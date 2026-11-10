@@ -69,11 +69,13 @@ export interface SkippedSkill { reason: SkipReason; id?: string; path?: string; 
 export interface DirFingerprint { dirs: [string, number, string?][]; files: [string, number, number][] }
 
 export interface SourceRead {
-  kind: 'dir' | 'bundled' | 'json' | 'claude_plugins';
+  kind: 'dir' | 'bundled' | 'json' | 'claude_plugins' | 'shared_catalog';
   skills: SkillRecord[];
   skipped: SkippedSkill[];
   fingerprint?: DirFingerprint;
   snapshot?: string;
+  /** The followed catalog's view token per cache root (shared_catalog only); null when a root has no readable active view. */
+  viewTokens?: (string | null)[];
 }
 
 const cut = (s: string, n: number) => (s.length <= n ? s : s.slice(0, n));
@@ -332,6 +334,137 @@ export function readClaudePluginSources(claudeDir: string): SourceRead {
   try { fp.dirs.unshift([pluginsDir, statSync(pluginsDir).mtimeMs]); } catch { /* no plugins yet */ }
   for (const f of files) { try { const st = statSync(f); fp.files.unshift([f, st.size, st.mtimeMs]); } catch { /* raced away */ } }
   return { ...read, kind: 'claude_plugins' };
+}
+
+/**
+ * Shared catalog (claude-code-shared): the followed shared-skills install's
+ * synced catalog, read engine-free from the adapter's local cache
+ * (<home>/skillpack-shared/<key>/shared-skills/, written by
+ * src/core/shared-skills/adapter.ts; the same layout
+ * src/core/skillpack/shared-brain-bridge.ts installs the native router from).
+ * The cache is the router's synced catalog: active.json names the authorized
+ * view (view_token) and every usable skill's immutable revision and cached
+ * files; only usable, delivery-complete skills are cached (blocked ones are
+ * listed on the receipt, never installed). `sync_brain_skills` refreshes the
+ * cache, so a new view_token is the freshness signal: the turn path compares
+ * it with the receipt's recorded tokens and rebuilds on drift.
+ *
+ * A skill's id is its qualified id (src/core/shared-skills/catalog.ts
+ * qualifiedSkillId: `skill:` + the key's segments joined by `:`), so a ranked
+ * line names the exact get_skill selector; the body, description and triggers
+ * come from the cached SKILL.md. No path is recorded: the cached files are
+ * private to the install, and the agent fetches the skill with get_skill,
+ * never by reading the cache.
+ */
+const SHARED_ACTIVE_CAP_BYTES = 8 * 1024 * 1024;
+const SHARED_RECEIPT_CAP_BYTES = 1024 * 1024;
+/** Follow statuses that leave no usable cache behind (adapter.ts SharedSkillsLocalReceipt). */
+const SHARED_INACTIVE = new Set(['left', 'left_with_retained_files']);
+
+/** The qualified id for a shared skill key (`brain/source/incarnation/pack/name`, URL-encoded segments). */
+export function sharedCatalogQualifiedId(key: string): string {
+  return `skill:${key.split('/').join(':')}`;
+}
+
+function parseSharedSkillKey(key: string): { brain_id: string; source_id: string; source_incarnation: string; pack_id: string; name: string } | null {
+  const parts = key.split('/');
+  if (parts.length !== 5) return null;
+  try {
+    const [brain_id, source_id, source_incarnation, pack_id, name] = parts.map(decodeURIComponent);
+    if (!brain_id || !source_id || !source_incarnation || !pack_id || !name) return null;
+    return { brain_id: brain_id!, source_id: source_id!, source_incarnation: source_incarnation!, pack_id: pack_id!, name: name! };
+  } catch { return null; }
+}
+
+interface SharedActive { view_token: string; skills: Record<string, { revision: string; files: Record<string, string> }> }
+
+/** The active view of one follow cache: null when there is none (the follow left or never synced). Never throws. */
+function readSharedActive(root: string): SharedActive | null {
+  try {
+    const b = readBounded(join(root, 'active.json'), SHARED_ACTIVE_CAP_BYTES);
+    if (b === 'too_large') return null;
+    const v = JSON.parse(b.toString('utf8')) as unknown;
+    if (!v || typeof v !== 'object' || typeof (v as { view_token?: unknown }).view_token !== 'string'
+      || !(v as { skills?: unknown }).skills || typeof (v as { skills?: unknown }).skills !== 'object') return null;
+    return v as SharedActive;
+  } catch { return null; }
+}
+
+/** The current view token per cache root (null when a root has no readable active view). Never throws: the turn path compares these with the receipt's. */
+export function sharedCatalogViewTokens(roots: readonly string[]): (string | null)[] {
+  return roots.map(r => readSharedActive(r)?.view_token ?? null);
+}
+
+/**
+ * The followed catalogs for this home: every claude-code shared-skills cache
+ * under <home>/skillpack-shared whose follow is still active and whose active
+ * view exists. Unreadable or foreign receipts are skipped, never fatal: setup
+ * must not fail because one follow's cache is corrupt, and the adapter's own
+ * tooling reports the conflict.
+ */
+export function findSharedSkillCaches(home: string): string[] {
+  const base = join(home, 'skillpack-shared');
+  let entries: string[];
+  try { entries = readdirSync(base); } catch { return []; }
+  const roots: string[] = [];
+  for (const name of entries.sort()) {
+    const root = join(base, name, 'shared-skills');
+    try {
+      const b = readBounded(join(root, 'receipt.json'), SHARED_RECEIPT_CAP_BYTES);
+      if (b === 'too_large') continue;
+      const receipt = JSON.parse(b.toString('utf8')) as { format_version?: unknown; adapter?: unknown; status?: unknown };
+      if (receipt.format_version !== 1 || receipt.adapter !== 'claude-code' || typeof receipt.status !== 'string' || SHARED_INACTIVE.has(receipt.status)) continue;
+      if (!readSharedActive(root)) continue;
+      roots.push(root);
+    } catch { /* foreign, corrupt or mid-write: not a follow setup can use */ }
+  }
+  return roots;
+}
+
+/** Read the followed shared catalog from its cache roots (the router's synced catalog). */
+export function readSharedCatalogSource(roots: readonly string[]): SourceRead {
+  const skills: SkillRecord[] = [];
+  const skipped: SkippedSkill[] = [];
+  const viewTokens: (string | null)[] = [];
+  const seen = new Map<string, string>();
+  let files = 0;
+  for (const root of roots) {
+    const realRoot = (() => { try { return realpathSync(root); } catch { return null; } })();
+    const active = readSharedActive(root);
+    viewTokens.push(active?.view_token ?? null);
+    if (!realRoot) continue; // the follow is gone: this root contributes nothing
+    if (!active) throw new ResolverError('skill_source_unreadable', `The shared-skills cache at ${root} has no readable active view.`, { suggestion: 'Run sync_brain_skills for that installation, or leave it and re-run setup.' });
+    for (const key of Object.keys(active.skills).sort()) {
+      const parsed = parseSharedSkillKey(key);
+      if (!parsed) { skipped.push({ reason: 'invalid_entry', id: key }); continue; }
+      const id = sharedCatalogQualifiedId(key);
+      const won = seen.get(id);
+      if (won !== undefined) { skipped.push({ reason: 'duplicate_id', id, kept: won }); continue; }
+      seen.set(id, root);
+      const entry = active.skills[key];
+      const filesMap = entry && typeof entry === 'object' && entry.files && typeof entry.files === 'object' ? entry.files : undefined;
+      const rel = filesMap?.[`skills/${parsed.name}/SKILL.md`];
+      if (typeof rel !== 'string') { skipped.push({ reason: 'unreadable', id }); continue; }
+      // Confine the cached file to the cache root: active.json is data, and a
+      // path that escapes the root must never be read.
+      let real: string;
+      try {
+        if (rel.startsWith('/') || rel.split('/').includes('..')) throw new Error('outside root');
+        real = realpathSync(join(realRoot, rel));
+        if (real !== realRoot && !real.startsWith(realRoot + sep)) throw new Error('outside root');
+      } catch { skipped.push({ reason: 'unreadable', id }); continue; }
+      if (++files > MAX_SKILLS) throw tooLarge(`more than ${MAX_SKILLS} shared skills`);
+      let text: string;
+      try { text = readHead(real, SKILL_FILE_CAP_BYTES).bytes.toString('utf8'); } catch { skipped.push({ reason: 'unreadable', id }); continue; }
+      const doc = parseSkillDoc(text);
+      if (!doc.modelInvocable) { skipped.push({ reason: 'not_model_invocable', id }); continue; }
+      if (!doc.eligible) { skipped.push({ reason: 'ineligible', id }); continue; }
+      skills.push({ id, name: cut(doc.name ?? parsed.name, MAX_NAME), description: cut(doc.description, MAX_DESCRIPTION),
+        ...(doc.whenToUse ? { whenToUse: cut(doc.whenToUse, MAX_DESCRIPTION) } : {}),
+        triggers: boundTriggers(doc.triggers), routing: [], body: doc.body });
+    }
+  }
+  return { kind: 'shared_catalog', skills, skipped, viewTokens };
 }
 
 /** Attach a routing file's rows to skills by name (or directory name); returns rows that matched no skill. */

@@ -33,7 +33,7 @@ const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
 Build, inspect or remove a skill catalog's index (under GBRAIN_HOME/skill-index/).
 No brain connection is needed.
 
-  gbrain skills index build --catalog <name> (--dir <d>... | --bundled | --from-json <file|-> [--dir <d>...]
+  gbrain skills index build --catalog <name> (--dir <d>... | --bundled | --from-json <file|-> [--dir <d>...] | --shared-catalog <d>...
         | --claude-plugins <dir>) [--routing <file>] [--harness <h>] [--scope user|project] [--json]
   gbrain skills index status [--catalog <name>] [--session <id> [--harness <h>] [--shadow]] [--json]
   gbrain skills index remove --catalog <name> [--json]
@@ -44,6 +44,7 @@ No brain connection is needed.
   --from-json <f|->  an adapter's skill list ([{id, name, description, triggers?, path?, eligible?}])
                      or OpenClaw's skills list --json output as is; with --dir, each listed skill
                      takes its body, path and triggers from the folder skill of the same name
+  --shared-catalog <d>  a followed shared-skills cache (<home>/skillpack-shared/<key>/shared-skills; repeatable)
   --claude-plugins <dir>  the skills of the enabled user-scope Claude Code plugins under
                      <dir> (~/.claude), named <plugin>:<skill>
   --routing <file>   one RESOLVER-style routing table; rows add trigger text to skills
@@ -174,7 +175,7 @@ async function runIndex(args: string[]): Promise<void> {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_INDEX); return; }
     usage(`Unknown subcommand "skills index ${sub}".`, 'Use gbrain skills index build, status or remove.');
   }
-  const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
+  const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--shared-catalog', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
   const json = p.bools.has('--json');
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass options as flags; see gbrain skills index --help.');
   try {
@@ -183,6 +184,7 @@ async function runIndex(args: string[]): Promise<void> {
       if (!catalog) usage('skills index build needs --catalog <name>.', 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills');
       const fromJson = one(p, '--from-json');
       const input: BuildInput = { catalog: catalog!, ...(p.flags.get('--dir') ? { dirs: p.flags.get('--dir') } : {}), ...(p.bools.has('--bundled') ? { bundled: true } : {}),
+        ...(p.flags.get('--shared-catalog') ? { sharedCatalog: p.flags.get('--shared-catalog') } : {}),
         ...(one(p, '--claude-plugins') !== undefined ? { claudePlugins: one(p, '--claude-plugins') } : {}),
         ...(one(p, '--routing') ? { routing: one(p, '--routing') } : {}), ...(one(p, '--harness') ? { harness: one(p, '--harness') } : {}),
         ...(one(p, '--scope') ? { scope: one(p, '--scope') as 'user' | 'project' } : {}) };

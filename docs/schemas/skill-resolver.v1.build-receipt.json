@@ -65,7 +65,8 @@
                 "dir",
                 "bundled",
                 "json",
-                "claude_plugins"
+                "claude_plugins",
+                "shared_catalog"
               ]
             },
             "dirs": {
@@ -90,6 +91,21 @@
             "claude_dir": {
               "type": "string",
               "description": "claude_plugins: the Claude Code config directory whose enabled user-scope plugins were indexed."
+            },
+            "shared_roots": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "view_tokens": {
+              "type": "array",
+              "items": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
             }
           }
         },

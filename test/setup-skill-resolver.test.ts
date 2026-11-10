@@ -51,6 +51,17 @@ function skill(dir: string, name: string, description: string): void {
   mkdirSync(join(dir, name), { recursive: true });
   writeFileSync(join(dir, name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\nSteps.\n`);
 }
+/** A followed shared-skills cache in the box home, as sync_brain_skills leaves it. */
+function sharedCache(b: Box, key: string, name: string, description: string, viewToken = 'vt-1'): string {
+  // The real adapter writes under configDir() (<home>/.gbrain), not under the
+  // GBRAIN_HOME parent: see src/core/skillpack/shared-brain-bridge.ts.
+  const root = join(b.home, '.gbrain', 'skillpack-shared', key, 'shared-skills');
+  mkdirSync(join(root, 'revisions', 'aa', 'aa', 'skills', name), { recursive: true });
+  writeFileSync(join(root, 'receipt.json'), JSON.stringify({ format_version: 1, adapter: 'claude-code', status: 'joined' }));
+  writeFileSync(join(root, 'active.json'), JSON.stringify({ view_token: viewToken, skills: { [`brain-a/source-b/incarnation-c/pack-d/${name}`]: { revision: 'r1', files: { [`skills/${name}/SKILL.md`]: `revisions/aa/aa/skills/${name}/SKILL.md` } } } }));
+  writeFileSync(join(root, 'revisions', 'aa', 'aa', 'skills', name, 'SKILL.md'), `---\nname: ${name}\ndescription: ${description}\n---\nSteps for ${name}.\n`);
+  return root;
+}
 const HARNESS = {
   'claude-code': { skills: (b: Box) => join(b.home, '.claude', 'skills'), hookFile: (b: Box) => join(b.home, '.claude', 'settings.json') },
   'codex': { skills: (b: Box) => join(b.home, '.agents', 'skills'), hookFile: (b: Box) => join(b.home, '.codex', 'hooks.json') },
@@ -155,6 +166,61 @@ for (const harness of ['claude-code', 'codex'] as H[]) {
     });
   });
 }
+
+describe('setup claude-code --skill-loading resolve: followed shared catalog', () => {
+  test('a follow builds claude-code-shared beside the user catalog, and re-runs keep all four steps', async () => {
+    const b = box();
+    skill(HARNESS['claude-code'].skills(b), 'deploy-widget', 'Deploy the widget service.');
+    sharedCache(b, 'follow-1', 'triage-widget', 'Triage a widget bug report.');
+    const on = await setup(b, 'claude-code', ['--skill-loading', 'resolve']);
+    expect(on.exitCode, on.stderr).toBe(0);
+    expect(on.stdout).toMatch(/skill resolver: on; 1 skills; fresh/);
+    expect(catalogs(b).sort()).toEqual(['claude-code-shared', 'claude-code-user']);
+    const again = await setup(b, 'claude-code', ['--skill-loading', 'resolve', '--json']);
+    expect(again.exitCode).toBe(0);
+    expect(again.doc.skill_resolver.steps.map((s: any) => s.action)).toEqual(['keep', 'keep', 'keep', 'keep']);
+    const refresh = await setup(b, 'claude-code', ['--json']);
+    expect(refresh.exitCode).toBe(0);
+    expect(refresh.doc.skill_resolver.steps.every((s: any) => s.action === 'keep')).toBe(true);
+    const off = await setup(b, 'claude-code', ['--skill-loading', 'off']);
+    expect(off.exitCode).toBe(0);
+    expect(catalogs(b)).toEqual([]);
+  });
+
+  test('dry-run lists the shared write and writes nothing; codex never builds one', async () => {
+    const b = box();
+    skill(HARNESS['claude-code'].skills(b), 'deploy-widget', 'Deploy the widget service.');
+    sharedCache(b, 'follow-1', 'triage-widget', 'Triage a widget bug report.');
+    // A plain setup first: the first CLI boot writes bun's module cache under
+    // the box home, so snapshot the tree only after it (the pre-existing
+    // dry-run test does the same) — the dry run itself must add nothing.
+    expect((await setup(b, 'claude-code', [])).exitCode).toBe(0);
+    const before = { ...tree(b.home) };
+    const dry = await setup(b, 'claude-code', ['--skill-loading', 'resolve', '--dry-run']);
+    expect(dry.exitCode).toBe(0);
+    expect(dry.stdout).toContain('claude-code-shared');
+    expect(tree(b.home)).toEqual(before);
+
+    const c = box();
+    skill(HARNESS['codex'].skills(c), 'deploy-widget', 'Deploy the widget service.');
+    sharedCache(c, 'follow-1', 'triage-widget', 'Triage a widget bug report.');
+    expect((await setup(c, 'codex', ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(catalogs(c)).toEqual(['codex-user']);
+  });
+
+  test('a follow that leaves removes the shared catalog on refresh; the user catalog stays', async () => {
+    const b = box();
+    skill(HARNESS['claude-code'].skills(b), 'deploy-widget', 'Deploy the widget service.');
+    sharedCache(b, 'follow-1', 'triage-widget', 'Triage a widget bug report.');
+    expect((await setup(b, 'claude-code', ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(catalogs(b).sort()).toEqual(['claude-code-shared', 'claude-code-user']);
+    rmSync(join(b.home, '.gbrain', 'skillpack-shared'), { recursive: true, force: true });
+    const refresh = await setup(b, 'claude-code', ['--json']);
+    expect(refresh.exitCode).toBe(0);
+    expect(catalogs(b)).toEqual(['claude-code-user']);
+    expect(refresh.doc.skill_resolver.steps.find((s: any) => s.action === 'remove')).toBeTruthy();
+  });
+});
 
 describe('setup --skill-loading resolve: refusals and other keys', () => {
   test('another harness refuses resolve', async () => {

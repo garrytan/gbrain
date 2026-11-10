@@ -42,14 +42,18 @@
  *
  * Catalogs, each searched only once its receipt exists (none: outcome
  * no_catalog, no output): <harness>-user (built by setup), for Claude Code
- * claude-code-plugins (built by setup from enabled plugins), then a project
- * catalog built out of the turn by a detached `gbrain skills index build` on
- * first sight and merged at rank time (names only: scope project). Claude
- * Code's covers the project's .claude/skills, keyed by a hash of the real
- * project root; Codex's covers every existing .agents/skills from the project
- * root (the nearest ancestor of cwd holding a .git entry, else cwd) down to
- * cwd, root first, as Codex 0.165 loads them (codex-rs host_roots.rs), keyed
- * by a hash of that real dir list and leaving out the user's own
+ * claude-code-plugins (built by setup from enabled plugins) and
+ * claude-code-shared (built by setup from a followed shared-skills install;
+ * the router's synced catalog — its lines carry the skill's qualified id, and
+ * the block's load line then names get_skill for those ids, so the agent
+ * fetches the shared skill from the brain instead of the Skill tool), then a
+ * project catalog built out of the turn by a detached `gbrain skills index
+ * build` on first sight and merged at rank time (names only: scope project).
+ * Claude Code's covers the project's .claude/skills, keyed by a hash of the
+ * real project root; Codex's covers every existing .agents/skills from the
+ * project root (the nearest ancestor of cwd holding a .git entry, else cwd)
+ * down to cwd, root first, as Codex 0.165 loads them (codex-rs host_roots.rs),
+ * keyed by a hash of that real dir list and leaving out the user's own
  * ~/.agents/skills. A stale catalog is rebuilt the same way, at most once a
  * minute per catalog, unless skills.resolver.auto_rebuild is false or
  * GBRAIN_SKILLS_NO_AUTOREBUILD=1.
@@ -80,7 +84,7 @@ import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-
 import { laneTurnSettings, type LaneTurnSettings } from './config.ts';
 import { appendDailyLog, appendDailyLogSync, LANE_LOG } from './daily-log.ts';
 import { HOOK_FIELD_CAP, readJsonFields } from './hook-input.ts';
-import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome } from './paths.ts';
+import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome, SHARED_CATALOG } from './paths.ts';
 import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
 import type { LaneWorkerTurn } from './hook-worker.ts';
@@ -336,6 +340,11 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     harness === 'hermes' ? null : projectCatalog(harness, harness === 'claude-code' ? env.CLAUDE_PROJECT_DIR || cwd : cwd, home),
   ]);
   const catalogs = [...(userBuilt ? [userCatalogName(harness)] : []), ...(pluginsBuilt ? [CLAUDE_PLUGINS_CATALOG] : [])];
+  if (harness === 'claude-code') {
+    // Ranked when setup built it from a followed shared-skills install; a
+    // follow added after setup lands on the next setup run, not mid-turn.
+    try { await stat(catalogFile(home, SHARED_CATALOG, 'receipt.json')); catalogs.push(SHARED_CATALOG); } catch { /* not built */ }
+  }
   if (project?.built) catalogs.push(project.name);
   else if (project && settings.autoRebuild) await scheduleBuild(home, project.name, ['skills', 'index', 'build', '--catalog', project.name, ...project.dirs.flatMap(d => ['--dir', d]), '--scope', 'project', '--harness', harness], spawnFn);
   if (catalogs.length === 0) return { outcome: 'no_catalog' };
