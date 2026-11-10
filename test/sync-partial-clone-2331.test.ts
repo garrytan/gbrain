@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { __setNoLazyFetchForTests, __setPinnedWindowForTests } from '../src/core/persistence/sync-blobs.ts';
@@ -8,6 +9,7 @@ import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
 import { __resetHistoryIndexesForTest, readOriginEvidence } from '../src/core/persistence/sync-origin-evidence.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
+import { hardenedGitSync } from '../src/core/hardened-git.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -330,3 +332,20 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
     }, root => { remote = bloblessClone(root, ['seed', 'a'], false, 'tree:0'); });
   }, 240_000);
 });
+
+test('a hardened read in a treeless clone fetches nothing on a Git that ignores GIT_NO_LAZY_FETCH, even where the repository allows the file transport', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gst2331-hardened-')), root = join(dir, 'clone');
+  try {
+    const remote = bloblessClone(root, ['seed', 'a'], true, 'tree:0');
+    const upstream = join(root, '..', 'upstream');
+    writeFileSync(join(upstream, 'notes/b.md'), note('b')); commit(upstream, 'b'); git(upstream, 'push', '-q', remote.url, 'HEAD:main');
+    git(root, 'fetch', '-q', 'origin');
+    git(root, 'config', 'protocol.file.allow', 'always');
+    rmSync(remote.marker, { force: true });
+    const restore = __setNoLazyFetchForTests(false);
+    let listed;
+    try { listed = hardenedGitSync(root, ['ls-tree', '-z', '--full-tree', 'origin/main', '--', 'notes/b.md'], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }); } finally { restore(); }
+    expect(existsSync(remote.marker)).toBe(false);
+    expect(listed.ok).toBe(false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}, 60_000);
