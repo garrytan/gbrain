@@ -134,6 +134,18 @@ describe('sources federate previews member-written pages it exposes (#8982, pgli
     }
   }, 240_000);
 
+  // Added by /ship coverage audit.
+  // Value: protects=federate on a source that is already federated adds nothing to the no-grant floor, so it names no pages;
+  //   fails_when=the !wasFederated guard is dropped and every repeat federate warns; why_new=each case above flips false to true;
+  //   seam=none; no_claim=restore's own federated check (covered above)
+  test('federating a source that is already federated names no pages', async () => {
+    expect(await federated()).toBe(true);
+    const out = await sources(['federate', SRC, '--json']);
+    expect(JSON.parse(out.stdout)).toEqual({ id: SRC, federated: true });
+    expect(out.stderr).not.toContain('Warning');
+    expect(await federated()).toBe(true);
+  }, 240_000);
+
   const archive = () => engine.executeRaw(`UPDATE sources SET archived = true, archived_at = now(), archive_expires_at = now() + interval '72 hours',
     config = config || '{"federated": false}'::jsonb WHERE id = $1`, [SRC]);
 
