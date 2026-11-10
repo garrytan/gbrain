@@ -111,9 +111,9 @@ export async function syncExcludePatterns(engine: Pick<BrainEngine, 'getConfig'>
   return [...extra, ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
     .map(v => v.endsWith('/') ? `${v}**` : v);
 }
-export function syncGit(root: string, args: string[]): string {
+export function syncGit(root: string, args: string[], env: NodeJS.ProcessEnv = {}): string {
   return execFileSync('git', ['-c', 'core.quotepath=false', '-C', root, ...args],
-    { env: gitChildEnv(), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
+    { env: gitChildEnv(env), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 /** `syncGit` without blocking the event loop while Git runs (a level read: a synchronous spawn held timers for 200+ ms on a loaded host). */
 const execFileAsync = promisify(execFile);
@@ -252,15 +252,27 @@ export function readManagedSyncRows(engine: BrainEngine, sourceId: string): Prom
     getWorktreeBinding(engine, sourceId)]);
 }
 /** #7973: the checkout's Git top level; a registered root with no Git checkout at or above it is a plain directory, which `gbrain sync` imports without Git. */
-function managedGitTopLevel(root: string, sourceId: string): string {
-  try { return realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim()); }
+function managedGitTopLevel(root: string, sourceId: string, gitRequired: boolean): string {
+  let topLevel: string;
+  try { topLevel = syncGit(root, ['rev-parse', '--show-toplevel'], { LC_ALL: 'C' }).trim(); }
   catch (error) {
-    for (let dir = root; ; dir = dirname(dir)) { if (existsSync(join(dir, '.git'))) throw error; if (dir === dirname(dir)) break; }
+    const failure = error as { status?: number; stderr?: string };
+    if (failure.status !== 128 || !failure.stderr?.startsWith('fatal: not a git repository (')) throw error;
+    // A damaged .git file, dangling symlink or inaccessible ancestor is a Git error, not a plain directory.
+    for (let dir = root; ; dir = dirname(dir)) {
+      if (lstatSync(join(dir, '.git'), { throwIfNoEntry: false })) throw error;
+      if (dir === dirname(dir)) break;
+    }
+    if (gitRequired) {
+      throw opError('sync_not_applicable', `Source ${sourceId} expects a Git checkout, but the registered directory has no repository.`,
+        'Restore the registered Git checkout before syncing or checking for unindexed files.', { reason: 'checkout_missing' });
+    }
     throw opError('sync_not_applicable', `The managed Git sync path does not apply to source ${sourceId}: ${root} is a plain directory, not a Git checkout.`,
       `Run gbrain sync --source ${sourceId} without --repo or --src-subpath; it imports the directory's files without Git (a file removed from it keeps its page). Nothing was synced.`,
       { reason: 'plain_directory', fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
         why: 'Sync imports a plain-directory source the way gbrain import does on a repo-less brain.' } });
   }
+  return realpathSync(topLevel);
 }
 /**
  * Validate the current owner and source without enumerating a new manifest. `rows`: `readManagedSyncRows` started by a
@@ -303,7 +315,8 @@ export async function resolveManagedSyncContext(engine: BrainEngine, opts: SyncO
     { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows the root the owner registered, to compare with the directory on disk.' } });
   assertConfiguredSyncRoot(root, source.local_path);
-  const gitRoot = managedGitTopLevel(root, sourceId);
+  const gitRequired = source.last_commit != null || source.config?.canonical === 'git' || binding.git_durability === 'enabled';
+  const gitRoot = managedGitTopLevel(root, sourceId, gitRequired);
   const requested = realpathSync(opts.srcSubpath ? resolve(opts.repoPath ?? gitRoot, opts.srcSubpath) : opts.repoPath ?? root);
   if (realpathSync.native(requested) !== realpathSync.native(root) || !isWriteTargetContained(realpathSync.native(root), realpathSync.native(gitRoot))) throw opError('source_changed', 'Sync path does not match this source binding.',
     `The repository path or source subpath given for ${sourceId} does not resolve to its registered root. Run gbrain sync --no-pull --source ${sourceId} without --repo or --src-subpath so it uses the registered root.`,
