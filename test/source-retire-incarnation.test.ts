@@ -211,3 +211,37 @@ test('the superseded refusal points at a writer status that lists the stopped an
   expect(refusal).toMatchObject({ code: 'source_retire_superseded', fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', source, '--json'] } });
   expect(await status()).toEqual([expect.objectContaining({ request_id: requestId, operation: 'remove', state: 'failed', error: 'source_retire_superseded' })]);
 }), 60_000);
+
+test('a retry under a replaced CLI registration after the source was removed and re-added refuses and keeps the new pages', () => fixture(SOURCE_RETIRE_BATCH_PAGES + 7, async root => {
+  const requestId = randomUUID();
+  const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
+  const first = await incarnation();
+  await expect(failAfterFirstBatch(remove)).rejects.toThrow('injected retire batch failure');
+  expect(await change(requestId)).toMatchObject({ state: 'recovering', source_incarnation: first });
+  await registerLocalWriter(engine, 'cli', undefined, true);
+  expect(await runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true })).toMatchObject({ state: 'committed' });
+  await readd(root, 2);
+  expect(await incarnation()).not.toBe(first);
+  for (let i = 0; i < 2; i++) await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
+  await expect(runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId, dryRun: true }))
+    .rejects.toMatchObject({ code: 'source_retire_superseded' });
+  expect(await pages()).toBe(2);
+  expect(await engine.executeRaw('SELECT state FROM persistence_topology_changes WHERE request_id=$1::uuid', [requestId])).toEqual([{ state: 'failed' }]);
+}), 60_000);
+
+test('a stopped remove whose source was replaced out of band refuses under a replaced registration and settles the old admission', () => fixture(SOURCE_RETIRE_BATCH_PAGES + 7, async root => {
+  const requestId = randomUUID();
+  const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
+  await expect(failAfterFirstBatch(remove)).rejects.toThrow('injected retire batch failure');
+  await registerLocalWriter(engine, 'cli', undefined, true);
+  await unmanaged(async () => {
+    await engine.executeRaw('DELETE FROM pages WHERE source_id=$1', [source]);
+    await engine.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1', [source]);
+    await engine.executeRaw('DELETE FROM sources WHERE id=$1', [source]);
+  });
+  await readd(root, 2);
+  await expect(remove()).rejects.toMatchObject({ code: 'source_retire_superseded' });
+  expect(await engine.executeRaw('SELECT state FROM persistence_topology_changes WHERE request_id=$1::uuid', [requestId])).toEqual([{ state: 'failed' }]);
+  expect((await deactivationBlockers(engine)).filter(b => b.kind === 'topology_recovery')).toEqual([]);
+  expect(await pages()).toBe(2);
+}), 60_000);
