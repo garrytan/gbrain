@@ -6,8 +6,8 @@
  *     reads as. An existing brain it cannot read refuses (setup_serves_unreadable). A one-person setup (the default)
  *     on a brain that serves several people refuses (setup_serves_several) unless config mcp.stdio_member already
  *     binds the stdio connection. Setup writes mcp.stdio_member only for --stdio-member <enabled member> with
- *     --serves several on claude-code or codex: the key is brain-wide, so it binds every stdio session on the host,
- *     and setup refuses the flag where a shared-stdio harness (sharedStdioHarness) is installed. The brain-first text
+ *     --serves several on claude-code or codex of a local PGLite brain: the key lives in the brain, so it binds every
+ *     stdio session that opens it, and setup refuses the flag where a shared-stdio harness (sharedStdioHarness) is installed. The brain-first text
  *     says the connection is already scoped only once it is bound.
  *   - `--serves several --members a,b` runs `gbrain access serves several --yes --json` (members, one folder rule per
  *     member, one bound key per member in a 0600 file) and proves the labels with one bound read per member
@@ -16,6 +16,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { openclawStateDir } from '../core/setup/brain-first.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { readRoster, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
@@ -25,7 +26,7 @@ export interface ServesFlags { serves?: 'one' | 'several'; members?: string; mem
 /** A harness installed on this host whose stdio sessions serve several conversations (OpenClaw, Hermes), or null. */
 export function sharedStdioHarness(): string | null {
   const onPath = (bin: string) => { try { return !!Bun.which(bin, { PATH: process.env.PATH ?? '' }); } catch { return false; } };
-  if (onPath('openclaw') || existsSync(join(homedir(), '.openclaw'))) return 'OpenClaw';
+  if (onPath('openclaw') || existsSync(openclawStateDir())) return 'OpenClaw';
   if (onPath('hermes') || existsSync(process.env.HERMES_HOME?.trim() || join(homedir(), '.hermes'))) return 'Hermes';
   return null;
 }
@@ -121,9 +122,10 @@ export interface ServesPlan { roster: string[]; status: ServesStatus | null }
  * Before setup writes anything: the roster (an empty one refuses), the brain's serves view (none for a brain setup is
  * about to create, or while this registration's own stdio serve holds a PGLite brain), and the one-person refusal.
  */
-export function servesPreflight(flags: ServesFlags, launcher: string, harness: string, hasBrain: boolean, liveOurs: boolean): ServesPlan | OperationError {
+export function servesPreflight(flags: ServesFlags, launcher: string, harness: string, hasBrain: boolean, liveOurs: boolean, pglite: boolean): ServesPlan | OperationError {
   const roster = servesRoster(flags, harness);
   if (roster instanceof OperationError) return roster;
+  if (flags.stdioMember && !pglite) return opError('invalid_params', 'This brain is a Postgres database other machines can open, and mcp.stdio_member is stored in the brain, so --stdio-member would bind stdio sessions on every machine that opens it, including a shared OpenClaw or Hermes host; nothing was written.', 'Leave the stdio server unbound, or bind a single-person harness with a member key over serve --http.');
   if (flags.stdioMember && !roster.includes(flags.stdioMember)) return opError('invalid_params', `--stdio-member ${flags.stdioMember} is not one of the people in --members; nothing was written.`, 'Name a member listed in --members.');
   if (flags.serves === 'several' && liveOurs) {
     return opError('setup_owner_conflict', 'A live stdio serve started by this registration holds the PGLite brain, and labelling several people needs to write to it; nothing was written.',
@@ -144,7 +146,9 @@ export function servesApply(flags: ServesFlags, launcher: string, harness: strin
     : { mode: 'several' as const, note: `the new brain is created first; then ${plan.roster.join(', ')} each get a member, a folder rule and a bound key` };
   const reread = several && !flags.dryRun ? readServesStatus(launcher) : null;
   const status = reread ? ('status' in reread ? reread.status : null) : plan.status;
-  const stdio = bindStdio(launcher, harness, several && !status ? { serves: 'several', from: 'config', enabled_members: plan.roster, owner: null, stdio_member: null } : status, flags.stdioMember, flags.dryRun);
+  const preview = several && flags.dryRun && status?.serves !== 'several';
+  const member = labelled && !servesOk({ ...labelled, brain_serves: 'one' }) ? undefined : flags.stdioMember;
+  const stdio = bindStdio(launcher, harness, preview ? { serves: 'several', from: 'config', enabled_members: plan.roster, owner: null, stdio_member: status?.stdio_member ?? null } : status, member, flags.dryRun);
   if (!labelled && !stdio) return null;
   const outcome: ServesOutcome = { ...(labelled ?? { mode: 'one' as const }), brain_serves: 'one', ...(stdio ? { stdio } : {}),
     ...(reread && 'error' in reread ? { error: `reading the brain back failed: ${reread.error}` } : {}) };
@@ -155,13 +159,13 @@ export function servesApply(flags: ServesFlags, launcher: string, harness: strin
 /** The stdio binding on a brain that serves several people: kept, written for the member a person named, else unbound. */
 export function bindStdio(launcher: string, harness: string, status: ServesStatus | null, member: string | undefined, dryRun: boolean): ServesOutcome['stdio'] {
   if (!status || status.serves !== 'several') return undefined;
-  if (status.stdio_member) return { member: status.stdio_member, action: 'keep', detail: `this harness reads as ${status.stdio_member} (config mcp.stdio_member)` };
+  if (status.stdio_member) return { member: status.stdio_member, action: 'keep', detail: `this harness reads as ${status.stdio_member} (config mcp.stdio_member)${member && member !== status.stdio_member ? `; --stdio-member ${member} ignored, since setup never replaces an existing binding` : ''}` };
   if (!member || !status.enabled_members.includes(member)) return { member: null, action: 'unbound', detail: `stdio sessions on this brain read only pages no rule restricts, so this harness's instructions keep the one-person scoping lines; to bind a harness that only that person uses, run gbrain setup ${harness} --serves several --stdio-member <member>` };
   if (!dryRun) {
     const r = child(launcher, ['config', 'set', 'mcp.stdio_member', member]);
     if (!r.ok) return { member: null, action: 'unbound', detail: `writing mcp.stdio_member = ${member} failed, so stdio stays unbound: ${r.stderr.trim()}` };
   }
-  return { member, action: 'write', detail: `every stdio MCP session on this brain, from any harness on this host, now reads as ${member}, including pages only ${member} may read (config mcp.stdio_member)` };
+  return { member, action: 'write', detail: `${dryRun ? 'would bind: ' : ''}every stdio MCP session on this brain, from any harness on this host, now reads as ${member}, including pages only ${member} may read (config mcp.stdio_member)` };
 }
 
 export function servesOk(o: ServesOutcome | null): boolean {

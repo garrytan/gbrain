@@ -179,8 +179,9 @@ restricts, and the harness's instructions keep the one-person scoping lines.
 the host, from any harness, read as that member, including pages only that member
 may read. Bind it only on a machine one person uses:
 `gbrain setup claude-code --serves several --members ... --stdio-member <member>`
-(claude-code or codex only; refused where OpenClaw or Hermes is installed, because
-their shared sessions would read as that member too). A bot that answers several
+(claude-code or codex on a local PGLite brain only; refused where OpenClaw or Hermes
+is installed, because their shared sessions would read as that member too, and on a
+Postgres brain, which other machines can open). A bot that answers several
 people runs `gbrain serve --http` with each member's key.
 
 The preview runs first, and a BLOCKED line (a disabled member, an existing rule on
