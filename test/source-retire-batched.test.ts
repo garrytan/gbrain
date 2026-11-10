@@ -135,7 +135,7 @@ test('an interrupted batch keeps the committed batches and the same request_id r
     await expect(remove()).rejects.toThrow('injected retire batch failure');
     expect(await pages(source)).toBe(PAGES - SOURCE_RETIRE_BATCH_PAGES * 2);
     expect(await registered()).toBe(1);
-    expect(await engine.executeRaw('SELECT id FROM persistence_topology_changes WHERE request_id=$1::uuid', [requestId])).toHaveLength(0);
+    expect(await engine.executeRaw('SELECT state,recovery FROM persistence_topology_changes WHERE request_id=$1::uuid', [requestId])).toEqual([{ state: 'recovering', recovery: null }]);
     await engine.executeRaw('DELETE FROM retire_fail');
     const receipt = await remove();
     expect(receipt).toMatchObject({ state: 'committed', operation: 'remove', pages_deleted: PAGES - SOURCE_RETIRE_BATCH_PAGES * 2 });
