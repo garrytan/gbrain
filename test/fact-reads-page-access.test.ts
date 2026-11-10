@@ -4,13 +4,13 @@
  * 1. Protects: a fact, timeline entry, tag or ontology observation is never wider than its page. A remote caller who
  *    cannot read a page (it names readers the caller is not among, or it is visibility: private) gets nothing about it
  *    from any fact read, even when the observation itself is world-visible. A soft-deleted page's facts, timeline and
- *    tags are hidden from every caller, local included, until restore_page brings them back unchanged, and a new page
- *    written over the deleted one starts clean.
+ *    tags are hidden from every caller, local included, until restore_page brings them back unchanged. A new page
+ *    written over the deleted one takes its tags from its own content; it hides and expires none of the old facts.
  * 2. Fails when: a world observation about a restricted or private page reaches a caller who cannot read that page
  *    (ontology_get, volunteer_chronicle, delta, find_trajectory, recall, hot memory); a deleted page's facts, timeline
  *    or tags come back from recall, get_timeline, get_tags, ontology_get, find_trajectory, volunteer_chronicle, delta or
- *    the entity card; a restore changes its facts; a new page at the slug shows the old page's facts or tags; or the
- *    fix deletes a fact row instead of hiding it.
+ *    the entity card; a restore changes its facts; a new page at the slug shows the old page's tags; or a fact row is
+ *    deleted or expired instead of hidden.
  * 3. Existing coverage: member-read-access pins page reads and facts held on a restricted page (provenance), not facts
  *    about one held elsewhere; pages-soft-delete pins the page row only.
  * 4. Real seams: tokens minted by the token service and verified by the serve --http verifier, dispatched through MCP
@@ -226,13 +226,12 @@ for (const kind of testBackends()) {
     await c.write('delete_page', { slug, expected_revision: await revision() });
     await c.write('put_page', { slug, expected_revision: await revision(),
       content: '---\ntype: person\ntitle: Carol Two\ntags: [new-tag]\n---\n# Carol Two\n\nA different page. canarynewpage' });
-    expect(await leaks()).toEqual([]);
+    const replaced = await leaks();
+    expect(replaced.filter(l => l.includes(old.tag))).toEqual([]);
+    expect(replaced).toContain(`local recall entity: ${old.fact}`);
     expect((await c.local('get_tags', { slug })).text).toContain('new-tag');
     expect((await c.local('get_page', { slug })).text).toContain('canarynewpage');
-    // The old page's facts are hidden, never deleted: every row is still there, expired.
-    const after = await rows();
-    expect(after.map(r => r.id)).toEqual(before.map(r => r.id));
-    expect(after.every(r => r.expired_at !== null)).toBe(true);
+    expect(await rows()).toEqual(before);
   }
 
   describe(`a deleted page takes its facts, timeline and tags with it (${kind})`, () => {
@@ -252,7 +251,7 @@ for (const kind of testBackends()) {
     }, 240_000);
     afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); }, 60_000);
 
-    test('repo-less source: hidden while deleted for local and remote readers, back unchanged on restore, not inherited by a new page', async () => {
+    test('repo-less source: hidden while deleted for local and remote readers, back unchanged on restore, tags not inherited by a new page', async () => {
       __resetPrivateVisibilityCacheForTests();
       await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT (id) DO NOTHING");
       await deletedPageScenario(engine, 'source-b', true);

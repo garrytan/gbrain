@@ -2,12 +2,14 @@
  * Recorded-time reads (get_page / get_versions with known_as_of) by a remote read-scope caller must not serve
  * what the current-time read withholds from that caller: (1) a quarantined page's body, (2) a page whose
  * readable_by excludes the caller, (3) a soft-deleted page. The plain version history (4) and delta's belief changes (5)
- * keep a quarantined page's body and claims from the same caller. Runs on PGLite, and on Postgres when DATABASE_URL is set.
+ * keep a quarantined page's body and claims from the same caller, (6) when the page was quarantined only by a later write too, and
+ * (7) per page across granted sources. Runs on PGLite, and on Postgres when DATABASE_URL is set.
  */
 import { describe, expect, test } from 'bun:test';
 import { operationsByName } from '../src/core/operations.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { beliefBrain, beliefEngineCase, beliefPage, type BeliefBrain } from './helpers/belief-ledger.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 
 const pause = () => new Promise(resolve => setTimeout(resolve, 20));
 const at = async (b: BeliefBrain) => {
@@ -115,5 +117,21 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
       expect(out.text).toContain('canarylatecontrol');
       expect(out.text.includes('canarylateq')).toBe(false);
     }), 120_000);
+
+    test('(7) a federated version history: each version follows its own page, so a newer clean page in another source does not open a quarantined page\'s bodies', () => beliefBrain(async b => {
+      const slug = 'companies/federated-history-example';
+      await b.put(slug, beliefPage({ prose: 'Canary body canaryfedq one.' }));
+      await b.put(slug, beliefPage({ title: 'Attention Required! | Cloudflare', prose: 'Canary body canaryfedq two.' }));
+      const [row] = await b.engine.executeRaw<{ q: unknown }>(`SELECT frontmatter->'quarantine' AS q FROM pages WHERE source_id = $1 AND slug = $2`, [b.sourceId, slug]);
+      expect(row?.q).toMatchObject({ reason: 'junk_pattern' });
+      await b.engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT (id) DO NOTHING");
+      await pause();
+      await importFromContent(b.engine, slug, beliefPage({ prose: 'Canary body canaryfedclean one.' }), { sourceId: 'source-b', noEmbed: true });
+      await b.engine.createVersion(slug, { sourceId: 'source-b' });
+      const remote = remoteOf(b);
+      const federated = { ...remote, auth: { ...remote.auth, allowedSources: [b.sourceId, 'source-b'] } } as unknown as BeliefBrain['ctx'];
+      const out = await call(b, federated, 'get_versions', { slug, include_body: true });
+      expect({ ok: out.ok, control: out.text.includes('canaryfedclean'), leaked: out.text.includes('canaryfedq') }).toEqual({ ok: true, control: true, leaked: false });
+    }, { databaseUrl: engineCase.databaseUrl }), 120_000);
   });
 }

@@ -246,11 +246,11 @@ const get_versions: Operation = {
     const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
       'SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [versions.map(v => Number(v.id))])).map(r => [Number(r.id), r.trust_tier] as const));
     const reason = await remoteReasons(ctx, String(p.slug), versions);
-    const [live] = ctx.remote === false || versions.length === 0 ? [] : await ctx.engine.executeRaw<{ slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
-      'SELECT slug, source_id, frontmatter FROM pages WHERE id = $1', [Number(versions[0]!.page_id)]);
-    const quarantine = live ? historyQuarantine(ctx, live) : () => null;
+    const lives = ctx.remote === false || versions.length === 0 ? [] : await ctx.engine.executeRaw<{ id: number | string; slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
+      'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(versions.map(v => Number(v.page_id)))]]);
+    const quarantines = new Map(lives.map(live => [Number(live.id), historyQuarantine(ctx, live)] as const));
     for (const v of versions) {
-      const quarantined = quarantine(v.frontmatter as Record<string, unknown> | null);
+      const quarantined = quarantines.get(Number(v.page_id))?.(v.frontmatter as Record<string, unknown> | null) ?? null;
       if (quarantined?.body_omitted) {
         const { compiled_truth: _b, timeline: _t, ...rest } = v;
         out.push({ ...rest, ...reason(v), quarantined });

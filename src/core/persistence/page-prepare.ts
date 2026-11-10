@@ -1088,7 +1088,6 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     let segmentedWrite = false;
     if (!noop) {
       const prior = snapshot ? await storedPageTier(tx, row.source_id, row.slug) : null;
-      if (replacesTombstone) await retireTombstoneFacts(tx, row.source_id, row.slug);
       // ENG-1: a managed fence edit keeps the page's tier; CEO-12: an agent rewrite that lowers a page files a queue item.
       const applied = await (isFenceEditWrite(row) ? withTrustKeep(tx, ['pages'], () => ready.apply(tx, lean ? preimage : undefined)) : ready.apply(tx, lean ? preimage : undefined));
       projectionPending = applied?.segmented?.complete === false || applied?.projectionPending === true;
@@ -1155,18 +1154,6 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       ...(contested.length ? { contested: { proposal_ref: contested[0], ...(contested.length > 1 ? { proposal_refs: contested } : {}) } } : {}) };
   } };
   return publication;
-}
-
-/**
- * A put over a soft-deleted page starts clean: it takes its tags from its own content only, skips the deleted page's
- * timeline rows, and here expires (never deletes) the active facts the deleted page held and those about it that no live
- * page holds. Facts other live pages hold about the slug stay theirs; restore_page is how the old page comes back.
- */
-async function retireTombstoneFacts(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
-  await tx.executeRaw(`UPDATE facts f SET expired_at = now(), row_num = NULL
-    WHERE f.source_id = $1 AND f.expired_at IS NULL
-      AND (f.source_markdown_slug = $2 OR (f.entity_slug = $2 AND NOT EXISTS (SELECT 1 FROM pages lp
-        WHERE lp.source_id = f.source_id AND lp.slug = f.source_markdown_slug AND lp.slug <> $2 AND lp.deleted_at IS NULL)))`, [sourceId, slug]);
 }
 
 /** What a page's projections report back: removed timeline rows and the contested proposal refs (#5575 guarded supersession). */
