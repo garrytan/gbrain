@@ -6,21 +6,21 @@
  *    page purge stores only slugs whose page still exists, and on Postgres one that runs while the purge is still open
  *    waits on the page row and drops the slug; (b) the connector delete (deleteConnectorPage -> deletePages) scrubs
  *    retrieval logs, ratings, weights, the volunteer log, the gazetteer and the eval candidates' captured slugs for
- *    that source in the delete's transaction;
+ *    that source in the delete's transaction, and so does the transcript stale-part delete, which now calls it;
  *    (c) removing a source (unmanaged removeSource -> deleteSourceRow, and the managed lifecycle remove) drops every
  *    such row of the source, and strips its slugs from eval candidates no other covered source still answers.
  * 2. Fails when: logEvalCandidate inserts slugs without probing the page row under a key-share lock, a hard delete or a
  *    source removal leaves any of those rows behind, or a scrub reaches another source's rows or a slug another
  *    source the candidate covers still holds.
  * 3. Existing coverage: purge-retrieval-feedback-8821 and purge-name-stores-9068 pin delete_page purge and the
- *    tombstone purge only; nothing pinned the capture, the connector delete, or source removal.
+ *    tombstone purge only; nothing pinned the capture, the connector and stale-part deletes, or source removal.
  * 4. Real seams: PGLite, and Postgres when DATABASE_URL is set (test/postgres-unit-arms.txt); the feedback store's
- *    writers, captureEvalCandidate under withResponseDeferral, the delete_page op, deleteConnectorPage, removeSource,
+ *    writers, captureEvalCandidate under withResponseDeferral, the delete_page op, deleteConnectorPage, runTranscriptsIngest, removeSource,
  *    runManagedSourceLifecycle; repo-less brain, no provider calls.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -35,6 +35,8 @@ import { captureEvalCandidate } from '../src/core/eval-capture.ts';
 import { withResponseDeferral } from '../src/core/background-work.ts';
 import { deleteConnectorPage } from '../src/core/connectors/api-source.ts';
 import { removeSource } from '../src/core/sources-ops.ts';
+import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
+import { buildTranscriptSlug } from '../src/core/transcripts/types.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle } from '../src/core/persistence/source-lifecycle.ts';
@@ -64,9 +66,14 @@ async function page(engine: BrainEngine, sourceId: string, slug: string) {
   await importFromContent(engine, slug, `---\ntitle: ${slug}\ntype: note\n---\n# ${slug}\n\nBody text ${randomUUID()}.\n`, { noEmbed: true, sourceId });
 }
 
-/** The page and OTHER in `sourceId`, and every store that names the page: a retrieval event (page and edge), page and edge ratings, a volunteer pointer, a gazetteer entry. */
+/** The page and OTHER in `sourceId`, and every store that names the page (traces). */
 async function traced(engine: BrainEngine, sourceId: string, slug: string) {
   await page(engine, sourceId, slug);
+  await traces(engine, sourceId, slug);
+}
+
+/** OTHER in `sourceId`, and for an existing page a retrieval event (page and edge), page and edge ratings, a volunteer pointer, a gazetteer entry. */
+async function traces(engine: BrainEngine, sourceId: string, slug: string) {
   await page(engine, sourceId, OTHER);
   const id = randomUUID(), edge = `${slug}|mentions|${OTHER}`;
   await insertRetrievalEvents(engine, [{ id, client_id: 'local', op: 'query', links: [{ source_id: sourceId, edge_key: edge, to_slug: OTHER }],
@@ -178,6 +185,39 @@ describe('#9068 the batch hard delete scrubs what names the page', () => {
     }
   }), 120_000);
 
+});
+
+/** An openclaw session file with `count` large messages, so a low page ceiling splits it into parts. */
+function session(dir: string, id: string, count: number): string {
+  const filler = 'lorem widget fact '.repeat(220);
+  const at = (i: number) => `2026-08-10T08:${String(Math.floor(i / 60)).padStart(2, '0')}:${String(i % 60).padStart(2, '0')}.000Z`;
+  const lines = [JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-08-10T08:00:00.000Z', cwd: '/tmp' }),
+    ...Array.from({ length: count }, (_, i) => JSON.stringify({ type: 'message', id: `m-${i}`, timestamp: at(i),
+      message: { role: i % 2 === 0 ? 'user' : 'assistant', timestamp: at(i), content: [{ type: 'text', text: `marker-${i} ${filler}` }] } }))];
+  const path = join(dir, `${id}-${count}.jsonl`);
+  writeFileSync(path, lines.join('\n') + '\n');
+  return path;
+}
+
+describe('#9068 the transcript stale-part delete scrubs what names the part', () => {
+  test('a re-ingest that shrinks a split session deletes its stale parts with their rows', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const dir = mkdtempSync(join(home, 'sessions-')), id = `shrink-${engine.kind}`;
+      const ingest = (path: string) => runTranscriptsIngest(engine, { paths: [path], sourceId: 'default', userPatternsPath: '/nonexistent-patterns.txt' });
+      await engine.setConfig('pages.max_bytes', '100000');
+      let parts: number;
+      try { parts = (await ingest(session(dir, id, 150))).pages.imported; } finally { await engine.unsetConfig('pages.max_bytes'); }
+      expect(parts).toBeGreaterThan(1);
+      const stale = `${buildTranscriptSlug('openclaw', '2026-08-10T08:00:00.000Z', { sessionId: id })}-p2`;
+      await traces(engine, 'default', stale);
+      const query = `stale part ${randomUUID()}`;
+      await engine.logEvalCandidate(candidate(query, [stale, OTHER], ['default']));
+      expect((await ingest(session(dir, id, 2))).partsDeleted).toBe(parts - 1);
+      expect(await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id = 'default' AND slug = $1`, [stale])).toHaveLength(0);
+      expect({ engine: engine.kind, residue: await residue(engine, 'default', stale) }).toEqual({ engine: engine.kind, residue: NONE });
+      expect(await capturedSlugs(engine, query)).toEqual([[OTHER]]);
+    }
+  }), 180_000);
 });
 
 describe('#9068 removing a source scrubs every row that names its pages', () => {
