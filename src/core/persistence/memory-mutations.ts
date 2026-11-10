@@ -218,6 +218,10 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const visibility = call.visibilityDefaulted && p.replaces !== undefined && p.replaces !== null
     ? await replacementVisibility(ctx.engine, sourceId, Number(p.replaces), defaultedVisibility, { remote: ctx.remote !== false })
     : defaultedVisibility;
+  if (p.share === true && visibility !== 'world') {
+    throw Object.assign(verbError('invalid_params', `remember: share: true cannot share a fact on ${slug}, whose facts are kept private (restricted page or the brain's private fact default); nothing was saved.`,
+      'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'), { reason: 'share_target_restricted' });
+  }
   const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {

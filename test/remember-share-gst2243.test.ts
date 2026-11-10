@@ -21,18 +21,11 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
-import { addGroup, addMember, bindCredential } from '../src/core/access/members.ts';
+import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { linkMember } from '../src/core/access/actor.ts';
-import { memberPageSlug } from '../src/core/access/member-facts.ts';
-import { decideSingleFact, type SingleFactIntent } from '../src/core/facts/single-prepare.ts';
-import { prepareMemoryMutation } from '../src/core/persistence/memory-prepare.ts';
-import { runFactsRelink } from '../src/core/facts/relink.ts';
-import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
-import { serializePageToMarkdown } from '../src/core/markdown.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
-import { withEnv } from './helpers/with-env.ts';
 
 const DIMS = 1536;
 function vectorFor(text: string): number[] {
@@ -50,7 +43,7 @@ const SRC = 'qm-members';
 const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const ACME = 'companies/acme-example';
-const CANARY = { alice: 'canaryfactalice', bob: 'canaryfactbob' } as const;
+const TEAM_PAGE = 'companies/globex-example';
 const ATTEST_OPS = ['memory_write', 'cancel_write_request', 'context_pack', 'delete_page', 'delta', 'edit_page', 'get_page', 'get_write_request', 'list_write_requests', 'put_page', 'recall', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
@@ -64,10 +57,6 @@ for (const kind of testBackends()) {
     type Who = { token: string; actor?: string };
     const who = {
       alice: (): Who => ({ token: 'qm', actor: ALICE_ID }),
-      bob: (): Who => ({ token: 'qm', actor: BOB_ID }),
-      bobToken: (): Who => ({ token: 'bob' }),
-      bare: (): Who => ({ token: 'qm' }),
-      unbound: (): Who => ({ token: 'plain' }),
     };
     async function call(as: Who, op: string, params: Record<string, unknown>, extra: { sessionId?: string } = {}) {
       const out: ToolResult = await dispatchToolCall(engine, op, { ...params }, {
@@ -93,6 +82,7 @@ for (const kind of testBackends()) {
       await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
       for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
       await importFromContent(engine, ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example builds harbor ledgers.', { sourceId: SRC });
+      await importFromContent(engine, TEAM_PAGE, '---\ntype: company\ntitle: Globex Example\nreadable_by: [alice-example]\n---\n# Globex Example\n\nGlobex example runs a private pilot.', { sourceId: SRC });
       const register = async (name: string) => {
         const c = await provider().registerClientManual('c2-' + name + '-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
         return { id: c.clientId, secret: c.clientSecret ?? '' };
@@ -109,7 +99,8 @@ for (const kind of testBackends()) {
       await linkMember(engine, 'bob-example', 'qm', BOB_ID);
     }, 120_000);
 
-    afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); });    const A = { token: 'alice' }, B = { token: 'bob' }, U = { token: 'plain' };
+    afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); });
+    const A = { token: 'alice' }, B = { token: 'bob' }, U = { token: 'plain' };
     const factRow = async (canary: string) => (await engine.executeRaw<Record<string, unknown>>('SELECT visibility, source_markdown_slug, entity_slug FROM facts WHERE fact LIKE $1', ['%' + canary + '%']))[0];
 
     test('share: true lands world on the subject page and another member recalls it; without share it stays private to the saver', async () => {
@@ -140,6 +131,23 @@ for (const kind of testBackends()) {
       expect(await factRow('canaryboth')).toBeUndefined();
       const own = await remember(A, 'Acme note canaryownprivate', { entity: ACME, visibility: 'private' });
       expect([own.isError, own.json.page, own.json.visibility]).toEqual([false, 'memory/members/alice-example', 'private']);
+    }, 120_000);
+
+    test('share onto a page whose facts are kept private is refused with share_target_restricted and nothing is saved', async () => {
+      const out = await remember(A, 'Globex pilot ends in March canaryrestricted', { entity: TEAM_PAGE, share: true });
+      expect(out.isError).toBe(true);
+      expect(out.all).toContain('share_target_restricted');
+      expect(await factRow('canaryrestricted')).toBeUndefined();
+    }, 120_000);
+
+    test('a replayed remember and a non-member remember both name page and visibility', async () => {
+      const request_id = randomUUID();
+      const first = await remember(A, 'Acme signs in April canaryreplay', { entity: ACME, share: true, request_id });
+      const again = await remember(A, 'Acme signs in April canaryreplay', { entity: ACME, share: true, request_id });
+      expect([again.isError, again.json.page, again.json.visibility]).toEqual([false, first.json.page, first.json.visibility]);
+      expect([first.json.page, first.json.visibility]).toEqual([ACME, 'world']);
+      const plain = await remember(U, 'Acme ships weekly canaryplain', { entity: ACME });
+      expect([plain.isError, plain.json.page, plain.json.visibility]).toEqual([false, ACME, 'world']);
     }, 120_000);
 
     test('a batch shares every item with a top-level share: true', async () => {
