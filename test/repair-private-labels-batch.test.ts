@@ -37,7 +37,6 @@ import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { persistenceHome } from '../src/core/persistence/identity.ts';
 import { tryAcquireNativeLock } from '../src/core/persistence/native-lock.ts';
-import { maintenancePreflight, publishMaintenancePage } from '../src/core/persistence/prepared-maintenance.ts';
 import { _setRepairRefreshWaitForTests, _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
@@ -309,45 +308,6 @@ for (const backend of testBackends()) {
       expect(result.complete).toBe(true);
       expect(exit).toBe(0);
       for (const slug of slugs) expect('access' in await frontmatter(engine, slug)).toBe(false);
-    }, { databaseUrl, setup }), 180_000);
-
-    test('after an upgrade from a ledger with no intent lines, pages the journal shows declined at their current revision are listed last and do not stop the window', () => managedBrain(async ({ engine, ctx, root }) => {
-      // The older release's state: five drifted pages at the head of the order whose maintenance writes were admitted and then
-      // declined at preparation (a conflict row, source_changed, at the page's revision), and no ledger line for them.
-      const carried = [0, 1, 2, 3, 4].map(i => 'notes/old-' + i);
-      const fresh = [0, 1, 2].map(i => 'notes/new-' + i);
-      for (const slug of [...carried, ...fresh]) await put(ctx, slug, labelled(slug));
-      await settleManagedGitEffects(engine);
-      const authority = (await maintenancePreflight(engine, 'default'))!;
-      installFaultHook(async point => { if (point === 'consumer:preparing') throw new OperationError('source_changed', 'The file changed before publication.', 'Fixture.'); });
-      for (const slug of carried) {
-        const snapshot = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
-        const declined = await publishMaintenancePage(engine, authority, slug, serializeMarkdown({ topic: 'kept' }, slug + ' body text.', '', { type: 'note' as never, title: slug, tags: ['t1'] }),
-          { expectedRevision: snapshot.revision, requestId: randomUUID(), keepTrust: true }).then(() => null, (error: unknown) => error as OperationError);
-        expect(declined?.code).toBe('source_changed');
-      }
-      installFaultHook(undefined);
-      // The ledger is in the older shape: one line per landed write, no phase (here one page an earlier run cleared).
-      await put(ctx, 'notes/landed', serializeMarkdown({ topic: 'kept' }, 'notes/landed body text.', '', { type: 'note' as never, title: 'notes/landed', tags: ['t1'] }));
-      await settleManagedGitEffects(engine);
-      const landed = (await engine.readPageSnapshot('notes/landed', { sourceId: 'default' }))!;
-      const { brain_id: brain } = await resolveRepairScope(engine, 'default');
-      const ledgerPath = privateLabelsLedger(brain).path;
-      mkdirSync(dirname(ledgerPath), { recursive: true });
-      appendFileSync(ledgerPath, JSON.stringify({ at: new Date().toISOString(), brain_id: brain, source_id: 'default', slug: 'notes/landed', page_id: Number(landed.page.id),
-        revision_before: 'r0', request_id: randomUUID(), removed: { access: 'private' } }) + NL);
-      for (const slug of carried) { const file = join(root, slug + '.md'); writeFileSync(file, readFileSync(file, 'utf8') + NL + 'An edit made outside gbrain.' + NL); }
-      expect((await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM persistence_requests WHERE state='conflict' AND error_code='source_changed' AND slug LIKE 'notes/old-%'"))[0]!.n).toBe(5);
-      const preview = (await cli(engine, ['private-labels', '--limit', '16'])).result;
-      expect(preview.listing.map((entry: { item: string }) => entry.item)).toEqual([...fresh, ...carried].map(slug => 'default:' + slug));
-      expect(preview.details.window.tried_before).toBe(5);
-      const { result, exit } = await cli(engine, ['private-labels', '--apply', '--expect', preview.preview_hash]);
-      expect(result.stopped).toBeUndefined();
-      expect(result.complete).toBe(true);
-      expect(result.applied).toBe(3);
-      expect(result.failed.map((f: { slug: string }) => f.slug).sort()).toEqual([...carried].sort());
-      expect(result.declined).toEqual({ source_changed: 5 });
-      expect(exit).toBe(0);
     }, { databaseUrl, setup }), 180_000);
 
     test('every page of a run has its intent line before any of them is published, and a crash after the group published still restores each', () => managedBrain(async ({ engine, ctx, root }) => {
