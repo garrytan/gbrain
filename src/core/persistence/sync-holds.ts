@@ -87,6 +87,8 @@ export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regre
   | 'frontmatter_alias_limit'
   /** GBRA-133 S-39: a Markdown file whose text holds a NUL byte (U+0000): a binary file, a padded file, a UTF-16 save. */
   | 'content_null_bytes'
+  /** GST-2312 (#9024): a committed blob a Git filter owns (git-crypt, a clean/smudge driver); sync never runs the filter. */
+  | 'content_filter_owned'
   /** GBRA-133 S-33: a committed file whose Git blob the repository no longer has, and whose working-tree copy differs or is gone. */
   | 'git_object_missing'
   /** GBRA-133 S-7: a committed file whose name is not valid UTF-8, so no Git read or file finds it by its decoded name. */
@@ -907,6 +909,11 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
         why: 'Page text is stored as UTF-8 without NUL bytes, so these bytes cannot be imported as they stand; the hold re-screens when the file changes.',
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'content_filter_owned':
+      return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} is stored in Git through a filter (git-crypt encryption or another clean/smudge driver), so its committed bytes are not the text in the checkout. gbrain does not run a repository's filter programs during sync, so sync holds it and the rest of source ${source} keeps syncing. Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then run gbrain sync --source ${source} --no-pull. If the filter is not in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${source}: a commit that changes only .gitattributes does not re-screen the file.`,
+        why: "Running a repository's filter programs would let the repository run code during sync, so the stored bytes cannot become the page; the hold re-screens when the file changes or on gbrain sources retry-held.",
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'git_object_missing':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),

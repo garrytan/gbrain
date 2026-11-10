@@ -1728,9 +1728,9 @@ skipping with "DATABASE_URL unset" is a silent regression, not caution.
    docker run -d --name gbrain-test-pg \
      -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
      -e POSTGRES_DB=gbrain_test \
-     -p PORT:5432 pgvector/pgvector:pg16
+     -p 127.0.0.1:PORT:5432 pgvector/pgvector:pg16
    ```
-   Wait for ready: `docker exec gbrain-test-pg pg_isready -U postgres`
+   Ready check: `docker exec gbrain-test-pg pg_isready -U postgres`
 4. **Bootstrap the schema** (required — fresh containers have no `oauth_clients`,
    `mcp_request_log`, `pages` etc.; tests like `serve-http-oauth.test.ts` will fail
    with `relation "oauth_clients" does not exist` if you skip this):

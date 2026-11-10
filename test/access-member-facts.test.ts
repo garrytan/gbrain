@@ -117,7 +117,7 @@ for (const kind of testBackends()) {
     afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); });
 
     test('an attested member fact lands private on the member page, created by it, with the entity kept as metadata', async () => {
-      const out = await remember(who.alice(), 'Alice prefers oolong for harbor reviews ' + CANARY.alice, { entity: ACME, visibility: 'world' });
+      const out = await remember(who.alice(), 'Alice prefers oolong for harbor reviews ' + CANARY.alice, { entity: ACME });
       expect(out.isError).toBe(false);
       expect(out.json.status).toBe('inserted');
       const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT visibility, source_markdown_slug, entity_slug, row_num FROM facts WHERE fact LIKE $1', ['%' + CANARY.alice + '%']);

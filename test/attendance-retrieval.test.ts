@@ -724,7 +724,13 @@ for (const kind of testBackends()) {
       await engine.putPage('notes/hidden', { type: 'note', title: 'Hidden origin', compiled_truth: 'Independent.' }, { sourceId: hidden });
       await engine.addLink(person, meeting, 'Other origin', 'mentions', 'markdown', 'notes/hidden', undefined,
         { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: hidden });
-      expect((await engine.getLinks(person, { sourceIds: [sourceId] })).find(row => row.link_type === 'mentions')).toMatchObject({ origin_slug: null, origin_source_id: null });
+      await engine.addLink(person, meeting, 'Granted origin', 'mentions', 'markdown', meeting, undefined,
+        { fromSourceId: sourceId, toSourceId: sourceId, originSourceId: sourceId });
+      const scoped = await engine.getLinks(person, { sourceIds: [sourceId] });
+      expect(scoped.filter(row => row.link_type === 'mentions')).toMatchObject([{ origin_slug: meeting, origin_source_id: sourceId, context: 'Granted origin' }]);
+      expect(scoped.map(row => row.origin_slug)).not.toContain('notes/hidden');
+      expect(scoped.map(row => row.origin_source_id)).not.toContain(hidden);
+      expect(scoped.map(row => row.context)).not.toContain('Other origin');
     });
     test('failed filesystem attendance replacement stays retryable and preserves the last good graph', async () => {
       await seed(meeting, 'meeting', positive);

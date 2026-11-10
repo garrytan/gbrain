@@ -33,6 +33,7 @@ import { waitForCompletionRenewing, TimeoutError } from '../minions/wait-for-com
 import type { MinionJobInput, MinionJobStatus, SubagentHandlerData } from '../minions/types.ts';
 import { parseMarkdown, serializeMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { truncateUtf8 } from '../text-safe.ts';
+import { publicBody } from '../mentions/aliases.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import type { Page, PageType } from '../types.ts';
 // #2415: allow-list + output-root resolution shared with the synthesize
@@ -645,7 +646,7 @@ async function gatherReflections(
     // leave a lone surrogate. Postgres rejects that when the prompt is bound
     // into the minion job's JSONB payload. Use the shared safe truncator so a
     // reflection containing emoji cannot abort the entire patterns phase.
-    excerpt: truncateUtf8(r.compiled_truth ?? '', 600),
+    excerpt: truncateUtf8(publicBody(r.compiled_truth ?? ''), 600),
     seat: r.seat ?? null,
     taint: { table: 'pages', id: Number(r.id), tier: storedTrustTier(r.trust_tier) },
   }));
@@ -939,7 +940,7 @@ async function loadGroundingSources<T>(engine: BrainEngine, sourceId: string, re
       }
       body = await (await import('../page-body/ingest.ts')).materializeSegmentedBody(engine, Number(p.id), sourceId);
     }
-    sources.push(groundSource(p.slug, `${body.compiled_truth}\n\n${body.timeline}`, { tolerant: true }));
+    sources.push(groundSource(p.slug, publicBody(`${body.compiled_truth}\n\n${body.timeline}`), { tolerant: true }));
   }
   return sources;
 }

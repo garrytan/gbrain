@@ -523,7 +523,9 @@
     },
     {
       "handlers": [
+        "ipLimit",
         "withBearerScopeHint(requireBearerAuth({ verifier : resourceVerifier , resourceMetadataUrl }), [ 'read' , 'write' ])",
+        "tokenLimit",
         "<inline>"
       ],
       "method": "post",

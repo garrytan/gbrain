@@ -19,7 +19,7 @@ import { isConfigTruthy } from '../config.ts';
 import { HALFLIFE_DAYS } from '../facts/decay.ts';
 import { listOpenLoops, type OpenLoopRow } from '../loops/loops-store.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { privatePagesFilterForCaller, privatePagesFilterFragment, privateProvenanceFilterFragment, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment } from '../search/private-visibility.ts';
+import { privateFactFilterForCaller, privatePagesFilterForCaller, privatePagesFilterFragment, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment } from '../search/private-visibility.ts';
 import { pageEligibleSql, projectionEligibleSql } from '../eligibility/sql.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { renderTrustedInline, trustFields } from '../eligibility/labels.ts';
@@ -424,7 +424,7 @@ async function loopItems(engine: BrainEngine, cp: BriefCounterparty, clock: Brie
     const rows = await e.executeRaw<{ id: number | string; fact: string; trust_tier: unknown; write_origin: unknown }>(
       `SELECT facts.id, facts.fact, facts.trust_tier, facts.write_origin FROM facts
         WHERE facts.id = ANY($1::bigint[]) AND facts.expired_at IS NULL AND facts.visibility = 'world'
-          AND ${privateProvenanceFilterFragment('facts')}
+          AND ${privateFactFilterForCaller('facts')}
           AND ${projectionEligibleSql('facts', 'facts', o.eligibility)}`,
       [factIds],
     );
