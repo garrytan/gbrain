@@ -432,7 +432,7 @@ export function mismatchedBuilds(plan: RestartPlan, processes: readonly HostProc
 
 /** What still stands between the host and one build after a restart; empty when it is done. */
 export function restartProblems(plan: RestartPlan, processes: readonly HostProcess[], restartStartedMs: number,
-  warm: { before: WarmSocketState; after: WarmSocketState }): string[] {
+  warm: { before: WarmSocketState; after: WarmSocketState }, lockPid: number | null = null): string[] {
   const problems: string[] = [];
   const live = new Map(processes.map(p => [p.pid, p]));
   const restarted = restartedPids(plan);
@@ -450,9 +450,15 @@ export function restartProblems(plan: RestartPlan, processes: readonly HostProce
   }
   for (const step of plan.steps) {
     if (step.kind === 'stop' || step.kind === 'replace_copy') continue;
+    if (step.kind === 'handoff') {
+      if (!fresh.some(p => p.role === 'autopilot' && p.pid === lockPid && p.started_ms !== null && p.started_ms >= restartStartedMs)) {
+        problems.push(`autopilot did not come back after it was stopped for ${launcherName(step.launcher)} to start again (this brain's autopilot lock names ${lockPid === null ? 'no autopilot' : `pid ${lockPid}, which is not an autopilot started after the restart`}).`);
+      }
+      continue;
+    }
     const role = step.kind === 'supervisor' ? 'supervisor' : step.role;
     if (!fresh.some(p => p.role === role)) {
-      problems.push(`${role} did not come back after ${step.kind === 'service' ? `\`${step.argv.join(' ')}\`` : step.kind === 'handoff' ? `it was stopped for ${launcherName(step.launcher)} to start again` : 'the supervisor restart'}.`);
+      problems.push(`${role} did not come back after ${step.kind === 'service' ? `\`${step.argv.join(' ')}\`` : 'the supervisor restart'}.`);
     } else if (step.kind === 'supervisor' && step.workers.length && !fresh.some(p => p.role === 'worker' && live.get(p.ppid ?? -1)?.role === 'supervisor' && !restarted.has(p.ppid!))) {
       problems.push(`the jobs worker did not come back under the restarted supervisor (\`${step.start.join(' ')}\`).`);
     }
@@ -474,6 +480,8 @@ export interface VerifyDeps {
   probeWarmSocket: () => Promise<WarmSocketState>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  /** This brain's autopilot lock pid, re-read on every poll: a hand-off is done only when an autopilot started after the restart holds it. */
+  autopilotLockPid?: () => number | null;
 }
 
 export interface VerifyResult { ok: boolean; processes: HostProcess[]; warm_socket: WarmSocketState; problems: string[]; unverified: string[] }
@@ -484,7 +492,9 @@ export async function verifyRestart(plan: RestartPlan, restartStartedMs: number,
   for (;;) {
     const processes = await deps.collect();
     const warm = await deps.probeWarmSocket();
-    const problems = restartProblems(plan, processes, restartStartedMs, { before: warmBefore, after: warm });
+    let lockPid: number | null = null;
+    try { lockPid = deps.autopilotLockPid?.() ?? null; } catch { lockPid = null; }
+    const problems = restartProblems(plan, processes, restartStartedMs, { before: warmBefore, after: warm }, lockPid);
     if (!problems.length || deps.now() >= deadline) return { ok: !problems.length, processes, warm_socket: warm, problems, unverified: unverifiedBuilds(plan, processes) };
     await deps.sleep(opts.pollMs);
   }

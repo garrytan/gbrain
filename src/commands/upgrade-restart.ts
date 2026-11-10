@@ -332,7 +332,7 @@ export async function runHostRestart(opts: HostRestartOptions & { dryRun: boolea
     if (!opts.json) for (const r of results) console.log(`  ${r.ok ? 'ok' : 'FAILED'}: ${r.detail}`);
     const verified = await verifyRestart(plan, startedMs, warmBefore, {
       collect: () => collectHostProcesses(sources), probeWarmSocket: () => probeCliSocket(),
-      sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now(),
+      sleep: ms => new Promise(r => setTimeout(r, ms)), now: () => Date.now(), autopilotLockPid: readAutopilotLockPid,
     }, { timeoutMs: plan.steps.length ? Math.max(VERIFY_TIMEOUT_MS, ...plan.steps.map(step => step.kind === 'handoff' ? step.launcher.wait_ms : 0)) : 0, pollMs: VERIFY_POLL_MS });
     const doc = { status: verified.ok ? 'ok' : 'unverified', ...planDoc, results, verified: { processes: verified.processes, warm_socket: verified.warm_socket, problems: verified.problems, unverified: verified.unverified } };
     if (!verified.ok) {

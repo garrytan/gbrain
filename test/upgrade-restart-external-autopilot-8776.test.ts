@@ -76,8 +76,8 @@ describe('planRestart: an autopilot started outside gbrain\'s service', () => {
     await withEnv({ GBRAIN_SELF_UPGRADE_MODE: 'auto' }, () => {
       const check = checkSelfUpgradeHealth(planRestart([autopilot(30)], ctx({ expected: PENDING_BUILD, autopilotLauncher: { ...DECLARED, pid: null } })));
       expect(check.status).toBe('warn');
-      expect(check.fix?.ask_user).not.toBe(true);
-      expect(check.fix?.argv).toEqual(['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json']);
+      expect(check.fix).not.toMatchObject({ ask_user: true });
+      expect(check.fix).toMatchObject({ argv: ['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'] });
     });
   });
 
@@ -105,16 +105,45 @@ describe('runRestartSteps and verifyRestart: the hand-off', () => {
 
   test('done once the launcher starts autopilot on the build; until then it names the launcher', async () => {
     const back = autopilot(130, NEW, { started_ms: 9_000 });
-    expect(restartProblems(plan, [back], 5_000, { before: { state: 'absent' }, after: { state: 'absent' } })).toEqual([]);
-    expect(restartProblems(plan, [], 5_000, { before: { state: 'absent' }, after: { state: 'absent' } }))
-      .toEqual(['autopilot did not come back after it was stopped for this brain\'s gbrain cron line to start again.']);
+    expect(restartProblems(plan, [back], 5_000, { before: { state: 'absent' }, after: { state: 'absent' } }, 130)).toEqual([]);
+    expect(restartProblems(plan, [], 5_000, { before: { state: 'absent' }, after: { state: 'absent' } }, null))
+      .toEqual(['autopilot did not come back after it was stopped for this brain\'s gbrain cron line to start again (this brain\'s autopilot lock names no autopilot).']);
     let clock = 0;
     let round = 0;
     const verified = await verifyRestart(plan, 5_000, { state: 'absent' }, {
       collect: async () => (round++ < 3 ? [] : [back]), probeWarmSocket: async () => ({ state: 'absent' }), sleep: async ms => { clock += ms; }, now: () => clock,
+      autopilotLockPid: () => (round > 3 ? 130 : null),
     }, { timeoutMs: CRON.wait_ms, pollMs: 2_000 });
     expect(verified.ok).toBe(true);
     expect(clock).toBe(6_000);
+  });
+});
+
+describe('verifyRestart: the hand-off is done only when this brain\'s autopilot lock names a fresh autopilot', () => {
+  const plan = planRestart([autopilot()], ctx({ autopilotLauncher: CRON }));
+  const absent = { state: 'absent' } as const;
+  const verify = (processes: HostProcess[], lockPid: () => number | null) => verifyRestart(plan, 5_000, absent,
+    { collect: async () => processes, probeWarmSocket: async () => absent, sleep: async () => {}, now: () => 0, autopilotLockPid: lockPid }, { timeoutMs: 0, pollMs: 2_000 });
+
+  test('two brains: only brain B\'s new autopilot alive after this brain\'s was handed off does not verify', async () => {
+    const brainB = autopilot(130, NEW, { started_ms: 9_000, args: ['autopilot', '--repo', '/srv/brain-b'] });
+    const result = await verify([brainB], () => 30);
+    expect(result.ok).toBe(false);
+    expect(result.problems).toEqual(['autopilot did not come back after it was stopped for this brain\'s gbrain cron line to start again (this brain\'s autopilot lock names pid 30, which is not an autopilot started after the restart).']);
+  });
+
+  test('a lock missing or unreadable at verify time reports that autopilot did not come back, naming the lock, and never verifies', async () => {
+    const fresh = autopilot(130, NEW, { started_ms: 9_000 });
+    for (const lockPid of [() => null, () => { throw new Error('EACCES'); }]) {
+      const result = await verify([fresh], lockPid);
+      expect(result.ok).toBe(false);
+      expect(result.problems).toEqual(['autopilot did not come back after it was stopped for this brain\'s gbrain cron line to start again (this brain\'s autopilot lock names no autopilot).']);
+    }
+  });
+
+  test('single brain: the launcher\'s new autopilot holding this brain\'s lock verifies', async () => {
+    const result = await verify([autopilot(130, NEW, { started_ms: 9_000 })], () => 130);
+    expect(result).toMatchObject({ ok: true, problems: [] });
   });
 });
 
