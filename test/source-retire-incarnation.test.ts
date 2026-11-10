@@ -186,10 +186,11 @@ test('a stopped automatic expired-archive purge is left to the next automatic ru
   const deactivate = (await deactivationBlockers(engine)).find(b => b.kind === 'topology_recovery');
   expect(deactivate?.detail).toContain(`automatic expired-archive purge of ${source} (request ${requestId})`);
   expect(deactivate?.exit).toMatch(/^the next automatic expired-archive purge finishes it/);
+  expect(deactivate?.exit).toContain('or gbrain sources purge with no source id finishes it now');
   expect(deactivate?.exit).not.toContain('ask the user');
   const graduation = (await graduationBlockers(engine, localHostId())).find(b => b.kind === 'topology_recovery');
   expect(graduation).toMatchObject({ needsUser: false, argv: ['gbrain', 'sources', 'writer', 'status', source, '--json'] });
-  expect(graduation?.detail).toContain('the next automatic expired-archive purge finishes it');
+  expect(graduation?.detail).toContain('the next automatic expired-archive purge finishes it, or gbrain sources purge with no source id finishes it now');
   expect(await runManagedSourceLifecycle(engine, { operation: 'purge', sourceId: source, confirmDestructive: true, expiredOnly: true, expectedIncarnation: first })).toMatchObject({ state: 'committed' });
   expect(await change(requestId)).toMatchObject({ state: 'failed' });
   expect((await deactivationBlockers(engine)).filter(b => b.kind === 'topology_recovery')).toEqual([]);

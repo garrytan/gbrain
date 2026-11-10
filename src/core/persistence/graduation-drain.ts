@@ -62,7 +62,7 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
     "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state = 'recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only', 'false') = 'true' AS automatic FROM persistence_topology_changes WHERE state = 'recovering' OR recovery IS NOT NULL ORDER BY created_at");
   for (const t of topology) {
     blockers.push({ kind: 'topology_recovery', id: t.id, detail: t.admission && t.automatic
-      ? `automatic expired-archive purge of ${t.source_id} (request ${t.request_id}) stopped before it finished; the next automatic expired-archive purge finishes it`
+      ? `automatic expired-archive purge of ${t.source_id} (request ${t.request_id}) stopped before it finished; the next automatic expired-archive purge finishes it, or gbrain sources purge with no source id finishes it now`
       : t.admission
       ? `${t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished; ask the user whether to finish it (rerun the same command with all its original flags and --request-id ${t.request_id}, which deletes the rest of its pages) or keep what is left (any other lifecycle change to the source, such as a restore, abandons the request)`
       : `${t.operation} for ${t.source_id} is recovering`,

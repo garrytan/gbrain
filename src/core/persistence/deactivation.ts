@@ -119,7 +119,7 @@ export async function deactivationBlockers(engine: BrainEngine): Promise<Deactiv
   for (const t of topology) blockers.push({ kind: 'topology_recovery', id: t.id, source_id: t.source_id,
     detail: !t.admission ? `${t.operation} for ${t.source_id} is recovering`
       : `${t.automatic ? 'automatic expired-archive purge' : t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished`,
-    exit: t.admission && t.automatic ? `the next automatic expired-archive purge finishes it (gbrain sources writer status --source ${t.source_id} --json lists the request), then rerun deactivate`
+    exit: t.admission && t.automatic ? `the next automatic expired-archive purge finishes it, or gbrain sources purge with no source id finishes it now (gbrain sources writer status --source ${t.source_id} --json lists the request), then rerun deactivate`
       : t.admission ? `ask the user whether to finish it, because finishing deletes the rest of ${t.source_id}'s pages: to finish, rerun the same gbrain sources ${t.operation} command with all its original flags and --request-id ${t.request_id} (an automatic expired-archive purge finishes on its next run); to keep what is left, any other lifecycle change to the source (gbrain sources restore of an archived source, or archive then restore) abandons the request; then rerun deactivate`
       : `gbrain sources writer status ${t.source_id} --json, then let the owner finish recovery` });
   // GBRA-130 A-15: only work that can still change blocks, as activation checks; terminal failures are failedEffectHistory's.
