@@ -24,7 +24,8 @@ const CLEAN: ReadonlySet<SyncDirtiness | null> = new Set(['clean', 'clean_eol', 
 
 /** The reference model: page state first, then level, then dirtiness, then the fileSame × dbSame × proof regions. */
 function reference(s: SyncPathState): SyncClass {
-  if (s.hold && s.hold.atLevel && !s.hold.rescreenDue && !s.hold.retried) return 'held';
+  const syncRestored = s.page?.live === false && s.page.syncDeleted === true && s.level !== null && s.hold?.deletionSide === true;
+  if (s.hold && s.hold.atLevel && !s.hold.rescreenDue && !s.hold.retried && !syncRestored) return 'held';
   const rest = referenceAfterHold(s);
   if (!s.hold) return rest;
   if (s.level !== null && (rest === 'matched' || rest === 'import')) return 'held';
@@ -44,6 +45,7 @@ function referenceAfterHold(s: SyncPathState): SyncClass {
   if (state !== 'live') {
     if (s.mode === 'committed' && s.tree === null) return 'untracked';
     if (s.level === null) return 'gone';
+    if (state === 'tombstone' && s.page!.syncDeleted) return dirtyCommitted ? dirtyClass() : 'import';
     const markerHolds = s.marker?.kind === 'deleted' && s.marker.blobOids.includes(s.level);
     if ((state === 'tombstone' && fileSame) || markerHolds) return 'deleted_same';
     const deletedEvidence = state === 'tombstone' || s.marker?.kind === 'deleted';
@@ -92,6 +94,11 @@ describe('rows (v3.2 §2.3)', () => {
     ['8 deleted_same (tombstone)', { page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_same', true],
     ['8 deleted_same (marker)', { page: null, record: null, marker: { kind: 'deleted', blobOids: ['A'] } }, 'deleted_same', true],
     ['9 deleted_edited (tombstone)', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
+    ['8 a sync-made tombstone whose file is back unchanged imports (a revert, a branch switch)', { page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'import', false],
+    ['9 a sync-made tombstone whose file is back edited imports', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'import', false],
+    ['1 a sync-made tombstone whose file is back under an import hold at its level stays held (the import itself refused)', { page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true }, hold: { atLevel: true, rescreenDue: false, retried: false } }, 'held', true],
+    ['1 a deletion-side hold an older version raised over a sync-made tombstone whose file is back is re-run', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true }, hold: { atLevel: true, rescreenDue: false, retried: false, deletionSide: true } }, 'held', false],
+    ['7 a sync-made tombstone whose file is still gone stays gone', { mode: 'working', tree: 'A', level: null, present: false, dirty: null, page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'gone', true],
     ['9 deleted_edited (marker without OIDs, fail closed)', { page: null, record: null, marker: { kind: 'deleted', blobOids: [] } }, 'deleted_edited', false],
     ['10 legacy_same: a marker that records a deletion', { page: null, record: null, marker: { kind: 'legacy', blobOids: ['A'], deletion: 'req-1' } }, 'legacy_same', true],
     ['10 a baseline-equal legacy marker without a deletion settles nothing (b1)', { page: null, record: null, marker: { kind: 'legacy', blobOids: ['A'] } }, 'import', false],
@@ -162,13 +169,13 @@ const stateArb: fc.Arbitrary<SyncPathState> = fc.record({
   dirty: fc.constantFrom<SyncDirtiness | null>('clean', 'clean_eol', 'clean_lfs', 'modified', 'deleted', 'staged', 'untracked', 'unknown', null),
   diskOid: oid,
   page: fc.constantFrom<SyncPathState['page']>(null, { live: true, revision: 'R1', originMatches: true }, { live: true, revision: 'R1', originMatches: false },
-    { live: true, revision: 'R2', originMatches: true }, { live: false, revision: 'R1', originMatches: true }),
+    { live: true, revision: 'R2', originMatches: true }, { live: false, revision: 'R1', originMatches: true }, { live: false, revision: 'R1', originMatches: true, syncDeleted: true }),
   record: fc.constantFrom<SyncPathState['record']>(null, { blobOids: ['A'], revision: null, parserSame: true }, { blobOids: ['A'], revision: 'R1', parserSame: true },
     { blobOids: ['A'], revision: 'R1', parserSame: false }, { blobOids: ['A', 'B'], revision: 'R1', parserSame: true }, { blobOids: ['A'], revision: 'R2', parserSame: true }),
   attested: fc.constantFrom<SyncPathState['attested']>(null, { hash: sha('A'), arm1: false }, { hash: sha('B'), arm1: false }, { hash: null, arm1: true }),
   published: fc.boolean(),
   hold: fc.constantFrom<SyncPathState['hold']>(null, { atLevel: true, rescreenDue: false, retried: false }, { atLevel: false, rescreenDue: false, retried: false },
-    { atLevel: true, rescreenDue: true, retried: false }, { atLevel: true, rescreenDue: false, retried: true }),
+    { atLevel: true, rescreenDue: true, retried: false }, { atLevel: true, rescreenDue: false, retried: true }, { atLevel: true, rescreenDue: false, retried: false, deletionSide: true }),
   marker: fc.constantFrom<SyncPathState['marker']>(null, { kind: 'deleted', blobOids: ['A'] }, { kind: 'deleted', blobOids: [] }, { kind: 'legacy', blobOids: ['A'] }, { kind: 'legacy', blobOids: ['A'], deletion: 'req-1' }),
   baseline: fc.constantFrom<string | null>(null, 'A', 'B'),
   spelling: fc.boolean(), episodeUnsatisfied: fc.boolean(), fullObligation: fc.boolean(), keepDb: fc.boolean(), openWork: fc.boolean(),
@@ -213,13 +220,23 @@ describe('P0 properties', () => {
     expect(n).toBeGreaterThan(100_000);
   });
 
-  test('(j) no page-less import while a deleted marker or tombstone matches the level', () => {
+  test('(j) no page-less import while a deleted marker or a person\'s tombstone matches the level', () => {
     fc.assert(fc.property(stateArb, s => {
       const live = s.page?.live === true;
       const tombstoneMatches = s.page !== null && !s.page.live && s.level !== null && !!s.record?.blobOids.includes(s.level);
       const markerMatches = s.marker?.kind === 'deleted' && s.level !== null && s.marker.blobOids.includes(s.level);
-      if (!live && (tombstoneMatches || markerMatches)) expect(classifySyncPath(s).action).not.toBe('import');
+      if (!live && !s.page?.syncDeleted && (tombstoneMatches || markerMatches)) expect(classifySyncPath(s).action).not.toBe('import');
     }), { numRuns: 40_000, seed: 67121 });
+  });
+
+  test('(j2) a tombstone sync made from a file\'s absence imports the file once it is back, a deletion-side hold over it included', () => {
+    fc.assert(fc.property(stateArb, s => {
+      if (s.page?.live !== false || !s.page.syncDeleted || s.level === null || s.spelling) return;
+      if (s.mode === 'committed' && (s.tree === null || !['clean', 'clean_eol', 'clean_lfs', 'deleted'].includes(s.dirty!))) return;
+      const standing = !!s.hold && s.hold.atLevel && !s.hold.rescreenDue && !s.hold.retried && !s.hold.deletionSide;
+      expect(classifySyncPath(s)).toMatchObject(standing ? { cls: 'held', action: 'none', settled: true }
+        : s.hold ? { cls: 'held', action: 'import', settled: false } : { cls: 'import', action: 'import', settled: false });
+    }), { numRuns: 40_000, seed: 22011 });
   });
 
   test('(k) an edit to a swept legacy page imports with no Decision', () => {

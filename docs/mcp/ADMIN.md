@@ -240,7 +240,7 @@ Inside one source, bind each member's credential with `gbrain auth rescope
 only some members may read, or keep a whole folder to them with `gbrain access
 rule add --prefix <folder>/ --readers <members> --source <id>`.
 A member-bound credential whose write source is `default` (no `--sources`, or an
-OAuth client at its registration default) keeps a page it creates to that
+OAuth client at its registration default) or a federated source keeps a page it creates to that
 member until the member names more readers
 ([details](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 One agent serving several people in a shared channel holds `--may-act-for

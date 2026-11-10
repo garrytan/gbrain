@@ -73,7 +73,7 @@ interface PreparedMutationBase {
   /** #7866: a content no-op whose chunks all hold a vector for their text: publication queues no embedding effect (`embedding_state: current`). */
   embeddingCurrent?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
-  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin' | 'detached';
+  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin' | 'detached' | 'committed_file';
   /** #6517: the receipt's `write_through.warning` for a database-only publication, set by `validate` under the publication guards. */
   databaseOnlyWarning?: string;
   /**
@@ -282,7 +282,9 @@ function writeInterruptedFailure(row: WriteRequest, interruption: TransientInter
     : 'Submit the write again with a new request_id once the database is less loaded.';
   const what = interruption.cause === 'publication_ceiling'
     ? `Publication of this write ran past persistence.publication_ceiling_ms and was cancelled ${attempts} time(s)${interruption.sqlstate ? ` (SQLSTATE ${interruption.sqlstate})` : ''}`
-    : `The database ended this write's statements ${attempts} time(s) (SQLSTATE ${interruption.sqlstate}, a statement timeout or cancel)`;
+    : interruption.cause === 'stale_plan'
+      ? `This write's statements ran on a plan cached before a schema change ${attempts} time(s) (SQLSTATE 0A000)`
+      : `The database ended this write's statements ${attempts} time(s) (SQLSTATE ${interruption.sqlstate}, a statement timeout or cancel)`;
   return { code: 'write_interrupted',
     message: `${what}; it was retried with backoff ${limit} time(s), the limit of ${TRANSIENT_RETRIES_KEY} (${limit}), and is not prepared again. `
       + `Run gbrain sources writer status --source ${row.source_id} --json to see the load on the owner. ${fix}`,

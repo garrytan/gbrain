@@ -186,10 +186,17 @@ export function callerSessionKey(base: string | null): string | null {
   return person ? `${base ?? 'remote'}#id:${createHash('sha256').update(JSON.stringify(person)).digest('hex').slice(0, 16)}` : base;
 }
 
-/** Whether a stored write's actor is the current caller's: both unattested, or the same system and member. */
+/**
+ * Whether a stored write's actingFor is the current caller's, compared the way submissionAuthority stores it: the same
+ * attested system and member, else the same audience (distinct entries, any order), else neither.
+ */
 export function sameAttestedActor(stored: unknown): boolean {
-  const actor = currentCallerAccess().actor ?? null;
-  const row = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored as { system?: unknown; member?: unknown } : null;
-  if (!actor || !row) return !actor && !row;
-  return row.system === actor.system && row.member === actor.member;
+  const { actor, audience } = currentCallerAccess();
+  if (actor) {
+    const row = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored as { system?: unknown; member?: unknown } : null;
+    return !!row && row.system === actor.system && row.member === actor.member;
+  }
+  if (!audience?.length) return stored === undefined || stored === null;
+  const key = (list: readonly unknown[]) => [...new Set(list)].map(String).sort().join(',');
+  return Array.isArray(stored) && key(stored) === key(audience);
 }

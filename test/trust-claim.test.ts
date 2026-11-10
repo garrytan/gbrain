@@ -142,6 +142,9 @@ describe('trust claim-sources', () => {
       { dream_generated: true }, { dream_generated: 'true' }, { dream_generated: false }, { provenance: 'manual', source_kind: 'inbox-folder', trust_tier: 'tool_observed' },
       { extracted_by: 'extract_atoms-v0.41.2.1' }, { extracted_by: ' extract_atoms-v0.42 ' }, { extracted_by: 'extractXatoms-v1' },
       { extracted_by: 'gpt-extractor' }, { extracted_by: 5 }, { extracted_by: 'extract_atoms-v0.41.2.1', trust_tier: 'external_untrusted' },
+      { source_kind: '\u00a0webhook\u00a0' }, { captured_via: '\u2003connector:gmail\u000b' }, { ingested_via: 'capture-cli\u3000' },
+      { transcript_import: { harness: '\ufeffclaude-code\u2028' } }, { source_url: '\u00a0', clipper: 'x' }, { source_url: 'https://x', clipped_at: '\u000c' },
+      { provenance: 'auto-extracted\u00a0' }, { extracted_by: '\u2009extract_atoms-v0.42' },
     ];
     const sql = `SELECT LEAST(${frontmatterTrustCapsSql('v.fm').join(', ')}) AS r FROM (SELECT $1::text::jsonb AS fm) v`;
     for (const fm of samples) {
