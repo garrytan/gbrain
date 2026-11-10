@@ -369,7 +369,7 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       source:     parseStringCell(sourceRaw),
       context,
       active: !struck,
-      supersededBy,
+      supersededBy: struck ? supersededBy : undefined,
       forgotten: struck ? forgotten : false,
       // v0.35.4 — typed-claim fields, all optional.
       claimMetric: parseStringCell(claimMetricRaw),
