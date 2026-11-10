@@ -1013,11 +1013,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       await save('resumable', 'timeout', false, true, true).catch(() => undefined); return result('partial', 'timeout');
     }
     // A Git listing that did not finish cleanly classifies nothing (design v3.2 §9): the pass stops blocked, having written nothing for that round.
-    if (error instanceof SyncTreeReadIncomplete) {
-      await save('blocked', 'reconcile_read_incomplete').catch(() => undefined);
-      const refusal = partialCloneTreeRefusal(context.gitRoot, sourceId, head); if (refusal) throw refusal;
-      return result('blocked_by_failures', 'reconcile_read_incomplete');
-    }
+    if (error instanceof SyncTreeReadIncomplete) { await save('blocked', 'reconcile_read_incomplete').catch(() => undefined); const refusal = partialCloneTreeRefusal(context.gitRoot, sourceId, head); if (refusal) throw refusal; return result('blocked_by_failures', 'reconcile_read_incomplete'); }
     const stop = resumableRowStop(error); if (stop) await save('resumable', stop, false, stop !== 'lease_lost', true).catch(() => undefined); throw error;
   } finally {
     unregisterPassCost(passId);

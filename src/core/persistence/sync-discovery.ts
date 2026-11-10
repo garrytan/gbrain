@@ -526,9 +526,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     for (const path of delta.manifest.deleted) put(path, 'delete');
     for (const rename of delta.manifest.renamed) putRename(rename);
   } else {
-    let tree: string;
-    try { tree = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]); } catch (error) { throw partialCloneTreeRefusal(gitRoot, sourceId, target) ?? error; }
-    const listed = tree.split('\0')
+    const listed = ((): string => { try { return syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]); } catch (error) { throw partialCloneTreeRefusal(gitRoot, sourceId, target) ?? error; } })().split('\0')
       .filter(path => path && (!scope || path.startsWith(`${scope}/`)));
     const paths = listed.filter(path => !refuse(path));
     assertDistinctSyncOrigins(paths);
