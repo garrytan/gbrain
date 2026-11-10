@@ -3,12 +3,6 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { getCode, isConnectionLoss, isStalePlanError } from '../retry-matcher.ts';
 
-/**
- * GST-2260: how many times an admission a stale plan aborted is re-run. The first failure makes every pooled connection
- * prepare again, so one re-run is normally enough; a few more cover migrations that change the same table one after
- * another. A stale plan that keeps coming back (a pooler that maps statements onto an older server-side one) rethrows.
- */
-export const STALE_PLAN_RETRIES = 3;
 /** #6355: how many times an admission attempt is re-run after the session dropped under it, and the pauses before each re-run. */
 export const CONNECTION_LOSS_RETRY_MS = [100, 300, 900] as const;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -42,7 +36,6 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
   recover?: (error: unknown) => Promise<void>): Promise<T> {
   const deadline = performance.now() + budgetMs;
   let lost = 0;
-  let stale = 0;
   for (;;) {
     try {
       return await attempt(Math.max(1, Math.floor(deadline - performance.now())));
@@ -57,10 +50,9 @@ export async function retryWriteAdmission<T>(requestId: string, attempt: (remain
         await recover?.(error).catch(() => undefined);
         continue;
       }
-      if (isStalePlanError(error) ? ++stale > STALE_PLAN_RETRIES : !['40001', '40P01', '55P03', '57014'].includes(code ?? '')) throw error;
+      if (!['40001', '40P01', '55P03', '57014'].includes(code ?? '') && !isStalePlanError(error)) throw error;
       const remaining = deadline - performance.now();
       if (remaining <= 25) {
-        if (isStalePlanError(error)) throw error;
         const unavailable = new OperationError('storage_error', 'Write admission is temporarily blocked by database contention.',
           `Retry the same operation, arguments, and request_id ${requestId}. No queued receipt has been confirmed.`);
         unavailable.writeError = 'storage_error';

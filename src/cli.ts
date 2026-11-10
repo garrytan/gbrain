@@ -2,7 +2,8 @@
 /**
  * gbrain CLI entry point (`bun src/cli.ts`, the `gbrain` bin, the compiled
  * binary). Runs the process-level setup, then answers the engine-free fast
- * paths (`--version`, `version`, bare `gbrain`, `--help`, `-h`) itself, or
+ * paths (`--version`, `version`, bare `gbrain`, `--help`, `-h`, and the
+ * skill-resolver hook lane's `hook user-prompt|session-start`) itself, or
  * loads the dispatcher (src/cli/main.ts) with a dynamic import. The dispatcher
  * pulls in every operation and command module, so the fast paths skip that
  * import graph entirely. Every static import here is paid by every invocation:
@@ -23,19 +24,40 @@ import { withLocalScope } from './core/engine-scope-store.ts';
  * run. Mirrors main()'s first branches after global-flag parsing; a parse
  * error falls through so the dispatcher reports it exactly as before.
  */
-export function cliFastPath(argv: string[]): 'help' | 'version' | null {
-  let command: string | undefined;
+export function cliFastPath(argv: string[], env: NodeJS.ProcessEnv = process.env): 'help' | 'version' | 'skill-resolver-lane' | null {
+  let rest: string[];
   try {
-    command = parseGlobalFlags(argv).rest[0];
+    rest = parseGlobalFlags(argv).rest;
   } catch {
     return null;
   }
+  const command = rest[0];
   if (!command || command === '--help' || command === '-h') return 'help';
   if (command === '--version' || command === 'version') return 'version';
+  if (env.GBRAIN_HOOK_LANE === 'skill-resolver' && command === 'hook' && (rest[1] === 'user-prompt' || rest[1] === 'session-start')
+    && !rest.some(a => a === '--help' || a === '-h')) return 'skill-resolver-lane';
   return null;
 }
 
-async function runFastPath(path: 'help' | 'version'): Promise<void> {
+/**
+ * The skill-resolver lane as runHook runs it (kill switch, harness flag, the
+ * launcher's session directory) without the dispatcher's module graph. The
+ * lane's worker starts first, so its start-up runs beside the preflight and
+ * the lane's own module loading.
+ */
+async function runSkillResolverLaneFastPath(): Promise<void> {
+  const rest = parseGlobalFlags(process.argv.slice(2)).rest;
+  const event = rest[1]!;
+  if (event === 'user-prompt' && process.env.GBRAIN_HOOKS !== '0') (await import('./core/skills/resolver/lane-worker.ts')).startLaneWorker();
+  await runCliPreflight();
+  if (process.env.GBRAIN_HOOKS === '0') return;
+  (await import('./core/session-cwd.ts')).captureHookSessionCwd();
+  const h = rest.indexOf('--harness');
+  await (await import('./core/skills/resolver/hook-lane.ts')).runSkillResolverLane(event, h >= 0 && rest[h + 1] === 'codex' ? 'codex' : 'claude-code');
+}
+
+async function runFastPath(path: 'help' | 'version' | 'skill-resolver-lane'): Promise<void> {
+  if (path === 'skill-resolver-lane') return runSkillResolverLaneFastPath();
   await runCliPreflight();
   if (path === 'help') printHelp();
   else console.log(`gbrain ${VERSION}`);

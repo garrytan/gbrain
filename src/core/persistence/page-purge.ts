@@ -46,7 +46,7 @@ import { faultPoint } from './fault-points.ts';
 import { writeOriginDeletedMarker } from './sync-markers.ts';
 import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheckRequestsCarrying, redactRequestIntents, sweepRequestsCarrying, sweepRequestsForGroups,
-  type JournalSweep } from './intent-redaction.ts';
+  type IntentRedactionTarget, type JournalSweep } from './intent-redaction.ts';
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
 import { isOutcomeMarker, outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
@@ -163,6 +163,8 @@ export interface PreparedPagePurge {
   needles: string[]; sweep: JournalSweep; slugIndex: RequestIndexState['state'];
   /** Retention removal of an expired tombstone (`gbrain pages purge-deleted`): no content tombstone, no ledger redaction, `page.expired`. */
   retention: boolean;
+  /** GST-2201: a sync-made tombstone purged database-only beside its committed file: the file's return imports it, so no deletion marker. */
+  keepOrigin?: boolean;
   /**
    * The belief streams locked with the page: those of the rows the derivation walk would hide (their `derived.hidden`
    * events append under their keys) and those of the links the delete cascades away (their `link.retracted`).
@@ -269,6 +271,9 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
 }
 
 /** Inside the coordinated delete transaction, before the page row is deleted. */
+/** The page's add_timeline_entry receipts one purge redacts; a page with more leaves `journal_sweep.complete` false. */
+const TIMELINE_RECEIPT_CAP = 10_000;
+
 export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, prepared: PreparedPagePurge): Promise<Record<string, unknown>> {
   const page = snapshot.page, sourceId = row.source_id, slug = page.slug;
   const actor = `${row.principal_kind}:${row.principal_id}`;
@@ -327,15 +332,23 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,
     { exclude: row.id, beforePending: () => faultPoint('purge:pending_recheck', { requestId: row.request_id, sourceId, operation: row.operation }) }));
-  const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : []]);
+  // The page's add_timeline_entry receipts keep the entry text in their outcome (`entry` summary and source, `bullet`), compacted
+  // ones included. That text is matched whole in the page's own requests (a set lookup, linear in their strings). A page past
+  // the cap leaves the journal sweep incomplete instead of claiming every receipt.
+  const timelineRows = await lookup('slug_lookup', () => tx.executeRaw<IntentRedactionTarget & { summary: string | null; source: string | null; bullet: string | null }>(`SELECT id::text AS id,
+    principal_kind, principal_id, outcome->'entry'->>'summary' AS summary, outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet FROM persistence_requests
+    WHERE source_id=$1 AND slug=$2 AND operation='add_timeline_entry' AND outcome ? 'entry' ORDER BY sequence LIMIT $3`, [sourceId, slug, TIMELINE_RECEIPT_CAP + 1]));
+  const timeline = timelineRows.slice(0, TIMELINE_RECEIPT_CAP);
+  const timelineText = new Set(timeline.flatMap(t => [t.summary, t.source, t.bullet]).map(text => text?.trim() ?? '').filter(Boolean));
+  const forSlug = await lookup('slug_lookup', async () => [...await findRequestsForSlugs(tx, sourceId, [slug]), ...reasons.length ? await requestsRecordingReasons(tx, sourceId, slug) : [], ...timeline]);
   const own = new Set(forSlug.map(r => r.id));
   const requests = [...new Map([...forSlug, ...prepared.sweep.targets, ...recheck.targets].map(r => [r.id, r])).values()];
   // GBRA-217: the page's reasons are needles in its own requests only, so a short reason never redacts another page's receipt.
   removed.persistence_requests = await lookup('redaction_read', async () => await redactRequestIntents(tx, requests.filter(r => own.has(r.id)), row.id,
-    { skipPending: true, needles: [...needles, ...reasons] }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
+    { skipPending: true, needles: [...needles, ...reasons], exact: timelineText }) + await redactRequestIntents(tx, requests.filter(r => !own.has(r.id)), row.id, { skipPending: true, needles }));
   removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
   const journalSweep = { scanned: prepared.sweep.scanned, ceiling: prepared.sweep.ceiling, watermark: prepared.sweep.watermark ?? null, batch: prepared.sweep.batch ?? 1,
-    tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete: prepared.sweep.complete && recheck.complete };
+    tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete: prepared.sweep.complete && recheck.complete && timelineRows.length <= TIMELINE_RECEIPT_CAP };
   const files = await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_id IS NULL AND page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
     RETURNING storage_path`, [page.id, slug, sourceId]);
   removed.files = files.length;
@@ -353,7 +366,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
     derived_hidden: await appendDerivedHidden(tx, { sourceId, request: row.id, publicationId: row.id, op: 'delete_page', targets: heldTargets, truncated: walk === 'truncated' }),
     derived_walk: walk })) : null;
   if (ledger) removed.belief_events = ledger.purged_events + ledger.redacted_fields.length;
-  await writeOriginDeletedMarker(tx, { sourceId, page: { id: page.id, slug, source_path: page.source_path } });
+  if (!prepared.keepOrigin) await writeOriginDeletedMarker(tx, { sourceId, page: { id: page.id, slug, source_path: page.source_path } });
   const { shas, ...segmentRows } = await deletePageWithSegments(tx, sourceId, slug, page.id, segmentClaims);
   Object.assign(removed, segmentRows);
   if (!retention) appendPurgeIntent({ request: row.id, request_id: row.request_id, source_id: sourceId, source_incarnation: row.source_incarnation,

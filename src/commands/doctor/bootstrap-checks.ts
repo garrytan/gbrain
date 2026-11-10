@@ -5,7 +5,7 @@
  */
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { execFileSync } from '../../core/spawn.ts';
+import { localProbe } from './local-probe.ts';
 import type { BrainEngine } from '../../core/engine.ts';
 import { LATEST_VERSION } from '../../core/migrate.ts';
 // Agent-bootstrap doctor group (plan B2/B4/ENG-4 + one-live-serve note).
@@ -44,14 +44,17 @@ async function pushSupersededEnrollmentCheck(checks: Check[], engine: BrainEngin
   return true;
 }
 
+/** #8990: `git -C <cwd> ...` stdout, or null on failure or past its 10 s bound (clipped to the entry deadline). */
+type GitProbe = (cwd: string, ...args: string[]) => Promise<string | null>;
+
+function gitProbe(entryDeadlineAt: number | undefined): GitProbe {
+  return (cwd, ...args) => localProbe(entryDeadlineAt, 'git', ['-C', cwd, ...args], { ownTimeoutMs: 10_000, windowsShell: false });
+}
+
 /** #5063: commits on the workspace's named branch that origin/<branch> lacks, counted whatever the push age (0 when unknown). */
-function commitsAheadOfOrigin(ws: string, branch: string): number {
+async function commitsAheadOfOrigin(git: GitProbe, ws: string, branch: string): Promise<number> {
   if (!branch) return 0;
-  try {
-    return parseInt(execFileSync('git', ['-C', ws, 'rev-list', '--count', `origin/${branch}..HEAD`], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-    }).toString().trim(), 10) || 0;
-  } catch { return 0; }
+  return parseInt((await git(ws, 'rev-list', '--count', `origin/${branch}..HEAD`))?.trim() ?? '', 10) || 0;
 }
 
 /**
@@ -72,14 +75,13 @@ function pushHealthCheck(root: string | null | undefined, status: 'warn' | 'fail
 }
 
 /** #6083: a tree with nothing uncommitted (ownership metadata aside) on a named branch, 0 commits ahead of a configured origin. */
-function treeMatchesOrigin(root: string): boolean {
-  const g = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
-  try {
-    g('remote', 'get-url', 'origin');
-    const branch = g('branch', '--show-current');
-    return branch !== '' && withoutPhysicalRootMetadata(g('status', '--porcelain')) === ''
-      && g('rev-list', '--count', `origin/${branch}..HEAD`) === '0';
-  } catch { return false; }
+async function treeMatchesOrigin(git: GitProbe, root: string): Promise<boolean> {
+  if ((await git(root, 'remote', 'get-url', 'origin')) === null) return false;
+  const branch = (await git(root, 'branch', '--show-current'))?.trim();
+  if (!branch) return false;
+  const status = await git(root, 'status', '--porcelain');
+  if (status === null || withoutPhysicalRootMetadata(status.trim()) !== '') return false;
+  return (await git(root, 'rev-list', '--count', `origin/${branch}..HEAD`))?.trim() === '0';
 }
 
 /**
@@ -87,8 +89,9 @@ function treeMatchesOrigin(root: string): boolean {
  * its origin is superseded (nothing is unpushed, and on a managed worktree
  * nothing ever clears a refusal record); the first live failure decides.
  */
-function recordedPushFailureCheck(failing: PushStatusEntry[], ws: string | null): Check {
-  const live = failing.filter((s) => !s.repoRoot || !treeMatchesOrigin(s.repoRoot));
+async function recordedPushFailureCheck(git: GitProbe, failing: PushStatusEntry[], ws: string | null): Promise<Check> {
+  const live: PushStatusEntry[] = [];
+  for (const s of failing) if (!s.repoRoot || !(await treeMatchesOrigin(git, s.repoRoot))) live.push(s);
   if (live.length === 0) {
     return { name: 'bootstrap_push_health', status: 'ok',
       message: `last recorded push failed for ${failing.map((s) => s.repoRoot).join(', ')} (${failing[0]!.ts ?? 'unknown'}), but the tree matches its origin branch with nothing uncommitted; nothing to push` };
@@ -100,8 +103,9 @@ function recordedPushFailureCheck(failing: PushStatusEntry[], ws: string | null)
     ` — run \`gbrain sources push${target ? ` --path ${target}` : ''}\``);
 }
 
-export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise<Check[]> {
+export async function bootstrapDoctorChecks(engine: BrainEngine | null, entryDeadlineAt?: number): Promise<Check[]> {
   const checks: Check[] = [];
+  const git = gitProbe(entryDeadlineAt);
   let home: string;
   try {
     home = resolveGbrainHome();
@@ -294,7 +298,7 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
       const { PUSH_STALE_MS } = await import('../hook.ts'); // hook.ts owns the threshold (single source)
       const failing = pushStatuses.filter((s) => s.ok === false);
       if (failing.length > 0) {
-        checks.push(recordedPushFailureCheck(failing, ws));
+        checks.push(await recordedPushFailureCheck(git, failing, ws));
       } else {
         const stamps = pushStatuses.map((s) => Date.parse(s.ts ?? '')).filter((t) => Number.isFinite(t));
         const stalest = stamps.length > 0 ? Math.min(...stamps) : NaN;
@@ -318,61 +322,46 @@ export async function bootstrapDoctorChecks(engine: BrainEngine | null): Promise
         // itself failed): unverified must NOT be treated as clean below.
         let dirty = false, known = false, ahead = 0;
         if (ws) {
-          try {
-            const statusOut = withoutPhysicalRootMetadata(execFileSync('git', ['-C', ws, 'status', '--porcelain'], {
-              stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-            }).toString());
-            const branch = execFileSync('git', ['-C', ws, 'branch', '--show-current'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 }).toString().trim();
-            ahead = commitsAheadOfOrigin(ws, branch);
+          const statusRaw = await git(ws, 'status', '--porcelain');
+          const branch = statusRaw === null ? null : (await git(ws, 'branch', '--show-current'))?.trim() ?? null;
+          if (statusRaw !== null && branch !== null) {
+            const statusOut = withoutPhysicalRootMetadata(statusRaw);
+            ahead = await commitsAheadOfOrigin(git, ws, branch);
             if (statusOut.trim() !== '') {
               dirty = true;
               known = true;
+            } else if (branch) {
+              // origin/<branch> doesn't resolve — e.g. never pushed. Any
+              // local commit on top of an empty tree still counts as
+              // needing a push (this fallback only applies to a NAMED
+              // branch with no upstream; see the detached-HEAD branch
+              // below for why the same trick is unsafe there). Mirrors
+              // treeNeedsPush's [hook.ts] existing "never pushed" fallback
+              // as-is: a topic branch already fully contained in another
+              // remote branch (e.g. origin/main) but never itself fetched
+              // as origin/<branch> can over-report as dirty here — an
+              // inherited, pre-existing edge case, left as a false FAIL
+              // rather than a false OK, which is the safer direction for
+              // this specific check.
+              const countOut = (await git(ws, 'rev-list', '--count', `origin/${branch}..HEAD`)) ?? (await git(ws, 'rev-list', '--count', 'HEAD'));
+              if (countOut !== null) {
+                dirty = (parseInt(countOut.trim(), 10) || 0) > 0;
+                known = true;
+              }
             } else {
-              const branchOut = branch;
-              if (branchOut) {
-                try {
-                  const aheadOut = execFileSync(
-                    'git', ['-C', ws, 'rev-list', '--count', `origin/${branchOut}..HEAD`],
-                    { stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000 },
-                  ).toString().trim();
-                  dirty = (parseInt(aheadOut, 10) || 0) > 0;
-                  known = true;
-                } catch {
-                  // origin/<branch> doesn't resolve — e.g. never pushed. Any
-                  // local commit on top of an empty tree still counts as
-                  // needing a push (this fallback only applies to a NAMED
-                  // branch with no upstream; see the detached-HEAD branch
-                  // below for why the same trick is unsafe there). Mirrors
-                  // treeNeedsPush's [hook.ts] existing "never pushed" fallback
-                  // as-is: a topic branch already fully contained in another
-                  // remote branch (e.g. origin/main) but never itself fetched
-                  // as origin/<branch> can over-report as dirty here — an
-                  // inherited, pre-existing edge case, left as a false FAIL
-                  // rather than a false OK, which is the safer direction for
-                  // this specific check.
-                  const haveOut = execFileSync('git', ['-C', ws, 'rev-list', '--count', 'HEAD'], {
-                    stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-                  }).toString().trim();
-                  dirty = (parseInt(haveOut, 10) || 0) > 0;
-                  known = true;
-                }
-              } else {
-                // Detached HEAD: `rev-list --count HEAD` counts ALL history
-                // reachable from HEAD, not just unpushed commits, so it is
-                // NOT a safe "never pushed" fallback here (unlike the named-
-                // branch case above) — it would flag any non-trivial repo as
-                // dirty even when HEAD is already contained by origin. If
-                // `@{u}` doesn't resolve, tree state is simply unverifiable.
-                try {
-                  const aheadOut = execFileSync('git', ['-C', ws, 'rev-list', '--count', '@{u}..HEAD'], {
-                    stdio: ['ignore', 'pipe', 'ignore'], timeout: 10_000,
-                  }).toString().trim();
-                  dirty = (parseInt(aheadOut, 10) || 0) > 0;
-                  known = true;
-                } catch { known = false; }
+              // Detached HEAD: `rev-list --count HEAD` counts ALL history
+              // reachable from HEAD, not just unpushed commits, so it is
+              // NOT a safe "never pushed" fallback here (unlike the named-
+              // branch case above) — it would flag any non-trivial repo as
+              // dirty even when HEAD is already contained by origin. If
+              // `@{u}` doesn't resolve, tree state is simply unverifiable.
+              const aheadOut = await git(ws, 'rev-list', '--count', '@{u}..HEAD');
+              if (aheadOut !== null) {
+                dirty = (parseInt(aheadOut.trim(), 10) || 0) > 0;
+                known = true;
               }
             }
-          } catch { dirty = false; known = false; }
+          }
         }
         if (dirty && ws && Date.now() - Date.parse(pushStatusForWorkspace(pushStatuses, ws)?.ts ?? '') > PUSH_STALE_MS) { // #5432: this root's own receipt
           checks.push(pushHealthCheck(ws, 'fail', `last successful push ${pushStatusForWorkspace(pushStatuses, ws)?.ts} (>48h) with a DIRTY workspace tree — recent agent memory is unpushed [B4]`,

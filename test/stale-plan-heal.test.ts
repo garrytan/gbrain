@@ -21,7 +21,7 @@ import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import postgres from '#postgres';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { retryWriteAdmission, STALE_PLAN_RETRIES } from '../src/core/persistence/admission-retry.ts';
+import { retryWriteAdmission } from '../src/core/persistence/admission-retry.ts';
 import { transientDatabaseFailure } from '../src/core/persistence/coordinator.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -46,14 +46,6 @@ const CHANGES = [
 ] as const;
 
 describe('write admission and a stale plan that keeps coming back (GST-2260)', () => {
-  test('it is re-run a bounded number of times and then rethrown as it was, never reported as contention', async () => {
-    const stalePlan = Object.assign(new Error('cached plan must not change result type'), { code: '0A000', routine: 'RevalidateCachedQuery' });
-    let attempts = 0;
-    const thrown = await caught(retryWriteAdmission(randomUUID(), async () => { attempts++; throw stalePlan; }, 5000));
-    expect(thrown).toBe(stalePlan);
-    expect(attempts).toBe(STALE_PLAN_RETRIES + 1);
-  });
-
   test('another 0A000 is not a stale plan and is not retried', async () => {
     const unsupported = Object.assign(new Error('FOR SHARE is not allowed with aggregate functions'), { code: '0A000', routine: 'CheckSelectLocking' });
     let attempts = 0;

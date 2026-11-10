@@ -409,7 +409,10 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   // GBRA-133: so does `sync.apply_held_deletions` when on (sync-held-deletions.ts): turning it on reads the level, and its held deletions, once.
   // `sync.level_reuse` rides the same read (sync-tree-reuse.ts); it changes how the level is read, not what it is.
   const { heldDeletions, levelReuse } = await readPassSwitches(engine, sourceId);
-  const selectionFp = digest({ ...selection, ...(metafilePages === 'off' ? {} : { metafile_pages: metafilePages }), ...(heldDeletions ? { apply_held_deletions: true } : {}), ...(strict ? { canonical: 'git' } : {}) }), parserFp = parserFingerprint();
+  // GST-2201: `sync_deleted_restore` marks the classifier that imports a file restored over its sync-made tombstone, so the first
+  // pass after the upgrade reads the whole level once and brings back pages an older pass left deleted beside their file.
+  const selectionFp = digest({ ...selection, ...(metafilePages === 'off' ? {} : { metafile_pages: metafilePages }), ...(heldDeletions ? { apply_held_deletions: true } : {}), ...(strict ? { canonical: 'git' } : {}),
+    sync_deleted_restore: 1 }), parserFp = parserFingerprint();
   const obligations: ManagedSyncPassValue['obligations'] = prior ? structuredClone(prior.value.obligations)
     : { baseline_commit: context.source.last_commit, mismatch: {}, not_converged_streak: 0, faults: {} };
   obligations.mismatch ??= {}; obligations.faults ??= {}; obligations.not_converged_streak ??= 0;

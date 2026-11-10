@@ -1052,6 +1052,13 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "Skipped (PGLite is always UTF8)",
+          "name": "database_encoding",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "elapsed_ms": "<volatile>",
           "message": "Version <latest> (latest: <latest>)",
@@ -1061,7 +1068,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1388 column(s) verified against live schema",
+          "message": "1392 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
@@ -1720,6 +1727,20 @@
           "elapsed_ms": "<volatile>",
           "message": "No atom retired by an empty re-extraction is waiting to be restored.",
           "name": "atom_retirements_restorable",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_source": [],
+            "count": 0,
+            "docs": "docs/guides/repair.md#atom-fence-rows",
+            "origin_unread": 0,
+            "repair": "atom-fence-rows"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No world atom carries a fence row its source page shows only to the owner.",
+          "name": "atom_fence_rows",
           "status": "ok"
         },
         {
@@ -2612,6 +2633,13 @@
           "elapsed_ms": "<volatile>",
           "message": "chronicle.* settings are valid.",
           "name": "chronicle_config_invalid",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No page holds live events from an earlier extraction run beside its newest one.",
+          "name": "chronicle_duplicate_events",
           "status": "ok"
         },
         {

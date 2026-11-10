@@ -103,6 +103,18 @@ export function getMessage(err: unknown): string {
 }
 
 /**
+ * GST-2314: a prepared statement whose cached plan went stale because a migration changed a table it reads (SQLSTATE
+ * 0A000 "cached plan must not change result type"). Outside a transaction the driver re-prepares it; inside one the
+ * transaction is already aborted, so the caller sees the error and a re-run on a fresh transaction succeeds. Every other
+ * 0A000 (feature_not_supported) stays a refusal. The C routine (RevalidateCachedQuery) is matched first because the
+ * server translates the message under a non-English lc_messages.
+ */
+export function isStalePlanError(err: unknown): boolean {
+  if (getCode(err) !== '0A000') return false;
+  return (err as { routine?: unknown }).routine === 'RevalidateCachedQuery' || /cached plan must not change result type/i.test(getMessage(err));
+}
+
+/**
  * SQLSTATE 57014: query_canceled / statement_timeout.
  * Postgres signals this when a statement exceeds `statement_timeout`.
  */
@@ -110,17 +122,6 @@ export function isStatementTimeoutError(err: unknown): boolean {
   if (getCode(err) === '57014') return true;
   const msg = getMessage(err);
   return /statement_timeout|canceling statement due to statement timeout/i.test(msg);
-}
-
-/**
- * GST-2260: SQLSTATE 0A000 from RevalidateCachedQuery, "cached plan must not change result type": another session
- * changed a column of a table a prepared statement reads, so its cached result type no longer holds. The vendored
- * driver re-prepares every connection's statements after the first one, so the statement succeeds when it runs again;
- * inside a transaction that means re-running the whole transaction, which this error has already rolled back. Matched
- * on the routine, never the code alone: other 0A000 errors (an unsupported feature) are permanent.
- */
-export function isStalePlanError(err: unknown): boolean {
-  return getCode(err) === '0A000' && (err as { routine?: unknown } | null)?.routine === 'RevalidateCachedQuery';
 }
 
 /**
