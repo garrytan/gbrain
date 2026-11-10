@@ -995,6 +995,27 @@
         "stampUnverifiedExtractions",
         "textVectorArmNonEmpty"
       ],
+      "./skill-resolver": [
+        "BLOCK_TOKEN_CAP",
+        "EXCLUDE_MAX",
+        "GBRAIN_VERSION",
+        "HARNESSES",
+        "MATCH_STRENGTHS",
+        "RESOLVER_FEATURES",
+        "ResolverError",
+        "SCHEMA_VERSION",
+        "buildSkillIndex",
+        "catalogStatus",
+        "commitSessionAsync",
+        "errorTurnOutput",
+        "listCatalogs",
+        "normalizeTurnInput",
+        "removeSkillIndex",
+        "resetSkillSession",
+        "resolveSkills",
+        "resolverHome",
+        "sessionStatus"
+      ],
       "./think": [
         "__thinkAdapter",
         "classifyLlmCallFailure",

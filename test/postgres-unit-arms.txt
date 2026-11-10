@@ -18,6 +18,7 @@ test/access-folder-lock-order.test.ts
 test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
+test/access-hidden-page-writes.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members.test.ts
@@ -66,6 +67,7 @@ test/contact-rows-drift-8109.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/cycle-world-fence-rows.test.ts
 test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
@@ -74,11 +76,13 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
 test/direct-pool-profile.test.ts
+test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
 test/doctor-routing-skill-pack-source.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
+test/edge-whitespace-twins.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts
@@ -86,6 +90,7 @@ test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
+test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
@@ -93,11 +98,13 @@ test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
 test/fact-fence-adoption-exits.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
+test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
 test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
+test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
 test/fence-repair-receipts.test.ts
@@ -256,6 +263,7 @@ test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
 test/link-cross-source.test.ts
+test/link-origin-scope.test.ts
 test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
@@ -454,6 +462,7 @@ test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
+test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
@@ -466,6 +475,7 @@ test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
+test/recorded-read-gate.test.ts
 test/refresh-barrier-gst1623.test.ts
 test/refresh-barrier-held-after-abort.test.ts
 test/refresh-barrier-purge-gst1602.test.ts
@@ -475,6 +485,7 @@ test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
 test/repair-apply-pending-6543.test.ts
+test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts
 test/repair-embedding-effects.test.ts
 test/repair-failed-writes-conflict-6429.test.ts
@@ -488,6 +499,7 @@ test/repair-file-drift-provenance-gbra133.test.ts
 test/repair-frontmatter-keys-sweep-6454.test.ts
 test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
+test/repair-lost-fence-rows.test.ts
 test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
@@ -524,6 +536,7 @@ test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-resolve-path.test.ts
 test/stats-health-source-scope.test.ts
+test/status-snapshot-source-scope.test.ts
 test/sync-absent-from-worktree-s27.test.ts
 test/sync-admission-6712.test.ts
 test/sync-apply-held-deletions-gbra133.test.ts
@@ -575,6 +588,7 @@ test/sync-pass-stop-in-level-gbra133.test.ts
 test/sync-plain-directory-7973.test.ts
 test/sync-prescreen-both-delta-6712.test.ts
 test/sync-prescreen-drift-6712.test.ts
+test/sync-restored-file-purge.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
 test/sync-status-failure-detail-6513.test.ts
@@ -591,6 +605,7 @@ test/take-resolution-survives-publish.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
 test/timeline-chunk-reuse.test.ts
+test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts

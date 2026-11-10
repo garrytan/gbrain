@@ -226,6 +226,10 @@
         "name": "harness_wiring"
       },
       {
+        "category": "ops",
+        "name": "skill_resolver"
+      },
+      {
         "category": "meta",
         "name": "agent_contract"
       },
@@ -396,6 +400,10 @@
       {
         "category": "ops",
         "name": "function_search_path"
+      },
+      {
+        "category": "ops",
+        "name": "database_encoding"
       },
       {
         "category": "meta",
@@ -596,6 +604,10 @@
       {
         "category": "brain",
         "name": "atom_retirements_restorable"
+      },
+      {
+        "category": "brain",
+        "name": "atom_fence_rows"
       },
       {
         "category": "brain",
@@ -916,6 +928,10 @@
       {
         "category": "brain",
         "name": "chronicle_config_invalid"
+      },
+      {
+        "category": "brain",
+        "name": "chronicle_duplicate_events"
       },
       {
         "category": "brain",

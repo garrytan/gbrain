@@ -4,6 +4,7 @@ import { attributeVersions, canReadWriteAttribution } from './attribution.ts';
 import { GET_VERSIONS_DEFAULT_LIMIT, GET_VERSIONS_REMOTE_MAX_LIMIT, pagingLimit, reportVersionPage } from './read-paging.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { fenceTranscriptText, quotesStored } from '../search/transcript-quote.ts';
+import { historyQuarantine } from './get-page-projection.ts';
 /**
  * Admin operation cluster — pure move from operations.ts (v0.46.x tranche 2).
  * Op consts stay module-private; `adminOperations` below lists them in
@@ -20,6 +21,7 @@ import { enforceClientSlugFence, sourceScopeOpts } from './context.ts';
 import { VERSION } from '../../version.ts';
 import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-column.ts';
 import { memoizedHealth } from '../health-memo.ts';
+import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { openSegmentedBody } from '../page-body/read-range.ts';
@@ -57,6 +59,20 @@ const get_stats: Operation = {
   cliHints: { name: 'stats' },
 };
 
+/**
+ * GBRA-431: most_connected names pages, so a remote caller sees only the ones its get_page would show (a live page
+ * of the slug in its scope that it can read). The counters stay as memoized per scope.
+ */
+async function visibleMostConnected(ctx: OperationContext, scope: { sourceId?: string; sourceIds?: string[] }, entries: Array<{ slug: string; link_count: number }>) {
+  if (ctx.remote === false || !entries?.length) return entries;
+  const sourceIds = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null);
+  const rows = await ctx.engine.executeRaw<{ slug: string }>(`SELECT DISTINCT p.slug FROM pages p
+    WHERE p.slug = ANY($1::text[]) AND p.deleted_at IS NULL AND ($2::text[] IS NULL OR p.source_id = ANY($2::text[]))
+      AND ${await remoteReadPolicySql(ctx.engine, 'p')}`, [entries.map(e => e.slug), sourceIds]);
+  const visible = new Set(rows.map(r => r.slug));
+  return entries.filter(e => visible.has(e.slug));
+}
+
 const get_health: Operation = {
   name: 'get_health',
   mutating: false,
@@ -93,7 +109,7 @@ const get_health: Operation = {
     } catch {
       migrations = { error: 'ledger_unreadable' };
     }
-    return { ...health, migrations };
+    return { ...health, most_connected: await visibleMostConnected(ctx, scope, health.most_connected), migrations };
   },
   scope: 'admin',
   cliHints: { name: 'health' },
@@ -245,7 +261,16 @@ const get_versions: Operation = {
     const snapshotTiers = ctx.remote === false || versions.length === 0 ? new Map<number, unknown>() : new Map((await ctx.engine.executeRaw<{ id: number | string; trust_tier: string | null }>(
       'SELECT id, trust_tier FROM page_versions WHERE id = ANY($1::bigint[])', [versions.map(v => Number(v.id))])).map(r => [Number(r.id), r.trust_tier] as const));
     const reason = await remoteReasons(ctx, String(p.slug), versions);
+    const lives = ctx.remote === false || versions.length === 0 ? [] : await ctx.engine.executeRaw<{ id: number | string; slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
+      'SELECT id, slug, source_id, frontmatter FROM pages WHERE id = ANY($1::bigint[])', [[...new Set(versions.map(v => Number(v.page_id)))]]);
+    const quarantines = new Map(lives.map(live => [Number(live.id), historyQuarantine(ctx, live)] as const));
     for (const v of versions) {
+      const quarantined = quarantines.get(Number(v.page_id))?.(v.frontmatter as Record<string, unknown> | null) ?? null;
+      if (quarantined?.body_omitted) {
+        const { compiled_truth: _b, timeline: _t, ...rest } = v;
+        out.push({ ...rest, ...reason(v), quarantined });
+        continue;
+      }
       if (isSegmentedPage(v)) {
         const sized = await remoteVersionSize(ctx, v);
         const { compiled_truth: _b, timeline: _t, ...rest } = sized;

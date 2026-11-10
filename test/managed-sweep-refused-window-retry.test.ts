@@ -29,6 +29,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { submitRememberMutation } from '../src/core/persistence/memory-mutations.ts';
 import { prepareManagedFactsSession } from '../src/core/persistence/facts-maintenance.ts';
+import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -179,6 +180,26 @@ describe('a sweep window refused by the canonical file check (#6048)', () => {
 
       expect(await w.sweep()).toBe(0);
       expect((await w.journal()).length).toBe(refusedFirstPass.length + 2);
+    });
+  }, 180_000);
+
+  test('a claim forgotten at world visibility after the refusal stays forgotten when the follow-up narrows to private', async () => {
+    named = [COMPANY, PERSON];
+    await onEachEngine('forgotten', async (engine, dir) => {
+      const w = await refusedWindow(engine, dir, [COMPANY, PERSON], [COMPANY]);
+      expect(await w.sweep()).toBe(0);
+      expect(await w.journal()).toEqual(refusedFirstPass);
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      const saved = await engine.insertFact({ fact: `${COMPANY.title} ships the example roadmap`, entity_slug: null, visibility: 'world', kind: 'fact', source: 'fixture' }, { source_id: w.sourceId });
+      expect((await recordFactWithdrawal(engine, saved.id, w.sourceId, false, { semanticReview: false })).withdrawn).toBe(true);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+      await engine.setConfig('facts.default_visibility', 'private');
+      w.repair(COMPANY);
+      expect(await w.sweep()).toBe(1);
+      expect(await w.journal()).toEqual([...refusedFirstPass, `${COMPANY.slug}:committed`, `${COMPLETE}:committed`]);
+      expect(await w.facts()).toEqual([`${PERSON.slug}:world`]);
+      expect(extractions).toBe(1);
     });
   }, 180_000);
 
