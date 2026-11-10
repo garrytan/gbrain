@@ -17,7 +17,9 @@
  *   skills.resolver.top_k       suggestions per turn (1..8, default 5)
  *   skills.resolver.min_match   the weakest match_strength to suggest
  *     (default: every match)
- *   skills.resolver.per_harness.<harness>.{top_k,min_match}  overrides
+ *   skills.resolver.top_gate    empty the block when the best skill's score
+ *     over its catalog's maxIdf is below this (0..100; default off)
+ *   skills.resolver.per_harness.<harness>.{top_k,min_match,top_gate}  overrides
  *     for one harness; a key it leaves out falls back to the global one, and
  *     an entry that is not an object (a hand-edited null) counts as unset
  *   skills.resolver.pinned      skill ids the harness always loads itself,
@@ -27,7 +29,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { HARNESSES } from './block.ts';
 import { ResolverError } from './errors.ts';
-import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_K_MAX } from './limits.ts';
+import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
 
 export const DEFAULT_SESSION_TOKEN_BUDGET = 2000;
 export const MIN_SESSION_TOKEN_BUDGET = 100;
@@ -64,7 +66,7 @@ export function readResolverSettings(home: string, env: NodeJS.ProcessEnv = proc
 }
 
 /** What the hook lane adds to each turn's input. */
-export interface LaneTurnSettings { top_k?: number; min_match_strength?: MatchStrength; exclude?: string[] }
+export interface LaneTurnSettings { top_k?: number; min_match_strength?: MatchStrength; top_gate?: number; exclude?: string[] }
 
 function configInvalid(key: string, rule: string): ResolverError {
   return new ResolverError('skill_resolver_config_invalid', `${key} ${rule}.`, { suggestion: `Fix or unset ${key}: gbrain config unset ${key}` });
@@ -80,6 +82,11 @@ export function validateMinMatch(v: unknown, key: string): MatchStrength {
   throw configInvalid(key, `must be one of ${MATCH_STRENGTHS.join(', ')}`);
 }
 
+export function validateTopGate(v: unknown, key: string): number {
+  if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= TOP_GATE_MAX) return v;
+  throw configInvalid(key, `must be a number from 0 to ${TOP_GATE_MAX} (0 or unset: off)`);
+}
+
 export function validatePinned(v: unknown, key: string): string[] {
   if (Array.isArray(v) && v.length <= EXCLUDE_MAX && v.every(x => typeof x === 'string' && x.length > 0 && x.length <= 256)) return v as string[];
   throw configInvalid(key, `must be a list of at most ${EXCLUDE_MAX} skill ids`);
@@ -91,6 +98,7 @@ export function laneTurnSettings(section: Record<string, unknown>, harness: stri
   const global: LaneTurnSettings = {
     ...(section.top_k !== undefined ? { top_k: validateTopK(section.top_k, `${p}top_k`) } : {}),
     ...(section.min_match !== undefined ? { min_match_strength: validateMinMatch(section.min_match, `${p}min_match`) } : {}),
+    ...(section.top_gate !== undefined ? { top_gate: validateTopGate(section.top_gate, `${p}top_gate`) } : {}),
     ...(section.pinned !== undefined ? { exclude: validatePinned(section.pinned, `${p}pinned`) } : {}),
   };
   const per = section.per_harness;
@@ -101,11 +109,12 @@ export function laneTurnSettings(section: Record<string, unknown>, harness: stri
     const key = `${p}per_harness.${h}`;
     if (!(HARNESSES as readonly string[]).includes(h)) throw configInvalid(key, `names no harness (one of ${HARNESSES.join(', ')})`);
     if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
-    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match')) throw configInvalid(key, 'may hold only top_k and min_match');
+    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match' && k !== 'top_gate')) throw configInvalid(key, 'may hold only top_k, min_match and top_gate');
     const r = o as Record<string, unknown>;
     const parsed: LaneTurnSettings = {
       ...(r.top_k !== undefined ? { top_k: validateTopK(r.top_k, `${key}.top_k`) } : {}),
       ...(r.min_match !== undefined ? { min_match_strength: validateMinMatch(r.min_match, `${key}.min_match`) } : {}),
+      ...(r.top_gate !== undefined ? { top_gate: validateTopGate(r.top_gate, `${key}.top_gate`) } : {}),
     };
     if (h === harness) mine = parsed;
   }

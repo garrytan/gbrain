@@ -23,7 +23,7 @@ import {
   buildSkillIndex, catalogStatus, removeSkillIndex, resolveSkills, sessionStatus, ResolverError, BLOCK_TOKEN_CAP, type TurnInput,
 } from '../src/core/skills/resolver/index.ts';
 import { lexTerms } from '../src/core/skills/resolver/tokenize.ts';
-import { isAcknowledgement, mentionsSkill } from '../src/core/skills/resolver/rank.ts';
+import { isAcknowledgement, maxIdf, mentionsSkill } from '../src/core/skills/resolver/rank.ts';
 import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
@@ -115,6 +115,33 @@ describe('turn rules', () => {
     expect([strict.output.suggestions, strict.output.block, strict.output.no_skill]).toEqual([[], '', false]);
     const named = await resolveSkills({ message: 'use the desc-3 skill', min_match_strength: 'named' }, { home });
     expect(named.output.suggestions.map(s => s.id)).toEqual(['x:desc-3']);
+  });
+
+  test('top_gate empties the block when the best skill scores below it over its catalog maxIdf; off by default and at 0, a named skill bypasses it, nothing gated is committed', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const open = await resolveSkills({ message: 'team status', session_id: 'g' }, { home });
+    expect(open.output.suggestions[0]!.id).toBe('gbrain:reports');
+    const top = open.output.suggestions[0]!.score / maxIdf(BASIC.length);
+    const below = await resolveSkills({ message: 'team status', top_gate: top + 0.01, session_id: 'g2' }, { home });
+    expect([below.output.block, below.output.suggestions, below.output.block_reason, below.output.no_skill]).toEqual(['', [], 'weak_top_match', false]);
+    expect(below.pending!.delta.suggested).toEqual([]);
+    expect((await resolveSkills({ message: 'team status', top_gate: top - 0.01 }, { home })).output.suggestions[0]!.id).toBe('gbrain:reports');
+    expect((await resolveSkills({ message: 'team status', top_gate: 0 }, { home })).output.suggestions).toEqual((await resolveSkills({ message: 'team status' }, { home })).output.suggestions);
+    const named = await resolveSkills({ message: 'use the deploy skill', top_gate: 100 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:deploy', match_strength: 'named' });
+  });
+
+  test('top_gate reads the same at any catalog size: the score is divided by the maxIdf of its own catalog', async () => {
+    const home = tmp();
+    const pad = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p:${word(i, 3)}`, name: word(i, 3), description: Array.from({ length: 8 }, (_, s) => word(i, 5 + s)).join(' ') }));
+    await jsonCatalog(home, 'small', BASIC);
+    await jsonCatalog(home, 'large', [...BASIC, ...pad(400)]);
+    const small = await resolveSkills({ message: 'team status' }, { home, catalogs: ['small'] });
+    const large = await resolveSkills({ message: 'team status' }, { home, catalogs: ['large'] });
+    const ratio = (r: typeof small, n: number) => r.output.suggestions[0]!.score / maxIdf(n);
+    expect(large.output.suggestions[0]!.score).toBeGreaterThan(small.output.suggestions[0]!.score * 2);
+    expect(Math.abs(ratio(large, BASIC.length + 400) - ratio(small, BASIC.length))).toBeLessThan(0.15 * ratio(small, BASIC.length));
   });
 
   test('previous_user_message is ranked only when the current message matches nothing', async () => {
@@ -217,6 +244,7 @@ describe('turn rules', () => {
     expect(r.output.suggestions.length).toBe(2);
     expect(r.output.suggestions.map(s => s.id)).not.toContain('gbrain:meeting-notes');
     for (const bad of [{}, { message: 1 }, { message: 'x', top_k: 9 }, { message: 'x', top_k: 0 }, { message: 'x', extra: 1 }, { message: 'x', exclude: new Array(EXCLUDE_MAX + 1).fill('a') }, { message: 'x', min_match_strength: 'weak' },
+      { message: 'x', top_gate: -1 }, { message: 'x', top_gate: 101 }, { message: 'x', top_gate: '1' }, { message: 'x', top_gate: Number.NaN },
       { message: 'x', session_id: 'has space' }, { message: 'x', session_id: 'é' }, { message: 'x', session_id: 'a'.repeat(257) }, { message: 'x', harness: 'vim' }, { message: 'x', expected_catalog_hash: 'abc' }]) {
       expect(await codeOf(resolveSkills(bad as TurnInput, { home }))).toBe('skill_resolve_invalid_input');
     }

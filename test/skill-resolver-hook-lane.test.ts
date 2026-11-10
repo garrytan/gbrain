@@ -255,6 +255,30 @@ describe('skill-resolver lane: turn settings from config', () => {
   });
 });
 
+describe('skill-resolver lane: top_gate from config', () => {
+  test('a gate above every score empties the block; per_harness 0 turns it off for one harness; a bad value is refused', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const config = (...args: string[]) => runCli(['config', ...args], { env: b.env, cwd: b.project });
+    const ask = (s: string) => hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: s }, WIDE);
+    expect((await config('set', 'skills.resolver.top_gate', '100')).exitCode).toBe(0);
+    const gated = await ask('tg1');
+    expect([gated.exitCode, gated.stdout]).toEqual([0, '']);
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'empty' });
+    expect((await config('set', 'skills.resolver.per_harness.claude-code.top_gate', '0')).exitCode).toBe(0);
+    expect(contextOf(await ask('tg2'))).toContain('deploy-widget');
+    for (const bad of ['high', '101']) {
+      const r = await config('set', 'skills.resolver.top_gate', bad);
+      expect(r.exitCode, bad).not.toBe(0);
+      expect(r.stderr).toContain('must be a number from 0 to 100');
+    }
+    expect((await config('set', 'skills.resolver.top_gate', '-1')).exitCode).not.toBe(0);
+    expect(JSON.parse(readFileSync(join(b.home, '.gbrain', 'config.json'), 'utf8')).skills.resolver).toMatchObject({ top_gate: 100, per_harness: { 'claude-code': { top_gate: 0 } } });
+  });
+});
+
 describe('skill-resolver lane: session GC before the process exits', () => {
   test('a delivered turn deletes idle session files and stamps the pass; a turn within the interval leaves new ones', async () => {
     const b = box();
