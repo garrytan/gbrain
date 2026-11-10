@@ -392,7 +392,7 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
   // GST-2312 (#9024): a committed blob a Git filter owns is held alone; sync never runs the filter that would turn it into text.
   const { gitRoot, target, entries } = input.cursor;
   const filtered = filterOwnedRefusal(entry.path, content, entry.working || !gitRoot || !target || !entries ? null
-    : pinnedFilterDriver({ ...input.cursor, gitRoot, target, entries }, entry.path));
+    : pinnedFilterDriver({ ...input.cursor, gitRoot, target, entries }, entry.path), input.cursor.sourceId, true);
   if (filtered) return heldEntry(entry, slug, pageId, filtered, content, blob);
   // GBRA-133 S-39: text holding NUL cannot be stored or carried in the write intent; only this file is held. A slug conflict
   // still names the hold (#6749): its message carries the path alone, and the slug-conflicts lane reports NULL_BYTES as still_invalid.

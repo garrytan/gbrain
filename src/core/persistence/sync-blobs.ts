@@ -8,6 +8,9 @@
  * `git show` per entry.
  */
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { gitChildEnv } from '../git-env.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 
@@ -16,9 +19,15 @@ export const SYNC_READ_BOUND = PAGE_MAX_BYTES;
 
 export interface TreeBlob { oid: string; size: number }
 
-function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1024 ** 2): Buffer {
-  return execFileSync('git', ['-c', 'core.quotepath=false', '--literal-pathspecs', '-C', gitRoot, ...args],
-    { env: gitChildEnv(), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
+/**
+ * GST-2312 (#9024): the configuration every read here runs with, so no repository-configured program starts: `check-attr`
+ * reads the index, and reading the index runs `core.fsmonitor`.
+ */
+export const NO_REPOSITORY_PROGRAMS: readonly string[] = ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null'];
+
+function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1024 ** 2, env: NodeJS.ProcessEnv = {}): Buffer {
+  return execFileSync('git', ['-c', 'core.quotepath=false', ...NO_REPOSITORY_PROGRAMS, '--literal-pathspecs', '-C', gitRoot, ...args],
+    { env: gitChildEnv(env), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
 }
 
 /** At this many paths `readTreeBlobs` lists the whole tree once instead of path chunks (#6712: the prescreen of a tree walk). */
@@ -70,12 +79,20 @@ export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, B
 
 let checkAttrSource: boolean | undefined;
 
+/** Test seam: `false` takes the path of a git older than 2.40; returns the restore. */
+export function __setCheckAttrSourceForTests(value: boolean | undefined): () => void {
+  const previous = checkAttrSource;
+  checkAttrSource = value;
+  return () => { checkAttrSource = previous; };
+}
+
 /**
- * GST-2312 (#9024): the Git filter driver of each path at commit `target`, null where no `filter` attribute names a driver
- * the Git config defines (`filter.<driver>.clean`, `.smudge` or `.process`): Git stores a path whose driver is not
- * configured as its plain bytes. A committed blob a configured filter owns holds what the filter's clean program stored
- * (git-crypt ciphertext, for one), not the text of the checkout, and sync never runs a repository's filters. Only
- * `git check-attr` (attribute files at `target` from git 2.40, the checkout's before) and `git config` run.
+ * GST-2312 (#9024): the Git filter driver each path's `filter` attribute names at commit `target`, null where none does,
+ * whether or not this checkout's Git config defines the driver (the commit may have been cleaned on another machine). A
+ * committed blob a filter owns holds what the filter's clean program stored (git-crypt ciphertext, for one), not the text
+ * of the checkout, and sync never runs a repository's filters. Git 2.40 and newer read the attributes with
+ * `check-attr --source=<target>`; an older git reads `target` into a temporary index (`read-tree`) and asks
+ * `check-attr --cached` there. Neither runs a program (`NO_REPOSITORY_PROGRAMS`).
  */
 export function readFilterDrivers(gitRoot: string, target: string, gitPaths: string[]): Map<string, string | null> {
   const out = new Map<string, string | null>();
@@ -84,13 +101,17 @@ export function readFilterDrivers(gitRoot: string, target: string, gitPaths: str
     const [major, minor] = (/git version (\d+)\.(\d+)/.exec(git(gitRoot, ['version']).toString('utf8')) ?? ['', '0', '0']).slice(1).map(Number);
     checkAttrSource = major! > 2 || major === 2 && minor! >= 40;
   }
-  let config = '';
-  try { config = git(gitRoot, ['config', '-z', '--get-regexp', '^filter\\.']).toString('utf8'); } catch (error) { if ((error as { status?: number }).status !== 1) throw error; }
-  const configured = new Set(config.split('\0').map(record => record.split('\n')[0]!).filter(key => /\.(clean|smudge|process)$/.test(key))
-    .map(key => key.slice('filter.'.length, key.lastIndexOf('.'))));
-  for (let i = 0; i < gitPaths.length; i += 2000) {
-    const fields = git(gitRoot, ['check-attr', ...(checkAttrSource ? [`--source=${target}`] : []), '-z', '--stdin', 'filter'], gitPaths.slice(i, i + 2000).join('\0') + '\0').toString('utf8').split('\0');
-    for (let at = 0; at + 2 < fields.length; at += 3) out.set(fields[at]!, configured.has(fields[at + 2]!) ? fields[at + 2]! : null);
+  const scratch = checkAttrSource ? null : mkdtempSync(join(tmpdir(), 'gbrain-attributes-'));
+  const env = scratch ? { GIT_INDEX_FILE: join(scratch, 'index') } : {};
+  try {
+    if (scratch) git(gitRoot, ['read-tree', target], undefined, undefined, env);
+    for (let i = 0; i < gitPaths.length; i += 2000) {
+      const fields = git(gitRoot, ['check-attr', ...(scratch ? ['--cached'] : [`--source=${target}`]), '-z', '--stdin', 'filter'],
+        gitPaths.slice(i, i + 2000).join('\0') + '\0', undefined, env).toString('utf8').split('\0');
+      for (let at = 0; at + 2 < fields.length; at += 3) out.set(fields[at]!, ['unspecified', 'unset', 'set'].includes(fields[at + 2]!) ? null : fields[at + 2]!);
+    }
+  } finally {
+    if (scratch) rmSync(scratch, { recursive: true, force: true });
   }
   return out;
 }

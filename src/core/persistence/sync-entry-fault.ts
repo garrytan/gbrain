@@ -57,13 +57,15 @@ const GIT_CRYPT_HEADER = '\u0000GITCRYPT\u0000';
  * GST-2312 (#9024): the `content_filter_owned` refusal of a blob that starts with git-crypt's header, or of a committed
  * blob whose path names a Git filter `driver` (Git LFS excepted: its pointers keep their own hold), or null. Such bytes
  * are what the filter's clean program stored, not the text of the checkout, and sync never runs a repository's filters.
+ * `held` is false where the run stops instead (`sync.holds=fail`, a company-brain source).
  */
-export function filterOwnedRefusal(path: string, content: string, driver: string | null): { code: 'content_filter_owned'; message: string } | null {
+export function filterOwnedRefusal(path: string, content: string, driver: string | null, sourceId: string, held: boolean): { code: 'content_filter_owned'; message: string } | null {
   const gitCrypt = content.startsWith(GIT_CRYPT_HEADER);
   if (!gitCrypt && (driver === null || driver === 'lfs')) return null;
   return { code: 'content_filter_owned', message: `${path} is ${gitCrypt ? 'encrypted with git-crypt' : `stored through the Git filter "${driver}"`}, so its committed bytes are not the text in your checkout. `
-    + "gbrain does not run a repository's filter programs during sync, so sync held this file and the rest of the source synced. "
-    + 'Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then sync again.' };
+    + `gbrain does not run a repository's filter programs during sync, so ${held ? 'sync held this file and the rest of the source synced' : 'this sync stopped at this file'}. `
+    + 'Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then sync again.'
+    + (gitCrypt ? '' : ` If no filter "${driver}" is in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${sourceId}: a commit that changes only .gitattributes does not re-screen the file.`) };
 }
 
 /**
