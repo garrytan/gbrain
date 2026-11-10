@@ -303,10 +303,15 @@ export async function prepareManagedImportMutation(engine: BrainEngine, row: Wri
   return mutation;
 }
 
+/** Whether a stored page source path and an import source path name the same file; Windows spells separators either way. */
+export function sameImportSourcePath(stored: string, incoming: string, windows: boolean = process.platform === 'win32'): boolean {
+  return windows ? stored.replaceAll('\\', '/') === incoming.replaceAll('\\', '/') : stored === incoming;
+}
+
 /** The admitted page is still the import's base: its revision, its id and the file it maps to. */
 function assertImportBaseSnapshot(row: WriteRequest, p: ManagedImportIntent, snapshot: PageSnapshot | null): void {
   assertPageRevision(snapshot, { expectedRevision: p.expected_revision ?? null }); // null: admitted against an absent page; still a revision_conflict if one appeared (#5385)
-  if ((snapshot?.page.id ?? null) !== row.page_id || snapshot?.page.source_path && snapshot.page.source_path !== p.sourcePath) {
+  if ((snapshot?.page.id ?? null) !== row.page_id || snapshot?.page.source_path && !sameImportSourcePath(snapshot.page.source_path, p.sourcePath)) {
     throw opError('page_identity_changed', 'The imported path no longer names the accepted page.',
       `Page ${row.slug} in source ${row.source_id} was replaced, removed, or now maps to a different file than ${p.sourcePath}, so import request ${row.request_id} published nothing. Read the page before importing the file again.`,
       { fix: readFix(`Shows which page holds ${row.slug} in source ${row.source_id} now, with its source path and revision.`,
