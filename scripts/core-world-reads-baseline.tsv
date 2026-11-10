@@ -743,6 +743,7 @@ src/core/persistence/staging.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/switches.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/persistence/switches.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/sync-authority.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/persistence/sync-blobs.ts	fs_import	1	W7: filesystem boundary moves to the local app (the temporary index a git before 2.40 reads attributes from, GST-2312)
 src/core/persistence/sync-blobs.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/persistence/sync-capacity-preflight.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/sync-discovery.ts	fs_import	1	W5: repo-less persistence for hosts

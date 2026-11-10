@@ -149,7 +149,7 @@ async function recallFacts(ctx: OperationContext, query: string, maxChars: numbe
   const { rankFactsByQuestion } = await import('../facts/question-recall.ts');
   const ranked = query && sources.length ? (await rankFactsByQuestion(ctx, {
     question: query, params: { question: query }, factSources: sources, limit: MEMORY_RECALL_ARM_LIMIT, entity: null, sessionId: null, since: null, grep: null,
-    scope: { sourceIds: sources, remote, excludePrivate: read.excludePrivate, minTrust: read.eligibility.floor, suppressFlagged: read.eligibility.suppressFlagged },
+    scope: { sourceIds: sources, worldOnly: remote, excludePrivate: read.excludePrivate, minTrust: read.eligibility.floor, suppressFlagged: read.eligibility.suppressFlagged },
   })).rows : [];
   const seen = new Set<number>();
   const rows = [...own, ...ranked].filter(r => !seen.has(r.id) && !!seen.add(r.id));

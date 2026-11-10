@@ -19,6 +19,7 @@ import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purg
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tombstones.ts';
 import { scrubPurgedPageNames } from './purged-page-names.ts';
+import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 import { maintenanceTransaction } from './attribution.ts';
 
@@ -138,6 +139,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
               [row.id, hours]);
             await expireGonePageFacts(tx, gone);
             if (gone.length) await scrubPurgedPageNames(tx, row.source_id, [row.slug]);
+            if (gone.length) await scrubPurgedSlugs(tx, row.source_id, [row.slug]);
             return gone.length > 0;
           });
       });

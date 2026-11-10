@@ -1038,6 +1038,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/guides/troubleshooting.md#consumers-without-heartbeat)
 
+### content_filter_owned
+
+<a id="content_filter_owned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A synced file is stored in Git through a filter (git-crypt or another clean/smudge driver), so managed sync holds that file alone. | A filter's committed bytes (git-crypt ciphertext, for one) are not the file's text, and gbrain does not run a repository's filter programs during sync, so the file cannot be imported as it stands. The rest of the source keeps syncing. | Leave the file out with sync.exclude, or commit it without the filter so Git stores its text, then sync again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#content_filter_owned](../../docs/guides/write-refusals.md#content_filter_owned)
+
 ### content_null_bytes
 
 <a id="content_null_bytes"></a>
@@ -4790,6 +4800,14 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 |---|---|---|---|---|---|---|
 | OAuth clients still reference this source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### source_retire_superseded
+
+<a id="source_retire_superseded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A retried source remove or purge was superseded: its source has since been removed, replaced or changed by another lifecycle operation; nothing was changed. | A remove or purge records the source incarnation it was admitted against before it deletes its first page, so a retry of its request id can never delete the pages of a source re-added under the same ID, and a later lifecycle change to the source (such as a restore) abandons the request. A request refused this way stays refused. | Do not retry this request id. Read the source's current state; removing the current source is a new decision for the user, made with a new request id. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+
 ### source_root_conflict
 
 <a id="source_root_conflict"></a>
@@ -5626,7 +5644,7 @@ Reasons: `override`, `standing_instruction`, `exfiltration`, `credential`, `dete
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The database kept ending this managed write's statements (SQLSTATE 57014, a statement timeout or cancel), or its publication kept running past persistence.publication_ceiling_ms and was cancelled, after persistence.max_transient_retries retries with backoff (default 5), so the owner finished it failed instead of preparing it again; nothing was published. | Each such interruption throws the write's preparation away. It is load or latency, not the write's content, so it has its own retry budget: the request is claimed again after a backoff (1 s, 2 s, 4 s, 8 s, then 15 s; no claim is held while it waits) up to persistence.max_transient_retries times, and the next interruption ends it instead of preparing it again without limit. It never charges persistence.max_preparation_attempts, which preparations cut off at their deadline keep. Contention with other transactions (lock timeout, serialization failure, deadlock), a dropped connection and a restarting database are never counted. The receipt names the interruptions (attempts), the retry limit, the cause and the SQLSTATE. | Inspect the owner with gbrain sources writer status --source <id> --json (read-only), then submit the write again with a new request_id once the database is less loaded; a held sync file needs gbrain sources retry-held <id> and the same sync. If the same write ends this way again, report its request id with gbrain doctor --json. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
+| The database kept ending this managed write's statements (SQLSTATE 57014, a statement timeout or cancel, or 0A000, a plan cached before a migration changed the table), or its publication kept running past persistence.publication_ceiling_ms and was cancelled, after persistence.max_transient_retries retries with backoff (default 5), so the owner finished it failed instead of preparing it again; nothing was published. | Each such interruption throws the write's preparation away. It is load or latency, not the write's content, so it has its own retry budget: the request is claimed again after a backoff (1 s, 2 s, 4 s, 8 s, then 15 s; no claim is held while it waits) up to persistence.max_transient_retries times, and the next interruption ends it instead of preparing it again without limit. It never charges persistence.max_preparation_attempts, which preparations cut off at their deadline keep. Contention with other transactions (lock timeout, serialization failure, deadlock), a dropped connection and a restarting database are never counted. The receipt names the interruptions (attempts), the retry limit, the cause and the SQLSTATE. | Inspect the owner with gbrain sources writer status --source <id> --json (read-only), then submit the write again with a new request_id once the database is less loaded; a held sync file needs gbrain sources retry-held <id> and the same sync. If the same write ends this way again, report its request id with gbrain doctor --json. Run: gbrain sources writer status --source '{source_id}' --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#write_interrupted](../../docs/guides/write-refusals.md#write_interrupted)
 

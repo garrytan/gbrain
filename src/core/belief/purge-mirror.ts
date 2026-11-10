@@ -142,6 +142,11 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
         await writeOriginDeletedMarker(tx, { sourceId: src, page: restored });
         const { deletePageWithSegments } = await import('../persistence/page-purge.ts');
         await deletePageWithSegments(tx, src, restored.slug, restored.id);
+        const [feedback] = await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('retrieval_event_pages') IS NOT NULL AS present");
+        if (feedback?.present) {
+          const { scrubPurgedSlugs } = await import('../feedback/store.ts');
+          await scrubPurgedSlugs(tx, src, [restored.slug]);
+        }
       };
     }
   } else {

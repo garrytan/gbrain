@@ -29,7 +29,7 @@ import type { Check } from '../../doctor.ts';
 import { withSkippedSegmented } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { scanDeadline } from '../budget.ts';
-import { currentStatementDeadline } from '../../../core/statement-deadline.ts';
+import { localProbe } from '../local-probe.ts';
 
 async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   const { engine, orphanRatioSourceId } = ctx;
@@ -379,42 +379,6 @@ export const extractionBacklogsEntry: DoctorEntry = {
   engineChecks: ['malformed_path_pages', 'extract_health', 'conversation_facts_backlog', 'extract_atoms_backlog', 'atom_provenance_drift', 'conversation_format_coverage'],
   run: runExtractionBacklogs,
 };
-
-/**
- * #8979: a local probe's stdout, or null when it fails or outlives its bound (5 s, clipped to the entry deadline less
- * the report reserve; `entryDeadlineAt` is read when the entry starts). It runs asynchronously and is killed with
- * SIGKILL at its bound (on POSIX its whole process group, so a wrapper's children die too), so a probe that hangs
- * never blocks the event loop or outlives the entry's deadline. A probe
- * the entry deadline cut short marks the entry's scope expired, so its checks report unknown instead of absent.
- */
-async function localProbe(entryDeadlineAt: number | undefined, file: string, args: string[]): Promise<string | null> {
-  const scope = currentStatementDeadline();
-  const ownEnd = Date.now() + 5_000;
-  const end = scanDeadline({ entryDeadlineAt }, 5_000);
-  const cutShort = () => { if (scope && end < ownEnd) scope.expired = true; return null; };
-  const timeout = end - Date.now();
-  if (timeout <= 0) return cutShort();
-  const { spawn } = await import('../../../core/spawn.ts');
-  const posix = process.platform !== 'win32';
-  return new Promise((resolve) => {
-    // nosemgrep: javascript.lang.security.audit.spawn-shell-true.spawn-shell-true -- file and args are constants from the three call sites (npm root -g, which -a gbrain, crontab -l); the shell is Windows-only, where npm resolves to npm.cmd, as with the execFile it replaced; trusted local CLI only
-    const child = spawn(file, args, { shell: !posix, detached: posix, stdio: ['ignore', 'pipe', 'ignore'] });
-    let out = '';
-    let done = false;
-    const finish = (value: string | null) => { if (done) return; done = true; clearTimeout(timer); resolve(value); };
-    const timer = setTimeout(() => {
-      if (done) return;
-      try { if (posix && child.pid) process.kill(-child.pid, 'SIGKILL'); else child.kill('SIGKILL'); } catch { child.kill('SIGKILL'); }
-      child.stdout?.destroy();
-      child.unref();
-      finish(cutShort());
-    }, timeout);
-    child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', (chunk: string) => { out += chunk; });
-    child.on('error', () => finish(null));
-    child.on('close', (code) => finish(code === 0 ? out : null));
-  });
-}
 
 async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
