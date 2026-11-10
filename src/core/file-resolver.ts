@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { parse as parseYaml } from './yaml-lite.ts';
 import type { StorageBackend } from './storage.ts';
+import { resolvedPrefixContained } from './path-confine.ts';
 
 /**
  * Universal file reader with fallback chain:
@@ -53,10 +54,10 @@ export async function resolveFile(
   storage?: StorageBackend,
 ): Promise<ResolvedFile> {
   // Validate filePath stays within brainRoot (prevents MCP callers from reading arbitrary files)
-  const { resolve: resolvePath } = await import('path');
+  const { resolve: resolvePath, sep } = await import('path');
   const resolvedRoot = resolvePath(brainRoot);
   const resolvedFull = resolvePath(brainRoot, filePath);
-  if (!resolvedFull.startsWith(resolvedRoot + '/') && resolvedFull !== resolvedRoot) {
+  if (!resolvedPrefixContained(resolvedFull, resolvedRoot, sep)) {
     throw new Error(`Path traversal blocked: ${filePath} resolves outside brain root`);
   }
 

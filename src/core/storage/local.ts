@@ -1,8 +1,9 @@
 import { chmodSync, createReadStream, createWriteStream, readFileSync, statSync, writeFileSync, unlinkSync, existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from 'fs';
 import { pipeline } from 'stream/promises';
-import { join, dirname, resolve, basename } from 'path';
+import { join, dirname, resolve, basename, sep } from 'path';
 import { createHash, randomBytes } from 'crypto';
 import { fileChangedDuringUpload, type StorageBackend } from '../storage.ts';
+import { resolvedPrefixContained } from '../path-confine.ts';
 
 /**
  * Local filesystem storage — for testing and development.
@@ -18,7 +19,7 @@ export class LocalStorage implements StorageBackend {
 
   private contained(path: string): string {
     const full = resolve(this.canonicalBase, path);
-    if (!full.startsWith(this.canonicalBase + '/') && full !== this.canonicalBase) {
+    if (!resolvedPrefixContained(full, this.canonicalBase, sep)) {
       throw new Error('Path traversal blocked: ' + path + ' resolves outside storage root');
     }
     return full;
