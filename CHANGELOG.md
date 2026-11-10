@@ -12,7 +12,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Fact extraction and capture now record who said what, and where a page came from, more faithfully.** Lines you quote with `>` in a turn are no longer saved as your own facts, a Claude Code Remote Control session is yours rather than an agent's, facts that open with a log word ("Notes from", "Watched") link to the one entity they name, a facts batch refused for a stale embedding config lands once the write owner restarts with the fixed config, `transcripts ingest --facts --json` reports a budget stop instead of reading complete, and a remote timeline entry, link or tag no longer overwrites how its page entered the brain.
+**Fact extraction and capture now record who said what, and where a page came from, more faithfully.** Lines you quote with `>` in a turn are no longer saved as your own facts, a Claude Code Remote Control session is yours rather than an agent's, facts that open with a log word ("Notes from", "Watched") link to the one entity they name, a facts batch refused for a stale embedding config lands once the write owner restarts with the fixed config, `transcripts ingest --facts --json` reports a budget stop instead of reading complete, a remote timeline entry, link or tag no longer overwrites how its page entered the brain, and a live fact whose context note happens to read "superseded by #N" is no longer hidden as superseded.
 
 ### Itemized changes
 
@@ -22,8 +22,9 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/transcripts/ingest-facts.ts`, `src/commands/transcripts.ts`: `transcripts ingest --facts` returns `budgetExhausted`, `budgetReason`, `pagesSkippedTooLarge` and `pagesLockSkipped` in `--json` and prints a line for each in the human summary. Reported and first fixed by @harjothkhara (#8722, #8757).
 - `src/core/context/session-speaker.ts`: a headless session that a `claude remote-control` server (or its `rc`, `remote`, `sync`, `bridge` aliases) hosts over `--sdk-url` is the owner's; a worker that session launches is still agent-launched. Existing speaker sidecars keep their first record. Reported and first fixed by @exGeni (#8080, #8892).
 - `src/core/persistence/page-mutations.ts`: only remote writes that supply page text (put_page, edit_page, append_page, capture) stamp `mcp:<operation>` provenance; other remote page writes keep the stored `source_kind`, `ingested_via` and `ingested_at`. Reported and first fixed by @zsimovanforgeops (#8667).
-- Docs: `docs/guides/ambient-writeback.md` (Remote Control sessions under automatic detection) and the KEY_FILES entries for the touched files.
-- Tests: `test/facts/writeback-gate.test.ts`, `test/facts-embedding-refusal-heal-8526.test.ts` (PGLite and Postgres), `test/facts-subject-infer.test.ts`, `test/extract-conversation-facts.test.ts`, `test/agent-session-speaker-8064.serial.test.ts`, `test/put-page-provenance.test.ts`.
+- `src/core/facts-fence.ts`: only a struck (`~~claim~~`) row takes a `superseded by #N` link from its context cell, the way only a struck row reads `forgotten:`; a live row keeps the text as context and stays in recall. A live row an older build linked is cleared by a full reconcile, which `gbrain dream --phase extract_facts --source <id>` runs; the nightly cycle clears it only when the page changes, and on a managed brain an earlier reconcile receipt for an unchanged page can replay until then. Reported and first fixed by @alanshurafa (#9069, #9073).
+- Docs: `docs/guides/ambient-writeback.md` (Remote Control sessions under automatic detection), `docs/guides/fence-format.md` (the `context` column) and the KEY_FILES entries for the touched files.
+- Tests: `test/facts/writeback-gate.test.ts`, `test/facts-embedding-refusal-heal-8526.test.ts` (PGLite and Postgres), `test/facts-subject-infer.test.ts`, `test/extract-conversation-facts.test.ts`, `test/agent-session-speaker-8064.serial.test.ts`, `test/put-page-provenance.test.ts`, `test/facts-fence.test.ts`, `test/extract-facts-phase.test.ts`, `test/fence-write.test.ts`.
 
 ## [0.60.620.0] - 2026-11-09
 
