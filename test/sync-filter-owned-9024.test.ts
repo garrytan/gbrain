@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { __setCheckAttrSourceForTests, __setPinnedWindowForTests } from '../src/core/persistence/sync-blobs.ts';
+import { retryHeld } from '../src/commands/sources-retry-held.ts';
+import { filterOwnedRefusal } from '../src/core/persistence/sync-entry-fault.ts';
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -123,7 +125,47 @@ for (const backend of testBackends()) describe('[' + backend + '] a committed fi
     expect(held[0]!.message).toContain('remove the filter attribute from .gitattributes');
     expect(held[0]!.message).toContain('gbrain sources retry-held default');
     expect(await live(engine)).not.toContain('notes/plain');
+    writeFileSync(join(root, '.gitattributes'), ''); commit(root, 'drop the attribute');
+    await performManagedSync(engine, OPTS);
+    expect((await holds(engine)).filter(hold => hold.path === 'notes/plain.md').map(hold => hold.code)).toEqual(['content_filter_owned']);
+    await retryHeld(engine, 'default');
+    await performManagedSync(engine, OPTS);
+    expect((await holds(engine)).filter(hold => hold.path === 'notes/plain.md')).toEqual([]);
+    expect(await live(engine)).toContain('notes/plain');
   }), 240_000);
+
+  test('the stop path (nothing held) does not tell the user to run retry-held', () => {
+    expect(filterOwnedRefusal('a.md', 'text', 'secret', 'default', false)!.message).not.toContain('retry-held');
+    expect(filterOwnedRefusal('a.md', 'text', 'secret', 'default', true)!.message).toContain('gbrain sources retry-held default');
+  });
+
+  for (const source of [true, false]) {
+    test('a partial clone missing the commit\'s .gitattributes holds the file git_object_missing and fetches nothing (' + (source ? 'check-attr --source' : 'git before 2.40: a temporary index') + ')', () => brain(async ({ engine, root }) => {
+      const restore = __setCheckAttrSourceForTests(source);
+      try {
+        expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+        const marker = filtered(root, false);
+        const server = join(root, '..', 'origin.git'), uploadPack = join(root, '..', 'bin', 'upload-pack');
+        execFileSync('git', ['clone', '-q', '--bare', root, server]);
+        git(server, 'config', 'uploadpack.allowFilter', 'true'); git(server, 'config', 'uploadpack.allowAnySHA1InWant', 'true');
+        writeFileSync(uploadPack, '#!/bin/sh\ntouch ' + marker + '.upload-pack\nexec git-upload-pack "$@"\n'); chmodSync(uploadPack, 0o755);
+        for (const [key, value] of [['core.repositoryformatversion', '1'], ['extensions.partialClone', 'origin'], ['remote.origin.url', 'file://' + server],
+          ['remote.origin.promisor', 'true'], ['remote.origin.partialclonefilter', 'blob:none'], ['remote.origin.uploadpack', uploadPack]]) git(root, 'config', key!, value!);
+        const oid = git(root, 'rev-parse', 'HEAD:.gitattributes');
+        rmSync(join(root, '.git', 'objects', oid.slice(0, 2), oid.slice(2)));
+        await performManagedSync(engine, OPTS);
+        expect(existsSync(marker + '.upload-pack')).toBe(false);
+        // The root .gitattributes applies to every path, so both files of the commit are held; the seed page stays.
+        const held = (await holds(engine)).filter(hold => hold.path === 'secret/one.md' || hold.path === 'ok.md').sort((a, b) => a.path.localeCompare(b.path));
+        expect(held.map(hold => [hold.path, hold.code])).toEqual([['ok.md', 'git_object_missing'], ['secret/one.md', 'git_object_missing']]);
+        expect(held[1]!.message).toContain('partial clone');
+        expect(held[1]!.message).toContain(oid);
+        expect(await live(engine)).toEqual(['seed']);
+        expect(existsSync(marker)).toBe(false);
+        expect(existsSync(marker + '.fsmonitor')).toBe(false);
+      } finally { restore(); }
+    }), 240_000);
+  }
 
   for (const source of [true, false]) {
     test('the filter attribute is read at the synced commit, not from an uncommitted .gitattributes (' + (source ? 'check-attr --source' : 'git before 2.40: a temporary index') + ')', () => brain(async ({ engine, root }) => {

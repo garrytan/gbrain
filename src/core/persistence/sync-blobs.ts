@@ -12,6 +12,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gitChildEnv } from '../git-env.ts';
+import { HARDENED_GIT_ARGS } from '../hardened-git.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 
 /** The sync read bound (`readSyncFile`): bigger files are held without being read. The page ceiling (page-size-policy.ts), which also covers MAX_IMAGE_BYTES. */
@@ -86,29 +87,50 @@ export function __setCheckAttrSourceForTests(value: boolean | undefined): () => 
   return () => { checkAttrSource = previous; };
 }
 
+/** GST-2312 (#9024): a `.gitattributes` of the commit that this repository lacks (a partial clone that never fetched it). */
+export interface MissingAttributes { attributes: string; oid: string }
+
 /**
  * GST-2312 (#9024): the Git filter driver each path's `filter` attribute names at commit `target`, null where none does,
  * whether or not this checkout's Git config defines the driver (the commit may have been cleaned on another machine). A
  * committed blob a filter owns holds what the filter's clean program stored (git-crypt ciphertext, for one), not the text
  * of the checkout, and sync never runs a repository's filters. Git 2.40 and newer read the attributes with
  * `check-attr --source=<target>`; an older git reads `target` into a temporary index (`read-tree`) and asks
- * `check-attr --cached` there. Neither runs a program (`NO_REPOSITORY_PROGRAMS`).
+ * `check-attr --cached` there. Every call takes `HARDENED_GIT_ARGS` and `GIT_NO_LAZY_FETCH=1`, so no repository
+ * program runs and a partial clone fetches nothing. Git then reads a `.gitattributes` the repository lacks as empty, so
+ * the ones that apply are checked first, and a path under a missing one maps to it instead of to a driver.
  */
-export function readFilterDrivers(gitRoot: string, target: string, gitPaths: string[]): Map<string, string | null> {
-  const out = new Map<string, string | null>();
+export function readFilterDrivers(gitRoot: string, target: string, gitPaths: string[]): Map<string, string | null | MissingAttributes> {
+  const out = new Map<string, string | null | MissingAttributes>();
   if (gitPaths.length === 0) return out;
+  const read = (args: string[], input?: string, env: NodeJS.ProcessEnv = {}) => git(gitRoot, [...HARDENED_GIT_ARGS, ...args], input, undefined, { GIT_NO_LAZY_FETCH: '1', ...env });
   if (checkAttrSource === undefined) {
-    const [major, minor] = (/git version (\d+)\.(\d+)/.exec(git(gitRoot, ['version']).toString('utf8')) ?? ['', '0', '0']).slice(1).map(Number);
+    const [major, minor] = (/git version (\d+)\.(\d+)/.exec(read(['version']).toString('utf8')) ?? ['', '0', '0']).slice(1).map(Number);
     checkAttrSource = major! > 2 || major === 2 && minor! >= 40;
   }
+  const dirsOf = (path: string) => path.split('/').slice(0, -1).map((_, at, parts) => parts.slice(0, at + 1).join('/')).concat('');
+  const candidates = [...new Set(gitPaths.flatMap(dirsOf))].map(dir => dir ? `${dir}/.gitattributes` : '.gitattributes');
+  const present: MissingAttributes[] = [];
+  for (let i = 0; i < candidates.length; i += 1000) {
+    for (const record of read(['ls-tree', '-z', '--full-tree', target, '--', ...candidates.slice(i, i + 1000)]).toString('utf8').split('\0')) {
+      const match = /^\d+ blob ([0-9a-f]+)\t(.*)$/s.exec(record);
+      if (match) present.push({ attributes: match[2]!, oid: match[1]! });
+    }
+  }
+  const missing = new Map<string, MissingAttributes>();
+  const checked = present.length ? read(['cat-file', '--batch-check'], present.map(file => file.oid).join('\n') + '\n').toString('utf8').split('\n') : [];
+  present.forEach((file, at) => { if (checked[at]?.endsWith(' missing')) missing.set(file.attributes.slice(0, -'.gitattributes'.length).replace(/\/$/, ''), file); });
   const scratch = checkAttrSource ? null : mkdtempSync(join(tmpdir(), 'gbrain-attributes-'));
   const env = scratch ? { GIT_INDEX_FILE: join(scratch, 'index') } : {};
   try {
-    if (scratch) git(gitRoot, ['read-tree', target], undefined, undefined, env);
+    if (scratch) read(['read-tree', target], undefined, env);
     for (let i = 0; i < gitPaths.length; i += 2000) {
-      const fields = git(gitRoot, ['check-attr', ...(scratch ? ['--cached'] : [`--source=${target}`]), '-z', '--stdin', 'filter'],
-        gitPaths.slice(i, i + 2000).join('\0') + '\0', undefined, env).toString('utf8').split('\0');
-      for (let at = 0; at + 2 < fields.length; at += 3) out.set(fields[at]!, ['unspecified', 'unset', 'set'].includes(fields[at + 2]!) ? null : fields[at + 2]!);
+      const fields = read(['check-attr', ...(scratch ? ['--cached'] : [`--source=${target}`]), '-z', '--stdin', 'filter'],
+        gitPaths.slice(i, i + 2000).join('\0') + '\0', env).toString('utf8').split('\0');
+      for (let at = 0; at + 2 < fields.length; at += 3) {
+        const lost = dirsOf(fields[at]!).map(dir => missing.get(dir)).find(Boolean);
+        out.set(fields[at]!, lost ?? (['unspecified', 'unset', 'set'].includes(fields[at + 2]!) ? null : fields[at + 2]!));
+      }
     }
   } finally {
     if (scratch) rmSync(scratch, { recursive: true, force: true });

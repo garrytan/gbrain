@@ -32,7 +32,7 @@ import { VERSION } from '../../version.ts';
 import { isWriteCapacityWait } from './admission-retry.ts';
 import { PAGE_BODY_FAULT_CODES } from './sync-fault-class.ts';
 import { gitBlobOid } from './digest.ts';
-import { readBlobBytes, type TreeBlob } from './sync-blobs.ts';
+import { readBlobBytes, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
 import { readSyncFile, type SyncEntry } from './sync-discovery.ts';
 import type { GitHoldRecord } from './sync-holds.ts';
 
@@ -65,7 +65,20 @@ export function filterOwnedRefusal(path: string, content: string, driver: string
   return { code: 'content_filter_owned', message: `${path} is ${gitCrypt ? 'encrypted with git-crypt' : `stored through the Git filter "${driver}"`}, so its committed bytes are not the text in your checkout. `
     + `gbrain does not run a repository's filter programs during sync, so ${held ? 'sync held this file and the rest of the source synced' : 'this sync stopped at this file'}. `
     + 'Leave it out with sync.exclude, or commit it without the filter so Git stores its text, then sync again.'
-    + (gitCrypt ? '' : ` If no filter "${driver}" is in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${sourceId}: a commit that changes only .gitattributes does not re-screen the file.`) };
+    + (gitCrypt || !held ? '' : ` If no filter "${driver}" is in use and the file is plain text, remove the filter attribute from .gitattributes, commit, and run gbrain sources retry-held ${sourceId}: a commit that changes only .gitattributes does not re-screen the file.`) };
+}
+
+/**
+ * GST-2312 (#9024): the `git_object_missing` refusal of a committed file whose `.gitattributes` at the synced commit the
+ * repository lacks (`readFilterDrivers`), so whether a Git filter owns it cannot be read; sync fetches nothing to find out.
+ */
+export function missingAttributesRefusal(cursor: { gitRoot: string; sourceId: string }, path: string, lost: MissingAttributes): OperationError {
+  return opError('git_object_missing', `The .gitattributes that applies to ${path} at the synced commit is missing from the repository.`,
+    `${lost.attributes} is committed as blob ${lost.oid}, but the repository of source ${cursor.sourceId} does not have that object, as in a partial clone (git clone --filter) that never fetched it. `
+      + `Sync reads a file's Git filter attribute without fetching anything, so it cannot tell whether a filter owns ${path}, and nothing was imported from it. `
+      + `Fetch the object in the checkout (git cat-file -p ${lost.oid} fetches it from the partial clone's remote) or use a clone without --filter, then run gbrain sync --source ${cursor.sourceId} --no-pull.`,
+    { detail: lost.oid, fix: { argv: ['git', '-C', cursor.gitRoot, 'cat-file', '-p', lost.oid], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Fetches the missing .gitattributes from the partial clone\'s remote, so the next sync can read the attribute.', verify: { argv: ['gbrain', 'sources', 'status', cursor.sourceId, '--json'] } } });
 }
 
 /**

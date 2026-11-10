@@ -36,9 +36,9 @@ import { materializedSnapshot } from './segmented-apply.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
 import { listTrustAllowRules } from '../trust/allow-rules.ts';
 import { readSyncContent, readSyncFile, syncGitPath, UNREADABLE_SYNC_FILE, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
-import { pinnedWindowBlock, readBlobBytes, readBlobContents, readFilterDrivers, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
+import { pinnedWindowBlock, readBlobBytes, readBlobContents, readFilterDrivers, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
-import { committedContentOrMissing, filterOwnedRefusal, nullBytesRefusal } from './sync-entry-fault.ts';
+import { committedContentOrMissing, filterOwnedRefusal, missingAttributesRefusal, nullBytesRefusal } from './sync-entry-fault.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldCode, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
 import type { WriteRequest } from './model.ts';
@@ -82,13 +82,14 @@ export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null 
   return readPinnedBlob(cursor.gitRoot, cursor.target, syncGitPath(cursor, path), upcomingGitPaths(cursor));
 }
 
-let filterDrivers: { key: string; drivers: Map<string, string | null> } | null = null;
+let filterDrivers: { key: string; drivers: Map<string, string | null | MissingAttributes> } | null = null;
 /**
  * GST-2312 (#9024): the Git filter driver of one entry's path at the pinned commit (`readFilterDrivers`), or null; a
  * company plan's at its approved revision. A miss reads it with up to 2,000 of the committed imports after it in one
- * `check-attr`; answers are kept per Git root and commit.
+ * `check-attr`; answers are kept per Git root and commit. A path under a `.gitattributes` the repository lacks throws
+ * `git_object_missing` (`missingAttributesRefusal`), and that answer is dropped once used, so the next run reads again.
  */
-export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries' | 'companyPlan'> & { index?: number }, path: string): string | null {
+export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries' | 'companyPlan' | 'sourceId'> & { index?: number }, path: string): string | null {
   const revision = cursor.companyPlan?.revision, gitRoot = revision?.git_root ?? cursor.gitRoot, target = revision?.commit ?? cursor.target;
   const gitPathOf = (next: string) => revision ? (revision.scope ? `${revision.scope}/${next}` : next) : syncGitPath(cursor, next);
   const gitPath = gitPathOf(path), key = `${gitRoot}\0${target}`;
@@ -100,7 +101,10 @@ export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot
     for (const [next, driver] of readFilterDrivers(gitRoot, target, [gitPath, ...upcoming])) known.set(next, driver);
     if (!known.has(gitPath)) known.set(gitPath, null);
   }
-  return known.get(gitPath) ?? null;
+  const driver = known.get(gitPath) ?? null;
+  if (typeof driver !== 'object' || driver === null) return driver;
+  known.delete(gitPath);
+  throw missingAttributesRefusal({ gitRoot, sourceId: cursor.sourceId }, path, driver);
 }
 
 /**
