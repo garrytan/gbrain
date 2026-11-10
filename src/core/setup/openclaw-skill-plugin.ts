@@ -23,6 +23,7 @@
  * admission. A failed or partial install is never reported as success: it
  * ends `skill_resolver_plugin_not_installed` with the commands still to run.
  */
+import { createHash } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -92,10 +93,11 @@ function which(name: string): string | null {
 const shown = (argv: string[]) => argv.map((a) => (/^[\w./:=@-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
 const lastLine = (s: string) => s.trim().split('\n').at(-1) || 'no output';
 
-/** `openclaw-<agent>`, folded to the catalog-name alphabet. */
+/** `openclaw-<agent>`, folded to the catalog-name alphabet; an id the fold changes gets a short hash of itself, so two agents never share a catalog. */
 export function openclawCatalogName(agentId: string): string {
-  const slug = agentId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[-_]+/, '').slice(0, 54) || 'main';
-  return `openclaw-${slug}`;
+  const slug = agentId.toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^[-_]+/, '');
+  if (slug && slug === agentId && slug.length <= 54) return `openclaw-${slug}`;
+  return `openclaw-${slug.slice(0, 45) || 'agent'}-${createHash('sha256').update(agentId).digest('hex').slice(0, 8)}`;
 }
 
 interface RosterEntry { id: string; workspace?: string }

@@ -256,6 +256,7 @@ function checkSkew(s) {
   if (refreshing || now < skewOpenUntil || now - skewCheckedAt < 3_600_000) return;
   skewCheckedAt = now;
   const env = { ...process.env, ...(GBRAIN_HOME_ENV ? { GBRAIN_HOME: GBRAIN_HOME_ENV } : {}) };
+  delete env.GBRAIN_SKILL_LOADING;
   execFile(GBRAIN_BIN, ['--version'], { timeout: 10_000, env }, (err, stdout) => {
     const v = !err && /\d+\.\d+\.\d+(?:\.\d+)?/.exec(String(stdout));
     if (!v || v[0] === s.gbrain_version) return;
@@ -298,11 +299,11 @@ async function resolveTurn(event, ctx, opts) {
   if (trigger === 'heartbeat' || trigger === 'cron') return finish({ outcome: 'skipped_provenance', provenance: trigger });
   if (Array.isArray(a.owner_sender_ids) && a.owner_sender_ids.length) {
     const sender = senderOf(event, ctx);
-    if (sender !== null && !a.owner_sender_ids.includes(sender)) return finish({ outcome: 'skipped_sender' });
+    if (sender === null || !a.owner_sender_ids.includes(sender)) return finish({ outcome: 'skipped_sender' });
   }
   const turnId = (event && (event.currentUserMessageId || event.messageId)) || createHash('sha256').update(text).digest('hex').slice(0, 16);
   const memoKey = agentId + '\0' + sessionKey + '\0' + turnId;
-  if (memo.has(memoKey)) return finish({ outcome: 'retry' }, memo.get(memoKey));
+  if (memo.has(memoKey)) return finish({ outcome: 'retry' }, arm === 'live' ? memo.get(memoKey) : '');
   const w = ensureWorker(s);
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);

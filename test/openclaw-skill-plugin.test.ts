@@ -19,6 +19,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
+import { openclawCatalogName } from '../src/core/setup/openclaw-skill-plugin.ts';
 
 setDefaultTimeout(120_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -84,7 +85,7 @@ const pluginDir = (b: Box) => join(b.state, 'gbrain', 'gbrain-skill-resolver');
 const readState = (b: Box) => JSON.parse(readFileSync(statePath(b), 'utf8'));
 
 /** Drive the generated plugin under Node with a fake OpenClaw api; each step is [kind, args]. */
-function drive(b: Box, steps: unknown[], nodeOptions?: string): any {
+function drive(b: Box, steps: unknown[], nodeOptions?: string, env: Record<string, string> = {}): any {
   const script = join(b.root, 'drive.mjs');
   writeFileSync(script, String.raw`
 import { pathToFileURL } from 'node:url';
@@ -108,7 +109,7 @@ await sleep(300);
 console.log(JSON.stringify(out));
 process.exit(0);
 `);
-  const r = Bun.spawnSync([NODE!, script, pluginDir(b), statePath(b), JSON.stringify(steps)], { env: { PATH: b.env.PATH!, HOME: b.home, ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}) }, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
+  const r = Bun.spawnSync([NODE!, script, pluginDir(b), statePath(b), JSON.stringify(steps)], { env: { PATH: b.env.PATH!, HOME: b.home, ...(nodeOptions ? { NODE_OPTIONS: nodeOptions } : {}), ...env }, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 });
   const text = r.stdout.toString().trim().split('\n').at(-1) ?? '';
   try { return JSON.parse(text); } catch { throw new Error('drive failed: ' + r.stderr.toString() + text); }
 }
@@ -218,6 +219,15 @@ describe.skipIf(!NODE)('gbrain skills pin', () => {
   });
 });
 
+test('catalog names: distinct agent ids never share a catalog, and plain ids keep their plain name', () => {
+  const long = 'a'.repeat(60);
+  const names = ['main', 'work', 'Work', 'a-b', 'a.b', long + 'x', long + 'y'].map(openclawCatalogName);
+  expect(names[0]).toBe('openclaw-main');
+  expect(names[1]).toBe('openclaw-work');
+  expect(new Set(names).size).toBe(names.length);
+  for (const n of names) expect(n).toMatch(/^openclaw-[a-z0-9][a-z0-9_-]{0,53}$/);
+});
+
 describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
   test('live: pins every turn, up to 3 suggestions, pinned never suggested, retry commits once; skips internal turns; shadow and off inject nothing', async () => {
     const b = box({ skills: 250 });
@@ -275,6 +285,34 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     const lines = logLines(b);
     expect(lines.find((l) => l.outcome === 'skipped_sender')).toBeTruthy();
     expect(lines.at(-1)).toMatchObject({ arm: 'control', outcome: 'would_suggest' });
+  });
+
+  test('fails closed: a turn with no sender under an owner allowlist, and a remembered block once the arm is no longer live', async () => {
+    const b = box();
+    await setup(b, ['--skill-loading', 'resolve', '--owner-sender', 'owner-1']);
+    const out = drive(b, [
+      ['turn', { text: 'triage the email inbox', id: 'm1' }],
+      ['turn', { text: 'sync the calendar', id: 'm2', sender: 'owner-1' }],
+      ['state', { mode: 'shadow' }],
+      ['turn', { text: 'sync the calendar', id: 'm2', sender: 'owner-1' }],
+      ['state', { mode: 'live', live_fraction: 0 }],
+      ['turn', { text: 'sync the calendar', id: 'm2', sender: 'owner-1' }],
+    ]);
+    expect(out[0]?.appendContext ?? '').not.toContain('<relevant_skills>');
+    expect(out[1].appendContext).toContain('calendar-sync');
+    expect(out[3]?.appendContext ?? '').not.toContain('<relevant_skills>');
+    expect(out[5]?.appendContext ?? '').not.toContain('<relevant_skills>');
+    expect(logLines(b)[0]).toMatchObject({ outcome: 'skipped_sender' });
+  });
+
+  test('the version-skew refresh never inherits GBRAIN_SKILL_LOADING, so a gateway env cannot turn the plugin off', async () => {
+    const b = box();
+    await setup(b, ['--skill-loading', 'resolve']);
+    const rec = join(b.root, 'gbrain-calls.log');
+    writeFileSync(b.bin, '#!/bin/sh\necho "skill_loading=[$GBRAIN_SKILL_LOADING] $*" >> \'' + rec + '\'\n[ "$1" = "--version" ] && echo "gbrain 99.0.0"\nexit 0\n');
+    drive(b, [['turn', { text: 'triage the email inbox', id: 'm1' }], ['sleep', { ms: 1500 }]], undefined, { GBRAIN_SKILL_LOADING: 'spring' });
+    const lines = readFileSync(rec, 'utf8').trim().split('\n');
+    expect(lines).toContain('skill_loading=[] setup openclaw --skills-index-only');
   });
 
   test('refuses a library writable by others, and survives a process-only NODE_OPTIONS flag', async () => {
