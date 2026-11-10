@@ -106,10 +106,12 @@ export function getMessage(err: unknown): string {
  * GST-2314: a prepared statement whose cached plan went stale because a migration changed a table it reads (SQLSTATE
  * 0A000 "cached plan must not change result type"). Outside a transaction the driver re-prepares it; inside one the
  * transaction is already aborted, so the caller sees the error and a re-run on a fresh transaction succeeds. Every other
- * 0A000 (feature_not_supported) stays a refusal.
+ * 0A000 (feature_not_supported) stays a refusal. The C routine (RevalidateCachedQuery) is matched first because the
+ * server translates the message under a non-English lc_messages.
  */
 export function isStalePlanError(err: unknown): boolean {
-  return getCode(err) === '0A000' && /cached plan must not change result type/i.test(getMessage(err));
+  if (getCode(err) !== '0A000') return false;
+  return (err as { routine?: unknown }).routine === 'RevalidateCachedQuery' || /cached plan must not change result type/i.test(getMessage(err));
 }
 
 /**
