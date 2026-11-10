@@ -1717,7 +1717,6 @@ export class MinionQueue {
    * stranding the parent in waiting-children forever.
    */
   async completeJob(id: number, lockToken: string, result?: Record<string, unknown>): Promise<MinionJob | null> {
-    // GST-2260: database work only, so a completion a stale plan aborted runs again instead of failing a job that ran.
     return retryOnStalePlan(() => this.engine.transaction(async (tx) => {
       // Peek at parent_job_id before the UPDATE so we can lock the parent row
       // FIRST. Without this SELECT FOR UPDATE, two siblings completing
@@ -1833,7 +1832,6 @@ export class MinionQueue {
     backoffMs?: number,
     result?: Record<string, unknown>,
   ): Promise<MinionJob | null> {
-    // GST-2260: database work only, so a failure record a stale plan aborted runs again.
     return retryOnStalePlan(() => this.engine.transaction(async (tx) => {
       // Lock the parent row first so concurrent sibling completions/failures
       // serialize on the parent — same race fix as completeJob.
