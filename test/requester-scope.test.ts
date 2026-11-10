@@ -474,4 +474,10 @@ describe('the CLI refuses an unbound credential and records the opt-out (pglite,
     await run(['apply-migrations', '--yes', '--non-interactive']);
     expect({ before, after: await stdioMember() }).toEqual({ before: '', after: '' });
   }, 600_000);
+  test('auth --help names --reads-unscoped --yes on auth create and register-client, the flags the credential_scope_required refusal asks for', async () => {
+    const help = await runCli(['auth', '--help'], { timeoutMs: 60_000 });
+    const text = help.stdout + help.stderr;
+    expect(text).toMatch(/gbrain auth create <name> [^\n]*\[--reads-unscoped --yes\]/);
+    expect(text).toMatch(/gbrain auth register-client <name>[\s\S]*--reads-unscoped --yes/);
+  }, 120_000);
 });

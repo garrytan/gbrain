@@ -77,7 +77,7 @@ async function withConfiguredSql<T>(
 }
 
 async function create(name: string, opts: { takesHolders?: string[]; scopes?: string[]; minTrust?: TrustTier; binding?: BindingPatch | null } = {}) {
-  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>]'); process.exit(1); }
+  if (!name) { console.error('Usage: auth create <name> [--takes-holders world,garry] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]'); process.exit(1); }
   // #4043 least-privilege: validate scopes at mint time — the verify path
   // treats a filtered-empty scopes array as DENY, so a typo must fail loudly
   // here, never silently brick (or widen) the token.
@@ -756,7 +756,7 @@ export function formatRegisterClientOutput(name: string, r: RegisteredClient, pa
 
 async function registerClient(name: string, args: string[]) {
   if (!name) {
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD] [--token-ttl SECONDS]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD] [--token-ttl SECONDS] [--member <id>] [--reads-unscoped --yes]');
     process.exit(1);
   }
   let parsed: RegisterClientArgs;
@@ -766,7 +766,7 @@ async function registerClient(name: string, args: string[]) {
     parsed = parseRegisterClientArgs(binding.args);
   } catch (e: any) {
     console.error(`Error: ${e.message}`);
-    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD] [--token-ttl SECONDS]');
+    console.error('Usage: auth register-client <name> [--grant-types G] [--scopes S] [--source SOURCE] [--federated-read SRC1,SRC2,...] [--redirect-uri URI ...] [--token-endpoint-auth-method client_secret_post|client_secret_basic|none] [--bound-tools T1,T2] [--bound-source SOURCE] [--bound-brain BRAIN] [--bound-slug-prefixes P1,P2] [--bound-max-concurrent N] [--budget-usd-per-day USD] [--token-ttl SECONDS] [--member <id>] [--reads-unscoped --yes]');
     process.exit(1);
   }
 
@@ -1310,7 +1310,7 @@ Admin dashboard login (running HTTP server):
   This does not create an MCP bearer token. See docs/mcp/DEPLOY.md.
 
 Usage:
-  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>] [--member <id>]
+  gbrain auth create <name> [--takes-holders world,garry,brain] [--scopes read,write] [--min-trust <tier>] [--member <id>] [--reads-unscoped --yes]
                                                           Create a legacy bearer token. v0.28: --takes-holders
                                                           sets the per-token allow-list for the takes.holder
                                                           field (default: ["world"]). MCP-bound calls to
@@ -1322,6 +1322,9 @@ Usage:
                                                           return rows below that trust tier (${TRUST_TIERS.join(', ')});
                                                           memory_confirm in --scopes lets the token confirm
                                                           memory as you (local CLI only; never via admin API)
+                                                          On a brain that serves several people a new token needs
+                                                          --member <id>, or --reads-unscoped --yes to read every
+                                                          page no rule restricts on purpose (credential_scope_required)
   gbrain auth set-min-trust <client|token> <tier|none>    Set or clear the read floor of an OAuth client (id)
                                                           or legacy token (id or name). Local CLI only.
   gbrain auth list [--json]                                List all tokens (id, scopes, usage, private pages)
@@ -1382,6 +1385,8 @@ Usage:
      --token-endpoint-auth-method <method>                 (v0.41.3+; client_secret_post | client_secret_basic | none;
                                                             'none' = public PKCE-only client, no secret minted)
      --member <id> / --may-act-for <list>                  Bind the client to a member (see auth rescope)
+     --reads-unscoped --yes                                Read unscoped on a brain that serves several people
+                                                          (without it or --member, refused: see auth create)
      --bound-tools <tool1,tool2>                           Bind submit_agent to an allow-list of tools
      --bound-source <id>                                   Bind submit_agent jobs to a source id
      --bound-brain <id>                                    Bind submit_agent jobs to a brain id
