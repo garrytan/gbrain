@@ -83,10 +83,10 @@ async function hook(b: Box, command: string, payload: Record<string, unknown>, e
   return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
 }
 const WIDE = { GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '10000' };
-const laneLog = (b: Box): any[] => {
-  const p = join(b.home, '.gbrain', 'skill-index', 'logs', dailyLogFile(LANE_LOG, Date.now()));
+const laneLog = (b: Box): any[] => [Date.now() - 86_400_000, Date.now()].flatMap((ms) => {
+  const p = join(b.home, '.gbrain', 'skill-index', 'logs', dailyLogFile(LANE_LOG, ms));
   return existsSync(p) ? readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
-};
+});
 const sessions = (b: Box) => { const d = join(b.home, '.gbrain', 'skill-index', 'sessions'); return existsSync(d) ? readdirSync(d) : []; };
 const contextOf = (r: Run) => JSON.parse(r.stdout).hookSpecificOutput.additionalContext as string;
 
@@ -186,6 +186,19 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
       expect(sessions(b).some((s) => readFileSync(join(b.home, '.gbrain', 'skill-index', 'sessions', s), 'utf8').includes('deploy-widget'))).toBe(false);
     });
   }
+
+  for (const stall of ['load-error', 'exit'] as const) {
+    test(`${stall}: a worker that fails before answering is logged as skill_resolver_internal, not as a timeout`, async () => {
+      const b = box();
+      seedSkills(claudeSkills(b));
+      await setup(b, 'claude-code');
+      const cmd = wired(b, 'claude-code');
+      const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-l' }, { ...WIDE, GBRAIN_TEST_SKILL_LANE_STALL: stall });
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe('');
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_internal' });
+    });
+  }
 });
 
 describe('skill-resolver lane: turn settings from config', () => {
@@ -221,6 +234,9 @@ describe('skill-resolver lane: turn settings from config', () => {
     const bad = await config(b, 'set', 'skills.resolver.per_harness.vim.top_k', '2');
     expect(bad.exitCode).not.toBe(0);
     expect(bad.stderr).toContain('names no harness');
+    const inherited = await config(b, 'set', 'skills.resolver.per_harness.constructor.top_k', '2');
+    expect(inherited.exitCode).not.toBe(0);
+    expect(inherited.stderr).toContain('names no harness');
     expect((await config(b, 'set', 'skills.resolver.top_k', '9')).exitCode).not.toBe(0);
     const cfg = JSON.parse(readFileSync(join(b.home, '.gbrain', 'config.json'), 'utf8')).skills.resolver;
     expect([cfg.top_k, cfg.min_match, cfg.pinned, cfg.per_harness]).toEqual([1, 'named', ['deploy-widget'], { codex: { top_k: 2 } }]);

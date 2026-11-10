@@ -65,7 +65,7 @@ import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.t
 import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
 import type { LaneWorkerTurn } from './hook-worker.ts';
-import { startLaneWorker } from './lane-worker.ts';
+import { laneWorkerFailed, startLaneWorker } from './lane-worker.ts';
 import { releaseLease } from './lock.ts';
 
 export { WORKER_SRC_PATH } from './lane-worker.ts';
@@ -284,10 +284,11 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   }
 
   const worker = ctl.worker;
-  if (!worker) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
+  if (!worker || laneWorkerFailed()) return { outcome: 'error', code: 'skill_resolver_internal', catalogs };
   const posted = await new Promise<{ output?: TurnOutput; pending?: { key: string; delta: TurnDelta } | null; error?: { code: string } }>((resolve) => {
     worker.once('message', resolve);
     worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
+    worker.once('exit', () => resolve({ error: { code: 'skill_resolver_internal' } }));
     worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
   });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };

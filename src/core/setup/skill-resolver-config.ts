@@ -127,7 +127,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   const doc = read.state === 'ok' ? structuredClone(read.doc) : {};
   const section = resolverSection(doc);
   const perHarness = (section.per_harness && typeof section.per_harness === 'object' && !Array.isArray(section.per_harness) ? section.per_harness : {}) as Record<string, Record<string, unknown>>;
-  const holder: Record<string, unknown> = nested ? (perHarness[nested[1]!] ??= {}) : section;
+  const holder: Record<string, unknown> = nested ? (Object.hasOwn(perHarness, nested[1]!) ? perHarness[nested[1]!]! : (perHarness[nested[1]!] = {})) : section;
   const field = nested ? nested[2]! : leaf;
   if (action === 'get') {
     if (holder[field] === undefined) return fail(`Config key not found: ${key}`);
