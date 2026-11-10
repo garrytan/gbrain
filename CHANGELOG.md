@@ -14,7 +14,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **`gbrain upgrade` finishes on hosts where autopilot runs outside launchd and systemd, instead of refusing every time.**
 
-The upgrade restarted autopilot only through an installed launchd or systemd service, and refused (`restart_refused`, exit 3) for any other autopilot. That included gbrain's own Linux cron install (`gbrain autopilot --install` on a host without a user systemd bus), so a scheduled stable upgrade on such a host failed on every run. An autopilot whose launcher starts it again is now handed to that launcher: the upgrade stops it (only while `ps` still shows the same process; SIGTERM drains it) and waits up to six minutes for the launcher to start the installed build.
+The upgrade restarted autopilot only through an installed launchd or systemd service, and refused (`restart_refused`, exit 3) for any other autopilot. That included gbrain's own Linux cron install (`gbrain autopilot --install` on a host without a user systemd bus), so a scheduled stable upgrade on such a host failed on every run. An autopilot whose launcher starts it again is now handed to that launcher. The upgrade stops it (only while `ps` still shows the same process; SIGTERM drains it) and waits up to six minutes for the launcher to start the installed build.
 
 | Situation | Before | Now |
 |---|---|---|
