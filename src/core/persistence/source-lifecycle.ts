@@ -222,7 +222,7 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         await assertTopologyRequestsSettled(tx,sources,bindings.map(binding=>binding.worktree_id));
         await lockTopologyPrincipal(tx,principal);
         if(!admitted) await admitTopologyRetire(tx,{principal,requestId,intent,operation:input.operation,sourceId:input.sourceId,
-          incarnation:source.incarnation,worktrees:bindings.map(binding=>binding.worktree_id)});
+          incarnation:source.incarnation,worktrees:bindings.map(binding=>binding.worktree_id),expiredOnly:input.expiredOnly});
         const gone=await withCoordinatedWrite(tx,sources,async()=>{
           deleting=true;
           const rows=await tx.executeRaw('DELETE FROM pages WHERE id IN (SELECT id FROM pages WHERE source_id=$1 LIMIT $2) RETURNING id',[input.sourceId,limit]);
@@ -339,9 +339,9 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         pagesDeleted+=Number(impact.count);
         await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
-        await supersedeTopologyRetires(tx,input.sourceId,incarnation,requestId);
+        await supersedeTopologyRetires(tx,input.sourceId,incarnation,principal,requestId);
       }
-      if(source&&!['remove','purge'].includes(input.operation)) await supersedeTopologyRetires(tx,input.sourceId,source.incarnation,requestId);
+      if(source&&!['remove','purge'].includes(input.operation)) await supersedeTopologyRetires(tx,input.sourceId,source.incarnation,principal,requestId);
       const contentReceipts=input.operation==='rebind'?await rebindContentReceipts(tx,worktrees,hostIdFor(tx),relocated?undefined:[input.sourceId]):[];
       await advanceTopology(tx,worktrees);
       for(const id of worktrees){

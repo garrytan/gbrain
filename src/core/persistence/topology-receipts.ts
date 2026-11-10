@@ -85,7 +85,7 @@ export const RETIRE_SUPERSEDED='source_retire_superseded';
 export function isSupersededRetire(row:TopologyChange):boolean{
   return row.state==='failed'&&row.outcome?.error===RETIRE_SUPERSEDED;
 }
-export async function admitTopologyRetire(tx:BrainEngine,input:{principal:string;requestId:string;intent:unknown;operation:string;sourceId:string;incarnation:string;worktrees:string[]}):Promise<void>{
+export async function admitTopologyRetire(tx:BrainEngine,input:{principal:string;requestId:string;intent:unknown;operation:string;sourceId:string;incarnation:string;worktrees:string[];expiredOnly?:boolean}):Promise<void>{
   const limits=await readJournalLimits(tx);
   const reservation=receiptReservation({});
   const counters=await lockCounters(tx,['brain',principalKey({kind:'local_cli',id:input.principal})]);
@@ -94,7 +94,7 @@ export async function admitTopologyRetire(tx:BrainEngine,input:{principal:string
     (principal_id,request_id,digest,operation,source_id,source_incarnation,worktree_ids,state,terminal_bytes,outcome)
     VALUES($1::uuid,$2::uuid,$3,$4,$5,$6::uuid,$7::uuid[],'recovering',$8,$9::text::jsonb)`,
   [input.principal,input.requestId,digest(input.intent),input.operation,input.sourceId,input.incarnation,input.worktrees,reservation,
-    JSON.stringify({operation:input.operation,source_id:input.sourceId,source_incarnation:input.incarnation})]);
+    JSON.stringify({operation:input.operation,source_id:input.sourceId,source_incarnation:input.incarnation,...(input.expiredOnly?{expired_only:true}:{})})]);
   for(const counter of counters) await tx.executeRaw('UPDATE persistence_counters SET lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,reservation]);
 }
 /** Settles a retire admission and trues its reserved receipt bytes up to the outcome it keeps; null when already settled. */
@@ -107,10 +107,10 @@ export async function settleTopologyRetire(tx:BrainEngine,row:TopologyChange,sta
   for(const counter of counters) await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,terminalBytes-Number(row.terminal_bytes)]);
   return settled;
 }
-/** A remove or purge that deleted incarnation X fails every other request still admitted against X: none can resume. */
-export async function supersedeTopologyRetires(tx:BrainEngine,sourceId:string,incarnation:string,requestId:string):Promise<void>{
+/** A lifecycle change that deleted or changed incarnation X fails every other request still admitted against X: none can resume. Requests are keyed by (principal, request_id), so the same request_id under another CLI registration is another request. */
+export async function supersedeTopologyRetires(tx:BrainEngine,sourceId:string,incarnation:string,principal:string,requestId:string):Promise<void>{
   const rows=await tx.executeRaw<TopologyChange>(`SELECT * FROM persistence_topology_changes WHERE source_id=$1 AND source_incarnation=$2::uuid
-    AND state='recovering' AND recovery IS NULL AND operation IN ('remove','purge') AND request_id<>$3::uuid ORDER BY id`,[sourceId,incarnation,requestId]);
+    AND state='recovering' AND recovery IS NULL AND operation IN ('remove','purge') AND NOT (principal_id=$3::uuid AND request_id=$4::uuid) ORDER BY id`,[sourceId,incarnation,principal,requestId]);
   for(const row of rows) await settleTopologyRetire(tx,row,'failed',{...row.outcome,error:RETIRE_SUPERSEDED});
 }
 /** Caller retains owner/source guards and completes final state in this same transaction. */

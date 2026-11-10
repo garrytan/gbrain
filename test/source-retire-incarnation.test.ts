@@ -12,13 +12,13 @@ import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { runManagedSourceLifecycle, SOURCE_RETIRE_BATCH_PAGES } from '../src/core/persistence/source-lifecycle.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { deactivationBlockers } from '../src/core/persistence/deactivation.ts';
 import { graduationBlockers } from '../src/core/persistence/graduation-drain.ts';
-import { localHostId } from '../src/core/persistence/identity.ts';
+import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 
 let engine: PGLiteEngine;
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); });
@@ -159,4 +159,54 @@ test('a retry against the same incarnation resumes, finishes and settles its rec
   expect(await change(requestId)).toMatchObject({ state: 'committed', recovery: null });
   expect((await deactivationBlockers(engine)).filter(b => b.kind === 'topology_recovery')).toEqual([]);
   expect(await incarnation()).toBeUndefined();
+}), 60_000);
+
+test('a retry under a replaced CLI registration finishes and settles the old registration\'s stopped admission', () => fixture(SOURCE_RETIRE_BATCH_PAGES + 3, async () => {
+  const requestId = randomUUID();
+  const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
+  await expect(failFinalTransaction(remove)).rejects.toThrow('injected final retire failure');
+  const [old] = await engine.executeRaw<{ principal_id: string }>('SELECT principal_id::text AS principal_id FROM persistence_topology_changes WHERE request_id=$1::uuid', [requestId]);
+  const replaced = await registerLocalWriter(engine, 'cli', undefined, true);
+  expect(replaced.id).not.toBe(old.principal_id);
+  expect(await remove()).toMatchObject({ state: 'committed', operation: 'remove' });
+  expect(await engine.executeRaw('SELECT principal_id::text AS principal_id, state FROM persistence_topology_changes WHERE request_id=$1::uuid ORDER BY created_at', [requestId]))
+    .toEqual([{ principal_id: old.principal_id, state: 'failed' }, { principal_id: replaced.id, state: 'committed' }]);
+  expect((await deactivationBlockers(engine)).filter(b => b.kind === 'topology_recovery')).toEqual([]);
+  expect((await graduationBlockers(engine, localHostId())).filter(b => b.kind === 'topology_recovery')).toEqual([]);
+}), 60_000);
+
+test('a stopped automatic expired-archive purge is left to the next automatic run, not handed to a person', () => fixture(SOURCE_RETIRE_BATCH_PAGES * 2, async () => {
+  expect(await runManagedSourceLifecycle(engine, { operation: 'archive', sourceId: source })).toMatchObject({ state: 'committed' });
+  await engine.executeRaw("UPDATE sources SET archive_expires_at=now()-interval '1 hour' WHERE id=$1", [source]);
+  const first = await incarnation();
+  const requestId = randomUUID();
+  const purge = () => runManagedSourceLifecycle(engine, { operation: 'purge', sourceId: source, confirmDestructive: true, expiredOnly: true, expectedIncarnation: first, requestId });
+  await expect(failAfterFirstBatch(purge)).rejects.toThrow('injected retire batch failure');
+  expect(await change(requestId)).toMatchObject({ state: 'recovering', recovery: null });
+  const deactivate = (await deactivationBlockers(engine)).find(b => b.kind === 'topology_recovery');
+  expect(deactivate?.detail).toContain(`automatic expired-archive purge of ${source} (request ${requestId})`);
+  expect(deactivate?.exit).toMatch(/^the next automatic expired-archive purge finishes it/);
+  expect(deactivate?.exit).not.toContain('ask the user');
+  const graduation = (await graduationBlockers(engine, localHostId())).find(b => b.kind === 'topology_recovery');
+  expect(graduation).toMatchObject({ needsUser: false, argv: ['gbrain', 'sources', 'writer', 'status', source, '--json'] });
+  expect(graduation?.detail).toContain('the next automatic expired-archive purge finishes it');
+  expect(await runManagedSourceLifecycle(engine, { operation: 'purge', sourceId: source, confirmDestructive: true, expiredOnly: true, expectedIncarnation: first })).toMatchObject({ state: 'committed' });
+  expect(await change(requestId)).toMatchObject({ state: 'failed' });
+  expect((await deactivationBlockers(engine)).filter(b => b.kind === 'topology_recovery')).toEqual([]);
+}), 60_000);
+
+test('the superseded refusal points at a writer status that lists the stopped and superseded requests', () => fixture(SOURCE_RETIRE_BATCH_PAGES + 3, async root => {
+  const requestId = randomUUID();
+  const remove = () => runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true, requestId });
+  await expect(failFinalTransaction(remove)).rejects.toThrow('injected final retire failure');
+  const status = async () => (await runPersistenceAdministration(engine, 'writer_status', { source_id: source }) as { topology_requests: unknown[] }).topology_requests;
+  expect(await status()).toEqual([expect.objectContaining({ request_id: requestId, operation: 'remove', state: 'recovering' })]);
+  await unmanaged(async () => {
+    await engine.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1', [source]);
+    await engine.executeRaw('DELETE FROM sources WHERE id=$1', [source]);
+  });
+  await readd(root, 2);
+  const refusal = await remove().then(() => null, (e: { code?: string; fix?: { argv?: string[] } }) => e);
+  expect(refusal).toMatchObject({ code: 'source_retire_superseded', fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', source, '--json'] } });
+  expect(await status()).toEqual([expect.objectContaining({ request_id: requestId, operation: 'remove', state: 'failed', error: 'source_retire_superseded' })]);
 }), 60_000);
