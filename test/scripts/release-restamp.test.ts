@@ -656,6 +656,18 @@ describe('release:unstamp and merge: direct', () => {
     }
   }, 120_000);
 
+  test('refuses a changelog fragment the branch already had, before touching a stamp', () => {
+    const fx = noticeFixture();
+    branchWork(fx, '0.1.1.0', { 'changelog.d/feature.md': 'Already written.\n' });
+    landOnMaster(fx, '0.1.1.0', null);
+    landOnMaster(fx, '0.1.2.0', null, POLICY_DIRECT);
+    const r = restamp(fx.work, ['--unstamp'], QUIET);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('changelog.d/feature.md already exists');
+    expect(read(fx.work, 'VERSION')).toBe('0.1.1.0\n');
+    expect(read(fx.work, 'changelog.d/feature.md')).toBe('Already written.\n');
+  }, 120_000);
+
   test('plain restamp is refused when origin/master says merge: direct', () => {
     const fx = noticeFixture();
     branchWork(fx, '0.1.1.0', {});

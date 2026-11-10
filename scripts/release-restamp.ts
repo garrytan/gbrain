@@ -460,10 +460,10 @@ function unstampFiles(ctx: Ctx, state: State, masterVersion: string): void {
     fail(`this branch has no CHANGELOG entry above ${state.masterRef}'s`, 'release:unstamp moves the branch\'s own entry into its changelog fragment.',
       `write ${CHANGELOG_FRAGMENT_DIR}/<branch-slug>.md yourself (docs/RELEASING.md#releases-per-batch), commit, then rerun: bun run release:unstamp`);
   }
+  const frag = `${CHANGELOG_FRAGMENT_DIR}/${fragmentSlug(ctx.git('rev-parse', '--abbrev-ref', 'HEAD').trim())}.md`;
+  if (ctx.gitOk('cat-file', '-e', `${state.preHead}:${frag}`)) fail(`${frag} already exists`, 'release:unstamp writes the branch\'s entry there and never merges two entries.', `fold your CHANGELOG entry into ${frag} by hand, put CHANGELOG.md back to ${state.masterRef}'s, commit, then rerun`);
   stampOnly(ctx.root, masterVersion, [state.branchVersion]);
   ctx.write('CHANGELOG.md', ctx.git('show', `${state.masterRef}:CHANGELOG.md`));
-  const frag = `${CHANGELOG_FRAGMENT_DIR}/${fragmentSlug(ctx.git('rev-parse', '--abbrev-ref', 'HEAD').trim())}.md`;
-  if (existsSync(join(ctx.root, frag))) fail(`${frag} already exists`, 'release:unstamp writes the branch\'s entry there and never merges two entries.', `fold your CHANGELOG entry into ${frag} by hand, put CHANGELOG.md back to ${state.masterRef}'s, commit, then rerun`);
   const rows = state.rows ?? [];
   const body = state.entry.text.split('\n').slice(1).join('\n').trim();
   mkdirSync(join(ctx.root, CHANGELOG_FRAGMENT_DIR), { recursive: true });
