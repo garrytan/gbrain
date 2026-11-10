@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [0.60.652.0] - 2026-11-10
+## [0.60.653.0] - 2026-11-10
 
 **Postgres connections to a database that isn't on your machine now use TLS unless the URL opts out.** Before this release gbrain's Postgres driver connected in plaintext whenever the database URL had no `sslmode`, so the password and every page crossed the network unencrypted, even to a hosted database that supports TLS. Now every connection pool requires TLS (`sslmode=require`) for any host other than `localhost`, `127.0.0.0/8`, `::1` or a Unix socket; private addresses and Docker service names count as remote. An sslmode in the URL is always honored, so `?sslmode=disable` keeps a plaintext connection on a network you trust. A server that has no TLS no longer connects silently: it fails with `postgres_tls_required`, which says to turn TLS on at the server or add `sslmode=disable`. `sslmode=require` encrypts but does not verify the server certificate; `sslmode=verify-full`, with the provider's CA in `NODE_EXTRA_CA_CERTS`, verifies it too. A new doctor check, `postgres_tls`, warns when a brain on a remote host is connected without TLS. PGLite has no network connection and is unchanged.
 
@@ -26,6 +26,17 @@ identifiers and attribution are available in the pre-removal Git revision
 - `gbrain init` prints the Supabase URL format with `?sslmode=require`; `docs/ENGINES.md#tls-for-postgres-connections` documents the modes, `verify-full` with Supabase's CA, and the opt-out; the personal-brain tutorial and the other documented Postgres URLs carry `?sslmode=require`.
 - `scripts/ci-local.sh`, `scripts/run-e2e.sh`: the Docker CI gate reaches its untrusted-by-name service hosts (`postgres-N`, `pgbouncer`) with an explicit `sslmode=disable`, and the derived PgBouncer E2E URL keeps the base URL's query.
 - Tests: `test/pg-tls.test.ts` (loopback, remote, explicit modes, opt-out, a guard that every `postgres()` pool in `src/` goes through `withPgTls`), `test/pg-tls-default-refusal.test.ts` (a fake server without TLS on a non-loopback interface gets the coded error; `sslmode=disable` and a TLS-capable server do not), `test/doctor-postgres-tls.test.ts`, `test/e2e/pg-tls-postgres.test.ts` (real servers: a TLS server through a non-loopback address connects with `pg_stat_ssl.ssl = true` on both pool kinds; an `ssl=off` server refuses, then connects with `sslmode=disable` and doctor warns; `sslmode=prefer` falls back and doctor says so; an opt-in TLS-client pooler with a plaintext upstream reads ok).
+
+## [0.60.652.0] - 2026-11-10
+
+**The private-labels preview finishes on large sources.** On a source with a few hundred thousand pages, `gbrain repair private-labels` ran past its 120-second statement bound while counting the pages a window of clears would expose, so the preview failed, and so did every `--apply --expect`, which repeats the check. The count used to pair every page with every cleared page. It now reads each page's references once and joins them to the cleared pages, so it returns the same pages and the same exposure map well inside the bound, which is unchanged. On a synthetic brain (`scripts/bench/private-labels-dependents.ts`: 300,000 pages in the window's source, 100,000 in another, 8 links per page) with a 1,000-page window, master hit the 120-second bound and this release took 0.33 to 1.06 seconds across the four shapes.
+
+### Itemized changes
+
+- The dependents statement in `src/core/repair/private-labels.ts` lists each page's `source_slug`, `event.depth` and `derived_from` slugs (with `.md` removed) in one pass, matches them to the cleared pages with equality joins, and applies the post-clear privacy rules only to the candidate pages. It runs with JIT off and is planned for its real parameters. No migration and no new index.
+- New equivalence tests on PGLite and Postgres run the old statement, kept verbatim in a test helper, next to the new one and require identical rows: a fixture with every kind of tie, each cleared page alone, a generated source and privacy aliases turned off.
+- A Postgres scale test requires a 50,000-page source with a 1,000-page window to finish inside 20 seconds. The old statement fails it.
+- `scripts/bench/private-labels-dependents.ts` builds the synthetic brain and times the preview, with `--lineage` for common `derived_from` chains and `--class alias-and-visibility`.
 
 ## [0.60.651.0] - 2026-11-10
 
