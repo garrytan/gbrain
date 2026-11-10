@@ -29,7 +29,7 @@ import {
   UNKNOWN_PARAM_ALLOWLIST,
   narrowingUnknownParams,
 } from '../src/mcp/validate-params.ts';
-import { operations, operationsByName } from '../src/core/operations.ts';
+import { operations, operationsByName, type Operation } from '../src/core/operations.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 /**
@@ -533,12 +533,28 @@ describe('a read rejects an unknown scope or filter parameter even in warn mode 
       { code: 'unknown_param', param: 'source', suggestion: 'source_id' }, { code: 'unknown_param', param: 'Source-IDs', suggestion: 'source_ids' },
       { code: 'unknown_param', param: 'srcid', suggestion: 'source_id' }, { code: 'unknown_param', param: 'tag', suggestion: 'types' },
       { code: 'unknown_param', param: 'limt', suggestion: 'limit' }, { code: 'unknown_param', param: 'partal', suggestion: 'partial' },
-    ]).map(w => w.param)).toEqual(['source', 'Source-IDs', 'srcid', 'tag']);
+    ], ['source_id', 'source_ids', 'types', 'limit', 'partial']).map(w => w.param)).toEqual(['source', 'Source-IDs', 'srcid', 'tag']);
   });
 
   test('a scope key sent to an op that declares no scope param keeps the warn grace period', () => {
     expect(narrowingUnknownParams([
       { code: 'unknown_param', param: 'source_id' }, { code: 'unknown_param', param: 'source_id', suggestion: 'request_id' },
-    ])).toEqual([]);
+    ], ['request_id', 'applied'])).toEqual([]);
+  });
+
+  const refusedOn = (declared: string[], key: string) => {
+    const op = { name: 'family_probe', params: Object.fromEntries(declared.map(name => [name, { type: 'string' }])) } as unknown as Operation;
+    return narrowingUnknownParams(findUnknownParams(op, { [key]: 'x' }), declared).map(w => w.param);
+  };
+
+  test('a key in a scope or filter family the op declares is refused even with no near suggestion', () => {
+    expect(refusedOn(['source_ids', 'limit'], 'source')).toEqual(['source']);
+    expect(refusedOn(['source_id', 'limit'], 'source_name')).toEqual(['source_name']);
+    expect(refusedOn(['types', 'limit'], 'kind')).toEqual(['kind']);
+  });
+
+  test('a key whose family the op does not declare keeps the warn grace period', () => {
+    expect(refusedOn(['types', 'limit'], 'source_id')).toEqual([]);
+    expect(refusedOn(['source_id', 'limit'], 'since')).toEqual([]);
   });
 });

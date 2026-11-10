@@ -236,21 +236,31 @@ export function findUnknownParams(op: Operation, params: Record<string, unknown>
   return warnings;
 }
 
-/** A parameter name that narrows a read's result: a source scope or a type, tag, entity, date, trust or visibility filter. */
-const NARROWING_PARAM_RE = /^(sources?(id|ids|name|names)?|types?|kinds?|tags?|entity|entities|since|until|after|before|mintrust|visibility)$/;
+/** The families of parameter names that narrow a read's result: a source scope or a type, tag, entity, date, trust or visibility filter. */
+const NARROWING_FAMILIES: readonly RegExp[] = [
+  /^sources?(id|ids|name|names)?$/, /^(types?|kinds?)$/, /^tags?$/, /^(entity|entities)$/,
+  /^(since|until|after|before)$/, /^(min)?trust$/, /^visibility$/,
+];
 
-function isNarrowingName(name: string): boolean {
-  return NARROWING_PARAM_RE.test(name.toLowerCase().replace(/[^a-z]/g, ''));
+function narrowingFamily(name: string): RegExp | undefined {
+  const normalized = name.toLowerCase().replace(/[^a-z]/g, '');
+  return NARROWING_FAMILIES.find(family => family.test(normalized));
 }
 
 /**
  * GBRA-431: the unknown keys a read must refuse whatever `mcp.strict_params` says, because ignoring them answers
- * unnarrowed: a key whose nearest declared param is a scope or filter of this op (`source` for `source_id`, `sources`
- * for `source_ids`, `type` for `types`). An op that declares no such param cannot narrow, so a scope key sent to it
- * (a client adding `source_id` to every call) keeps the warn grace period like any other unknown key.
+ * unnarrowed: a key whose nearest declared param is a scope or filter (`source` for `source_id`, `type` for `types`),
+ * or whose own name is in a scope or filter family the op declares (`source_name` on an op declaring `source_id`,
+ * `kind` on one declaring `types`). A key whose family the op does not declare cannot narrow it, so it keeps the warn
+ * grace period like any other unknown key (a client adding `source_id` to every call).
  */
-export function narrowingUnknownParams(warnings: readonly UnknownParamWarning[]): UnknownParamWarning[] {
-  return warnings.filter(w => w.suggestion !== undefined && isNarrowingName(w.suggestion));
+export function narrowingUnknownParams(warnings: readonly UnknownParamWarning[], declared: readonly string[]): UnknownParamWarning[] {
+  const declaredFamilies = new Set(declared.map(narrowingFamily).filter(family => family !== undefined));
+  return warnings.filter(w => {
+    if (w.suggestion !== undefined && narrowingFamily(w.suggestion)) return true;
+    const family = narrowingFamily(w.param);
+    return family !== undefined && declaredFamilies.has(family);
+  });
 }
 
 /**

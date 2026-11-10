@@ -1181,7 +1181,7 @@ async function dispatchResolvedCall(
   if (unknownParamWarnings.length > 0) {
     const strictMode = op.mutating === true ? 'reject' : await resolveStrictParamsMode(engine, opts.config ?? loadConfig());
     // GBRA-431: a misspelled scope or filter on a read would answer unnarrowed, so it rejects in every mode.
-    const narrowing = strictMode === 'reject' ? [] : narrowingUnknownParams(unknownParamWarnings);
+    const narrowing = strictMode === 'reject' ? [] : narrowingUnknownParams(unknownParamWarnings, Object.keys(op.params));
     if (strictMode === 'reject' || narrowing.length > 0) {
       logVerb(false);
       // Privacy (amendment 11): the raw unknown key rides `suggestion` ONLY.
