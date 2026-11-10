@@ -1090,6 +1090,13 @@
         {
           "category": "ops",
           "elapsed_ms": "<volatile>",
+          "message": "The Postgres host is on this machine; TLS is not required.",
+          "name": "postgres_tls",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
           "message": "Every gbrain function that pins a search_path ends it with pg_temp",
           "name": "function_search_path",
           "status": "ok"
