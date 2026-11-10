@@ -192,7 +192,9 @@ With `--session <id>` the resolver remembers which skills it suggested:
 
 The key is `sha256(on|shadow, harness, session id)`: the same id under two
 harnesses is two sessions, and merged catalogs share one. Session files idle
-for 7 days are deleted.
+for 7 days are deleted: after a commit (at most once every 10 minutes per
+home, at most 1,000 files a pass, with async I/O after the commit settles),
+and on each build and status.
 
 Measured block size at k=5 over the Step 1 test turns on gbrain's own skills:
 median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
@@ -201,7 +203,9 @@ median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
 ## Freshness and rebuilds
 
 `resolve` never rebuilds. When the source changed it still answers from the
-existing index with `meta.index_stale: true` and touches `stale.stamp`; the
+existing index with `meta.index_stale: true` and writes `stale.stamp` once (a
+later stale turn leaves it alone; a `--from-json -` catalog, which only its
+adapter rebuilds, never gets one); the
 rebuild runs from `gbrain skills index build` (which prints the exact command
 in `skills index status`). For a `--dir` catalog the turn checks file sizes and
 mtimes, at most 1,024 per turn and a full sweep at most once a minute;
@@ -227,6 +231,7 @@ Nothing leaves the machine. Everything lives under `$GBRAIN_HOME/.gbrain/skill-i
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
 | `sessions/<key>.json` | skill ids and turn counters; never turn text |
 | `logs/lane-<date>.jsonl`, `logs/resolver-<date>.log` | one line per lane turn, and scrubbed stack traces of unexpected failures; never turn text; one file per day, kept 14 days |
+| `logs/session-gc.stamp` | empty; its mtime is the last session GC |
 
 The block never echoes the user's text. Summaries (each skill's description
 cut at 120 characters, the `summary` field) are catalog text, so they are
@@ -282,6 +287,36 @@ it sends a field an older gbrain would refuse.
 On an event loop that must not block, commit with async I/O instead:
 `if (r.pending) await commitSessionAsync(home, r.pending.key, r.pending.delta)`
 (same file, lease and rules as `commit()`).
+
+A host that stays up across turns (`open_catalog` in `RESOLVER_FEATURES`)
+opens a warm handle once instead of reopening the index every turn:
+
+```ts
+const h = openCatalog(['codex-user'], { failOpen: true });
+const r = await h.resolve({ message, session_id, harness: 'codex' });
+inject(r.output.block);
+await r.commit();
+h.close(); // on shutdown
+```
+
+The handle keeps each catalog's receipt, term dictionary and settings in
+memory and checks once per turn (a stat of `receipt.json`, `index.bin` and
+`config.json`) whether a rebuild or a config edit replaced them, reloading
+only that catalog. Its results are the same as `resolveSkills` for the same
+input, apart from `meta.timing_ms`; a removed catalog refuses the same way.
+`h.resolve(input, { explainTarget, now, ... })` takes per-turn options.
+At 1,000 skills it took a turn's p50 from 0.39 ms to 0.14 ms when the
+freshness sweep had nothing to do.
+
+`await buildSkillIndexOffThread(input, { home })` (`build_off_thread`) runs
+`buildSkillIndex` on a worker thread so a build of 100 ms or more doesn't
+block the host's event loop. It returns the same receipt and rethrows a
+`ResolverError` with its code and fix. It works from Bun and from the Node
+bundle, whose own file is the worker's entry, so nothing else ships.
+
+Commits already collect idle session files every 10 minutes; a host that
+wants its own schedule calls `await gcSkillSessions({ home })` (`gc_sessions`),
+one bounded pass that returns how many files it deleted.
 
 ## Error codes
 

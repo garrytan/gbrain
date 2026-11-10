@@ -42,8 +42,9 @@ describe('skill resolver packaging', () => {
       const out = join(dir, 'gbrain-skill-resolver.mjs');
       const run = Bun.spawnSync([process.execPath, 'scripts/build-skill-resolver-bundle.ts', '--out', out, '--smoke'], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
       expect(run.exitCode, run.stderr.toString()).toBe(0);
-      const smoke = JSON.parse(run.stdout.toString().trim().split('\n').at(-1)!) as { node: string; gbrain_version: string; bundled_skills: number; top: string };
+      const smoke = JSON.parse(run.stdout.toString().trim().split('\n').at(-1)!) as { node: string; gbrain_version: string; bundled_skills: number; top: string; off_thread: string; warm_top: string };
       expect(smoke.top).toBe('x:deploy');
+      expect([smoke.off_thread, smoke.warm_top]).toEqual(['w', 'x:invoice']);
       expect(smoke.gbrain_version).toBe(VERSION);
       expect(smoke.bundled_skills).toBeGreaterThan(20);
       const sum = createHash('sha256').update(readFileSync(out)).digest('hex');
