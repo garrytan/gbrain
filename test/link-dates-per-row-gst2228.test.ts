@@ -164,6 +164,41 @@ for (const backend of testBackends()) {
         expect(await pageRows(engine)).toEqual(sortRows([hidden, BETA]));
       }, opts), 180_000);
 
+      test('a remote writer refused for a kept row\'s target learns nothing: the refusal names no slug or row count and matches the one for a deleted target', async () => {
+        const target = 'companies/hidden-example';
+        const rows: LinksFenceRow[] = [
+          { to: target, type: 'works_at', source: 'manual', validFrom: '2020-01-01', context: 'first stint' },
+          { to: target, type: 'works_at', source: 'crm-import', validFrom: '2022-01-01', context: 'second stint' },
+        ];
+        const requestId = randomUUID();
+        const refusal = async (kind: 'private' | 'deleted') => {
+          let seen: Record<string, unknown> | undefined;
+          await managedBrain(async ({ engine, ctx }) => {
+            await seed(ctx);
+            await put(ctx, target, `---\ntype: company\ntitle: Hidden Example\n${kind === 'private' ? 'visibility: private\n' : ''}---\n\n# Hidden Example\n\nA company.\n`);
+            await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION(rows)}`));
+            await put(ctx, ALICE, PERSON(DROPPED));
+            await forgetSources(engine);
+            if (kind === 'deleted') await op(ctx, 'delete_page', { slug: target, expected_revision: (await engine.readPageSnapshot(target, { sourceId: 'default' }))!.revision });
+            const before = { revision: await revision(engine), statements: await statements(engine), edges: await edges(engine) };
+            expect(before.edges).toEqual([`${target} crm-import`, `${target} manual`]);
+            const clientId = 'client-fixture';
+            await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id) VALUES($1,'fixture-hash','example-client','read write','default')`, [clientId]);
+            const remote = { ...ctx, remote: true, transport: 'http', auth: { token: 'fixture', clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['read', 'write'], sourceId: 'default' } } as OperationContext;
+            const error = await op(remote, 'add_link', { request_id: requestId, from: ALICE, to: BETA.to, link_type: BETA.type, context: BETA.context })
+              .then(() => null, (thrown: unknown) => thrown as Record<string, unknown>);
+            expect(error).not.toBeNull();
+            seen = Object.fromEntries(Object.getOwnPropertyNames(error).filter(key => key !== 'stack').sort().map(key => [key, error![key]]));
+            expect({ revision: await revision(engine), statements: await statements(engine), edges: await edges(engine) }).toEqual(before);
+          }, opts);
+          return JSON.stringify(seen).replace(/"(created_at|updated_at)":"[^"]*"/g, '"$1":"<time>"');
+        };
+        const hidden = await refusal('private');
+        expect({ code: JSON.parse(hidden).code, slug: hidden.includes(target) || hidden.includes('hidden-example'), rowCount: /\d+ rows?\b/.test(hidden) })
+          .toEqual({ code: 'page_not_found', slug: false, rowCount: false });
+        expect(hidden).toBe(await refusal('deleted'));
+      }, 360_000);
+
       test('statements from before the source column, one kept row: add_link puts them on that row and labels them with its source', () => managedBrain(async ({ engine, ctx, root }) => {
         await seed(ctx);
         await put(ctx, ALICE, PERSON(`Alice v1.\n\n${SECTION([FIRST_STINT])}`));
