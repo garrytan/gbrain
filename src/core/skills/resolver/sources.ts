@@ -196,7 +196,7 @@ export async function readBundledSource(): Promise<SourceRead> {
 }
 
 function invalid(message: string): ResolverError {
-  return new ResolverError('skill_source_invalid', message, { suggestion: 'Pass a JSON array of {id, name, description, triggers?, routing?, body?, path?, eligible?} objects, or OpenClaw\'s skills list --json output as is (at most 10,000 entries, 64 MB).' });
+  return new ResolverError('skill_source_invalid', message, { suggestion: 'Pass a JSON array of {id, name, description, when_to_use?, triggers?, routing?, body?, path?, eligible?, disable_model_invocation?} objects, or OpenClaw\'s skills list --json output as is (at most 10,000 entries, 64 MB).' });
 }
 
 const optStr = (v: unknown) => v === undefined || typeof v === 'string';
@@ -208,14 +208,14 @@ const OPENCLAW_HIDDEN = ['disabled', 'blockedByAllowlist', 'blockedByAgentFilter
 function badField(o: Record<string, unknown>, openclaw: boolean): string | null {
   if (!openclaw && (typeof o.id !== 'string' || !o.id.trim() || o.id.length > MAX_ID)) return `id (a required string of at most ${MAX_ID} characters)`;
   if (typeof o.name !== 'string' || !o.name.trim() || (openclaw && o.name.length > MAX_ID)) return 'name (a required string)';
-  for (const f of ['description', 'body', 'path'] as const) if (!optStr(o[f])) return `${f} (a string)`;
+  for (const f of ['description', 'when_to_use', 'body', 'path'] as const) if (!optStr(o[f])) return `${f} (a string)`;
   for (const f of ['triggers', 'routing'] as const) if (!optStrList(o[f])) return `${f} (an array of strings)`;
-  for (const f of ['eligible', ...(openclaw ? [...OPENCLAW_HIDDEN, 'modelVisible'] : [])]) if (!optBool(o[f])) return `${f} (a boolean)`;
+  for (const f of ['eligible', 'disable_model_invocation', ...(openclaw ? [...OPENCLAW_HIDDEN, 'modelVisible'] : [])]) if (!optBool(o[f])) return `${f} (a boolean)`;
   return null;
 }
 
 /**
- * An adapter's catalog snapshot: `[{id, name, description, triggers?, routing?, body?, path?, eligible?}]`,
+ * An adapter's catalog snapshot: `[{id, name, description, when_to_use?, triggers?, routing?, body?, path?, eligible?, disable_model_invocation?}]`,
  * `{skills: [...]}`, or OpenClaw's `skills list --json` document.
  */
 export function readJsonSource(text: string): SourceRead {
@@ -240,13 +240,16 @@ export function readJsonSource(text: string): SourceRead {
       throw invalid(`Entry ${i}${named} is not a valid skill: ${bad} is wrong or missing.${hint}`);
     }
     const id = (openclaw ? o.name as string : o.id as string).trim();
-    if (o.eligible === false || (openclaw && (OPENCLAW_HIDDEN.some(f => o[f] === true) || o.modelVisible === false))) { skipped.push({ reason: 'ineligible', id }); return; }
+    const at = typeof o.path === 'string' && o.path ? { path: o.path } : {};
+    if (o.disable_model_invocation === true) { skipped.push({ reason: 'not_model_invocable', id, ...at }); return; }
+    if (o.eligible === false || (openclaw && (OPENCLAW_HIDDEN.some(f => o[f] === true) || o.modelVisible === false))) { skipped.push({ reason: 'ineligible', id, ...at }); return; }
     if (seen.has(id)) { skipped.push({ reason: 'duplicate_id', id, kept: id }); return; }
     seen.set(id, id);
-    skills.push({ id, name: cut(cleanText(o.name), MAX_NAME), description: cut(cleanText(o.description ?? ''), MAX_DESCRIPTION),
+    const whenToUse = cut(cleanText(o.when_to_use ?? ''), MAX_DESCRIPTION);
+    skills.push({ id, name: cut(cleanText(o.name), MAX_NAME), description: cut(cleanText(o.description ?? ''), MAX_DESCRIPTION), ...(whenToUse ? { whenToUse } : {}),
       triggers: boundTriggers(((o.triggers as string[] | undefined) ?? []).map(cleanText).filter(Boolean)),
       routing: ((o.routing as string[] | undefined) ?? []).map(cleanText).filter(Boolean).slice(0, MAX_ROUTING_ROWS),
-      body: typeof o.body === 'string' ? boundBody(o.body) : '', ...(typeof o.path === 'string' && o.path ? { path: o.path } : {}) });
+      body: typeof o.body === 'string' ? boundBody(o.body) : '', ...at });
   });
   if (bytes <= JSON_SOURCE_CAP_BYTES) return { kind: 'json', skills, skipped, snapshot: text };
   for (const e of list) { const o = e as Record<string, unknown>; if (typeof o.body === 'string') o.body = boundBody(o.body); }

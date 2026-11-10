@@ -233,3 +233,29 @@ describe('harness-owned entries in a skills root (HARN-52)', () => {
     expect(await stale(b.home)).toBe(true);
   });
 });
+
+describe('a JSON list equal to a folder builds the same index (HARN-52)', () => {
+  test('when_to_use and disable_model_invocation: one catalog built from folders and from JSON has equal catalog_hash and index_hash', async () => {
+    const root = tmp('skres-parity-');
+    const write = (dir: string, fm: string, body: string) => { mkdirSync(join(root, dir), { recursive: true }); writeFileSync(join(root, dir, 'SKILL.md'), `---\n${fm}\n---\n${body}\n`); return join(root, dir, 'SKILL.md'); };
+    const deploy = write('deploy', 'name: deploy\ndescription: Ship a service\nwhen_to_use: when the user asks for a zebrafinch release', 'Run the tests, then deploy.');
+    const notes = write('notes', 'name: notes\ndescription: Take meeting notes', 'Write the notes.');
+    const hidden = write('hidden', 'name: hidden\ndescription: Internal helper\ndisable-model-invocation: true', 'Never offered.');
+    const homeA = tmp();
+    const a = await buildSkillIndex({ catalog: 'p', dirs: [root] }, { home: homeA });
+    const list = [
+      { id: 'deploy', name: 'deploy', description: 'Ship a service', when_to_use: 'when the user asks for a zebrafinch release', body: 'Run the tests, then deploy.\n', path: deploy },
+      { id: 'hidden', name: 'hidden', description: 'Internal helper', disable_model_invocation: true, body: 'Never offered.\n', path: hidden },
+      { id: 'notes', name: 'notes', description: 'Take meeting notes', body: 'Write the notes.\n', path: notes },
+    ];
+    const homeB = tmp();
+    const b = await buildSkillIndex({ catalog: 'p', fromJson: JSON.stringify(list), fromJsonStdin: true }, { home: homeB });
+    expect(b.catalog.skipped).toEqual(a.catalog.skipped);
+    expect(b.catalog.skipped.map((s) => s.reason)).toEqual(['not_model_invocable']);
+    expect([b.catalog.catalog_hash, b.index.index_hash]).toEqual([a.catalog.catalog_hash, a.index.index_hash]);
+    const top = (await resolveSkills({ message: 'zebrafinch release' }, { home: homeB, catalogs: ['p'] })).output.suggestions.map((s) => s.id);
+    expect(top).toEqual(['deploy']);
+    expect(await codeAndMessage(buildSkillIndex({ catalog: 'q', fromJson: JSON.stringify([{ id: 'x', name: 'x', when_to_use: 3 }]), fromJsonStdin: true }, { home: homeB }))).toEqual(['skill_source_invalid', expect.stringContaining('when_to_use (a string)')]);
+    expect(RESOLVER_FEATURES).toContain('from_json_when_to_use');
+  });
+});

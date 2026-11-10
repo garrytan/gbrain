@@ -168,7 +168,10 @@ The JSON Schemas are checked in under `docs/schemas/`:
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
   `meta` is byte-identical for the same index, input and session state.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
-  `[{id, name, description?, triggers?, routing?, body?, path?, eligible?}]`.
+  `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
+  eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
+  folder has (`when_to_use`, `disable-model-invocation`), a JSON build gives
+  the same `catalog_hash` and `index_hash` as the folder build.
 - `skill-resolver.v1.build-receipt.json`: the build receipt, also saved as
   `receipt.json` beside the index.
 
