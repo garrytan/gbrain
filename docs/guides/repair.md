@@ -2163,6 +2163,9 @@ Clearing a declined page is a separate choice per page: see
 run's systemic-failure stop (`item_failures_systemic`), so a window whose tail,
 or whole listing, is carried declines completes; pages not tried yet that all
 fail the same way, as a dirty checkout makes them, still stop the run.
+A script that previews and applies windows in a loop should stop when every
+listed page was tried before (`details.window.tried_before` equals
+`details.window.listed`): what's left is pages that keep declining.
 
 An apply that meets a `gbrain sources refresh` waits for the refresh to
 finish, for up to 10 minutes per step, instead of being refused after 10

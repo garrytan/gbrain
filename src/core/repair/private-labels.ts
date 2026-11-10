@@ -58,6 +58,7 @@ import { isTerminal } from '../persistence/model.ts';
 import { requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { digest } from '../persistence/digest.ts';
 import { modeRequiresSynopsis } from '../embedding-context.ts';
+import { chunkGenerationFilter } from '../search/safe-chunks.ts';
 import { importFromContent } from '../import-file.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -303,13 +304,11 @@ async function importAtRevision(engine: BrainEngine, entry: Approved, revision: 
   });
 }
 
-/** GBRA-443: lines this run appended to each ledger, by phase (the apply result's ledger_rows_written and ledger_rows). */
-const ledgerRows = new WeakMap<PrivateLabelsLedger, { intent: number; committed: number }>();
-function recordLine(ledger: PrivateLabelsLedger, line: LedgerLine & { phase: 'intent' | 'committed' }): void {
+/** GBRA-443: lines this run appended to its ledger, by phase (the apply result's ledger_rows_written and ledger_rows), kept on the ledger it was handed. */
+type CountedLedger = PrivateLabelsLedger & { rows?: { intent: number; committed: number } };
+function recordLine(ledger: CountedLedger, line: LedgerLine & { phase: 'intent' | 'committed' }): void {
   ledger.record(line);
-  const rows = ledgerRows.get(ledger) ?? { intent: 0, committed: 0 };
-  rows[line.phase]++;
-  ledgerRows.set(ledger, rows);
+  (ledger.rows ??= { intent: 0, committed: 0 })[line.phase]++;
 }
 
 /**
@@ -326,13 +325,17 @@ function triedBefore(ledger: PrivateLabelsLedger | undefined, brainId: string): 
   return new Set([...latest].flatMap(([key, line]) => line.removed && line.phase === 'intent' ? [key] : []));
 }
 
-/** GBRA-443: the listed items whose write re-embeds: a label-only edit keeps every stored vector except on a page stored under per-chunk synopsis. */
+/** GBRA-443: the listed items whose write embeds: a label-only edit keeps every stored vector except on a page stored under per-chunk synopsis; a page with a chunk that has no vector yet is counted too. */
 async function reembedding(engine: BrainEngine, items: LabelsItem[]): Promise<LabelsItem[]> {
   if (!items.length) return [];
+  const ids = items.map(item => item.entry.page_id);
   const rows = await engine.executeRaw<{ id: number; mode: string }>(`SELECT id, contextual_retrieval_mode AS mode FROM pages
-    WHERE id = ANY($1::integer[]) AND contextual_retrieval_mode IS NOT NULL`, [items.map(item => item.entry.page_id)], bounded);
-  const synopsis = new Set(rows.filter(row => modeRequiresSynopsis(row.mode as Parameters<typeof modeRequiresSynopsis>[0])).map(row => Number(row.id)));
-  return items.filter(item => synopsis.has(item.entry.page_id));
+    WHERE id = ANY($1::integer[]) AND contextual_retrieval_mode IS NOT NULL`, [ids], bounded);
+  const unembedded = await engine.executeRaw<{ id: number }>(`SELECT DISTINCT cc.page_id AS id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+    WHERE cc.page_id = ANY($1::integer[]) AND cc.embedding IS NULL AND ${chunkGenerationFilter('p', 'cc')}`, [ids], bounded);
+  const embeds = new Set([...rows.filter(row => modeRequiresSynopsis(row.mode as Parameters<typeof modeRequiresSynopsis>[0])).map(row => Number(row.id)),
+    ...unembedded.map(row => Number(row.id))]);
+  return items.filter(item => embeds.has(item.entry.page_id));
 }
 
 const CHANGED: RepairItemOutcome = { applied: false, outcome: 'changed_since_preview' };
@@ -440,7 +443,7 @@ export const privateLabelsRepair: RepairHandler = {
       }
       const approvedExposes = new Set(approved.items.flatMap(entry => entry.exposes ?? []));
       if ([...(await windowDependents(engine, approved.items)).exposes.values()].flat().some(id => !approvedExposes.has(id))) throw previewChangedError(opts.expect, command);
-      ledgerRows.set(ledger!, { intent: 0, committed: 0 });
+      (ledger as CountedLedger).rows = { intent: 0, committed: 0 };
       const items = toItems(approved.items).filter(item => afterCursor(item.cursor, after));
       return { items, preview_hash: opts.expect, residuals: {}, embedding_items: await reembedding(engine, items) };
     }
@@ -515,7 +518,9 @@ export const privateLabelsRepair: RepairHandler = {
   async applyBatch(ctx, raw, opts) {
     const items = raw as LabelsItem[];
     const out: RepairSettlement[] = new Array(items.length);
-    const settle = (index: number, write: () => Promise<RepairItemOutcome>) => write().then(value => { out[index] = { value }; }, error => { out[index] = { error }; });
+    // Once any page of this call may have been written, a later throw settles the pages it left instead of discarding the batch.
+    let wrote = false;
+    const settle = (index: number, write: () => Promise<RepairItemOutcome>) => { wrote = true; return write().then(value => { out[index] = { value }; }, error => { out[index] = { error }; }); };
     const ready: Array<Ready | null> = [];
     for (const [index, item] of items.entries()) {
       const prepared = await prepareWrite(ctx, item).catch((error: unknown) => ({ error }));
@@ -527,36 +532,43 @@ export const privateLabelsRepair: RepairHandler = {
     for (const sourceId of new Set(items.map(item => item.entry.source_id))) {
       const indices = items.flatMap((item, index) => item.entry.source_id === sourceId && ready[index] ? [index] : []);
       if (!indices.length) continue;
-      const preflight = await maintenancePreflight(ctx.engine, sourceId).then(authority => ({ authority }), (error: unknown) => ({ error }));
-      if ('error' in preflight) { for (const index of indices) out[index] = { error: preflight.error }; continue; }
-      const { authority } = preflight;
-      const batch: Array<{ index: number; line: LedgerLine }> = [];
-      for (const index of indices) {
-        const line = await ledgerLine(ctx, items[index]!, ready[index]!);
-        // An unmanaged source, or a request a single-page apply admitted before batching (its intent has no batch id), writes on its own.
-        const prior = authority ? await getWriteRequest(ctx.engine, principal, line.request_id) : null;
-        if (!authority || (prior && !isTerminal(prior) && typeof prior.intent?.maintenance_batch !== 'string')) {
-          await settle(index, () => writeOne(ctx, items[index]!, ready[index]!, line, authority, opts.embed));
-          continue;
+      try {
+        const preflight = await maintenancePreflight(ctx.engine, sourceId).then(authority => ({ authority }), (error: unknown) => ({ error }));
+        if ('error' in preflight) { for (const index of indices) out[index] = { error: preflight.error }; continue; }
+        const { authority } = preflight;
+        const batch: Array<{ index: number; line: LedgerLine }> = [];
+        for (const index of indices) {
+          const line = await ledgerLine(ctx, items[index]!, ready[index]!);
+          // An unmanaged source, or a request a single-page apply admitted before batching (its intent has no batch id), writes on its own.
+          const prior = authority ? await getWriteRequest(ctx.engine, principal, line.request_id) : null;
+          if (!authority || (prior && !isTerminal(prior) && typeof prior.intent?.maintenance_batch !== 'string')) {
+            await settle(index, () => writeOne(ctx, items[index]!, ready[index]!, line, authority, opts.embed));
+            continue;
+          }
+          batch.push({ index, line });
         }
-        batch.push({ index, line });
-      }
-      if (!batch.length || !authority) continue;
-      const admitted: typeof batch = [];
-      for (const [position, entry] of batch.entries()) {
-        try { recordIntent(items[entry.index]!, entry.line); admitted.push(entry); } catch (error) {
-          // A ledger that refuses one intent line refuses the rest too: nothing after it is written.
-          for (const rest of batch.slice(position)) out[rest.index] = { error };
-          break;
+        if (!batch.length || !authority) continue;
+        const admitted: typeof batch = [];
+        for (const [position, entry] of batch.entries()) {
+          try { recordIntent(items[entry.index]!, entry.line); admitted.push(entry); } catch (error) {
+            // A ledger that refuses one intent line refuses the rest too: nothing after it is written.
+            for (const rest of batch.slice(position)) out[rest.index] = { error };
+            break;
+          }
         }
-      }
-      if (!admitted.length) continue;
-      const published = await publishMaintenancePages(ctx.engine, authority, admitted.map(({ index, line }) => ({ slug: items[index]!.entry.slug, content: ready[index]!.content,
-        expectedRevision: ready[index]!.revision, requestId: line.request_id, keepTrust: true as const })), { batch: digest(['private-labels-batch-v1', opts.expect ?? opts.runId ?? '', sourceId]) });
-      for (const [position, { index, line }] of admitted.entries()) {
-        const settled = published[position]!;
-        if ('error' in settled) { out[index] = { error: settled.error }; continue; }
-        out[index] = { value: committedOutcome(items[index]!, line, await writtenRevision(ctx.engine, items[index]!.entry)) };
+        if (!admitted.length) continue;
+        const published = await publishMaintenancePages(ctx.engine, authority, admitted.map(({ index, line }) => ({ slug: items[index]!.entry.slug, content: ready[index]!.content,
+          expectedRevision: ready[index]!.revision, requestId: line.request_id, keepTrust: true as const })), { batch: digest(['private-labels-batch-v1', opts.expect ?? opts.runId ?? '', sourceId]) });
+        wrote = true;
+        for (const [position, { index, line }] of admitted.entries()) {
+          const settled = published[position]!;
+          if ('error' in settled) { out[index] = { error: settled.error }; continue; }
+          // A failed read of the written revision still records the committed line (without revision_after).
+          out[index] = { value: committedOutcome(items[index]!, line, await writtenRevision(ctx.engine, items[index]!.entry).catch(() => null)) };
+        }
+      } catch (error) {
+        if (!wrote) throw error;
+        for (const index of indices) out[index] ??= { error };
       }
     }
     return out;
@@ -580,7 +592,7 @@ export const privateLabelsRepair: RepairHandler = {
     }
     const ledger = opts.privateLabelsLedger;
     if (result.mode !== 'apply' || !ledger) return {};
-    const rows = ledgerRows.get(ledger) ?? { intent: 0, committed: 0 };
+    const rows = (ledger as CountedLedger).rows ?? { intent: 0, committed: 0 };
     return { details: { ...result.details, ledger: ledger.path, ledger_rows_written: rows.intent + rows.committed, ledger_rows: { ...rows } } };
   },
   render(details) {

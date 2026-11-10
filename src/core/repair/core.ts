@@ -486,12 +486,19 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     return unresolved.length <= target;
   };
   const batched = new Map<number, RepairSettlement>();
+  let batchCap = Infinity;
   absorbBatched = () => {
     for (const [index, settled] of [...batched].sort(([a], [b]) => a - b)) {
       batched.delete(index);
       if ('error' in settled) {
         const receipt = acceptedPendingReceipt(settled.error);
-        if (receipt) unresolved.push({ index, item: pending[index]!, request_id: receipt.request_id });
+        if (receipt) { unresolved.push({ index, item: pending[index]!, request_id: receipt.request_id }); continue; }
+        if (settled.error instanceof OperationError && settled.error.code === 'revision_conflict') { result.skipped++; continue; }
+        // A page the batch already tried and the run stopped before reaching: reported as failed, never counted by the breaker.
+        const item = pending[index]!, failure = { ...classifyItemFailure(settled.error), key: `${item.source_id}:${item.slug}` };
+        result.failed.push(failedEntry(handler.kind, item, failure));
+        failedItems.push({ item, failure });
+        result.outcomes = { ...result.outcomes, failed: (result.outcomes?.failed ?? 0) + 1 };
         continue;
       }
       const value = settled.value;
@@ -558,20 +565,16 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
           + `${remaining} item(s) still need ${remaining * perItem} more). Run: gbrain config set ${full.config_key} ${needed} — then rerun \`${result.apply_command}\` to resume.` });
       }
       // GBRA-443: the items from here that fit the admission window, the capacity stop line and one write per page, applied as one run.
-      if (handler.applyBatch && !llm) {
-        const room = Math.min(Math.max(1, window - unresolved.length), ...counters.map(c => Math.floor((c.stop_at - c.used) / (c.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR))));
-        const pages = new Set([...unresolved.map(open => open.item), item].map(other => other.source_id + '\0' + other.slug));
-        let end = index + 1;
-        for (; end < pending.length && end - index < room; end++) {
-          const key = pending[end]!.source_id + '\0' + pending[end]!.slug;
-          if (pages.has(key) || (opts.expect && end === plan.items.length - 1 && unresolved.length)) break;
-          pages.add(key);
-        }
-        const run = pending.slice(index, end);
+      if (handler.applyBatch && !llm && batchCap > 1) {
+        const room = Math.min(batchCap, Math.max(1, window - unresolved.length), ...counters.map(c => Math.floor((c.stop_at - c.used) / (c.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR))));
+        const run = batchRun(pending, index, room, unresolved.map(open => open.item), opts.expect && unresolved.length ? plan.items.length - 1 : null);
         // A thrown batch is the first item's failure, classified below like a single apply's; the rest run again from the next item.
+        // A batch the writer's capacity refused whole (admission is atomic) halves the batches after it, and this item applies alone.
         const settled = await step(() => handler.applyBatch!({ ...ctx, sourceId: item.source_id }, run, { embed: opts.embed === true, runId, ...(opts.expect ? { expect: opts.expect } : {}) }))
           .catch((error: unknown): RepairSettlement[] => [{ error }]);
-        settled.slice(0, run.length).forEach((entry, offset) => batched.set(index + offset, entry));
+        const refusedWhole = run.length > 1 && settled.length > 0 && settled.every(entry => 'error' in entry && entry.error instanceof OperationError && entry.error.code === 'queue_capacity');
+        if (refusedWhole) batchCap = Math.max(1, Math.floor(run.length / 2));
+        else settled.slice(0, run.length).forEach((entry, offset) => batched.set(index + offset, entry));
       }
     }
     const prefetched = batched.get(index);
@@ -641,7 +644,14 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
           fix: readFix(`Previews ${handler.kind} again (read-only) to show whether the database accepts work again.`, { argv: ['gbrain', 'repair', handler.kind, ...(opts.sourceFlag ? ['--source', opts.sourceFlag] : []), '--json'] }) });
       }
       // An apply bound to an approved preview (`--expect`) applies that set or answers why not; only the kinds' own refusals continue it.
-      if (opts.expect && !(error instanceof OperationError && REPAIR_ITEM_FAILURE_CODES.has(error.code))) throw error;
+      if (opts.expect && !(error instanceof OperationError && REPAIR_ITEM_FAILURE_CODES.has(error.code))) {
+        if (![...batched.values()].some(entry => 'value' in entry)) throw error;
+        // GBRA-443: later pages of this item's batch were already written; stop with this error so the result still counts them.
+        const code = error instanceof OperationError ? error.code : classifyItemFailure(error).code;
+        return stopAfterSettle({ reason: code, message: redactConnectionInfo(`Stopped at ${item.source_id}:${item.slug} (${code}): ${(error instanceof Error ? error.message : String(error)).slice(0, 300)} `
+          + `Pages of its batch after it that were already published are counted in this result. Fix this page, then rerun \`${result.apply_command}\`.`),
+          fix: readFix(`Previews ${handler.kind} again (read-only) to show this page's current state.`, { argv: ['gbrain', 'repair', handler.kind, ...(opts.sourceFlag ? ['--source', opts.sourceFlag] : []), '--json'] }) });
+      }
       const carried = item.retried === true && error instanceof OperationError && REPAIR_DECLINE_CODES.has(error.code);
       const { failure, systemic: stop } = carried ? { failure: { ...classifyItemFailure(error), key: `${item.source_id}:${item.slug}` }, systemic: null }
         : items.record(`${item.source_id}:${item.slug}`, error);
@@ -652,9 +662,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
       // A per-item failure: recorded, nothing written, no cursor for it; the next full scan retries it (PR #6459, GBRA-130).
       const message = redactConnectionInfo(failure.message);
       const failedItem = `${item.source_id}:${item.slug}`;
-      result.failed.push({ item: failedItem, source_id: item.source_id, slug: item.slug, reason: failure.code, message, retry: 'next_full_scan',
-        fix: readFix(`Previews ${handler.kind} for source ${item.source_id} (read-only); it lists ${item.slug} again with its current state. A run with no stored cursor retries it.`,
-          { argv: ['gbrain', 'repair', handler.kind, '--source', item.source_id, '--json'] }) });
+      result.failed.push(failedEntry(handler.kind, item, failure));
       failedItems.push({ item, failure });
       result.outcomes = { ...result.outcomes, failed: (result.outcomes?.failed ?? 0) + 1 };
       if ((result.outcome_items ??= []).length < (handler.outcomeItemsLimit ?? SAMPLE * 2)) {
@@ -672,6 +680,28 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   // A limited run whose attempted items all failed keeps no cursor either: the next run is a full scan, not a resume past them.
   if (result.complete || (latest === null && result.failed.length > 0)) await writeCursor(ctx.engine, handler.kind, scope, null, null, opts.expect);
   return finish();
+}
+
+/** One item-scoped failure as `result.failed` reports it: nothing written, and the next full scan retries the item. */
+function failedEntry(kind: string, item: RepairItem, failure: ItemFailure): RepairResult['failed'][number] {
+  return { item: `${item.source_id}:${item.slug}`, source_id: item.source_id, slug: item.slug, reason: failure.code, message: redactConnectionInfo(failure.message), retry: 'next_full_scan',
+    fix: readFix(`Previews ${kind} for source ${item.source_id} (read-only); it lists ${item.slug} again with its current state. A run with no stored cursor retries it.`,
+      { argv: ['gbrain', 'repair', kind, '--source', item.source_id, '--json'] }) };
+}
+
+/**
+ * GBRA-443: the items from `index` one batch applies: at most `room`, one write per page (a page already pending or earlier in
+ * the batch ends it), and never the item at `stopBefore` (a preview-bound run's last approved item while writes are unresolved).
+ */
+function batchRun(pending: RepairItem[], index: number, room: number, busy: RepairItem[], stopBefore: number | null): RepairItem[] {
+  const pages = new Set([...busy, pending[index]!].map(other => other.source_id + '\0' + other.slug));
+  let end = index + 1;
+  for (; end < pending.length && end - index < room; end++) {
+    const key = pending[end]!.source_id + '\0' + pending[end]!.slug;
+    if (pages.has(key) || end === stopBefore) break;
+    pages.add(key);
+  }
+  return pending.slice(index, end);
 }
 
 /** Cursor order shared by the kinds' SQL: (phase, id) strictly after `after`. */

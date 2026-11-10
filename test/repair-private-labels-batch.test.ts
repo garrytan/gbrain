@@ -108,15 +108,20 @@ for (const backend of testBackends()) {
     };
     const pageId = async (source: string, slug: string) => Number((await engine.readPageSnapshot(slug, { sourceId: source }))!.page.id);
 
-    test('the preview claims no re-embeds for a label-only edit, except for a page stored under per-chunk synopsis', async () => {
+    test('the preview claims no re-embeds for a label-only edit, except for a page stored under per-chunk synopsis or with a chunk that has no vector yet', async () => {
       await seed('source-e', 'notes/e0');
       await seed('source-e', 'notes/e1');
+      const vector = '[' + Array(1536).fill(0.01).join(',') + ']';
+      await engine.executeRaw("UPDATE content_chunks SET embedding=$1::text::vector WHERE page_id IN (SELECT id FROM pages WHERE source_id='source-e')", [vector]);
       const plain = (await cli(engine, ['private-labels', '--source', 'source-e'], env)).result;
       expect(plain.listing.length).toBe(2);
       expect(plain.cost.embedding_pages).toBe(0);
       await engine.executeRaw("UPDATE pages SET contextual_retrieval_mode='per_chunk_synopsis' WHERE source_id='source-e' AND slug='notes/e1'");
       const synopsis = (await cli(engine, ['private-labels', '--source', 'source-e'], env)).result;
       expect(synopsis.cost.embedding_pages).toBe(1);
+      await engine.executeRaw("UPDATE content_chunks SET embedding=NULL WHERE page_id=(SELECT id FROM pages WHERE source_id='source-e' AND slug='notes/e0')");
+      const unembedded = (await cli(engine, ['private-labels', '--source', 'source-e'], env)).result;
+      expect(unembedded.cost.embedding_pages).toBe(2);
     });
 
     test('pages an earlier apply tried and that did not change are listed after every page not tried yet; the apply names its ledger and the lines it appended', async () => {
@@ -181,7 +186,8 @@ for (const backend of testBackends()) {
       await settleManagedGitEffects(engine);
       const preview = (await cli(engine, ['private-labels', '--limit', '4'])).result;
       expect(preview.listing.map((entry: { item: string }) => entry.item)).toEqual(slugs.slice(0, 4).map(slug => 'default:' + slug));
-      expect(preview.cost.embedding_pages).toBe(0);
+      // No provider here, so these pages have no vectors yet: their write embeds them, and the preview counts them.
+      expect(preview.cost.embedding_pages).toBe(4);
       const drifted = join(root, slugs[0] + '.md');
       writeFileSync(drifted, readFileSync(drifted, 'utf8') + NL + 'An edit made outside gbrain.' + NL);
       installFaultHook(async (point, detail) => {
@@ -262,8 +268,47 @@ for (const backend of testBackends()) {
       const w4 = await cli(engine, ['private-labels', '--apply', '--expect', four.preview_hash]);
       expect(w4.result.stopped?.reason).toBe('item_failures_systemic');
       expect(w4.result.applied).toBe(0);
+      // Every page the batch tried is reported, the ones past the stop included; the page the breaker stopped at is named by the stop.
+      expect(w4.result.failed.map((f: { slug: string }) => f.slug).sort()).toEqual([...fresh.slice(0, 4), fresh[5]!, ...declined].sort());
       expect(w4.exit).toBe(1);
     }, { databaseUrl, setup }), 240_000);
+
+    test('a page refused with a non-item error inside a batch stops the run with its code, and the pages after it, already published, are counted', () => managedBrain(async ({ engine, ctx }) => {
+      const slugs = [0, 1, 2, 3].map(i => 'notes/stop-' + i);
+      for (const slug of slugs) await put(ctx, slug, labelled(slug));
+      await settleManagedGitEffects(engine);
+      const preview = (await cli(engine, ['private-labels'])).result;
+      installFaultHook(async (point, detail) => {
+        if (point !== 'consumer:preparing') return;
+        const [row] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM persistence_requests WHERE id=$1::uuid', [detail.writeId]);
+        if (row?.slug === slugs[1]) throw new OperationError('invalid_fence', 'Forced fence refusal inside the batch.', 'Fixture.');
+      });
+      let run;
+      try { run = await cli(engine, ['private-labels', '--apply', '--expect', preview.preview_hash]); } finally { installFaultHook(undefined); }
+      const { result, exit } = run;
+      expect(result.stopped?.reason).toBe('invalid_fence');
+      expect(result.stopped?.message).toContain(slugs[1]);
+      expect(exit).toBe(1);
+      expect(result.applied).toBe(3);
+      expect((await frontmatter(engine, slugs[1])).access).toBe('private');
+      for (const slug of [slugs[0], slugs[2], slugs[3]]) expect('access' in await frontmatter(engine, slug)).toBe(false);
+      expect(result.details.ledger_rows).toEqual({ intent: 4, committed: 3 });
+      expect(lines(result.details.ledger).length).toBe(result.details.ledger_rows_written);
+    }, { databaseUrl, setup }), 180_000);
+
+    test('a writer whose brain-wide outstanding cap is below the batch still applies every page: a refused batch halves the next ones and its page applies alone', () => managedBrain(async ({ engine, ctx }) => {
+      const slugs = [0, 1, 2].map(i => 'notes/cap-' + i);
+      for (const slug of slugs) await put(ctx, slug, labelled(slug));
+      await settleManagedGitEffects(engine);
+      await engine.setConfig('persistence.limits.brain_outstanding', '1');
+      const preview = (await cli(engine, ['private-labels'])).result;
+      const { result, exit } = await cli(engine, ['private-labels', '--apply', '--expect', preview.preview_hash]);
+      expect(result.stopped).toBeUndefined();
+      expect(result.applied).toBe(3);
+      expect(result.complete).toBe(true);
+      expect(exit).toBe(0);
+      for (const slug of slugs) expect('access' in await frontmatter(engine, slug)).toBe(false);
+    }, { databaseUrl, setup }), 180_000);
 
     test('every page of a run has its intent line before any of them is published, and a crash after the group published still restores each', () => managedBrain(async ({ engine, ctx, root }) => {
       const slugs = [0, 1, 2].map(i => 'notes/crash-' + i);
