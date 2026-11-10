@@ -23,7 +23,7 @@
  * Engine-free: setup never opens the database itself.
  */
 import { realpathSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
@@ -408,7 +408,7 @@ export async function runSetup(args: string[]): Promise<number> {
   }
 
   const launcher = flags.gbrainBin ?? resolveGbrainBin();
-  if (!launcher || !launcher.startsWith('/')) {
+  if (!launcher || !isAbsolute(launcher)) {
     process.stderr.write('gbrain setup: cannot resolve an absolute gbrain launcher (GUI hosts inherit no PATH). Install gbrain globally (`bun install -g github:garrytan/gbrain`) or pass --gbrain-bin <absolute path>.\n');
     return 2;
   }
