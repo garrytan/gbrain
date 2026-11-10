@@ -59,6 +59,7 @@ const find_orphans: Operation = {
     // source-isolation class. Local CLI callers route through `gbrain
     // orphans --source` instead (ctx.remote === false → empty scope here).
     // #5891: a named source narrows the caller's scope and never widens it.
+    // A remote caller's inbound links count only from referrers in its scope.
     const named = p.source_id === undefined ? undefined : String(p.source_id);
     if (named !== undefined) assertSourceInCallerScope(ctx, named);
     const scope = named !== undefined ? await readPolicyOpts(ctx, { sourceId: named }) : await readPolicyOpts(ctx);
@@ -74,6 +75,7 @@ const find_orphans: Operation = {
       includePseudo: (p.include_pseudo as boolean) || false,
       ...(mode ? { mode } : {}),
       ...scope,
+      scopeInbound: ctx.remote !== false,
     });
     const cursor = p.cursor === undefined ? undefined : String(p.cursor);
     if (cursor !== undefined && offset !== 0) {

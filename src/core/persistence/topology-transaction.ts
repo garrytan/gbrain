@@ -28,8 +28,11 @@ export async function topologyTransaction<T>(engine: BrainEngine, run: (tx: Brai
       return scoped(engine, tx, run);
     });
   } catch (error) {
-    if (['55P03','57014'].includes((error as { code?: string }).code ?? '')) {
-      throw new OperationError('write_pending', 'The source transaction exceeded its bounded database wait.', 'Retry the same lifecycle request_id after the current writer finishes.');
+    const code = (error as { code?: string }).code ?? '';
+    if (['55P03','57014'].includes(code)) {
+      const pending = new OperationError('write_pending', 'The source transaction exceeded its bounded database wait.', 'Retry the same lifecycle request_id after the current writer finishes; work it already committed, such as the pages a source removal deleted, is kept and the retry resumes from there.');
+      pending.reason = code === '57014' ? 'statement_timeout' : 'lock_timeout';
+      throw pending;
     }
     throw error;
   } finally { release(); }

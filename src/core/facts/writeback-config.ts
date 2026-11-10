@@ -49,6 +49,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
+import type { AuthInfo } from '../ops/contract.ts';
 import { validateTtlConfig } from './ttl-parse.ts';
 
 export const AUTO_WRITEBACK_KEY = 'memory.auto_writeback';
@@ -155,7 +156,7 @@ const lkg = new WeakMap<BrainEngine, WritebackConfig>();
  */
 export function ambientOptsFrom(
   wb: WritebackConfig,
-  avail: { remember: boolean; extractFacts: boolean },
+  avail: { remember: boolean; extractFacts: boolean; member?: boolean; actor?: boolean },
 ): AmbientOptsShape | null {
   if (!wb.enabled || wb.mode === 'off') return null;
   if (!avail.remember) return null;
@@ -164,6 +165,7 @@ export function ambientOptsFrom(
     transientTtl: wb.transient_ttl,
     visibility: wb.visibility,
     extractFactsAvailable: avail.extractFacts,
+    ...(avail.member ? { member: true } : avail.actor ? { actor: true } : {}),
   };
 }
 interface AmbientOptsShape {
@@ -171,6 +173,17 @@ interface AmbientOptsShape {
   transientTtl: string;
   visibility: 'world' | 'private';
   extractFactsAvailable: boolean;
+  member?: boolean;
+  actor?: boolean;
+}
+
+/**
+ * GST-2243: who an HTTP credential writes as, for its instructions: a member-bound credential is one member; a credential
+ * that may name a member per call (x-qm-actor on remember) writes as that member on those calls and as itself otherwise.
+ */
+export function writebackCaller(auth: Pick<AuthInfo, 'member' | 'attest'> | undefined): { member?: true; actor?: true } {
+  if (auth?.member) return { member: true };
+  return auth?.attest?.ops.includes('remember') ? { actor: true } : {};
 }
 
 /**

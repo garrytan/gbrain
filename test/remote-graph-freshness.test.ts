@@ -128,4 +128,14 @@ describe('remote put_page graph freshness', () => {
       await engine.unsetConfig('mcp.remote_auto_links');
     }
   }, 120_000);
+
+  test('an off value with edge whitespace other than a space still queues no mention pass', async () => {
+    await engine.setConfig('mcp.remote_auto_links', 'Off\u00a0');
+    try {
+      const row = await remoteWrite('notes/freshness-off-padded', BODY.replace('Freshness example', 'Freshness off padded'));
+      expect((row.outcome?.auto_links as Record<string, unknown> | undefined)?.mention_links).toBeUndefined();
+    } finally {
+      await engine.unsetConfig('mcp.remote_auto_links');
+    }
+  }, 120_000);
 });

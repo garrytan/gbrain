@@ -27,6 +27,7 @@ import { bindCredential } from '../src/core/access/members.ts';
 import { accessCheck } from '../src/commands/access.ts';
 import { openAsPreview } from '../src/cli/as-preview.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { getBrainHotMemoryMeta, __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -55,6 +56,12 @@ const OPEN = { slug: 'notes/open-plan', canary: 'canaryownopen' };
 /** Another person's page: member access keeps it from the owner too. */
 const BOBS = { slug: 'notes/bob-plan', canary: 'canaryownbob' };
 const PRIVATE_FACT = 'canaryownfact';
+/** GST-2089: a private dated fact about a person, which think's trajectory reads. */
+const PERSON = 'people/carol-example';
+const PRIVATE_TRAJECTORY = 'canaryowntraj';
+/** Private facts the owner must not read: one taken from another person's readable_by page, one in a source its grant does not read. */
+const BOBS_FACT = 'canaryownbobfact';
+const UNGRANTED_FACT = 'canaryownungranted';
 
 const pageText = (title: string, canary: string, fm: readonly string[]) =>
   ['---', ...(fm.some(l => l.startsWith('type:')) ? [] : ['type: note']), `title: ${title}`, ...fm, '---', `# ${title}`, '', `Harbor ledger planning notes ${canary} for the roadmap.`].join('\n');
@@ -77,13 +84,13 @@ for (const kind of testBackends()) {
     const tokens: Record<string, string> = {};
     const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
 
-    async function call(who: string, op: string, params: Record<string, unknown>, header?: string): Promise<{ isError: boolean; text: string; meta: Record<string, unknown> | undefined }> {
+    async function call(who: string, op: string, params: Record<string, unknown>, header?: string, extra: { metaHook?: typeof getBrainHotMemoryMeta } = {}): Promise<{ isError: boolean; text: string; meta: Record<string, unknown> | undefined }> {
       const auth = await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
       const sourceId = auth.sourceId ?? 'default';
       const localFederated = await noGrantFederatedScope(engine, auth.hasSourceGrant, sourceId);
       const out = await dispatchToolCall(engine, op, { ...params }, {
         remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: auth.takesHoldersAllowList ?? ['world'],
-        ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), ...(header ? { onBehalfOf: { header } } : {}),
+        ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), ...(header ? { onBehalfOf: { header } } : {}), ...extra,
       });
       return { isError: out.isError === true, text: out.content.map(c => c.text).join('\n'), meta: out._meta as Record<string, unknown> | undefined };
     }
@@ -116,6 +123,14 @@ for (const kind of testBackends()) {
       await importFromContent(engine, BOBS.slug, pageText('Bob plan', BOBS.canary, ['readable_by: [bob-example]']), { sourceId: SRC });
       const fact = await dispatchToolCall(engine, 'remember', { fact: `Harbor ledger planning notes ${PRIVATE_FACT}`, provenance: 'fixture', entity: OPEN.slug, visibility: 'private' }, { remote: false, sourceId: SRC });
       if (fact.isError) throw new Error(`fixture remember: ${fact.content.map(c => c.text).join(' ')}`);
+      // think resolves trajectory entities in its scalar source, which is default for a caller with a source grant.
+      for (const sourceId of [SRC, 'default']) await importFromContent(engine, PERSON, ['---', 'type: person', 'title: Carol Example', '---', '# Carol Example', '', 'Carol is a founder.'].join('\n'), { sourceId });
+      await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, valid_from, source, event_type)
+        VALUES ($1, $2, $3, 'event', 'private', '2026-05-01T00:00:00Z', 'fixture', 'job_change')`, [SRC, PERSON, `Carol switched jobs ${PRIVATE_TRAJECTORY}`]);
+      for (const [sourceId, canary, provenance] of [[SRC, BOBS_FACT, BOBS.slug], ['default', UNGRANTED_FACT, null]] as const) {
+        await engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, valid_from, source, event_type, source_markdown_slug)
+          VALUES ($1, $2, $3, 'event', 'private', '2026-06-01T00:00:00Z', 'fixture', 'job_change', $4)`, [sourceId, PERSON, `Harbor ledger planning notes ${canary}`, provenance]);
+      }
       for (const id of [OWNER, 'bob-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
       const mint = async (name: string, member?: string, mayActFor?: string[]) => {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [SRC] });
@@ -152,6 +167,72 @@ for (const kind of testBackends()) {
     test('the owner recalls private facts; no other caller does', async () => {
       for (const who of ['owner', 'delegate']) expect({ who, seen: (await call(who, 'recall', { query: 'harbor ledger planning notes' })).text.includes(PRIVATE_FACT) }).toEqual({ who, seen: true });
       for (const who of ['bob', 'unbound']) expect({ who, seen: (await call(who, 'recall', { query: 'harbor ledger planning notes' })).text.includes(PRIVATE_FACT) }).toEqual({ who, seen: false });
+    }, 120_000);
+
+    /** GST-2089: which fact surfaces show `who` a private fact: the query facts arm, ranked recall, hot memory, delta, context_pack and think's trajectory. */
+    async function privateFactsSeenBy(who: string, header?: string, canary = PRIVATE_FACT): Promise<string[]> {
+      const seen: string[] = [];
+      const surfaces: Array<[string, () => Promise<string>, string]> = [
+        ['query', async () => (await call(who, 'query', { query: 'harbor ledger planning notes', expand: false, limit: 20 }, header)).text, canary],
+        ['recall question', async () => (await call(who, 'recall', { question: `Harbor ledger planning notes ${canary}` }, header)).text, canary],
+        ['recall entity question', async () => (await call(who, 'recall', { entity: OPEN.slug, question: `Harbor ledger planning notes ${canary}` }, header)).text, canary],
+        ['hot memory', async () => JSON.stringify((await call(who, 'get_page', { slug: OPEN.slug }, header, { metaHook: getBrainHotMemoryMeta })).meta?.brain_hot_memory ?? null), canary],
+        ['delta', async () => (await call(who, 'delta', { since: '2000-01-01T00:00:00Z' }, header)).text, canary],
+        ['context_pack', async () => (await call(who, 'context_pack', { entities: OPEN.slug }, header)).text, canary],
+        ['think trajectory', async () => (await call(who, 'think', { question: 'When did Carol last switch jobs?' }, header)).text.match(/TRAJECTORY_INJECTED_\d+_POINTS/)?.[0] ?? '', 'TRAJECTORY_INJECTED'],
+      ];
+      for (const [label, read, shown] of surfaces) if ((await read()).includes(shown)) seen.push(label);
+      return seen;
+    }
+    const FACT_SURFACES = ['query', 'recall question', 'recall entity question', 'hot memory', 'delta', 'context_pack', 'think trajectory'];
+
+    test('fixture control: a trusted local caller gets the private facts on every fact surface', async () => {
+      const local = (op: string, params: Record<string, unknown>) => dispatchToolCall(engine, op, params, { remote: false, sourceId: SRC }).then(o => o.content.map(c => c.text).join('\n'));
+      expect(await local('recall', { question: `Harbor ledger planning notes ${PRIVATE_FACT}` })).toContain(PRIVATE_FACT);
+      expect(await local('think', { question: 'When did Carol last switch jobs?' })).toMatch(/TRAJECTORY_INJECTED_\d+_POINTS/);
+      expect(await local('recall', { question: `Harbor ledger planning notes ${BOBS_FACT}` })).toContain(BOBS_FACT);
+      expect((await dispatchToolCall(engine, 'recall', { question: `Harbor ledger planning notes ${UNGRANTED_FACT}` }, { remote: false, sourceId: 'default' })).content.map(c => c.text).join('\n')).toContain(UNGRANTED_FACT);
+    }, 120_000);
+
+    test('GST-2089: the owner and its delegate get private facts on every fact surface; another member and an unbound token get world-only facts', async () => {
+      __resetHotMemoryCacheForTests();
+      for (const who of ['owner', 'delegate']) expect({ who, seen: await privateFactsSeenBy(who) }).toEqual({ who, seen: FACT_SURFACES });
+      for (const who of ['bob', 'unbound']) expect({ who, seen: await privateFactsSeenBy(who) }).toEqual({ who, seen: [] });
+    }, 240_000);
+
+    test('GST-2089: the owner reads no private fact taken from another person\'s readable_by page or kept in a source its grant does not read', async () => {
+      __resetHotMemoryCacheForTests();
+      for (const canary of [BOBS_FACT, UNGRANTED_FACT]) expect({ canary, seen: (await privateFactsSeenBy('owner', undefined, canary)).filter(s => s !== 'think trajectory') }).toEqual({ canary, seen: [] });
+      expect((await call('owner', 'think', { question: 'When did Carol last switch jobs?' })).text).toContain('TRAJECTORY_INJECTED_1_POINTS');
+    }, 240_000);
+
+    test('GST-2089: the owner speaking for itself alone keeps private facts; for a channel audience it gets world-only facts', async () => {
+      __resetHotMemoryCacheForTests();
+      expect(await privateFactsSeenBy('owner', `member:${OWNER}`)).toEqual(FACT_SURFACES);
+      expect(await privateFactsSeenBy('owner', `member:${OWNER},member:bob-example`)).toEqual([]);
+    }, 240_000);
+
+    test('GST-2089: hot memory keys on the caller: after the owner warms the entry, the next caller with the same session reads world-only facts', async () => {
+      const hot = async (who: string, header?: string) => JSON.stringify((await call(who, 'get_page', { slug: OPEN.slug }, header, { metaHook: getBrainHotMemoryMeta })).meta?.brain_hot_memory ?? null);
+      for (const next of [['bob'], ['unbound'], ['owner', `member:${OWNER},member:bob-example`]] as const) {
+        __resetHotMemoryCacheForTests();
+        expect(await hot('owner')).toContain(PRIVATE_FACT);
+        expect({ next, seen: (await hot(next[0], next[1])).includes(PRIVATE_FACT) }).toEqual({ next, seen: false });
+      }
+      // With privacy relaxed by the operator, the same credential after `gbrain access owner clear` shares the owner's
+      // page tier and identity; the fact tier still keeps it off the owner's cached private facts.
+      await engine.setConfig('search.remote_private_pages', 'visible');
+      __resetPrivateVisibilityCacheForTests();
+      __resetHotMemoryCacheForTests();
+      try {
+        expect(await hot('owner')).toContain(PRIVATE_FACT);
+        await clearOwner(engine);
+        expect(await hot('owner')).not.toContain(PRIVATE_FACT);
+      } finally {
+        await setOwner(engine, OWNER);
+        await engine.unsetConfig('search.remote_private_pages');
+        __resetPrivateVisibilityCacheForTests();
+      }
     }, 120_000);
 
     test('another member and an unbound token still see no private page on any path, after the owner read them', async () => {

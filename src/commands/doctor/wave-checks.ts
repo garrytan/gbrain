@@ -339,6 +339,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => (await import('./checks/atom-retirements.ts')).atomRetirementsRestorableCheck(engine, scope.sourceIds),
   },
   {
+    id: 'atom_fence_rows', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Narrowing atoms to private is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some world atoms carry text of a fence row their source page shows only to the owner',
+    run: async (engine, scope) => (await import('./checks/atom-fence-rows.ts')).atomFenceRowsCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'generation_retirements', resolution: 'repair', registration: 'wave',
     hostOnly: 'Restoring a derived generation is a host-side, explicit-only repair.',
     count: d => Number(d.items ?? 0),

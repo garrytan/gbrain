@@ -8,7 +8,7 @@ is the planned way to run many brains in one process.
 
 ## Pick the brain's shape
 
-- **No-root (database-only).** `gbrain init --db-only --url postgresql://<user>:<password>@<host>:5432/<database>`
+- **No-root (database-only).** `gbrain init --db-only --url 'postgresql://<user>:<password>@<host>:5432/<database>?sslmode=require'`
   keeps the brain in the database with no content directory or checkout.
   Any host can publish its writes, so a replaced container never strands
   them. Take markdown out with `gbrain export`.

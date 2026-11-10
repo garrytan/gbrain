@@ -24,14 +24,14 @@ import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { checkError } from '../check-fix.ts';
 
 async function runBootstrapChecks(ctx: DoctorContext): Promise<Check[]> {
-  const { engine } = ctx;
+  const { engine, entryDeadlineAt } = ctx;
   const checks: Check[] = [];
 
   // 2d. Agent-bootstrap health (plan B2/B4/ENG-4). Filesystem-first; the
   // one engine-dependent pairing check degrades gracefully when engine is
   // null. Emits NOTHING on machines with no bootstrap state, so ordinary
   // brains keep a clean doctor.
-  checks.push(...(await bootstrapDoctorChecks(engine)));
+  checks.push(...(await bootstrapDoctorChecks(engine, entryDeadlineAt)));
   return checks;
 }
 

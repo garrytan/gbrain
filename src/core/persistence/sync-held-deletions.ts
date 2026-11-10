@@ -21,6 +21,7 @@ import { promisify } from 'node:util';
 import type { BrainEngine } from '../engine.ts';
 import { execFile } from '../spawn.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { ghostFileBacked } from '../repair/ghost-pages.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
@@ -126,7 +127,7 @@ async function proveHeldDeletions(engine: BrainEngine, level: ShadowLevel, conte
 /** The blob `path` held in the deleting commit's first parent: the file's last committed bytes. */
 async function lastCommittedBlob(gitRoot: string, commit: string, path: string): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync('git', ['-C', gitRoot, 'rev-parse', '--verify', '--quiet', `${commit}^1:${path}`], { env: gitChildEnv(), encoding: 'utf8', timeout: 60_000 });
+    const { stdout } = await execFileAsync('git', [...HARDENED_GIT_ARGS, '-C', gitRoot, 'rev-parse', '--verify', '--quiet', `${commit}^1:${path}`], { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 60_000 });
     return stdout.trim() || null;
   } catch {
     return null;
