@@ -338,7 +338,11 @@ export async function publishManagedAtomGeneration(engine: BrainEngine, session:
     approved: generation.approved, release: generation.release }, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, scope: generation.approved ? null : claim.runKey, locator: generation.locator ?? (origin.kind === 'transcript' ? origin.locator : null) });
   if (plan.kind === 'held') return { state: 'held', reason: plan.outcome.reason, holdId: plan.outcome.holdId, receipts: [] };
   if (plan.kind === 'unchanged') return { state: 'unchanged', receipts: generation.approved ? [] : await publishManagedAtoms(engine, session, origin, []) };
-  const runKey = generation.approved ? digest(['managed-atoms-approved', plan.intent.activationId]) : claim.runKey;
+  // A held release is a new publication, not a replay of the drain that produced the hold.
+  // Bind its completion (and its children's run key) to the deterministic activation so an
+  // older completion keeps its receipt and a retry of this release keeps the same identity.
+  const runKey = generation.approved ? digest(['managed-atoms-approved', plan.intent.activationId])
+    : generation.release ? digest(['managed-atoms-release', plan.intent.activationId]) : claim.runKey;
   const advance = !generation.approved && claim.checkpointKey ? { checkpointKey: claim.checkpointKey, expectedCheckpoint: claim.expectedCheckpoint ?? null } : {};
   const { activationId } = plan.intent;
   const bySlug = new Map(atoms.map(atom => [atom.slug, atom]));
