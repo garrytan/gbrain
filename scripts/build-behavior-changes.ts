@@ -28,7 +28,7 @@ export const CHANGELOG_FRAGMENT_DIR = 'changelog.d';
 export const OUT = 'src/core/behavior-changes.generated.ts';
 export const NOTICE_FILE = 'src/core/behavior-change-notice.ts';
 export const MARKER = /<!--\s*behavior-change:\s*([^\s]+)\s*-->/g;
-export const ID = /^[a-z0-9][a-z0-9_]{2,95}$/;
+export const ID = /^[a-z][a-z0-9_]{2,95}$/;
 const NOTICE_CAP = 2_000;
 const DOCS = 'behavior-changes.d/README.md';
 
@@ -72,7 +72,7 @@ export function build(root: string): Built {
   const stamping = !!version && (!top || cmp(version, top) > 0);
   const pendingFiles = existsSync(join(root, CHANGELOG_FRAGMENT_DIR))
     ? readdirSync(join(root, CHANGELOG_FRAGMENT_DIR)).filter(f => f.endsWith('.md') && f !== 'README.md').sort() : [];
-  const pending = [...releases.filter(r => !r.version).flatMap(r => r.ids), ...pendingFiles.flatMap(f => markers(read(root, join(CHANGELOG_FRAGMENT_DIR, f))))];
+  const pending = [...pendingFiles.flatMap(f => markers(read(root, join(CHANGELOG_FRAGMENT_DIR, f)))), ...releases.filter(r => !r.version).flatMap(r => r.ids)];
   const sinceOf = new Map<string, string>();
   const order: string[] = [];
   const mark = (id: string, v: string) => {
@@ -80,14 +80,20 @@ export function build(root: string): Built {
     sinceOf.set(id, v); order.push(id);
   };
   for (const r of released) for (const id of r.ids) mark(id, r.version!);
-  const pendingIds = new Set(pending);
-  if (stamping) for (const id of pending) if (!sinceOf.has(id)) mark(id, version);
+  const pendingIds = new Set<string>();
+  for (const id of pending) {
+    if (pendingIds.has(id)) problems.push(`${id} is marked twice among the unreleased changes (changelog.d and ## [Unreleased]); the release would mark it twice`);
+    else if (sinceOf.has(id)) problems.push(`${id} is marked again after release ${sinceOf.get(id)}; a released id is never marked again`);
+    pendingIds.add(id);
+  }
+  for (const id of new Set([...sinceOf.keys(), ...pendingIds])) if (!ID.test(id)) problems.push(`the marker <!-- behavior-change: ${id} --> is not an id: lowercase letters, digits and _, starting with a letter (3-96 characters)`);
+  if (stamping) for (const id of pendingIds) if (!sinceOf.has(id)) mark(id, version);
 
   const files = existsSync(join(root, FRAGMENT_DIR)) ? readdirSync(join(root, FRAGMENT_DIR)).filter(f => f !== 'README.md').sort() : [];
   const texts = new Map<string, string>();
   for (const f of files) {
     const id = f.replace(/\.md$/, '');
-    if (!f.endsWith('.md') || !ID.test(id)) { problems.push(`${FRAGMENT_DIR}/${f}: a fragment is named <id>.md, the id lowercase letters, digits and _ (3-96 characters)`); continue; }
+    if (!f.endsWith('.md') || !ID.test(id)) { problems.push(`${FRAGMENT_DIR}/${f}: a fragment is named <id>.md, the id lowercase letters, digits and _, starting with a letter (3-96 characters)`); continue; }
     const text = read(root, join(FRAGMENT_DIR, f)).trim().replace(/\s*\n\s*/g, ' ');
     if (!text) problems.push(`${FRAGMENT_DIR}/${f} is empty`);
     else if (text.length > NOTICE_CAP) problems.push(`${FRAGMENT_DIR}/${f} is ${text.length} characters; the notice renders at most ${NOTICE_CAP}`);

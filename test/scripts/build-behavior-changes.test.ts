@@ -107,9 +107,9 @@ describe('build()', () => {
     });
     const { problems } = build(root);
     expect(problems.sort()).toEqual([
-      'behavior-changes.d/Bad-Name.md: a fragment is named <id>.md, the id lowercase letters, digits and _ (3-96 characters)',
+      'behavior-changes.d/Bad-Name.md: a fragment is named <id>.md, the id lowercase letters, digits and _, starting with a letter (3-96 characters)',
       'behavior-changes.d/no_marker_abc.md has no <!-- behavior-change: no_marker_abc --> marker in a changelog.d fragment or the CHANGELOG, so no release would disclose it',
-      'behavior-changes.d/notes.txt: a fragment is named <id>.md, the id lowercase letters, digits and _ (3-96 characters)',
+      'behavior-changes.d/notes.txt: a fragment is named <id>.md, the id lowercase letters, digits and _, starting with a letter (3-96 characters)',
       `behavior-changes.d/old_table_row.md repeats the id of a row in ${NOTICE_FILE}`,
       'behavior-changes.d/too_long_abc.md is 2001 characters; the notice renders at most 2000',
       `the marker <!-- behavior-change: no_fragment_abc --> names no behavior-changes.d/no_fragment_abc.md and no function row dated releasedIn('no_fragment_abc')`,
@@ -173,6 +173,53 @@ describe('build()', () => {
       'behavior-changes.d/twice_row_abc.md': 'Twice.\n',
     });
     expect(build(root).problems).toEqual(['twice_row_abc is marked in two releases (0.1.0.0 and 0.1.1.0)']);
+  });
+
+  test('a marker repeated among unreleased changes, or marked again after its release, is refused on the PR tree', () => {
+    const twoFragments = build(tree({
+      VERSION: '0.1.0.0\n',
+      'CHANGELOG.md': changelog(section('0.1.0.0', 'First.')),
+      'behavior-changes.d/dup_row_abc.md': 'Dup.\n',
+      'changelog.d/a.md': `${marker('dup_row_abc')}\n`,
+      'changelog.d/b.md': `${marker('dup_row_abc')}\n`,
+    }));
+    expect(twoFragments.problems).toEqual(['dup_row_abc is marked twice among the unreleased changes (changelog.d and ## [Unreleased]); the release would mark it twice']);
+    const remarked = build(tree({
+      VERSION: '0.1.0.0\n',
+      'CHANGELOG.md': changelog(section('0.1.0.0', marker('old_row_abc'))),
+      'behavior-changes.d/old_row_abc.md': 'Old.\n',
+      'changelog.d/a.md': `${marker('old_row_abc')}\n`,
+    }));
+    expect(remarked.problems).toEqual(['old_row_abc is marked again after release 0.1.0.0; a released id is never marked again']);
+  });
+
+  test('an id starting with a digit is refused, so the generated map never holds an unquoted numeric key', () => {
+    const root = tree({
+      VERSION: '0.1.0.0\n',
+      'CHANGELOG.md': changelog(section('0.1.0.0', 'First.')),
+      'behavior-changes.d/8123_sync.md': 'Sync.\n',
+      'changelog.d/a.md': `${marker('8123_sync')}\n`,
+    });
+    expect(build(root).problems).toEqual([
+      'the marker <!-- behavior-change: 8123_sync --> is not an id: lowercase letters, digits and _, starting with a letter (3-96 characters)',
+      'behavior-changes.d/8123_sync.md: a fragment is named <id>.md, the id lowercase letters, digits and _, starting with a letter (3-96 characters)',
+      "the marker <!-- behavior-change: 8123_sync --> names no behavior-changes.d/8123_sync.md and no function row dated releasedIn('8123_sync')",
+    ]);
+  });
+
+  test('with [Unreleased] markers on the base, the release in progress orders ids as the fold writes them', () => {
+    const shared = {
+      'behavior-changes.d/frag_row_abc.md': 'From a fragment.\n',
+      'behavior-changes.d/open_row_abc.md': 'From [Unreleased].\n',
+    };
+    const released = section('0.1.0.0', 'First.');
+    const frag = `**Fragment.**\n\n${marker('frag_row_abc')}`;
+    const open = `**Open.**\n\n${marker('open_row_abc')}`;
+    const inProgress = build(tree({ ...shared, 'changelog.d/a.md': `${frag}\n`, VERSION: '0.1.1.0\n', 'CHANGELOG.md': changelog(`## [Unreleased]\n\n${open}\n`, released) }));
+    const folded = build(tree({ ...shared, VERSION: '0.1.1.0\n', 'CHANGELOG.md': changelog(section('0.1.1.0', frag, '', open), released) }));
+    expect(inProgress.problems).toEqual([]);
+    expect(folded.problems).toEqual([]);
+    expect(folded.text).toBe(inProgress.text);
   });
 });
 

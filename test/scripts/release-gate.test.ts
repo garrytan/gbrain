@@ -38,14 +38,16 @@ describe('release gate', () => {
     expect((await evaluate(missing, A, '0.60.70.0')).why).toContain('Test has no push run yet');
   });
 
-  test('a failed run publishes nothing and names the repair and the backfill command', async () => {
+  test('a failed run publishes nothing and names the repair and the re-run of the Release run', async () => {
     const red = deps({ 'test.yml': [run(1, 10, A, 'completed', 'failure')], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] });
     const v = await evaluate(red, A, '0.60.70.0');
     expect(v.kind).toBe('fail');
     if (v.kind !== 'fail') return;
     expect(v.why).toContain('v0.60.70.0 is not published and latest-stable does not move');
     expect(v.next).toContain('Master red: Test');
-    expect(v.next).toContain('gh workflow run release.yml --ref master');
+    expect(v.next).toContain('gh run rerun 1');
+    expect(v.next).toContain('re-run this Release run');
+    expect(v.next).not.toContain('gh workflow run release.yml');
     const rerunGreen = deps({ 'test.yml': [run(1, 10, A, 'completed', 'failure'), run(1, 10, A, 'completed', 'success', 2)], 'e2e.yml': [run(2, 20, A, 'completed', 'success')] });
     expect((await evaluate(rerunGreen, A, '0.60.70.0')).kind).toBe('publish');
   });
@@ -59,6 +61,7 @@ describe('release gate', () => {
       const v = await evaluate(d, A, '0.60.70.0');
       expect(v).toMatchObject({ kind: 'fail', sha: A });
       expect(v.kind === 'fail' && v.next).toContain('gh run rerun 1');
+      expect(v.kind === 'fail' && v.next).not.toContain('gh workflow run release.yml');
       expect(d.calls.some(c => c.endsWith(' b'))).toBe(false);
     }
   });
@@ -82,10 +85,11 @@ describe('release gate', () => {
     expect(v.why).toContain("no 'reused-full-suite' artifact");
     expect(v.why).toContain('v0.60.70.0 is not published');
     expect(v.next).toContain('gh run rerun 2');
-    expect(v.next).toContain('gh workflow run release.yml --ref master');
+    expect(v.next).toContain('re-run this Release run');
+    expect(v.next).not.toContain('gh workflow run release.yml');
   });
 
-  test('the poller waits while CI runs and fails with the backfill command at its deadline (dispatch backfill uses the same gate)', async () => {
+  test('the poller waits while CI runs and fails naming the re-run of the Release run at its deadline', async () => {
     let t = 0;
     const lines: string[] = [];
     const states = [run(1, 10, A, 'queued', null), run(1, 10, A, 'in_progress', null), run(1, 10, A, 'completed', 'success')];
@@ -101,7 +105,7 @@ describe('release gate', () => {
     t = 0;
     const late = await gate(stuck, { sha: A, version: '0.60.70.0', timeoutMs: 3 * 60_000, pollMs: 60_000, log: () => {}, sleep: async ms => { t += ms; }, now: () => t });
     expect(late.kind).toBe('fail');
-    if (late.kind === 'fail') expect(late.next).toContain('gh workflow run release.yml --ref master');
+    if (late.kind === 'fail') expect(late.next).toContain('re-run this Release run');
   });
 });
 

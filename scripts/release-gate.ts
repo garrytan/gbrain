@@ -18,10 +18,11 @@
  *   master commit with the same VERSION may carry unreleased changes, so the
  *   gate never publishes another commit in the release commit's place;
  * - still running, or not created yet: wait, up to --timeout-minutes, then
- *   fail with the dispatch backfill command.
+ *   fail naming the re-run of this Release run, which gates the same commit.
  *
- * A workflow_dispatch backfill runs the same gate for master's HEAD, so it
- * publishes the current VERSION once master's CI for HEAD is green. Writes
+ * A workflow_dispatch backfill runs the same gate for master's HEAD, so it is
+ * right only while HEAD is the release commit; every failure names the re-run
+ * of the Release run instead. Writes
  * `publish=true|false` and `sha=<commit>` to --output (GITHUB_OUTPUT).
  *
  * Master-push reuse (scripts/ci-reuse.ts, docs/ci-event-parity.md#master-push-reuse):
@@ -42,6 +43,7 @@ import { fetchArtifactJson, restClient, type GitHubClient } from './lib/gh-issue
 export const GATED = [{ file: 'test.yml', name: 'Test', key: 'test' }, { file: 'e2e.yml', name: 'E2E Tests', key: 'e2e' }] as const;
 export const DOCS = 'docs/RELEASING.md#release-ci-gate';
 const RED = new Set(['failure', 'timed_out', 'startup_failure', 'action_required']);
+const RERUN = `re-run this Release run (gh run rerun ${process.env.GITHUB_RUN_ID ?? '<this Release run id>'}), which gates the same release commit; a dispatch on master would gate master HEAD instead`;
 
 export interface GateRun { id: number; run_number: number; run_attempt: number; status: string; conclusion: string | null; head_sha: string; head_branch: string; event: string; html_url?: string }
 export interface ReusedRun { run_id: number; run_attempt: number; sha: string }
@@ -68,7 +70,7 @@ export async function evaluate(deps: GateDeps, sha: string, version: string): Pr
     return {
       kind: 'fail', sha,
       why: `${failed.wf.name} run ${failed.run!.id} (${failed.run!.html_url ?? `run ${failed.run!.run_number}`}) ended ${failed.run!.conclusion} on ${sha.slice(0, 12)}, so v${version} is not published and latest-stable does not move. Releases publish only commits master CI passed.`,
-      next: `Repair master (the open "Master red: ${failed.wf.name}" issue names the failing tests; docs/RELEASING.md#master-red-issues). Once a later push-to-master run of Test and E2E Tests is green, publish the current VERSION with: gh workflow run release.yml --ref master`,
+      next: `Repair master (the open "Master red: ${failed.wf.name}" issue names the failing tests; docs/RELEASING.md#master-red-issues). If the failure is outside the release commit, re-run that run (gh run rerun ${failed.run!.id}) and, once it is green, ${RERUN}. Otherwise land the repair and open the next release.`,
     };
   }
   const cancelled = runs.find(r => r.run && r.run.status === 'completed' && (r.run.conclusion === 'cancelled' || r.run.conclusion === 'skipped'));
@@ -76,7 +78,7 @@ export async function evaluate(deps: GateDeps, sha: string, version: string): Pr
     return {
       kind: 'fail', sha,
       why: `${cancelled.wf.name} run ${cancelled.run!.id} on ${sha.slice(0, 12)} ended ${cancelled.run!.conclusion}, so v${version} is not published. Master push runs are keyed by commit, so a newer push never cancels them, and a later master commit may carry unreleased changes under the same VERSION, so the gate never publishes one in its place.`,
-      next: `Re-run it (gh run rerun ${cancelled.run!.id}); once Test and E2E Tests are green on ${sha.slice(0, 12)}: gh workflow run release.yml --ref master`,
+      next: `Re-run it (gh run rerun ${cancelled.run!.id}); once Test and E2E Tests are green on ${sha.slice(0, 12)}, ${RERUN}`,
     };
   }
   const pending = runs.filter(r => !r.run || r.run.status !== 'completed');
@@ -87,7 +89,7 @@ export async function evaluate(deps: GateDeps, sha: string, version: string): Pr
     return {
       kind: 'fail', sha,
       why: `${unproven.wf.name} run ${unproven.run.id} reused an earlier full-suite run on ${sha.slice(0, 12)}, but its reuse record cannot name that run (${unproven.prov.problem}), so v${version} is not published. A release names the run that proved its tree.`,
-      next: `Re-run that push run (gh run rerun ${unproven.run.id}); it decides reuse again and records it, or runs the full suite. Once it is green: gh workflow run release.yml --ref master`,
+      next: `Re-run that push run (gh run rerun ${unproven.run.id}); it decides reuse again and records it, or runs the full suite. Once it is green, ${RERUN}`,
     };
   }
   const sources: Source[] = proven.map(p => ({ workflow: p.wf.name, key: p.wf.key, run_id: p.run.id, ...('run_id' in p.prov ? { reused: { run_id: p.prov.run_id, run_attempt: p.prov.run_attempt, sha: p.prov.sha } } : {}) }));
@@ -126,7 +128,7 @@ export async function gate(deps: GateDeps, opts: { sha: string; version: string;
     const v = await evaluate(deps, opts.sha, opts.version);
     if (v.kind !== 'wait') return v;
     if (now() >= deadline) {
-      return { kind: 'fail', sha: v.sha, why: `Test and E2E Tests did not finish on ${v.sha.slice(0, 12)} within ${Math.round(opts.timeoutMs / 60_000)} minutes (${v.why})`, next: 'When they finish green, publish with: gh workflow run release.yml --ref master' };
+      return { kind: 'fail', sha: v.sha, why: `Test and E2E Tests did not finish on ${v.sha.slice(0, 12)} within ${Math.round(opts.timeoutMs / 60_000)} minutes (${v.why})`, next: `When they finish green, ${RERUN}` };
     }
     opts.log(`[release-gate] waiting: ${v.why}`);
     await sleep(opts.pollMs);
@@ -159,12 +161,12 @@ if (import.meta.main) {
       write(true, v.sha);
       if (output) appendFileSync(output, reuseOutputs(v.sources));
     } else {
-      console.log(`::error::Release v${version} not published: ${v.kind === 'fail' ? v.why : 'gate ended while waiting'}. Next: ${v.kind === 'fail' ? v.next : 'gh workflow run release.yml --ref master'}. Docs: ${DOCS}`);
+      console.log(`::error::Release v${version} not published: ${v.kind === 'fail' ? v.why : 'gate ended while waiting'}. Next: ${v.kind === 'fail' ? v.next : RERUN}. Docs: ${DOCS}`);
       write(false, v.sha);
       process.exit(1);
     }
   } catch (e) {
-    console.log(`::error::Release v${version} not published: the CI gate could not read the actions API (${e instanceof Error ? e.message : String(e)}). Why: publication waits for Test and E2E Tests success on the release commit. Fix: re-run this workflow (gh run rerun <this run id>) or gh workflow run release.yml --ref master. Docs: ${DOCS}`);
+    console.log(`::error::Release v${version} not published: the CI gate could not read the actions API (${e instanceof Error ? e.message : String(e)}). Why: publication waits for Test and E2E Tests success on the release commit. Fix: ${RERUN}. Docs: ${DOCS}`);
     write(false, sha);
     process.exit(1);
   }

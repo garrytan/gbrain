@@ -224,7 +224,7 @@ const DOCTOR_ARGV = ['gbrain', 'doctor', '--only', BEHAVIOR_NOTICE_CODE, '--json
 type ChangeText = string | ((chain: ChainDisclosure | null, remote: boolean) => string | null);
 
 /** A function row's release: the version whose CHANGELOG section marks its id (behavior-changes.d/README.md), 'TBD' until a release does. */
-const releasedIn = (id: string): string => BEHAVIOR_CHANGE_RELEASES[id] ?? 'TBD';
+const releasedIn = (id: string): string => (Object.hasOwn(BEHAVIOR_CHANGE_RELEASES, id) ? BEHAVIOR_CHANGE_RELEASES[id]! : 'TBD');
 
 /**
  * Every disclosed behavior change, with the release that introduced it; never edit a shipped `since`. A new plain-text

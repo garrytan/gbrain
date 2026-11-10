@@ -9,7 +9,7 @@ line and nobody picks a version before the release.
 
 1. Write the notice text, one paragraph of plain text (at most 2,000
    characters, no markup), in `behavior-changes.d/<id>.md`. The id is
-   lowercase letters, digits and `_`, unique across the table, for example
+   lowercase letters, digits and `_`, starting with a letter, unique across the table, for example
    `sync_holds_unparsable_8123`.
 2. Name the id in your PR's changelog fragment (`changelog.d/<slug>.md`)
    on its own line:
@@ -19,16 +19,20 @@ line and nobody picks a version before the release.
    ```
 
 That is all. `bun run verify` (check:regen-all) refuses a fragment with no
-marker, a marker with no fragment, a duplicate id and an over-long text.
+marker, a marker with no fragment, a duplicate id (including an id marked
+twice among unreleased changes, or marked again after its release) and an
+over-long text.
 
 ## What the release does
 
-The release (`gstack-release-stamp open`) folds every changelog fragment
-into one CHANGELOG section under the new version, so each marker now sits
-under that version's heading. It then runs `bun scripts/build-behavior-changes.ts`,
-which writes src/core/behavior-changes.generated.ts: every fragment whose
-marker sits in a released section, with that section's version as its
-`since`. The files here are never edited or deleted, so the release changes
+The release (`gstack-release-stamp open`) writes the new VERSION, runs
+`bun scripts/build-behavior-changes.ts`, then folds every changelog fragment
+into one CHANGELOG section under that version. While VERSION is newer than
+the CHANGELOG's top release, the builder dates the pending markers with it,
+in the order the fold writes them (fragments by path, then `## [Unreleased]`),
+so its output equals what it generates once the markers sit under the new
+heading. It writes src/core/behavior-changes.generated.ts: every fragment
+whose marker is released, with that release as its `since`. The files here are never edited or deleted, so the release changes
 only version stamps, the CHANGELOG and that generated file, which gstack's
 land check regenerates byte for byte.
 

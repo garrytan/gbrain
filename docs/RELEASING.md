@@ -161,13 +161,13 @@ master since the last release one version and writes all the stamps at once.
 
 **The release PR.** The merge lane runs `gstack-release-stamp open`. On a
 fresh worktree of `origin/master` it sets VERSION to master's PATCH + 1,
-folds every `changelog.d` fragment under one `## [<version>] - <date>`
-heading and deletes the fragments, then runs
-`bun scripts/release-restamp.ts --stamp-only <version>` (every required row
+runs `bun scripts/release-restamp.ts --stamp-only <version>` (every required row
 of the CLAUDE.md "Version locations" table plus the plugin, variant and
 template stamp lines; no fetch, no merge, no commit) and
-`bun scripts/build-behavior-changes.ts`, which dates each
-`behavior-changes.d` row whose marker now sits under the new heading. It
+`bun scripts/build-behavior-changes.ts`, which dates each pending
+`behavior-changes.d` marker with the new version, in the order the fold
+writes them, then folds every `changelog.d` fragment under one
+`## [<version>] - <date>` heading and deletes the fragments. It
 pushes `release/<version>` and opens the PR. The lane lands it with
 `gstack-ship-queue land --pr <n> --pin <head>`, which accepts only a head
 that is exactly the release stamp of master's tip. The release PR runs the
@@ -646,15 +646,20 @@ The `ci-gate` job (`scripts/release-gate.ts`) holds build, publication and the
 succeed on the release commit.
 
 - **Failed run:** nothing is published and the job fails with the run and the
-  master-red issue. After master is green again, publish the current VERSION
-  with `gh workflow run release.yml --ref master`.
+  master-red issue. When the failure is outside the release commit (a flake),
+  re-run the failed run, then re-run the Release run (`gh run rerun <release
+  run id>`), which gates the same commit; otherwise land the repair and open
+  the next release.
 - **Cancelled or skipped run:** nothing is published and the job fails with
   `gh run rerun <id>`. Master push runs are keyed by commit, so a newer push
   no longer cancels them; and between releases many master commits share one
   VERSION, so the gate never follows to a later commit.
 - **Backfill:** `gh workflow run release.yml --ref master` gates and publishes
-  master HEAD's VERSION. Other refs are refused.
-- The gate waits up to 110 minutes, then fails with the backfill command.
+  master HEAD's VERSION, so use it only while HEAD is the release commit:
+  between releases a later commit carries the same VERSION with unreleased
+  changes. Other refs are refused.
+- The gate waits up to 110 minutes, then fails naming the re-run of the
+  Release run.
 - **Reused push run:** a push run that reused a passed full-suite run of its
   exact tree ([master-push reuse](ci-event-parity.md#master-push-reuse))
   publishes only with a readable `reuse.json` naming the same workflow, the
