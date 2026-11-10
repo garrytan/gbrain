@@ -2,12 +2,13 @@
  * Bounded SKILL.md reader for the resolver: name, description,
  * when_to_use, triggers, `disable-model-invocation` and `eligible`, plus
  * the first 4 KB of the body. Reads at most 64 KB of a file. Leaf module
- * (js-yaml and the one-line description rule only).
+ * (alias-bounded js-yaml via data-frontmatter.ts and the one-line description rule only).
  *
  * The body rule matches the Step 1 catalog builder: drop the frontmatter
  * fence, trim, keep the first 4,096 UTF-8 bytes without a split character.
  */
-import { CORE_SCHEMA, load } from 'js-yaml';
+import { CORE_SCHEMA } from 'js-yaml';
+import { loadBoundedYaml } from '../../data-frontmatter.ts';
 import { oneLineDescription } from '../../skill-description.ts';
 
 export const SKILL_FILE_CAP_BYTES = 64 * 1024;
@@ -34,7 +35,7 @@ export function boundBody(text: string): string {
 
 function yamlFields(raw: string): Record<string, unknown> | null {
   try {
-    const v = load(raw, { schema: CORE_SCHEMA, json: true });
+    const v = loadBoundedYaml(raw, { schema: CORE_SCHEMA, json: true });
     return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
   } catch {
     return null;

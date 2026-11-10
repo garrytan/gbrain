@@ -14,6 +14,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { renderCommitPushHelper } from '../src/core/brain-repo-durability.ts';
+import { commitAndPush, commitPathsLocked } from '../src/core/git/commit-push.ts';
 import { recordManagedRoots } from '../src/core/persistence/root-registry.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -272,3 +273,86 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   expect(remoteTip(f)).toBe(head(f));
 }, 90_000);
 
+test('write-through: commitPathsLocked fails commit_paths_skipped for a nested-repository file instead of returning the commit', () => {
+  const f = fixture('locked-nested', 'classic');
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const nested = nestedPage(f, 'carol-example.md');
+  let failure: { code?: string; message?: string } | undefined;
+  withEnv({ GBRAIN_HOME: f.home, ...identity }, () => {
+    try { commitPathsLocked(f.brain, [join(f.brain, 'people', 'bob-example.md'), join(f.brain, nested)], 'gbrain: write-through', { lockWaitMs: 2_000 }); }
+    catch (e) { failure = e as { code?: string; message?: string }; }
+  });
+  expect(failure?.code).toBe('commit_paths_skipped');
+  expect(failure?.message).toContain(nested);
+  expect(failure?.message).toContain('not pushed');
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+}, 60_000);
+
+test('classic: a skipped path still fails commit_paths_skipped when the push fails, and the push log records the local-only commit', async () => {
+  const f = fixture('classic-skip-pushfail', 'classic');
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const nested = nestedPage(f, 'carol-example.md');
+  git(f.brain, 'remote', 'set-url', 'origin', join(dir, 'missing.git'));
+  const r = await commitPush(f, 'people/bob-example.md', nested);
+  expect(r.exitCode).not.toBe(0);
+  const e = envelope(r.stdout);
+  expect(e.code).toBe('commit_paths_skipped');
+  expect(e.message).toContain(nested);
+  expect(e.message).toContain('not pushed');
+  const detail = JSON.parse(e.detail!) as { committed: string; pushed?: string; publish?: { code: string } };
+  expect(detail.committed).toBe(head(f));
+  expect(detail.pushed).toBeUndefined();
+  expect(detail.publish?.code).toBe('push_unconfirmed');
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+  expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION: main');
+}, 60_000);
+
+test('helper without gbrain: a skipped path is still named when the push fails', () => {
+  const f = fixture('helper-pushfail', 'classic');
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const nested = nestedPage(f, 'carol-example.md');
+  git(f.brain, 'remote', 'set-url', 'origin', join(dir, 'missing.git'));
+  const r = helper(f, false, 'write pages', 'people/bob-example.md', nested);
+  expect(r.status).toBe(4);
+  expect(r.stderr).toContain('PUSH FAILED');
+  expect(r.stderr).toContain('commit_paths_skipped');
+  expect(r.stderr).toContain(nested);
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+}, 60_000);
+
+test('classic: a named assume-unchanged gitlink beside a committed page leaves the commit standing, with no reversal staged', async () => {
+  const f = fixture('gitlink', 'classic');
+  const sub = join(f.brain, 'vendor');
+  execFileSync('git', ['init', '-q', '-b', 'main', sub]);
+  writeFileSync(join(sub, 'README'), 'nested\n');
+  git(sub, 'add', '.'); git(sub, 'commit', '-qm', 'nested');
+  git(f.brain, 'add', 'vendor'); git(f.brain, 'commit', '-qm', 'gitlink'); git(f.brain, 'push', '-q');
+  git(f.brain, 'update-index', '--assume-unchanged', '--', 'vendor');
+  writeFileSync(join(f.brain, 'people', 'alice-example.md'), page('Alice', 'Second version.'));
+  const r = await commitPush(f, 'people/alice-example.md', 'vendor');
+  expect(r.stdout).not.toContain('git_unavailable');
+  expect(r.exitCode).toBe(0);
+  expect(headBlob(f, 'people/alice-example.md')).toContain('Second version.');
+  expect(remoteTip(f)).toBe(head(f));
+  expect(git(f.brain, 'diff', '--cached', '--name-only')).toBe('');
+}, 60_000);
+
+test('managed: the put_page fix names the managed source in both the CLI argv and the MCP arguments', async () => {
+  const f = fixture('managed-source', 'managed');
+  const path = nestedPage(f, 'carol-example.md');
+  const r = await commitPush(f, path);
+  expect(r.exitCode).not.toBe(0);
+  const e = JSON.parse(r.stdout) as { code: string; fix?: { argv?: string[] } };
+  expect(e.code).toBe('writer_coordinator_required');
+  const argv = e.fix?.argv ?? [];
+  expect(argv.slice(0, 2)).toEqual(['gbrain', 'put']);
+  expect(argv.indexOf('--source-id')).toBeGreaterThan(1);
+  expect(argv[argv.indexOf('--source-id') + 1]).toBe('source-a');
+  const thrown = await withEnv({ GBRAIN_HOME: f.home }, () => {
+    try { commitAndPush({ repo: f.brain, paths: [path], message: 'write pages', cwd: f.brain }); } catch (err) { return err as { code?: string; fix?: { mcp?: { tool: string; arguments: Record<string, unknown> } } }; }
+    return null;
+  });
+  expect(thrown?.code).toBe('writer_coordinator_required');
+  expect(thrown?.fix?.mcp?.tool).toBe('put_page');
+  expect(thrown?.fix?.mcp?.arguments.source_id).toBe('source-a');
+}, 60_000);

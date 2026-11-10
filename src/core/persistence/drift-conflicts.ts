@@ -33,6 +33,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { validateSlug } from '../utils.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { sha256 } from './digest.ts';
+import { findLiveFileClaimants, recordedReconcilePath } from './file-claims.ts';
 import { existingHostIdFor } from './identity.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { sourceMirrorReadOnly, staleMirrorPage } from './mirror-read-only.ts';
@@ -41,6 +42,7 @@ import { prepareFileTarget, publishesDatabaseOnly } from './page-prepare.ts';
 import { adoptableSlugOrigin, readReconcileState } from './reconcile-state.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
 import { classifyDrift } from './reconcile-additive.ts';
+import { loadSyncEligibility, syncGit } from './sync-discovery.ts';
 import { recordsNoFileOrigin, slugPathFile } from './unbound-pages.ts';
 
 /** The refusal message `prepareFileTarget` stores on a drift conflict receipt (the detail is not kept on the row). */
@@ -88,8 +90,11 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
   // #7974: it is compared as reconcile reads it; a slug path that reading cannot settle (several spellings) is unknown.
   // GBRA-108: so is an origin twin with no recorded file that adopts its slug path (twinReading). Sync imports that file
   // into it (and holds it file_drift when they differ), so the drift is read from it as repair file-drift adopts it.
-  // A slug-path file another live page records is that page's (sync imports it there), so the twin stays database-only.
-  const twin = await twinReading(engine, sourceId, root, page);
+  // A slug-path file another live page records as its source path is that page's (sync imports it there), so the twin
+  // stays database-only; one another page names only by file URI is unknown (sync still routes it to the twin).
+  let twin: Awaited<ReturnType<typeof twinReading>>;
+  try { twin = await twinReading(engine, sourceId, root, page); }
+  catch (error) { return { still_present: null, reason: error instanceof OperationError && typeof error.detail === 'string' ? error.detail : 'error' }; }
   if (twin === 'db_only') return { still_present: null, reason: 'db_only_slug_path', db_revision: page.revision };
   if (twin === 'adopt' || await staleMirrorPage(engine, sourceId, page.page)) {
     try {
@@ -99,7 +104,9 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
         path: relative(state.root, state.path).split(sep).join('/'), file_hash: sha256(state.raw) };
     } catch (error) {
       if (!(error instanceof OperationError)) return { still_present: null, reason: 'error' };
-      if (error.detail === 'canonical_file_missing' || twin && error.detail === 'shared_origin') return { still_present: false, reason: 'database_only', db_revision: page.revision };
+      if (error.detail === 'canonical_file_missing' || twin && error.detail === 'shared_origin' && await claimedBySourcePath(engine, sourceId, root, page)) {
+        return { still_present: false, reason: 'database_only', db_revision: page.revision };
+      }
       return { still_present: null, reason: typeof error.detail === 'string' ? error.detail : error.code };
     }
   }
@@ -125,17 +132,49 @@ export async function liveFileDrift(engine: BrainEngine, sourceId: string, slug:
 
 /**
  * GBRA-108: how liveFileDrift reads an origin twin with no recorded file, in a source that is not a read-only mirror (no
- * repair writes there): `adopt` when it adopts its slug path as reconcile does (adoptableSlugOrigin); `db_only` when that
- * path is under a declared storage.db_only directory and holds a file, which sync imports into the twin but no repair
- * adopts; null (prepareFileTarget's database-only reading) otherwise.
+ * repair writes there): `db_only` when its slug path is under a declared storage.db_only directory and holds a file (one
+ * or several), which sync imports into the twin but no repair adopts; `adopt` when it adopts its slug path as reconcile
+ * does (adoptableSlugOrigin) and sync admits that path (loadSyncEligibility: scope, sync.exclude, hidden and reserved
+ * paths); null (prepareFileTarget's database-only reading) otherwise, including a slug path several files import as.
+ * Any other refusal or failure throws.
  */
 async function twinReading(engine: BrainEngine, sourceId: string, root: string, page: PageSnapshot): Promise<'adopt' | 'db_only' | null> {
-  if (page.page.source_path || !existsSync(root) || !await isOriginTwinPage(engine, sourceId, page.page.slug) || await sourceMirrorReadOnly(engine, sourceId)) return null;
+  const slug = page.page.slug;
+  if (page.page.source_path || !existsSync(root) || !await isOriginTwinPage(engine, sourceId, slug) || await sourceMirrorReadOnly(engine, sourceId)) return null;
   const real = realpathSync(root), mode = await scannerSlugRootMode(engine, sourceId, real);
   try {
-    if (await adoptableSlugOrigin(engine, sourceId, real, page, mode)) return 'adopt';
-    return publishesDatabaseOnly(real, page.page.slug, page) && existsSync(slugPathFile(real, page.page.slug, mode)) ? 'db_only' : null;
-  } catch { return 'adopt'; } // a refusal (several files import as the slug, an invalid gbrain.yml): readReconcileState reports it
+    if (publishesDatabaseOnly(real, slug, page)) return existsSync(slugPathFile(real, slug, mode)) ? 'db_only' : null;
+    const derived = await adoptableSlugOrigin(engine, sourceId, real, page, mode);
+    if (!derived) return null;
+    const [source] = await engine.executeRaw<{ last_commit: string | null; config: Record<string, unknown> | null }>('SELECT last_commit, config FROM sources WHERE id=$1', [sourceId]);
+    const gitRoot = realpathSync(syncGit(real, ['rev-parse', '--show-toplevel']).trim());
+    const { nativeRoot, nativeGitRoot, eligible } = await loadSyncEligibility(engine, { root: real, gitRoot, sourceId,
+      source: { last_commit: source?.last_commit ?? null, config: source?.config ?? {} } });
+    return eligible(relative(nativeGitRoot, join(nativeRoot, relative(real, derived.path))).split(sep).join('/')) ? 'adopt' : null;
+  } catch (error) {
+    if (error instanceof OperationError && error.detail === 'slug_path_ambiguous') return publishesDatabaseOnly(real, slug, page) ? 'db_only' : null;
+    throw error;
+  }
+}
+
+/**
+ * GBRA-108: whether another live page records an origin twin's slug-path file as its source path, so sync imports that
+ * file there and not into the twin. A page naming it only by file URI does not count: sync routes by source path. False
+ * when this cannot be read.
+ */
+async function claimedBySourcePath(engine: BrainEngine, sourceId: string, root: string, page: PageSnapshot): Promise<boolean> {
+  try {
+    const real = realpathSync(root), mode = await scannerSlugRootMode(engine, sourceId, real), slug = page.page.slug;
+    const path = slugPathFile(real, slug, mode), canonicalPath = realpathSync(path);
+    const claimants = await findLiveFileClaimants(engine, { sourceId, slug, pageId: page.page.id, root: real, mode, path, canonicalPath, recordedUri: null });
+    if (!claimants.length) return false;
+    const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>('SELECT slug, source_path FROM pages WHERE source_id=$1 AND id=ANY($2::bigint[])',
+      [sourceId, claimants.map(claimant => claimant.id)]);
+    return rows.some(row => {
+      const recorded = row.source_path ? recordedReconcilePath(real, { slug: row.slug, source_path: row.source_path, source_uri: null }, mode) : null;
+      return !!recorded && existsSync(recorded) && realpathSync(recorded) === canonicalPath;
+    });
+  } catch { return false; }
 }
 
 /** The path `prepareFileTarget` compares, resolved the same way (recorded source path, captured file URI, then the slug path). */

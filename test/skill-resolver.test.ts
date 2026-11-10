@@ -26,7 +26,7 @@ import { lexTerms } from '../src/core/skills/resolver/tokenize.ts';
 import { isAcknowledgement, mentionsSkill } from '../src/core/skills/resolver/rank.ts';
 import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
-import { commitSession, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
+import { commitSession, commitSessionAsync, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
@@ -585,6 +585,22 @@ describe('leases', () => {
     expect(releaseLease(mine)).toBe(false);
     expect(holdsLease(next as never)).toBe(true);
     expect(releaseLease(next as never)).toBe(true);
+  });
+
+  test('an async session commit reclaims a lease its holder stranded at the deadline, and still yields to a live one', async () => {
+    const home = tmp();
+    const key = sessionKey('on', 'claude-code', 'session-a');
+    const dir = join(home, 'skill-index', 'sessions');
+    mkdirSync(dir, { recursive: true });
+    const lock = join(dir, `${key}.json.lock`);
+    const holder = (expires: number) => JSON.stringify({ v: 1, token: 'other', host: 'host-b', pid: 999_999, purpose: 'session-commit', generation: 0, acquired_ms: Date.now(), expires_ms: expires });
+    const delta = { tokens: 10, suggested: ['x:a'], resuggested: [], reset: false };
+    writeFileSync(lock, holder(Date.now() + 60_000));
+    expect(await commitSessionAsync(home, key, delta)).toBe(false);
+    writeFileSync(lock, holder(Date.now() - 1));
+    expect(await commitSessionAsync(home, key, delta)).toBe(true);
+    expect(loadSession(home, key)).toMatchObject({ turn: 1, spent: 10, last: { 'x:a': 1 } });
+    expect(existsSync(lock)).toBe(false);
   });
 
   test('an unparsable lease is held until its grace period passes', () => {
