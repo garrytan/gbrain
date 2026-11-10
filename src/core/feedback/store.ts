@@ -5,6 +5,7 @@
  * run the same SQL through `engine.executeRaw` with positional binds (no JSONB).
  */
 import type { BrainEngine } from '../engine.ts';
+import type { EvalCandidateInput } from '../types.ts';
 
 export type FeedbackOp = 'query' | 'search' | 'think' | 'synthesize' | 'recall';
 export type FeedbackSignal = 'explicit' | 'cited';
@@ -327,6 +328,32 @@ export async function scrubPurgedSlugs(
       SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE NOT (${purgedCandidateSlug('u.s')}) ORDER BY n)
       WHERE $1 = ANY(source_ids) AND EXISTS (SELECT 1 FROM unnest(retrieved_slugs) AS r(s) WHERE ${purgedCandidateSlug('r.s')}) RETURNING 1`),
   };
+}
+
+/**
+ * #9068: insert one captured eval candidate with only the slugs a page of its sources (any source when it names none)
+ * still holds, in retrieval order. Each probe takes the feedback writers' key-share lock on the page row, so a capture
+ * deferred past its query's response either commits before a purge takes the row, and the purge's scrub strips it, or
+ * waits for the purge and drops the slug. Both engines run this statement.
+ */
+export async function insertEvalCandidate(engine: Pick<BrainEngine, 'executeRaw'>, input: EvalCandidateInput): Promise<number> {
+  const rows = await engine.executeRaw<{ id: number | string }>(
+    `INSERT INTO eval_candidates (
+       tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
+       expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
+       latency_ms, remote, job_id, subagent_id, embedding_column
+     ) VALUES ($1, $2,
+       ARRAY(SELECT u.s FROM unnest($3::text[]) WITH ORDINALITY AS u(s, n)
+              WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.slug = u.s
+                              AND (cardinality($5::text[]) = 0 OR pg.source_id = ANY($5::text[])) FOR KEY SHARE)
+              ORDER BY u.n),
+       $4::int[], $5::text[], $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+     RETURNING id`,
+    [input.tool_name, input.query, input.retrieved_slugs, input.retrieved_chunk_ids, input.source_ids, input.expand_enabled, input.detail,
+      input.detail_resolved, input.vector_enabled, input.expansion_applied, input.latency_ms, input.remote, input.job_id, input.subagent_id,
+      input.embedding_column ?? null],
+  );
+  return Number(rows[0]!.id);
 }
 
 export async function resetRetrievalWeights(

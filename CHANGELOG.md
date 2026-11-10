@@ -25,6 +25,23 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/deletion-inventory.ts`: both tables are `swept` (`page_names`); the fact receipt still probes them, since a fact purge sweeps neither.
 - Tests: `test/purge-name-stores-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`).
 
+### Removing a source, a connector delete and a late eval capture no longer leave a deleted page's slug behind
+
+**Three more ways a deleted page's slug outlived the page are closed, and the federation warning stops counting private pages.** Before, only a page purge scrubbed the stores that name a page without a foreign key to it.
+
+| What you did | Before | Now |
+|---|---|---|
+| A query or search with eval capture on, whose capture runs after the response, racing a page purge | the capture could write the purged slug back into `eval_candidates.retrieved_slugs` | the insert keeps only slugs whose page still exists, checked under the same row lock the feedback writers take |
+| A connector, GitHub or Google sync deletes a page (`deletePages`) | retrieval logs, ratings, weights, the volunteer log, the gazetteer and captured eval slugs kept naming it | scrubbed in the delete's transaction |
+| `gbrain sources remove`, `sources purge`, the expired-archive sweep, or a managed `remove`/`purge` | the source's retrieval logs, ratings, volunteer rows and captured eval slugs stayed | deleted in the statement that deletes the source, and swept again right after for a write that raced it |
+| `gbrain sources federate` or `sources restore` on a source with a remote-written `visibility: private` page and no readers | the warning named that page, though no-grant connections still cannot read it | the warning applies the read paths' privacy rules, unless `search.remote_private_pages` or `GBRAIN_REMOTE_PRIVATE_PAGES` relaxes them |
+
+- `src/core/feedback/store.ts`: `insertEvalCandidate` is the one eval capture insert both engines run.
+- `src/core/engine-sql/pages.ts`: `deletePages` runs `scrubPurgedSlugs` and `scrubPurgedNameStores` after the delete, in one transaction. `deletePage` is unchanged: the page purge, its main caller, scrubs and records the stores in its receipt.
+- `src/core/source-delete.ts`: `removedSourceScrubCtes` runs inside `deleteSourceRow` and the managed lifecycle's source delete, then once more ungated. `retrieval_weights` and `mention_gazetteer_entries` already cascaded from `sources`.
+- `src/core/access/federation-exposure.ts`: the exposure read adds `privacyPartSql` unless `remotePrivacyRelaxed`.
+- Tests: `test/purge-scrub-followups-9068.test.ts` and `test/federation-exposure-private-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`). `test/eval-candidates.test.ts` now seeds the pages its round-trip captures, since a capture keeps only live slugs.
+
 ## [0.60.650.0] - 2026-11-10
 
 **Private-labels windows publish together and finish past declined pages.** `gbrain repair private-labels --apply --expect <hash>` on a brain with managed persistence now admits a window's pages together and publishes them in groups, instead of one page and one wait at a time. On a 1,000-page window with Git commits and a second queue consumer (`scripts/bench/private-labels-apply.ts`), it went from 181.4 to 1365.3 pages a minute with no added database latency, and from 19.9 to 37.1 pages a minute with 20 ms added to each database round trip. Git commits for the window dropped from 990 to 22. The preview no longer claims a re-embed for every page: only pages stored under per-chunk synopsis, or with a chunk that has no vector yet, count.
