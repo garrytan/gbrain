@@ -166,6 +166,27 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
   }
 });
 
+describe('skill-resolver lane: a deadline during the dedupe commit', () => {
+  for (const stall of ['commit-held', 'commit-written'] as const) {
+    test(`${stall}: the exit releases the session lease and removes the temp file, so the next turn commits`, async () => {
+      const b = box();
+      seedSkills(claudeSkills(b));
+      await setup(b, 'claude-code');
+      const cmd = wired(b, 'claude-code');
+      const turn = { prompt: 'please deploy the widget to staging', session_id: 'sess-l' };
+      const r = await hook(b, cmd, turn, { GBRAIN_TEST_SKILL_LANE_STALL: stall, GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '3000' });
+      expect(r.exitCode).toBe(0);
+      expect(contextOf(r)).toContain('id: "deploy-widget"');
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'timeout', code: 'skill_resolve_timeout' });
+      expect(sessions(b)).toEqual([]);
+      const again = await hook(b, cmd, turn, WIDE);
+      expect(contextOf(again)).toContain('id: "deploy-widget"');
+      expect(sessions(b).filter((s) => !s.startsWith('.')).map((s) => s.endsWith('.json'))).toEqual([true]);
+      expect((await hook(b, cmd, turn, WIDE)).stdout).toBe('');
+    });
+  }
+});
+
 describe('skill-resolver lane: the CLI fast path keeps the hook contract', () => {
   test('GBRAIN_HOOKS=0 silences the lane, whether exported or set in the env file the CLI preflight loads', async () => {
     const b = box();

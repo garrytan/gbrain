@@ -10,7 +10,9 @@
  *
  * GBRAIN_TEST_SKILL_LANE_STALL (tests only) forces a slow stage: block
  * (synchronous 10 s busy loop), hang (never answers), late (answers after
- * 300 ms). GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
+ * 300 ms); commit-held and commit-written (hook-lane.ts) stop the main
+ * thread's commit once it holds the lease, or once its temp file is
+ * written. GBRAIN_TEST_SKILL_LANE_DEADLINE_MS (tests only, hook-lane.ts)
  * widens the lane's deadline so a loaded test machine can assert delivery.
  */
 import { parentPort, workerData } from 'node:worker_threads';

@@ -45,6 +45,7 @@
  * capped at 256 KB; doctor's skill_resolver check reads it.
  */
 import { createHash } from 'node:crypto';
+import { unlinkSync } from 'node:fs';
 import { appendFile, mkdir, readFile, realpath, stat, truncate, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -54,10 +55,11 @@ import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } fr
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
-import { commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
+import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
 import type { LaneWorkerTurn } from './hook-worker.ts';
 import { startLaneWorker } from './lane-worker.ts';
+import { releaseLease } from './lock.ts';
 
 export { WORKER_SRC_PATH } from './lane-worker.ts';
 
@@ -217,7 +219,7 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   try { home = resolverHome(env); } catch { return 0; }
   const deadlineMs = io.deadlineMs ?? (Number(env.GBRAIN_TEST_SKILL_LANE_DEADLINE_MS) || LANE_DEADLINE_MS);
   const elapsed = () => performance.now() - t0;
-  const ctl: LaneCtl = { expired: false, worker: null, logged: false };
+  const ctl: LaneCtl = { expired: false, worker: null, logged: false, commit: {} };
   if (event === 'user-prompt') ctl.worker = startLaneWorker(env);
   const log = (t: Turn) => appendLaneLog(home, { at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
 
@@ -228,6 +230,9 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   if (result === 'deadline') {
     ctl.expired = true;
     void ctl.worker?.terminate();
+    const { tmp, lease } = ctl.commit;
+    if (tmp) try { unlinkSync(tmp); } catch { /* renamed or never created */ }
+    if (lease) releaseLease(lease);
     if (ctl.logged) await Promise.race([log({ outcome: 'timeout', code: 'skill_resolve_timeout' }), new Promise(r => setTimeout(r, 5))]);
     (io.exit ?? ((c: number) => process.exit(c)))(0);
     return 0;
@@ -238,7 +243,7 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   return 0;
 }
 
-interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean }
+interface LaneCtl { expired: boolean; worker: Worker | null; logged: boolean; commit: CommitHold }
 
 async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHarness, home: string, env: NodeJS.ProcessEnv, io: LaneIo, ctl: LaneCtl, elapsed: () => number, deadlineMs: number): Promise<Turn> {
   const settings = await readLaneSettings(home, env);
@@ -292,7 +297,9 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     if (payload.length > settings.payloadChars) return { outcome: 'payload_dropped', catalogs, dropped_chars: payload.length };
     await (io.write ?? writeStdout)(`${payload}\n`);
   }
-  if (posted.pending && !ctl.expired) await commitSessionAsync(home, posted.pending.key, posted.pending.delta);
+  const stall = env.GBRAIN_TEST_SKILL_LANE_STALL;
+  if (stall === 'commit-held' || stall === 'commit-written') ctl.commit.at = (stage) => (`commit-${stage}` === stall ? new Promise(() => {}) : Promise.resolve());
+  if (posted.pending && !ctl.expired) await commitSessionAsync(home, posted.pending.key, posted.pending.delta, ctl.commit);
   return { outcome, catalogs };
 }
 
