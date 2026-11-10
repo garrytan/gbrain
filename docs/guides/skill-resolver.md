@@ -115,8 +115,9 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   0.165 and later) resets the session, so skills can be offered again. A Codex
   install from before gets the SessionStart group on its next setup run.
 
-Each turn appends one line (outcome, error code, duration; never turn text)
-to `skill-index/logs/lane.jsonl`. `gbrain doctor` (`skill_resolver`, and
+Each turn appends one line (outcome, error code, duration, catalogs; never
+turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off.
 
@@ -225,7 +226,7 @@ Nothing leaves the machine. Everything lives under `$GBRAIN_HOME/.gbrain/skill-i
 | `<catalog>/source.json` | the `--from-json` snapshot |
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
 | `sessions/<key>.json` | skill ids and turn counters; never turn text |
-| `logs/resolver.log` | scrubbed stack traces of unexpected failures; never turn text |
+| `logs/lane-<date>.jsonl`, `logs/resolver-<date>.log` | one line per lane turn, and scrubbed stack traces of unexpected failures; never turn text; one file per day, kept 14 days |
 
 The block never echoes the user's text. Summaries (each skill's description
 cut at 120 characters, the `summary` field) are catalog text, so they are
@@ -357,7 +358,7 @@ written (an empty catalog is removed). Add a skill there, or pass
 ### skill_resolver_internal
 
 An unexpected failure; a scrubbed trace was written to
-`skill-index/logs/resolver.log`. Run `gbrain skills index status` and report it
+`skill-index/logs/resolver-<UTC date>.log`. Run `gbrain skills index status` and report it
 if it repeats.
 
 ### skill_catalog_unknown

@@ -23,7 +23,7 @@
  * never shrinks the block below what the stronger matches fill. A message
  * that matches no catalog word falls back to previous_user_message.
  */
-import { appendFileSync, existsSync, readFileSync, statSync, truncateSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { VERSION } from '../../../version.ts';
@@ -32,6 +32,7 @@ import type { BuildReceipt } from './build.ts';
 import { dirFingerprintSlice, listCatalogs, readReceipt } from './catalog-files.ts';
 import { readResolverSettings, validateSessionTokenBudget } from './config.ts';
 import { ResolverError } from './errors.ts';
+import { appendDailyLogSync, RESOLVER_LOG } from './daily-log.ts';
 import { ensureDir, writeFileAtomic, writeFileDurable } from './fsutil.ts';
 import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, STRENGTH_FIELDS, TOP_K_DEFAULT, TOP_K_MAX } from './limits.ts';
 import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
@@ -227,10 +228,8 @@ function logUnexpected(home: string, e: unknown): void {
   try {
     const dir = logsDir(home);
     ensureDir(dir);
-    const p = join(dir, 'resolver.log');
-    try { if (statSync(p).size > 256 * 1024) truncateSync(p, 0); } catch { /* new */ }
     const err = e as Error;
-    appendFileSync(p, `${JSON.stringify({ at: new Date().toISOString(), version: VERSION, name: err?.name ?? typeof e, stack: String(err?.stack ?? '').split('\n').slice(1, 6).map(l => l.trim()) })}\n`, { mode: 0o600 });
+    appendDailyLogSync(dir, RESOLVER_LOG, `${JSON.stringify({ at: new Date().toISOString(), version: VERSION, name: err?.name ?? typeof e, stack: String(err?.stack ?? '').split('\n').slice(1, 6).map(l => l.trim()) })}\n`);
   } catch { /* logging never fails a turn */ }
 }
 

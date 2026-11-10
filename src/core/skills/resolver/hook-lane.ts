@@ -44,13 +44,14 @@
  * 4000 characters of hook JSON); a block that does not fit is dropped whole
  * and counted (outcome payload_dropped in the lane log).
  *
- * Lane log: <home>/skill-index/logs/lane.jsonl, one line per turn that got
- * past the on/off check (outcome, error code, duration; never turn text),
- * capped at 256 KB; doctor's skill_resolver check reads it.
+ * Lane log: <home>/skill-index/logs/lane-<UTC day>.jsonl (daily-log.ts, kept
+ * 14 days), one line per turn that got past the on/off check (outcome, error
+ * code, duration, catalogs; never turn text); doctor's skill_resolver check
+ * reads the last day of it.
  */
 import { createHash } from 'node:crypto';
 import { unlinkSync } from 'node:fs';
-import { appendFile, mkdir, readFile, realpath, stat, truncate, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { Worker } from 'node:worker_threads';
@@ -59,6 +60,7 @@ import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } fr
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
 import { laneTurnSettings, type LaneTurnSettings } from './config.ts';
+import { appendDailyLog, LANE_LOG } from './daily-log.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
 import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
@@ -73,8 +75,6 @@ export const LANE_STDIN_CAP_BYTES = 256 * 1024;
 export const LANE_PAYLOAD_CHARS_DEFAULT = 4000;
 export const LANE_PAYLOAD_CHARS_MIN = 500;
 export const LANE_PAYLOAD_CHARS_MAX = 10_000;
-export const LANE_LOG_FILE = 'lane.jsonl';
-const LANE_LOG_CAP_BYTES = 256 * 1024;
 const CONFIG_CAP_BYTES = 1024 * 1024;
 const SPAWN_INTERVAL_MS = 60_000;
 /** Time kept back from the worker's own deadline for delivery and the commit. */
@@ -157,9 +157,7 @@ async function appendLaneLog(home: string, line: LaneLogLine): Promise<void> {
   try {
     const dir = logsDir(home);
     await mkdir(dir, { recursive: true, mode: 0o700 });
-    const p = join(dir, LANE_LOG_FILE);
-    try { if ((await stat(p)).size > LANE_LOG_CAP_BYTES) await truncate(p, 0); } catch { /* new */ }
-    await appendFile(p, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+    await appendDailyLog(dir, LANE_LOG, `${JSON.stringify(line)}\n`);
   } catch { /* logging never fails a turn */ }
 }
 

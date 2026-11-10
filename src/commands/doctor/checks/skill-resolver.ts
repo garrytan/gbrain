@@ -10,14 +10,14 @@
  *
  * Read-only apart from catalogStatus's session sweep; warns, never fails.
  */
-import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { configDir } from '../../../core/config.ts';
 import { catalogStatus, listCatalogs } from '../../../core/skills/resolver/build.ts';
 import { logsDir } from '../../../core/skills/resolver/paths.ts';
-import { LANE_LOG_FILE, projectCatalogPrefix, userCatalogName, type LaneHarness } from '../../../core/skills/resolver/hook-lane.ts';
+import { LANE_LOG, readRecentDailyLog } from '../../../core/skills/resolver/daily-log.ts';
+import { projectCatalogPrefix, userCatalogName, type LaneHarness } from '../../../core/skills/resolver/hook-lane.ts';
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
 import { inspectSkillResolverHook } from '../../../core/setup/skill-resolver-hook.ts';
 
@@ -36,14 +36,8 @@ export interface SkillResolverView {
 }
 
 function recentLane(home: string): SkillResolverView['recent'] | null {
-  const p = join(logsDir(home), LANE_LOG_FILE);
-  if (!existsSync(p)) return null;
-  let text = '';
-  try {
-    const size = statSync(p).size;
-    text = readFileSync(p, 'utf8');
-    if (size > LOG_TAIL_BYTES) text = text.slice(-LOG_TAIL_BYTES);
-  } catch { return null; }
+  const text = readRecentDailyLog(logsDir(home), LANE_LOG, LOG_TAIL_BYTES);
+  if (text === null) return null;
   const outcomes: Record<string, number> = {};
   const errors: Record<string, number> = {};
   const lines = text.split('\n').filter(Boolean).slice(-RECENT_LINES);

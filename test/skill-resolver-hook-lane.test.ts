@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { LANE_DEADLINE_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { dailyLogFile, LANE_LOG } from '../src/core/skills/resolver/daily-log.ts';
 
 setDefaultTimeout(60_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -83,7 +84,7 @@ async function hook(b: Box, command: string, payload: Record<string, unknown>, e
 }
 const WIDE = { GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '10000' };
 const laneLog = (b: Box): any[] => {
-  const p = join(b.home, '.gbrain', 'skill-index', 'logs', 'lane.jsonl');
+  const p = join(b.home, '.gbrain', 'skill-index', 'logs', dailyLogFile(LANE_LOG, Date.now()));
   return existsSync(p) ? readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
 };
 const sessions = (b: Box) => { const d = join(b.home, '.gbrain', 'skill-index', 'sessions'); return existsSync(d) ? readdirSync(d) : []; };

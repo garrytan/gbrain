@@ -28,6 +28,7 @@ import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, commitSessionAsync, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
+import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 
@@ -833,5 +834,27 @@ describe('freshness and errors', () => {
     const r = await resolveSkills({ message: 'deploy' }, { home });
     expect(r.output.suggestions[0]!.id).toBe('gbrain:deploy');
     expect(existsSync(join(home, 'missing'))).toBe(false);
+  });
+});
+
+describe('daily logs', () => {
+  test('one file per UTC day; the first write of a day drops files older than 14 days and the undated file; a day stops at its cap', async () => {
+    const dir = tmp('skres-logs-');
+    const day = 86_400_000;
+    const now = Date.parse('2026-11-20T12:00:00Z');
+    for (const d of [0, 12, 13, 30]) writeFileSync(join(dir, dailyLogFile(LANE_LOG, now - d * day)), 'old\n');
+    writeFileSync(join(dir, 'lane.jsonl'), 'legacy\n');
+    writeFileSync(join(dir, dailyLogFile(RESOLVER_LOG, now - 30 * day)), 'other log\n');
+    await appendDailyLog(dir, LANE_LOG, 'x\n', now + day);
+    expect(readdirSync(dir).sort()).toEqual(['lane-2026-11-08.jsonl', 'lane-2026-11-20.jsonl', 'lane-2026-11-21.jsonl', 'resolver-2026-10-21.log']);
+    appendDailyLogSync(dir, RESOLVER_LOG, 'trace\n', now + day);
+    expect(readdirSync(dir).filter(n => n.startsWith('resolver-'))).toEqual(['resolver-2026-11-21.log']);
+    expect(readRecentDailyLog(dir, LANE_LOG, 1024, now + day)).toBe('old\nx\n');
+    expect(readRecentDailyLog(dir, LANE_LOG, 2, now + day)).toBe('x\n');
+    expect(readRecentDailyLog(dir, LANE_LOG, 1024, now + 9 * day)).toBeNull();
+    const full = join(dir, dailyLogFile(LANE_LOG, now + day));
+    writeFileSync(full, 'y'.repeat(DAILY_LOG_DAY_CAP_BYTES));
+    await appendDailyLog(dir, LANE_LOG, 'z\n', now + day);
+    expect(readFileSync(full, 'utf8').endsWith('z\n')).toBe(false);
   });
 });
