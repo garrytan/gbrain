@@ -102,13 +102,24 @@ describe('runRestartSteps and verifyRestart: the hand-off', () => {
   });
 });
 
+describe('planRestart: an autopilot known only from its heartbeat row', () => {
+  test('is not handed off, since the upgrade cannot confirm the process to stop, and names kill <pid>', () => {
+    const plan = planRestart([autopilot(30, OLD, { started_ms: null, args: undefined, ancestors: undefined })], ctx({ expected: PENDING_BUILD, autopilotLauncher: CRON }));
+    expect(plan.steps).toEqual([]);
+    expect(plan.manual.map(m => [m.role, m.pid, m.argv])).toEqual([['autopilot', 30, ['kill', '30']]]);
+    expect(plan.manual[0]!.instruction).toContain('known only from its heartbeat row');
+  });
+});
+
 describe('autopilotLauncher', () => {
-  test('this brain\'s gbrain cron line is a launcher; a commented line, a monitor-only line or none is not; the declared key is the fallback', () => {
+  test('this brain\'s gbrain cron line is a launcher; a commented line, a monitor-only line, a line that does not start its wrapper every 5 minutes or none is not; the declared key is the fallback', () => {
     const job = resolveAutopilotJob();
     const line = `*/5 * * * * '${join(job.homeDir, 'autopilot-run.sh')}' >> '${job.logPath}' 2>&1${job.cronMarker ? ` ${job.cronMarker}` : ''}`;
     expect(autopilotLauncher(() => `MAILTO=""\n${line}\n`, undefined, 30)).toEqual({ kind: 'cron', wait_ms: 360_000, pid: 30 });
     expect(autopilotLauncher(() => `# ${line}\n*/30 * * * * gbrain autopilot --status\n`, undefined, 30)).toBeNull();
     expect(autopilotLauncher(() => null, undefined, 30)).toBeNull();
+    expect(autopilotLauncher(() => `0 0 * * * gbrain autopilot pause${job.cronMarker ? ` ${job.cronMarker}` : ''}\n`, undefined, 30)).toBeNull();
+    expect(autopilotLauncher(() => `${line.replace('*/5 * * * *', '0 3 * * *')}\n`, undefined, 30)).toBeNull();
     expect(autopilotLauncher(() => null, 'external', null)).toEqual({ kind: 'declared', wait_ms: 360_000, pid: null });
   });
 

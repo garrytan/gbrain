@@ -19,7 +19,7 @@ import { writeCliError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { SERVE_LAUNCHD_LABEL, SERVE_SYSTEMD_UNIT, serveServiceRestartArgv } from '../core/serve-service.ts';
 import { autopilotLockPath, resolveAutopilotJob } from '../core/autopilot-paths.ts';
-import { cronLineBelongsToBrain, plistPath, systemdUnitPath } from './autopilot/jobs.ts';
+import { cronLineBelongsToBrain, plistPath, scriptWrapperPath, systemdUnitPath } from './autopilot/jobs.ts';
 import { readSupervisorBuild, readSupervisorPid } from '../core/minions/supervisor-pid.ts';
 import { parseEtimeToMs, readWorkers } from '../core/minions/worker-registry.ts';
 import { installedVersion, runtimeInstallRoot } from '../core/runtime-build.ts';
@@ -128,14 +128,15 @@ function readCrontab(): string | null {
 
 /**
  * #8776: what starts autopilot again when it exits, for an autopilot launchd or systemd does not run: this brain's own
- * gbrain cron line (`gbrain autopilot --install` on Linux without a user systemd bus), else a launcher the operator
+ * gbrain cron line (`gbrain autopilot --install` on Linux without a user systemd bus: its wrapper every 5 minutes or more often), else a launcher the operator
  * declared with `self_upgrade.autopilot_launcher external`; null when neither, so the upgrade refuses as before.
  * `pid` is the daemon this brain's autopilot lock names, the only one the hand-off may stop.
  */
 export function autopilotLauncher(crontab: () => string | null = readCrontab, declared: string | undefined = loadConfig()?.self_upgrade?.autopilot_launcher,
   lockPid: number | null = readAutopilotLockPid()): AutopilotLauncher | null {
   const job = resolveAutopilotJob();
-  if (crontab()?.split('\n').some(line => cronLineBelongsToBrain(line, job))) return { kind: 'cron', wait_ms: HANDOFF_WAIT_MS, pid: lockPid };
+  const relaunches = (line: string) => /^\*(?:\/[1-5])?\s+\*\s+\*\s+\*\s+\*\s/.test(line.trim()) && scriptWrapperPath(line) !== null && cronLineBelongsToBrain(line, job);
+  if (crontab()?.split('\n').some(relaunches)) return { kind: 'cron', wait_ms: HANDOFF_WAIT_MS, pid: lockPid };
   return declared === 'external' ? { kind: 'declared', wait_ms: HANDOFF_WAIT_MS, pid: lockPid } : null;
 }
 

@@ -291,7 +291,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
   const byPid = new Map(processes.map(p => [p.pid, p]));
   const addService = (role: 'serve' | 'autopilot', pid: number) => services.set(role, [...(services.get(role) ?? []), pid]);
   const handoffs = new Map<number, Extract<RestartStep, { kind: 'handoff' }>>();
-  const launcherOf = (p: HostProcess) => (ctx.autopilotLauncher?.pid === p.pid ? ctx.autopilotLauncher : null);
+  const launcherOf = (p: HostProcess) => (ctx.autopilotLauncher?.pid === p.pid && p.started_ms !== null && p.args ? ctx.autopilotLauncher : null);
   const addHandoff = (p: HostProcess, launcher: AutopilotLauncher) => handoffs.set(p.pid, { kind: 'handoff', role: 'autopilot', pid: p.pid, started_ms: p.started_ms, launcher });
   const runsUnder = (p: HostProcess, service: ServiceHandle | null) => !!service && service.pid !== null && (p.pid === service.pid || !!p.ancestors?.includes(service.pid));
   const kill = (p: HostProcess, instruction: string) => manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['kill', String(p.pid)], instruction });
@@ -319,6 +319,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
       case 'autopilot':
         if (runsUnder(p, ctx.autopilotService)) addService('autopilot', p.pid);
         else if (launcherOf(p)) addHandoff(p, launcherOf(p)!);
+        else if (ctx.autopilotLauncher?.pid === p.pid) kill(p, `${label(p)} is known only from its heartbeat row (the process table could not be read), so the upgrade cannot confirm it is the process to stop before handing autopilot to its launcher: stop it (\`kill ${p.pid}\`) and let the launcher start it again, then run the upgrade.`);
         else manual.push({ role: p.role, pid: p.pid, version: p.version, argv: ['gbrain', 'autopilot', '--install'],
           instruction: `${label(p)} was started outside gbrain's autopilot service (by a cron entry, a wrapper or by hand), so the upgrade cannot restart it. `
             + 'Either run `gbrain autopilot --install`, which runs autopilot under launchd, systemd or a gbrain cron line so every upgrade restarts it (retire the launcher that starts it now first, or both race for the autopilot lock), '
