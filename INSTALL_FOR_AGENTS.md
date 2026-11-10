@@ -153,8 +153,9 @@ a member, a folder `people/<member>/` only they read and a key bound to them
 (`~/.gbrain/member-keys/<member>.key`, 0600; relay paths, never key values), and
 the receipt proves no member reads another member's folder.
 `setup_serves_several` means the brain already serves several people and the
-connection would be bound to nobody: rerun with its fix, or name the owner
-(`gbrain access owner set <member>`) first. Doctor's `unlabeled_people_folders`
+connection would be bound to nobody: rerun with its fix. Add `--stdio-member <member>`
+only when one person alone uses this machine; it binds every stdio session here.
+Doctor's `unlabeled_people_folders`
 names any person's folder still without a rule.
 `--remove` undoes only what setup wrote. Guide:
 [docs/guides/setup.md](docs/guides/setup.md). Otherwise:

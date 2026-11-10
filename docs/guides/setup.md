@@ -173,9 +173,15 @@ then proves the labels by reading every other member's folder as each member
 (`gbrain find people/<other>/ --as <member>`): none may return a page.
 The receipt also lists any other `people/<name>/` folder that no rule covers, since
 every member reads it, and the run is not OK until it has a rule.
-When the brain names an owner (`gbrain access owner set <member>`), this harness's
-own stdio server is bound to it (`mcp.stdio_member`); until it is bound, its
-instructions keep the one-person scoping lines. A bot that answers several
+Setup leaves the stdio server unbound: stdio sessions read only pages no rule
+restricts, and the harness's instructions keep the one-person scoping lines.
+`mcp.stdio_member` is brain-wide, so binding it makes every stdio MCP session on
+the host, from any harness, read as that member, including pages only that member
+may read. Bind it only on a machine one person uses:
+`gbrain setup claude-code --serves several --members ... --stdio-member <member>`
+(claude-code or codex on a local PGLite brain only; refused where OpenClaw or Hermes
+is installed, because their shared sessions would read as that member too, and on a
+Postgres brain, which other machines can open). A bot that answers several
 people runs `gbrain serve --http` with each member's key.
 
 The preview runs first, and a BLOCKED line (a disabled member, an existing rule on
@@ -187,7 +193,7 @@ its own: revoke it (`gbrain auth revoke member-<id>`) and run setup again. An
 empty roster refuses.
 `--serves one` (the default) changes nothing, but on a brain that already serves
 several people a plain setup refuses (`setup_serves_several`) rather than write a
-connection bound to nobody, unless an owner or `mcp.stdio_member` binds it, and
+connection bound to nobody, unless `mcp.stdio_member` already binds it, and
 a brain setup cannot read refuses (`setup_serves_unreadable`).
 `gbrain doctor` fails `unlabeled_people_folders` when such a brain has a
 `people/<name>/` folder with pages and no rule naming its readers.

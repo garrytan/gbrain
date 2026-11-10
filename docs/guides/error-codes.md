@@ -4534,7 +4534,7 @@ More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#s
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain setup for one person was run on a brain that serves several people, and the stdio connection it would write is bound to nobody, so setup wrote nothing. | On a brain that serves several people an unbound connection reads every page no rule restricts, for whoever is asking; setup never writes one. | Run gbrain setup <harness> --serves several --members <id,...> to label each person, or name the brain owner first (gbrain access owner set <member>) so this harness reads as the owner. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
+| gbrain setup for one person was run on a brain that serves several people, and config mcp.stdio_member binds no stdio connection there, so setup wrote nothing. | On a brain that serves several people an unbound connection reads every page no rule restricts, for whoever is asking; setup never writes one. | Run gbrain setup <harness> --serves several --members <id,...> to label each person; add --stdio-member <member> only for a harness that one person alone uses. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
 
 ### setup_serves_unreadable
 

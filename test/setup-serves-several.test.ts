@@ -30,6 +30,9 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { labelSeveral, receiptOk, servesStatus, type ServesReceipt } from '../src/commands/access-serves.ts';
+import { setupRerunArgv } from '../src/core/setup/launcher-lanes.ts';
+import { servesPreflight } from '../src/commands/setup-serves.ts';
+import { readdirSync } from 'node:fs';
 import { addMember } from '../src/core/access/members.ts';
 import { unlabeledPeopleFoldersEntry } from '../src/commands/doctor/checks/unlabeled-people-folders.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
@@ -287,7 +290,7 @@ function box(): Box {
   chmodSync(bin, 0o755);
   return { root, home, bin };
 }
-const gbrain = (b: Box, args: string[], env: Record<string, string | undefined> = {}) => runCli(args, { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, ...env }, timeoutMs: 120_000 });
+const gbrain = (b: Box, args: string[], env: Record<string, string | undefined> = {}) => runCli(args, { env: { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, OPENCLAW_STATE_DIR: join(b.root, 'openclaw-state'), OPENCLAW_PROFILE: undefined, HERMES_HOME: join(b.root, 'hermes-home'), ...env }, timeoutMs: 120_000 });
 async function setup(b: Box, args: string[]): Promise<CliResult & { doc: any }> {
   const r = await gbrain(b, ['setup', ...args, '--gbrain-bin', b.bin]);
   let doc: any = null;
@@ -298,6 +301,25 @@ async function brainWithPages(b: Box): Promise<void> {
   expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
   for (const [slug, canary] of Object.entries(PAGES)) expect((await gbrain(b, ['put', slug, '--content', pageText(slug, canary)])).exitCode).toBe(0);
 }
+const stdioKey = async (b: Box) => { const r = await gbrain(b, ['config', 'get', 'mcp.stdio_member']); return r.exitCode === 0 ? r.stdout.trim() : ''; };
+function fakeOpenclaw(b: Box): string {
+  const dir = join(b.root, 'oc-bin');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'openclaw'), '#!/bin/sh\nexit 0\n');
+  chmodSync(join(dir, 'openclaw'), 0o755);
+  return dir;
+}
+/** Every setup connection receipt under the box's HOME. */
+function setupReceipts(b: Box): any[] {
+  const found: any[] = [];
+  const walk = (d: string) => { for (const e of readdirSync(d, { withFileTypes: true })) {
+    const p = join(d, e.name);
+    if (e.isDirectory()) walk(p);
+    else if (e.name.endsWith('.json')) { try { const j = JSON.parse(readFileSync(p, 'utf8')); if (j?.connection === 'local-stdio' && j?.setup_receipt_version) found.push(j); } catch { /* not JSON */ } }
+  } };
+  walk(b.home);
+  return found;
+}
 const claudeMd = (b: Box) => readFileSync(join(b.home, '.claude', 'CLAUDE.md'), 'utf8');
 const normalized = (doc: any) => JSON.parse(JSON.stringify(doc).replace(/\d{4}-\d\d-\d\dT[\d:.]+Z/g, 'T'));
 
@@ -305,6 +327,10 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
   test('--serves several labels each person, proves it with bound reads, prints key paths never values; a re-run keeps it all', async () => {
     const b = box();
     await brainWithPages(b);
+    const preview = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--stdio-member', 'alice-example', '--dry-run']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('stdio      would bind: every stdio MCP session on this brain');
+    expect(await stdioKey(b)).toBe('');
     const first = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example']);
     expect(first.exitCode).toBe(0);
     for (const m of ROSTER) {
@@ -313,7 +339,7 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
       expect(first.stdout).toContain(`key        ${m}: ${join(b.home, '.gbrain', 'member-keys', `${m}.key`)} (minted, 0600; token member-${m})`);
       expect(first.stdout).toContain(`proof      a read bound to ${m} sees its own folder (1 page(s)) and no page of another member's folder`);
     }
-    expect(first.stdout).toContain('stdio      this harness reads as nobody in particular');
+    expect(first.stdout).toContain('stdio      stdio sessions on this brain read only pages no rule restricts');
     expect(claudeMd(b)).not.toContain(SERVES_SEVERAL_LINE);
     expect(claudeMd(b)).toContain('apply your own access rules to what comes back');
     const again = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--json']);
@@ -325,11 +351,57 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
     ]);
     expect(again.doc.serves.brain_serves).toBe('one');
     expect((await gbrain(b, ['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
-    const bound = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--json']);
+    const owner = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--json']);
+    expect(owner.exitCode).toBe(0);
+    expect(owner.doc.serves).toMatchObject({ brain_serves: 'one', stdio: { member: null, action: 'unbound' } });
+    expect(owner.doc.serves.stdio.detail).toContain('stdio sessions on this brain read only pages no rule restricts');
+    expect(owner.doc.serves.stdio.detail).toContain('gbrain setup claude-code --serves several --stdio-member <member>');
+    expect(await stdioKey(b)).toBe('');
+    const bound = await setup(b, ['claude-code', '--serves', 'several', '--members', 'alice-example,bob-example', '--stdio-member', 'alice-example', '--json']);
     expect(bound.exitCode).toBe(0);
     expect(bound.doc.serves).toMatchObject({ brain_serves: 'several', stdio: { member: 'alice-example', action: 'write' } });
+    expect(bound.doc.serves.stdio.detail).toContain('every stdio MCP session on this brain, from any harness on this host, now reads as alice-example, including pages only alice-example may read');
+    expect(await stdioKey(b)).toBe('alice-example');
     expect(claudeMd(b)).toContain(`- ${SERVES_SEVERAL_LINE}`);
+    const receipts = setupReceipts(b);
+    expect(receipts.length).toBeGreaterThan(0);
+    for (const r of receipts) {
+      expect(JSON.stringify(r)).not.toContain('stdio-member');
+      expect(setupRerunArgv('claude-code', r)).not.toContain('--stdio-member');
+    }
+  }, 480_000);
+
+  test('--stdio-member refuses without --serves several, off claude-code and codex, and on a host with OpenClaw; nothing is written', async () => {
+    const b = box();
+    await brainWithPages(b);
+    for (const m of ROSTER) expect((await gbrain(b, ['access', 'member', 'add', m])).exitCode).toBe(0);
+    expect((await gbrain(b, ['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
+    const workspace = join(b.root, 'oc-workspace');
+    mkdirSync(workspace);
+    expect(existsSync(join(b.root, 'openclaw-state'))).toBe(false);
+    const refusals: Array<[string[], string, Record<string, string>]> = [
+      [['claude-code', '--stdio-member', 'alice-example'], '--stdio-member needs --serves several', {}],
+      [['openclaw', '--serves', 'several', '--members', ROSTER.join(','), '--workspace', workspace, '--stdio-member', 'alice-example'], 'claude-code or codex', {}],
+      [['claude-code', '--instructions-only', '--serves', 'several', '--stdio-member', 'alice-example'], 'claude-code or codex', {}],
+      [['claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--stdio-member', 'alice-example'], "OpenClaw's shared sessions", { PATH: `${fakeOpenclaw(b)}:${process.env.PATH}` }],
+      [['codex', '--serves', 'several', '--members', ROSTER.join(','), '--stdio-member', 'alice-example'], "Hermes's shared sessions", { HERMES_HOME: b.root }],
+    ];
+    for (const [args, says, env] of refusals) {
+      const r = await gbrain(b, ['setup', ...args, '--gbrain-bin', b.bin], env);
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain(says);
+      expect(await stdioKey(b)).toBe('');
+    }
+    const labelled = await setup(b, ['openclaw', '--serves', 'several', '--members', ROSTER.join(','), '--workspace', workspace]);
+    expect(labelled.stdout + labelled.stderr).not.toContain('reads as alice-example');
+    expect(await stdioKey(b)).toBe('');
   }, 360_000);
+
+  test('--stdio-member refuses on a Postgres brain other machines can open, before reading or writing anything', () => {
+    const refused = servesPreflight({ serves: 'several', members: 'alice-example,bob-example', stdioMember: 'alice-example', dryRun: false }, '/nonexistent/gbrain', 'claude-code', true, false, false);
+    expect(refused).toMatchObject({ code: 'invalid_params' });
+    expect((refused as Error).message).toContain('every machine that opens it');
+  });
 
   test('a brain setup cannot read refuses and writes nothing', async () => {
     const b = box();
@@ -391,12 +463,18 @@ exec '${process.execPath}' --no-env-file '${CLI}' "$@"
     expect(refused.stdout).toContain('gbrain setup claude-code --serves several --members alice-example,bob-example');
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
     expect((await gbrain(b, ['access', 'owner', 'set', 'alice-example'])).exitCode).toBe(0);
+    const owner = await setup(b, ['claude-code', '--json']);
+    expect(owner.exitCode).not.toBe(0);
+    expect(owner.stdout).toContain('setup_serves_several');
+    expect(await stdioKey(b)).toBe('');
+    expect((await gbrain(b, ['apply-migrations', '--yes', '--no-autopilot-install'])).exitCode).toBe(0);
+    expect(await stdioKey(b)).toBe('');
+    expect((await gbrain(b, ['config', 'set', 'mcp.stdio_member', 'alice-example'])).exitCode).toBe(0);
     const bound = await setup(b, ['claude-code', '--json']);
     expect(bound.exitCode).toBe(0);
-    expect(bound.doc.serves).toMatchObject({ mode: 'one', brain_serves: 'several', stdio: { member: 'alice-example', action: 'write' } });
-    expect((await gbrain(b, ['config', 'get', 'mcp.stdio_member'])).stdout.trim()).toBe('alice-example');
+    expect(bound.doc.serves).toMatchObject({ mode: 'one', brain_serves: 'several', stdio: { member: 'alice-example', action: 'keep' } });
     expect(claudeMd(b)).toContain(`- ${SERVES_SEVERAL_LINE}`);
-  }, 240_000);
+  }, 300_000);
 
   test('a repo brain commits the folder rules to .gbrain/access.yml through the commit door, and the bound reads hold', async () => {
     const b = box();
