@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.642.0] - 2026-11-10
+
+**A purged page's facts no longer come back.** When the 72-hour retention purge removed a soft-deleted page's row, it left the page's facts active, because facts have no foreign key to pages. Once the tombstone was gone, those facts showed up again for every reader, local and remote, and a new page written at the same slug picked them up. The purge now expires those facts in the same transaction as the page delete: the facts filed on the page, and the facts about it that no page holds. The rows are kept, expired, never deleted. A fact another page holds about the slug stays active, even when that page is soft-deleted, so restoring it brings the fact back. An ontology observation about a live entity that was sourced from the purged page also stays active.
+
+### Itemized changes
+
+- `src/core/facts/gone-page-facts.ts`: `expireGonePageFacts`, the facts a purged page takes with it, as two updates that each use their slug index.
+- `src/core/engine-sql/pages.ts` (`purgeDeletedPages`, the bulk purge) and `src/core/persistence/purge-deleted.ts` (`expireRecordedTombstones`, the belief-ledger purge of a recorded source) call it in the purge transaction. The managed purge already sweeps the facts filed on the page.
+- Tests: `test/purge-expires-page-facts.test.ts` (PGLite and Postgres), which fails before the fix on the bulk and recorded purges.
+
 ## [0.60.641.0] - 2026-11-10
 
 **Facts, timeline entries, tags and ontology observations now follow the page they are about, so a remote caller who cannot read a page learns nothing about it from fact reads, and a deleted page's facts, timeline and tags stay hidden from everyone until it is restored.** Before this, a fact saved on an open page about a page with `readable_by` or `visibility: private` still reached remote callers through recall, ontology_get, volunteer_chronicle, delta, find_trajectory, hot memory and the entity card, and a soft-deleted page's facts, timeline rows and tags kept answering every reader. Recorded-time reads (get_page and get_versions with known_as_of), plain get_versions with include_body, and delta's belief changes now also keep a quarantined page's bodies and claims from remote callers, including a page quarantined only by a later write and a version history that spans several sources. Nothing is deleted or expired, so restore_page brings every row back as it was. A new page written at a deleted page's slug still shows the deleted page's facts, and a purged page's facts still come back, as before; both are follow-up work.

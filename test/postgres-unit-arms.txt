@@ -462,6 +462,7 @@ test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
+test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
