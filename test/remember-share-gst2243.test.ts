@@ -22,6 +22,7 @@ import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
+import { prepareMemoryMutation } from '../src/core/persistence/memory-prepare.ts';
 import { linkMember } from '../src/core/access/actor.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -138,6 +139,13 @@ for (const kind of testBackends()) {
       expect(out.isError).toBe(true);
       expect(out.all).toContain('share_target_restricted');
       expect(await factRow('canaryrestricted')).toBeUndefined();
+      const explicitWorld = await remember(U, 'Globex pilot ends in May canaryrestrictedworld', { entity: TEAM_PAGE, share: true, visibility: 'world' });
+      expect(explicitWorld.isError).toBe(true);
+      expect(await factRow('canaryrestrictedworld')).toBeUndefined();
+      const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [SRC, TEAM_PAGE]);
+      const row = { operation: 'remember', request_id: 'gst2243-prepare-' + randomUUID().slice(0, 6), source_id: SRC, slug: TEAM_PAGE, page_id: page!.id,
+        intent: { fact: 'Globex pilot ends in June canaryprepshare', kind: 'fact', visibility: 'world', visibility_defaulted: true, share: true, entity_slug: TEAM_PAGE, fence: true, valid_from: new Date().toISOString() } };
+      await expect(prepareMemoryMutation(engine, row as never, {} as never)).rejects.toMatchObject({ code: 'invalid_params' });
     }, 120_000);
 
     test('a replayed remember and a non-member remember both name page and visibility', async () => {

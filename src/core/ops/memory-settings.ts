@@ -74,6 +74,7 @@ function ruleFor(res: AgentWritebackResolution, mode: WritebackMode, ctx: Operat
     visibility: res.operator.visibility,
     extractFactsAvailable: callerCan(ctx, EXTRACT_FACTS_OP),
     origin,
+    ...(ctx.remote !== false && ctx.auth?.member ? { member: true } : {}),
   });
 }
 

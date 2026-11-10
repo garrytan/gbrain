@@ -219,6 +219,7 @@ function createMcpRequestServer(
     writebackOpts = ambientOptsFrom(writeback, {
       remember: rememberOp !== undefined && opAllowedForBoundClient(authInfo, rememberOp),
       extractFacts: extractFactsOp !== undefined && opAllowedForBoundClient(authInfo, extractFactsOp),
+      member: !!authInfo?.member,
     });
   }
   const server = new Server(

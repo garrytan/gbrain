@@ -155,7 +155,7 @@ const lkg = new WeakMap<BrainEngine, WritebackConfig>();
  */
 export function ambientOptsFrom(
   wb: WritebackConfig,
-  avail: { remember: boolean; extractFacts: boolean },
+  avail: { remember: boolean; extractFacts: boolean; member?: boolean },
 ): AmbientOptsShape | null {
   if (!wb.enabled || wb.mode === 'off') return null;
   if (!avail.remember) return null;
@@ -164,6 +164,7 @@ export function ambientOptsFrom(
     transientTtl: wb.transient_ttl,
     visibility: wb.visibility,
     extractFactsAvailable: avail.extractFacts,
+    ...(avail.member ? { member: true } : {}),
   };
 }
 interface AmbientOptsShape {
@@ -171,6 +172,7 @@ interface AmbientOptsShape {
   transientTtl: string;
   visibility: 'world' | 'private';
   extractFactsAvailable: boolean;
+  member?: boolean;
 }
 
 /**

@@ -17,7 +17,7 @@ identifiers and attribution are available in the pre-removal Git revision
 ### Itemized changes
 
 - `src/core/verbs.ts`: `remember` takes a `share` boolean on every MCP surface, starter included. A non-boolean `share`, `share: true` with `visibility: "private"`, and a member's `visibility: "world"` (`member_share_required`) are refused with `invalid_params` before anything is saved, so one such item refuses a whole batch.
-- `src/core/persistence/memory-mutations.ts`: a member's `share: true` saves on the entity page with world visibility; when that page's facts would be private, the call is refused (`share_target_restricted`) before anything is admitted. New and replayed replies carry `page` and `visibility`.
+- `src/core/persistence/memory-mutations.ts`: a member's `share: true` saves on the entity page with world visibility; when that page's facts would be private (whatever `visibility` the call passed), the save is refused (`share_target_restricted`), and preparation refuses it again if the page turned restricted after admission. In a batch, items saved before a refused item stay saved, as with other save-time refusals. New and replayed replies carry `page` and `visibility`.
 - `src/core/remember-batch.ts`: `share` is accepted per item and as a shared top-level key, and each item's receipt carries `page` and `visibility`.
 - `test/mcp-schema-budget.test.ts`: the starter tool-list ceilings and the `remember` budget grow by what `share` costs (+144 characters, 200 headroom kept).
 - QM's `memory_write` and its per-person contract (`docs/contracts/qm-memory-provider/v1.json`) are unchanged.

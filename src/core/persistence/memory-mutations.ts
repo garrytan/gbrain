@@ -206,7 +206,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const ownPage = scopePage ? null : memberFactPage(ctx);
   const memberPage = scopePage ? SCOPE_PAGE_SLUG : p.share === true ? null : ownPage;
   const call: RememberCall = memberPage ? { p: { ...p, visibility: scopePage ? 'world' : 'private', infer_entity: false }, visibilityDefaulted: false }
-    : { p, visibilityDefaulted: opts.visibilityDefaulted === true };
+    : { p, visibilityDefaulted: opts.visibilityDefaulted === true || p.share === true };
   const inference = entity === null && !memberPage ? await inferRememberTarget(ctx, sourceId, source, call) : null;
   const linked = inference && 'target' in inference ? inference : null;
   const entitySlug = linked?.target.slug ?? resolved?.slug ?? null;
