@@ -617,6 +617,14 @@ await faultPoint('effect:git:mid', { requestId: 'r1', signal: cyclic as never })
     expect(robotFullGate(robot, 'full')).toBe(true);
   });
 
+  test('#8078: a short run that found violations is never retargeted; its violations fail the run', async () => {
+    const { spawn, spawned } = fakeSpawn([{ done: { result: { violations: [{ class: 'lost_write', detail: 'planted' }], deferred: [], reached: 5 } } }]);
+    const robot = await phase(spawn, publication(6), { counted: 6 });
+    expect(spawned.map(s => s.role)).toEqual(['run']);
+    expect(robot.violations.map(v => v.detail)).toEqual(['planted']);
+    expect({ retargeted: robot.faults_retargeted.length, failing: robot.failing_runs.length }).toEqual({ retargeted: 0, failing: 1 });
+  });
+
   test('#8078: a run two slots short of the count run fails as fault_not_reached', async () => {
     const { spawn, spawned } = fakeSpawn([short(4)]);
     const robot = await phase(spawn, publication(6), { counted: 6 });

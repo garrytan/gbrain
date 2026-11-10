@@ -89,11 +89,11 @@ export function unreachedAllowed(run: Pick<RobotRun, 'schedule' | 'process' | 'f
  * (sync_and_connector_race_direct_write: the connector republish racing a direct write publishes 5 or 6 times, and
  * its git effects, preparations and commits follow), so a fault the count run planned at its last slot can be missed
  * by a run that took the other outcome. Such a run, short by exactly one slot of the count run, runs once more at the
- * last slot it did make. A run that made no slot, fell more than one short, or missed again fails as before.
+ * last slot it did make. A run that found violations, made no slot, fell more than one short, or missed again fails as before.
  */
 export function retargetable(run: RobotRun): boolean {
   const reached = run.reached ?? 0;
-  return run.fault_not_reached === true && !run.retargeted && run.counted !== undefined && run.fault !== undefined
+  return run.fault_not_reached === true && !run.retargeted && run.counted !== undefined && run.fault !== undefined && run.violations.length === 0
     && reached > 0 && reached >= run.counted - 1 && reached < run.fault.nth;
 }
 /** A run fails the gate when it found violations, its hook threw, or it never reached a fault it was not allowed to miss. */
