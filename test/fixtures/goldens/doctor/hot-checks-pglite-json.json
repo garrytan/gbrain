@@ -1210,6 +1210,13 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Skipped (PGLite is always UTF8)",
+            "name": "database_encoding",
+            "status": "ok"
+          },
+          {
             "category": "meta",
             "elapsed_ms": "<volatile>",
             "message": "Version <latest> (latest: <latest>)",
@@ -6325,6 +6332,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every gbrain function that pins a search_path ends it with pg_temp",
             "name": "function_search_path",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Skipped (PGLite is always UTF8)",
+            "name": "database_encoding",
             "status": "ok"
           },
           {

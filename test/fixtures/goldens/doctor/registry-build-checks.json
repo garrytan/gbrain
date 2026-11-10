@@ -402,6 +402,10 @@
         "name": "function_search_path"
       },
       {
+        "category": "ops",
+        "name": "database_encoding"
+      },
+      {
         "category": "meta",
         "name": "schema_version"
       },

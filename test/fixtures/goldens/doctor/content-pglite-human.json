@@ -89,6 +89,7 @@
       "  [INFO] access_may_act_for_wildcard: Not applicable: no page names readers and no member exists.",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] function_search_path: Every gbrain function that pins a search_path ends it with pg_temp",
+      "  [OK] database_encoding: Skipped (PGLite is always UTF8)",
       "  [OK] schema_version: Version <latest> (latest: <latest>)",
       "  [OK] schema_columns: 1392 column(s) verified against live schema",
       "  [OK] schema_missing_tables: All 175 table(s) the applied migrations create exist.",

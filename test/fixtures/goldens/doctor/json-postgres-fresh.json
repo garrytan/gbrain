@@ -1095,6 +1095,13 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "The database encoding is UTF8",
+          "name": "database_encoding",
+          "status": "ok"
+        },
+        {
           "category": "meta",
           "elapsed_ms": "<volatile>",
           "message": "Version <latest> (latest: <latest>)",

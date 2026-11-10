@@ -76,6 +76,7 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
 test/direct-pool-profile.test.ts
+test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
 test/doctor-image-embedding-coverage.test.ts
 test/doctor-keyword-plan-6495.test.ts
@@ -261,6 +262,7 @@ test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
 test/link-cross-source.test.ts
+test/link-origin-scope.test.ts
 test/link-preparation-shared-index.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
@@ -531,6 +533,7 @@ test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-resolve-path.test.ts
 test/stats-health-source-scope.test.ts
+test/status-snapshot-source-scope.test.ts
 test/sync-absent-from-worktree-s27.test.ts
 test/sync-admission-6712.test.ts
 test/sync-apply-held-deletions-gbra133.test.ts
@@ -599,6 +602,7 @@ test/take-resolution-survives-publish.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
 test/timeline-chunk-reuse.test.ts
+test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
