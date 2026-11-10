@@ -2208,6 +2208,19 @@ A script that previews and applies windows in a loop should stop when every
 listed page was tried before (`details.window.tried_before` equals
 `details.window.listed`): what's left is pages that keep declining.
 
+**Upgrading from a release before 0.60.649.0.** Those releases wrote an undo
+ledger line only for a page write that landed, so a page that declined under
+them has no record, and the first preview after the upgrade lists it like a
+page not tried yet. If five or more such pages head the window, that apply
+stops once with `item_failures_systemic` after its first batch, which is at
+most one admission window (up to 64 pages, fewer when the writer's
+outstanding-request cap is low). Nothing is written to the declined pages; the
+pages of that batch after them that published stay published and are counted
+in the result. Every page of the batch sent for writing got its intent line
+first, so the next preview lists the declined ones last. Repeat the preview and
+the apply: each round gets through at most one window of such pages, and a
+window of only carried declines completes with exit 0.
+
 An apply that meets a `gbrain sources refresh` waits for the refresh to
 finish, for up to 10 minutes per step, instead of being refused after 10
 seconds. A refresh that runs longer ends the apply with `worktree_refreshing`
