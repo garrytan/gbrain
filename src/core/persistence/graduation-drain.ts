@@ -58,11 +58,15 @@ export async function graduationBlockers(source: BrainEngine, hostId: string): P
       blockers.push({ kind: 'request', id: r.request_id, detail, needsUser: false });
     }
   }
-  const topology = await source.executeRaw<{ id: string; operation: string; source_id: string }>(
-    "SELECT id::text AS id, operation, source_id FROM persistence_topology_changes WHERE state = 'recovering' OR recovery IS NOT NULL ORDER BY created_at");
+  const topology = await source.executeRaw<{ id: string; operation: string; source_id: string; request_id: string; admission: boolean; automatic: boolean }>(
+    "SELECT id::text AS id, operation, source_id, request_id::text AS request_id, (state = 'recovering' AND recovery IS NULL) AS admission, COALESCE(outcome->>'expired_only', 'false') = 'true' AS automatic FROM persistence_topology_changes WHERE state = 'recovering' OR recovery IS NOT NULL ORDER BY created_at");
   for (const t of topology) {
-    blockers.push({ kind: 'topology_recovery', id: t.id, detail: `${t.operation} for ${t.source_id} is recovering`,
-      argv: ['gbrain', 'sources', 'writer', 'status', t.source_id, '--json'], needsUser: false });
+    blockers.push({ kind: 'topology_recovery', id: t.id, detail: t.admission && t.automatic
+      ? `automatic expired-archive purge of ${t.source_id} (request ${t.request_id}) stopped before it finished; the next automatic expired-archive purge finishes it, or gbrain sources purge with no source id finishes it now`
+      : t.admission
+      ? `${t.operation} of ${t.source_id} (request ${t.request_id}) stopped before it finished; ask the user whether to finish it (rerun the same command with all its original flags and --request-id ${t.request_id}, which deletes the rest of its pages) or keep what is left (any other lifecycle change to the source, such as a restore, abandons the request)`
+      : `${t.operation} for ${t.source_id} is recovering`,
+      argv: ['gbrain', 'sources', 'writer', 'status', t.source_id, '--json'], needsUser: t.admission && !t.automatic });
   }
   const effects = await source.executeRaw<{ id: string; kind: string; state: string; error_code: string | null; source_id: string | null; request_id: string }>(
     `SELECT e.id::text AS id, e.kind, e.state, e.error_code, COALESCE(e.source_id, r.source_id) AS source_id, r.request_id::text AS request_id
