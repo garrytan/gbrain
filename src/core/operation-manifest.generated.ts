@@ -4541,7 +4541,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "model": {
         "type": "string",
-        "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus."
+        "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus. Remote callers get the host think model unless the host lists this one in think.remote_models."
       },
       "since": {
         "type": "string",

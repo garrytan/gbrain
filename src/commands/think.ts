@@ -11,7 +11,7 @@ import { loadConfig, isThinClient } from '../core/config.ts';
 import { callRemoteTool, unpackToolResult } from '../core/mcp-client.ts';
 import { canonicalLookup } from '../core/model-pricing.ts';
 import { embedQueryWithPrefix } from '../core/search/query-prefix.ts';
-import { keylessThinkNotice } from '../core/interop-notices.ts';
+import { keylessThinkNotice, modelOverrideIgnoredNotice } from '../core/interop-notices.ts';
 import { applyCliOpNotices, captureOpNotice } from '../cli/op-notices.ts';
 
 function flagValue(args: string[], name: string): string | undefined {
@@ -57,7 +57,9 @@ Options:
   --model <name>           Override the model: provider:model (preferred) or
                            provider/model or a bare alias. An explicit --model that
                            can't be resolved is a hard error (exit 1) — never a
-                           silent no-LLM degrade.
+                           silent no-LLM degrade. On a thin client the remote
+                           brain answers with its own think model unless its
+                           host allows this one (think.remote_models).
   --source <id>            Scope evidence gathering to this source. An unknown
                            or archived source is a hard error (exit 1).
   --since YYYY-MM-DD       Start of temporal window
@@ -263,6 +265,8 @@ prints what would have been the input (exit 0).
 
   // F8: keyless-by-design output carries its explanation as an info notice.
   if (result.synthesis_status === 'no_llm') captureOpNotice(keylessThinkNotice());
+  const ignoredModel = /^MODEL_OVERRIDE_IGNORED:(not_allowed|unusable)$/.exec((result.warnings as string[] | undefined)?.find(w => w.startsWith('MODEL_OVERRIDE_IGNORED:')) ?? '');
+  if (ignoredModel) captureOpNotice(modelOverrideIgnoredNotice(ignoredModel[1] as 'not_allowed' | 'unusable'));
   const { persist_base: _persistBase, ...visible } = result;
   const { result: jsonDoc, stderr: noticeText } = applyCliOpNotices({
     ...visible,
