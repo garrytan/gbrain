@@ -721,7 +721,7 @@ for (const kind of testBackends()) {
       }
     }, 60_000);
 
-    test('attested and member-bound forget judge ownership first: a fact off the caller\'s own member page is not_found and files no owner proposal', async () => {
+    test('attested and member-bound forget judge ownership first: a fact off the caller\'s own member page is not_found to the attested person, refused by name to a member credential that reads it (#9101), and files no owner proposal', async () => {
       await engine.insertFact({ fact: 'Acme harbor charter is confirmed canaryconfirmed', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
       const [confirmed] = await factRows('canaryconfirmed');
       await engine.transaction(tx => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier = 'user_confirmed' WHERE id = $1", [confirmed!.id])));
@@ -735,7 +735,8 @@ for (const kind of testBackends()) {
       for (const as of [alice, { token: 'bob' }] as Who[]) {
         for (const [op, id] of [['forget', String(confirmed!.id)], ['forget_fact', Number(confirmed!.id)]] as const) {
           const out = await call(as, op, { id });
-          expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code: op === 'forget' ? 'not_found' : 'fact_not_found' });
+          const code = as === alice ? (op === 'forget' ? 'not_found' : 'fact_not_found') : (op === 'forget' ? 'scope_denied' : 'permission_denied');
+          expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code });
         }
       }
       expect(await proposals()).toBe(start);

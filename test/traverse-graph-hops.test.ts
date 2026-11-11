@@ -2,8 +2,9 @@
  * traverse_graph `hops` (agent-structured typed chains), through the real MCP
  * dispatcher for remote callers and the op handler for trusted local callers.
  *
- * Protects: a 1-3 hop chain returns answers with evidence edges; bad hops and
- * conflicting params are `invalid_params`, never silently ignored; a chain that
+ * Protects: a 1-3 hop chain returns answers with evidence edges; bad hops are
+ * `invalid_params`, and depth/link_type/direction beside hops are set aside and
+ * named in `set_aside` (GST-2214), never silently ignored; a chain that
  * finds nothing distinguishes an invisible start page from missing edges and
  * names the next call; remote callers never see private pages or raw context
  * beyond the sanitized excerpt; a granted token cannot reach another source.
@@ -83,15 +84,22 @@ describe('traverse_graph hops', () => {
     expect(ctx.length).toBeLessThanOrEqual(160);
   });
 
-  test('invalid hops and conflicting params are invalid_params with the exact problem', async () => {
+  test('invalid hops are invalid_params with the exact problem', async () => {
     await expect(runLocal({ slug: 'people/alice-example', hops: [{ link_type: 'mentions', toward: 'object' }] }))
       .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('hops[0].link_type') });
     await expect(runLocal({ slug: 'people/alice-example', hops: [{ link_type: 'founded', toward: 'in' }] }))
       .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('hops[0].toward') });
     await expect(runLocal({ slug: 'people/alice-example', hops: [...HOPS, ...HOPS] }))
       .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('at most 3 hops') });
-    await expect(runLocal({ slug: 'people/alice-example', hops: HOPS, depth: 2, link_type: 'founded' }))
-      .rejects.toMatchObject({ code: 'invalid_params', message: expect.stringContaining('depth, link_type') });
+  });
+
+  test('depth and link_type beside hops walk the same chain and are named in set_aside, never silently dropped', async () => {
+    const chain = await runLocal({ slug: 'people/alice-example', hops: HOPS });
+    const { set_aside, ...rest } = await runLocal({ slug: 'people/alice-example', hops: HOPS, depth: 2, link_type: 'founded' });
+    expect(rest).toEqual(chain);
+    expect(chain.set_aside).toBeUndefined();
+    expect(set_aside).toEqual({ ignored: ['depth', 'link_type'],
+      note: 'Walked the hops chain; ignored depth and link_type: each hop names its link type and direction (toward), and the chain length is the number of hops.' });
   });
 
   test('anchor_not_found, no_edges and empty_hop each carry a notice with the next call', async () => {
