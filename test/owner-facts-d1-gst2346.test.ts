@@ -41,6 +41,7 @@ import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.t
 
 const ACME = 'companies/acme-example';
 const GLOBEX = 'companies/globex-example';
+const INITECH = 'companies/initech-example';
 const OWNER = 'carol-example';
 const OWNER_PAGE = 'memory/members/' + OWNER;
 const ATTEST_OPS = ['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write', 'recall', 'remember'];
@@ -57,6 +58,7 @@ async function seedCallers(engine: BrainEngine, sourceId: string,
   await setOwner(engine, OWNER);
   await writePage(ACME, '---\ntype: company\ntitle: Acme Example\n---\n# Acme Example\n\nAcme example builds harbor ledgers.');
   await writePage(GLOBEX, '---\ntype: company\ntitle: Globex Example\nreadable_by: [' + OWNER + ']\n---\n# Globex Example\n\nGlobex example runs a quiet pilot.');
+  await writePage(INITECH, '---\ntype: company\ntitle: Initech Example\nvisibility: private\n---\n# Initech Example\n\nInitech example audits printers.');
   const tokens: Record<string, string> = {};
   const bindings: Record<string, Parameters<typeof bindCredential>[2] | null> = {
     owner: { member: OWNER }, alice: { member: 'alice-example' }, bob: { member: 'bob-example' }, plain: null,
@@ -152,6 +154,22 @@ for (const kind of testBackends()) {
       const out = await h.remember('owner', 'Globex pilot slipped a month canaryownerglobex', { entity: GLOBEX });
       expect([out.isError, out.json.page, out.json.visibility]).toEqual([false, OWNER_PAGE, 'private']);
       expect(await h.row('canaryownerglobex')).toMatchObject({ visibility: 'private', source_markdown_slug: OWNER_PAGE, entity_slug: GLOBEX });
+    }, 120_000);
+
+    test("a visibility: private page keeps the owner's default save private on its own page; its explicit world onto a page that names readers is refused", async () => {
+      const out = await h.remember('owner', 'Initech audit moved canaryownerinitech', { entity: INITECH });
+      expect([out.isError ? out.text : 'ok', out.json.page, out.json.visibility]).toEqual(['ok', OWNER_PAGE, 'private']);
+      expect(await h.row('canaryownerinitech')).toMatchObject({ visibility: 'private', source_markdown_slug: OWNER_PAGE, entity_slug: INITECH });
+      const world = await h.remember('owner', 'Globex pilot in public canaryownerglobexworld', { entity: GLOBEX, visibility: 'world' });
+      expect([world.isError, world.json.reason]).toEqual([true, 'share_target_restricted']);
+      expect(await h.row('canaryownerglobexworld')).toBeUndefined();
+    }, 120_000);
+
+    test("the owner's default save that replaces a fact on its own page supersedes it there, private", async () => {
+      const old = await h.remember('owner', 'Acme margin is thin canaryownerreplaceold', { visibility: 'private' });
+      const out = await h.remember('owner', 'Acme margin recovered canaryownerreplacenew', { replaces: String(old.json.id) });
+      expect([out.isError ? out.text : 'ok', out.json.status, out.json.page, out.json.visibility]).toEqual(['ok', 'superseded', OWNER_PAGE, 'private']);
+      expect(await h.row('canaryownerreplacenew')).toMatchObject({ visibility: 'private', source_markdown_slug: OWNER_PAGE });
     }, 120_000);
 
     test("the brain's private fact default keeps the owner's default save private, on its own page, and the reply says so", async () => {

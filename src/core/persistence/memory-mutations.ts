@@ -32,6 +32,7 @@ import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, membe
 import { perCallWriteSource } from '../access/attest-sources.ts';
 
 import { ownerSpeaksForItself } from '../access/member-facts.ts';
+import { isDerivationPrivate } from '../search/private-visibility.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -158,6 +159,14 @@ async function rememberVisibility(ctx: OperationContext, call: RememberCall, pag
   return resolveRememberVisibility(ctx.engine, page && await withFolderRestricted(ctx.engine, page));
 }
 
+/** GST-2346 D1: whether the owner's default save stays on its member page: it replaces a fact there, or the target page or the brain's default keeps facts private. */
+async function ownerDefaultKeptPrivate(ctx: OperationContext, sourceId: string, slug: string | null, replaces: unknown): Promise<boolean> {
+  const id = Number(replaces);
+  if (replaces !== undefined && replaces !== null && Number.isSafeInteger(id) && (await ownMemberFactIds(ctx.engine, sourceId, [id])).has(id)) return true;
+  const snapshot = slug ? await ctx.engine.readPageSnapshot(slug, { sourceId }) : null;
+  return await rememberVisibility(ctx, { p: {}, visibilityDefaulted: true }, snapshot && { ...snapshot.page, source_id: sourceId, slug: slug! }) === 'private';
+}
+
 async function rememberCarry(ctx: OperationContext, call: RememberCall, page: PageLabel): Promise<RememberCarry> {
   const { p } = call;
   return { visibility: await rememberVisibility(ctx, call, page), ...(typeof p.kind === 'string' ? { kind: p.kind } : {}),
@@ -209,7 +218,8 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const scopePage = perCallWriteSource(ctx, sourceId);
   const ownPage = scopePage ? null : memberFactPage(ctx);
   // GST-2346 D1: the brain owner speaking for itself saves as a caller with no member page does, unless it asks for private.
-  const ownerShares = ownPage !== null && p.share !== true && ownerSpeaksForItself(ctx) && (opts.visibilityDefaulted === true || p.visibility !== 'private');
+  const ownerShares = ownPage !== null && p.share !== true && ownerSpeaksForItself(ctx) && (opts.visibilityDefaulted === true
+    ? !await ownerDefaultKeptPrivate(ctx, sourceId, resolved?.slug ?? null, p.replaces) : p.visibility !== 'private');
   let memberPage = scopePage ? SCOPE_PAGE_SLUG : p.share === true || ownerShares ? null : ownPage;
   let call: RememberCall = memberPage ? { p: { ...p, visibility: scopePage ? 'world' : 'private', infer_entity: false }, visibilityDefaulted: false }
     : { p, visibilityDefaulted: opts.visibilityDefaulted === true || p.share === true };
@@ -230,9 +240,12 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     inference = null; linked = null; entitySlug = resolved?.slug ?? null;
     ({ slug, authority, snapshot, fence, binding, writeThrough } = await planRememberTarget(ctx, sourceId, source, entitySlug, null, call, memberPage));
   }
-  if (p.share === true && visibility !== 'world') {
-    throw Object.assign(verbError('invalid_params', `remember: share: true cannot share a fact on ${slug}, whose facts are kept private (restricted page or the brain's private fact default); nothing was saved.`,
-      'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'), { reason: 'share_target_restricted' });
+  // D1: the owner's explicit visibility "world" onto a page whose facts are kept private is refused like share: true.
+  const ownerWorldRestricted = ownerShares && !call.visibilityDefaulted && snapshot !== null && isDerivationPrivate(await withFolderRestricted(ctx.engine, { ...snapshot.page, source_id: sourceId, slug }));
+  if (p.share === true && visibility !== 'world' || ownerWorldRestricted) {
+    throw Object.assign(verbError('invalid_params', `remember: ${p.share === true ? 'share: true' : 'visibility "world"'} cannot share a fact on ${slug}, whose facts are kept private (restricted page or the brain's private fact default); nothing was saved.`,
+      p.share === true ? 'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'
+        : 'Share it on a page every reader of this source can read, or pass visibility "private" to keep the fact on your own page.'), { reason: 'share_target_restricted' });
   }
   const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
