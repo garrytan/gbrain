@@ -12,7 +12,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Doctor, dream, enrich and `maintain --safe` fixes, landed together.** `gbrain maintain --safe` no longer deletes pages or calls a paid provider, several doctor checks now report what they find accurately, dream phases stop and report correctly, and enrich, model-call errors, atom provenance and transcript dates get community-reported fixes. Each fix has a test that fails without it.
+**Doctor, dream, enrich and `maintain --safe` fixes, landed together.** `gbrain maintain --safe` no longer deletes pages or calls a paid provider, several doctor checks now report what they find accurately, dream phases stop and report correctly, and enrich, model-call errors, atom provenance, transcript dates and the stale link sweep get community-reported fixes. Each fix has a test that fails without it.
 
 **The `unindexed_files` maintenance phase no longer reports a complete scan when a source could not be scanned.** A source whose Git checkout failed to read was counted as an error and the phase warned, but its `details.complete` still said `true`, so anything reading the phase result took the run as a full scan of every managed source. `complete` is now `true` only when no source stopped at its time budget and none errored. Reported by @Masashi-Ono0611 (#8887).
 
@@ -39,6 +39,8 @@ identifiers and attribution are available in the pre-removal Git revision
 **Transcripts without a date in the filename take the date in their frontmatter, and the atoms extracted from a transcript take the transcript's date.** Both used to fall back to the date of the run.
 
 **The admin dashboard's live feed keeps reconnecting after a dropped connection,** and four smaller fixes land with it: the load throttle still applies its concurrency and memory limits when the machine reports no load data (Windows), a `remember` TTL past the representable date range is refused as `invalid_params` instead of throwing, a worker pool whose error callback throws now stops every worker before rejecting, and claude-cli tool loops read the previous turn's prompt cache instead of rewriting the whole transcript to it.
+
+**The stale link sweep no longer re-extracts one page forever when a bare-name frontmatter link matches a top-level page.** A person page with `founded: ["acme-toolkit"]` resolves that name under `companies/`, so a top-level page named `acme-toolkit` does not satisfy it and the link stays wanted. The wanted-link row was still stamped as if its target existed, which marks its page stale on every pass, so the sweep queued the same page again and again (thousands of extract jobs an hour) and starved lower-priority jobs. Only a slug reference to an existing page is stamped that way now, and a row an earlier release stamped settles the next time its page is extracted, which the sweep does on its own. Reported and first fixed by @akinduroifedayo (#9140).
 
 ### Itemized changes
 
@@ -69,6 +71,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/cycle/atom-source-date.ts`: new `transcriptAtomSourceDate` (frontmatter date, else the path date that names the `atoms/<date>/` folder); an undated transcript still gets none. Test: `test/extract-atoms-source-date.test.ts`. Reported by @spiky02plateau (#7268).
 - Admin dashboard: the EventSource `onerror` only sets the status from `readyState` and no longer closes the stream; `admin/dist` and `src/admin-embedded.ts` are rebuilt. Test: `test/admin-dashboard-stream-reconnect.test.ts`. Reported by @ramybarsoum (#8913).
 - Load throttle (`shouldProceed`), `remember` TTL parsing and the worker pool: see the paragraph above. Tests: `test/backoff.test.ts`, `test/writeback-config.test.ts`, `test/worker-pool.test.ts`. Reported by @ramybarsoum (#8913).
+- `src/core/wanted-links-store.ts` (`replaceWantedLinks`): `checked_at` is `-infinity` only for a `slug` row whose exact page exists; a `name` row gets `now()`, and the existing `ON CONFLICT` update re-stamps old rows on their origin's next extraction. Test: `test/wanted-links.test.ts` and `test/e2e/wanted-links-postgres.test.ts` (`topLevelSlugNameReferenceSettles`: the origin is not stale after one sweep, and a row forced to `-infinity` settles after one more). Reported by @akinduroifedayo (#9140).
 
 ## [0.60.659.0] - 2026-11-11
 

@@ -85,6 +85,28 @@ export async function bareNameReferenceSettles(databaseUrl?: string) {
   }, { databaseUrl });
 }
 
+/**
+ * #9140: a bare-name frontmatter reference resolved under a directory hint stays unresolved even when a
+ * top-level page has the exact slug. It settles after one extraction, and a row an older build stamped
+ * `-infinity` settles on its origin's next extraction.
+ */
+export async function topLevelSlugNameReferenceSettles(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    await put(ctx, 'acme-toolkit', 'Acme toolkit.');
+    await put(ctx, 'people/alice-example', 'Alice.', 'person', 'founded: ["acme-toolkit"]\n');
+    await extractStale(engine);
+    expect(await wantedRows(engine)).toEqual([{ target_ref: 'acme-toolkit', ref_kind: 'name', producer: 'frontmatter' }]);
+    expect(await stale(engine)).toBe(0);
+    await engine.executeRaw("UPDATE wanted_links SET checked_at = '-infinity'::timestamptz WHERE target_ref = 'acme-toolkit'");
+    expect(await stale(engine)).toBe(1);
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    const [row] = await engine.executeRaw<{ settled: boolean }>(
+      "SELECT checked_at > '-infinity'::timestamptz AS settled FROM wanted_links WHERE target_ref = 'acme-toolkit'");
+    expect(row?.settled).toBe(true);
+  }, { databaseUrl });
+}
+
 /** A remote caller never sees targets referenced only from private pages, nor counts that include them. */
 export async function privateOriginsStayPrivate(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx }) => {
