@@ -38,7 +38,7 @@ BEGIN
   FOR r IN SELECT DISTINCT t.tgname FROM pg_trigger t
              JOIN pg_depend d ON d.classid = 'pg_trigger'::regclass AND d.objid = t.oid
              JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid
-            WHERE d.refobjid = 'pages'::regclass AND a.attname = 'source_id' AND NOT t.tgisinternal LOOP
+            WHERE d.refclassid = 'pg_class'::regclass AND d.refobjid = 'pages'::regclass AND a.attname = 'source_id' AND NOT t.tgisinternal LOOP
     EXECUTE format('DROP TRIGGER %I ON pages', r.tgname);
   END LOOP;
 END $$;

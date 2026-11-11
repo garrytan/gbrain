@@ -12,12 +12,13 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-### The nightly Heavy Tests run checks the Codex plugin and old-brain upgrades again
+### Nightly checks stop failing on their own fixtures and sampling
 
-**Two nightly checks had been failing on their own fixtures, not on gbrain. Both now test what users get.** The Codex plugin check expected gated tools to be listed even when their publish gate was off. The pre-v0.18 upgrade fixture couldn't build its legacy database because a newer trigger depends on the column it removes.
+**Three nightly checks were failing because of how they measure, not because of gbrain. All three now test what users get.** The Codex plugin check expected gated tools to be listed even when their publish gate was off. The pre-v0.18 upgrade fixture couldn't build its legacy database because a newer trigger depends on the column it removes.
 
 - `test/e2e/codex-plugin-install-real.serial.test.ts`: the expected tool list now resolves publish gates the way `gbrain serve` does for the seeded brain over stdio. Wakeshift's `watch_job`, `list_watches` and `unwatch` (#8670) and `set_memory_writeback` (#8481) are listed only when their gate is on. Before this change the check failed every night from 2026-11-06 on; it now passes against codex 0.147.0, the version the workflow pins.
 - `tests/heavy/fixtures/down-mutate-pre-v0.18.sql`: before dropping `pages.source_id`, the fixture drops every trigger that depends on that column. The first such trigger was the per-folder access stamp from #8134. The walk forward re-creates those triggers. `tests/heavy/pg_upgrade_matrix.sh` failed on the pre-v0.18 shape before this change and passes on both shapes after it.
+- `scripts/bench/sync-freshness-gate.ts`: the Postgres managed serve-watch cell is now measured 3 times, and the gate uses the median of the three p50s, as the PGLite managed cell already did. The baseline and the 25% limit are unchanged. The cell's nightly p50 moves in steps of the 50 ms probe. Single runs at 656.5, 659.2 and 706.8 ms failed the 627 ms limit on 3 of 19 nightlies, and each passed when rerun on the same commit. A regression that slows every run still fails.
 
 ## [0.60.675.0] - 2026-11-11
 

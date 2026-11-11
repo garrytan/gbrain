@@ -238,7 +238,10 @@ describe.skipIf(!PLUGIN_CAPABLE)('codex plugin door — INSTALL (no auth needed)
       });
       // Publish gates resolve the way serve resolves them for this brain over stdio: a gated op (Wakeshift's watches,
       // the memory settings) is listed only when its gate is on, and the seeded brain turns on only publish_skills.
-      const publishGates = publishGatesFromDisabled(operations, await seededGateDisabled(seededHome));
+      const gateDisabled = await seededGateDisabled(seededHome);
+      expect(['list_watches', 'set_memory_writeback', 'unwatch', 'watch_job'].filter((name) => !gateDisabled.has(name))).toEqual([]);
+      expect(['get_skill', 'list_skills'].filter((name) => gateDisabled.has(name))).toEqual([]);
+      const publishGates = publishGatesFromDisabled(operations, gateDisabled);
       const expected = operations.filter((o) => isCallable(o, { transport: 'stdio', surface: PLUGIN_SURFACE, scopes: [], publishGates })).map((o) => o.name).sort();
       expect(tools.sort()).toEqual(expected);
 
