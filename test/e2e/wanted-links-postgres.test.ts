@@ -7,13 +7,14 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { replaceWantedLinks } from '../../src/core/wanted-links.ts';
 import { bareNameReferenceSettles, disabledClearsRows, forwardReferenceHeals, impossibleTargetsNeverAbortTheSweep,
   impossibleTargetsStayOutOfWrites, onlyUnresolvedAuthoredReferences, privateOriginsStayPrivate,
-  restoredTargetHeals } from '../helpers/wanted-links-scenarios.ts';
+  restoredTargetHeals, unreachableBareNameAtExactSlugSettles } from '../helpers/wanted-links-scenarios.ts';
 
 const url = process.env.DATABASE_URL;
 describe.skipIf(!url)('Postgres wanted pages', () => {
   test('a forward reference heals once its target exists', () => forwardReferenceHeals(url), 180_000);
   test('only unresolved authored references are wanted', () => onlyUnresolvedAuthoredReferences(url), 180_000);
   test('a bare-name reference settles', () => bareNameReferenceSettles(url), 180_000);
+  test('an unreachable bare-name reference at an exact slug settles', () => unreachableBareNameAtExactSlugSettles(url), 180_000);
   test('private origins stay private', () => privateOriginsStayPrivate(url), 180_000);
   test('restoring a deleted target heals', () => restoredTargetHeals(url), 180_000);
   test('disabling clears rows', () => disabledClearsRows(url), 180_000);

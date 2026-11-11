@@ -85,6 +85,24 @@ export async function bareNameReferenceSettles(databaseUrl?: string) {
   }, { databaseUrl });
 }
 
+/**
+ * A bare-name frontmatter reference whose name equals an existing page's exact
+ * slug, but which the field's resolver cannot reach (the page sits outside the
+ * field's directory hint), stays unresolved. It must not keep its origin stale:
+ * re-extraction cannot resolve it, so a stale origin re-lists forever.
+ */
+export async function unreachableBareNameAtExactSlugSettles(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    await put(ctx, 'acme-toolkit', 'A project page at the top level.', 'project');
+    await put(ctx, 'people/erin-example', 'Erin.', 'person', 'founded: ["acme-toolkit"]\n');
+    await extractStale(engine);
+    expect(await wantedRows(engine)).toEqual([{ target_ref: 'acme-toolkit', ref_kind: 'name', producer: 'frontmatter' }]);
+    expect(await stale(engine)).toBe(0);
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+  }, { databaseUrl });
+}
+
 /** A remote caller never sees targets referenced only from private pages, nor counts that include them. */
 export async function privateOriginsStayPrivate(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx }) => {
