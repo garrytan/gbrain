@@ -27,7 +27,7 @@ import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
-import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
@@ -102,7 +102,7 @@ for (const backend of testBackends()) {
       s.incarnation::text AS incarnation FROM pages p JOIN sources s ON s.id=p.source_id WHERE p.source_id='default' AND p.slug='notes/n0'`);
     await engine.transaction(tx => writeGitHold(tx, { source_id: 'default', incarnation: row!.incarnation, path: 'notes/n0.md', source_path: 'notes/n0.md', slug: 'notes/n0',
       page_id: Number(row!.id), code: 'file_drift', message: 'notes/n0.md is held: file drift (unknown)', upstream_version: null, observed_at: new Date().toISOString(),
-      run_id: null, mode: 'managed', meta: { recovery_version: RECOVERY_VERSION, sides: 'unknown', side: 'unknown', drift_version: 1, page_revision: row!.revision } }));
+      run_id: null, mode: 'managed', meta: { recovery_version: RECOVERY_VERSION, sides: 'unknown', side: 'unknown', drift_version: FILE_DRIFT_VERSION, page_revision: row!.revision } }));
     await performManagedSync(engine, OPTS);
     const preview = await filePreview(engine, { held: true });
     expect(listing(preview)?.map(line => line.split(' ').slice(0, 2).join(' '))).toEqual(['default:notes/n0 release_hold']);

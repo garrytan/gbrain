@@ -305,6 +305,8 @@ commits come in. Four rules keep that checkout able to move:
    on (`sources.refresh_publish_diverged` unset; `false` turns it off, `true` publishes
    with durability off too), after scanning the local commits for secrets
    ([live sync](live-sync.md)); it never publishes over a rewritten upstream.
+   `gbrain sources git-reconcile` runs that publish for every source checkout
+   on the host, and autopilot runs it each tick.
 3. **Stop syncing a source before rewriting its history.** Before a
    force-push or `git filter-repo`, run `gbrain sources set-sync <id> off`
    (with the user's agreement) so automatic sync skips it, and

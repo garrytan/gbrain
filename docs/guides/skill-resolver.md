@@ -9,8 +9,8 @@ model.
 
 - **Off by default.** Nothing changes until you build a catalog and wire a
   harness to call `gbrain skills resolve`, or turn on the hook lane with
-  `gbrain setup <claude-code|codex> --skill-loading resolve`. Setup writes
-  nothing for it otherwise.
+  `gbrain setup <claude-code|codex> --skill-loading resolve` (OpenClaw: the
+  plugin below). Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
   network, no model, no clock, no randomness on the turn path.
@@ -162,6 +162,90 @@ Compiled binaries carry the lane's worker as a second entrypoint
 binary built without it delivers nothing and logs `skill_resolver_internal`.
 The release and `bun run build` also pass `--define GBRAIN_BUILD_COMMIT=<sha>`,
 so a compiled binary's build receipts record `gbrain_commit`.
+
+## OpenClaw plugin
+
+OpenClaw runs its turns inside one long-lived gateway, so a per-turn CLI call
+is too slow there. `gbrain setup openclaw --skill-loading resolve --gbrain-bin <abs path>`
+installs a separate plugin, `gbrain-skill-resolver`, that ranks inside the
+gateway's Node process instead:
+
+1. It builds one catalog per agent, `openclaw-<agent>`, from the skill
+   directories OpenClaw loads for that agent, and writes the Node library to
+   `~/.gbrain/lib/<sha256>.mjs`.
+2. It writes the plugin to `<openclaw state dir>/gbrain/gbrain-skill-resolver`
+   and its state to `~/.gbrain/openclaw-skill-resolver.json` (mode 0600: per
+   agent the mode, catalog, top_k, floor, pinned block and rollout knobs).
+3. It runs `openclaw plugins install --link`, `plugins enable` and
+   `config set ...hooks.allowConversationAccess true`, then
+   `plugins inspect` and one self-test turn under Node. Anything short of a
+   loaded plugin exits 3 with `skill_resolver_plugin_not_installed` and the
+   commands still to run; it never reports a partial install as done.
+
+The plugin never adds to or edits OpenClaw's own skill list. On each real user
+turn (`before_prompt_build`; inter-session and other internal turns are
+skipped) it puts up to 3 suggestions with at least a description match in
+`appendContext`, and the pinned block in `appendSystemContext`. Ranking runs
+in a worker thread with a 50 ms deadline: a miss injects nothing, commits
+nothing and is logged as `timeout`; three misses in a row restart the worker.
+A retried turn (same message id) gets the same block and commits once. It
+loads the library only from `~/.gbrain/lib`, owned by the gateway's user, not
+writable by others and matching the recorded sha256.
+
+Flipping modes or knobs only rewrites the state file, which the plugin reads
+on its next turn, so no OpenClaw command runs and the gateway does not reload:
+
+- `--skill-loading shadow`: rank and log what would have been suggested
+  (`would_suggest`), inject nothing. Use it to measure before going live.
+- `--agent <id>` (repeatable) or `--all-agents`: which agents; otherwise
+  the agents already on, else `main`.
+- `--live-fraction <0-1>`: the share of sessions that see suggestions; the
+  rest are logged as the control arm.
+- `--pins-route system|first_turn`: pins every turn in the system context
+  (default), or in the turn context on a session's first turn and after
+  compaction.
+- `--owner-sender <id>` (repeatable): only turns from these senders get
+  suggestions; others get the pins only.
+- `--skill-loading off`: uninstalls the plugin and removes its files and
+  state. Pins stay in config.json.
+
+`skills.resolver.per_harness.openclaw.{top_k,min_match}` overrides the
+defaults (3 and `description`); the global `skills.resolver.top_k` and
+`min_match` apply when it is unset, and `skills.resolver.pinned` lists skills
+OpenClaw already loads, which are never suggested. The plugin reads these the
+way every lane does, so a bad value makes setup refuse with
+`skill_resolver_config_invalid` and write nothing; a change takes effect at
+the next `gbrain setup openclaw`.
+
+Each turn appends one line (agent, outcome, duration, error code, arm,
+suggested ids; never turn text) to
+`skill-index/logs/openclaw-<date>.jsonl`, and a `read` line when the model
+opens a skill, marked with whether it was suggested. `gbrain doctor --only
+skill_resolver` reports the plugin, the library, each agent's catalog and pins
+and, over the last 24 hours, the turns, outcomes, how many reads were of
+suggested skills and the deadline-miss rate. Above 5% over at least 20 turns
+it warns with `skill_resolve_timeout`; keep a rollout in shadow until the rate
+is under that on the real host.
+
+## Pinned skills
+
+Pins are the operator's always-on skills for one catalog. gbrain ships none,
+and a catalog with no pins gets no pinned block. They differ from
+`skills.resolver.pinned`: a pin is shown by gbrain on every turn, while a
+`pinned` skill is one the harness already shows, so gbrain only leaves it out.
+
+```bash
+gbrain skills pin add deploy-example --catalog openclaw-main --line "Before any production deploy"
+gbrain skills pin list --catalog openclaw-main
+gbrain skills pin remove deploy-example --catalog openclaw-main
+```
+
+A pin must name a skill in that catalog (`skill_resolver_pin_unknown`
+otherwise), its line is at most 100 characters with no `<` or `>`, a catalog
+holds at most 64 pins, and the rendered block is capped at 600 tokens (pins
+past it are listed as cut). A pinned skill is never also suggested. Pins live
+in config.json under `skills.resolver.pins.<catalog>`, so turning the resolver
+off keeps them; an OpenClaw agent uses a change from its next turn.
 
 ## The contract (schema_version 1)
 
@@ -460,3 +544,74 @@ No message: stdin was a terminal or empty, or neither `--text` nor
 
 The turn input is not a valid JSON object for the turn-input schema (an
 unknown field, `top_k` outside 1-8, a bad session id). Exit 2.
+
+### skill_resolver_plugin_not_installed
+
+`gbrain setup openclaw` wrote the plugin and its state, but OpenClaw has not
+loaded it: no `openclaw` on PATH, an `openclaw` command failed (named in the
+message), or `plugins inspect` does not show it loaded. Exit 3. Run the
+commands the message lists on the OpenClaw host, restart the gateway, then
+`gbrain doctor --only skill_resolver`.
+
+### skill_resolver_host_not_local
+
+The plugin runs inside the gateway and needs this gbrain home, library and
+binary on the same machine, but this machine has neither `openclaw` nor an
+OpenClaw state directory. Run setup on the OpenClaw host.
+
+### skill_resolver_selftest_failed
+
+The plugin is installed, but one turn through it under Node did not resolve.
+The message carries the library or worker code; fix that and run setup again.
+
+### skill_resolver_pin_unknown
+
+A pin names a skill that is not in its catalog. `pin add` refuses and writes
+nothing; an existing pin whose skill disappeared is left out of the block.
+Check the id with `gbrain skills pin list --catalog <c>`.
+
+### skill_resolver_library_missing
+
+No `~/.gbrain/lib/<sha256>.mjs` for the sha256 the plugin state names, so
+turns proceed without suggestions. Run `gbrain setup openclaw --skills-index-only`.
+
+### skill_resolver_library_mismatch
+
+The library file is outside `~/.gbrain/lib`, not owned by the gateway's user,
+writable by group or others, or does not hash to the recorded sha256, so the
+plugin refused it. Run `gbrain setup openclaw --skills-index-only` and check
+what else writes the gbrain home.
+
+### skill_resolver_library_skew
+
+The installed gbrain is a different version from the library the plugin runs
+and a refresh did not fix it; the plugin keeps the last good library and stops
+retrying for a day. Run `gbrain setup openclaw --skills-index-only` and read
+its error.
+
+### skill_resolver_worker_crash
+
+The plugin's worker thread could not start or crashed. Turns proceed without
+suggestions and it restarts with backoff. Report it if it repeats.
+
+### skill_resolver_worker_stuck
+
+The worker missed the deadline three turns in a row and was restarted. A
+loaded host misses more often; `gbrain doctor --only skill_resolver` shows the
+miss rate.
+
+### skill_resolver_worker_unavailable
+
+The worker is restarting after a crash or a stall, so this turn got no
+suggestions. Nothing to do when it is rare.
+
+### skill_resolver_state_missing
+
+The plugin state has no entry for this agent, so the self-test had nothing to
+run. Run `gbrain setup openclaw --skill-loading resolve --agent <id>`.
+
+### skill_resolver_host_load_cut
+
+OpenClaw lists fewer skills than the agent's skill directories hold (it caps
+each root with `skills.limits.maxCandidatesPerRoot`), so a suggestion can name
+a skill `skills_read` cannot open. Raise that limit or split the root.
