@@ -90,6 +90,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_release_unpreviewed_fields',
   'credential_projection_pending',
   'derived_visibility',
+  'privacy_label_ignored',
   // GBRA-218: member read access (doctor/checks/member-access.ts).
   'access_readers_malformed',
   'access_unknown_readers',

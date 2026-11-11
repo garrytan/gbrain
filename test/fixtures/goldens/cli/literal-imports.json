@@ -100,7 +100,10 @@
         "./commands/graph-query.ts"
       ],
       "import": [
-        "./commands/import.ts"
+        "./commands/import.ts",
+        "./core/agent-output.ts",
+        "./core/agent-markers.ts",
+        "./core/interaction.ts"
       ],
       "jobs": [
         "./commands/jobs.ts"

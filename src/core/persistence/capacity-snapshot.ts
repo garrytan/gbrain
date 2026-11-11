@@ -104,15 +104,16 @@ const describe = (row: CapacityAttention) => `${row.scope} ${row.resource} ${row
 const VERIFY = CAPACITY_VERIFY;
 
 /**
- * GST-2107: this notice rides a write that succeeded, so it says so first and its fix is the read-only forecast; the cap raise
- * stays in doctor's finding for the brain host's operator, never in the tail of a write an agent may read as a refusal.
+ * GST-2107: this notice rides receipts, sync status and cycle output whatever the call did, so it says first that it is not a
+ * refusal and its fix is the read-only forecast; the cap raise stays in doctor's finding for the brain host's operator, never in
+ * the tail of a write an agent may read as a refusal.
  */
 function lowNotice(rows: CapacityAttention[]): Notice {
   return { code: 'write_capacity_low', kind: 'info',
-    why: `This write was saved and writes still work. Write capacity is running low: ${rows.map(describe).join('; ')}; admission refuses only at the cap. `
+    why: `This notice is not a refusal: writes still work, and this call's own result says what it did. Write capacity is running low: ${rows.map(describe).join('; ')}; admission refuses only at the cap. `
       + 'gbrain doctor --only persistence_capacity --json reads the forecast and the remedy for the brain host.',
-    fix: { argv: [...VERIFY.argv], consent: [], actor: 'agent', requires_exclusive: false,
-      why: 'Reads which cap is running low, its forecast and the remedy, read-only; nothing needs to change for this write.', verify: VERIFY,
+    fix: { argv: [...VERIFY.argv], mcp: VERIFY.mcp, consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Reads which cap is running low, its forecast and the remedy, read-only; nothing needs to change for this call.', verify: VERIFY,
       docs: 'docs/guides/concurrent-writes.md#quota-near-exhaustion' } };
 }
 

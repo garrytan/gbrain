@@ -27,7 +27,7 @@ import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
-import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
+import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -115,12 +115,12 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
  * a database role that row-level security keeps from reading them reads every page as covered.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix)) AND NOT (SELECT gbrain_access_state_unreadable())`;
+  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
     : c.prefix === '' ? ` AND ${alias}.source_id <> '${c.source_id}'`
-    : ` AND NOT (${alias}.source_id = '${c.source_id}' AND starts_with(${alias}.slug, '${c.prefix}'))`).join('');
+    : ` AND NOT (${alias}.source_id = '${c.source_id}' AND ${ruleCoversSql(`${alias}.slug`, `'${c.prefix}'`)})`).join('');
 }
 
 /** The satisfied rule ids for `identity`: the current record's set when it is the record's identity, else none. */

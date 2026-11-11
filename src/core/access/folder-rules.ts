@@ -9,11 +9,17 @@
  *     - id: alice-notes                       # optional; derived from the prefix
  *       prefix: partners/alice-example/       # literal slug prefix, lower case, ends in '/'
  *       readable_by: [alice-example, group:team-a]
+ *     - slug: projects                        # a page rule: exactly this one slug (GST-2462)
+ *       readable_by: [alice-example]
  *
  * A prefix is matched literally against the source's slugs (never LIKE): it is
  * lower case, built of segments that start with a letter or digit, ends in
  * '/', and holds no '..' or '*'. Rule ids are stable: an omitted id is derived
- * deterministically from the normalized prefix. Duplicate ids or prefixes make
+ * deterministically from the normalized prefix. A page rule names one exact slug
+ * instead (`slug:`), so a page at the source root or a page whose file left git
+ * can be restricted without writing it; it is stored in the same prefix column
+ * without the trailing '/', and a prefix without '/' covers only itself
+ * (ruleCovers, ruleCoversSql). Duplicate ids or prefixes make
  * the file invalid. Readers use the page grammar (principals.ts).
  *
  * classifyRulebook() compares the applied rulebook with a desired one rule by
@@ -51,11 +57,22 @@ export const POLICY_VERSION = 1;
 export const MAX_RULES = 256;
 const MAX_READERS = 256;
 const PREFIX_RE = /^(?:[a-z0-9][a-z0-9._-]*\/)+$/;
-const RULE_KEYS = new Set(['id', 'prefix', 'readable_by']);
+const SLUG_RE = /^(?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*$/;
+const RULE_KEYS = new Set(['id', 'prefix', 'slug', 'readable_by']);
 
-/** A prefix the grammar accepts (also safe to embed as an SQL literal: no quote or backslash). */
+/** A stored rule prefix the grammar accepts: a folder (ends in '/') or one page's exact slug. Also safe to embed as an SQL literal: no quote or backslash. */
 export function validPrefix(prefix: string): boolean {
-  return prefix.length <= 512 && PREFIX_RE.test(prefix) && !prefix.includes('..');
+  return prefix.length <= 512 && (PREFIX_RE.test(prefix) || SLUG_RE.test(prefix)) && !prefix.includes('..');
+}
+
+/** Whether a rule's stored prefix covers `slug`: a folder covers the slugs under it, a page rule only its own slug. */
+export function ruleCovers(slug: string, prefix: string): boolean {
+  return prefix.endsWith('/') ? slug.startsWith(prefix) : slug === prefix;
+}
+
+/** The SQL twin of ruleCovers over two text expressions; an empty prefix (pending coverage of a whole source) covers every slug. */
+export function ruleCoversSql(slug: string, prefix: string): string {
+  return `(starts_with(${slug}, ${prefix}) AND (${prefix} = '' OR right(${prefix}, 1) = '/' OR ${slug} = ${prefix}))`;
 }
 
 /** A source-qualified rule id (`<source>:<rule>`) safe to embed as an SQL literal. */
@@ -64,9 +81,9 @@ export function validQualifiedRuleId(id: string): boolean {
   return i > 0 && /^[a-z0-9][a-z0-9_-]{0,31}$/.test(id.slice(0, i)) && ACCESS_ID_RE.test(id.slice(i + 1));
 }
 
-/** The id a rule gets when the file omits one: its prefix with '/' as '-', hashed when longer than an id may be. */
+/** The id a rule gets when the file omits one: its prefix with '/' as '-' (a page rule's ends in '.page'), hashed when longer than an id may be. */
 export function ruleIdForPrefix(prefix: string): string {
-  const base = prefix.slice(0, -1).replace(/\//g, '-');
+  const base = prefix.endsWith('/') ? prefix.slice(0, -1).replace(/\//g, '-') : `${prefix.replace(/\//g, '-')}.page`;
   if (base.length <= 64) return base;
   return `${base.slice(0, 55).replace(/[._-]+$/, '')}-${createHash('sha256').update(prefix).digest('hex').slice(0, 8)}`;
 }
@@ -78,8 +95,17 @@ function prefixProblem(raw: unknown): string | null {
   if (raw.includes('..')) return `prefix "${raw}" holds '..'`;
   if (raw.startsWith('/')) return `prefix "${raw}" starts with '/': prefixes are relative to the source's slugs, as in ${raw.replace(/^\/+/, '')}`;
   if (raw !== raw.toLowerCase()) return `prefix "${raw}" is not lower case; slugs are lower case, so write ${raw.toLowerCase()}`;
-  if (!raw.endsWith('/')) return `prefix "${raw}" does not end in '/'; write ${raw}/ so it names a folder`;
-  if (!validPrefix(raw)) return `prefix "${raw}" is not a slug folder: each segment starts with a letter or digit and holds only a-z, 0-9, '.', '_' and '-'`;
+  if (!raw.endsWith('/')) return `prefix "${raw}" does not end in '/'; write ${raw}/ so it names a folder, or slug: ${raw} for that one page`;
+  if (raw.length > 512 || !PREFIX_RE.test(raw)) return `prefix "${raw}" is not a slug folder: each segment starts with a letter or digit and holds only a-z, 0-9, '.', '_' and '-'`;
+  return null;
+}
+
+/** Why a page rule's slug is refused. */
+function slugProblem(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw === '') return 'slug must be a non-empty page slug such as projects or notes/plan';
+  if (raw !== raw.toLowerCase()) return `slug "${raw}" is not lower case; slugs are lower case, so write ${raw.toLowerCase()}`;
+  if (raw.endsWith('/')) return `slug "${raw}" ends in '/'; a folder is a prefix: write prefix: ${raw}`;
+  if (raw.length > 512 || !SLUG_RE.test(raw) || raw.includes('..')) return `slug "${raw}" is not a page slug: each segment starts with a letter or digit and holds only a-z, 0-9, '.', '_' and '-'`;
   return null;
 }
 
@@ -102,9 +128,10 @@ export function normalizeRule(raw: unknown): { rule: FolderRule } | { problem: s
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { problem: 'each rule is a mapping with prefix, readable_by and an optional id' };
   const entry = raw as Record<string, unknown>;
   const unknown = Object.keys(entry).filter(k => !RULE_KEYS.has(k));
-  const prefixError = prefixProblem(entry.prefix);
-  const prefix = prefixError ? undefined : entry.prefix as string;
-  if (unknown.length) return { problem: `unknown key ${unknown.map(k => JSON.stringify(k)).join(', ')}; a rule has id, prefix and readable_by`, prefix };
+  if (entry.slug !== undefined && entry.prefix !== undefined) return { problem: 'a rule has prefix (a folder) or slug (one page), not both' };
+  const prefixError = entry.slug !== undefined ? slugProblem(entry.slug) : prefixProblem(entry.prefix);
+  const prefix = prefixError ? undefined : (entry.slug ?? entry.prefix) as string;
+  if (unknown.length) return { problem: `unknown key ${unknown.map(k => JSON.stringify(k)).join(', ')}; a rule has id, prefix or slug, and readable_by`, prefix };
   if (prefixError) return { problem: prefixError };
   const readers = readersOf(entry.readable_by);
   if ('problem' in readers) return { problem: readers.problem, prefix };
@@ -186,13 +213,14 @@ export function sortRules(rules: readonly FolderRule[]): FolderRule[] {
 
 /** The file text for a rulebook: the same grammar parsePolicyYaml reads, members written bare. */
 export function serializePolicyYaml(rules: readonly FolderRule[], comment?: string): string {
-  const reader = (p: string) => p.startsWith('member:') ? p.slice(7) : p;
+  const plain = (v: string) => (/^[a-z][a-z0-9._/:-]*$/.test(v) && !['true', 'false', 'null'].includes(v) ? v : JSON.stringify(v));
+  const reader = (p: string) => plain(p.startsWith('member:') ? p.slice(7) : p);
   const lines = [...(comment ? comment.split('\n').map(l => `# ${l}`) : []), `version: ${POLICY_VERSION}`];
   const sorted = sortRules(rules);
   if (!sorted.length) return [...lines, 'rules: []', ''].join('\n');
   lines.push('rules:');
   for (const r of sorted) {
-    lines.push(`  - id: ${r.id}`, `    prefix: ${r.prefix}`, `    readable_by: [${r.readable_by.map(reader).join(', ')}]`);
+    lines.push(`  - id: ${plain(r.id)}`, r.prefix.endsWith('/') ? `    prefix: ${plain(r.prefix)}` : `    slug: ${plain(r.prefix)}`, `    readable_by: [${r.readable_by.map(reader).join(', ')}]`);
   }
   return [...lines, ''].join('\n');
 }
@@ -277,13 +305,13 @@ export function classifyRulebook(applied: readonly FolderRule[], desired: readon
   return { target: sortRules(target), changes, held, kind };
 }
 
-/** The rule ids (unqualified) whose prefix `slug` starts with, sorted; null when none (the row twin of gbrain_access_folder_rules). */
+/** The rule ids (unqualified) whose rule covers `slug` (ruleCovers), sorted; null when none (the row twin of gbrain_access_folder_rules). */
 export function matchingRuleIds(slug: string, rules: readonly FolderRule[]): string[] | null {
-  const ids = rules.filter(r => slug.startsWith(r.prefix)).map(r => r.id).sort();
+  const ids = rules.filter(r => ruleCovers(slug, r.prefix)).map(r => r.id).sort();
   return ids.length ? ids : null;
 }
 
 /** Whether a caller with `identity` passes every rule matching `slug` (the row twin of the folder part of the predicate). */
 export function folderRulesAllow(slug: string, rules: readonly FolderRule[], identity: readonly string[]): boolean {
-  return rules.filter(r => slug.startsWith(r.prefix)).every(r => r.readable_by.some(p => identity.includes(p)));
+  return rules.filter(r => ruleCovers(slug, r.prefix)).every(r => r.readable_by.some(p => identity.includes(p)));
 }
