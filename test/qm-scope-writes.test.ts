@@ -303,6 +303,15 @@ for (const kind of testBackends()) {
       expect(row!.source_id).toBe(HOME);
     }, 60_000);
 
+    test('a scope-writing credential never reads the sources it names as the person: --attest-read person is refused', async () => {
+      const scopes = { kind: 'client' as const, id: clients.scopes!.id };
+      expect((await refusal(bindCredential(engine, scopes, { attestRead: 'person' })))?.message).toContain('never as the person');
+      const [row] = await engine.executeRaw<{ attest_read: string | null }>('SELECT attest_read FROM oauth_clients WHERE client_id = $1', [clients.scopes!.id]);
+      expect(row!.attest_read).toBeNull();
+      expect((await bindCredential(engine, scopes, { attestRead: 'scope' })).attest_read).toBe('scope');
+      expect((await bindCredential(engine, scopes, { attestRead: null })).attest_read).toBeNull();
+    }, 60_000);
+
     test('a squatted scope page takes no scope write; no other remote writer may write memory/scope', async () => {
       await importFromContent(engine, 'memory/scope', '---\ntype: note\ntitle: Scope memory\nreadable_by:\n  - member:alice-example\n  - member:bob-example\n---\n# Scope memory\n', { sourceId: SCOPE_B });
       const squat = await write(alice, [{ fact: 'Squatted scope canarysquatscope', provenance: 'x' }], { source_id: SCOPE_B });

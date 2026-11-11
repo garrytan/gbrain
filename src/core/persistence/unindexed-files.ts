@@ -51,6 +51,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { SyncOpts } from '../../commands/sync.ts';
 import { spawn } from '../spawn.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { isSyncMetafile, matchesAnyGlob, metafileIsPage, resolveSlugForPath } from '../sync.ts';
 import { screenImportContent } from '../import-screen.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
@@ -160,8 +161,8 @@ function visitBlobSlices<T extends TreeBlob>(gitRoot: string, entries: T[], visi
 
 /** The blobs of `target` under `scope` in tree order, after `after`, in batches; the child stops when the consumer does. */
 async function* treeBatches(gitRoot: string, target: string, scope: string, after: string | null, size: number, revisit?: ReadonlySet<string>): AsyncGenerator<TreeEntry[]> {
-  const child = spawn('git', ['-c', 'core.quotepath=false', '--literal-pathspecs', '-C', gitRoot, 'ls-tree', '-r', '-l', '-z', target, ...(scope ? ['--', scope] : [])],
-    { env: gitChildEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '--literal-pathspecs', '-C', gitRoot, 'ls-tree', '-r', '-l', '-z', target, ...(scope ? ['--', scope] : [])],
+    { env: gitChildEnv(NO_LAZY_FETCH_ENV), stdio: ['ignore', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr!.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString('utf8')).slice(0, 2000); });
   const exit = new Promise<number | null>((resolve, reject) => { child.on('error', reject); child.on('close', resolve); });

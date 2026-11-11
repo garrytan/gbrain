@@ -17,8 +17,11 @@
 // identifier must not fire); this rule is keyword-anchored, so the same
 // reasoning inverts. The keyword is also allowed trailing identifier
 // segments before the assignment, or `AWS_SECRET_ACCESS_KEY=` cannot match:
-// the keyword `SECRET` is not adjacent to the `=`, `_ACCESS_KEY` is. The
-// entropy gate still decides, so a wider anchor costs nothing on prose.
+// the keyword `SECRET` is not adjacent to the `=`, `_ACCESS_KEY` is. A bare
+// `key` counts only as the last word of an identifier with a prefix
+// (`STRIPE_KEY=`, `deploy-key:`), never inside a word (`MONKEY=`) or alone
+// (`KEY=`). The entropy gate still decides, so a wider anchor costs nothing
+// on prose.
 //
 // The value floor is 12, not 20. A 16-character SMTP password sat under the
 // old floor and stayed plaintext in the receipt on disk even once the keyword
@@ -78,7 +81,7 @@ export const HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE = /[^0-9]/;
 // Both keep the 12-4096 bounds and the digit + entropy gates. Each also has
 // an ESCAPE_BOUNDARY twin (#7978): `\\npassword=…` in escaped tool output.
 export const assignmentKey = (boundary: string) =>
-  `${boundary}(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}["']?\\s*[:=]\\s*`;
+  `${boundary}(?:(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}|[A-Za-z][A-Za-z0-9_-]{0,63}[_-]key)["']?\\s*[:=]\\s*`;
 export const ASSIGNMENT_QUOTED_SOURCE = (key: string) => `(${key}["'])([^"'\\s]{12,4096})`;
 export const ASSIGNMENT_UNQUOTED_SOURCE = (key: string) =>
   `(${key})([A-Za-z0-9+/_=\\-!#$%*@^~.?<>]{11,4095}[A-Za-z0-9+/_=\\-#$%*@^~<>])`;

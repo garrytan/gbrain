@@ -37,7 +37,7 @@ import { normalizeModelId } from '../model-id.ts';
 import { hasAnthropicKey } from '../ai/anthropic-key.ts';
 import { resolveThinkWindow, trajectoryPointsInWindow } from './temporal-window.ts';
 import { resolveThinkTemporalContext } from './temporal-context.ts';
-import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from '../search/private-visibility.ts';
 import { deliverEvidence, effectivePlan, resolveEvidencePlan, EVIDENCE_BLOCK_CHAR_CAP, THINK_RETURN_UNIT_CONFIG_KEY, type DeliveryMeta } from '../search/evidence-delivery.ts';
 import { evidenceTitlesEnabled } from '../search/evidence-date.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
@@ -771,7 +771,7 @@ export async function runThink(
                     entitySlug: resolved.slug,
                     ...(opts.sourceId !== undefined ? { sourceId: opts.sourceId } : {}),
                     ...(opts.allowedSources !== undefined ? { sourceIds: opts.allowedSources } : {}),
-                    ...(opts.remote !== undefined ? { remote: opts.remote } : {}),
+                    ...(opts.remote !== undefined ? { remote: worldOnlyFacts(opts.remote) } : {}),
                     excludePrivate,
                     kind: 'all',
                     limit: 100,

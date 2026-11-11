@@ -46,6 +46,7 @@ import { appendBulkRetier } from '../belief/retier.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
 import { EXTRACT_ATOMS_EXTRACTOR_PREFIX, frontmatterTrustCapsSql } from './channel.ts';
 import { claimedSourceSql, legacyRowSql, notConnectorSourceSql, readLegacyCeilings, type LegacyCeilings } from './claim-state.ts';
 import { TRUST_BACKFILL_COMPLETED_KEY, type TrustTable } from './schema.ts';
@@ -168,7 +169,7 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
       signals.add('frontmatter_provenance');
       terms.push(`CASE WHEN ${p}.frontmatter ? 'transcript_import' OR ${p}.frontmatter->>'provenance' = 'auto-extracted'
         OR ${p}.frontmatter->>'dream_generated' = 'true'
-        OR (CASE WHEN jsonb_typeof(${p}.frontmatter->'extracted_by') = 'string' THEN btrim(${p}.frontmatter->>'extracted_by', E' \\t\\n\\r') END)
+        OR (CASE WHEN jsonb_typeof(${p}.frontmatter->'extracted_by') = 'string' THEN ${edgeTrimSql(`${p}.frontmatter->>'extracted_by'`)} END)
           LIKE '${EXTRACT_ATOMS_EXTRACTOR_PREFIX.replace(/_/g, '\\_')}%' THEN ${rank('agent_written')} END`);
     }
     if (cols.has('pages', 'revision_write_request_id')) { const q = request(r); if (q) terms.push(q); }

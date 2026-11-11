@@ -129,7 +129,7 @@ export async function queryOrphanPages(
  */
 export async function findOrphans(
   engine: BrainEngine,
-  opts: PageReadScope & { includePseudo?: boolean; mode?: 'inbound' | 'islanded' } = {},
+  opts: PageReadScope & { includePseudo?: boolean; mode?: 'inbound' | 'islanded'; scopeInbound?: boolean } = {},
 ): Promise<OrphanResult> {
   const includePseudo = !!opts.includePseudo;
   // v0.41.29.0: `sourceId` (scalar, from `--source` + single-source MCP
@@ -159,6 +159,7 @@ export async function findOrphans(
       excludePrivate: opts.excludePrivate,
       ...(sourceIds ? { sourceIds } : sourceId ? { sourceId } : {}),
       ...(opts.mode ? { mode: opts.mode } : {}),
+      ...(opts.scopeInbound ? { scopeInbound: true } : {}),
     });
     // v0.41.29.0 (Codex F6): correct the `total_linkable` denominator.
     // Enumerate ALL live pages (scoped) and count excluded-by-slug across

@@ -1,8 +1,10 @@
 /**
  * GBRA-218: `gbrain access`, the operator surface for per-member read access.
  *
- *   gbrain access member add|disable|enable|rm|list <id> [--name N] [--groups a,b] [--bind-token <name>]
- *   gbrain access member link <id> --qm <canonical id> | unlink --qm <canonical id> | links [--member <id>]
+ *   gbrain access member add|disable|enable|rm|list <id> [--name N] [--email <addr>] [--groups a,b] [--bind-token <name>]
+ *   gbrain access member set <id> --email <addr>|none
+ *   gbrain access member link <id>|--email <addr> --qm <canonical id> | unlink --qm <canonical id> | links [--member <id>]
+ *   gbrain access member source add|remove|list <member> [<source>]
  *   gbrain access group add|rm|list <group> [--members a,b]
  *   gbrain access who-can-read <slug> [--source <id>]
  *   gbrain access check --token <name>|--client <id> [--as a,b]
@@ -19,28 +21,42 @@ import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
 import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
-import { isPrivacyPrivatePage } from '../core/search/private-visibility.ts';
-import { identityFor, normalizePrincipal, normalizeReaders, readersAllow } from '../core/access/principals.ts';
+import { accessAllowedSql, isPrivacyPrivatePage, withCallerAccess } from '../core/search/private-visibility.ts';
+import { folderAccessFor } from '../core/access/caller.ts';
+import { identityFor, normalizePrincipal, normalizeReaders } from '../core/access/principals.ts';
 import { mayActForCovers, singleMemberAudience, type AudiencePrincipal } from '../core/access/audience.ts';
-import { linkMember, listMemberLinks, unlinkMember } from '../core/access/actor.ts';
+import { linkMember, linkMemberByEmail, listMemberLinks, unlinkMember } from '../core/access/actor.ts';
+import { bindMemberSource, listMemberSources, unbindMemberSource } from '../core/access/member-sources.ts';
 import { clearOwner, ownerMemberId, ownerView, setOwner, type OwnerView } from '../core/access/owner.ts';
 import {
   addGroup, addMember, assertAccessId, disableMember, enableMember, getMember, legacyTokenByName, listGroups, listMembers,
-  parseIdList, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember, type MemberRecord,
+  parseIdList, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember, setMemberEmail, type MemberRecord,
 } from '../core/access/members.ts';
 
 export const ACCESS_USAGE = `gbrain access: per-member read access inside one brain
 
 Members and groups:
-  gbrain access member add <id> [--name <display name>] [--groups a,b] [--bind-token <token name>]
+  gbrain access member add <id> [--name <display name>] [--email <addr>] [--groups a,b] [--bind-token <token name>]
+  gbrain access member set <id> --email <addr>|none
+                                             Declare or clear the email an operator finds the member by
+                                             (case-folded, unique per brain)
   gbrain access member disable <id>          Reversible: the member and its credentials stop reading
   gbrain access member enable <id>
   gbrain access member rm <id> [--yes]       Preview first; --yes removes for good (the id is never reused)
   gbrain access member list [--all]          --all includes removed ids
   gbrain access member link <id> --qm <canonical id> [--dry-run]
                                              An attested QM call naming that person reads and writes as <id>
+  gbrain access member link --email <addr> --qm <canonical id> [--dry-run]
+                                             The same link, to the member that declares <addr>
   gbrain access member unlink --qm <canonical id> [--dry-run]
   gbrain access member links [--member <id>] Canonical ids are compared exactly (no case folding)
+  gbrain access member source add <id> <source> [--dry-run]
+                                             Personal source: attested calls for anyone else, and scope
+                                             reads, stop reading it (hide-only, inside each grant)
+  gbrain access member source remove <id> <source> [--yes]
+                                             Preview first; removing the last binding makes it readable
+                                             again to every attested person whose credential grants it
+  gbrain access member source list [<id>]
   gbrain access group add <group> [--members a,b]
   gbrain access group rm <group> [--members a,b] [--yes]
                                              With --members, removes those members; otherwise previews
@@ -85,7 +101,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return v;
 }
 
-const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--source', '--token', '--client', '--as', '--qm', '--member']);
+const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--source', '--token', '--client', '--as', '--qm', '--member', '--email']);
 
 function positionals(args: string[]): string[] {
   const out: string[] = [];
@@ -97,7 +113,7 @@ function positionals(args: string[]): string[] {
 }
 
 function memberLine(m: MemberRecord): string {
-  return `  ${m.id}${m.display_name ? ` (${m.display_name})` : ''}  ${m.status}${m.groups.length ? `  groups: ${m.groups.join(', ')}` : ''}`;
+  return `  ${m.id}${m.display_name ? ` (${m.display_name})` : ''}  ${m.status}${m.email ? `  email: ${m.email}` : ''}${m.groups.length ? `  groups: ${m.groups.join(', ')}` : ''}`;
 }
 
 export interface WhoCanReadEntry {
@@ -111,27 +127,41 @@ export interface WhoCanReadEntry {
 
 /** Who may read `slug` remotely: its normalized readers, privacy and the enabled members those readers admit. */
 export async function whoCanRead(engine: BrainEngine, slug: string, sourceId?: string): Promise<WhoCanReadEntry[]> {
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown }>(
-    `SELECT slug, source_id, type, frontmatter FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id`,
+  const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string | null; frontmatter: unknown; folder_rule_ids: string[] | null }>(
+    `SELECT slug, source_id, type, frontmatter, folder_rule_ids FROM pages WHERE slug = $1${sourceId ? ' AND source_id = $2' : ''} ORDER BY source_id`,
     sourceId ? [slug, sourceId] : [slug]);
   if (!rows.length) {
     throw opError('not_found', `No page "${slug}"${sourceId ? ` in source ${sourceId}` : ''}.`, 'Check the slug with gbrain list or gbrain search.');
   }
-  const members = (await listMembers(engine)).filter(m => m.status === 'enabled');
-  return rows.map(row => {
+  const members = await Promise.all((await listMembers(engine)).filter(m => m.status === 'enabled').map(async m => {
+    const identity = identityFor(m.id, m.groups);
+    return { id: m.id, identity, folder: await folderAccessFor(engine, identity) };
+  }));
+  const entries: WhoCanReadEntry[] = [];
+  for (const row of rows) {
     const fm = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter;
     const readers = normalizeReaders(fm);
     const priv = isPrivacyPrivatePage({ type: row.type, frontmatter: fm });
-    const allowed = readers === null ? 'every_source_reader' as const : members.filter(m => readersAllow(fm, identityFor(m.id, m.groups))).map(m => m.id);
+    const ruled = (row.folder_rule_ids?.length ?? 0) > 0;
+    const allowed: string[] = [];
+    if (readers !== null || ruled) {
+      for (const { id, identity, folder } of members) {
+        const admitted = await withCallerAccess({ identity, ...folder, restricted: true }, () => engine.executeRaw(
+          `SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${accessAllowedSql('p', identity)}`, [row.source_id, row.slug]));
+        if (admitted.length) allowed.push(id);
+      }
+    }
     const notes = [
-      readers === null ? 'No readable_by: every caller entitled to the source reads it.'
+      readers === null ? (ruled ? 'No readable_by, but folder rules cover it: only members who meet every rule read it remotely.' : 'No readable_by: every caller entitled to the source reads it.')
         : readers.includes('!nobody') ? 'readable_by is malformed, so no remote caller reads it; fix the frontmatter.'
         : 'Only credentials bound to these members (directly or through a group) read it remotely; unbound credentials and stdio do not.',
+      ...(readers !== null && ruled ? ['Folder rules cover it too: a member must meet readable_by and every rule.'] : []),
       ...(priv ? ['visibility: private also applies: a member still needs private_pages: granted_sources on this source.'] : []),
       'Derived pages (atoms, facts, chronicle events) of a page that names readers are hidden from every remote caller.',
     ];
-    return { slug: row.slug, source_id: row.source_id, readers, private: priv, members: allowed, note: notes.join(' ') };
-  });
+    entries.push({ slug: row.slug, source_id: row.source_id, readers, private: priv, members: readers === null && !ruled ? 'every_source_reader' : allowed, note: notes.join(' ') });
+  }
+  return entries;
 }
 
 export interface AccessCheckResult {
@@ -213,7 +243,7 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
   const id = positionals(args)[0];
   switch (sub) {
     case 'add': {
-      const r = await addMember(engine, id, { name: flagValue(args, '--name'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token') });
+      const r = await addMember(engine, id, { name: flagValue(args, '--name'), email: flagValue(args, '--email'), groups: parseIdList(flagValue(args, '--groups'), 'group'), bindToken: flagValue(args, '--bind-token') });
       return print(json, r, () => [`Member added: ${r.member.id}`, memberLine(r.member),
         ...(r.groups_created.length ? [`  Groups created: ${r.groups_created.join(', ')}`] : []),
         ...(r.bound ? [`  Bound token: ${r.bound.name} (${r.bound.id})`] : ['  Bind a credential: gbrain auth rescope --token <name> --member ' + r.member.id]),
@@ -224,6 +254,12 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
       const m = await (sub === 'disable' ? disableMember : enableMember)(engine, id);
       return print(json, { member: m }, () => [`Member ${sub}d: ${m.id}`, memberLine(m),
         sub === 'disable' ? 'Its credentials are refused on their next request; gbrain access member enable undoes this.' : 'Its credentials read again on their next request.']);
+    }
+    case 'set': {
+      const email = flagValue(args, '--email');
+      if (email === undefined) throw usageError('access member set needs --email <addr>|none.', 'gbrain access member set <id> --email <addr>|none');
+      const r = await setMemberEmail(engine, id, email === 'none' ? null : email);
+      return print(json, r, () => [`${r.changed ? 'Member updated' : 'Unchanged'}: ${r.member.id}`, memberLine(r.member)]);
     }
     case 'rm': {
       const yes = args.includes('--yes');
@@ -243,8 +279,10 @@ async function memberCmd(engine: BrainEngine, sub: string | undefined, args: str
     case 'unlink':
     case 'links':
       return memberLinksCmd(engine, sub, args, json, id);
+    case 'source':
+      return memberSourceCmd(engine, args, json);
     default:
-      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, disable, enable, rm, list, link, unlink or links (gbrain access --help).');
+      throw usageError(`Unknown access member subcommand: ${sub ?? '(none)'}.`, 'Use add, set, disable, enable, rm, list, link, unlink, links or source (gbrain access --help).');
   }
 }
 
@@ -256,11 +294,52 @@ async function memberLinksCmd(engine: BrainEngine, sub: 'link' | 'unlink' | 'lin
     return print(json, { links }, () => links.length ? ['Links:', ...links.map(l => `  ${l.system}:${l.external_id} -> ${l.member_id}`)] : ['No links. Add one: gbrain access member link <id> --qm <canonical id>']);
   }
   const externalId = flagValue(args, '--qm');
-  if (externalId === undefined) throw usageError(`access member ${sub} needs --qm <canonical id>.`, sub === 'link' ? 'gbrain access member link <id> --qm <canonical id> [--dry-run]' : 'gbrain access member unlink --qm <canonical id> [--dry-run]');
+  if (externalId === undefined) throw usageError(`access member ${sub} needs --qm <canonical id>.`, sub === 'link' ? 'gbrain access member link <id>|--email <addr> --qm <canonical id> [--dry-run]' : 'gbrain access member unlink --qm <canonical id> [--dry-run]');
   const dryRun = args.includes('--dry-run');
-  const r = sub === 'link' ? await linkMember(engine, id, 'qm', externalId, { dryRun }) : await unlinkMember(engine, 'qm', externalId, { dryRun });
+  const email = flagValue(args, '--email');
+  if (email !== undefined && (sub === 'unlink' || id !== undefined)) {
+    throw usageError(sub === 'link' ? 'access member link takes a member id or --email, not both.' : 'access member unlink takes only --qm.',
+      sub === 'link' ? 'gbrain access member link <id> --qm <canonical id>, or gbrain access member link --email <addr> --qm <canonical id>' : 'gbrain access member unlink --qm <canonical id> [--dry-run]');
+  }
+  const r = sub === 'unlink' ? await unlinkMember(engine, 'qm', externalId, { dryRun })
+    : email !== undefined ? await linkMemberByEmail(engine, email, 'qm', externalId, { dryRun }) : await linkMember(engine, id, 'qm', externalId, { dryRun });
   return print(json, r, () => [`${r.applied ? (sub === 'link' ? 'Linked' : 'Unlinked') : `Would ${sub}`} ${r.link.system}:${r.link.external_id} ${sub === 'link' ? '->' : 'from'} ${r.link.member_id}`,
     r.applied ? 'Takes effect on the next attested call.' : `Apply without --dry-run.`]);
+}
+
+/** GBRA-284: personal sources, bound to the member they belong to (database only, repo-less or not). */
+async function memberSourceCmd(engine: BrainEngine, args: string[], json: boolean): Promise<void> {
+  const [sub, member, source] = positionals(args);
+  switch (sub) {
+    case 'add': {
+      if (!member || !source) throw usageError('access member source add needs a member and a source.', 'gbrain access member source add <id> <source> [--dry-run]');
+      const r = await bindMemberSource(engine, member, source, { dryRun: args.includes('--dry-run') });
+      return print(json, r, () => [
+        `${r.applied ? 'Bound' : r.changed ? 'Would bind' : 'Already bound:'} ${r.binding.source_id} to ${r.binding.member_id}`,
+        `  Owners of ${r.binding.source_id}: ${r.owners.join(', ')}`,
+        `  Attested calls for anyone else, and every scope read, stop reading ${r.binding.source_id}; it is read only where a credential already grants it.`,
+        ...(r.changed && !r.applied ? ['Apply without --dry-run.'] : r.applied ? ['Takes effect on the next attested call.'] : [])]);
+    }
+    case 'remove': {
+      if (!member || !source) throw usageError('access member source remove needs a member and a source.', 'gbrain access member source remove <id> <source> [--yes]');
+      const yes = args.includes('--yes');
+      const r = await unbindMemberSource(engine, member, source, { apply: yes });
+      return print(json, r, () => [
+        `${yes ? 'Unbound' : 'Would unbind'} ${r.binding.source_id} from ${r.binding.member_id}`,
+        r.still_personal
+          ? `  ${r.binding.source_id} stays personal (owners: ${r.owners.join(', ')}).`
+          : `  ${r.binding.source_id} stops being personal: every attested person whose credential grants it reads it again.`,
+        ...(yes ? [] : [`Apply with: gbrain access member source remove ${r.binding.member_id} ${r.binding.source_id} --yes`])]);
+    }
+    case 'list': {
+      const bindings = await listMemberSources(engine, member ? { member } : {});
+      return print(json, { bindings }, () => bindings.length
+        ? ['Personal sources:', ...bindings.map(b => `  ${b.source_id} -> ${b.member_id}`)]
+        : ['No personal sources. Bind one: gbrain access member source add <id> <source>']);
+    }
+    default:
+      throw usageError(`Unknown access member source subcommand: ${sub ?? '(none)'}.`, 'Use add, remove or list (gbrain access --help).');
+  }
 }
 
 function ownerLines(v: OwnerView): string[] {
@@ -339,7 +418,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
         const pages = await whoCanRead(engine, slug, flagValue(rest, '--source'));
         return print(json, { pages }, () => pages.flatMap(p => [
           `${p.source_id}:${p.slug}`,
-          `  Readers: ${p.readers === null ? 'not restricted' : p.readers.join(', ')}${p.private ? '  (visibility: private)' : ''}`,
+          `  Readers: ${p.readers === null ? 'no readable_by' : p.readers.join(', ')}${p.private ? '  (visibility: private)' : ''}`,
           `  Members who may read it: ${p.members === 'every_source_reader' ? 'every caller entitled to the source' : p.members.join(', ') || 'none'}`,
           `  ${p.note}`]));
       }

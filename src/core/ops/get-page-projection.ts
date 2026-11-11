@@ -48,6 +48,22 @@ export function readQuarantined(ctx: Pick<OperationContext, 'remote' | 'auth' | 
 }
 
 /**
+ * #6259 for history reads (get_versions, known_as_of): the quarantine view of each stored edition, null when neither the
+ * live page nor that edition is quarantined. A remote reader gets no body for such an edition, as get_page keeps the
+ * live body; the notice is emitted once per read.
+ */
+export function historyQuarantine(ctx: Pick<OperationContext, 'remote' | 'auth' | 'emitNotice'>, live: Pick<Page, 'slug' | 'frontmatter' | 'source_id'>): (frontmatter: Record<string, unknown> | null | undefined) => QuarantinedView | null {
+  let noticed = false;
+  return frontmatter => {
+    const page = isQuarantined(live.frontmatter as Record<string, unknown> | null) ? live : isQuarantined(frontmatter) ? { ...live, frontmatter: frontmatter! } : null;
+    if (!page) return null;
+    if (noticed) return quarantinedView(page, { remote: ctx.remote !== false, admin: false, includeQuarantined: false });
+    noticed = true;
+    return readQuarantined(ctx, page, false);
+  };
+}
+
+/**
  * #8042: an untrusted reader gets a third-party page's body quoted (get_page, fetch); trusted local reads stay raw.
  * GST-687: so is a page whose trust tier is below the owner's (an agent-written note; `trust` from pageTrustForRead).
  */

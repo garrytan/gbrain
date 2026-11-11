@@ -80,24 +80,22 @@ describe('S3Storage exists', () => {
   });
 });
 
-describe('S3Storage getUrl', () => {
+describe('S3Storage getUrl (presigned, #8793)', () => {
+  const KEYS = { accessKeyId: 'test-access-key-b', secretAccessKey: 'test-secret-value-b' };
+  const base = (url: string) => { const u = new URL(url); expect(u.searchParams.get('X-Amz-Signature')).toBeTruthy(); return u.origin + u.pathname; };
+
   test('string endpoint (R2/MinIO): endpoint/bucket/path', async () => {
-    const { client } = stubClient({ endpoint: 'https://acct.r2.example.com' });
-    expect(await new S3Storage(CONFIG, client).getUrl('img/a.png'))
+    expect(base(await new S3Storage({ ...CONFIG, endpoint: 'https://acct.r2.example.com', ...KEYS }).getUrl('img/a.png')))
       .toBe('https://acct.r2.example.com/blobs/img/a.png');
   });
 
-  test('function endpoint: resolves the provider and uses its url', async () => {
-    const { client } = stubClient({
-      endpoint: async () => ({ url: new URL('https://minio.local:9000/s3') }),
-    });
-    expect(await new S3Storage(CONFIG, client).getUrl('img/a.png'))
+  test('endpoint with a path: keeps the path before bucket/key', async () => {
+    expect(base(await new S3Storage({ ...CONFIG, endpoint: 'https://minio.local:9000/s3', ...KEYS }).getUrl('img/a.png')))
       .toBe('https://minio.local:9000/s3/blobs/img/a.png');
   });
 
   test('no endpoint: regional virtual-hosted AWS URL', async () => {
-    const { client } = stubClient({ region: 'eu-central-1' });
-    expect(await new S3Storage(CONFIG, client).getUrl('img/a.png'))
+    expect(base(await new S3Storage({ ...CONFIG, region: 'eu-central-1', ...KEYS }).getUrl('img/a.png')))
       .toBe('https://blobs.s3.eu-central-1.amazonaws.com/img/a.png');
   });
 });

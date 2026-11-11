@@ -349,6 +349,42 @@ describe('daily: weekly floor', () => {
     expect(w.pushes).toEqual([]);
   });
 
+  test('a release that was stable and rolled back is skipped: the newest release gets the soak instead of a refused promotion every run (#8792)', async () => {
+    const handPromoted = { version: '1.0.2', commit: 2, message: stableMessage('1.0.2', '2026-11-02T05:17:00Z') };
+    const w = world(base({ stable: handPromoted, runs: [soak(9, 3)] }));
+    w.tags['stable-v1.0.3'] = { commit: 3, object: 'tagobj-record-1.0.3' };
+    expect(await daily(w.deps)).toMatchObject({ action: 'soak_dispatched', version: '1.0.4' });
+    expect(w.pushes).toEqual([]);
+    expect(w.logs.some(l => l.includes('skipping v1.0.3: stable-v1.0.3 exists'))).toBe(true);
+  });
+
+  test('a soaked release stable.json lists as not_promotable is skipped on the important path: nothing is promoted and the fix release is soaked', async () => {
+    const published = JSON.stringify({ schema: 1, version: '1.0.1', commit: sha(1), known_bad: [], not_promotable: [{ version: '1.0.3', reason: 'preview exceeds its statement bound', fixed_in: '1.0.4' }] });
+    const w = world(base({ published, importantPrs: [{ number: 20, merge: 2 }], runs: [soak(9, 3)] }));
+    const r = await daily(w.deps);
+    expect(r).toMatchObject({ action: 'soak_dispatched', version: '1.0.4' });
+    expect(w.posts).toEqual([{ path: `repos/${REPO}/actions/workflows/production-soak.yml/dispatches`, body: { ref: 'v1.0.4' } }]);
+    expect(w.pushes).toEqual([]);
+    expect(w.logs.some(l => l.includes('skipping v1.0.3: stable.json lists it as not promotable (preview exceeds its statement bound; fixed in v1.0.4)'))).toBe(true);
+  });
+
+  test('the weekly walk skips a not_promotable release too, and is never soaked', async () => {
+    const published = JSON.stringify({ schema: 1, version: '1.0.1', commit: sha(1), known_bad: [], not_promotable: [{ version: '1.0.4', reason: 'regression', fixed_in: '1.0.5' }] });
+    const w = world(base({ stable: old, published, runs: [soak(9, 3)] }));
+    const r = await daily(w.deps);
+    expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.3');
+    const unsoaked = world(base({ stable: old, published }));
+    expect(await daily(unsoaked.deps)).toMatchObject({ action: 'soak_dispatched', version: '1.0.3' });
+  });
+
+  test('a release stable.json lists as known_bad is never a candidate; an older qualifying release still promotes (#8792)', async () => {
+    const published = JSON.stringify({ schema: 1, version: '1.0.1', commit: sha(1), known_bad: ['1.0.3'] });
+    const w = world(base({ stable: old, published, runs: [soak(8, 2), soak(9, 3)] }));
+    const r = await daily(w.deps);
+    expect(r.action === 'promoted' && r.promotion.version).toBe('1.0.2');
+    expect(w.logs.some(l => l.includes('skipping v1.0.3: stable.json lists it as known bad'))).toBe(true);
+  });
+
   test('never moves stable backward: only releases newer than stable are candidates', async () => {
     const w = world(base({ stable: { ...old, version: '1.0.4', commit: 4, message: stableMessage('1.0.4', '2026-11-02T05:17:00Z') }, runs: [soak(9, 3)] }));
     expect((await daily(w.deps)).action).toBe('none');

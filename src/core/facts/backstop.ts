@@ -727,6 +727,9 @@ async function derivedFactWriter(ctx: FactsBackstopCtx, input: PipelineInput, de
   /** A DB-only insert: one attributed transaction at the derived tier, gated, with input edges for a new row. */
   const insertDerivedFact = (newFact: NewFact) => maintenanceTransaction(ctx.engine, tx =>
     applyGateDecision(tx, decideFact(newFact, newFact.entity_slug ?? null, { ...newFact }), { table: 'facts', sourceId: ctx.sourceId }, async () => {
+      await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR SHARE', [ctx.sourceId]);
+      const { isFactWithdrawn } = await import('./withdrawal.ts');
+      if (await isFactWithdrawn(tx, ctx.sourceId, null, newFact.fact, newFact.entity_slug ?? null)) { countWithdrawnSkip(counts); return null; }
       const result = await tx.insertFact(newFact, { source_id: ctx.sourceId }); // gbrain-allow-direct-insert: the facts backstop's DB-only fallbacks (unparented / thin-client facts, stub-guard or unresolvable targets, a declined fence lane)
       counts.fact_ids.push(result.id);
       if (result.status === 'inserted') counts.inserted += 1;
@@ -910,9 +913,9 @@ async function runPipelineBodyInner(
     const resolvedSlug = resolved?.source === 'fallback_slugify' ? null : resolved?.slug ?? null;
     const resolutionSource = resolved?.source ?? null;
 
-    // B-10: a withdrawn claim for this entity is never re-written; the
-    // fence writer rechecks under its page lock.
-    if (await isFactWithdrawn(ctx.engine, ctx.sourceId, visibility, f.fact, resolvedSlug)) { countWithdrawnSkip(counts); continue; }
+    // B-10: a claim withdrawn for this entity, at any visibility, is never
+    // re-written; the fence writer and the DB-only insert recheck under lock.
+    if (await isFactWithdrawn(ctx.engine, ctx.sourceId, null, f.fact, resolvedSlug)) { countWithdrawnSkip(counts); continue; }
 
     // Dedup against DB candidates (correct per Codex Q7: fence rows
     // have no embeddings; FS lock + sync invariant means DB == fence
@@ -1067,7 +1070,7 @@ async function runPipelineBodyInner(
 
     const result = await writeFactsToFence(
       ctx.engine,
-      { sourceId: ctx.sourceId, localPath, slug, resolutionSource: groupResolutionSource },
+      { sourceId: ctx.sourceId, localPath, slug, resolutionSource: groupResolutionSource, automatic: true },
       keptFacts,
       derivation,
     );
