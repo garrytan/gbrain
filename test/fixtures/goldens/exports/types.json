@@ -8718,6 +8718,7 @@
         "members": [
           "bundled?: boolean | undefined",
           "catalog: string",
+          "claudePlugins?: string | undefined",
           "dirs?: string[] | undefined",
           "fromJson?: string | undefined",
           "fromJsonStdin?: boolean | undefined",
@@ -8732,7 +8733,7 @@
         "members": [
           "block: { token_cap: number; tokenizer: string; }",
           "build: { args: string[]; rebuild_argv: string[] | null; ms: number; built_at: string; generation: number; }",
-          "catalog: { name: string; catalog_hash: string; source: { kind: \"dir\" | \"bundled\" | \"json\"; dirs?: string[]; stdin?: boolean; file?: string; snapshot?: \"source.json\"; bundled_skills?: number; }; fingerprint_sha256: string | null; skill_count: number; skipped: SkippedSkill[]; scope: \"user\" | \"project\"; hints: \"shown\" | \"names_only\"; harness: string | null; routing: { file: string; rows: number; unmatched: number; stat: [string, number, number]; } | null; }",
+          "catalog: { name: string; catalog_hash: string; source: { kind: \"dir\" | \"bundled\" | \"json\" | \"claude_plugins\"; dirs?: string[]; stdin?: boolean; file?: string; snapshot?: \"source.json\"; bundled_skills?: number; claude_dir?: string; }; fingerprint_sha256: string | null; skill_count: number; skipped: SkippedSkill[]; scope: \"user\" | \"project\"; hints: \"shown\" | \"names_only\"; harness: string | null; routing: { file: string; rows: number; unmatched: number; stat: [string, number, number]; } | null; }",
           "gbrain_commit: string | null",
           "gbrain_version: string",
           "index: { file: \"index.bin\"; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number; }",
@@ -8740,6 +8741,21 @@
           "schema_version: 1"
         ],
         "name": "BuildReceipt"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "close: () => void",
+          "resolve: (input: TurnInput | unknown, turn?: CatalogTurnOptions) => Promise<ResolveResult>"
+        ],
+        "name": "CatalogHandle"
+      },
+      {
+        "kind": "type",
+        "name": "CatalogHandleOptions",
+        "signature": [
+          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
+        ]
       },
       {
         "kind": "interface",
@@ -8753,6 +8769,13 @@
           "stale_reason: string | null"
         ],
         "name": "CatalogStatus"
+      },
+      {
+        "kind": "type",
+        "name": "CatalogTurnOptions",
+        "signature": [
+          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; now?: (() => number) | undefined; }"
+        ]
       },
       {
         "kind": "variable",
@@ -8923,6 +8946,7 @@
         "kind": "interface",
         "members": [
           "block: string",
+          "block_reason: BlockReason | null",
           "block_tokens: number",
           "budget_exhausted: boolean",
           "catalog: string | null",
@@ -8951,6 +8975,13 @@
       },
       {
         "kind": "function",
+        "name": "buildSkillIndexOffThread",
+        "signature": [
+          "(input: BuildInput, opts?: { home?: string; }) => Promise<BuildReceipt>"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "catalogStatus",
         "signature": [
           "(name: string, opts?: { home?: string; }) => Promise<CatalogStatus>"
@@ -8972,6 +9003,13 @@
       },
       {
         "kind": "function",
+        "name": "gcSkillSessions",
+        "signature": [
+          "(opts?: { home?: string; now?: number; }) => Promise<number>"
+        ]
+      },
+      {
+        "kind": "function",
         "name": "listCatalogs",
         "signature": [
           "(home: string) => string[]"
@@ -8982,6 +9020,13 @@
         "name": "normalizeTurnInput",
         "signature": [
           "(raw: unknown) => Required<Pick<TurnInput, \"message\" | \"top_k\" | \"exclude\" | \"shadow\" | \"reset_session\">> & TurnInput"
+        ]
+      },
+      {
+        "kind": "function",
+        "name": "openCatalog",
+        "signature": [
+          "(catalogs: string[], opts?: CatalogHandleOptions) => CatalogHandle"
         ]
       },
       {

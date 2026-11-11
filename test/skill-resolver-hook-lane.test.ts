@@ -10,15 +10,21 @@
  * worker (exit 0, no output, no dedupe commit); a brainless install stays
  * brainless; an unreadable config fails open with its code; a block over the
  * payload budget is dropped whole and counted; one owner per event; the
- * project catalog is built out of the turn and merged at rank time; with the
- * lane off it prints and writes nothing.
+ * project catalog (Claude Code's .claude/skills, Codex's .agents/skills from the
+ * project root down to cwd) is built out of the turn and merged at rank time;
+ * a built claude-code-plugins catalog is searched; no built catalog ends the
+ * turn as no_catalog; Hermes reads extra.user_message from a stream of any size
+ * and answers {"context"}; with the lane off it prints and writes nothing.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { runCli } from './helpers/cli-spawn.ts';
-import { LANE_DEADLINE_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { CLAUDE_PLUGINS_CATALOG, LANE_DEADLINE_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { HOOK_FIELD_CAP, readJsonFields } from '../src/core/skills/resolver/hook-input.ts';
+import { MESSAGE_CAP_BYTES } from '../src/core/skills/resolver/resolve.ts';
 import { dailyLogFile, LANE_LOG } from '../src/core/skills/resolver/daily-log.ts';
 
 setDefaultTimeout(60_000);
@@ -74,11 +80,12 @@ function wired(b: Box, harness: 'claude-code' | 'codex', event: 'UserPromptSubmi
 
 interface Run { stdout: string; stderr: string; exitCode: number; wallMs: number }
 /** Run a hook command the way the harness does: sh -c, the event JSON on stdin. Wall time is measured outside the process. */
-async function hook(b: Box, command: string, payload: Record<string, unknown>, env: Record<string, string | undefined> = {}): Promise<Run> {
+async function hook(b: Box, command: string, payload: Record<string, unknown> | string, env: Record<string, string | undefined> = {}, cwd = b.project): Promise<Run> {
   const merged: Record<string, string> = {};
   for (const [k, v] of Object.entries({ ...process.env, ...b.env, GBRAIN_SKIP_STARTUP_HOOKS: '1', ...env })) if (v !== undefined) merged[k] = v;
   const t0 = performance.now();
-  const proc = Bun.spawn(['sh', '-c', command], { env: merged, cwd: b.project, stdin: new TextEncoder().encode(JSON.stringify({ cwd: b.project, ...payload })), stdout: 'pipe', stderr: 'pipe' });
+  const stdin = new TextEncoder().encode(typeof payload === 'string' ? payload : JSON.stringify({ cwd, ...payload }));
+  const proc = Bun.spawn(['sh', '-c', command], { env: merged, cwd, stdin, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
 }
@@ -417,5 +424,204 @@ describe('skill-resolver lane: project catalog', () => {
     await hook(b, wired(b, 'claude-code'), { prompt: 'rotate the fixture files', session_id: 's' }, { ...WIDE, GBRAIN_SKILLS_NO_AUTOREBUILD: '1' });
     await Bun.sleep(1500);
     expect(readdirSync(join(b.home, '.gbrain', 'skill-index')).filter((n) => n.startsWith('claude-code-project-'))).toEqual([]);
+  });
+});
+
+const catalogRoot = (b: Box) => join(b.home, '.gbrain', 'skill-index');
+async function waitForCatalog(b: Box, prefix: string): Promise<string | undefined> {
+  for (let i = 0; i < 100; i++) {
+    const built = readdirSync(catalogRoot(b)).find((n) => n.startsWith(prefix) && existsSync(join(catalogRoot(b), n, 'receipt.json')));
+    if (built) return built;
+    await Bun.sleep(100);
+  }
+  return undefined;
+}
+const spawnStamps = (b: Box) => { const d = join(catalogRoot(b), 'logs'); return existsSync(d) ? readdirSync(d).filter((n) => n.startsWith('spawn-')) : []; };
+async function buildCatalog(b: Box, catalog: string, dir: string, harness: string) {
+  const r = await runCli(['skills', 'index', 'build', '--catalog', catalog, '--dir', dir, '--harness', harness], { env: b.env, cwd: b.project });
+  expect(r.exitCode, r.stderr).toBe(0);
+}
+
+describe('skill-resolver lane: codex project catalog', () => {
+  test("a repo's .agents/skills at the root and in a subdir get one catalog over both, root first, keyed by the dir list", async () => {
+    const b = box();
+    seedSkills(codexSkills(b));
+    mkdirSync(join(b.project, '.git'));
+    const sub = join(b.project, 'packages', 'widget');
+    skill(join(b.project, '.agents', 'skills'), 'rotate-fixtures', 'Rotate the fixture files for the nightly widget run.');
+    skill(join(sub, '.agents', 'skills'), 'bump-widget-schema', 'Bump the widget schema version.');
+    await setup(b, 'codex');
+    const cmd = wired(b, 'codex');
+    const turn = { prompt: 'rotate the fixture files and bump the widget schema', hook_event_name: 'UserPromptSubmit' };
+    expect((await hook(b, cmd, { ...turn, session_id: 'cp1' }, WIDE, sub)).exitCode).toBe(0);
+    const built = await waitForCatalog(b, projectCatalogPrefix('codex'));
+    expect(built).toMatch(/^codex-project-[0-9a-f]{16}$/);
+    const receipt = readJson(join(catalogRoot(b), built!, 'receipt.json'));
+    expect(receipt.catalog).toMatchObject({ source: { dirs: [join(b.project, '.agents', 'skills'), join(sub, '.agents', 'skills')] }, scope: 'project', harness: 'codex' });
+    const block = contextOf(await hook(b, cmd, { ...turn, session_id: 'cp2' }, WIDE, sub));
+    expect(block).toContain('id: "rotate-fixtures"');
+    expect(block).toContain('id: "bump-widget-schema"');
+    expect(block).toContain(CODEX_LOAD);
+    expect(laneLog(b).at(-1).catalogs).toEqual(['codex-user', built]);
+  });
+
+  test('no .agents/skills below the project root, or only the home directory\'s own, means no project catalog', async () => {
+    const b = box();
+    seedSkills(codexSkills(b));
+    mkdirSync(join(b.project, '.git'));
+    await setup(b, 'codex');
+    const cmd = wired(b, 'codex');
+    const turn = { prompt: 'write the changelog for this release', hook_event_name: 'UserPromptSubmit' };
+    expect(contextOf(await hook(b, cmd, { ...turn, session_id: 'cn1' }, WIDE))).toContain('write-changelog');
+    mkdirSync(join(b.home, '.git'));
+    const fromHome = await hook(b, cmd, { ...turn, session_id: 'cn2' }, WIDE, b.home);
+    expect(contextOf(fromHome)).toContain('write-changelog');
+    expect(laneLog(b).map((l) => l.catalogs)).toEqual([['codex-user'], ['codex-user']]);
+    expect(spawnStamps(b)).toEqual([]);
+  });
+});
+
+describe('skill-resolver lane: built catalogs only', () => {
+  test('claude-code: a built claude-code-plugins catalog is searched, between the user and the project catalog', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    expect(CLAUDE_PLUGINS_CATALOG).toBe('claude-code-plugins');
+    const plugins = join(b.root, 'plugin-fixtures');
+    skill(plugins, 'audit-widget-licenses', 'Audit the widget dependency licenses.');
+    await buildCatalog(b, CLAUDE_PLUGINS_CATALOG, plugins, 'claude-code');
+    const r = await hook(b, wired(b, 'claude-code'), { prompt: 'audit the widget licenses', session_id: 'pl1' }, WIDE);
+    expect(contextOf(r)).toContain('id: "audit-widget-licenses"');
+    expect(laneLog(b).at(-1).catalogs).toEqual(['claude-code-user', CLAUDE_PLUGINS_CATALOG]);
+  });
+
+  test('claude-code with only plugin skills: the plugins catalog alone delivers', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    rmSync(join(catalogRoot(b), 'claude-code-user'), { recursive: true });
+    const plugins = join(b.root, 'plugin-fixtures');
+    skill(plugins, 'audit-widget-licenses', 'Audit the widget dependency licenses.');
+    await buildCatalog(b, CLAUDE_PLUGINS_CATALOG, plugins, 'claude-code');
+    const r = await hook(b, wired(b, 'claude-code'), { prompt: 'audit the widget licenses', session_id: 'pl2' }, WIDE);
+    expect(contextOf(r)).toContain('id: "audit-widget-licenses"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered', catalogs: [CLAUDE_PLUGINS_CATALOG] });
+  });
+
+  for (const harness of ['claude-code', 'codex'] as const) {
+    test(`${harness}: no built catalog ends the turn with no output and outcome no_catalog, never skill_index_missing`, async () => {
+      const b = box();
+      seedSkills(harness === 'codex' ? codexSkills(b) : claudeSkills(b));
+      await setup(b, harness);
+      rmSync(join(catalogRoot(b), `${harness}-user`), { recursive: true });
+      const r = await hook(b, wired(b, harness), { prompt: 'please deploy the widget to staging', session_id: 'nc', hook_event_name: 'UserPromptSubmit' }, WIDE);
+      expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+      const last = laneLog(b).at(-1);
+      expect(last.outcome).toBe('no_catalog');
+      expect(last.code).toBeUndefined();
+    });
+  }
+});
+
+describe('skill-resolver lane: hermes', () => {
+  const HERMES_LOAD = 'To use one, load it with skill_view(name) using its id before acting.';
+  const hermesCmd = (b: Box) => `env GBRAIN_HOOK_LANE=skill-resolver GBRAIN_HOME='${b.home}' '${b.bin}' hook user-prompt --harness hermes`;
+  async function hermesBox(extra: Record<string, unknown> = {}): Promise<Box> {
+    const b = box();
+    const dir = join(b.home, '.hermes', 'skills');
+    seedSkills(dir);
+    await buildCatalog(b, 'hermes-user', dir, 'hermes');
+    writeFileSync(join(b.home, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: { enabled: true, harnesses: ['hermes'], ...extra } } }));
+    return b;
+  }
+  const history = (bytes: number) => {
+    const turns: unknown[] = [];
+    const item = { role: 'user', content: 'An earlier turn with "quotes", a \\ backslash, \u00e9t\u00e9 and \ud83d\ude80, plus a decoy.', user_message: 'decoy: rotate the fixtures' };
+    const size = JSON.stringify(item).length + 1;
+    for (let n = 0; n * size < bytes; n++) turns.push(item);
+    return turns;
+  };
+
+  test('without --harness the turn is never routed to hermes, even with a stray hermes argument', async () => {
+    const b = await hermesBox();
+    const cmd = `env GBRAIN_HOOK_LANE=skill-resolver GBRAIN_HOME='${b.home}' '${b.bin}' hook user-prompt hermes`;
+    const r = await hook(b, cmd, { session_id: 'h0', extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(laneLog(b).filter((l) => l.harness === 'hermes')).toEqual([]);
+    expect(sessions(b)).toEqual([]);
+  });
+
+  test('a pre_llm_call turn reads extra.user_message and answers {"context": block}; a repeat in the session is deduped', async () => {
+    const b = await hermesBox();
+    const turn = { session_id: 'h1', extra: { user_message: 'please deploy the widget to staging', conversation_history: [] } };
+    const r = await hook(b, hermesCmd(b), turn, WIDE);
+    expect(r.exitCode).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(Object.keys(out)).toEqual(['context']);
+    expect(out.context).toContain('id: "deploy-widget"');
+    expect(out.context).toContain(HERMES_LOAD);
+    expect((await hook(b, hermesCmd(b), turn, WIDE)).stdout).toBe('');
+    expect(laneLog(b).map((l) => [l.harness, l.outcome])).toEqual([['hermes', 'delivered'], ['hermes', 'empty']]);
+  });
+
+  test('a 5 MB conversation_history before and after user_message is read, never refused, and still delivers within a turn budget', async () => {
+    const b = await hermesBox();
+    const small = await hook(b, hermesCmd(b), { session_id: 'h2a', extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
+    expect(JSON.parse(small.stdout).context).toContain('id: "deploy-widget"');
+    const turn = { session_id: 'h2', extra: { conversation_history: history(2.5e6), user_message: 'please deploy the widget to staging', later_history: history(2.5e6) } };
+    expect(JSON.stringify(turn).length).toBeGreaterThan(5e6);
+    const r = await hook(b, hermesCmd(b), turn, WIDE);
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout).context).toContain('id: "deploy-widget"');
+    const [base, big] = laneLog(b).slice(-2);
+    expect(big).toMatchObject({ outcome: 'delivered' });
+    // Reading 5 MB adds less than one lane deadline to a small turn; a buffering or quadratic reader would not.
+    expect(big.ms - base.ms).toBeLessThan(LANE_DEADLINE_MS);
+  });
+
+  test('malformed Hermes JSON fails open: exit 0, no stdout, skill_resolve_no_input', async () => {
+    const b = await hermesBox();
+    for (const raw of ['{"session_id": "h3", "extra": {"user_message": "deploy the widget"', '{"extra": {"user_message": "deploy the widget"}} trailing', '[1, 2]', '']) {
+      const r = await hook(b, hermesCmd(b), raw, WIDE);
+      expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolve_no_input' });
+    }
+  });
+
+  test('skills.resolver.lane_payload_chars caps the Hermes JSON too', async () => {
+    const b = await hermesBox({ lane_payload_chars: 500 });
+    const r = await hook(b, hermesCmd(b), { session_id: 'h4', extra: { user_message: 'deploy the widget, write the changelog and triage the bug' } }, WIDE);
+    expect(r).toMatchObject({ exitCode: 0, stdout: '' });
+    expect(laneLog(b).at(-1).outcome).toBe('payload_dropped');
+  });
+});
+
+describe('readJsonFields: the bounded streaming hook reader', () => {
+  const chunks = (text: string, size: number) => { const bytes = Buffer.from(text); return Readable.from(Array.from({ length: Math.ceil(bytes.length / size) }, (_, i) => bytes.subarray(i * size, (i + 1) * size))); };
+  const PATHS = ['session_id', 'cwd', 'extra.user_message'];
+
+  test('keeps only the string values at the paths, decoding escapes across any chunk boundary; nested decoys do not match', async () => {
+    const doc = { cwd: '/w/acme-example', extra: { conversation_history: [{ user_message: 'decoy', extra: { user_message: 'decoy' } }], user_message: 'say "hi" \\ \u00e9 \ud83d\ude80\n', n: -1.5e3, ok: [true, false, null] }, session_id: 's-1', user_message: 'top-level decoy' };
+    const text = JSON.stringify(doc);
+    for (const size of [1, 3, 7, 64 * 1024]) {
+      expect(await readJsonFields(chunks(text, size), PATHS, HOOK_FIELD_CAP)).toEqual({ cwd: '/w/acme-example', 'extra.user_message': doc.extra.user_message, session_id: 's-1' });
+    }
+  });
+
+  test('caps each kept value and refuses no payload size', async () => {
+    expect(HOOK_FIELD_CAP).toBe(MESSAGE_CAP_BYTES);
+    const text = JSON.stringify({ extra: { conversation_history: 'x'.repeat(6e6), user_message: 'y'.repeat(20_000) } });
+    const got = await readJsonFields(chunks(text, 64 * 1024), PATHS, 100);
+    expect(got).toEqual({ 'extra.user_message': 'y'.repeat(100) });
+    const escaped = `{"session_id":"a${'\\u00e9'.repeat(200)}"}`;
+    expect(await readJsonFields(chunks(escaped, 5), PATHS, 100)).toEqual({ session_id: `a${'\u00e9'.repeat(99)}` });
+  });
+
+  test('null for malformed JSON (a kept string fully checked, discarded ones for nesting and ends), a non-object document; a non-string value is skipped', async () => {
+    for (const bad of ['', '{', '{"a":}', '{"a":1,}', '{"session_id":"\\x"}', '{"cwd":"\\u12"}', '{"extra":{"user_message":"line\nbreak"}}', '{"a":01}', '{"a":tru}', '{} {}', '"x"', '[]', '{"a":[{"b":"x"]}', '{"a":"open}']) {
+      expect(await readJsonFields(chunks(bad, 2), PATHS, 100)).toBeNull();
+    }
+    expect(await readJsonFields(chunks('{"session_id": 7, "extra": {"user_message": ["x"]}}', 4), PATHS, 100)).toEqual({});
   });
 });

@@ -18,7 +18,8 @@
  *   skills.resolver.min_match   the weakest match_strength to suggest
  *     (default: every match)
  *   skills.resolver.per_harness.<harness>.{top_k,min_match}  overrides
- *     for one harness; a key it leaves out falls back to the global one
+ *     for one harness; a key it leaves out falls back to the global one, and
+ *     an entry that is not an object (a hand-edited null) counts as unset
  *   skills.resolver.pinned      skill ids the harness always loads itself,
  *     never suggested (at most 1,024)
  */
@@ -99,7 +100,8 @@ export function laneTurnSettings(section: Record<string, unknown>, harness: stri
   for (const [h, o] of Object.entries(per as Record<string, unknown>)) {
     const key = `${p}per_harness.${h}`;
     if (!(HARNESSES as readonly string[]).includes(h)) throw configInvalid(key, `names no harness (one of ${HARNESSES.join(', ')})`);
-    if (!o || typeof o !== 'object' || Array.isArray(o) || Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match')) throw configInvalid(key, 'may hold only top_k and min_match');
+    if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
+    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match')) throw configInvalid(key, 'may hold only top_k and min_match');
     const r = o as Record<string, unknown>;
     const parsed: LaneTurnSettings = {
       ...(r.top_k !== undefined ? { top_k: validateTopK(r.top_k, `${key}.top_k`) } : {}),

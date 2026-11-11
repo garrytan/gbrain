@@ -306,6 +306,8 @@ esac
     expect([...new Set(pinned)]).toEqual([primary]);
     expect(/oven\/bun:\$\{GBRAIN_CI_BUN_TAG:-([^}]+)\}/.exec(read('docker-compose.ci.yml'))?.[1]).toBe(primary);
     expect(/BUN_VERSION="\$\{BUN_VERSION:-([^}]+)\}"/.exec(read('scripts/ubicloud/setup-ci-vm.sh'))?.[1]).toBe(primary);
+    // A gate VM's Node is CI's pinned Node: apt's Node 18 cannot import the .ts file the packaging test imports.
+    expect(/NODE_VERSION="\$\{NODE_VERSION:-([^}]+)\}"/.exec(read('scripts/ubicloud/setup-ci-vm.sh'))?.[1]).toBe(/node-version:\s*(\S+)/.exec(read('.github/workflows/native-locks.yml'))?.[1]);
     expect(/\?\? "([\d.]+)";/.exec(read('scripts/ci-ubicloud.ts'))?.[1]).toBe(primary);
     expect(/^gbrain_bun_version=(\S+)$/m.exec(read('scripts/setup-in-agent.sh'))?.[1]).toBe(primary);
     expect(/ARG BUN_IMAGE=oven\/bun:(\S+)/.exec(read('tests/docker/Dockerfile'))?.[1]).toBe(primary);
