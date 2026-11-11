@@ -25,7 +25,7 @@ import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
-import { callerIsOwner, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
@@ -329,6 +329,8 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const ownPage = member ? memberPageSlug(member) : null;
   if (ownPage && !(await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${memberFactAdmitSql('facts')}`, [id, sourceId])).length) {
     // #9101: a fact the caller reads (one it shared, or a teammate's shared fact) is refused by name; a fact it cannot read stays not_found.
+    // An attested QM actor keeps not_found for every fact off its page, as QM memory-provider contract v3 states.
+    if (currentCallerAccess().actor) throw missing();
     const readable = callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
     const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
     const reads = (await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : ''}`, [id, sourceId])).length > 0;

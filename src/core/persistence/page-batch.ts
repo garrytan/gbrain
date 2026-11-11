@@ -307,9 +307,9 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
       }
       if (error instanceof OperationError && error.code === 'worktree_refreshing' && error.requestId) {
         const child = error.requestId, own = String(params.request_id);
-        error.message = error.message.replaceAll(child, own);
-        error.suggestion = error.suggestion?.replaceAll(child, own);
-        if (error.fix) error.fix = { ...error.fix, why: error.fix.why.replaceAll(child, own) };
+        error.message = error.message.replaceAll(child, () => own);
+        error.suggestion = error.suggestion?.replaceAll(child, () => own);
+        if (error.fix) error.fix = { ...error.fix, why: error.fix.why.replaceAll(child, () => own) };
         error.requestId = own;
       }
       throw error;

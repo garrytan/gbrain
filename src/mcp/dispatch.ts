@@ -11,7 +11,7 @@ import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import type { OperationMeta } from '../core/ops/contract.ts';
+import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
@@ -743,6 +743,17 @@ async function hiddenContentNotices(engine: BrainEngine, name: string, result: u
   }
 }
 
+/**
+ * GST-2353: a refusal safe to retry carries the call to repeat (next: wait) in the id parameter the tool takes: its
+ * request_id with the id it was refused under, or the same arguments when the tool replays by its idempotency_key.
+ */
+function attachRetryCall(op: Pick<Operation, 'mutating' | 'params'>, name: string, params: Record<string, unknown>, e: unknown): void {
+  if (!op.mutating || !(e instanceof OperationError) || e.retryable !== true || !e.fix || e.fix.mcp) return;
+  const retry = op.params.request_id ? (e.requestId ? { ...params, request_id: e.requestId } : null)
+    : op.params.idempotency_key && typeof params.idempotency_key === 'string' ? params : null;
+  if (retry) e.fix = { ...e.fix, mcp: { tool: name, arguments: retry } };
+}
+
 /** A refusal a grant explains: a missing scope or an operation outside the grant's snapshot or fence. */
 function refusedByGrant(e: unknown): boolean {
   return e instanceof OperationError && (e.code === 'insufficient_scope' || e.code === 'permission_denied');
@@ -1385,10 +1396,7 @@ async function dispatchResolvedCall(
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
-    // GST-2353: a refusal safe to retry under its request id carries the call to repeat, that id included (next: wait).
-    if (op.mutating && e instanceof OperationError && e.retryable === true && e.requestId && e.fix && !e.fix.mcp) {
-      e.fix = { ...e.fix, mcp: { tool: name, arguments: { ...safeParams, request_id: e.requestId } } };
-    }
+    attachRetryCall(op, name, safeParams, e);
     return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }
