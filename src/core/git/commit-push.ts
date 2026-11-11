@@ -421,14 +421,21 @@ function indexEntries(root: string, rel: string[]): string[] {
 /**
  * Put the index under `rel` back to `before` after a commit that did not land:
  * `git add` already staged the paths, and an entry left staged in the shared
- * index is what the next writer's commit without paths sweeps up.
+ * index is what the next writer's commit without paths sweeps up. `--index-info`
+ * writes fresh entries, so the skip-worktree and assume-unchanged flags in
+ * `flagged` (`ls-files -v` records) are set again: a dropped flag lets the
+ * next commit publish the edit it hid.
  */
-function restoreIndex(root: string, rel: string[], before: string[]): void {
+function restoreIndex(root: string, rel: string[], before: string[], flagged: string[]): void {
   const pathOf = (line: string) => line.slice(line.indexOf('\t') + 1);
   const kept = new Set(before.map(pathOf));
   const zero = '0'.repeat(git(root, ['rev-parse', 'HEAD']).stdout.trim().length || 40);
   const records = [...indexEntries(root, rel).map(pathOf).filter(p => !kept.has(p)).map(p => `0 ${zero}\t${p}`), ...before];
   if (records.length) withIndexRetry(root, ['update-index', '-z', '--index-info'], 'index restore', undefined, records.map(l => `${l}\0`).join(''));
+  for (const [option, pattern] of [['--skip-worktree', /^[sS] /], ['--assume-unchanged', /^[a-z] /]] as const) {
+    const paths = flagged.filter(entry => pattern.test(entry)).map(entry => `${entry.slice(2)}\0`);
+    if (paths.length) withIndexRetry(root, ['update-index', option, '-z', '--stdin'], 'index restore', undefined, paths.join(''));
+  }
 }
 
 interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string> }
@@ -596,15 +603,16 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
   const before = indexEntries(root, rel);
+  const flagged = gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v').split('\0').filter(entry => /^[a-zS] /.test(entry));
+  const skipWorktree = new Set(flagged.filter(entry => /^[sS] /.test(entry)).map(entry => entry.slice(2)));
   // GST-2118: git add refuses a named skip-worktree file that is on disk; it is left to the skipped-path check, so the other paths still commit.
-  const sparse = new Set(gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v').split('\0')
-    .filter(entry => /^[sS] /.test(entry) && rel.includes(entry.slice(2)) && existsSync(join(root, entry.slice(2)))).map(entry => entry.slice(2)));
+  const sparse = new Set([...skipWorktree].filter(p => rel.includes(p) && existsSync(join(root, p))));
   const live = rel.filter(p => !sparse.has(p));
   // #7984: a tracked path stages with `add -u`, because `add -A` refuses a deletion whose only match left is an ignored
   // path; visible untracked files stage with `add -A`; a path already staged as deleted is staged. Any other path keeps
   // git's own refusal (missing, or only an ignored untracked file).
   const listed = (args: string[]) => live.length ? git(root, [...args, '-z', '--', ...literalPathspecs(live)]).stdout.split('\0').filter(Boolean) : [];
-  const tracked = before.map(line => line.slice(line.indexOf('\t') + 1));
+  const tracked = before.map(line => line.slice(line.indexOf('\t') + 1)).filter(p => !skipWorktree.has(p));
   const untracked = listed(['ls-files', '--others', '--exclude-standard']);
   const deleted = listed(['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=D']);
   const matching = (paths: string[]) => live.filter(spec => paths.some(p => covers(spec, p)));
@@ -639,7 +647,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
       landed = { committed: true, paths, listed };
     }
   } catch (e) {
-    try { restoreIndex(root, rel, before); } catch { /* the index lock outlasted the retries; the error below still stands */ }
+    try { restoreIndex(root, rel, before, flagged); } catch { /* the index lock outlasted the retries; the error below still stands */ }
     throw e;
   }
   // GST-2116: after the try, so a failure from here on never restores the index under a commit that landed.
