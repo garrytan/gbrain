@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.675.0] - 2026-11-11
+
+**Tool calls through native OpenAI models no longer fill every optional argument with a placeholder.** gbrain's tool loop (subagent jobs and SkillOpt rollouts) sends OpenAI models through the Responses API, and that API treats a tool definition with no `strict` field as strict: it marks every property required, so the model has to invent a value for each optional argument. A `get_page` call came back with a zero-line window and an empty byte range, which gbrain's own argument checks then refused. Native OpenAI tool definitions now say `strict: false`, so the schema's own `required` list holds and the model sends only the arguments it means. Anthropic, Google and the OpenAI-compatible providers (chat completions) send the same request as before. Reported and first fixed by @akinduroifedayo.
+
+### Itemized changes
+
+- `src/core/ai/gateway.ts`: `toAISDKTools` takes an optional `strict` value, and `chatAdmitted()`, which every `chat()` call goes through, passes `false` on the `native-openai` route only; every other route leaves the field out.
+- Tests: `test/ai/native-openai-tool-strict-wire.test.ts` drives `chat()` and `toolLoop()` against a local stub and checks the request body per route: native OpenAI carries `strict: false` on every tool and every turn with the schema's `required` list unchanged; native Anthropic, native Google and an OpenAI-compatible recipe send no `strict` field.
+
 ## [0.60.674.0] - 2026-11-11
 
 ### A managed sync's file freeze no longer holds timers through its Git reads
