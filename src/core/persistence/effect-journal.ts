@@ -159,8 +159,8 @@ export const effectClaimStamp = (token: string) => JSON.stringify({ token, owner
  * while it runs (index-split-page.ts).
  */
 const INDEX_LEASE_FREE_SQL = (e: string) => `(${e}.kind<>'${INDEX_SPLIT_PAGE_EFFECT}' OR NOT EXISTS (SELECT 1 FROM persistence_effects lease
-  WHERE lease.kind='${INDEX_SPLIT_PAGE_EFFECT}' AND lease.id<>${e}.id AND lease.source_id=${e}.source_id AND lease.data->>'slug'=${e}.data->>'slug'
-    AND lease.state='running' AND lease.claim_expires_at>=now()))`;
+  WHERE lease.kind='${INDEX_SPLIT_PAGE_EFFECT}' AND lease.next_attempt_at='infinity'::timestamptz AND lease.id<>${e}.id AND lease.source_id=${e}.source_id
+    AND lease.data->>'slug'=${e}.data->>'slug' AND lease.state='running' AND lease.claim_expires_at>=now()))`;
 
 /** Test seam: runs after a claim serialized on an index candidate's page, before it reads the lease again. */
 export const indexLeaseClaimSeam: { beforeRecheck?: (tx: BrainEngine, candidate: PersistenceEffect) => Promise<void> } = {};
@@ -173,26 +173,30 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
     const kinds = claimableEffectKinds(BUILT_IN_EFFECT_KINDS);
-    // eng-r3-outside-4: an index effect keeps next_attempt_at at 'infinity' and its due time in data.due_at
-    // (git-first-schema.ts), so a released binary's claim never selects it; only a claim that knows the kind reads due_at.
-    const due = kinds.includes(INDEX_SPLIT_PAGE_EFFECT)
-      ? `(CASE WHEN e.kind='${INDEX_SPLIT_PAGE_EFFECT}' THEN COALESCE((e.data->>'due_at')::timestamptz,'-infinity'::timestamptz) ELSE e.next_attempt_at END)`
-      : 'e.next_attempt_at';
-    // A candidate whose page lease a concurrent claim took is passed over; the next claimable effect is claimed instead.
-    const passed: string[] = [];
-    for (;;) {
-      const [candidate] = await tx.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e
-        LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
-        WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$2')}) AND ${due}<=now()
+    const ready = `(e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR ${DEAD_OWNER_EFFECT_SQL('e', '$2')})
         AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')})
         AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
           WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
           WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
         AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))
-        AND e.kind=ANY($3::text[]) AND ${INDEX_LEASE_FREE_SQL('e')} AND NOT (e.id::text=ANY($4::text[]))
-        ORDER BY ${due},e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners], kinds, passed]);
+          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))`;
+    // Every other kind is claimed in persistence_effects_pending order, so a backlog costs one index walk, not a sort.
+    const [next] = await tx.executeRaw<PersistenceEffect & { next_attempt_at: Date | string }>(`SELECT e.* FROM persistence_effects e LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
+        WHERE ${ready} AND e.next_attempt_at<=now() AND e.kind=ANY($3::text[])
+        ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners], kinds]);
+    // eng-r3-outside-4: an index effect keeps next_attempt_at at 'infinity' (the barrier trigger in git-first-schema.ts) and its due
+    // time in data.due_at, so a released binary's claim never selects it. Only one due before `next` is claimed ahead of it.
+    const due = `COALESCE((e.data->>'due_at')::timestamptz,'-infinity'::timestamptz)`;
+    // A candidate whose page lease a concurrent claim took is passed over; the next claimable effect is claimed instead.
+    const passed: string[] = [];
+    for (;;) {
+      const [index] = kinds.includes(INDEX_SPLIT_PAGE_EFFECT) ? await tx.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e
+        LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
+        WHERE ${ready} AND e.kind='${INDEX_SPLIT_PAGE_EFFECT}' AND e.next_attempt_at='infinity'::timestamptz AND ${due}<=now()
+        AND ($4::timestamptz IS NULL OR (${due},e.id)<($4::timestamptz,$5::bigint)) AND ${INDEX_LEASE_FREE_SQL('e')} AND NOT (e.id::text=ANY($3::text[]))
+        ORDER BY ${due},e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners], passed, next?.next_attempt_at ?? null, next?.id ?? null]) : [];
+      const candidate = index ?? next;
       if (!candidate) return null;
       if (candidate.kind === INDEX_SPLIT_PAGE_EFFECT) {
         // Two claimers can pick two queued jobs of one page at once: serialize them on the page and read the lease again.

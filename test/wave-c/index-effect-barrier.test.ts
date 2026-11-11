@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import { claimPersistenceEffect } from '../../src/core/persistence/effect-journal.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import { _resetGitFirstGateForTests, _resetIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
@@ -80,5 +81,33 @@ for (const backend of testBackends()) describe(`[${backend}] index effects are i
     }
     expect(await engine.executeRaw("SELECT 1 FROM page_pending_heads WHERE slug = $1", [slug])).toEqual([]);
     expect((await indexEffects(engine)).map(row => row.state)).toEqual(['committed']);
+  }, { databaseUrl, setup }), 240_000);
+
+  test('the claim walks the pending index under a large backlog instead of sorting every pending effect', () => managedBrain(async ({ engine, ctx }) => {
+    await strict(engine);
+    registerIndexSplitPageConsumer(paused);
+    expect((await write(engine, ctx, 'notes/backlog', pageBody(2 * MiB, 'MARKERBACKLOG'), 'put')).state).toBe('indexing');
+    const [seed] = await engine.executeRaw<{ request_id: string }>("SELECT request_id FROM persistence_effects WHERE kind='index-split-page'");
+    const columns = (await engine.executeRaw<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema()
+      AND table_name='persistence_requests' AND column_name NOT IN ('id','request_id','sequence') ORDER BY ordinal_position`)).map(row => row.column_name).join(',');
+    await asMaster(engine, `WITH clones AS (INSERT INTO persistence_requests(id,request_id,${columns})
+        SELECT gen_random_uuid(),gen_random_uuid(),${columns} FROM persistence_requests CROSS JOIN generate_series(1,5000) WHERE id='${seed!.request_id}'
+        RETURNING id,source_id,source_incarnation,worktree_id)
+      INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id,next_attempt_at)
+      SELECT id,'embedding','{}'::jsonb,source_id,source_incarnation,worktree_id,now()-interval '1 minute' FROM clones`);
+    await engine.executeRaw('ANALYZE persistence_effects');
+    const plans: string[] = [];
+    const bound = <T extends object>(target: T, key: string | symbol) => { const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value; };
+    const explaining = (tx: BrainEngine) => new Proxy(tx, { get: (target, key) => key !== 'executeRaw' ? bound(target, key)
+      : async (sql: string, params?: unknown[]) => {
+        if (sql.includes('FOR UPDATE OF e SKIP LOCKED')) plans.push((await target.executeRaw<Record<string, string>>(`EXPLAIN ${sql}`, params as never)).map(row => Object.values(row)[0]).join('\n'));
+        return target.executeRaw(sql, params as never);
+      } });
+    const spy = new Proxy(engine, { get: (target, key) => key !== 'transactionDirect' ? bound(target, key)
+      : (fn: (tx: BrainEngine) => Promise<unknown>, opts?: unknown) => target.transactionDirect(tx => fn(explaining(tx)), opts as never) });
+    await claimPersistenceEffect(spy, localHostId(), []);
+    expect(plans.length).toBeGreaterThan(0);
+    expect(plans[0]).toContain('persistence_effects_pending');
+    expect(plans[0]).not.toMatch(/\bSort\b/);
   }, { databaseUrl, setup }), 240_000);
 });
