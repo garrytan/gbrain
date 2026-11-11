@@ -26,6 +26,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
+import { describeOpenclawSkill, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult } from '../core/setup/openclaw-skill-plugin.ts';
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
 import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
@@ -36,6 +37,7 @@ import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../cor
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { configDir, gbrainPath, isThinClient, loadConfig, type GBrainConfig } from '../core/config.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
+import { exitCodeForCode } from '../core/error-catalogue.ts';
 import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
 import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
 import { hookLauncherPath } from '../core/setup/hook-launcher.ts';
@@ -246,8 +248,12 @@ interface SetupFlags {
   skillsIndexOnly: boolean;
   workspace?: string;
   skillLoading?: SkillLoading;
-  /** --skill-loading resolve turns the skill-resolver lane on (skill-resolver-setup.ts); off or spring turns it off; unset leaves it as it is. */
-  skillResolver?: 'on' | 'off';
+  /** --skill-loading resolve turns the skill-resolver lane on (skill-resolver-setup.ts); off or spring turns it off; unset leaves it as it is. OpenClaw also takes shadow. */
+  skillResolver?: 'on' | 'shadow' | 'off';
+  /** OpenClaw: the agents --skill-loading applies to (--agent <id>, repeatable, or --all-agents); unset means the agents already on, else main. */
+  agents?: string[] | 'all';
+  /** OpenClaw rollout knobs written to the plugin's state (hot, no reload): --live-fraction, --pins-route, --owner-sender. */
+  openclawTuning?: { live_fraction?: number; pins_route?: 'system' | 'first_turn'; owner_sender_ids?: string[] };
   /** GST-363: whom the brain serves; several labels each person (setup-serves.ts). */
   serves?: 'one' | 'several';
   members?: string;
@@ -257,7 +263,7 @@ interface SetupFlags {
   noStdioMember: boolean;
 }
 
-const VALUE_FLAGS = new Set(['--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--serves', '--members', '--members-file', '--stdio-member']);
+const VALUE_FLAGS = new Set(['--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -290,15 +296,29 @@ function parseFlags(args: string[]): SetupFlags | string {
   const workspace = value('--workspace');
   if (workspace !== undefined && !workspace.startsWith('/') && !workspace.startsWith('~')) return '--workspace needs an absolute path';
   const flagLoading = value('--skill-loading');
-  if (flagLoading !== undefined && flagLoading !== 'resolve' && !isSkillLoading(flagLoading)) return `unknown --skill-loading '${flagLoading}'; pass off, spring or resolve`;
+  if (flagLoading !== undefined && flagLoading !== 'resolve' && flagLoading !== 'shadow' && !isSkillLoading(flagLoading)) return `unknown --skill-loading '${flagLoading}'; pass off, spring, resolve or (openclaw) shadow`;
   const envLoading = process.env[SKILL_LOADING_ENV]?.trim();
   if (flagLoading === undefined && envLoading && envLoading !== 'resolve' && !isSkillLoading(envLoading)) return new InvalidSkillLoadingEnv(envLoading).message;
-  const resolverHarness = positionals[0] === 'claude-code' || positionals[0] === 'codex';
-  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code and Codex only (claude-code, codex); other harnesses call gbrain skills resolve from their own adapter (docs/guides/skill-resolver.md)';
+  const openclaw = positionals[0] === 'openclaw';
+  const resolverHarness = positionals[0] === 'claude-code' || positionals[0] === 'codex' || openclaw;
+  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code, Codex and OpenClaw (claude-code, codex, openclaw); other harnesses call gbrain skills resolve from their own adapter (docs/guides/skill-resolver.md)';
+  if (flagLoading === 'shadow' && !openclaw) return '--skill-loading shadow is for openclaw only (it resolves and logs each turn without showing the model anything)';
+  const agentFlags = args.flatMap((a, i) => (a === '--agent' ? [args[i + 1] ?? ''] : []));
+  if (agentFlags.some((a) => !/^[\w.@:-]{1,128}$/.test(a))) return '--agent needs an OpenClaw agent id';
+  if ((agentFlags.length || args.includes('--all-agents')) && !openclaw) return '--agent and --all-agents are for openclaw only';
+  if (agentFlags.length && args.includes('--all-agents')) return 'pass --agent or --all-agents, not both';
+  const liveFraction = value('--live-fraction');
+  const pinsRoute = value('--pins-route');
+  const owners = args.flatMap((a, i) => (a === '--owner-sender' ? [args[i + 1] ?? ''] : []));
+  if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length) && !openclaw) return '--live-fraction, --pins-route and --owner-sender are for openclaw only';
+  if (liveFraction !== undefined && !(/^(0(\.\d+)?|1(\.0+)?)$/.test(liveFraction))) return '--live-fraction must be a number from 0 to 1 (the share of sessions that see suggestions; the rest are logged as control)';
+  if (pinsRoute !== undefined && pinsRoute !== 'system' && pinsRoute !== 'first_turn') return '--pins-route must be system (appendSystemContext, every turn) or first_turn (appendContext on a session\'s first turn and after compaction)';
+  if (owners.some((o) => !/^[\x21-\x7e]{1,128}$/.test(o))) return '--owner-sender needs a sender id';
+  const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}) };
   const chosenLoading = flagLoading ?? (envLoading || undefined);
-  const skillResolver = !resolverHarness || chosenLoading === undefined ? undefined : chosenLoading === 'resolve' ? 'on' as const : 'off' as const;
+  const skillResolver = !resolverHarness || chosenLoading === undefined ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
   // resolve replaces the spring index: the skills block is decided as off, explicitly, so GBRAIN_SKILL_LOADING=resolve is never read as a block mode.
-  const skillLoading = skillResolver === 'on' ? 'off' : flagLoading;
+  const skillLoading = skillResolver === 'on' || skillResolver === 'shadow' ? 'off' : flagLoading;
   return {
     harness: positionals[0],
     dryRun: args.includes('--dry-run'),
@@ -318,6 +338,8 @@ function parseFlags(args: string[]): SetupFlags | string {
     workspace,
     skillLoading: skillLoading as SkillLoading | undefined,
     ...(skillResolver ? { skillResolver } : {}),
+    ...(agentFlags.length ? { agents: agentFlags } : args.includes('--all-agents') ? { agents: 'all' as const } : {}),
+    ...(Object.keys(openclawTuning).length ? { openclawTuning } : {}),
     ...(serves ? { serves: serves as 'one' | 'several' } : {}),
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
@@ -901,6 +923,34 @@ function resolverRefusal(r: ResolverSetupResult): OperationError {
       fix: { argv: rerun, consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the resolver setup would make and names the directories it scans; changes nothing.' } });
 }
 
+/**
+ * The OpenClaw skill-resolver plugin for this run: --skill-loading resolve
+ * (live) or shadow turns it on for --agent/--all-agents (else the agents
+ * already on, else main), off turns those agents off (the plugin leaves when
+ * none is on), and with no choice an existing plugin is refreshed. It is
+ * independent of the brain-first block. Null when there is nothing to do.
+ */
+async function openclawSkillFor(flags: SetupFlags, refreshOnly = false): Promise<OpenclawSkillResult | null> {
+  const home = configDir();
+  const agents = flags.agents ?? null;
+  if (flags.skillResolver === 'off' || (flags.remove && flags.skillResolver === undefined)) {
+    return removeOpenclawSkillPlugin({ home, agents: Array.isArray(agents) ? agents : null, dryRun: flags.dryRun });
+  }
+  if (flags.skillResolver === undefined && !readOpenclawSkillState(home)) return null;
+  return syncOpenclawSkillPlugin({ mode: flags.skillResolver === 'on' ? 'live' : flags.skillResolver === 'shadow' ? 'shadow' : null, agents, home,
+    gbrainBin: flags.gbrainBin ?? resolveGbrainBin() ?? '', gbrainHomeEnv: process.env.GBRAIN_HOME?.trim() || null, dryRun: flags.dryRun, refreshOnly, tuning: flags.openclawTuning });
+}
+
+function openclawSkillRefusal(r: OpenclawSkillResult): OperationError {
+  const e = r.error!;
+  const detail = [e.recovery, ...(e.commands ?? []).map((c) => `still to run: ${c}`)].filter(Boolean).join('\n');
+  return opError(e.code, e.message, e.commands?.length ? `Run on the OpenClaw host: ${e.commands.join(' && ')}; then gbrain doctor --only skill_resolver.` : 'Fix the cause named above, then preview with gbrain setup openclaw --skill-loading resolve --dry-run.', {
+    docs: `docs/guides/skill-resolver.md#${e.code}`, ...(detail ? { detail } : {}),
+    fix: e.argv ? { argv: e.argv, consent: ['persistent_install'], actor: 'user', requires_exclusive: false, why: 'Finishes the OpenClaw install setup could not complete; gbrain doctor --only skill_resolver confirms it.' }
+      : { argv: ['gbrain', 'setup', 'openclaw', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the OpenClaw resolver setup would make; changes nothing.' },
+  });
+}
+
 const instructionsChanged = (o: BrainFirstOutcome | SkillsBlockOutcome | null): boolean => !!o && (o.action === 'write' || o.action === 'remove');
 const resolverChanged = (r: ResolverSetupResult | null): boolean => !!r && (!!r.error || r.steps.some((s) => s.action === 'write' || s.action === 'remove'));
 
@@ -976,20 +1026,23 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.
   const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' ? verifyTurnHook(harness, { projectDir }) : null;
   const resolver = harness === 'claude-code' || harness === 'codex' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
+  const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags) : null;
   const code = instructions?.action === 'preserve' || skillsFailed(skills) || (check && !check.ok) || resolver?.error ? 1 : 0;
   if (out.json) {
-    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
-    return code;
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}), mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
+    return skillPlugin?.error ? exitCodeForCode(skillPlugin.error.code) : code;
   }
   if (instructions) say(out, flags.remove ? describeBrainFirstOutcome(instructions, flags.dryRun) : describeInstructions(instructions, flags.dryRun));
   if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}${'next' in turnHook && turnHook.next ? `; wire it with: ${turnHook.next}` : ''}`);
   else if (!off && placed) say(out, `  note     ${'turn hook'.padEnd(7)} ${adapter.label} has no per-turn hook gbrain can install; the rule reaches it through ${target.path} only.`);
   if (skills && skillsOutcomeShown(skills)) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
   if (resolver) for (const line of describeResolverSetup(resolver, flags.dryRun)) say(out, line);
+  if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
   if (resolver?.error) return refuse(resolverRefusal(resolver), out);
+  if (skillPlugin?.error) return refuse(openclawSkillRefusal(skillPlugin), out);
   if (check && !check.ok) return refuse(turnHookNotLoaded(harness, check, rerun), out);
   return code;
 }
@@ -1002,15 +1055,18 @@ async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> 
   }
   const outcomes = refreshSkillsIndexes(harness, { mode: flags.skillLoading, launcher: flags.gbrainBin, dryRun: flags.dryRun });
   const resolver = harness === 'claude-code' || harness === 'codex' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
+  const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags, true) : null;
   const code = outcomes.some((o) => o.action === 'preserve') || resolver?.error ? 1 : 0;
   if (out.json) {
-    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, skills_index_only: true, skills: outcomes, ...(resolver ? { skill_resolver: resolver } : {}) }, null, 2)}\n`, (t) => process.stdout.write(t));
-    return code;
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, skills_index_only: true, skills: outcomes, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}) }, null, 2)}\n`, (t) => process.stdout.write(t));
+    return skillPlugin?.error ? exitCodeForCode(skillPlugin.error.code) : code;
   }
-  if (outcomes.length === 0 && !resolver) say(out, `No skills index is recorded for ${harness}. Add one with: gbrain setup ${harness} --skill-loading spring`);
+  if (outcomes.length === 0 && !resolver && !skillPlugin) say(out, `No skills index is recorded for ${harness}. Add one with: gbrain setup ${harness} --skill-loading spring`);
   for (const o of outcomes) say(out, describeSkillsBlockOutcome(o, flags.dryRun));
   if (resolver) for (const line of describeResolverSetup(resolver, flags.dryRun)) say(out, line);
+  if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
   if (resolver?.error) return refuse(resolverRefusal(resolver), out);
+  if (skillPlugin?.error) return refuse(openclawSkillRefusal(skillPlugin), out);
   return code;
 }
 

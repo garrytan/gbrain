@@ -10,6 +10,30 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.672.0] - 2026-11-11
+
+**OpenClaw agents can now be shown the few installed skills that fit each message, the OpenClaw guide shows how one bot can serve several people over DMs with each person reading only their own pages, and running gbrain's own tests no longer writes into your brain.** Three changes for people who run gbrain with OpenClaw and for contributors, landed together.
+
+### OpenClaw skill resolver (off by default)
+
+- `gbrain setup openclaw --skill-loading resolve|shadow|off`: a separate OpenClaw plugin, `gbrain-skill-resolver`, that puts up to 3 relevant skills in front of the model on each real user turn, ranked inside the gateway's Node process in a worker thread with a 50 ms deadline, so a busy gateway never waits on gbrain. It leaves OpenClaw's own skill list alone. `shadow` ranks and logs what it would have suggested without injecting anything; `--live-fraction`, `--pins-route` and `--owner-sender` stage a rollout. Switching modes or pins rewrites only gbrain's state file, so no OpenClaw command runs and the gateway does not reload. It reads `top_k`, `min_match` and `pinned` from `skills.resolver` the way the other lanes do. A partial install is never reported as done. It exits 3 with `skill_resolver_plugin_not_installed` and the commands still to run. Off by default.
+- `gbrain skills pin add|remove|list --catalog <c>`: operator-chosen always-on skills, shown as a pinned block and never suggested twice. gbrain ships none; pins must name a skill in the catalog.
+- `gbrain doctor --only skill_resolver` reports the OpenClaw plugin, its library, each agent's catalog and pins, and over the last 24 hours the outcomes, how often a suggested skill was opened and the deadline-miss rate; it warns when more than 5% of at least 20 turns missed the deadline.
+
+### One OpenClaw bot for several people, in DMs (docs only)
+
+A new section in `docs/mcp/OPENCLAW.md` connects the bot over `serve --http` with a read-only token bound to no member, whose `--may-act-for` lists each person and `guest`. A small OpenClaw plugin uses the requester-scoped MCP connection resolver to send each DM sender's member as `X-Gbrain-On-Behalf-Of`; unmapped senders read as `guest`. The section limits the recipe to gateways with no group conversations, lists the gateway settings that keep people's sessions apart, and warns against the private-page relaxations that would show every person the owner's private pages. Those are a `--private-pages granted-sources` grant on the bot, the host hatches, reusing the owner's own token, and clearing `access: private` labels on pages that should stay the owner's. Docs only; no behavior changes. Proposed and first implemented by @exGeni (#8732).
+
+- `docs/mcp/OPENCLAW.md`: new section "One bot for several people, in DMs" (brain-host setup, the plugin, what each DM gets, refusals, revocation and the `whoami` check), and a pointer to it from the page's opening.
+
+### Tests stay out of your brain, and `bun run verify` passes on Windows
+
+Three test and ratchet fixes reported by contributors and rewritten on master.
+
+- `test/harness-install-ownership.test.ts`, `test/shared-skills-adapter.test.ts`, `test/shared-skills-native-router.test.ts`: each install runs under its own scratch `GBRAIN_HOME`, so `bun test` from a shell that exports `GBRAIN_HOME` for a real brain no longer adds temp paths to that brain's `agent-instructions.json` (which doctor's `harness_wiring` then reported as broken installs). `test/helpers/inherited-ledger-guard.ts` fails a file whose tests change the inherited ledger. Reported and first fixed by @Kkkkkuro (#8434).
+- `test/persistence-write-interrupted.test.ts`: the test home goes through `realpathSync`, so the two worktree-backed cases pass on macOS, where the temp directory sits under a symlink that managed import refuses. Reported and first fixed by @babyspectrum (#8552).
+- `.gitattributes`, `scripts/check-function-size.ts`: `*.tsv` checks out with LF on every platform, and the function-size ratchet keys functions by forward-slash paths, so a Windows checkout no longer reports every baselined function as a new violation. `test/scripts/tsv-eol.test.ts` pins the attribute. Reported and first fixed by @mrsonord2240 (#8641).
+
 ## [0.60.671.0] - 2026-11-11
 
 **A team member's `forget` now says who can withdraw a fact, instead of answering that the fact does not exist.** A remote credential bound to a member, the brain owner's included, withdraws only the facts on its own member page. When it tried to forget a fact it can read but that lives elsewhere (one it saved with `share: true`, or a teammate's shared fact), it got `not_found`, so its agent believed the fact was gone while every reader still recalled it. It is now refused with a reply saying the brain host withdraws it with `gbrain forget <id>`, and the fact stays. A fact the caller cannot read still answers `not_found`, so the reply never confirms a hidden fact exists. An attested QM call (`x-qm-actor`) is unchanged and still answers `not_found` for any fact off the person's page, as QM's published contract says. The docs that said `remember` defaults to `world` now say that a member-bound credential saves privately on its member page unless it passes `share: true`. Reported by @andreineacsu (#9101).

@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,10 +11,16 @@ import type { HarnessCredentials } from '../src/core/harness/credentials.ts';
 import type { SharedSkillsToolCaller } from '../src/core/shared-skills/adapter.ts';
 import { readHarnessConnectionStatus } from '../src/core/harness/status.ts';
 import { runCli } from './helpers/cli-spawn.ts';
+import { guardInheritedInstructionLedger } from './helpers/inherited-ledger-guard.ts';
+
+guardInheritedInstructionLedger();
 
 const roots: string[] = [];
 const temp = () => { const root = mkdtempSync(join(tmpdir(), 'gbrain-native-router-')); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+let ledgerHome = '';
+beforeEach(() => { ledgerHome = temp(); });
+const install: typeof installHarnessConnection = (c, opts) => withEnv({ GBRAIN_HOME: ledgerHome }, () => installHarnessConnection(c, opts));
 const body = '---\nname: gbrain-shared-router\ndescription: Discover relevant authorized shared-brain skills.\n---\nUse only the named connection. Native use remains unverified.\n';
 
 function fixture() {
@@ -47,7 +53,7 @@ for (const harness of ['claude-code', 'codex', 'opencode']) test(`${harness} con
       expect(names.length).toBe(1);
       expect(existsSync(join(expected, names[0], 'SKILL.md'))).toBe(true);
     });
-    const installed = await installHarnessConnection(f.credentials, { harness, toolCaller: f.call });
+    const installed = await install(f.credentials, { harness, toolCaller: f.call });
     const shared = installed.shared_skills as any;
     expect(shared.status).toBe('restart_required'); expect(shared.native_registration).toBe('installed'); expect(shared.native).toBe('unverified');
     const path = shared.native_router_path as string;
@@ -55,10 +61,10 @@ for (const harness of ['claude-code', 'codex', 'opencode']) test(`${harness} con
     const content = readFileSync(path, 'utf8'); const name = path.split('/').at(-2)!;
     expect(content).toContain(`name: ${name}\n`); expect(content).toContain('enrollment_epoch 1');
     expect(installed.native_harness_verified).toBe(false);
-    const again = await installHarnessConnection(f.credentials, { harness, toolCaller: f.call });
+    const again = await install(f.credentials, { harness, toolCaller: f.call });
     expect((again.shared_skills as any).native_router_path).toBe(path); expect(readFileSync(path, 'utf8')).toBe(content);
     expect(readdirSync(expected).filter(p => p.startsWith('gbrain-shared-')).length).toBe(1);
-    const removed = await installHarnessConnection(f.credentials, { harness, toolCaller: f.call, remove: true });
+    const removed = await install(f.credentials, { harness, toolCaller: f.call, remove: true });
     expect(removed.shared_skills?.status).toBe('left'); expect(existsSync(path)).toBe(false);
     expect(readFileSync(join(expected, 'unrelated', 'SKILL.md'), 'utf8')).toBe('User-owned skill');
   });
@@ -67,15 +73,15 @@ for (const harness of ['claude-code', 'codex', 'opencode']) test(`${harness} con
 test('native edits block reinstall before active-reference changes and survive leave', async () => {
   const root = temp(), f = fixture();
   const opts = { harness: 'codex', configPath: join(root, 'config.toml'), nativeSkillsDir: join(root, 'skills'), toolCaller: f.call };
-  const first = await installHarnessConnection(f.credentials, opts);
+  const first = await install(f.credentials, opts);
   const shared = first.shared_skills as any;
   writeFileSync(shared.native_router_path, '# User edited native router');
   const refPath = join(root, '.gbrain-codex-gbrain', 'shared-skills', 'active.json');
   const before = readFileSync(refPath, 'utf8');
-  const next = await installHarnessConnection(f.credentials, opts);
+  const next = await install(f.credentials, opts);
   expect((next.shared_skills as any).reason).toBe('local_conflict');
   expect(readFileSync(refPath, 'utf8')).toBe(before);
-  const left = await installHarnessConnection(f.credentials, { ...opts, remove: true });
+  const left = await install(f.credentials, { ...opts, remove: true });
   expect(left.shared_skills?.status).toBe('left_with_retained_files');
   expect(readFileSync(shared.native_router_path, 'utf8')).toBe('# User edited native router');
 });
@@ -122,10 +128,10 @@ test('manual harnesses have no invented native discovery directory', () => {
 for (const edited of [false, true]) test(`expired credentials do not prevent local native cleanup (edited=${edited})`, async () => {
   const root = temp(), f = fixture();
   const opts = { harness: 'codex', configPath: join(root, 'config.toml'), nativeSkillsDir: join(root, 'skills') };
-  const installed = await installHarnessConnection(f.credentials, { ...opts, toolCaller: f.call });
+  const installed = await install(f.credentials, { ...opts, toolCaller: f.call });
   const path = (installed.shared_skills as { native_router_path: string }).native_router_path;
   if (edited) writeFileSync(path, 'User edited native router');
-  const result = await installHarnessConnection({ ...f.credentials, expires_at: 1 }, { ...opts, remove: true });
+  const result = await install({ ...f.credentials, expires_at: 1 }, { ...opts, remove: true });
   expect(result.shared_skills.status).toBe(edited ? 'left_with_retained_files' : 'left');
   expect('remote_membership_pending' in result && result.remote_membership_pending).toBe(true);
   expect(existsSync(path)).toBe(edited);
@@ -136,7 +142,7 @@ for (const edited of [false, true]) test(`expired credentials do not prevent loc
 test('connect status reads only the local receipt without credentials, network or writes', async () => {
   const root = temp(), f = fixture();
   await withEnv({ HOME: root, CLAUDE_CONFIG_DIR: join(root, '.claude') }, async () => {
-    const installed = await installHarnessConnection(f.credentials, { harness: 'claude-code', toolCaller: f.call });
+    const installed = await install(f.credentials, { harness: 'claude-code', toolCaller: f.call });
     const receipt = installed.shared_skills as { native_router_path: string; desired_view: string };
     const before = readFileSync(receipt.native_router_path, 'utf8');
     const status = await runCli(['connect', '--harness', 'claude-code', '--status', '--json'], { env: { HOME: root, CLAUDE_CONFIG_DIR: join(root, '.claude') } });
