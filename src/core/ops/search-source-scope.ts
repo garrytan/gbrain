@@ -26,7 +26,7 @@ export const SOURCE_IDS_PARAM = {
 };
 
 /** `source_ids` as distinct, trimmed source ids; undefined when absent. */
-export function parseSourceIdsParam(ctx: OperationContext, tool: 'search' | 'query' | 'recall' | 'list_pages' | 'memory_recall', raw: unknown): string[] | undefined {
+export function parseSourceIdsParam(ctx: OperationContext, tool: 'search' | 'query' | 'recall' | 'list_pages' | 'memory_recall' | 'get_timeline' | 'find_experts' | 'volunteer_context', raw: unknown): string[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   // #5390: OpenAI-family MCP clients fill every optional param with an empty value; [] and a blank string mean absent.
   if (Array.isArray(raw) && raw.length === 0) return undefined;

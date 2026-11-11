@@ -6,7 +6,7 @@
     "session": "stateless",
     "session_header_issued": false,
     "success_codes_in": "structuredContent",
-    "unknown_arguments": "an argument a read tool does not declare is ignored and reported only in _meta.warnings ([{code: \"unknown_param\", param, suggestion?}]), never in content; a write tool refuses it with invalid_params"
+    "unknown_arguments": "an argument a read tool does not declare is refused with invalid_params, and nothing is read, when its nearest declared argument is a source scope or a filter (source for source_id, sources for source_ids, type for types) or its own name is in a scope or filter family the tool declares (source_name on a tool that declares source_id); any other argument a read tool does not declare is ignored and reported only in _meta.warnings ([{code: \"unknown_param\", param, suggestion?}]), never in content, unless the brain sets mcp.strict_params to reject; a write tool refuses every argument it does not declare with invalid_params"
   },
   "actor": {
     "header": "x-qm-actor",
@@ -23,9 +23,13 @@
       "memory_write"
     ],
     "deferred_ops": [
+      "add_link",
+      "add_timeline_entry",
       "capture",
+      "edit_page",
       "extract_facts",
       "list_write_conflicts",
+      "put_page",
       "takes_add",
       "takes_resolve",
       "takes_supersede",

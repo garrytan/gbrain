@@ -394,6 +394,10 @@
         "name": "access_may_act_for_wildcard"
       },
       {
+        "category": "brain",
+        "name": "attest_read_shared_scope"
+      },
+      {
         "category": "ops",
         "name": "rls"
       },
@@ -916,6 +920,10 @@
       {
         "category": "ops",
         "name": "decide_health"
+      },
+      {
+        "category": "brain",
+        "name": "memory_proposals_pending"
       },
       {
         "category": "brain",

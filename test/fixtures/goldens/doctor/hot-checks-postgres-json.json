@@ -1192,9 +1192,18 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
+            "name": "attest_read_shared_scope",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 174/174 public tables",
+            "message": "RLS enabled on 176/176 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1236,7 +1245,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 176 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -3096,6 +3105,13 @@
             "elapsed_ms": "<volatile>",
             "message": "System One is off (every decide slot is off; nothing is sent).",
             "name": "decide_health",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No memory proposals await the owner.",
+            "name": "memory_proposals_pending",
             "status": "ok"
           },
           {
@@ -6325,9 +6341,18 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
+            "name": "attest_read_shared_scope",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 174/174 public tables",
+            "message": "RLS enabled on 176/176 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6369,7 +6394,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 176 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -8241,6 +8266,13 @@
             "elapsed_ms": "<volatile>",
             "message": "System One is off (every decide slot is off; nothing is sent).",
             "name": "decide_health",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No memory proposals await the owner.",
+            "name": "memory_proposals_pending",
             "status": "ok"
           },
           {
