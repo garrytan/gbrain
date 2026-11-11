@@ -229,6 +229,15 @@ test('setting on: the publish runs in a child gbrain, never in this process, so 
   expect(await f.refreshRows()).toEqual([]);
 }, '/bin/false'), 120_000);
 
+test('setting on: a refresh that cannot locate its own CLI refuses git_push_unavailable, and the publish by hand it names still scans', () => each(async f => {
+  diverge(f);
+  const remote = remoteHead(f);
+  await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+  const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'git_push_unavailable');
+  expect(error.suggestion).toContain(`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path `);
+  expect(remoteHead(f)).toBe(remote);
+}, ''), 120_000);
+
 test('setting on: a dry run publishes nothing and still refuses refresh_diverged', () => each(async f => {
   const local = diverge(f);
   const remote = remoteHead(f);

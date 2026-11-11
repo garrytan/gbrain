@@ -34,6 +34,8 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import { memberIdentityFor, STDIO_MEMBER_KEY } from '../src/core/access/caller.ts';
 import { addGroup, addMember, bindCredential, disableMember, enableMember, removeMember } from '../src/core/access/members.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { watchPrincipal } from '../src/core/ops/wakeshift.ts';
+import { principalLive, STDIO_REGISTRATION_PRINCIPAL } from '../src/core/wakeshift/drain.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
@@ -180,6 +182,43 @@ for (const kind of testBackends()) {
         await engine.setConfig(STDIO_MEMBER_KEY, '');
       }
       expect(await stdioGet(ALICE_SLUG)).not.toContain(CANARY);
+    });
+
+    test('GST-363: serve --stdio-member binds only that server; it wins over config, a disabled member reads as nobody with no config fallback, and nothing a caller sends binds it', async () => {
+      const get = async (opts: Record<string, unknown>, args: Record<string, unknown> = {}) =>
+        (await dispatchToolCall(engine, 'get_page', { slug: ALICE_SLUG, ...args }, { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'], ...opts })).content.map(c => c.text).join('\n');
+      const who = async (opts: Record<string, unknown>) => JSON.parse((await dispatchToolCall(engine, 'whoami', {}, { remote: true, transport: 'stdio', sourceId: SRC, ...opts })).content[0]!.text).access;
+      expect(await get({ stdioMember: 'alice-example' })).toContain(CANARY);
+      expect(await get({})).not.toContain(CANARY);
+      expect(await who({ stdioMember: 'alice-example' })).toMatchObject({ member: 'alice-example', groups: ['team-a'], bound_by: 'stdio_registration' });
+      expect(await who({})).toMatchObject({ member: null, bound_by: 'none' });
+      for (const args of [{ stdio_member: 'alice-example' }, { _meta: { stdio_member: 'alice-example' } }]) expect(await get({}, args)).not.toContain(CANARY);
+      expect(await get({ transport: 'http', stdioMember: 'alice-example' })).not.toContain(CANARY);
+      expect(await get({ auth: await verify(tokens.unbound!.token), stdioMember: 'alice-example' })).not.toContain(CANARY);
+      await engine.setConfig(STDIO_MEMBER_KEY, 'alice-example');
+      try {
+        expect(await get({ stdioMember: 'bob-example' })).not.toContain(CANARY);
+        const bob = await who({ stdioMember: 'bob-example' });
+        expect(bob).toMatchObject({ member: 'bob-example', bound_by: 'stdio_registration' });
+        expect(bob.note).toContain('its own --stdio-member wins');
+        await disableMember(engine, 'bob-example');
+        try {
+          expect(await get({ stdioMember: 'bob-example' })).not.toContain(CANARY);
+          const disabled = await who({ stdioMember: 'bob-example' });
+          expect(disabled).toMatchObject({ member: null, bound_by: 'none' });
+          expect(disabled.note).toContain('not an enabled member');
+          expect(await memberIdentityFor(engine, { principal: { kind: 'local_stdio', id: 'registration' }, stdioMember: 'bob-example' })).toEqual([]);
+          expect(await get({ stdioMember: 'ghost-example' })).not.toContain(CANARY);
+        } finally { await enableMember(engine, 'bob-example'); }
+      } finally { await engine.setConfig(STDIO_MEMBER_KEY, ''); }
+      expect(await memberIdentityFor(engine, { principal: { kind: 'local_stdio', id: 'registration' }, stdioMember: 'alice-example' })).toContain('member:alice-example');
+      const watch = await watchPrincipal({ engine, transport: 'stdio', remote: true, stdioMember: 'alice-example' } as never);
+      expect(watch).toEqual({ kind: 'local_stdio', id: STDIO_REGISTRATION_PRINCIPAL, member: 'alice-example' });
+      expect(await watchPrincipal({ engine, transport: 'stdio', remote: true } as never)).toEqual({ kind: 'local_stdio', id: 'local', member: null });
+      const row = { principal_kind: 'local_stdio' as const, principal_id: STDIO_REGISTRATION_PRINCIPAL, member_id: 'alice-example' };
+      expect(await principalLive(engine, row)).toBe(true);
+      await disableMember(engine, 'alice-example');
+      try { expect(await principalLive(engine, row)).toBe(false); } finally { await enableMember(engine, 'alice-example'); }
     });
 
     test('whoami and grant_diagnosis over a legacy token report member, groups and may_act_for', async () => {

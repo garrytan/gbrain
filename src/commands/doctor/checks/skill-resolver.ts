@@ -2,7 +2,8 @@
  * `skill_resolver` (GBRA-377 PR B): the skill-resolver hook lane that
  * `gbrain setup <claude-code|codex> --skill-loading resolve` turns on
  * (src/core/skills/resolver/hook-lane.ts). Per harness it reports the lane's
- * hook (wired, untrusted in Codex, or missing), each catalog's freshness
+ * hook (wired, untrusted in Codex, outdated when it predates the SessionStart
+ * compaction reset, or missing), each catalog's freshness
  * (the content tier: source re-read, index re-hashed) and the recent
  * outcomes and error codes from the lane log. It emits nothing when the
  * resolver is not configured: no keys, no hook, no catalog and no lane log.
@@ -17,19 +18,19 @@ import { configDir } from '../../../core/config.ts';
 import { catalogStatus, listCatalogs } from '../../../core/skills/resolver/build.ts';
 import { logsDir } from '../../../core/skills/resolver/paths.ts';
 import { LANE_LOG, readRecentDailyLog } from '../../../core/skills/resolver/daily-log.ts';
-import { projectCatalogPrefix, userCatalogName, type LaneHarness } from '../../../core/skills/resolver/hook-lane.ts';
+import { CLAUDE_PLUGINS_CATALOG, projectCatalogPrefix, userCatalogName } from '../../../core/skills/resolver/hook-lane.ts';
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
-import { inspectSkillResolverHook } from '../../../core/setup/skill-resolver-hook.ts';
+import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState } from '../../../core/setup/skill-resolver-hook.ts';
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
 
 const name = 'skill_resolver';
-const HARNESSES: LaneHarness[] = ['claude-code', 'codex'];
+const HARNESSES: ResolverHarness[] = ['claude-code', 'codex'];
 /** Lane-log lines doctor reads (the newest), and the tail it reads them from. */
 const RECENT_LINES = 200;
 const LOG_TAIL_BYTES = 64 * 1024;
 
 export interface SkillResolverCatalogView { name: string; fresh: boolean | null; stale_reason: string | null; skills: number }
-export interface SkillResolverHarnessView { harness: LaneHarness; on: boolean; hook: 'wired' | 'untrusted' | 'absent'; catalogs: SkillResolverCatalogView[] }
+export interface SkillResolverHarnessView { harness: ResolverHarness; on: boolean; hook: ResolverHookState; catalogs: SkillResolverCatalogView[] }
 export interface SkillResolverView {
   config: 'ok' | 'absent' | 'unreadable';
   harnesses: SkillResolverHarnessView[];
@@ -56,6 +57,9 @@ function recentLane(home: string): SkillResolverView['recent'] | null {
   return { turns, outcomes, errors };
 }
 
+/** A catalog a turn can rank with no project: the user catalog, and for Claude Code the plugins catalog. */
+const isTurnCatalog = (harness: ResolverHarness, n: string) => n === userCatalogName(harness) || (harness === 'claude-code' && n === CLAUDE_PLUGINS_CATALOG);
+
 /** The resolver's state for doctor, or null when nothing of it exists. */
 export async function skillResolverView(home = configDir()): Promise<SkillResolverView | null> {
   const cfg = readResolverConfig(home);
@@ -65,7 +69,7 @@ export async function skillResolverView(home = configDir()): Promise<SkillResolv
   const harnesses: SkillResolverHarnessView[] = [];
   for (const harness of HARNESSES) {
     const hook = inspectSkillResolverHook(harness).state;
-    const mine = catalogs.filter((n) => n === userCatalogName(harness) || n.startsWith(projectCatalogPrefix(harness)));
+    const mine = catalogs.filter((n) => isTurnCatalog(harness, n) || n.startsWith(projectCatalogPrefix(harness)));
     if (!on.includes(harness) && hook === 'absent' && mine.length === 0) continue;
     const views: SkillResolverCatalogView[] = [];
     for (const name of mine) {
@@ -85,7 +89,7 @@ const setupArgv = (harness: string) => ['gbrain', 'setup', harness, '--skill-loa
 export function describeSkillResolver(v: SkillResolverView): string {
   if (v.config === 'unreadable') return 'Skill resolver: the config file cannot be read (skill_resolver_config_unreadable).';
   const parts = v.harnesses.map((h) => {
-    const user = h.catalogs.find((c) => c.name === userCatalogName(h.harness));
+    const user = h.catalogs.find((c) => c.name === userCatalogName(h.harness)) ?? h.catalogs.find((c) => isTurnCatalog(h.harness, c.name));
     const fresh = !user ? 'no catalog' : user.fresh ? 'fresh' : `stale (${user.stale_reason})`;
     return `${h.harness} ${h.on ? 'on' : 'off'}, hook ${h.hook}, ${user?.skills ?? 0} skills, ${fresh}`;
   });
@@ -103,10 +107,11 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
         why: 'gbrain never rewrites a config file it cannot parse; the lane and setup leave it alone.',
         user_message: `gbrain's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: gbrain setup <claude-code|codex> --skill-loading resolve` } };
   }
-  const broken = v.harnesses.find((h) => h.on && (h.hook !== 'wired' || !h.catalogs.some((c) => c.name === userCatalogName(h.harness))));
+  const broken = v.harnesses.find((h) => h.on && (h.hook !== 'wired' || !h.catalogs.some((c) => isTurnCatalog(h.harness, c.name))));
   if (broken) {
-    const what = broken.hook === 'untrusted' ? 'its Codex hook is not trusted' : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing';
-    return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}, so no skills block is added.`, details,
+    const what = broken.hook === 'outdated' ? `its hook has no SessionStart entry (installed before the compaction reset), so skills offered before a compaction are not offered again; ${setupArgv(broken.harness).join(' ')} adds it`
+      : `${broken.hook === 'untrusted' ? 'its Codex hook is not trusted' : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing'}, so no skills block is added`;
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}.`, details,
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };
   }

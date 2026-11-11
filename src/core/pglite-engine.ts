@@ -173,6 +173,7 @@ import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
+import { insertEvalCandidate } from './feedback/store.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -2996,32 +2997,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
-    const { rows } = await this.db.query<{ id: number }>(
-      `INSERT INTO eval_candidates (
-         tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
-         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
-         latency_ms, remote, job_id, subagent_id, embedding_column
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-       RETURNING id`,
-      [
-        input.tool_name,
-        input.query,
-        input.retrieved_slugs,
-        input.retrieved_chunk_ids,
-        input.source_ids,
-        input.expand_enabled,
-        input.detail,
-        input.detail_resolved,
-        input.vector_enabled,
-        input.expansion_applied,
-        input.latency_ms,
-        input.remote,
-        input.job_id,
-        input.subagent_id,
-        input.embedding_column ?? null,
-      ]
-    );
-    return rows[0]!.id;
+    return insertEvalCandidate(this, input);
   }
 
   async listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]> {

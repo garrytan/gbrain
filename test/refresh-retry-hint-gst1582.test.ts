@@ -89,7 +89,7 @@ test('a write refused during a syncing refresh is told the time its refresh typi
   expect(retryAfterMs).toBeGreaterThanOrEqual(190_000);
   expect(retryAfterMs).toBeLessThanOrEqual(201_000);
   expect(body.message).toContain('not saved');
-  expect(body.message).toMatch(/[Rr]etry the same request_id in about (19\d|200|201) s/);
+  expect(body.message).toMatch(/[Rr]etry with request_id [0-9a-f-]{36} in about (19\d|200|201) s/);
   expect(body.message).not.toContain('\n');
 }), 120_000);
 

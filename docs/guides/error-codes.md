@@ -152,6 +152,22 @@ More: [docs/guides/write-refusals.md#access_policy_pending](../../docs/guides/wr
 
 More: [docs/guides/write-refusals.md#access_rule_invalid](../../docs/guides/write-refusals.md#access_rule_invalid)
 
+### access_serves_key_dir_in_git
+
+<a id="access_serves_key_dir_in_git"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The directory the per-member keys would be written to is inside a git work tree, so no key, member or rule was written. | Key files hold live credentials; a file inside a checkout can be committed and pushed. | Point GBRAIN_HOME at a directory outside any git checkout (the default is your home directory) and run the command again. | agent | `repeat the read that failed` | 1 | no |
+
+### access_serves_roster_empty
+
+<a id="access_serves_roster_empty"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --serves several or gbrain access serves several was given no people (no --members, an empty --members-file), so nothing was written. | Each person gets a member, a folder only they read and a key bound to them; the installer never guesses who they are. | Name every person: --members alice-example,bob-example, or --members-file <file> with one id per line. | agent | `repeat the read that failed` | 1 | no |
+
 ### acknowledgment_unavailable
 
 <a id="acknowledgment_unavailable"></a>
@@ -275,6 +291,14 @@ More: [docs/guides/retrieval-feedback.md#answer_unavailable](../../docs/guides/r
 | Google connect credential error: api not enabled. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
+
+### append_links_fence
+
+<a id="append_links_fence"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| append_page text held a links fence marker, so nothing was appended. | A page has one links section, and the rows it lists are the page's authored links: an appended links table would replace that section and delete every link it does not list. | Write each link with add_link (from, to, link_type); it adds the row to the page's links section and keeps the rows already there. | agent | `repeat the read that failed` | 1 | no |
 
 ### approval_required
 
@@ -2842,6 +2866,16 @@ More: [docs/guides/repair.md#legacy-twins](../../docs/guides/repair.md#legacy-tw
 |---|---|---|---|---|---|---|
 | A get_links / get_backlinks cursor was not one this listing returned: it belongs to another slug, direction, source scope or filter set, or is not a cursor. | A cursor is a link-id position bound to the exact listing that issued it; continuing a different listing from it could skip or repeat edges without saying so. Nothing was read. | Restart the listing with the same slug and filters and no cursor, then pass each next_cursor unchanged. Run: gbrain links '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
+### link_dates_unattributed
+
+<a id="link_dates_unattributed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| add_link or remove_link would re-create or change a links section whose dated statements were stored before each row kept its own dates, and gbrain cannot tell which row each date belongs to; nothing was changed. | Each row of a page's links section (target, type, source) keeps its own valid_from and valid_until. Statements stored before that have no source: with several rows for one target and type, or dates that do not fit the one row, any pairing would be a guess that could put one row's dates on another. | Add the page's ## Links section back with edit_page, one row per source with that row's own valid_from and valid_until, then submit the request again. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `several_rows`, `dates_do_not_fit`.
+
 ### local_conflict
 
 <a id="local_conflict"></a>
@@ -4540,6 +4574,22 @@ Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
 
 More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#setup-owner-conflict)
 
+### setup_serves_several
+
+<a id="setup_serves_several"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup for one person was run on a brain that serves several people, and neither this harness's entry (--stdio-member) nor config mcp.stdio_member binds its stdio connection, so setup wrote nothing. | On a brain that serves several people an unbound connection reads every page no rule restricts, for whoever is asking; setup never writes one. | Run gbrain setup <harness> --serves several --members <id,...> to label each person; add --stdio-member <member> only for a harness that one person alone uses. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
+
+### setup_serves_unreadable
+
+<a id="setup_serves_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup could not read whether the existing brain serves several people, so it wrote nothing. | Setup writes an unbound connection only on a brain it knows serves one person; a brain it cannot read might serve several. | Run gbrain access serves --json to see why the brain cannot be read, fix that, then run setup again. Run: gbrain access serves --json | agent | `repeat the read that failed` | 1 | no |
+
 ### shared_skills_unavailable
 
 <a id="shared_skills_unavailable"></a>
@@ -5746,7 +5796,7 @@ More: [docs/guides/write-refusals.md#worktree_dirty](../../docs/guides/write-ref
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A write reached a checkout while `gbrain sources refresh` was draining, fast-forwarding or syncing it, so it was not journaled; nothing was recorded. | A refresh fences every source bound to the checkout until its syncs finish, so no write publishes onto a moving HEAD. An interactive write waits out the fence for up to 10 s before this refusal; a refresh tick can hold it for minutes. | Repeat the same call with the same request_id after retry_after_ms (in detail); nothing was recorded, so the retry cannot write twice. gbrain sources writer status --source <id> --json shows the refresh. | provider | `repeat the read that failed` | 1 | yes |
+| A write reached a checkout while `gbrain sources refresh` was draining, fast-forwarding or syncing it, so it was not journaled; nothing was recorded. | A refresh fences every source bound to the checkout until its syncs finish, so no write publishes onto a moving HEAD. An interactive write waits out the fence for up to 10 s before this refusal; a refresh tick can hold it for minutes. | Repeat the call with the request_id the refusal names after retry_after_ms (in detail); over MCP, fix.mcp is that call. Nothing was recorded, so the retry cannot write twice. gbrain sources writer status --source <id> --json shows the refresh. | provider | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/write-refusals.md#worktree_refreshing](../../docs/guides/write-refusals.md#worktree_refreshing)
 

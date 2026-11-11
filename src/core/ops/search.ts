@@ -223,11 +223,12 @@ async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>,
 }
 
 /** Keyword rows (every one a direct FTS hit): the markers hybridSearch would stamp, then bookkeeping. */
-async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], scope: SourceScope & { excludePrivate: boolean }, queryText: string, startedAt: number, timings: SearchTimings): Promise<void> {
+async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], scope: SourceScope & { excludePrivate: boolean }, queryText: string, startedAt: number, timings: SearchTimings, keywordMode: boolean): Promise<void> {
   // #3783: mark before stamping so evidence still reads keyword_exact.
   markKeywordHits(results);
   stampDeepResearchIds(results);
-  stampEvidenceSafe(results);
+  // GBRA-449: with match "keyword" each row satisfies the caller's own keyword statement (this path never OR-relaxes), whatever its score.
+  stampEvidenceSafe(results, { keywordMode });
   // #1699 / #160: the content_flag channel and the unverified-stub marker still surface off the hybrid path.
   await timings.stage('post_fusion', () => stampContentFlags(ctx.engine, results, scope));
   await timings.stage('post_fusion', () => stampUnverifiedExtractions(ctx.engine, results, scope));
@@ -752,11 +753,14 @@ const search: Operation = {
       const keywordOpts = { ...readOpts, source_boosts: sourceBoosts, keywordPhrase, ...(types ? { types } : {}) };
       // F2 `match: "keyword"`: page-grain enumeration, no diversity pruning, every page keeps a row.
       // A query that is one entity's name lists records filed under any of its names (the agent no longer walks each alias).
-      const names = paging.match === 'keyword' && !paging.cursor ? await setup(() => wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate })) : null;
-      const pageParams = names ? { ...p, query: names.map(aliasPhrase).join(' OR ') } : p;
-      const page = paging.match === 'keyword' ? await timings.stage('lexical', () => readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap()))) : null;
+      // A cursor page's query is already the first page's OR of names; the cursor carries the names for matched_alias.
+      const names = paging.match !== 'keyword' ? null
+        : paging.cursor ? paging.cursor.names ?? null
+        : await setup(() => wholeQueryEntityNames(ctx.engine, queryText, { ...scope, excludePrivate }));
+      const pageParams = names && !paging.cursor ? { ...p, query: names.map(aliasPhrase).join(' OR ') } : p;
+      const page = paging.match === 'keyword' ? await timings.stage('lexical', () => readKeywordPage(ctx.engine, pageParams, keywordOpts, paging, Math.min(limit, searchLimitCap()), names)) : null;
       if (page && names) {
-        page.meta.match_names = names;
+        if (!paging.cursor) page.meta.match_names = names;
         for (const row of page.rows) {
           const text = (row.chunk_text ?? '').toLowerCase();
           const hit = names.slice(1).find(n => text.includes(n.toLowerCase()));
@@ -769,7 +773,7 @@ const search: Operation = {
       let keywordBound: DegradedStageEntry | undefined;
       const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts,
         onKeywordIncomplete: reason => { keywordBound = { stage: 'keyword_candidates_incomplete', reason }; } })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
-      await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings);
+      await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings, paging.match === 'keyword' && !names);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
         async rows => withCountMeta(withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),

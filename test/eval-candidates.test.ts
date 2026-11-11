@@ -11,6 +11,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { EvalCandidateInput, EvalCaptureFailureReason } from '../src/core/types.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 
 let engine: PGLiteEngine;
 
@@ -18,6 +19,9 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
+  for (const slug of ['people/alice-example', 'companies/acme-example']) {
+    await importFromContent(engine, slug, `---\ntitle: ${slug}\ntype: note\n---\n# ${slug}\n`, { noEmbed: true, sourceId: 'default' });
+  }
 });
 
 afterAll(async () => {

@@ -19,6 +19,7 @@ import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purg
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tombstones.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
+import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 import { maintenanceTransaction } from './attribution.ts';
 
@@ -137,7 +138,10 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
             const gone = await tx.executeRaw<{ source_id: string; slug: string }>(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} AND ${derivedRetirementPurgeHold('pages')} RETURNING source_id, slug`,
               [row.id, hours]);
             await expireGonePageFacts(tx, gone);
-            if (gone.length > 0) await scrubPurgedSlugs(tx, row.source_id, [row.slug]);
+            if (gone.length > 0) {
+              await scrubPurgedSlugs(tx, row.source_id, [row.slug]);
+              await scrubPurgedNameStores(tx, row.source_id, [row.slug]);
+            }
             return gone.length > 0;
           });
       });

@@ -187,13 +187,21 @@
       "deletePages": {
         "default": [
           {
-            "lane": "pool",
+            "event": "begin",
+            "lane": "tx"
+          },
+          {
+            "lane": "tx",
             "params": [
               "array<string>",
               "string"
             ],
             "sql": "DELETE FROM pages WHERE slug = ANY($1::text[]) AND source_id = $2 RETURNING slug",
-            "textSha256": "86db0206d12c7c1dad3d3cd92d5ce73c9fd3c3084e54fd078f87fa960ff38611"
+            "textSha256": "f2b7a55d8e378066ca8966102867a9cc197b072f657a22a1025fe9c06bad47d1"
+          },
+          {
+            "event": "commit",
+            "lane": "tx"
           }
         ]
       },

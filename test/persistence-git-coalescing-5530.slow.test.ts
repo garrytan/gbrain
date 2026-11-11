@@ -328,7 +328,7 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
     await pauseGitEffects(engine, () => seed(ctx('default'), BACKLOG));
     const real = Bun.which('git')!;
     const committing = join(home, 'committing');
-    const stub = stubGit(home, `case " $* " in *" commit "*) touch '${committing}'; sleep ${COMMIT_SLEEP_S};; esac\nexec '${real}' "$@"`);
+    const stub = stubGit(home, `case " $* " in *" commit "*|*" commit-tree "*) touch '${committing}'; sleep ${COMMIT_SLEEP_S};; esac\nexec '${real}' "$@"`);
     await withEnv({ PATH: `${stub}:${process.env.PATH}` }, async () => {
       await release(engine);
       startPersistenceConsumer(engine, { engine: engine.kind, embedding_disabled: true } as never);
@@ -394,7 +394,7 @@ for (const kind of testBackends()) describe(`#5530 Git effect coalescing (${kind
       await effectSql(engine, "UPDATE persistence_effects SET next_attempt_at=now() WHERE kind='embedding' AND state='queued'");
       const real = Bun.which('git')!;
       const committing = join(home, 'committing');
-      const stub = stubGit(home, `case " $* " in *" commit "*) touch '${committing}'; sleep ${COMMIT_SLEEP_S};; esac\nexec '${real}' "$@"`);
+      const stub = stubGit(home, `case " $* " in *" commit "*|*" commit-tree "*) touch '${committing}'; sleep ${COMMIT_SLEEP_S};; esac\nexec '${real}' "$@"`);
       await withEnv({ PATH: `${stub}:${process.env.PATH}` }, async () => {
         await release(engine);
         startPersistenceConsumer(engine, { engine: engine.kind, embedding_disabled: true } as never);

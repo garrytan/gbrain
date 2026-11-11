@@ -313,7 +313,7 @@ function finalize(config: RobotConfig, model: ReferenceModel, extra: Partial<Rob
 }
 
 /**
- * A git shim whose `git commit` hangs while the marker file exists, holding the
+ * A git shim whose `git commit` (or `commit-tree`, the Git effect's commit) hangs while the marker file exists, holding the
  * checkout's index.lock the way a real stuck git does: SIGTERM lets it remove
  * its lock and exit, SIGKILL leaves the lock behind.
  */
@@ -322,7 +322,7 @@ function installHungGit(root: string): { marker: string; release(): void } {
   const real = Bun.which('git')!; const marker = join(root, 'hung-git.marker');
   writeFileSync(join(dir, 'git'), `#!/bin/sh
 repo=.; prev=; commit=
-for a in "$@"; do [ "$prev" = -C ] && repo="$a"; [ "$a" = commit ] && commit=1; prev="$a"; done
+for a in "$@"; do [ "$prev" = -C ] && repo="$a"; case "$a" in commit|commit-tree) commit=1;; esac; prev="$a"; done
 if [ -n "$commit" ] && [ -e '${marker}' ]; then
   lock="$repo/.git/index.lock"; : > "$lock"; echo $$ >> '${marker}.pids'
   trap 'kill $! 2>/dev/null; rm -f "$lock"; exit 143' TERM

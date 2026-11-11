@@ -289,7 +289,7 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     // its retry_after_ms detail and its wait fix ride along so the caller retries the same request_id.
     if (error.code === 'worktree_refreshing') {
       const fenced = verbError('unavailable', error.message, error.suggestion ?? 'Retry the same request_id after retry_after_ms.', error.detail);
-      Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true });
+      Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true, requestId: error.requestId });
       throw markNotAdmitted(fenced);
     }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
