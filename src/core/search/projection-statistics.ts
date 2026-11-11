@@ -128,11 +128,15 @@ async function chunkStatisticsStillCurrent(engine: BrainEngine, changedRows: num
   let model: string | null = null;
   try { model = (await import('../ai/gateway.ts')).getEmbeddingModelProvenance(); } catch { return false; } // engine-dynamic-import-ok
   if (!model) return false;
-  const [state] = await engine.executeRaw<{ reltuples: number; sampled: boolean }>(
+  // A host that hides pg_statistic (SQLSTATE 42501) leaves the statistics unobservable: not current, so the owner's bounded ANALYZE runs.
+  let state: { reltuples: number; sampled: boolean } | undefined;
+  try {
+  [state] = await engine.executeRaw<{ reltuples: number; sampled: boolean }>(
     `SELECT c.reltuples::float8 AS reltuples,
             EXISTS (SELECT 1 FROM pg_stats s WHERE s.schemaname = current_schema() AND s.tablename = 'content_chunks' AND s.attname = 'model'
                       AND $1 = ANY (s.most_common_vals::text::text[])) AS sampled
        FROM pg_class c WHERE c.oid = 'content_chunks'::regclass`, [model]);
+  } catch { return false; }
   const rows = Number(state?.reltuples ?? -1);
   if (rows <= 0 || !state?.sampled || changedRows >= 50 + 0.1 * rows) return false;
   return !(await missingSearchStatistics(engine)).some(column => column.startsWith('content_chunks.'));
