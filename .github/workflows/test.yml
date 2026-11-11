@@ -89,6 +89,7 @@ jobs:
       native-locks: ${{ steps.dynamic-ci.outputs.native-locks }}
       persistence-validation: ${{ steps.dynamic-ci.outputs.persistence-validation }}
       stress-changed-tests: ${{ steps.dynamic-ci.outputs.stress-changed-tests }}
+      enumeration-census-tests: ${{ steps.dynamic-ci.outputs.enumeration-census-tests }}
     steps:
       - id: dynamic-ci
         uses: trunk-io/dynamic-ci@5bcddbf3615c2b032c21eed1b514c91164bda4a8  # v1 (v0.1.7)
@@ -96,7 +97,7 @@ jobs:
         timeout-minutes: 3
         with:
           token: ${{ secrets.TRUNK_API_TOKEN }}
-          job-keys: security-regressions,native-locks,persistence-validation,stress-changed-tests
+          job-keys: security-regressions,native-locks,persistence-validation,stress-changed-tests,enumeration-census-tests
           enable-annotation: 'true'
 
   # Planning gate for the native platform matrix. Pull requests that touch
@@ -117,6 +118,7 @@ jobs:
     outputs:
       native-scope: ${{ steps.scope.outputs.native }}
       convergence: ${{ steps.convergence.outputs.convergence }}
+      census: ${{ steps.census.outputs.census }}
       reuse: ${{ steps.reuse.outputs.reuse }}
       reuse-source-run-id: ${{ steps.reuse.outputs.source_run_id }}
     steps:
@@ -126,10 +128,11 @@ jobs:
             scripts/ci-native-scope.sh
             scripts/ci-manifest-diff.sh
             scripts/ci-convergence-scope.sh
+            scripts/select-e2e.ts
             scripts/ci-reuse.ts
             scripts/lib/gh-issue.ts
           sparse-checkout-cone-mode: false
-      - if: github.event_name == 'push'
+      - if: github.event_name == 'push' || github.event_name == 'pull_request'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
@@ -211,6 +214,27 @@ jobs:
           fi
           echo "convergence gate: $convergence"
           echo "convergence=$convergence" >> "$GITHUB_OUTPUT"
+      # A pull request runs enumeration-census-tests unless every changed file is
+      # a doc (scripts/select-e2e.ts --classify-only says DOC_ONLY); an unknown or
+      # unreadable diff runs it.
+      - id: census
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          census=run
+          if [[ "$CHANGED_FILES" =~ ^[0-9]{1,4}$ ]] && [ "$CHANGED_FILES" -lt 3000 ] \
+            && files=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename') \
+            && [ "$(printf '%s\n' "$files" | awk 'NF { count++ } END { print count+0 }')" -eq "$CHANGED_FILES" ] \
+            && [ "$(printf '%s\n' "$files" | bun scripts/select-e2e.ts --classify-only --changed-files -)" = DOC_ONLY ]; then
+            census=skip
+          fi
+          echo "enumeration and census tests: $census"
+          echo "census=$census" >> "$GITHUB_OUTPUT"
 
   # Re-run checks for every event, except a master push reusing a passed full-suite run of its exact tree (scripts/ci-reuse.ts). Only dependencies and PGLite snapshots are cached.
   gitleaks:
@@ -540,6 +564,49 @@ jobs:
         with:
           path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
           key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
+
+  # Enumeration and census tests: the unit files that fail when a change adds an
+  # operation, command, flag, error code, doctor check, caller or route without its
+  # reviewed entry, or changes a golden (scripts/ci-census-tests.sh prints them; the
+  # crew runs the same command by hand). No aggregate, merge rule or reuse check
+  # reads it. Two shards of about 175 s of mined weight each on 2 vCPUs, like one
+  # of the two unit shards a 4-vCPU test runner packs.
+  # Event parity (docs/ci-event-parity.md#enumeration-and-census-tests): pull
+  # requests only, and not on a doc-only diff. Every full run (the full-ci
+  # dispatch, every push to master, the nightly schedule) runs these files in the
+  # unit shards.
+  enumeration-census-tests:
+    name: enumeration and census tests (${{ matrix.shard }}/2)
+    needs: [changes, dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.enumeration-census-tests != 'false' && needs.changes.result == 'success' && (github.event_name == 'pull_request' && needs.changes.outputs.census != 'skip') }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/**/*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
+      - name: Run shard ${{ matrix.shard }} of 2
+        timeout-minutes: 10
+        run: bash scripts/ci-census-tests.sh --run ${{ matrix.shard }} 2
 
   # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
   # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
