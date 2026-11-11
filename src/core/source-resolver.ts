@@ -966,6 +966,15 @@ export async function noGrantFederatedScope(
 }
 
 /**
+ * #8982: whether a caller with no source grant reads `sourceId` unqualified: `default`, or a source in the federated
+ * set noGrantFederatedScope threads for that floor. Throws when the sources cannot be read, so a write policy keyed on
+ * it fails closed instead of treating an unreadable table as "not shared".
+ */
+export async function noGrantFloorReads(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  return sourceId === 'default' || ((await localFederatedSourceIds(engine, 'default', 'seed_default'))?.includes(sourceId) ?? false);
+}
+
+/**
  * #2561 — compute the federated read scope for an UNQUALIFIED local CLI call.
  *
  * `sources add --federated` promises that a `config.federated = true` source

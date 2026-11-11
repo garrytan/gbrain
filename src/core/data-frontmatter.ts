@@ -54,7 +54,7 @@ export class YamlAliasBoundError extends Error {
  * keys by length, other nodes as one; shared nodes memoized, a cycle infinite)
  * and throws YamlAliasBoundError past the bound, before any caller can walk it.
  */
-export function loadBoundedYaml(text: string, opts: { schema?: Schema } = {}): unknown {
+export function loadBoundedYaml(text: string, opts: { schema?: Schema; json?: boolean } = {}): unknown {
   const value = load(text, opts);
   const limit = text.length + MAX_YAML_ALIAS_EXPANSION;
   const sizes = new Map<object, number>();

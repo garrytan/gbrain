@@ -95,7 +95,7 @@ function contractClauses(c: CallablePredicate, writeback?: AmbientWritebackOpts 
   if (c('remember')) loop.push('`remember` what the user explicitly asks you to keep, with provenance, and preserve corrections');
   // #6170: capped harnesses read the first 2,048 characters; the writeback line and the error protocol live there.
   const capture = writeback
-    ? `Ambient writeback is ON (${writeback.mode}): unprompted, \`remember\` the user's preferences, corrections, decisions and commitments${writeback.visibility === 'private' ? ' with visibility "private"' : ''} (rules below).`
+    ? `Ambient writeback is ON (${writeback.mode}): unprompted, \`remember\` the user's preferences, corrections, decisions and commitments${writeback.visibility === 'private' && !writeback.member ? ' with visibility "private"' : ''} (rules below).`
     : 'Automatic capture is opt-in.';
   const recallNote = c('recall') && any('search', 'query') ? ` Facts saved with remember are read back with recall${c('entity') ? ' (or entity)' : ''}, not search.` : '';
   out.push(`${loop.length ? `Memory loop: ${loop.join('; ')}. ` : 'Use relevant memory across conversations. '}${capture}${recallNote}`);

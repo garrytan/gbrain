@@ -54,7 +54,7 @@ export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
   owner_unavailable: 'config', owner_marker_missing: 'config', writer_coordinator_required: 'config', write_quota_exhausted: 'config', write_quota_insufficient: 'config', plan_stale: 'config',
   slug_root_mode_mismatch: 'config', invalid_params: 'config',
   // GBRA-133 (#6712 PR 4b lane F): a file whose text holds NUL bytes, and a committed file whose Git object is gone.
-  content_null_bytes: 'content_refused', git_object_missing: 'storage', path_not_utf8: 'content_refused',
+  content_null_bytes: 'content_refused', content_filter_owned: 'content_refused', git_object_missing: 'storage', path_not_utf8: 'content_refused',
   visibility_noncanonical: 'content_refused',
 };
 

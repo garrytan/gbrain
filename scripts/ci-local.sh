@@ -166,12 +166,12 @@ env -u DATABASE_URL -u GBRAIN_DATABASE_URL bun run test:slow
 echo "[runner] unit (unsharded, DATABASE_URL unset)"
 env -u DATABASE_URL bash scripts/run-unit-shard.sh
 echo "[runner] PgBouncer admin database (gbrain_ci_admin_test on postgres-1)"
-bun scripts/lib/ensure-e2e-database.ts postgresql://postgres:postgres@postgres-1:5432/gbrain_test gbrain_ci_admin_test \
+bun scripts/lib/ensure-e2e-database.ts postgresql://postgres:postgres@postgres-1:5432/gbrain_test?sslmode=disable gbrain_ci_admin_test \
   || { echo "[runner] ERROR: could not create gbrain_ci_admin_test; E2E not started" >&2; exit 1; }
 echo "[runner] e2e (unsharded)"
-DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test \
-GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \
-GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_ci_admin_test \
+DATABASE_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_test?sslmode=disable \
+GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test?sslmode=disable \
+GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_ci_admin_test?sslmode=disable \
 GBRAIN_PGBOUNCER_E2E_DB=gbrain_test \
 GBRAIN_CI_REQUIRE_PGBOUNCER=1 \
 GBRAIN_TEST_DB=1 \
@@ -203,7 +203,7 @@ export GBRAIN_TEST_TIMEOUT_MULTIPLIER=\${GBRAIN_TEST_TIMEOUT_MULTIPLIER:-6}
 # database (shard 1 uses postgres-1/gbrain_test), created once before any
 # shard starts.
 echo \"[runner] PgBouncer admin database (gbrain_ci_admin_test on postgres-1)\"
-bun scripts/lib/ensure-e2e-database.ts postgresql://postgres:postgres@postgres-1:5432/gbrain_test gbrain_ci_admin_test \\
+bun scripts/lib/ensure-e2e-database.ts postgresql://postgres:postgres@postgres-1:5432/gbrain_test?sslmode=disable gbrain_ci_admin_test \\
   || { echo \"[runner] ERROR: could not create gbrain_ci_admin_test; shards not started\" >&2; exit 1; }
 mkdir -p /tmp/shard-logs
 echo \"[runner] Tier 1: 4-shard parallel unit + E2E (xargs -P4)\"
@@ -223,9 +223,9 @@ printf '%s\\n' 1 2 3 4 | xargs -P4 -I{} sh -c '
   # Backend-matrix PgBouncer pass: the one pooler fronts postgres-1, so each
   # shard gets its own pooled database there (run-e2e.sh creates it).
   SHARD=\${shard}/4 \\
-  DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test \\
-  GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test \\
-  GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_ci_admin_test \\
+  DATABASE_URL=postgresql://postgres:postgres@postgres-\${shard}:5432/gbrain_test?sslmode=disable \\
+  GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test?sslmode=disable \\
+  GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@postgres-1:5432/gbrain_ci_admin_test?sslmode=disable \\
   GBRAIN_PGBOUNCER_E2E_DB=gbrain_pooled_\${shard}_test \\
   GBRAIN_CI_REQUIRE_PGBOUNCER=1 \\
   GBRAIN_TEST_DB=1 \\

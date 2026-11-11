@@ -38,6 +38,7 @@
 
 import postgres from '#postgres'
 import { traceSqlOptions } from './sql-trace.ts';
+import { tlsRequiredDefaultError, withPgTls } from './pg-tls.ts';
 import { gbrainApplicationName, readPoolPipelineOptions, transactionPipelineOptions, resolvePrepare, resolveSessionTimeouts, resolvePoolSize, resolveMaxLifetimeSeconds, resolveUrlConnectTimeout, resolveSharedTypes, resolveArrayTypes, endPoolBounded, poolHealthOptions, type PoolHealthHooks } from './db.ts';
 import { redactPgUrl } from './url-redact.ts';
 import { logConnectionEvent } from './connection-audit.ts';
@@ -274,7 +275,7 @@ export class ConnectionManager {
     if (Object.keys(timeouts).length > 0) opts.connection = timeouts;
     const prepare = resolvePrepare(this.opts.url);
     if (typeof prepare === 'boolean') opts.prepare = prepare;
-    this._readPool = postgres(this.opts.url, traceSqlOptions(opts, 'read'));
+    this._readPool = postgres(this.opts.url, traceSqlOptions(withPgTls(this.opts.url, opts), 'read'));
     logConnectionEvent({ pool: 'read', op: 'init' });
     return this._readPool;
   }
@@ -436,8 +437,10 @@ export class ConnectionManager {
     };
     const t0 = Date.now();
     let pool: Sql | null = null;
+    let directOpts: Record<string, unknown> = opts;
     try {
-      pool = postgres(this._directUrl, traceSqlOptions(this.opts.settingsConnection ? { ...opts, ...settingsConnectionOptions(this._directUrl) } : opts, 'direct'));
+      directOpts = this.opts.settingsConnection ? { ...opts, ...settingsConnectionOptions(this._directUrl) } : opts;
+      pool = postgres(this._directUrl, traceSqlOptions(withPgTls(this._directUrl, directOpts), 'direct'));
       // Probe to validate connectivity early.
       await pool`SELECT 1`;
       logConnectionEvent({
@@ -457,7 +460,7 @@ export class ConnectionManager {
         duration_ms: Date.now() - t0,
         error: { message: err instanceof Error ? err.message : String(err) },
       });
-      throw err;
+      throw (this._directUrl ? await tlsRequiredDefaultError(this._directUrl, err, directOpts) : null) ?? err;
     }
   }
 

@@ -57,6 +57,8 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'nod
 import type { BrainEngine } from '../engine.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
+import { factsFenceHeld } from '../generations/fence-evidence.ts';
+import { readFenceBlocks } from '../generations/fence.ts';
 import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
 import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
@@ -343,6 +345,36 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
 }
 
 /**
+ * The live facts rows of `slug` that a facts fence of the page held (fence-evidence.ts), each rendered as its fence row
+ * (`fenceRowOf`), in row order. A rewrite that drops the `## Facts` section keeps exactly these rows live (held
+ * `fence_absent`) until the user decides. A withdrawn row (expired: forgotten, struck, retired by an empty fence) is not
+ * among them, nor is a row no fence ever held or a conversation-extractor row (its replay owns it).
+ */
+export async function heldFenceFactRows(engine: BrainEngine, sourceId: string, slug: string): Promise<ParsedFact[]> {
+  const rows = await engine.executeRaw<FenceRowInput & { id: number; row_num: number; fact: string }>(`SELECT id, row_num, fact, kind, visibility, notability, context,
+      valid_from, valid_until, source, confidence, claim_metric, claim_value, claim_unit, claim_period, attributed_to FROM facts
+     WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND expired_at IS NULL
+       AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' ORDER BY row_num, id`, [sourceId, slug]);
+  if (!rows.length) return [];
+  const { held } = await factsFenceHeld(engine, { sourceId, slug, rows });
+  const seen = new Set<number>();
+  return rows.filter(r => held.has(Number(r.id)) && !seen.has(Number(r.row_num)) && seen.add(Number(r.row_num)))
+    .map(r => fenceRowOf(r, Number(r.row_num), r.fact));
+}
+
+/**
+ * `page` with its held facts rows (`heldFenceFactRows`) rendered into a new facts section when it has no facts fence
+ * at all, else unchanged. Every writer that adds a row to a page creates the section through this, so the section it
+ * creates carries the rows a dropped section held: otherwise the next projected write reads the new section as the
+ * user's answer and expires them.
+ */
+export async function withHeldFactsFence<T extends { compiled_truth: string; timeline?: string | null }>(engine: BrainEngine, sourceId: string, slug: string, page: T): Promise<T> {
+  if (readFenceBlocks(page, 'facts').state !== 'absent') return page;
+  const held = await heldFenceFactRows(engine, sourceId, slug);
+  return held.length ? { ...page, compiled_truth: replaceOrInsertFactsFence(page.compiled_truth, renderFactsTable(held)) } : page;
+}
+
+/**
  * Append a page's adoptable unfenced rows to its facts fence. Row numbering
  * starts above every occupied `row_num` on the page, conversation-extractor
  * rows included, so no fence row can take an extractor row's position. A
@@ -355,6 +387,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
  */
 export async function planFence(engine: BrainEngine, sourceId: string, entitySlug: string, body: string, group: UnfencedFactRow[]):
   Promise<{ body: string; assignments: Array<{ id: string; row_num: number; fact: string }>; rejected: UnadoptableFactRecord[] } | { warnings: string[] }> {
+  body = (await withHeldFactsFence(engine, sourceId, entitySlug, { compiled_truth: body })).compiled_truth;
   const existingFence = parseFactsFence(body);
   if (existingFence.warnings.length > 0) return { warnings: existingFence.warnings };
   const occupiedRows = await engine.executeRaw<{ row_num: number; fact: string; source: string | null }>(

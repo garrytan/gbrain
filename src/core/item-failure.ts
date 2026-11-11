@@ -53,6 +53,7 @@ export const ISOLATE_SITES = {
   'propose_takes.pages': 'A-25',
   'sync.import_files': 'A-18',
   'extract_facts.phantom_redirect': 'A-24',
+  'memory_proposals.upkeep_authority': 'A-68',
 } as const satisfies Record<string, string>;
 
 export type IsolateSite = keyof typeof ISOLATE_SITES;
