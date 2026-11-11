@@ -222,7 +222,7 @@ export function proposalReceipt(row: MemoryProposal, now = Date.now()): Record<s
   const untilExpiry = Math.max(0, new Date(row.expires_at).getTime() - now);
   return {
     request_id: row.request_id, state: row.state, retry_after_ms: waiting ? Math.min(PROPOSAL_RETRY_AFTER_MS, untilExpiry) : null,
-    operation: row.operation, source_id: row.source_id, slug: row.slug,
+    operation: row.operation, source_id: row.source_id, slug: row.slug, created_at: row.created_at, updated_at: row.updated_at,
     proposal: { kind: row.kind, target: row.slug, ...(row.to_slug ? { to: row.to_slug } : {}), expires_at: row.expires_at },
     ...(waiting ? {} : { decision: { reason: row.reason, decided_at: row.decided_at } }),
     ...(row.error_code ? { write_error: row.error_code } : {}),

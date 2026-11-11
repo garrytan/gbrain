@@ -131,6 +131,17 @@ export function memberFactAdmitSql(alias: string): string {
       AND ${privatePagesFilterForCaller('member_page')}))`;
 }
 
+/**
+ * GST-2407: the facts among `ids` in `sourceId` that sit on the current caller's own member page, by memberFactAdmitSql.
+ * forget_fact withdraws a remote member's fact only when it is in this set, and memory_recall reports the same set as
+ * own_page, so the two never disagree. Empty outside a member caller record.
+ */
+export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, ids: readonly number[]): Promise<Set<number>> {
+  if (!ids.length || !callerMember()) return new Set();
+  const rows = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND source_id = $2 AND ${memberFactAdmitSql('facts')}`, [[...ids], sourceId]);
+  return new Set(rows.map(r => Number(r.id)));
+}
+
 /** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql. */
 export function factVisibilitySql(alias: string, visibility: readonly string[]): string {
   const known = (['world', 'private'] as const).filter(v => visibility.includes(v));
