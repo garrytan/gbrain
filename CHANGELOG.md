@@ -21,6 +21,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - `test/e2e/evidence-long-page.test.ts`: with provider keys in the environment, every search called the live reranker, whose scores for identical calls differ in the last digits, so the byte comparison failed. The file now runs keyless, as CI's Selected E2E runs it.
 - `test/e2e/source-retire-batched-postgres.test.ts` ran into its 180 s cap. It now retires 2,017 pages (four full batches and a partial one) instead of 60,000, and a statement trigger records every committed page delete. So each test asserts the batches themselves: their sizes, the per-batch bound and one transaction each. Removing the batch `LIMIT` fails the remove and purge tests. The file takes about 57 s.
 - `test/config-file-plane-keys.test.ts`, `test/consent.test.ts`: the memorable enable tests hung waiting for a `[y/N]` answer when stdin was a terminal. They now pin `process.stdin.isTTY` to false while the command runs, so they test the non-interactive refusal however the runner's stdin is set up.
+- `scripts/ci-census-tests.sh`: the pull-request census job now runs 15 more tests that read every file under `src/` (or a whole `src/` subtree), such as `test/cli-exit-verdict-pin.test.ts`. Before, a change that broke one of them passed its pull-request checks and failed only in the full run. `test/scripts/ci-census-tests.test.ts` pins `cli-exit-verdict-pin` in the list.
 
 ## [0.60.664.0] - 2026-11-11
 
