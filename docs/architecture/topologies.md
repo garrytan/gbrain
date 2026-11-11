@@ -830,7 +830,7 @@ elsewhere), and never during a pending recovery or transfer
 or rebases the checkout.
 
 <a id="files-that-are-not-pages"></a>**Files that are not pages.** The owner's
-Git effect commits only the page paths it wrote (`git commit --only`) and then
+Git effect commits only the page paths it wrote (a `commit-tree` of them) and then
 pushes HEAD. Everything else in the checkout (`MEMORY.md`, daily notes,
 `AGENTS.md`, scripts) is the operator's: commit it with
 `gbrain git commit-push -m "<msg>" -- <paths>`, which commits only those paths

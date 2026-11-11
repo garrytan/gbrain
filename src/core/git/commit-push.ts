@@ -27,7 +27,7 @@
  */
 import { appendFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { scanRange } from './range-secret-scan.ts';
+import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { execFileSync } from '../spawn.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
@@ -142,6 +142,7 @@ interface Ctx {
   mergeRef: string;
   trackingRef: string;
   keepCheckout?: boolean;
+  scanSecrets?: boolean;
 }
 
 interface GitRun { code: number; stdout: string; stderr: string }
@@ -983,13 +984,13 @@ function conflictError(ctx: Ctx, ours: string, theirs: string, merged: MergeTree
   const compare = `Compare the two versions (this machine's: git show ${local}:<path>; the remote's: git show ${remote}:<path>)`;
   const fix = merged.structural.length
     ? `${preface}The local commit ${local} stays local and the checkout is unchanged. ${merged.structural.map(shellWord).join(', ')} ${merged.structural.length === 1 ? 'is' : 'are'} a file/directory or rename conflict that a per-file choice cannot resolve. ${compare}, then move or remove the local path in a new commit (gbrain git commit-push -m "<msg>" -- <paths>) and rerun gbrain git commit-push --push-only. See docs/guides/shared-checkout-git.md#conflicts.`
-    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''} --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
+    : `${preface}The local commit ${local} stays local and the checkout is unchanged. ${compare}, then run gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''}${ctx.scanSecrets ? ' --scan-secrets' : ''} --expect-remote ${remote} ${paths.map(p => `--resolve ${shellWord(p)}=ours|theirs`).join(' ')} (ours = this machine's version, theirs = the remote's, or =file:<path> with a merged copy). Until then every push from this checkout reports this conflict. See docs/guides/shared-checkout-git.md#conflicts.`;
   return opError('integrate_conflict', `Local and remote commits both changed ${paths.length} file(s) on ${ctx.branch}; nothing was merged.`, fix,
     { detail: JSON.stringify({ local: ours, remote: theirs, paths, structural: merged.structural, ...(merged.superseded?.length ? { superseded: merged.superseded } : {}) }),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.',
         user_message: `Both this machine and the remote changed ${paths.join(', ')}. Which version should win, or should they be merged by hand?`,
-        ...(merged.structural.length ? {} : { argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--path', ctx.root, '--expect-remote', theirs, ...paths.flatMap(p => ['--resolve', `${p}=<ours|theirs>`])] }),
+        ...(merged.structural.length ? {} : { argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), ...(ctx.scanSecrets ? ['--scan-secrets'] : []), '--path', ctx.root, '--expect-remote', theirs, ...paths.flatMap(p => ['--resolve', `${p}=<ours|theirs>`])] }),
         docs: 'docs/guides/shared-checkout-git.md#conflicts' } });
 }
 
@@ -1080,8 +1081,11 @@ export function readQuarantine(repo: string): QuarantineEntry[] {
  * When the remote already holds the candidate, the published tip (which may be
  * a merge built over it earlier) is returned so a lagging checkout catches up.
  */
-function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> | undefined, expectRemote: string | undefined, cwd: string): Published {
+function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> | undefined, expectRemote: string | undefined, cwd: string, scanSecrets = false): Published {
   const bound = expectRemote && !resolutions?.size ? gitOk(ctx.root, ['rev-parse', '--verify', `${expectRemote}^{commit}`], 'rev-parse --expect-remote') : undefined;
+  // #8896: a scanned publish scans <base>..<candidate> before every push and leases the push on that base, so a remote that
+  // moved or was rewound since the tracking ref was fetched (a stale ref hides commits from the scan) is fetched and scanned again.
+  let scannedBase = scanSecrets ? git(ctx.root, ['rev-parse', '--verify', '--quiet', ctx.trackingRef]).stdout.trim() : '';
   let candidate = start;
   let integrated = 0;
   let lastError = '';
@@ -1097,12 +1101,16 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
     if (attempt) Atomics.wait(sleeper, 0, 0, Math.min(2000, 50 * 2 ** attempt) + Math.floor(Math.random() * 100));
     let remoteTip = bound && !isAncestor(ctx.root, bound, candidate) ? bound : null;
     if (!remoteTip) {
-      const push = remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(bound ? [`--force-with-lease=${ctx.mergeRef}:${bound}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
-      if (push.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
-      lastError = push.stderr.trim();
+      const lease = bound ?? (scanSecrets ? scannedBase : undefined);
+      if (scanSecrets) assertNoSecretsInRange({ ...ctx, trackingRef: lease || ctx.trackingRef }, candidate);
+      const push = lease && !isAncestor(ctx.root, lease, candidate) ? null
+        : remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(lease ? [`--force-with-lease=${ctx.mergeRef}:${lease}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+      if (push?.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
+      if (push) lastError = push.stderr.trim();
       if (remoteContains(ctx, candidate)) return onRemote();
       remoteTip = fetchTracking(ctx);
       if (!remoteTip) break;
+      scannedBase = remoteTip;
       if (bound && remoteTip !== bound) {
         throw opError('push_unconfirmed', `The remote moved to ${remoteTip.slice(0, 12)} after --expect-remote ${bound.slice(0, 12)} was checked, so nothing was pushed: publishing now could merge back commits a rewrite removed.`,
           'Check the remote history first (gbrain sources refresh checks it for a force-push), then rerun.', { detail: candidate, retryable: true });
@@ -1112,6 +1120,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
         continue;
       }
     }
+    if (scanSecrets) assertNoSecretsInRange({ ...ctx, trackingRef: remoteTip }, candidate);
     const raw = integrate(ctx.root, candidate, remoteTip);
     const kept = supersededPaths(ctx.root, candidate, remoteTip, raw, resolutions);
     const merged = kept.length
@@ -1139,7 +1148,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   }
   if (remoteContains(ctx, candidate)) return onRemote();
   throw opError('push_unconfirmed', `The commit is durable locally but no push to ${ctx.remote}/${ctx.mergeRef.replace(/^refs\/heads\//, '')} was confirmed.`,
-    `git push failed (network, credentials, branch protection, or a remote that kept moving): ${lastError.slice(0, 500) || 'no detail'}. Rerun gbrain git commit-push --push-only once the remote is reachable; never git pull --rebase in this checkout.`,
+    `git push failed (network, credentials, branch protection, or a remote that kept moving): ${lastError.slice(0, 500) || 'no detail'}. Rerun gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''}${ctx.scanSecrets ? ' --scan-secrets' : ''} once the remote is reachable; never git pull --rebase in this checkout.`,
     { detail: candidate, retryable: true });
 }
 
@@ -1172,36 +1181,16 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
     `A commit made without gbrain git commit-push (for example a cron's git add plus git commit) can carry files other writers had staged. Show the user git show --stat ${offending[0].sha.slice(0, 12)}; if they want it published as is, rerun with --allow-outside-source-root. See docs/guides/shared-checkout-git.md#source-roots.`,
     { detail: JSON.stringify({ roots, commits: offending }),
       fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-        argv: ['gbrain', 'git', 'commit-push', '--push-only', '--allow-outside-source-root', '--path', ctx.root],
+        argv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), ...(ctx.scanSecrets ? ['--scan-secrets'] : []), '--allow-outside-source-root', '--path', ctx.root],
         why: 'These commits change files that are not the brain\'s; publishing them can overwrite other projects\' or writers\' work on the remote.',
         user_message: `Local commit(s) ${shas} change files outside the brain's folder (${files.slice(0, 5).join(', ')}${files.length > 5 ? ', ...' : ''}). Publish them anyway?`,
         docs: 'docs/guides/shared-checkout-git.md#source-roots' } });
 }
 
-/** The automatic-publish secret gate: scan what the commits in trackingRef..target add (the exact range this publish pushes, under its lock). */
+/** The automatic-publish secret gate: scan what the commits in trackingRef..target add (publish passes the base it leases its push on, under its lock). */
 function assertNoSecretsInRange(ctx: Ctx, target: string): void {
-  const scan = scanRange(ctx.root, ctx.trackingRef, target);
-  if (scan.unreadable !== undefined) {
-    throw opError('publish_scan_unreadable', `The secret scan could not read the local commits ${ctx.trackingRef}..${target.slice(0, 12)} (${scan.unreadable}). No secret was reported. Nothing was pushed.`,
-      `The publish pushes only commits it has read in full. Check the checkout with git fsck in ${ctx.root} (a missing or corrupt object, a full disk, or a git too slow for the 300 s budget), fix what it reports, then retry. Never publish with a command that skips this scan.`,
-      { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-        argv: ['git', '-C', ctx.root, 'fsck'],
-        why: 'Read-only: names missing or corrupt objects in the unpublished commits, the usual reason the scan cannot read them.',
-        user_message: `The secret scan could not read the unpublished commits in ${ctx.root}, so nothing was pushed. Check the checkout with git fsck and fix what it reports?`,
-        docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } });
-  }
-  if (!scan.findings.length && !scan.unscanned.length && !scan.gate_changes.length) return;
-  const named = [...scan.findings.map(f => `${f.path}:${f.line} (${f.pattern}, ${f.commit.slice(0, 7)})`), ...scan.unscanned.map(u => `${u.path} (too large to scan, ${u.commit.slice(0, 7)})`),
-    ...scan.gate_changes.map(g => `${g.path} (changes what the scan sees, ${g.commit.slice(0, 7)})`)];
-  throw opError('publish_secret_found',
-    `${named.length} item(s) in the local commits ${ctx.trackingRef}..${target.slice(0, 12)} look like secrets or could not be scanned: ${named.slice(0, 10).join(', ')}${named.length > 10 ? ', ...' : ''}. Nothing was pushed.`,
-    'Remove the value from those commits (rewriting unpushed local commits is the user\'s call), or add a false positive\'s fingerprint to .gbrain-scan-allow, then retry. Never publish them with a command that skips this scan.',
-    { detail: JSON.stringify(scan),
-      fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-        argv: ['git', '-C', ctx.root, 'log', '--stat', `${ctx.trackingRef}..${target}`],
-        why: 'Lists the unpublished commits the scan refused; read-only. A secret pushed to the remote stays in its history.',
-        user_message: `Unpublished commits in ${ctx.root} hold ${named.length || 'some'} item(s) that look like secrets or could not be scanned (${named.slice(0, 3).join(', ')}). Nothing was pushed. Remove them from those commits, or confirm a false positive so it can be allowlisted by fingerprint?`,
-        docs: 'docs/guides/shared-checkout-git.md#publish_secret_found' } });
+  const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, scanRange(ctx.root, ctx.trackingRef, target));
+  if (refusal) throw refusal;
 }
 
 /** Advance the shared checkout (caller holds the commit lock) with a real compare-and-swap: fast-forward only, hooks off, never autostash. */
@@ -1347,7 +1336,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     throw opError('commit_paths_invalid', 'A commit message is required.', 'Pass -m "<message>".');
   }
   const upstream = resolveCtx(root);
-  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}) };
+  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}), ...(opts.scanSecrets ? { scanSecrets: true } : {}) };
   const elsewhere = ctx.mergeRef !== upstream.mergeRef;
   assertNoOperationInProgress(root);
 
@@ -1381,7 +1370,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       return deferred;
     }
     const busy = opError('push_unconfirmed', `${committed ? 'The commit is durable locally, but another' : 'Another'} publish held this checkout's push lock for ${Math.round(waitMs / 1000)}s.`,
-      `The running publish was asked to push HEAD too once it finishes. Rerun gbrain git commit-push --push-only to confirm; never git pull --rebase in this checkout.`,
+      `The running publish was asked to push HEAD too once it finishes. Rerun gbrain git commit-push --push-only${ctx.keepCheckout ? ' --keep-checkout' : ''}${ctx.scanSecrets ? ' --scan-secrets' : ''} to confirm; never git pull --rebase in this checkout.`,
       { detail: committed ?? '', retryable: true });
     if (skipped.length) throw skippedPathsError(root, skipped, unpublished, undefined, busy);
     throw busy;
@@ -1394,8 +1383,7 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
       const head = gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD');
       const target = start && !isAncestor(root, start, head) ? start : head;
       if (!opts.allowOutsideSourceRoot) assertLocalCommitsInsideRoots(ctx, target, roots);
-      if (opts.scanSecrets) assertNoSecretsInRange(ctx, target);
-      const published = publish(ctx, target, resolutions, expectRemote, cwd);
+      const published = publish(ctx, target, resolutions, expectRemote, cwd, opts.scanSecrets);
       if (!elsewhere) rmSync(absGitPath(root, CONFLICT_STATE_NAME), { force: true });
       const moved = published.sha === head || elsewhere || opts.keepCheckout ? { checkout: 'unchanged' as const } : advanceWithLock(root, published.sha, head, onlyWhenClean, opts.lockWaitMs);
       return { published, moved };
