@@ -12,6 +12,42 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
+**Moved your brain folder? gbrain now tells you how to bring it back.** When a managed checkout was moved to a new path, or a folder above it was renamed, `gbrain sources set-path` and `gbrain sources add` used to refuse with a generic "identity changed" or "checkout missing" error that offered no way out, and their `--dry-run` said everything was fine. Now the preview and the real command refuse the same way, name where gbrain recorded the folder and where it is now, and give the exact commands that get you back without losing the folder's ownership or Git history. Nothing new can rebind ownership: the commands are the ones that already worked, and gbrain still checks everything they do.
+
+### How to use it
+
+Run the command you were going to run, with `--dry-run`:
+
+```bash
+gbrain sources set-path notes /Users/alice-example/Brain --dry-run
+```
+
+The refusal (`recovery_required`, detail `physical_root_moved`) carries its exit as a `fix` the agent asks you about first, because it moves your folders:
+
+| What happened | The exit it names |
+|---|---|
+| Folder moved, its source still registered | `ln -s <new> <old>`, `gbrain sources set-path <source> <new>`, `rm <old>` |
+| Folder moved after `gbrain sources remove` | `mv <new> <old>`, then `gbrain sources add <id> --path <old>`, which reattaches the folder's history |
+| A parent folder renamed | the same, on the parent folder |
+| Copied to another disk and the original deleted | restore the original, or switch to classic mode (`gbrain sources writer deactivate --dry-run`); a copy cannot be reattached |
+
+### Things to watch
+
+- `gbrain sources add --dry-run` and `gbrain sources writer claim --dry-run` now refuse a folder that holds a copied ownership stamp, and `gbrain sources set-path --dry-run` refuses a missing checkout, as their real runs always did. They still write nothing.
+- A remote agent whose page write reaches such a folder sees only the detail, never a path.
+- A brain without a Git repository is unaffected: the default keyless brain's `gbrain sources set-path` stays a plain path update.
+
+Proposed and first implemented by @Kkkkkuro (#8625).
+
+### Itemized changes
+
+- `src/core/persistence/physical-root-record.ts`: `describeMovedPhysicalRoot` (read-only file evidence: the stamp's recorded root is gone, and the reservation of that root, beside it or beside the new root after a parent rename, carries the stamp's token, brain and worktree; `sameDirectory` from device, inode and birth time), `physicalRootMovedError` (path-free) and `physicalRootMovedRefusal` (the local CLI refusal with an `ask_user` fix chain in argv form, paths shell-quoted in the prose). An ownership stamp other users can read at the new path now refuses `ownership_record_not_private` instead of the generic error.
+- `src/core/persistence/physical-root.ts`: `movedPhysicalRoot` accepts the evidence only for this brain, a worktree this host owns and a host binding still at the recorded root; `reservePhysicalRoot` raises the path-free refusal on its copied-marker branch.
+- `src/core/persistence/source-lifecycle.ts`, `topology-locks.ts`, `administration.ts`: `add`, `claim`, `rebind` and `writer claim` build the full refusal (never for the automatic first-write claim); their dry runs predict it, and a rebind dry run of a missing checkout refuses `source_checkout_missing` like the real run.
+- `src/core/persistence/verb-errors.ts`, `src/core/error-registry.ts`: the `physical_root_moved` reason and its explanation; `docs/guides/error-codes.md` regenerated.
+- Docs: `docs/architecture/topologies.md#moved-root`, `docs/guides/write-refusals.md#moved-root`.
+- Tests: `test/physical-root-moved-8625.test.ts` (PGLite and Postgres: leaf and parent moves, bound and removed sources, Git and plain directories, a copy on a new inode, two sources in one worktree, `writer claim --dry-run`, five lookalikes that keep the generic refusal, a readable stamp, the classic keyless set-path, and a remote `put_page` whose refusal carries no path or worktree id).
+
 **A remote `think` now runs on the brain host's own think model unless the host allows the model the caller asked for.** Every `think` answer is a paid call on the host's key, and before this change any MCP or HTTP client (or a thin-client `gbrain think --model`) could pick the most expensive model the host could reach. Now the requested `model` runs only when it is the host's think model (`models.think`, then `models.default`) or the host lists it in the new `think.remote_models` key (comma-separated, empty by default). Any other model, or a listed one the host cannot run (no key for its provider, or no chat support), no longer fails the call: the host model answers, `warnings` carries `MODEL_OVERRIDE_IGNORED:not_allowed` or `MODEL_OVERRIDE_IGNORED:unusable`, and the result carries a `model_override_ignored` notice that says how the owner can allow it. Remote `rounds` runs one round. The local CLI `--model` is unchanged and still exits 1 on an unusable model. A keyless brain answers a remote think the same way with or without `model`.
 
 ### Itemized changes
