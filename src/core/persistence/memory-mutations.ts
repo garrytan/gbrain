@@ -17,7 +17,7 @@ import { emitFenceNotice, initializeLocalPersistence, requestPrincipalForContext
 import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
 import { assertPersistenceAccepting, registerMutationPreparer, waitForWrite, writeResponse } from './service.ts';
-import { claimWorktree } from './ownership.ts';
+import { claimWorktree, getWorktreeBinding } from './ownership.ts';
 import { resolveFactWriteTarget } from './fact-write-target.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
@@ -30,6 +30,8 @@ import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
+import { entityPageMissingNotice } from '../interop-notices.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -123,6 +125,12 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
     throw error;
   }) : null;
   if (unattributed && !snapshot && !target) fence = false;
+  // GST-2446: a named entity with no page keeps its fact out of every file. Where the source has a checkout the reason
+  // is the missing page, never a missing repository.
+  if (!fence && entitySlug !== null && writeThrough) {
+    const root = source.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+    authority.databaseOnlyReason = root || await getWorktreeBinding(ctx.engine, sourceId) ? 'entity_page_missing' : 'no_repo_configured';
+  }
   let binding = target?.kind === 'publish' ? target.binding : null;
   if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
   if (target?.kind === 'unbound') {
@@ -192,7 +200,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   registerMutationPreparer('remember', prepareMemoryMutation);
   const { visibility: _defaulted, ...withoutDefault } = params;
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
-  if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }
+  if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(ctx, settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
@@ -244,13 +252,25 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   const response = throwIfHeld(withRememberTarget(row, () => writeResponse(written)));
   emitFenceNotice(ctx, response, row.slug);
-  return rememberLanded(written, response);
+  return rememberLanded(ctx, written, response);
 }
 
-/** GST-2243: every remember reply names the page the fact went to and who can recall it. */
-function rememberLanded<T>(row: WriteRequest, response: T): T {
-  const visibility = (row.intent as { visibility?: unknown } | null)?.visibility;
-  return { ...response, page: row.slug, ...(visibility === 'world' || visibility === 'private' ? { visibility } : {}) };
+/**
+ * GST-2243: every remember reply names the page the fact went to and who can recall it. GST-2446: a fact saved for an
+ * entity with no page is on no page, so the reply names none; where the source's pages are in Git, one notice gives
+ * the call that creates the page (a brain with no repository keeps the database as its record and is told nothing).
+ */
+async function rememberLanded<T extends Record<string, unknown>>(ctx: OperationContext, row: WriteRequest, response: T): Promise<T> {
+  const intent = row.intent as { visibility?: unknown; fence?: unknown; entity_slug?: unknown } | null;
+  if ((response.write_through as { skipped?: unknown } | undefined)?.skipped === 'entity_page_missing' && typeof intent?.entity_slug === 'string') {
+    const binding = await getWorktreeBinding(ctx.engine, row.source_id);
+    const root = binding?.local_path || (await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [row.source_id]))[0]?.local_path
+      || (row.source_id === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+    if (binding?.canonical_git === true || binding?.git_durability === 'enabled' || root && classifyGitCheckout(root) === 'git') {
+      ctx.emitNotice?.(entityPageMissingNotice(row.source_id, intent.entity_slug));
+    }
+  }
+  return { ...response, ...(intent?.fence === true ? { page: row.slug } : {}), ...(intent?.visibility === 'world' || intent?.visibility === 'private' ? { visibility: intent.visibility } : {}) };
 }
 
 /**
@@ -262,7 +282,7 @@ function withRememberTarget<T>(row: WriteRequest, reply: () => T): T {
   try { return reply(); } catch (error) {
     if (error instanceof OperationError && error.writeRequest) {
       const entity = (row.intent as { entity_slug?: unknown } | null)?.entity_slug;
-      error.writeRequest.target = { slug: row.slug || null, entity_slug: typeof entity === 'string' ? entity : null };
+      error.writeRequest.target = { slug: (row.intent as { fence?: unknown } | null)?.fence === true && row.slug || null, entity_slug: typeof entity === 'string' ? entity : null };
     }
     throw error;
   }

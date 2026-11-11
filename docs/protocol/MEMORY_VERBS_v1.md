@@ -408,6 +408,29 @@ Optional response fields; clients must ignore any they do not know.
   caller is never told about an entity it cannot read: that case is `NO_ENTITY`.
 - `hint: string` — present with `warnings`; names the `entity` input.
 
+#### remember: where the fact landed (additive)
+
+Optional response fields; clients must ignore any they do not know.
+
+- `page: string`: the page whose `## Facts` table now holds the fact. It is
+  absent when the fact is on no page: an `entity` slug that has no page, or a
+  fact with no entity on a source that cannot hold `memory/unattributed`.
+  `remember` never creates an entity page.
+- `visibility`: `world` or `private`, as saved.
+- `persistence: { mode }`: `filesystem` when the write changed a page file,
+  `database` when it changed the database alone.
+- `write_through: { written, skipped? }`: `skipped` says why no file was
+  written. `entity_page_missing`: the source has a checkout, but the entity
+  has no page to take the fact. `no_repo_configured`: the source has no
+  checkout, so the database is its record.
+
+A fact saved for an entity with no page is stored and recalled like any
+other. Where the source's pages are in Git, the reply also carries one
+`entity_page_missing` notice per entity per session, whose fix is the
+`put_page` call that creates the page; once the page exists, the next
+maintenance cycle moves the entity's facts into its Facts table and file. A
+brain with no Git repository gets no such notice.
+
 #### remember items: several facts in one call (additive)
 
 `items` (1 to 20) replaces `fact` for a batch, typically right before
@@ -426,7 +449,7 @@ writes nothing twice.
 
 Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
-request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
+request_id, status, id?, entity_slug?, page?, visibility?, persistence?, write_through?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
 `{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Per-item hints
 appear once in `hints`. `partial: true`: some saved; resend

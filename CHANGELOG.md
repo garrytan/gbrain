@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`remember` now says when a fact is on no page.** `remember` never creates a page. A fact saved for an entity whose page does not exist yet is stored in the database and recall returns it, but the reply read as if the fact had been written to that page, so an agent would report it as saved to a file. What is stored has not changed; the reply now tells the truth about it.
+
+### Itemized changes
+
+- The reply names a `page` only when the fact is on one. For an entity with no page it used to carry `page: "<the entity slug>"`, a page that does not exist; now the field is absent. A pending reply's `target.slug` follows the same rule.
+- Each `items` entry of a batch carries `persistence` and `write_through`, the same fields the single form returns. Before, a batch item gave no sign of whether it landed in a page file or in the database alone.
+- When the source has a checkout, the reason no file was written is `write_through.skipped: "entity_page_missing"`, in the reply and in the write receipt. It used to read `no_repo_configured`, which is false for such a source. A source with no checkout still reads `no_repo_configured`.
+- Where the brain's pages are in a Git repository, the reply adds one `entity_page_missing` notice per entity per session with the `put_page` call that creates the page. Once the page exists, the next maintenance cycle moves the facts saved for that entity into the page's Facts table and its file. A brain with no Git repository gets no notice, because there the database is the record.
+- `gbrain remember` prints `note: the entity has no page, so this fact is stored in the database only`, and a batch line ends `(no page: database only)`.
+- Docs: `docs/guides/entity-scoped-facts.md`, the `remember` section of `docs/mcp/TOOL_REFERENCE.md` and `docs/protocol/MEMORY_VERBS_v1.md` describe the reply. One behavior-change row discloses the reply change after an upgrade.
+- Tests: `test/remember-pageless-entity-gst2446.test.ts` runs on PGLite and Postgres against a Git checkout, a content folder with no Git and a source with no checkout, single and batch, through the operation handler and through MCP dispatch. It also pins that the fact reaches the page's Facts table and its committed file once the page is created.
+
 ## [0.60.675.0] - 2026-11-11
 
 **Tool calls through native OpenAI models no longer fill every optional argument with a placeholder.** gbrain's tool loop (subagent jobs and SkillOpt rollouts) sends OpenAI models through the Responses API, and that API treats a tool definition with no `strict` field as strict: it marks every property required, so the model has to invent a value for each optional argument. A `get_page` call came back with a zero-line window and an empty byte range, which gbrain's own argument checks then refused. Native OpenAI tool definitions now say `strict: false`, so the schema's own `required` list holds and the model sends only the arguments it means. Anthropic, Google and the OpenAI-compatible providers (chat completions) send the same request as before. Reported and first fixed by @akinduroifedayo.
