@@ -307,6 +307,8 @@ export interface DispatchOpts {
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
   /** The stdio session surface (OperationContext.stdioSurface); its allow-set is the one `allowedOps` mirrors. */
   stdioSurface?: OperationContext['stdioSurface'];
+  /** GST-363: OperationContext.stdioMember, from the stdio server's own argv (serve --stdio-member); no other transport sets it. */
+  stdioMember?: string;
   /** Threaded into OperationContext.revealTools (stdio session tool reveal). */
   revealTools?: (names: string[]) => void;
   /**
@@ -949,6 +951,7 @@ export function buildOperationContext(
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
+    ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
@@ -1005,7 +1008,7 @@ export async function dispatchToolCall(
       audience = parseAudience(opts.onBehalfOf);
       attested = await resolveAttestedActor(engine, { channels: opts.actor, params: args, op: name, opShape: op,
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
-      access = attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+      access = attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined);
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
       // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.

@@ -329,7 +329,7 @@ function stdioSurfaceSession(
  */
 const READ_ONLY_SERVE_NOTE = '[gbrain-serve] read-only: no persistence consumer, on-commit sync or sweep runs here; a read-write serve, jobs work or autopilot owns them.\n';
 
-export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess; advertise?: McpSurface } = {}) {
+export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess; advertise?: McpSurface; stdioMember?: string } = {}) {
   const config = loadConfig();
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
   // Refuse to serve a well-formed GBRAIN_SOURCE that no active source row
@@ -417,7 +417,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   }, bootGatedReads(createSkillResources(engine, async () => {
     const scope = await resolveMcpStdioSourceScope(engine);
     return { remote: true, transport: 'stdio', sourceId: scope.sourceId,
-      localFederatedSourceIds: scope.localFederatedSourceIds, allowedOps: session.allowedOps, surface: session.surface, config: config ?? undefined };
+      localFederatedSourceIds: scope.localFederatedSourceIds, allowedOps: session.allowedOps, surface: session.surface, config: config ?? undefined, ...(opts.stdioMember !== undefined ? { stdioMember: opts.stdioMember } : {}) };
   }), gate.awaitBoot));
 
   // FILE config plane only — stdio has no per-request list cycle, so a
@@ -507,7 +507,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // --source-guard (plugin lanes): thread the winning resolution tier so
       // dispatch can fail-close ambient-tier writes. Off (undefined) unless
       // the serve was started with the flag.
-      ...(opts.sourceGuard ? { sourceGuardTier: sourceScope.tier } : {}),
+      ...(opts.sourceGuard ? { sourceGuardTier: sourceScope.tier } : {}), ...(opts.stdioMember !== undefined ? { stdioMember: opts.stdioMember } : {}),
       // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.

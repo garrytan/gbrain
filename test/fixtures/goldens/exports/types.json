@@ -6827,6 +6827,7 @@
           "revealTools?: ((names: string[]) => void) | undefined",
           "sessionId?: string | undefined",
           "sourceId: string",
+          "stdioMember?: string | undefined",
           "stdioSurface?: StdioSurfaceState | undefined",
           "subagentId?: number | undefined",
           "surfaceCeiling?: \"verbs\" | \"starter\" | \"full\" | undefined",
