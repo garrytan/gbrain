@@ -43,6 +43,15 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(native).toContain('bun test --timeout=60000 test/openclaw-context-engine-native.serial.test.ts');
     expect(build).toContain('codesign --verify --strict --verbose=2');
     expect(build.indexOf('codesign --verify')).toBeLessThan(build.indexOf('Smoke-test the compiled binary'));
+    expect(build).toContain('bun scripts/native/compiled-admin-smoke.ts --binary bin/${{ matrix.artifact }}');
+    expect(native).toContain('bun scripts/native/compiled-admin-smoke.ts --binary bin/gbrain-native-validation');
+  });
+
+  test('the compiled admin smoke makes a fresh bootstrap token each run instead of committing one', () => {
+    const smoke = readFileSync(join(ROOT, 'scripts/native/compiled-admin-smoke.ts'), 'utf8');
+    expect(smoke).not.toMatch(/GBRAIN_ADMIN_BOOTSTRAP_TOKEN:\s*['"`]/);
+    expect(smoke).toMatch(/const bootstrapToken = randomBytes\(\d+\)\.toString\('hex'\);/);
+    expect(smoke).toContain('GBRAIN_ADMIN_BOOTSTRAP_TOKEN: bootstrapToken,');
   });
 
   test('workflow build matrix produces exactly the assets the updater requests', () => {

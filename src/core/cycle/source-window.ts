@@ -36,13 +36,15 @@ export interface SourceCycleWindow {
  * back): `pages.updated_at` is its writer's transaction start, so a page that
  * commits after the listing still lands after the cursor.
  */
-const LISTING_INSTANT_SQL = `SELECT GREATEST(LEAST(clock_timestamp(),
+const LISTING_INSTANT_SQL = `SELECT to_char(GREATEST(LEAST(clock_timestamp(),
   (SELECT min(xact_start) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()) - interval '1 millisecond'),
-  clock_timestamp() - interval '10 minutes')::text AS at`;
+  clock_timestamp() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`;
 
 /**
  * One window of the source's live pages after `since` (every page when null), and the cursor the next one starts after.
  * Cursors bind as text: a driver that reads a timestamp parameter as a JS date keeps only milliseconds.
+ * They are written as UTC ISO with microseconds whatever the session DateStyle and TimeZone (#8771): the queued
+ * handler drops a cursor Date.parse cannot read, and a day-first style is not one.
  */
 export async function listSourceChangedPages(engine: BrainEngine, sourceId: string, since: string | null): Promise<SourceCycleWindow> {
   const [{ at } = { at: undefined }] = await engine.executeRaw<{ at: string }>(LISTING_INSTANT_SQL);
@@ -51,7 +53,7 @@ export async function listSourceChangedPages(engine: BrainEngine, sourceId: stri
   const slug = since !== null && state?.stamped === since ? state.slug ?? '' : '';
   const limit = sourceWindow.pageLimit;
   const rows = await engine.executeRaw<{ slug: string; updated_at: string }>(
-    `SELECT slug, updated_at::text AS updated_at FROM pages
+    `SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at FROM pages
       WHERE source_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR (updated_at, slug) > ($2::text::timestamptz, $3::text))
       ORDER BY updated_at, slug LIMIT $4`,
     [sourceId, since, slug, limit + 1]);

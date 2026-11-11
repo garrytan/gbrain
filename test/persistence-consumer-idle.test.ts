@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PersistenceConsumer } from '../src/core/persistence/consumer.ts';
 import { admitWrite, getWriteRequestById } from '../src/core/persistence/journal.ts';
+import { sweepCompactedReservations } from '../src/core/persistence/receipt-true-up.ts';
 import { disposePersistenceConsumer, startPersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
 import { admission, fixtures, initializeFixtures, prepared, selectFixtureHost, type HarnessConfig } from '../scripts/persistence/harness.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -93,16 +94,40 @@ test('idle polling backs off to the cap, then a wake runs a full tick immediatel
   const consumer = new PersistenceConsumer(proxy, { engine: 'pglite' }, async () => { throw new Error('no work expected'); },
     { hostId: config.hostId, pollMs: 20, idleMaxMs: 160, onError: () => {} });
   const refreshes = () => statements.filter(sql => sql.startsWith('SELECT brain_id,enabled,')).length;
+  const bare = counting(engine);
+  const withoutPass = new PersistenceConsumer(bare.proxy, { engine: 'pglite' }, async () => { throw new Error('no work expected'); },
+    { hostId: config.hostId, onError: () => {} });
+  (withoutPass as unknown as { nextMaintenance: number }).nextMaintenance = Number.POSITIVE_INFINITY;
+  try { await withoutPass.tick(); await settled(withoutPass); } finally { await withoutPass.stop(); }
+  // The pass's one-shot compacted-receipt sweep reads the journal until its cursor is done (an earlier test's pass may have
+  // finished it); the count is the steady-state pass.
+  while (!(await sweepCompactedReservations(engine)).done) { /* walk the cursor to done */ }
+  // The first tick's workers can outlive it by more than the 20 ms poll on a slow machine; the next tick waits until the
+  // first tick's statements are counted, so its probe never lands in that count.
+  const counted = Promise.withResolvers<void>();
+  const ticks: Promise<void>[] = [];
+  const tick = consumer.tick.bind(consumer);
+  consumer.tick = (afterProgress?: boolean) => {
+    const run = ticks.length ? counted.promise.then(() => tick(afterProgress)) : tick(afterProgress);
+    ticks.push(run);
+    return run;
+  };
   consumer.start();
   try {
+    await waitFor(() => ticks.length > 0, { timeoutMs: 1_000 });
+    await ticks[0];
+    await settled(consumer);
+    const firstTick = statements.length;
+    counted.resolve();
+    // The first full tick carries the maintenance pass; a statement added to that pass changes this count on purpose.
+    expect(firstTick - bare.statements.length).toBe(10);
     await Bun.sleep(2_000);
     // 20 ms polling for 2 s would be ~100 ticks; doubling to a 160 ms cap is ~15.
-    const ticks = statements.length;
-    expect(ticks).toBeLessThan(40);
+    expect(statements.length - firstTick).toBeLessThan(40);
     const full = refreshes();
     consumer.wake();
     await waitFor(() => refreshes() > full, { timeoutMs: 1_000 });
-  } finally { await consumer.stop(); }
+  } finally { counted.resolve(); await consumer.stop(); }
 }));
 
 test('concurrent wakes during a tick coalesce into one follow-up tick', async () => {

@@ -191,6 +191,7 @@ jobs:
           fi
           bun scripts/native/compiled-smoke.ts --binary bin/gbrain-native-validation
           bun scripts/native/cli-persistence-smoke.ts --binary bin/gbrain-native-validation
+          bun scripts/native/compiled-admin-smoke.ts --binary bin/gbrain-native-validation
       # The terminal status, naming the job result: a run that ends, even cancelled, leaves nothing pending; a machine
       # that dies keeps its last heartbeat.
       - name: Stop the diagnostic heartbeat

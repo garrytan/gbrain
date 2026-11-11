@@ -42,6 +42,8 @@ import {
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
+import { postgresTlsEntry } from './checks/postgres-tls.ts';
+import { databaseEncodingEntry } from './checks/database-encoding.ts';
 import {
   pgvectorEntry,
   rlsEntry,
@@ -110,6 +112,7 @@ import { factsDrainEntry } from './checks/facts-drain.ts';
 import { wakeshiftEntry } from './checks/wakeshift.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
+import { memoryProposalsEntry } from './checks/memory-proposals.ts';
 import { supersessionCalibrationEntry } from './checks/supersession-calibration.ts';
 import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
@@ -138,7 +141,10 @@ import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
 import { folderAccessEntry } from './checks/folder-access.ts';
+import { unlabeledPeopleFoldersEntry } from './checks/unlabeled-people-folders.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
+import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
+import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
@@ -222,9 +228,14 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   derivedVisibilityEntry,
   memberAccessEntry,
   folderAccessEntry,
+  unlabeledPeopleFoldersEntry,
   sharedAgentAccessEntry,
+  ownerReadsRestrictedEntry,
+  attestReadAccessEntry,
   rlsEntry,
+  postgresTlsEntry,
   functionSearchPathEntry,
+  databaseEncodingEntry,
   schemaVersionEntry,
   rlsEventTriggerEntry,
   embeddingsEntry,
@@ -276,6 +287,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   gitWriterEntry,
   foreignWritersEntry,
   decideHealthEntry,
+  memoryProposalsEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,
   autoChronicleEntry,
@@ -404,7 +416,11 @@ function onlyResult(checks: Check[], only: ReadonlySet<string>, stopped: boolean
  * connection lane runs at every tier). Each entry runs under its own deadline:
  * the per-entry budget (`doctor.entry_budget_ms`, read with a bounded
  * statement) clipped to the overall deadline; under `--tier ops`, or under
- * `--only` with an explicit `--budget-ms`, the overall deadline alone. The
+ * `--only` with an explicit `--budget-ms`, the overall deadline alone. #8979:
+ * with an engine, without `--fast` or `--only`, the entries before the
+ * connection lane stop at half the time left when the run starts, so the ops
+ * sections and the cheap incident checks after it keep the other half however
+ * slow those entries are. The
  * entry reads through the run's deadline-bound engine with that deadline in
  * its async context, so its statements stop at it (src/core/statement-deadline.ts).
  * An entry past its budget, or whose statement was refused or cancelled at its
@@ -423,6 +439,9 @@ export function runDoctorRegistry(ctx: DoctorContext, entries: readonly DoctorEn
     const outcomes: EntryOutcome[] = [];
     const memo = new Map<string, Promise<unknown>>();
     const gateAt = entries.indexOf(connectionGateEntry);
+    const dbLaneAt = ctx.engine && !ctx.fastMode && !ctx.only ? entries.findIndex((e) => CONNECTION_LANE.has(e)) : -1;
+    const startedAt = Date.now();
+    const preLaneReserveMs = dbLaneAt >= 0 && ctx.deadline?.deadlineAt != null ? Math.floor((ctx.deadline.deadlineAt - startedAt) / 2) : 0;
     const checks: Check[] = [];
     let entryBudgetMs: number | null = null;
     for (const entry of entries) {
@@ -441,7 +460,7 @@ export function runDoctorRegistry(ctx: DoctorContext, entries: readonly DoctorEn
         entryBudgetMs = await readEntryBudget(ctx);
       }
       const overallOnly = cheapTier(tier) || (!!ctx.only && ctx.deadline?.explicit === true);
-      const budgetMs = entryBudget(ctx, overallOnly, CONNECTION_LANE.has(entry) ? null : entryBudgetMs, started);
+      const budgetMs = entryBudget(ctx, overallOnly, CONNECTION_LANE.has(entry) ? null : entryBudgetMs, started, entries.indexOf(entry) < dbLaneAt ? preLaneReserveMs : 0);
       const limit = budgetMs !== null && ctx.deadline?.deadlineAt != null && (overallOnly || entryBudgetMs === null || started + budgetMs >= ctx.deadline.deadlineAt) ? 'overall' : 'entry';
       if (budgetMs !== null && budgetMs <= 0) {
         checks.push(...emitted.map((n) => budgetUnknownCheck(n, 0, ctx.deadline?.budgetMs ?? 0, 'overall')));
@@ -503,9 +522,9 @@ async function withLastKnown(engine: BrainEngine, checks: Check[], outcomes: Ent
   return unmeasured ? [...applied.checks, unmeasured] : applied.checks;
 }
 
-/** The time this entry may take: the per-entry budget (unless only the overall deadline applies) clipped to the overall deadline; null: unbounded. */
-function entryBudget(ctx: DoctorContext, overallOnly: boolean, perEntry: number | null, now: number): number | null {
-  const overall = ctx.deadline?.deadlineAt != null ? ctx.deadline.deadlineAt - now : null;
+/** The time this entry may take: the per-entry budget (unless only the overall deadline applies) clipped to the overall deadline less `reservedMs`; null: unbounded. */
+function entryBudget(ctx: DoctorContext, overallOnly: boolean, perEntry: number | null, now: number, reservedMs: number): number | null {
+  const overall = ctx.deadline?.deadlineAt != null ? ctx.deadline.deadlineAt - reservedMs - now : null;
   const own = overallOnly ? null : ctx.entryBudgetOverrideMs ?? perEntry;
   if (overall === null) return own;
   return own === null ? overall : Math.min(own, overall);

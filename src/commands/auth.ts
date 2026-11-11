@@ -19,15 +19,14 @@
  * postgres.js singleton. `test` only hits a remote URL and doesn't need
  * a local DB.
  */
-import { createHash } from 'crypto';
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
 import { isTrustTier, TRUST_TIERS, type TrustTier } from '../core/trust/tier.ts';
-import { setMinTrust, setTokenMinTrust } from '../core/trust/min-trust.ts';
-import { generateToken, isMissingSchemaObject } from '../core/utils.ts';
-import { TOKEN_ID_RE, insertUnifiedToken } from '../core/token-mint.ts';
+import { setMinTrust } from '../core/trust/min-trust.ts';
+import { isMissingSchemaObject } from '../core/utils.ts';
+import { TOKEN_ID_RE } from '../core/token-mint.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import type { OAuthTransaction } from '../core/oauth-grants.ts';
@@ -39,12 +38,9 @@ import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-binding.ts';
+import { mintToken } from './auth-mint.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { OperationError } from '../core/ops/contract.ts';
-
-function hashToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
 
 /**
  * Acquire an engine from the active config, run `fn` with a SqlQuery, and
@@ -93,28 +89,9 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       process.exit(1);
     }
   }
-  const token = generateToken('gbrain_');
-  const hash = hashToken(token);
-
   try {
     await withConfiguredSql(async (_sql, engine) => {
-      // v0.28: persist per-token takes-holder allow-list. Default ['world'] keeps
-      // private hunches hidden from MCP-bound tokens.
-      const takesHolders = opts.takesHolders && opts.takesHolders.length > 0
-        ? opts.takesHolders
-        : ['world'];
-      await checkBindingTarget(engine, opts.binding ?? null);
-      // F3: the token is born on the unified grant shape (columns + the
-      // permissions JSONB mirror older binaries read). Scopes land in the
-      // original-schema scopes TEXT[] column; omitted → NULL → the historical
-      // grandfathered full-access grant.
-      const [row] = await insertUnifiedToken(engine, {
-        name, tokenHash: hash, ...(opts.scopes !== undefined ? { scopes: opts.scopes } : {}),
-        grant: { sources: { kind: 'default' }, takesHolders, allowedOperations: null },
-      });
-      // #5575 (CEO-18): the read floor; the CLI is the only writer of it.
-      if (opts.minTrust) await setTokenMinTrust(engine, row!.id, opts.minTrust);
-      const bound = opts.binding ? await bindCredential(engine, { kind: 'token', id: String(row!.id) }, opts.binding) : null;
+      const { token, takesHolders, bound } = await mintToken(engine, name, opts);
       const scopeLine = opts.scopes !== undefined
         ? `scopes=${JSON.stringify(opts.scopes)}`
         : 'scopes=full access (grandfathered — pass --scopes read,write to narrow)';
@@ -1360,6 +1337,9 @@ Usage:
                                                           the person a QM call serves (x-qm-actor; linked with gbrain
                                                           access member link); ops default get_write_request,
                                                           memory_recall,memory_write
+     --attest-read <person|scope|none>                    How an attested call that names sources reads them:
+                                                          person, or scope (every call must then name a person);
+                                                          none (default) reads them as the scope
      --private-pages <granted-sources|none>               Remote reads see visibility: private pages in the
                                                           sources this grant names explicitly (never the
                                                           no-grant floor, federation, a client's bound source

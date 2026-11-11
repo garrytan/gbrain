@@ -9,7 +9,7 @@ import { pageIdentityError, rememberAcceptsPageCreatedSince } from './page-ident
 import { atomicStagingPath, atomicWriteFileSync, mkdirPrivate, validateAtomicStagingPath } from '../atomic-write.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
-import { sha256 } from './digest.ts';
+import { sha256, stableJson } from './digest.ts';
 import { authorizeStoredRequest } from './authority.ts';
 import { hostIdFor } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBinding } from './ownership.ts';
@@ -19,6 +19,7 @@ import { PREPARATION_BUDGET_KEYS, preparationKind } from './preparation-budget.t
 import { chargeTransientInterruption, chargedInterruptionDetail, transientInterruption, type TransientInterruption } from './transient-retry.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 import { isSharedReadFailure } from './bounded-reads.ts';
+import { isStalePlanError } from '../retry-matcher.ts';
 import { isBundleRecovery, isTerminal, PAGES_RECOVERY_MAX_FILES, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
 import { isLockOpenFailure, noteLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -31,7 +32,7 @@ import { tryAcquirePublicationCapacity } from './pool-capacity.ts';
 import { queuePublicationEffects } from './effect-journal.ts';
 import { deferredReplayRefusal } from './refresh-barrier.ts';
 import { holdForImport } from './import-deferral.ts';
-import { adoptionCommitLanded, adoptLocalEdit } from './local-edit-adoption.ts';
+import { adoptionRecoveryEvidence, adoptLocalEdit } from './local-edit-adoption.ts';
 import { timePublicationStep } from './publication-timing.ts';
 import type { AppendedRange, GitCommitNote } from './effect-model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
@@ -46,7 +47,7 @@ import { assertMutationProtocol, assertSharedSkillPersistence, declareDurablePer
 import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, publishStagedBundleFile, stageBundleFile, type MutationFile } from './bundle-files.ts';
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
-import { landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
+import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
 import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
@@ -73,7 +74,7 @@ interface PreparedMutationBase {
   /** #7866: a content no-op whose chunks all hold a vector for their text: publication queues no embedding effect (`embedding_state: current`). */
   embeddingCurrent?: boolean;
   /** Why a page write bound to a worktree publishes no file (receipt `write_through.skipped`). */
-  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin' | 'detached';
+  databaseOnlyReason?: 'db_only' | 'unbound_source' | 'mirror_read_only' | 'sync_excluded' | 'shared_origin' | 'origin_twin' | 'detached' | 'committed_file';
   /** #6517: the receipt's `write_through.warning` for a database-only publication, set by `validate` under the publication guards. */
   databaseOnlyWarning?: string;
   /**
@@ -255,7 +256,7 @@ function conflictCode(code: string): boolean { return ['revision_required','revi
 function failureState(code: string): 'conflict' | 'failed' | 'cancelled' { return code === 'admission_paused' ? 'cancelled' : conflictCode(code) ? 'conflict' : 'failed'; }
 export function transientDatabaseFailure(error: unknown): boolean {
   return ['40001','40P01','55P03','57014','53300','57P01','57P02','57P03','08000','08003','08006','08001','08004',
-    'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code)) || connectionCapFailure(error);
+    'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code)) || connectionCapFailure(error) || isStalePlanError(error);
 }
 /**
  * GBRA-133: a pooler's client cap (Supavisor `EMAXCONNSESSION`, "too many clients already") is the same contention as
@@ -282,7 +283,9 @@ function writeInterruptedFailure(row: WriteRequest, interruption: TransientInter
     : 'Submit the write again with a new request_id once the database is less loaded.';
   const what = interruption.cause === 'publication_ceiling'
     ? `Publication of this write ran past persistence.publication_ceiling_ms and was cancelled ${attempts} time(s)${interruption.sqlstate ? ` (SQLSTATE ${interruption.sqlstate})` : ''}`
-    : `The database ended this write's statements ${attempts} time(s) (SQLSTATE ${interruption.sqlstate}, a statement timeout or cancel)`;
+    : interruption.cause === 'stale_plan'
+      ? `This write's statements ran on a plan cached before a schema change ${attempts} time(s) (SQLSTATE 0A000)`
+      : `The database ended this write's statements ${attempts} time(s) (SQLSTATE ${interruption.sqlstate}, a statement timeout or cancel)`;
   return { code: 'write_interrupted',
     message: `${what}; it was retried with backoff ${limit} time(s), the limit of ${TRANSIENT_RETRIES_KEY} (${limit}), and is not prepared again. `
       + `Run gbrain sources writer status --source ${row.source_id} --json to see the load on the owner. ${fix}`,
@@ -794,12 +797,20 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       return blocked ?? row;
     }
     if (!isTerminal(row)) await upgradeRecoveryStaging(engine, 'persistence_requests', id, row.worktree_id!, 'restore');
+    const adoption = isTerminal(row) ? null : await adoptionRecoveryEvidence(engine, row, binding);
+    const adoptionPin = (request: WriteRequest) => stableJson([request.intent, request.state, request.execution_token]);
+    const pinned = adoptionPin(row);
     row = await engine.transaction(async tx => {
       await declareDurablePersistence(tx);
       await tx.executeRaw('SELECT id FROM persistence_worktrees WHERE id=$1::uuid FOR SHARE', [row!.worktree_id]);
       await lockCounters(tx, ['brain', principalKey(requestPrincipal(row!)), `worktree:${row!.worktree_id}`]);
       const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
       if (!current.recovery) return current;
+      // #8869: the adoption proof was read before this transaction; a request or HEAD that moved since leaves the recovery pending.
+      if (adoption && !isTerminal(current) && (adoptionPin(current) !== pinned || await headCommit(adoption.root) !== adoption.head)) throw opError('recovery_required',
+        'Local edit adoption recovery evidence changed.',
+        `Request ${current.request_id} in source ${current.source_id} or its checkout's HEAD changed while recovery read the adoption's commit proof, so recovery stopped before touching any file and the request stays recovering. Its canonical owner retries the recovery with fresh evidence.`,
+        { fix: ownerStatusFix(current.source_id) });
       const records = recoveryFiles(current.recovery);
       let landed: string | null = null;
       if (isBundleRecovery(current.recovery)) {
@@ -870,7 +881,7 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
         ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
       // #8767: so is a local edit adoption's own commit (local-edit-adoption.ts), on a failure and on the requeued replay.
-      landed ??= await adoptionCommitLanded(tx, current, binding);
+      landed ??= adoption?.landed ?? null;
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
       if (failure) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);

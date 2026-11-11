@@ -172,3 +172,105 @@ test('backend failures stay visible and cannot expose the owner credential', asy
   expect(result.output).not.toContain(owner);
   expect(result.result).not.toHaveProperty('clients');
 });
+
+test('people administration commands send owner-session requests to the access routes (GST-1094 gap 4)', async () => {
+  const cases: Array<[string[], string, unknown]> = [
+    [['attest', clientId, '--attest-actor', 'qm', '--attest-ops', 'memory_recall,memory_write', '--dry-run'], '/admin/api/access/attest', { clientId, dryRun: true, attestActor: 'qm', attestOps: ['memory_recall', 'memory_write'] }],
+    [['attest', clientId, '--attest-actor', 'none'], '/admin/api/access/attest', { clientId, dryRun: false, attestActor: null }],
+    [['members', '--all'], '/admin/api/access/members?all=1', undefined],
+    [['member-add', 'alice-example', '--name', 'Alice Example', '--groups', 'team-a,team-b'], '/admin/api/access/members', { action: 'add', id: 'alice-example', name: 'Alice Example', groups: ['team-a', 'team-b'] }],
+    [['member-disable', 'alice-example'], '/admin/api/access/members', { action: 'disable', id: 'alice-example' }],
+    [['member-enable', 'alice-example'], '/admin/api/access/members', { action: 'enable', id: 'alice-example' }],
+    [['links', '--member', 'alice-example'], '/admin/api/access/member-links?member=alice-example', undefined],
+    [['link', 'alice-example', '--qm', 'ext-alice', '--dry-run'], '/admin/api/access/member-links', { action: 'link', externalId: 'ext-alice', dryRun: true, member: 'alice-example' }],
+    [['unlink', '--qm', 'ext-alice'], '/admin/api/access/member-links', { action: 'unlink', externalId: 'ext-alice', dryRun: false }],
+  ];
+  for (const [args, path, body] of cases) {
+    expect(mcpNeedsEngine(['admin', args[0]!], undefined)).toBe(false);
+    const run = await capture(args, () => Response.json({ applied: false }));
+    expect(run.exitCode).toBe(0);
+    const sent = run.requests.at(-1)!;
+    expect(sent.url).toBe(base + path);
+    expect(sent.init.body === undefined ? undefined : JSON.parse(String(sent.init.body))).toEqual(body);
+    expect(run.output).not.toContain(owner);
+  }
+  const refused = await capture(['attest', clientId], () => Response.json({}));
+  expect(refused.result).toMatchObject({ status: 'error', reason: 'invalid_arguments' });
+  const noQm = await capture(['link', 'alice-example'], () => Response.json({}));
+  expect(noQm.result).toMatchObject({ status: 'error', reason: 'invalid_arguments' });
+  const serverRefusal = await capture(['attest', clientId, '--attest-actor', 'qm'], () => Response.json({ error: 'invalid_params', code: 'invalid_params', message: 'not a confidential client-credentials client', outcome: 'failed' }, { status: 400 }));
+  expect(serverRefusal.result.status).toBe('error');
+  expect(serverRefusal.exitCode).toBe(1);
+});
+
+test('GST-1158: member-add and member-set send a declared email, and link finds the member by --email', async () => {
+  const cases: Array<[string[], string, unknown]> = [
+    [['member-add', 'alice-example', '--email', 'Alice@Example.com'], '/admin/api/access/members', { action: 'add', id: 'alice-example', email: 'Alice@Example.com' }],
+    [['member-set', 'alice-example', '--email', 'alice@example.com'], '/admin/api/access/members', { action: 'set', id: 'alice-example', email: 'alice@example.com' }],
+    [['member-set', 'alice-example', '--email', 'none'], '/admin/api/access/members', { action: 'set', id: 'alice-example', email: null }],
+    [['link', '--qm', 'ext-alice', '--email', 'alice@example.com', '--dry-run'], '/admin/api/access/member-links', { action: 'link', externalId: 'ext-alice', dryRun: true, email: 'alice@example.com' }],
+  ];
+  for (const [args, path, body] of cases) {
+    expect(mcpNeedsEngine(['admin', args[0]!], undefined)).toBe(false);
+    const run = await capture(args, () => Response.json({ applied: false }));
+    expect(run.exitCode).toBe(0);
+    const sent = run.requests.at(-1)!;
+    expect(sent.url).toBe(base + path);
+    expect(JSON.parse(String(sent.init.body))).toEqual(body);
+    expect(run.output).not.toContain(owner);
+  }
+  for (const args of [['member-set', 'alice-example'], ['link', 'alice-example', '--qm', 'ext-alice', '--email', 'alice@example.com'], ['link', '--qm', 'ext-alice']]) {
+    const refused = await capture(args, () => Response.json({}));
+    expect(refused.result).toMatchObject({ status: 'error', reason: 'invalid_arguments' });
+    expect(refused.requests.filter(r => !r.url.endsWith('/admin/login'))).toEqual([]);
+  }
+  const notFound = await capture(['link', '--qm', 'ext-nobody', '--email', 'nobody@example.com'], () => Response.json({ error: 'not_found', code: 'not_found', message: 'No member has that email.', outcome: 'failed' }, { status: 400 }));
+  expect(notFound.result.status).toBe('error');
+  expect(notFound.exitCode).toBe(1);
+});
+
+test('GST-2407: memory-proposals list, show, approve and deny mirror the owner proposal routes, one request id per decision', async () => {
+  const id = '0f8e2a1c-7b3d-5e9f-8a4b-6c2d1e0f9a8b';
+  const cases: Array<[string[], string, unknown]> = [
+    [['memory-proposals', 'list'], '/admin/api/memory-proposals', undefined],
+    [['memory-proposals', 'list', '--source', 'source-a', '--cursor', 'abc_-'], '/admin/api/memory-proposals?source=source-a&cursor=abc_-', undefined],
+    [['memory-proposals', 'show', id], '/admin/api/memory-proposals/' + id, undefined],
+    [['memory-proposals', 'approve', id, '--dry-run'], '/admin/api/memory-proposals/' + id, { action: 'approve', dryRun: true }],
+    [['memory-proposals', 'approve', id], '/admin/api/memory-proposals/' + id, { action: 'approve', dryRun: false }],
+    [['memory-proposals', 'deny', id, '--reason', 'Not confirmed'], '/admin/api/memory-proposals/' + id, { action: 'deny', dryRun: false, reason: 'Not confirmed' }],
+  ];
+  for (const [args, path, body] of cases) {
+    expect(mcpNeedsEngine(['admin', ...args], undefined)).toBe(false);
+    const run = await capture(args, () => Response.json({ applied: false }));
+    expect(run.exitCode).toBe(0);
+    const sent = run.requests.at(-1)!;
+    expect(sent.url).toBe(base + path);
+    expect(sent.init.method).toBe(body === undefined ? 'GET' : 'POST');
+    expect(sent.init.body === undefined ? undefined : JSON.parse(String(sent.init.body))).toEqual(body);
+    expect(run.output).not.toContain(owner);
+  }
+  for (const args of [['memory-proposals'], ['memory-proposals', 'remove', id], ['memory-proposals', 'approve'], ['memory-proposals', 'approve', id, id],
+    ['memory-proposals', 'approve', id, '--reason', 'because'], ['memory-proposals', 'deny', id], ['memory-proposals', 'list', '--dry-run'], ['memory-proposals', 'show', id, '--source', 'source-a']]) {
+    _resetCliExitVerdictForTests();
+    const refused = await capture(args, () => Response.json({}));
+    expect(refused.result).toMatchObject({ status: 'error' });
+    expect(['invalid_arguments', 'invalid_admin_command', 'missing_target']).toContain(refused.result.reason);
+    expect(refused.requests.filter(r => !r.url.endsWith('/admin/login'))).toEqual([]);
+    expect(refused.exitCode).toBe(1);
+  }
+  _resetCliExitVerdictForTests();
+  const writeFailed = await capture(['memory-proposals', 'approve', id], () => Response.json({ applied: true, status: 'approved', request_id: id, write_request: { state: 'failed', write_error: 'actor_unlinked' }, outcome: 'failed' }));
+  expect(writeFailed.result).toMatchObject({ status: 'approved', outcome: 'failed', write_request: { state: 'failed' } });
+  expect(writeFailed.exitCode).toBe(1);
+  _resetCliExitVerdictForTests();
+  const closed = await capture(['memory-proposals', 'approve', id], () => Response.json({ error: 'proposal_closed', code: 'proposal_closed', message: 'Proposal is denied.', outcome: 'failed' }, { status: 400 }));
+  expect(closed.result).toMatchObject({ status: 'error', reason: 'proposal_closed', outcome: 'failed' });
+  expect(closed.exitCode).toBe(1);
+  _resetCliExitVerdictForTests();
+  const unknown = await capture(['memory-proposals', 'deny', id, '--reason', 'no'], () => Response.json({ error: 'administration_unavailable', code: 'administration_unavailable', message: 'The change outcome is unknown.', outcome: 'unknown' }, { status: 503 }));
+  expect(unknown.result).toMatchObject({ status: 'error', outcome: 'unknown', next_action: 'gbrain mcp admin memory-proposals show ' + id + ' --url ' + base });
+  expect(unknown.exitCode).toBe(1);
+  _resetCliExitVerdictForTests();
+  const preview = await capture(['memory-proposals', 'approve', id, '--dry-run'], () => Response.json({ applied: false, dry_run: true, would: 'failed', error_code: 'actor_unlinked' }));
+  expect(preview.exitCode).toBe(0);
+});

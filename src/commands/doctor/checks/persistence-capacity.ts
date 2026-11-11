@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { capacityDiagnostics } from '../../../core/persistence/diagnostics.ts';
-import { oneYearCapacity, readJournalLimits } from '../../../core/persistence/limits.ts';
+import { HOUSEKEEPING_FLOOR_DAYS, oneYearCapacity, readCompactableReceiptBytes, readJournalLimits, readReceiptTargetBytes, RECEIPT_RETENTION_KEY, RECEIPT_TARGET_KEY } from '../../../core/persistence/limits.ts';
 import type { CapacityForecast } from '../../../core/persistence/capacity-forecast.ts';
 import { doctorCapacityForecast, forecastOrNull } from '../capacity-memo.ts';
 import { capacityVerify } from '../../../core/persistence/capacity-view.ts';
@@ -35,6 +35,12 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
     const limits = await readJournalLimits(engine);
     const forecast: CapacityForecast | null = await doctorCapacityForecast(engine, { limits }).catch(forecastOrNull);
     const pause = await readBackgroundPauseShare(engine);
+    const target = await readReceiptTargetBytes(engine);
+    const [retention] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1', [RECEIPT_RETENTION_KEY]);
+    const stored = Number(counters.find(row => row.key === 'brain')?.terminal_bytes ?? 0);
+    const compactable = target > 0 && stored > target ? await readCompactableReceiptBytes(engine) : null;
+    const housekeeping = { target_bytes: target, used_bytes: stored, compactable_bytes: compactable, over_target: compactable !== null && compactable > target,
+      explicit_retention_days: retention ? Number(retention.value) : null };
     const cumulative = capacityDiagnostics(counters, limits).filter(row => row.resource === 'lifetime_ids' || row.resource === 'terminal_bytes');
     const outstanding = [];
     for (const row of capacityDiagnostics(counters, limits)) {
@@ -71,7 +77,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
     }
     const anyPaused = resources.some(r => r.background_paused);
     const commands = [...needed].map(([key, value]) => `gbrain config set ${key} ${value}`);
-    const details = { exact: true, inspected: counters.length, truncated: false, resources, outstanding, commands, verify: VERIFY, docs: DOCS,
+    const details = { exact: true, inspected: counters.length, truncated: false, resources, outstanding, commands, housekeeping, verify: VERIFY, docs: DOCS,
       background_pause_pct: Math.round(pause * 100), paused_producers: anyPaused ? [...BACKGROUND_PRODUCERS] : [],
       forecast: forecast ? { thresholds: forecast.thresholds, window_days: forecast.window_days, retention_days: forecast.retention_days,
         table_bytes: forecast.table_bytes, rows: forecast.rows } : { health: 'unknown' } };
@@ -85,6 +91,17 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
         consent: [], actor: 'host_admin', requires_exclusive: false, verify: capacityVerify(), docs: DOCS,
         why: `Read-only: names the requests${holder ? ` source ${holder.source_id}` : ''} holds and why they have not settled (a refused write ends terminally and frees its slot).` },
       message: `${held}Run on the brain host: ${holder ? `gbrain sources writer status --source ${holder.source_id} --json` : 'gbrain sources writer status --json'}, then verify with ${VERIFY}.` };
+    // GBRA-108: receipt storage over the housekeeping target is the host operator's to look at; it never refuses or pauses a write.
+    if (!resources.length && housekeeping.over_target) return { name: 'persistence_capacity', status: 'warn', details,
+      fix: { argv: ['gbrain', 'repair', 'receipt-compaction', '--json'], consent: [], actor: 'host_admin', requires_exclusive: false, verify: capacityVerify(), docs: DOCS,
+        why: 'Previews the receipts an explicit compaction would take and the bytes it would free; it compacts nothing.' },
+      message: `Receipts not yet compacted reserve ${compactable} bytes (receipt storage holds ${stored} in all), above the housekeeping target of ${target} (${RECEIPT_TARGET_KEY}). Writes are not affected: receipt storage never refuses or pauses a write unless the operator sets a cap. `
+        + (housekeeping.explicit_retention_days !== null
+          ? `Housekeeping leaves receipts to the retention you set (${RECEIPT_RETENTION_KEY} = ${housekeeping.explicit_retention_days} days). `
+          : `Housekeeping compacts settled receipts, and refusals gbrain's own producers write again, older than ${HOUSEKEEPING_FLOOR_DAYS} days while storage is above the target; what stays is newer receipts, refusals whose intent a replay or retry reads, job receipts, receipts an open sync or recovery holds, and compacted receipts that keep request ids idempotent. `)
+        + `On the brain host, gbrain repair receipt-compaction --json previews what an explicit compaction would free and compacts nothing; a larger target, or 0, quiets this warning.` };
+    if (!resources.length && !cumulative.length) return { name: 'persistence_capacity', status: 'ok', details,
+      message: `No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds ${stored} reserved bytes${target > 0 ? `, and receipts not yet compacted are under the housekeeping target of ${target}` : ''}.` };
     if (!resources.length) return { name: 'persistence_capacity', status: 'ok', details,
       message: thresholds ? `Managed write capacity is below ${thresholds.warn_pct}% of every cumulative limit and none runs out within ${thresholds.warn_days} days at its 7-day rate.`
         : 'Managed write capacity is below 80% of every cumulative limit.' };

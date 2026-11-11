@@ -57,11 +57,14 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'nod
 import type { BrainEngine } from '../engine.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
+import { factsFenceHeld } from '../generations/fence-evidence.ts';
+import { readFenceBlocks } from '../generations/fence.ts';
 import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
 import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { withPageLock } from '../page-lock.ts';
+import { LockUnavailableError } from '../db-lock.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { assertLifetimeIdHeadroom } from '../persistence/journal.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
@@ -115,6 +118,8 @@ export interface UnfencedFactsOutcome {
   pages_touched: number;
   /** `<slug> (<reason>)` per page whose fence write failed; its rows stay unfenced. */
   failed_pages: string[];
+  /** #8568: pages in `failed_pages` whose fence write threw (I/O, lock, database), as opposed to holds the next run or another host settles. */
+  write_errors: number;
   /** Slugs whose fence this run wrote. */
   fenced_slugs: string[];
   /** Unmanaged: `<slug> (<reason>)` per live page whose recorded canonical file is not on this host (counted in skipped_no_page). */
@@ -304,7 +309,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   );
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
-    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
+    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
@@ -343,6 +348,36 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
 }
 
 /**
+ * The live facts rows of `slug` that a facts fence of the page held (fence-evidence.ts), each rendered as its fence row
+ * (`fenceRowOf`), in row order. A rewrite that drops the `## Facts` section keeps exactly these rows live (held
+ * `fence_absent`) until the user decides. A withdrawn row (expired: forgotten, struck, retired by an empty fence) is not
+ * among them, nor is a row no fence ever held or a conversation-extractor row (its replay owns it).
+ */
+export async function heldFenceFactRows(engine: BrainEngine, sourceId: string, slug: string): Promise<ParsedFact[]> {
+  const rows = await engine.executeRaw<FenceRowInput & { id: number; row_num: number; fact: string }>(`SELECT id, row_num, fact, kind, visibility, notability, context,
+      valid_from, valid_until, source, confidence, claim_metric, claim_value, claim_unit, claim_period, attributed_to FROM facts
+     WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND expired_at IS NULL
+       AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' ORDER BY row_num, id`, [sourceId, slug]);
+  if (!rows.length) return [];
+  const { held } = await factsFenceHeld(engine, { sourceId, slug, rows });
+  const seen = new Set<number>();
+  return rows.filter(r => held.has(Number(r.id)) && !seen.has(Number(r.row_num)) && seen.add(Number(r.row_num)))
+    .map(r => fenceRowOf(r, Number(r.row_num), r.fact));
+}
+
+/**
+ * `page` with its held facts rows (`heldFenceFactRows`) rendered into a new facts section when it has no facts fence
+ * at all, else unchanged. Every writer that adds a row to a page creates the section through this, so the section it
+ * creates carries the rows a dropped section held: otherwise the next projected write reads the new section as the
+ * user's answer and expires them.
+ */
+export async function withHeldFactsFence<T extends { compiled_truth: string; timeline?: string | null }>(engine: BrainEngine, sourceId: string, slug: string, page: T): Promise<T> {
+  if (readFenceBlocks(page, 'facts').state !== 'absent') return page;
+  const held = await heldFenceFactRows(engine, sourceId, slug);
+  return held.length ? { ...page, compiled_truth: replaceOrInsertFactsFence(page.compiled_truth, renderFactsTable(held)) } : page;
+}
+
+/**
  * Append a page's adoptable unfenced rows to its facts fence. Row numbering
  * starts above every occupied `row_num` on the page, conversation-extractor
  * rows included, so no fence row can take an extractor row's position. A
@@ -355,6 +390,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
  */
 export async function planFence(engine: BrainEngine, sourceId: string, entitySlug: string, body: string, group: UnfencedFactRow[]):
   Promise<{ body: string; assignments: Array<{ id: string; row_num: number; fact: string }>; rejected: UnadoptableFactRecord[] } | { warnings: string[] }> {
+  body = (await withHeldFactsFence(engine, sourceId, entitySlug, { compiled_truth: body })).compiled_truth;
   const existingFence = parseFactsFence(body);
   if (existingFence.warnings.length > 0) return { warnings: existingFence.warnings };
   const occupiedRows = await engine.executeRaw<{ row_num: number; fact: string; source: string | null }>(
@@ -444,6 +480,14 @@ function factsChangedSincePlanning(body: string, assignments: Array<{ id: string
   });
 }
 
+/**
+ * #8568: a typed refusal (a revision conflict, a stored fence defect, an owner or host check) or a busy source lock is a
+ * hold the next run or the owning host settles; any other throw (I/O, database) is a fence write failure.
+ */
+export function isFenceHold(err: unknown): boolean {
+  return err instanceof OperationError || err instanceof LockUnavailableError;
+}
+
 /** Keep the typed records and name the page once in `failed_pages` with the stable token; the rows stay as they are. */
 function recordUnadoptable(outcome: UnfencedFactsOutcome, slug: string, records: UnadoptableFactRecord[]): void {
   if (records.length === 0) return;
@@ -530,6 +574,7 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
       outcome.fenced_slugs.push(entitySlug);
     } catch (err) {
       outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+      if (!isFenceHold(err)) outcome.write_errors += 1;
     }
   }
 }
@@ -561,6 +606,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     outcome.fenced_slugs.push(entitySlug);
   } catch (err) {
     outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+    if (!isFenceHold(err)) outcome.write_errors += 1;
   }
 }
 
@@ -644,6 +690,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
     await (hasSourceFilesystemLock(writeRoot) ? write() : withSourceFilesystemLock(engine, writeRoot, write));
   } catch (err) {
     outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+    if (!isFenceHold(err)) outcome.write_errors += 1;
   }
 }
 

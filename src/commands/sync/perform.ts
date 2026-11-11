@@ -28,8 +28,22 @@ import type { IdleSkip } from '../../core/persistence/sync-idle-skips.ts';
 import { runConnectorSync } from './connector.ts';
 import { performSyncInner } from './incremental.ts';
 import { isConnectorSourceKind } from '../../core/persistence/connector-kinds.ts';
+import { ignoredPrivacyLabelRunNotice } from '../../core/search/ignored-privacy-labels.ts';
 
 export async function performSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
+  const since = opts.dryRun ? null : await syncStartedAt(engine);
+  const result = await routeSync(engine, opts);
+  if (!since || result.privacy_label_notice || result.status === 'up_to_date' || result.status === 'dry_run') return result;
+  const notice = await ignoredPrivacyLabelRunNotice(engine, opts.sourceId ?? 'default', result.pagesAffected?.length ? { slugs: result.pagesAffected } : { since }, 'sync');
+  return notice ? { ...result, privacy_label_notice: notice } : result;
+}
+
+/** GST-2462: the database clock when a sync starts; a managed sync lists no pages, so its notice reads the pages updated since. */
+async function syncStartedAt(engine: BrainEngine): Promise<string | null> {
+  try { return (await engine.executeRaw<{ at: string }>('SELECT clock_timestamp()::text AS at'))[0]?.at ?? null; } catch { return null; }
+}
+
+async function routeSync(engine: BrainEngine, opts: SyncOpts): Promise<SyncResult> {
   assertSyncDispatchActive();
   const inheritedSignal = currentSourceFilesystemSignal();
   if (inheritedSignal) opts = { ...opts, signal: opts.signal ? AbortSignal.any([opts.signal, inheritedSignal]) : inheritedSignal };

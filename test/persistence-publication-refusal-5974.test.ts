@@ -16,7 +16,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
-import { admitWrite, claimNextWrite, compactWriteReceipts, receiptFor, type WriteAdmission } from '../src/core/persistence/journal.ts';
+import { admitWrite, claimNextWrite, COMPACTABLE_STATES, compactReceipt, compactWriteReceipts, receiptFor, type WriteAdmission } from '../src/core/persistence/journal.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { databaseRefusal, publicFailureDetail } from '../src/core/persistence/publication-failure.ts';
@@ -107,7 +107,9 @@ describe('#5974 database refusal diagnostics', () => {
       expect(failure.next_action).toBe(DATABASE_REFUSAL_HINT);
 
       await engine.executeRaw("UPDATE persistence_requests SET completed_at=now()-interval '400 days' WHERE id=$1::uuid", [done.id]);
-      await compactWriteReceipts(engine, 1);
+      // GBRA-108: the retention pass keeps a caller refusal failed-writes could still replay; the explicit compaction drops it.
+      expect(await compactWriteReceipts(engine, 1)).toBe(0);
+      expect(await compactReceipt(engine, done, { states: COMPACTABLE_STATES })).toMatchObject({ freed_bytes: expect.any(Number) });
       const [compacted] = await engine.executeRaw<{ compacted: boolean; error_message: string | null; error_detail: unknown }>(
         'SELECT compacted,error_message,error_detail FROM persistence_requests WHERE id=$1::uuid', [done.id]);
       expect(compacted.compacted).toBe(true);

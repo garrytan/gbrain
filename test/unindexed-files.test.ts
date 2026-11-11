@@ -316,3 +316,14 @@ test('retry-held --unindexed refuses a connector source with invalid_params', ()
   await unmanaged(engine, () => engine.executeRaw('DELETE FROM sources WHERE id=$1', [id]));
   await expect(runRetryHeld(engine, [id, '--unindexed', '--all'])).rejects.toMatchObject({ code: 'invalid_params', message: 'Unknown option: --all.' });
 }), 60_000);
+
+test('#8887: a source whose scan errors leaves the phase incomplete, so the run never reads as a full scan', () => each(async engine => {
+  const s = await source(engine, { 'notes/a.md': note('A') });
+  await s.sync();
+  writeFileSync(join(s.repo, '.git', 'HEAD'), 'not a ref\n');
+  const phase = await runUnindexedFilesPhase(engine, { dryRun: false });
+  expect(phase.status).toBe('warn');
+  expect(phase.details.errors).toEqual([{ source_id: s.id, code: expect.any(String) }]);
+  expect(phase.details.complete).toBe(false);
+}), 240_000);
+

@@ -39,7 +39,7 @@
 import type { BrainEngine, ReservedConnection } from '../engine.ts';
 import { PoolCapacityError } from '../pool-budget.ts';
 import { READ_WRITE_BEGIN } from '../postgres-engine/read-write-transactions.ts';
-import { withReadDeadline } from '../read-deadline.ts';
+import { ReadDeadlineError, withReadDeadline } from '../read-deadline.ts';
 import { recordClaimSql, type ClaimPhaseClock } from './claim-phase.ts';
 import { registerEngineView, viewedEngine } from './switches.ts';
 
@@ -117,9 +117,10 @@ export function boundedReads(engine: BrainEngine, clock: ClaimPhaseClock | undef
     return (...args: unknown[]) => {
       const result = withReadDeadline(deadlineAt, () => value.apply(target, args));
       return result instanceof Promise ? result.catch(error => {
-        if (!isStatementTimeout(error) || isSharedReadFailure(error) || Date.now() < deadlineAt) throw error;
+        const refused = error instanceof ReadDeadlineError;
+        if (!refused && (!isStatementTimeout(error) || isSharedReadFailure(error) || Date.now() < deadlineAt)) throw error;
         if (clock!.signal?.aborted) throw clock!.signal.reason;
-        throw new PreparationDeadlineError(clock!.step, error.code, error);
+        throw new PreparationDeadlineError(clock!.step, refused ? null : error.code, error);
       }) : result;
     };
   } }), viewedEngine(engine));

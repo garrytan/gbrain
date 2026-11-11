@@ -148,6 +148,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   loops: async () => (await import('../commands/loops.ts')).runLoops as never,
   beliefs: async () => (await import('../commands/beliefs.ts')).runBeliefs as never,
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
+  'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
   waiting: async () => (await import('../commands/loops.ts')).runWaiting as never,
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
@@ -666,7 +667,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // because the import.meta.main seam exits explicitly on every one-shot path.
   const READ_OP_TIMEOUT_MS = 180_000;
   const configSnapshot = op.scope === 'read' ? takeStartupConfigSnapshot(engine) ?? openRequestConfigSnapshot(engine) : null;
-  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command); // GBRA-218 local --as <member>
+  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command, op.mutating === false); // GBRA-218 local --as <member>; GST-2490: owner lineage on reads only
 
   try {
     const { withTimeout, OperationTimeoutError } = await import('../core/timeout.ts');

@@ -25,8 +25,9 @@ import type { BrainEngine } from '../engine.ts';
 import { embeddedKey, embeddedKeyInScope, unscopedWithOpenEmbeddedEngines } from '../engine-scope-store.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
+import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
-import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
+import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -36,6 +37,14 @@ export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
  * Written only by the trusted local CLI, like mcp.stdio_member; unset, ill-formed or unreadable names no owner.
  */
 export const OWNER_MEMBER_KEY = 'access.owner_member';
+
+/**
+ * GST-2490 (G6 of GST-2476): the owner opt-in. Set to '1' only by the trusted local operator (`gbrain access owner
+ * reads-restricted on`); with it on, a read by a credential bound to the owner (CallerAccess.ownerReadsRestricted) reads
+ * pages a readers list, folder rule or page rule would close to the owner, and their derived pages and facts, except
+ * another member's own member page (memory/members/<id>) and anything derived from it. Off or unset changes nothing.
+ */
+export const OWNER_READS_RESTRICTED_KEY = 'access.owner_reads_restricted';
 
 /**
  * #5525 — extracted atoms and synthesized concept pages are derived from
@@ -114,12 +123,12 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
  * a database role that row-level security keeps from reading them reads every page as covered.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND starts_with(${alias}.slug, pc.prefix)) AND NOT (SELECT gbrain_access_state_unreadable())`;
+  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
     : c.prefix === '' ? ` AND ${alias}.source_id <> '${c.source_id}'`
-    : ` AND NOT (${alias}.source_id = '${c.source_id}' AND starts_with(${alias}.slug, '${c.prefix}'))`).join('');
+    : ` AND NOT (${alias}.source_id = '${c.source_id}' AND ${ruleCoversSql(`${alias}.slug`, `'${c.prefix}'`)})`).join('');
 }
 
 /** The satisfied rule ids for `identity`: the current record's set when it is the record's identity, else none. */
@@ -169,18 +178,67 @@ function originAllowedSql(p: string): string {
     OR NOT gbrain_access_origin_restricted(${p}.id, ${p}.source_id, ${p}.type, ${p}.frontmatter))`;
 }
 
+/** GST-2490: the owner's own member page for an owner read (CallerAccess.ownerLineage), else null. */
+function ownerReadPage(access: CallerAccess): string | null {
+  if (!access.ownerLineage) return null;
+  const member = access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
+  return member && ACCESS_ID_RE.test(member) ? `${MEMBER_PAGE_PREFIX}${member}` : null;
+}
+
+/** GST-2490: the owner's own member page for an owner read under the opt-in (access.owner_reads_restricted), else null. */
+function ownerOptInPage(access: CallerAccess): string | null {
+  return access.ownerReadsRestricted ? ownerReadPage(access) : null;
+}
+
+/** GST-2490: `alias` is not another member's own member page (the owner's own one passes). */
+function notOtherMemberPageSql(alias: string, ownPage: string): string {
+  return `(NOT starts_with(${alias}.slug, '${MEMBER_PAGE_PREFIX}') OR ${alias}.slug = '${ownPage}')`;
+}
+
+const textArraySql = (values: readonly string[]): string => values.length ? `ARRAY[${values.map(v => `'${v}'`).join(', ')}]::text[]` : 'ARRAY[]::text[]';
+
+/**
+ * GST-2490: originAllowedSql for an owner read. A derived page passes when the owner reads every origin of it
+ * (gbrain_access_origin_hidden_for with the owner's identity and satisfied rules, v304), so a page whose readers or rule
+ * name the owner keeps its derivatives for the owner; under the opt-in every origin passes except another member's own
+ * member page and pending coverage. The identity and rule ids are validated on the record, so they embed as literals.
+ */
+function ownerOriginAllowedSql(p: string, access: CallerAccess, ownPage: string): string {
+  const identity = validIdentity(access.identity) ? access.identity : [];
+  const satisfied = access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : [];
+  return `((${p}.type NOT IN ('atom', 'question', 'concept', 'event') AND NOT (${p}.frontmatter ? 'derived_from'))
+    OR NOT gbrain_access_origin_hidden_for(${p}.id, ${p}.source_id, ${p}.type, ${p}.frontmatter, ${textArraySql(identity)}, ${textArraySql(satisfied)}, ${access.ownerReadsRestricted}, '${ownPage}'))`;
+}
+
+/**
+ * GST-2490: the member-access part for an owner read: the owner's readers and folder rules as for any member, with the
+ * owner's lineage (ownerOriginAllowedSql) instead of the every-caller one. Under the opt-in, a page that is not another
+ * member's own member page passes too, outside a prefix that reads as nobody.
+ */
+function ownerAccessSql(pageAlias: string, access: CallerAccess, ownPage: string): string {
+  const notOther = notOtherMemberPageSql(pageAlias, ownPage);
+  if (!access.restricted) {
+    const unrestricted = `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
+    return access.ownerReadsRestricted ? `(${unrestricted} OR ${notOther})` : unrestricted;
+  }
+  const listed = `(${readersAllowedSql(pageAlias, access.identity)} AND ${folderRulesAllowedSql(pageAlias, access.satisfiedRuleIds)})`;
+  const page = access.ownerReadsRestricted ? `(${listed} OR (${notOther}${coverageSql(pageAlias)}))` : listed;
+  return `(${page} AND ${ownerOriginAllowedSql(pageAlias, access, ownPage)})`;
+}
+
 /**
  * `privatePagesFilterFragment` with a cheap first test: a page with no
  * `visibility` or `derived_from` key (nor, unless the operator turned
- * `visibility.honor_aliases` off, a privacy-alias key) whose type is not atom, concept or event is visible by every rule
+ * `visibility.honor_aliases` off, a privacy-alias key, nor `readable_by` or `pinned_question`) whose type is not atom, concept,
+ * event or question is visible by every rule
  * above, so only the remaining pages run the full check. For scans over thousands of
  * candidate pages (an entity's referrers).
  */
 export function privatePagesFilterFragmentFast(pageAlias: string): string {
   return `(${folderRulesAllowedSql(pageAlias, [])} AND ((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.frontmatter->'readable_by' IS NULL
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'readable_by' IS NULL AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privatePagesFilterFragment(pageAlias)}))`;
 }
 
@@ -240,6 +298,17 @@ export interface CallerAccess {
   privateReadableSources: readonly string[];
   hidePrivate: boolean;
   owner: boolean;
+  /**
+   * GST-2490: an owner read (owner true, a non-mutating operation): derived pages and facts pass when the owner reads
+   * every origin (ownerOriginAllowedSql) instead of being hidden from every remote caller.
+   */
+  ownerLineage: boolean;
+  /**
+   * GST-2490: an owner read (owner true, a non-mutating operation) on a brain whose operator turned on
+   * access.owner_reads_restricted: readers lists, folder rules and page rules stop closing pages, their derivatives and
+   * their facts to the owner, except another member's own member page and what derives from it (ownerAccessSql).
+   */
+  ownerReadsRestricted: boolean;
   applyRemoteReadPolicy: boolean;
   restricted: boolean;
   /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
@@ -250,7 +319,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, ownerLineage: false, ownerReadsRestricted: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -276,10 +345,18 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
     hidePrivate: access.hidePrivate ?? (fresh ? true : base.hidePrivate),
     owner: access.owner ?? (fresh ? false : base.owner),
+    ...ownerReads(access.owner ?? (fresh ? false : base.owner), audienceIdentities.length <= 1,
+      access.ownerLineage ?? (fresh ? false : base.ownerLineage), access.ownerReadsRestricted ?? (fresh ? false : base.ownerReadsRestricted)),
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
   }), fn);
+}
+
+/** GST-2490: the owner-read flags of a record; both need the owner speaking for itself, and the opt-in needs an owner read. */
+function ownerReads(owner: boolean, single: boolean, lineage: boolean, readsRestricted: boolean): Pick<CallerAccess, 'ownerLineage' | 'ownerReadsRestricted'> {
+  const ownerLineage = owner && single && lineage;
+  return { ownerLineage, ownerReadsRestricted: ownerLineage && readsRestricted };
 }
 
 /** Runs `fn` outside any caller's record, for work a request spawns that must not inherit its view. */
@@ -302,6 +379,15 @@ export function callerIsOwner(): boolean {
   return currentCallerAccess().owner;
 }
 
+/**
+ * GST-2089: whether a fact read stays world-only (visibility = 'world'). Only the trusted local CLI (remote strictly
+ * false) and the brain owner (CallerAccess.owner, the page rule) read private facts; provenance, source grants and
+ * member access still apply to both. Fact arms decide their visibility list here and nowhere else.
+ */
+export function worldOnlyFacts(remote: boolean | undefined): boolean {
+  return remote !== false && !callerIsOwner();
+}
+
 /** The current caller's member identity; empty outside a bound remote read or a local --as, and for an audience of several entries (see callerIdentities). */
 export function callerIdentity(): readonly string[] {
   return currentCallerAccess().identity;
@@ -314,12 +400,19 @@ export function callerIdentities(): readonly (readonly string[])[] {
 }
 
 /** GBRA-231: readersAllow for the current caller (every audience entry must be a reader). */
-export function callerReadersAllow(frontmatter: unknown): boolean {
+export function callerReadersAllow(frontmatter: unknown, slug?: string): boolean {
+  const ownPage = ownerOptInPage(currentCallerAccess());
+  if (ownPage && typeof slug === 'string' && (!slug.startsWith(MEMBER_PAGE_PREFIX) || slug === ownPage)) return true;
   return callerIdentities().every(identity => readersAllow(frontmatter, identity));
 }
 
 /** GBRA-231: readersAllowedSql for the current caller, one conjunct per audience entry. */
 export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' = 'page'): string {
+  const ownPage = ownerOptInPage(currentCallerAccess());
+  if (ownPage) {
+    const notOther = row === 'snapshot' ? `EXISTS (SELECT 1 FROM pages sp WHERE sp.id = ${alias}.page_id AND ${notOtherMemberPageSql('sp', ownPage)})` : notOtherMemberPageSql(alias, ownPage);
+    return `(${readersAllowedSql(alias, currentCallerAccess().identity, row)} OR ${notOther})`;
+  }
   return callerIdentities().map(identity => readersAllowedSql(alias, identity, row)).join(' AND ');
 }
 
@@ -330,6 +423,8 @@ function validAudienceEntry(entry: string): boolean {
 
 function callerAccessSql(pageAlias: string): string {
   const access = currentCallerAccess();
+  const ownPage = ownerReadPage(access);
+  if (ownPage) return ownerAccessSql(pageAlias, access, ownPage);
   return access.audienceIdentities.length ? accessAllowedForAllSql(pageAlias, access.audienceIdentities, access.satisfiedRuleIds)
     : accessAllowedSql(pageAlias, access.identity);
 }
@@ -392,7 +487,8 @@ export function privatePagesFilterFastForCaller(pageAlias: string): string {
 function privacyPartFastSql(pageAlias: string): string {
   return `((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privacyPartSql(pageAlias)})`;
 }
 
@@ -402,9 +498,9 @@ function privacyPartFastSql(pageAlias: string): string {
  * `source_id` is private-readable or when an operator relaxed privacy. A row
  * without `source_id` keeps the plain privacy rule.
  */
-export function isPrivatePageForCaller(page: { type?: string | null; frontmatter?: unknown; source_id?: string | null }): boolean {
+export function isPrivatePageForCaller(page: { type?: string | null; frontmatter?: unknown; source_id?: string | null; slug?: string | null }): boolean {
   const access = currentCallerAccess();
-  if (!callerReadersAllow(page.frontmatter)) return true;
+  if (!callerReadersAllow(page.frontmatter, page.slug ?? undefined)) return true;
   if (!access.hidePrivate || !isPrivacyPrivatePage(page)) return false;
   if (typeof page.frontmatter === 'object' && page.frontmatter !== null && (page.frontmatter as Record<string, unknown>).pinned_question != null) return true;
   return !(typeof page.source_id === 'string' && access.privateReadableSources.includes(page.source_id));
@@ -484,7 +580,8 @@ export type Visibility = 'private' | 'world';
 /**
  * Privacy aliases: keys a page may carry instead of `visibility` (the
  * bulk-ingestion template's `access`, a `confidentiality` field), with the
- * values that mean private. Matching is case-insensitive on the trimmed value.
+ * values that mean private. Matching is ASCII case-insensitive on the value trimmed of
+ * edge whitespace, the same on the TypeScript and SQL sides.
  * Everything derived from an aliased page (facts, chronicle events, timeline
  * rows, remember saves into it) is private. Remote page reads honor the aliases
  * too unless the operator sets `visibility.honor_aliases false`.
@@ -498,14 +595,14 @@ export const HONOR_ALIASES_KEY = 'visibility.honor_aliases';
 function hasPrivacyAlias(frontmatter: Record<string, unknown>): boolean {
   return Object.entries(PRIVACY_ALIASES).some(([key, values]) => {
     const value = frontmatter[key];
-    return typeof value === 'string' && values.includes(value.trim().toLowerCase());
+    return typeof value === 'string' && values.includes(asciiLower(value.trim()));
   });
 }
 
 /** SQL twin of hasPrivacyAlias on a page alias (a code-provided literal). */
 export function privacyAliasSql(alias: string): string {
   return `(${Object.entries(PRIVACY_ALIASES).map(([key, values]) =>
-    `COALESCE(lower(btrim(${alias}.frontmatter->>'${key}')) IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
+    `COALESCE(${asciiLowerSql(edgeTrimSql(`${alias}.frontmatter->>'${key}'`))} IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
 }
 
 /**
@@ -673,10 +770,33 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const access = currentCallerAccess();
   const hide = !callerRelaxesPrivacy();
   const member = access.actor?.member ?? (access.audienceIdentities.length ? null : access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length));
-  const policy = member && ACCESS_ID_RE.test(member)
-    ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds)} ELSE ${readPolicyFragment('pp', [], hide)} END`
+  const ownPage = ownerReadPage(access);
+  const otherwise = ownPage
+    ? `CASE WHEN starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}') THEN ${readPolicyFragment('pp', [], hide)} ELSE (${ownerAccessSql('pp', access, ownPage)} AND ${hide ? privacyPartSql('pp') : 'TRUE'}) END`
     : readPolicyFragment('pp', [], hide);
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy}))`;
+  const policy = member && ACCESS_ID_RE.test(member)
+    ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds)} ELSE ${otherwise} END`
+    : otherwise;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)})`;
+}
+
+/**
+ * A fact is never wider than the page it is about: hide a fact whose entity page (`entity_slug`, looked up in the fact's
+ * own source) the current caller cannot read under the read policy its page reads use, so a member the page's readers
+ * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
+ * only ever narrows.
+ */
+export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')}${perCandidate ? ' OFFSET 0' : ''})`;
+}
+
+/**
+ * privateProvenanceFilterFragment for a remote fact read: the provenance page gate plus the caller's entity-page gate.
+ * perCandidate keeps the entity gate a lookup per candidate row (OFFSET 0 stops the planner turning it into a join), so
+ * a scan an index serves, such as the saved-fact keyword match, keeps that index.
+ */
+export function privateFactFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
@@ -814,7 +934,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
-export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null }
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean }
 
 /**
  * The remote read policy read fresh, for publication: whether an operator
@@ -825,10 +945,10 @@ export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ow
  */
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY]]);
+    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY]]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false };
   }
 }
 
@@ -846,7 +966,7 @@ function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
   const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
   const owner = config[OWNER_MEMBER_KEY]?.trim();
   return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',
-    ownerMember: owner && ACCESS_ID_RE.test(owner) ? owner : null };
+    ownerMember: owner && ACCESS_ID_RE.test(owner) ? owner : null, ownerReadsRestricted: config[OWNER_READS_RESTRICTED_KEY]?.trim() === '1' };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

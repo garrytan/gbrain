@@ -27,13 +27,16 @@
  * - `quarantined`: the chunks of a live page carrying the `quarantine` marker,
  *   or the page itself when it has none (the gate writes zero chunks). Hidden
  *   from search; doctor `quarantined_pages` owns the warning.
- * - `empty`: a live page with no chunk rows and an empty body
- *   (`compiled_truth` and `timeline` both ''): nothing to index.
+ * - `empty`: a live page with no chunk rows and nothing to index: an empty
+ *   body (`compiled_truth` and `timeline` both ''), or a current revision
+ *   whose sealed text projection has no chunks (#8473: a body holding only
+ *   a protected takes fence).
  * - `deleted_page_chunks`: chunks on a soft-deleted page. The purge lifecycle
  *   (`gbrain pages purge-deleted`, the autopilot purge phase, 72 h) removes
  *   them; past that window they are overdue.
- * - `chunkless_healable`: a live, unquarantined page with body text and no
- *   chunk rows (`listChunklessPagesWithContent`'s predicate): `gbrain embed
+ * - `chunkless_healable`: a live, unquarantined page with body text, no
+ *   chunk rows and no sealed projection of its current revision
+ *   (`listChunklessPagesWithContent`'s predicate): `gbrain embed
  *   --stale` chunks it before embedding. An `embed_skip` page is included
  *   (#7174): writes keep its chunks (#6722), so none means keyword search
  *   cannot find it; it is chunked and still gets no vectors.
@@ -217,7 +220,7 @@ export function embeddingStateFix(state: EmbeddingState, ctx: { sourceId?: strin
     case 'empty':
       return { ...base, ask_user: true, argv: ctx.slug ? ['gbrain', 'delete', ctx.slug, ...source, '--force'] : ['gbrain', 'list', '--json'],
         consent: ['destructive'], actor: 'user',
-        why: 'The page has no body text, so there is nothing to index. Writing content to it chunks it on the next write; delete it only if it is a stub nobody needs (soft delete, restorable).',
+        why: 'The page has no indexable body text: its body is empty, or holds only content kept out of search (such as a takes fence). Writing content to it chunks it on the next write; delete it only if it is a stub nobody needs (soft delete, restorable).',
         user_message: 'A page is empty, so there is nothing to search. Add content to it, or delete the empty stub?' };
     case 'deleted_page_chunks':
       return { ...base, argv: ['gbrain', 'pages', 'purge-deleted', '--yes'], preview_argv: ['gbrain', 'pages', 'purge-deleted', '--dry-run', '--json'],

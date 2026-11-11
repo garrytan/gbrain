@@ -24,15 +24,18 @@ import { execFileSync } from 'node:child_process';
 import type { BrainEngine } from '../src/core/engine.ts';
 import * as syncCore from '../src/core/sync.ts';
 import * as syncDiscovery from '../src/core/persistence/sync-discovery.ts';
+import * as syncPageFault from '../src/core/persistence/sync-page-fault.ts';
+import * as syncScreen from '../src/core/persistence/sync-screen.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
-import { watchLoopLag } from './helpers/cpu-time.ts';
+import { spinCpuMs, watchLoopLag } from './helpers/cpu-time.ts';
 import { isolatedTest } from './helpers/isolated-test.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 
 const PATHS = 8_000;
 const MAX_LAG_MS = 100;
 const SLUG_CPU_MS = 0.05;
+const FREEZE_READ_CPU_MS = 40;
 
 const git = (root: string, args: string[], input?: string) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', input, maxBuffer: 1 << 26 }).trim();
 const setup = ({ root }: { root: string }) => {
@@ -120,5 +123,37 @@ describe('GBRA-133 PR 2b: a first sync builds its batch in linear time', () => {
       expect([slugs, adopted, sorting]).toEqual([PATHS + 1, PATHS, true]);
       expect(turned).toEqual({ 'legacy-identity read': true, 'slug-holder read': true, 'first freeze': true });
     } finally { clearInterval(ticker); engine.executeRaw = raw; slugSpy.mockRestore(); adoptSpy.mockRestore(); compareSpy.mockRestore(); }
+  }, { setup }), 300_000);
+
+  isolatedTest(import.meta.path, `with ${FREEZE_READ_CPU_MS} ms of CPU per Git read, the first freeze still yields within ${MAX_LAG_MS} ms`, () => managedBrain(async ({ engine }) => {
+    // GBRA-133: the first freeze reads the file, its pinned blob and its pinned content one synchronous call after another
+    // (Git children for the pinned reads). Each read here costs FREEZE_READ_CPU_MS more of this thread's CPU, so a freeze
+    // that runs its reads as one stretch holds timers past the bound on any machine, and one that yields between them never
+    // does. The filter driver and HEAD reads are wrapped too; with holds on the filter driver is read by the screen after the freeze's
+    // last own turn, and this fixture (a clean checkout) never reaches the HEAD read.
+    const resolve = syncCore.resolveSlugForPath;
+    let slugs = 0, reads = 0;
+    const slugSpy = spyOn(syncCore, 'resolveSlugForPath').mockImplementation(((...args: Parameters<typeof resolve>) => {
+      if (window.open) slugs++;
+      return resolve(...args);
+    }) as typeof resolve);
+    const slow = <T extends (...args: never[]) => unknown>(fn: T) => ((...args: Parameters<T>) => {
+      if (window.open && slugs >= PATHS) { reads++; spinCpuMs(FREEZE_READ_CPU_MS); }
+      return fn(...args);
+    }) as unknown as T;
+    const { pinnedBlob, pinnedContent, pinnedFilterDriver } = syncScreen, { readSyncFile } = syncDiscovery, { headCommittedBytes } = syncPageFault;
+    const spies = [
+      spyOn(syncScreen, 'pinnedBlob').mockImplementation(slow(pinnedBlob)),
+      spyOn(syncScreen, 'pinnedContent').mockImplementation(slow(pinnedContent)),
+      spyOn(syncScreen, 'pinnedFilterDriver').mockImplementation(slow(pinnedFilterDriver)),
+      spyOn(syncDiscovery, 'readSyncFile').mockImplementation(slow(readSyncFile)),
+      spyOn(syncPageFault, 'headCommittedBytes').mockImplementation(slow(headCommittedBytes)),
+    ];
+    try {
+      const maxLag = await batchBuildLag(engine, () => true);
+      expect(reads).toBeGreaterThanOrEqual(3);
+      expect(maxLag).toBeDefined();
+      expect(Math.round(maxLag!)).toBeLessThan(MAX_LAG_MS);
+    } finally { slugSpy.mockRestore(); for (const spy of spies) spy.mockRestore(); }
   }, { setup }), 300_000);
 });

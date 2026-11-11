@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -10,6 +10,8 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { adoptSharedSkillpack } from '../src/core/shared-skills/publication.ts';
 import { listSharedSkills } from '../src/core/shared-skills/catalog.ts';
 import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts';
+import { installPackagedSharedSkills } from '../src/core/shared-skills/setup.ts';
+import { VERSION } from '../src/version.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 
@@ -49,12 +51,12 @@ function packaged(edit?: (files: Record<string, string>) => void) {
       files: [{ path: `${path}/SKILL.md`, content: initial_files[`${path}/SKILL.md`], file_class: 'prose' as const }] })) };
 }
 
-/** Admits the adoption, then fails its canonical apply, leaving the accepted request uncommitted (host work pending). */
-function interrupted(ctx: OperationContext): OperationContext {
+/** Admits the adoption, then fails its canonical apply with `error`, leaving the accepted request uncommitted (host work pending). */
+function interrupted(ctx: OperationContext, error = () => new Error('synthetic storage interruption')): OperationContext {
   const failing = new Proxy(ctx.engine, { get(target, key) {
     if (key === 'transaction') return async (fn: (tx: BrainEngine) => Promise<unknown>) => target.transaction((real) => fn(new Proxy(real, { get(tx, prop) {
       if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (sql.includes('INSERT INTO shared_skill_revisions')) throw new Error('synthetic storage interruption');
+        if (sql.includes('INSERT INTO shared_skill_revisions')) throw error();
         return tx.executeRaw(sql, params);
       };
       const value = Reflect.get(tx, prop); return typeof value === 'function' ? value.bind(tx) : value;
@@ -87,4 +89,50 @@ test('an exact replay of the packaged payload resumes the same request', () => f
   const replay = await adoptSharedSkillpack(f.local, 'default', packaged());
   expect(replay.receipts[0].revision).toBe(first.receipts[0].revision);
   expect(await requestIds(f.engine)).toHaveLength(1);
+}), 120_000);
+
+test('#8453: an init retried after an upgrade resumes the adoption the earlier release admitted instead of admitting a second', () => fixture(async (f) => {
+  const older = packaged((files) => { for (const path of ['skillpack.json', 'README.md']) files[path] = files[path].replaceAll(VERSION, '0.0.1.0'); });
+  expect(older.initial_files['skillpack.json']).not.toBe(packagedSharedSkills()['skillpack.json']);
+  // A statement cancel is a transient interruption: the admitted request goes back to the queue, uncommitted.
+  const broken = interrupted(f.local, () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+  await adoptSharedSkillpack(broken, 'default', older).catch(() => undefined);
+  await disposePersistenceConsumer(broken.engine);
+  await disposePersistenceConsumer(f.engine);
+  const admitted = await requestIds(f.engine);
+  expect(admitted).toHaveLength(1);
+  expect((await f.engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE operation='put_skill'")).map((r) => r.state)).toEqual(['queued']);
+  await installPackagedSharedSkills(f.local, 'default');
+  expect(await requestIds(f.engine)).toEqual(admitted);
+  expect((await f.engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE operation='put_skill'")).map((r) => r.state)).toEqual(['committed']);
+  const [{ local_path }] = await f.engine.executeRaw<{ local_path: string }>("SELECT local_path FROM sources WHERE id='default'");
+  expect(JSON.parse(readFileSync(join(local_path, 'skillpack.json'), 'utf8')).version).toBe('0.0.1.0');
+  expect((await listSharedSkills(f.reader)).skills.length).toBeGreaterThan(0);
+}), 120_000);
+
+test('#8453: an init retried after an upgrade keeps the pack an earlier release already committed', () => fixture(async (f) => {
+  const older = packaged((files) => { for (const path of ['skillpack.json', 'README.md']) files[path] = files[path].replaceAll(VERSION, '0.0.1.0'); });
+  await adoptSharedSkillpack(f.local, 'default', older);
+  const admitted = await requestIds(f.engine);
+  await installPackagedSharedSkills(f.local, 'default');
+  expect(await requestIds(f.engine)).toEqual(admitted);
+  expect((await f.engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE operation='put_skill'")).map((r) => r.state)).toEqual(['committed']);
+}), 120_000);
+
+test('#8453: an init retried while the earlier adoption is deferred behind a refresh reports it pending instead of admitting a second', () => fixture(async (f) => {
+  const older = packaged((files) => { for (const path of ['skillpack.json', 'README.md']) files[path] = files[path].replaceAll(VERSION, '0.0.1.0'); });
+  const broken = interrupted(f.local, () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+  await adoptSharedSkillpack(broken, 'default', older).catch(() => undefined);
+  await disposePersistenceConsumer(broken.engine);
+  await disposePersistenceConsumer(f.engine);
+  const admitted = await requestIds(f.engine);
+  expect(admitted).toHaveLength(1);
+  // A write admitted during a worktree refresh waits as deferred until the refresh releases it; it is still the open adoption.
+  await f.engine.transaction(async (tx) => {
+    await tx.executeRaw('SET LOCAL session_replication_role = replica');
+    await tx.executeRaw("UPDATE persistence_requests SET state='deferred' WHERE operation='put_skill'");
+  });
+  const error = await installPackagedSharedSkills({ ...f.local, writeWaitMs: 50 }, 'default').then(() => null, (e: unknown) => e);
+  expect((error as { code?: string } | null)?.code).toBe('publication_pending');
+  expect(await requestIds(f.engine)).toEqual(admitted);
 }), 120_000);

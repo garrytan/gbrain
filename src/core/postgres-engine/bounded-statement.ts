@@ -23,6 +23,7 @@ import type postgres from '#postgres';
 import { reserveWithCancellation } from './cancellation.ts';
 import { READ_WRITE_BEGIN } from './read-write-transactions.ts';
 import type { CheckoutGauge } from '../pool-gauge.ts';
+import { ReadDeadlineError } from '../read-deadline.ts';
 
 type Sql = ReturnType<typeof postgres>;
 export type RunStatement = <T>(conn: Sql, sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal; prepare?: boolean }) => Promise<T[]>;
@@ -62,11 +63,28 @@ export async function runBoundedStatement<T>(conn: Sql, sql: string, params: unk
  * (one simple statement), the read's own statements and `COMMIT`, pipelined: the server ends a read still waiting on
  * a lock at the deadline (57014), through a transaction-mode pooler, and the answer returns without waiting for
  * COMMIT's round trip. A failed read leaves the transaction aborted, and COMMIT then rolls it back.
+ * #8651: the deadline also ends the wait for a free connection; a read whose deadline passed before it had one is
+ * never sent (`ReadDeadlineError`). A COMMIT still unsettled at the deadline, and at least `settleMs` after it was
+ * sent, has its connection discarded so the connection and its gauge slot come back.
  */
 // engine-sql-ok: transaction control around a caller's read (BEGIN READ ONLY / SET LOCAL statement_timeout / COMMIT), no storage-domain SQL
-export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx: Sql) => Promise<T>, gauge: CheckoutGauge): Promise<T> {
+export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx: Sql) => Promise<T>, gauge: CheckoutGauge, settleMs: number): Promise<T> {
+  if (Date.now() >= deadlineAt) throw new ReadDeadlineError();
   gauge.acquire('reserved');
-  const reserved = await conn.reserve().catch(error => { gauge.release('reserved'); throw error; });
+  const expiry = new AbortController();
+  const timer = setTimeout(() => expiry.abort(), deadlineAt - Date.now());
+  let reserved: postgres.ReservedSql;
+  try {
+    reserved = await reserveWithCancellation(reserve => conn.reserve(reserve), expiry.signal);
+  } catch (error) {
+    gauge.release('reserved');
+    throw expiry.signal.aborted ? new ReadDeadlineError() : error;
+  } finally { clearTimeout(timer); }
+  if (Date.now() >= deadlineAt) {
+    reserved.release();
+    gauge.release('reserved');
+    throw new ReadDeadlineError();
+  }
   gauge.checkedOut();
   const ms = Math.max(1, Math.ceil(deadlineAt - Date.now()));
   const opened = reserved.unsafe(`BEGIN READ ONLY; SET LOCAL statement_timeout = ${ms}`).simple().execute().then(() => undefined, (error: unknown) => error);
@@ -76,7 +94,17 @@ export async function runDeadlineRead<T>(conn: Sql, deadlineAt: number, run: (tx
     if (failed) throw failed;
     return result;
   } finally {
-    void reserved.unsafe('COMMIT').execute().then(() => undefined, () => undefined).finally(() => { reserved.release(); gauge.release('reserved'); });
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(stuck);
+      reserved.release();
+      gauge.release('reserved');
+    };
+    const stuck = setTimeout(() => { reserved.discard(); settle(); }, Math.max(deadlineAt - Date.now(), settleMs));
+    stuck.unref?.();
+    void reserved.unsafe('COMMIT').execute().then(settle, settle);
   }
 }
 

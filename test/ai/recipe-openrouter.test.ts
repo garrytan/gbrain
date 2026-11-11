@@ -604,3 +604,15 @@ describe('recipe: openrouter thinking-by-default — z-ai GLM (#4727)', () => {
     expect(getProviderCapabilities(model).supportsThinking).toBe(false);
   });
 });
+
+// GST-1977: Particle's particle-1 reasons by default and OpenRouter bills the
+// reasoning against max_tokens, so a thinking:'off' call (the dream-triage
+// judge) needs the thinking-model headroom or it truncates at the 2,048 cap.
+describe('recipe: openrouter thinking-by-default — particle-ai (GST-1977)', () => {
+  test.each([
+    'openrouter:particle-ai/particle-1',
+    'openrouter:Particle-AI/particle-1',
+  ])('%s is thinking-by-default', (model) => {
+    expect(getProviderCapabilities(model).supportsThinking).toBe(true);
+  });
+});

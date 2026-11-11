@@ -25,8 +25,10 @@ import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
-import { resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
-import { callerMember, memberFactAdmitSql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
+import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { projectionEligibleSql } from '../eligibility/sql.ts';
+import { resolveReadEligibility } from '../eligibility/policy.ts';
+import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
@@ -190,7 +192,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   registerMutationPreparer('remember', prepareMemoryMutation);
   const { visibility: _defaulted, ...withoutDefault } = params;
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
-  if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return throwIfHeld(withRememberTarget(prior, () => writeResponse(settled))); }
+  if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
   const [source] = await ctx.engine.executeRaw<RememberSource>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
@@ -201,10 +203,12 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const resolved = entity ? await resolveRememberEntity(ctx, sourceId, entity) : null;
   // GST-359 C2: a remote member's fact is private, on its member page, and never inferred onto another page.
   // GST-1113: an attested memory_write that named a scope source saves world facts on that source's scope page instead.
+  // GST-2243: share: true saves a member's fact as anyone else's, on the subject's page for every reader of the source.
   const scopePage = perCallWriteSource(ctx, sourceId);
-  const memberPage = scopePage ? SCOPE_PAGE_SLUG : memberFactPage(ctx);
+  const ownPage = scopePage ? null : memberFactPage(ctx);
+  const memberPage = scopePage ? SCOPE_PAGE_SLUG : p.share === true ? null : ownPage;
   const call: RememberCall = memberPage ? { p: { ...p, visibility: scopePage ? 'world' : 'private', infer_entity: false }, visibilityDefaulted: false }
-    : { p, visibilityDefaulted: opts.visibilityDefaulted === true };
+    : { p, visibilityDefaulted: opts.visibilityDefaulted === true || p.share === true };
   const inference = entity === null && !memberPage ? await inferRememberTarget(ctx, sourceId, source, call) : null;
   const linked = inference && 'target' in inference ? inference : null;
   const entitySlug = linked?.target.slug ?? resolved?.slug ?? null;
@@ -216,6 +220,10 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const visibility = call.visibilityDefaulted && p.replaces !== undefined && p.replaces !== null
     ? await replacementVisibility(ctx.engine, sourceId, Number(p.replaces), defaultedVisibility, { remote: ctx.remote !== false })
     : defaultedVisibility;
+  if (p.share === true && visibility !== 'world') {
+    throw Object.assign(verbError('invalid_params', `remember: share: true cannot share a fact on ${slug}, whose facts are kept private (restricted page or the brain's private fact default); nothing was saved.`,
+      'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'), { reason: 'share_target_restricted' });
+  }
   const factIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as never, visibility, entity_slug: entitySlug, ...(memberPage ? { page_slug: memberPage } : {}) };
   // Fail fast on an invalid target or a withdrawn claim; the coordinator re-checks both under its locks before publishing.
   if (p.replaces !== undefined && p.replaces !== null) {
@@ -236,7 +244,13 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   const response = throwIfHeld(withRememberTarget(row, () => writeResponse(written)));
   emitFenceNotice(ctx, response, row.slug);
-  return response;
+  return rememberLanded(written, response);
+}
+
+/** GST-2243: every remember reply names the page the fact went to and who can recall it. */
+function rememberLanded<T>(row: WriteRequest, response: T): T {
+  const visibility = (row.intent as { visibility?: unknown } | null)?.visibility;
+  return { ...response, page: row.slug, ...(visibility === 'world' || visibility === 'private' ? { visibility } : {}) };
 }
 
 /**
@@ -267,9 +281,9 @@ async function resolveRememberEntity(ctx: OperationContext, sourceId: string, en
   const { entityReferenceCandidates, resolveEntitySlugWithSource, resolveStrictEntityReference } = await import('../entities/resolve.ts');
   if (entity.includes('/')) return (await resolveEntitySlugWithSource(ctx.engine, sourceId, entity))!;
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
-  const strict = await resolveStrictEntityReference(ctx.engine, sourceId, entity, { sameName: true, excludePrivate });
+  const strict = await resolveStrictEntityReference(ctx.engine, sourceId, entity, { sameName: true, excludePrivate, forCaller: true });
   if (strict.slug !== null) return { slug: strict.slug };
-  const candidates = await entityReferenceCandidates(ctx.engine, sourceId, entity, { excludePrivate });
+  const candidates = await entityReferenceCandidates(ctx.engine, sourceId, entity, { excludePrivate, forCaller: true });
   if (strict.miss === 'no_page' && !candidates.length) {
     const unnamed = await resolveEntitySlugWithSource(ctx.engine, sourceId, entity);
     if (unnamed?.source === 'fallback_slugify') return { slug: unnamed.slug };
@@ -313,7 +327,17 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // so no owner proposal is filed and its tier is never disclosed.
   const member = remote ? callerMember() : null;
   const ownPage = member ? memberPageSlug(member) : null;
-  if (ownPage && !(await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${memberFactAdmitSql('facts')}`, [id, sourceId])).length) throw missing();
+  if (ownPage && !(await ownMemberFactIds(ctx.engine, sourceId, [id])).has(id)) {
+    // #9101: a fact the caller reads (one it shared, or a teammate's shared fact) is refused by name; a fact it cannot read stays not_found.
+    // An attested QM actor keeps not_found for every fact off its page, as QM memory-provider contract v3 states.
+    if (currentCallerAccess().actor) throw missing();
+    const readable = callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
+    const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
+    const reads = (await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : ''}`, [id, sourceId])).length > 0;
+    if (!reads) throw missing();
+    throw verbError('permission_denied', `Fact #${rawId} is not on your member page ${ownPage}, so this credential cannot withdraw it. Nothing was forgotten.`,
+      `A member credential withdraws only the facts on its own member page. The brain host withdraws this one with gbrain forget ${rawId}.`);
+  }
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
   if (remote) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
   const [source] = await ctx.engine.executeRaw<RememberSource>(

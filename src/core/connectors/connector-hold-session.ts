@@ -19,11 +19,15 @@ import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { clearHoldRetryKeys, readHoldRetryKeys, writeHeldRetryPointer } from './item-holds-store.ts';
 import { holdsExhaustedError, ItemHoldsRun, type ClassifiedConnectorError, type ItemHoldMeta, type ItemHoldsFinish, type ItemHoldsState } from './item-holds.ts';
 
-/** Errors a managed connector must not absorb (the run aborts). Refusals raised before submission are counted instead. */
+/**
+ * Errors a managed connector must not absorb (the run aborts). Refusals raised before submission are counted instead:
+ * invalid connector text, and (#9062) a stored page a read cannot load whole (`page_body_segmented`, a body over the
+ * single-string ceiling), which fails that item while the rest of the run imports.
+ */
 export function abortsManagedRun(error: unknown): boolean {
   if (error instanceof LockStolenError || (error as { name?: string } | null)?.name === 'ConnectorWaitBudgetStop') return true;
   if (!(error instanceof OperationError)) return false;
-  return !(error.code === 'invalid_connector_text' && !error.writeRequest);
+  return !((error.code === 'invalid_connector_text' || error.code === 'page_body_segmented') && !error.writeRequest);
 }
 
 export interface HoldRunSummary { held: number; newlyHeld: number; skipped: number; outage: boolean }

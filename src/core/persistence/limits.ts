@@ -1,20 +1,43 @@
 import { opError, type OperationError } from '../ops/contract.ts';
 import { PAGE_BODY_CONFIG_KEYS, pageRecoveryBytes, segmentedPageCeiling } from '../page-body/limits.ts';
 import { DEFAULT_JOURNAL_LIMITS, principalKey, type JournalLimits, type Principal, type SqlEngine } from './model.ts';
-import { COMPACTED_HEADROOM_BYTES, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
+import { engineKey } from '../engine-key.ts';
+import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
 
 /** Fallback compacted receipt size when no receipt is sampled; a compacted put_page measures about 3.9 KB. */
 export const RETAINED_RECEIPT_BYTES = 4096;
 
 export const RECEIPT_RETENTION_KEY = 'persistence.receipt_retention_days';
 export const DEFAULT_RECEIPT_RETENTION_DAYS = 30;
+/**
+ * GBRA-108: while receipts not yet compacted reserve more than this target (`readCompactableReceiptBytes`), housekeeping compacts settled receipts and re-derivable
+ * producer refusals older than HOUSEKEEPING_FLOOR_DAYS instead of waiting out the default retention (compaction-pass.ts
+ * `EARLY_SQL`; an explicit retention is kept as set), and doctor tells the host operator. 0 turns both off. Never a write refusal.
+ */
+export const RECEIPT_TARGET_KEY = 'persistence.housekeeping.receipt_target_bytes';
+export const DEFAULT_RECEIPT_TARGET_BYTES = 8 * 1024 ** 3;
+export const HOUSEKEEPING_FLOOR_DAYS = 7;
+export async function readReceiptTargetBytes(engine:SqlEngine):Promise<number> {
+  const [row]=await engine.executeRaw<{value:string}>('SELECT value FROM config WHERE key=$1',[RECEIPT_TARGET_KEY]);
+  return row ? parseJournalConfigValue(RECEIPT_TARGET_KEY,row.value) : DEFAULT_RECEIPT_TARGET_BYTES;
+}
+/**
+ * The reserved bytes the receipt target counts: terminal receipts not yet compacted that no recovery holds (the rows of the
+ * persistence_requests_compactable index). A compacted receipt keeps about 1-4 KB so its request id stays idempotent and never
+ * shrinks further, so counting those would keep a large brain above the target forever with nothing left to compact.
+ */
+export async function readCompactableReceiptBytes(engine:SqlEngine):Promise<number> {
+  const [row]=await engine.executeRaw<{bytes:string}>(`SELECT COALESCE(SUM(terminal_reservation),0)::text AS bytes FROM persistence_requests
+    WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled')`);
+  return Number(row?.bytes ?? 0);
+}
 
 export function journalLimitKey(key:keyof JournalLimits):string {
   return `persistence.limits.${key.replace(/[A-Z]/g,letter=>`_${letter.toLowerCase()}`)}`;
 }
 /** Every database config key the persistence journal reads. */
 export const JOURNAL_CONFIG_KEYS: readonly string[] = [
-  ...(Object.keys(DEFAULT_JOURNAL_LIMITS) as Array<keyof JournalLimits>).map(journalLimitKey), RECEIPT_RETENTION_KEY,
+  ...(Object.keys(DEFAULT_JOURNAL_LIMITS) as Array<keyof JournalLimits>).map(journalLimitKey), RECEIPT_RETENTION_KEY, RECEIPT_TARGET_KEY,
 ];
 export function parseJournalConfigValue(key:string,value:string):number {
   if(!/^(0|[1-9]\d*)$/.test(value) || !Number.isSafeInteger(Number(value))) {
@@ -51,7 +74,7 @@ export async function readJournalLimits(engine:SqlEngine & { kind?: string },ove
     const value=configured.get(journalLimitKey(key));
     if(value!==undefined) limits[key]=parseJournalConfigValue(journalLimitKey(key),value);
     if(overrides?.[key]!==undefined) limits[key]=overrides[key]!;
-    if(!Number.isSafeInteger(limits[key]) || limits[key]<0) throw new TypeError(`Invalid journal limit: ${key}`);
+    if((!Number.isSafeInteger(limits[key]) || limits[key]<0) && !(limits[key]===Infinity && DEFAULT_JOURNAL_LIMITS[key]===Infinity)) throw new TypeError(`Invalid journal limit: ${key}`);
   }
   return limits;
 }
@@ -68,27 +91,45 @@ export function recommendedLimit(resource: CapacityResource, used: number, limit
   return resource === 'terminal_bytes' ? Math.ceil(value / 1024 ** 2) * 1024 ** 2 : value;
 }
 
+/** How long the 7-day mean rates a forecast read stay usable by an admission refusal. */
+export const FORECAST_RATES_TTL_MS = 60_000;
+const forecastRates = new WeakMap<object, { at: number; brain: string | null; retention: number; rates: Map<string, { perDay: number; netPerDay: number }> }>();
 /**
- * A cumulative cap value that covers one more year at the scope's recent
- * admission rate (sampled from its latest 1,000 admissions), never less than
- * double the current cap. Receipt bytes use the sample's measured
- * reservations: what its receipts reserve now while the retention window
- * holds them, and their compacted size after (capacity-forecast.ts
- * `recommendedLimit`, the formula doctor uses too).
+ * GST-2107: `readCapacityForecast` records each scope's 7-day mean rates here, per engine, for `oneYearCapacity`; `brain`
+ * (the brain's first request) keeps a reused engine on a different brain from reading them.
+ */
+export function recordForecastRates(engine:SqlEngine,brain:string|null,retention:number,rates:Array<{scope:string;resource:CapacityResource;perDay:number;netPerDay:number}>):void {
+  forecastRates.set(engineKey(engine),{at:Date.now(),brain,retention,rates:new Map(rates.map(r=>[`${r.scope}|${r.resource}`,{perDay:r.perDay,netPerDay:r.netPerDay}]))});
+}
+
+/**
+ * A cumulative cap value that covers one more year, never less than double the current cap. Admission refusals call this
+ * under the counter locks, so it never walks the week itself. GST-2107: when a forecast read in the last minute (doctor,
+ * `/metrics`, or the capacity snapshot write and sync receipts read) recorded the scope's 7-day mean rates, it uses them,
+ * so the refusal names doctor's value and one bulk hour is not projected for a year. Otherwise it samples the scope's
+ * latest 1,000 admissions. Receipt bytes use measured reservations: what receipts reserve while the retention window
+ * holds them, and their compacted size after (`recommendedLimit`).
  */
 export async function oneYearCapacity(engine:SqlEngine,scope:string,setting:'LifetimeIds'|'TerminalBytes',used:number,limit:number):Promise<number> {
+  const resource:CapacityResource=setting==='LifetimeIds' ? 'lifetime_ids' : 'terminal_bytes';
+  const known=forecastRates.get(engineKey(engine));
+  const [first]=known && Date.now()-known.at<FORECAST_RATES_TTL_MS
+    ? await engine.executeRaw<{id:string}>('SELECT id::text AS id FROM persistence_requests ORDER BY sequence LIMIT 1') : [];
+  const rate=known && first && first.id===known.brain ? known.rates.get(`${scope}|${resource}`) : undefined;
+  if(rate && known) return recommendedLimit(resource,used,limit,rate,known.retention);
   const principal=/^principal:([^:]+):(.+)$/.exec(scope);
-  const [sample]=await engine.executeRaw<{admissions:number;age_seconds:number|null;gross:number|null;net:number|null}>(`SELECT count(*)::int AS admissions,
-    EXTRACT(EPOCH FROM (now()-min(created_at)))::float8 AS age_seconds,avg(terminal_reservation)::float8 AS gross,
-    avg(LEAST(terminal_reservation,octet_length(authority::text)+COALESCE(octet_length(outcome::text),0)+COALESCE(octet_length(error_detail::text),0)+${COMPACTED_HEADROOM_BYTES}))::float8 AS net
-    FROM (SELECT created_at,terminal_reservation,authority,outcome,error_detail FROM persistence_requests
-    ${principal ? 'WHERE principal_kind=$1 AND principal_id=$2' : ''} ORDER BY sequence DESC LIMIT 1000) recent`,
+  const [sample]=await engine.executeRaw<{admissions:number;age_seconds:number|null;gross:number|null;net:number|null}>(`WITH recent AS (
+      SELECT id,created_at,terminal_reservation,authority,outcome,error_detail,client_request_id FROM persistence_requests
+      ${principal ? 'WHERE principal_kind=$1 AND principal_id=$2' : ''} ORDER BY sequence DESC LIMIT 1000),
+    e AS (SELECT request_id,SUM(${EFFECT_BYTES_SQL}) AS bytes FROM persistence_effects WHERE request_id IN (SELECT id FROM recent) GROUP BY request_id)
+    SELECT count(*)::int AS admissions,EXTRACT(EPOCH FROM (now()-min(created_at)))::float8 AS age_seconds,avg(terminal_reservation)::float8 AS gross,
+      avg(${COMPACTED_RECEIPT_BYTES_SQL('recent', 'e')})::float8 AS net FROM recent LEFT JOIN e ON e.request_id=recent.id`,
   principal ? [principal[1],principal[2]] : []);
-  const perDay=sample.admissions/Math.max(1/24,(sample.age_seconds ?? 0)/86_400);
+  const perDay=sample!.admissions/Math.max(1/24,(sample!.age_seconds ?? 0)/86_400);
   const retention=await readReceiptRetentionDays(engine).catch(()=>DEFAULT_RECEIPT_RETENTION_DAYS);
   const measured=(value:number|null|undefined,fallback:number)=>Number.isFinite(Number(value)) && Number(value)>0 ? Number(value) : fallback;
-  return setting==='LifetimeIds' ? recommendedLimit('lifetime_ids',used,limit,{perDay},retention)
-    : recommendedLimit('terminal_bytes',used,limit,{perDay:perDay*measured(sample.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample.net,RETAINED_RECEIPT_BYTES)},retention);
+  return resource==='lifetime_ids' ? recommendedLimit(resource,used,limit,{perDay},retention)
+    : recommendedLimit(resource,used,limit,{perDay:perDay*measured(sample!.gross,RECEIPT_RESERVATION_FLOOR),netPerDay:perDay*measured(sample!.net,RETAINED_RECEIPT_BYTES)},retention);
 }
 
 /**

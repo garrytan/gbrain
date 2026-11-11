@@ -198,8 +198,8 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
   const uncommitted = stranded.find(r => r.uncommitted_pages);
   if (uncommitted) {
     const pages = uncommitted.uncommitted_pages!;
-    const push: Action = { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', uncommitted.root], consent: [], actor: 'agent', requires_exclusive: false,
-      why: 'Publishes the commit just made without moving the checkout.', verify: doctorVerify('git_convergence') };
+    const push: Action = { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', uncommitted.root], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Publishes the commit just made without moving the checkout, after scanning what the unpublished commits add for secrets.', verify: doctorVerify('git_convergence') };
     return { name: 'git_convergence', status, details,
       message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${uncommitted.root} is a managed checkout with Git durability on, ${pages.length} tracked file(s) modified under its source root (${pages.slice(0, 5).join(', ')}${pages.length > 5 ? ', ...' : ''}) and no Git effect queued, running or parked, so no effect will commit them (#7091: earlier releases committed no edits to tracked pages when the source root sits below the repository top). Review them and commit them with gbrain git commit-push, then push with the keep-checkout publish. ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
       fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--path', uncommitted.root, '-m', 'gbrain: persist canonical memory update', '--', ...pages], consent: [], actor: 'user', requires_exclusive: false,
@@ -211,15 +211,15 @@ export async function gitConvergenceCheck(engine: BrainEngine, now = Date.now())
     const first = stranded[0]!;
     return { name: 'git_convergence', status, details,
       message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${stranded.map(r => r.root).join(', ')} ${stranded.length === 1 ? 'is a managed checkout' : 'are managed checkouts'} with Git durability on and no Git effect queued, running or parked, so no effect will push ${stranded.length === 1 ? 'its' : 'their'} commits; push them with the keep-checkout publish, which merges a moved remote in memory and never moves the checkout. ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
-      fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', first.root], consent: [], actor: 'agent', requires_exclusive: false,
-        why: `${first.root} has ${first.ahead} commit(s) not on its upstream and no Git effect left to push them (#7089); this publishes the commits already on the branch and commits nothing. A conflict with the remote is reported with the user's choice as its fix.${stranded.length > 1 ? ` ${stranded.length - 1} other checkout(s) need the same, see details.roots (stranded).` : ''}`,
+      fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', first.root], consent: [], actor: 'agent', requires_exclusive: false,
+        why: `${first.root} has ${first.ahead} commit(s) not on its upstream and no Git effect left to push them (#7089); this publishes the commits already on the branch and commits nothing, refusing with publish_secret_found when what they add looks like a secret. A conflict with the remote is reported with the user's choice as its fix.${stranded.length > 1 ? ` ${stranded.length - 1} other checkout(s) need the same, see details.roots (stranded).` : ''}`,
         verify: doctorVerify('git_convergence') } };
   }
   const diverged = bad.find(r => r.diverged);
   if (diverged) {
     return { name: 'git_convergence', status, details,
       message: `Git checkouts have not converged with their upstream: ${lines.join(' | ')}. ${diverged.root} is a managed checkout that diverged from its upstream, so gbrain sources refresh refuses (refresh_diverged) until its local commits are published merged with the upstream; details.roots lists each one (sha, author, date, paths). ${remedy}; this compares with the last fetched upstream and does not fetch.${boundNote}`,
-      fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', diverged.root, '--json'], consent: [], actor: 'user', requires_exclusive: false,
+      fix: { ask_user: true, argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', diverged.root, '--json'], consent: [], actor: 'user', requires_exclusive: false,
         why: `${diverged.root} holds ${diverged.ahead} commit(s) its upstream lacks while the upstream moved on; this merges the upstream into HEAD in memory, refuses on a conflict, pushes the merge and never moves the checkout, after which gbrain sources refresh fast-forwards. It publishes those commits, so the user reviews them first.`,
         user_message: `${diverged.root} has ${diverged.ahead} local commit(s) that were never pushed (newest ${diverged.unpushed_commits?.[0]?.sha.slice(0, 7) ?? 'unknown'} by ${diverged.unpushed_commits?.[0]?.author ?? 'unknown'}) while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date?`,
         verify: doctorVerify('git_convergence') } };

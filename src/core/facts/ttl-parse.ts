@@ -52,7 +52,11 @@ export function parseTtlShorthand(raw: unknown): TtlParseResult {
   }
 
   const ms = parseDurationShorthandMs(s);
-  if (ms !== null) return { ok: true, validUntil: new Date(Date.now() + ms) };
+  if (ms !== null) {
+    const validUntil = new Date(Date.now() + ms);
+    // #8913: a duration past the Date range would be an Invalid Date.
+    return Number.isFinite(validUntil.getTime()) ? { ok: true, validUntil } : { ok: false, code: 'unparseable', input: s };
+  }
 
   if (/^\d{4}-\d{2}-\d{2}$/.test(s) &&
       (!Number.isFinite(Date.parse(s)) || new Date(s).toISOString().slice(0, 10) !== s)) {

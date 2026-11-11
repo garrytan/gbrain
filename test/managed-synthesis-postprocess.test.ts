@@ -21,6 +21,9 @@ import { requestIndexesCheck } from '../src/commands/doctor/checks/persistence-r
 import { PERSISTENCE_REQUEST_ID_INDEX } from '../src/core/persistence/schema.ts';
 import { buildIndexOnline } from '../src/core/schema-migrations/helpers.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { runCompactionPass } from '../src/core/persistence/compaction-pass.ts';
+import { RECEIPT_TARGET_KEY } from '../src/core/persistence/limits.ts';
+import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { isTerminal as isTerminalRequest, type RequestState as PersistenceRequestState } from '../src/core/persistence/model.ts';
 import { configureGateway, resetGateway, __setChatTransportForTests, __setEmbedTransportForTests, __setDecideTransportForTests } from '../src/core/ai/gateway.ts';
 import { flushDecideWrites } from '../src/core/ai/decide/store.ts';
@@ -355,6 +358,29 @@ test('a maintenance-only frontmatter drift after the child commit is adopted (#6
     expect(replay.status).toBe('ok');
     expect(replay.details.pages_written).toBe(0);
     expect((await engine.readPageSnapshot(slug, { sourceId }))!.revision).toBe(snapshot.revision);
+  });
+}, 120_000);
+
+test('GBRA-108: receipt housekeeping keeps an interrupted child output, so a later pass still verifies it after a maintenance drift', async () => {
+  await fixture(async ({ engine, sourceId, opts, calls }) => {
+    await interruptAfterChild(engine, sourceId, opts);
+    const slug = await outputSlug(engine, sourceId);
+    await maintenanceFrontmatterDrift(engine, sourceId, slug);
+    await disposePersistenceConsumer(engine);
+    // Ten days later, with receipt storage above the housekeeping target, housekeeping runs before synthesis does.
+    await engine.transaction(async tx => { await declarePersistenceProtocol(tx);
+      await tx.executeRaw("UPDATE persistence_requests SET created_at=created_at-interval '10 days',completed_at=completed_at-interval '10 days'"); });
+    await engine.setConfig(RECEIPT_TARGET_KEY, '1');
+    await runCompactionPass(engine, { hostId: 'host-a' });
+    const [child] = await engine.executeRaw<{ compacted: boolean }>(
+      "SELECT compacted FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND operation='put_page' AND state='committed' ORDER BY sequence LIMIT 1", [sourceId, slug]);
+    expect(child).toEqual({ compacted: false });
+    const spent = calls();
+    const recovered = await runPhaseSynthesize(engine, opts);
+    expect(recovered.status).toBe('ok');
+    expect(calls()).toBe(spent);
+    expect(recovered.details.pages_written).toBe(1);
+    expect((await engine.readPageSnapshot(slug, { sourceId }))!.page.compiled_truth).not.toContain('"an entirely invented');
   });
 }, 120_000);
 

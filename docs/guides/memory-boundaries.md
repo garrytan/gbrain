@@ -297,7 +297,7 @@ wrong with the page.
 | Markdown import and sync (`gbrain import`, `gbrain sync`, the managed sync blob read) | the page ceiling: 256 MiB on Postgres, 128 MiB on PGLite (24 MiB while segmented storage is off); above 24 MiB on a source backed by files, only from the file's own place in the checkout | — |
 | CLI stdin (`gbrain put`, `gbrain capture --stdin`) | 24 MiB (was 5 MB) | `gbrain import` the file |
 | MCP stdio (local agents, `gbrain serve`) | 64 MiB per JSON-RPC message (the MCP SDK default of 10 MiB is raised), so a JSON-escaped page at the ceiling fits | — |
-| MCP over HTTP (`gbrain serve --http`) | 4 MiB request body (the MCP SDK default) | an [upload session](#adding-to-a-large-page), or sync or the CLI on the brain host |
+| MCP over HTTP (`gbrain serve --http`) | 4 MiB request body (the MCP SDK default; `GBRAIN_HTTP_MAX_BODY_BYTES` overrides it) | an [upload session](#adding-to-a-large-page), or sync or the CLI on the brain host |
 | Legacy HTTP transport | 1 MiB (`GBRAIN_HTTP_MAX_BODY_BYTES`) | the same |
 | `put_pages` batch | 8 MiB per batch | send large pages one per `put_page`, or by file |
 | Persistence journal | 64 MiB of outstanding JSON-escaped write intent per principal (was 32 MiB), 256 MiB per brain | nothing: a second large write waits for the first |

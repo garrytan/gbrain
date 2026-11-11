@@ -482,82 +482,7 @@
               "exact": true,
               "forecast": {
                 "retention_days": 30,
-                "rows": [
-                  {
-                    "basis": "aggregate_1d_short_history",
-                    "config_key": "persistence.limits.brain_lifetime_ids",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 8000000,
-                    "max_day_7d": 24,
-                    "pct": 0,
-                    "per_day_7d": 24,
-                    "recommended_limit": 16000000,
-                    "resource": "lifetime_ids",
-                    "scope": "brain",
-                    "spike_day": null,
-                    "status": "ok",
-                    "used": 24,
-                    "window_days": 1
-                  },
-                  {
-                    "basis": "aggregate_1d_short_history:gross_then_net",
-                    "config_key": "persistence.limits.brain_terminal_bytes",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 68719476736,
-                    "max_day_7d": 198780,
-                    "net_per_day_7d": 58870,
-                    "pct": 0,
-                    "per_day_7d": 198780,
-                    "reclaimable_bytes": 139910,
-                    "recommended_limit": 137438953472,
-                    "resource": "terminal_bytes",
-                    "scope": "brain",
-                    "spike_day": null,
-                    "status": "ok",
-                    "under_reserved_receipts": 0,
-                    "used": 198780,
-                    "window_days": 1
-                  },
-                  {
-                    "basis": "aggregate_1d_short_history",
-                    "config_key": "persistence.limits.principal_lifetime_ids",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 2000000,
-                    "max_day_7d": 24,
-                    "pct": 0,
-                    "per_day_7d": 24,
-                    "recommended_limit": 4000000,
-                    "resource": "lifetime_ids",
-                    "scope": "principal:local_cli:<uuid>",
-                    "spike_day": null,
-                    "status": "ok",
-                    "used": 24,
-                    "window_days": 1
-                  },
-                  {
-                    "basis": "aggregate_1d_short_history:gross_then_net",
-                    "config_key": "persistence.limits.principal_terminal_bytes",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 17179869184,
-                    "max_day_7d": 198780,
-                    "net_per_day_7d": 58870,
-                    "pct": 0,
-                    "per_day_7d": 198780,
-                    "reclaimable_bytes": 139910,
-                    "recommended_limit": 34359738368,
-                    "resource": "terminal_bytes",
-                    "scope": "principal:local_cli:<uuid>",
-                    "spike_day": null,
-                    "status": "ok",
-                    "under_reserved_receipts": 0,
-                    "used": 198780,
-                    "window_days": 1
-                  }
-                ],
+                "rows": [],
                 "table_bytes": "<volatile>",
                 "thresholds": {
                   "fail_days": 7,
@@ -567,6 +492,13 @@
                 },
                 "window_days": 1
               },
+              "housekeeping": {
+                "compactable_bytes": null,
+                "explicit_retention_days": null,
+                "over_target": false,
+                "target_bytes": 8589934592,
+                "used_bytes": 198780
+              },
               "inspected": 2,
               "outstanding": [],
               "paused_producers": [],
@@ -575,7 +507,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Managed write capacity is below 80% of every cumulative limit and none runs out within 30 days at its 7-day rate.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 198780 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -686,6 +618,7 @@
               "last_compaction": {
                 "at": "<ts>",
                 "compacted": 0,
+                "early": 0,
                 "freed_bytes": 0,
                 "host_id": "<uuid>",
                 "skipped_by_reason": {}
@@ -1185,6 +1118,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+            "name": "unlabeled_people_folders",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no page names readers and no member exists.",
             "name": "access_may_act_for_wildcard",
             "readiness_state": "not_applicable",
@@ -1192,10 +1134,35 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the owner opt-in (access.owner_reads_restricted) is off; the owner reads a page that names readers or sits under a rule only when listed.",
+            "name": "access_owner_reads_restricted",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
+            "name": "attest_read_shared_scope",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 174/174 public tables",
+            "message": "RLS enabled on 176/176 public tables",
             "name": "rls",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The Postgres host is on this machine; TLS is not required.",
+            "name": "postgres_tls",
             "status": "ok"
           },
           {
@@ -1203,6 +1170,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every gbrain function that pins a search_path ends it with pg_temp",
             "name": "function_search_path",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The database encoding is UTF8",
+            "name": "database_encoding",
             "status": "ok"
           },
           {
@@ -1215,14 +1189,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1394 column(s) verified against live schema",
+            "message": "1399 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 176 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1511,6 +1485,22 @@
             "category": "brain",
             "details": {
               "count": "exact",
+              "pages": 0,
+              "scan_cap": 100000,
+              "truncated": false,
+              "value_count": 0,
+              "values": [],
+              "values_truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "name": "privacy_label_ignored",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": "exact",
               "kept_pages": 0,
               "pages_pending": 0,
               "repair": "safe-chunks",
@@ -1599,30 +1589,7 @@
               "docs": "docs/guides/repair.md#request-growth",
               "rows": 22,
               "rows_exact": false,
-              "scopes": [
-                {
-                  "admissions_in_window": 22,
-                  "config_key": "persistence.limits.brain_lifetime_ids",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "lifetime_ids": 24,
-                  "limit": 8000000,
-                  "per_day": 3,
-                  "scope": "brain",
-                  "window_days": 7
-                },
-                {
-                  "admissions_in_window": 22,
-                  "config_key": "persistence.limits.principal_lifetime_ids",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "lifetime_ids": 24,
-                  "limit": 2000000,
-                  "per_day": 3,
-                  "scope": "principal:local_cli:<uuid>",
-                  "window_days": 7
-                }
-              ],
+              "scopes": [],
               "verify": "gbrain doctor --json (check persistence_request_growth)",
               "window_days": 7
             },
@@ -2027,6 +1994,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#atom-fence-rows",
+              "origin_unread": 0,
+              "repair": "atom-fence-rows"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No world atom carries a fence row its source page shows only to the owner.",
+            "name": "atom_fence_rows",
             "status": "ok"
           },
           {
@@ -3072,6 +3053,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No memory proposals await the owner.",
+            "name": "memory_proposals_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "conversation": null,
               "fix": "preview links: gbrain facts relink --dry-run",
@@ -3168,6 +3156,13 @@
             "elapsed_ms": "<volatile>",
             "message": "chronicle.* settings are valid.",
             "name": "chronicle_config_invalid",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No page holds live events from an earlier extraction run beside its newest one.",
+            "name": "chronicle_duplicate_events",
             "status": "ok"
           },
           {
@@ -5580,82 +5575,7 @@
               "exact": true,
               "forecast": {
                 "retention_days": 30,
-                "rows": [
-                  {
-                    "basis": "aggregate_1d_short_history",
-                    "config_key": "persistence.limits.brain_lifetime_ids",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 8000000,
-                    "max_day_7d": 24,
-                    "pct": 0,
-                    "per_day_7d": 24,
-                    "recommended_limit": 16000000,
-                    "resource": "lifetime_ids",
-                    "scope": "brain",
-                    "spike_day": null,
-                    "status": "ok",
-                    "used": 24,
-                    "window_days": 1
-                  },
-                  {
-                    "basis": "aggregate_1d_short_history:gross_then_net",
-                    "config_key": "persistence.limits.brain_terminal_bytes",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 68719476736,
-                    "max_day_7d": 198780,
-                    "net_per_day_7d": 58870,
-                    "pct": 0,
-                    "per_day_7d": 198780,
-                    "reclaimable_bytes": 139910,
-                    "recommended_limit": 137438953472,
-                    "resource": "terminal_bytes",
-                    "scope": "brain",
-                    "spike_day": null,
-                    "status": "ok",
-                    "under_reserved_receipts": 0,
-                    "used": 198780,
-                    "window_days": 1
-                  },
-                  {
-                    "basis": "aggregate_1d_short_history",
-                    "config_key": "persistence.limits.principal_lifetime_ids",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 2000000,
-                    "max_day_7d": 24,
-                    "pct": 0,
-                    "per_day_7d": 24,
-                    "recommended_limit": 4000000,
-                    "resource": "lifetime_ids",
-                    "scope": "principal:local_cli:<uuid>",
-                    "spike_day": null,
-                    "status": "ok",
-                    "used": 24,
-                    "window_days": 1
-                  },
-                  {
-                    "basis": "aggregate_1d_short_history:gross_then_net",
-                    "config_key": "persistence.limits.principal_terminal_bytes",
-                    "days_to_exhaustion": null,
-                    "exhaustion_date": null,
-                    "limit": 17179869184,
-                    "max_day_7d": 198780,
-                    "net_per_day_7d": 58870,
-                    "pct": 0,
-                    "per_day_7d": 198780,
-                    "reclaimable_bytes": 139910,
-                    "recommended_limit": 34359738368,
-                    "resource": "terminal_bytes",
-                    "scope": "principal:local_cli:<uuid>",
-                    "spike_day": null,
-                    "status": "ok",
-                    "under_reserved_receipts": 0,
-                    "used": 198780,
-                    "window_days": 1
-                  }
-                ],
+                "rows": [],
                 "table_bytes": "<volatile>",
                 "thresholds": {
                   "fail_days": 7,
@@ -5665,6 +5585,13 @@
                 },
                 "window_days": 1
               },
+              "housekeeping": {
+                "compactable_bytes": null,
+                "explicit_retention_days": null,
+                "over_target": false,
+                "target_bytes": 8589934592,
+                "used_bytes": 198780
+              },
               "inspected": 2,
               "outstanding": [],
               "paused_producers": [],
@@ -5673,7 +5600,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "Managed write capacity is below 80% of every cumulative limit and none runs out within 30 days at its 7-day rate.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 198780 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -5784,6 +5711,7 @@
               "last_compaction": {
                 "at": "<ts>",
                 "compacted": 0,
+                "early": 0,
                 "freed_bytes": 0,
                 "host_id": "<uuid>",
                 "skipped_by_reason": {}
@@ -6283,6 +6211,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+            "name": "unlabeled_people_folders",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no page names readers and no member exists.",
             "name": "access_may_act_for_wildcard",
             "readiness_state": "not_applicable",
@@ -6290,10 +6227,35 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the owner opt-in (access.owner_reads_restricted) is off; the owner reads a page that names readers or sits under a rule only when listed.",
+            "name": "access_owner_reads_restricted",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
+            "name": "attest_read_shared_scope",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 174/174 public tables",
+            "message": "RLS enabled on 176/176 public tables",
             "name": "rls",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The Postgres host is on this machine; TLS is not required.",
+            "name": "postgres_tls",
             "status": "ok"
           },
           {
@@ -6301,6 +6263,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every gbrain function that pins a search_path ends it with pg_temp",
             "name": "function_search_path",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The database encoding is UTF8",
+            "name": "database_encoding",
             "status": "ok"
           },
           {
@@ -6313,14 +6282,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1394 column(s) verified against live schema",
+            "message": "1399 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 176 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6609,6 +6578,22 @@
             "category": "brain",
             "details": {
               "count": "exact",
+              "pages": 0,
+              "scan_cap": 100000,
+              "truncated": false,
+              "value_count": 0,
+              "values": [],
+              "values_truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "name": "privacy_label_ignored",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": "exact",
               "kept_pages": 0,
               "pages_pending": 0,
               "repair": "safe-chunks",
@@ -6697,30 +6682,7 @@
               "docs": "docs/guides/repair.md#request-growth",
               "rows": 22,
               "rows_exact": false,
-              "scopes": [
-                {
-                  "admissions_in_window": 22,
-                  "config_key": "persistence.limits.brain_lifetime_ids",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "lifetime_ids": 24,
-                  "limit": 8000000,
-                  "per_day": 3,
-                  "scope": "brain",
-                  "window_days": 7
-                },
-                {
-                  "admissions_in_window": 22,
-                  "config_key": "persistence.limits.principal_lifetime_ids",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "lifetime_ids": 24,
-                  "limit": 2000000,
-                  "per_day": 3,
-                  "scope": "principal:local_cli:<uuid>",
-                  "window_days": 7
-                }
-              ],
+              "scopes": [],
               "verify": "gbrain doctor --json (check persistence_request_growth)",
               "window_days": 7
             },
@@ -7125,6 +7087,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#atom-fence-rows",
+              "origin_unread": 0,
+              "repair": "atom-fence-rows"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No world atom carries a fence row its source page shows only to the owner.",
+            "name": "atom_fence_rows",
             "status": "ok"
           },
           {
@@ -8182,6 +8158,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No memory proposals await the owner.",
+            "name": "memory_proposals_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "conversation": null,
               "fix": "preview links: gbrain facts relink --dry-run",
@@ -8278,6 +8261,13 @@
             "elapsed_ms": "<volatile>",
             "message": "chronicle.* settings are valid.",
             "name": "chronicle_config_invalid",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No page holds live events from an earlier extraction run beside its newest one.",
+            "name": "chronicle_duplicate_events",
             "status": "ok"
           },
           {

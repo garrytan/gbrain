@@ -112,6 +112,24 @@ describe('alias fan-out', () => {
     expect(plain.content.map(c => c.text ?? '').join('\n')).not.toContain('any of this entity');
   });
 
+  test('match: "keyword" labels a row found only under another name the same way on every page (GBRA-449)', async () => {
+    await account();
+    const seen: Array<{ slug: string; evidence?: string; matched_alias?: string; page: number }> = [];
+    let page: Record<string, unknown> | undefined = { query: 'Widget Co', match: 'keyword', limit: 3 };
+    for (let n = 0; page; n++) {
+      const r = await dispatchToolCall(engine, 'search', page, remote as never);
+      for (const row of JSON.parse(r.content[0].text!) as Array<{ slug: string; evidence?: string; matched_alias?: string }>) seen.push({ ...row, page: n });
+      page = (r._meta?.retrieval as { next?: Record<string, unknown> }).next;
+    }
+    const aliasOnly = seen.filter(r => r.slug === 'tickets/t1' || r.slug === 'contracts/a1');
+    expect(aliasOnly.map(r => r.slug).sort()).toEqual(['contracts/a1', 'tickets/t1']);
+    expect(aliasOnly.some(r => r.page > 0)).toBe(true);
+    for (const r of aliasOnly) {
+      expect(r.matched_alias).toBeDefined();
+      expect(r.evidence).toBe('weak_semantic');
+    }
+  });
+
   test('search.alias_fanout_max=0 turns fan-out off', async () => {
     await account();
     await engine.setConfig('search.alias_fanout_max', '0');

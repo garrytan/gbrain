@@ -34,14 +34,8 @@ export function DashboardPage() {
         setEvents(prev => [event, ...prev].slice(0, 50));
       } catch {}
     };
-    es.onerror = () => {
-      setSseStatus('disconnected');
-      setTimeout(() => {
-        setSseStatus('connecting');
-        es.close();
-        // Reconnect handled by browser EventSource auto-retry
-      }, 3000);
-    };
+    // #8913: EventSource retries on its own while readyState is CONNECTING; closing it here would end that retry for good.
+    es.onerror = () => setSseStatus(es.readyState === EventSource.CLOSED ? 'disconnected' : 'connecting');
 
     // #5061: both calls are full-table aggregates on Postgres; a background tab stops polling.
     const stopPoll = startVisibilityPoll(refresh, 30000, document);
