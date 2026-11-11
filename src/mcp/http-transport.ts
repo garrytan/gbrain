@@ -544,7 +544,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           // Frozen v1 pair: `error: permission_denied` stays; `code: insufficient_scope`.
           const denial = scopeDeniedError({ op: toolName, required: [op.scope ?? 'read', ...(op.requiredScopes ?? [])], auth: auth.auth,
             transport: 'http', message: `Tool requires ${op.scope ?? 'read'} scope`, legacy_error: 'permission_denied' });
-          return Response.json({ jsonrpc: '2.0', id, result: qmMemoryToolResult(toolName, errorResult(denial, { remote: true, transport: 'http', auth: auth.auth }, { op: toolName })) },
+          return Response.json({ jsonrpc: '2.0', id, result: qmMemoryToolResult(toolName, errorResult(denial, { remote: true, transport: 'http', auth: auth.auth }, { op: toolName }), req.headers.get(ACTOR_HEADER) != null) },
             { headers: corsHeaders(origin) });
         }
         // v0.28: thread per-token takes-holder allow-list so takes_list /

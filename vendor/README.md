@@ -142,6 +142,25 @@ while it is still producing them. The next statement on that connection then
 stored its rows after that many empty slots, so a one-row read came back as
 `[empty, row]` (`test/e2e/postgres-driver-row-count-postgres.test.ts`).
 
+A statement whose result type changed heals every connection in the process,
+not only the one that failed. When another session adds, renames or drops a
+column of a table that a prepared `SELECT *` or `RETURNING *` reads, Postgres
+answers that statement's next run with SQLSTATE 0A000 "cached plan must not
+change result type" (routine `RevalidateCachedQuery`) on every connection
+that prepared it. Stock postgres.js forgets the statement only on the failing
+connection and runs it again, which cannot work inside a transaction the error
+already aborted, so each pooled connection failed once. With the patch the
+first such error starts a new process-wide plan generation, and each
+connection drops its prepared statements before it builds its next query (the
+server-side statements stay until the connection closes; new ones take new
+names). Only a statement the connection had cached starts a generation: a
+fresh statement that fails this way means a pooler (PgBouncer with
+`max_prepared_statements`) mapped it onto an older server-side statement,
+which preparing again cannot heal. A `prepare: false` pool keeps no prepared
+statements, so nothing changes there. GBrain's write retry loops treat the aborted transaction as
+transient (`isStalePlanError` in `src/core/retry-matcher.ts`;
+`test/stale-plan-heal.test.ts`).
+
 An idle connection keeps nothing from its last statement. Stock postgres.js
 left its receive buffer as an empty view over the last message it joined from
 several socket reads, so the buffer stayed allocated until the connection's

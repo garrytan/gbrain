@@ -101,6 +101,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_store_mismatch',
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
+  // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
+  'attest_read_shared_scope',
   'extractor_facts_expired',
   'unwithdrawn_facts',
   'loop_facts_drift',
@@ -239,6 +241,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).
   'unlinked_facts',
+  // GST-1158: QM's proposed writes awaiting the owner (doctor/checks/memory-proposals.ts).
+  'memory_proposals_pending',
   // #7160: title-prefixed person pages that likely duplicate an unprefixed page (preview only).
   'person_title_duplicates',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).

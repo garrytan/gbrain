@@ -132,6 +132,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/pace-mode.ts', expr: 'k', why: P },
   { file: 'src/core/page-body/limits.ts', expr: 'key', why: P },
   { file: 'src/core/persistence/group-publish.ts', expr: 'name', why: P },
+  { file: 'src/core/persistence/memory-proposals.ts', expr: 'spec.key', why: 'Object.entries walk over PROPOSAL_LIMIT_KEYS (registered in config-runtime-keys.ts)' },
   { file: 'src/core/persistence/page-mutations.ts', expr: 'name', why: P },
   { file: 'src/core/persistence/sync-drain.ts', expr: 'key', why: P },
   { file: 'src/core/persistence/sync-group.ts', expr: 'key', why: P },

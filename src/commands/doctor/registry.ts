@@ -112,6 +112,7 @@ import { factsDrainEntry } from './checks/facts-drain.ts';
 import { wakeshiftEntry } from './checks/wakeshift.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
+import { memoryProposalsEntry } from './checks/memory-proposals.ts';
 import { supersessionCalibrationEntry } from './checks/supersession-calibration.ts';
 import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
@@ -141,6 +142,7 @@ import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
 import { folderAccessEntry } from './checks/folder-access.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
+import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
@@ -225,6 +227,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   memberAccessEntry,
   folderAccessEntry,
   sharedAgentAccessEntry,
+  attestReadAccessEntry,
   rlsEntry,
   postgresTlsEntry,
   functionSearchPathEntry,
@@ -280,6 +283,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   gitWriterEntry,
   foreignWritersEntry,
   decideHealthEntry,
+  memoryProposalsEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,
   autoChronicleEntry,

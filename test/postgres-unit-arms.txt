@@ -78,6 +78,7 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
 test/direct-pool-profile.test.ts
+test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
 test/doctor-frontmatter-holds.test.ts
 test/doctor-image-embedding-coverage.test.ts
@@ -106,6 +107,7 @@ test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
+test/federation-exposure-private-9068.test.ts
 test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
@@ -365,6 +367,7 @@ test/pathological/a46-content-lane-kinds.test.ts
 test/pathological/a47-backfill-poison-row.test.ts
 test/pathological/a49-unmanaged-purge-tombstones.test.ts
 test/pathological/a50-unmanaged-expired-sources.test.ts
+test/pathological/a68-memory-proposal-upkeep.test.ts
 test/pathological/a9-repair-core.test.ts
 test/pathological/b-10-ontology-rekey-collision.test.ts
 test/pathological/b-7-facts-pageless-entity.test.ts
@@ -470,9 +473,15 @@ test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
+test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
+test/purge-scrub-followups-9068.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
+test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
+test/qm-personal-sources.test.ts
+test/qm-personal-tools.test.ts
+test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
 test/reason-trailers-gbra217.test.ts
@@ -534,6 +543,7 @@ test/search/rerank-gate-hybrid.test.ts
 test/search/rerank-gate-telemetry.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
+test/serve-http-access.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts
@@ -543,6 +553,7 @@ test/source-lifecycle-dry-run-physical-root-6849.test.ts
 test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-resolve-path.test.ts
+test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
 test/sync-absent-from-worktree-s27.test.ts

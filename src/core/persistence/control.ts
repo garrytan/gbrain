@@ -24,7 +24,7 @@ export async function listWriteRequests(engine: BrainEngine, principal: Principa
         WHERE length(p.prefix)>0 AND (CASE WHEN right(p.prefix,1)='/'
           THEN left(lower(r.slug),length(p.prefix))=p.prefix
           ELSE lower(r.slug)=p.prefix OR left(lower(r.slug),length(p.prefix)+1)=p.prefix||'/' END)))
-      AND ($7::text[] IS NULL OR r.operation=ANY($7::text[]))
+      AND ($7::text[] IS NULL OR COALESCE(r.authority->>'attestedOp', r.operation)=ANY($7::text[]))
       AND ($8::text[] IS NULL OR EXISTS (SELECT 1 FROM unnest($8::text[]) AS a(pattern)
         WHERE CASE WHEN right(a.pattern,2)='/*' THEN left(r.slug,length(a.pattern)-1)=left(a.pattern,length(a.pattern)-1)
           ELSE r.slug=a.pattern END))

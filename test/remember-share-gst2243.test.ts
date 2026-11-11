@@ -47,7 +47,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const ACME = 'companies/acme-example';
 const TEAM_PAGE = 'companies/globex-example';
-const ATTEST_OPS = ['memory_write', 'cancel_write_request', 'context_pack', 'delete_page', 'delta', 'edit_page', 'get_page', 'get_write_request', 'list_write_requests', 'put_page', 'recall', 'remember', 'search', 'whoami'];
+const ATTEST_OPS = ['memory_write', 'cancel_write_request', 'context_pack', 'delete_page', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'recall', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('remember share for member credentials (' + kind + ', repo-less)', () => {

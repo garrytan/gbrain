@@ -21,6 +21,111 @@ identifiers and attribution are available in the pre-removal Git revision
 - `search` with `match: "keyword"` now labels every row that matches the query as written `keyword_exact`, including rows from your own `"A" OR "B"` query or a one-word query. Their match scores sit below the cutoff the label used to need, so they were labelled `weak_semantic`, which told agents the batched lookup the instructions recommend had found nothing solid. `create_safety` (the "don't write a duplicate" hint) is unchanged for these rows. Rows found only by gbrain's own fallback of loosening a query to any-word matching stay `weak_semantic`. A query that is an entity's name, which keyword search also runs under the entity's other names, keeps the labels it had before, and default (hybrid) search is unchanged.
 - `request_tools` accepts `tools` and `surface` in one call. It changes the tool surface exactly as a `surface`-only call does (same limits and refusals), then returns the requested tool schemas, with the surface answer under `surface_change`. Before, the pair was refused, and some models send it every night. Calls with only one of the two answer as before.
 
+## [0.60.659.0] - 2026-11-11
+
+### A page purge removes the page's name from the volunteer log and the mention gazetteer
+
+**Purging a page now also deletes the rows that kept its name next to its slug.** Before, `delete_page purge:true` and the retention purge left two stores behind, because neither has a foreign key to `pages`: `context_volunteer_events` kept the slug with a rationale that quotes the matched name (`alias match "<name>"`) for up to 90 days, and `mention_gazetteer_entries` kept the page's normalized title and aliases until that source's next mention pass. The purge receipt called the page gone while both were still readable. Reported and first fixed by @alanshurafa (#9072).
+
+| What you did | Before | Now |
+|---|---|---|
+| `delete_page purge:true`, the expired-tombstone purge, or a restore that replays a page purge | the slug and name stayed in the volunteer log and the mention gazetteer | removed in the purge transaction, and the page receipt checks both stores |
+| `purge_fact` on a claim that is also another page's name or quoted in a volunteer rationale | the gazetteer was not checked | both stores are probed and a match is listed as a residual |
+
+- `src/core/persistence/purge-name-stores.ts` (new): `scrubPurgedNameStores` deletes the source's rows for the purged slugs from both stores. `purgePageInTransaction`, `purgeDeletedPages`, `expireRecordedTombstones` and the restore-time purge replay call it beside the retrieval-feedback scrub. A soft delete keeps both, so `restore_page` still brings the page back whole.
+- `src/core/deletion-inventory.ts`: both tables are `swept` (`page_names`); the fact receipt still probes them, since a fact purge sweeps neither.
+- Tests: `test/purge-name-stores-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`).
+
+### Removing a source, a connector delete and a late eval capture no longer leave a deleted page's slug behind
+
+**Four more ways a deleted page's slug outlived the page are closed, and the federation warning stops counting private pages.** Before, only a page purge scrubbed the stores that name a page without a foreign key to it.
+
+| What you did | Before | Now |
+|---|---|---|
+| A query or search with eval capture on, whose capture runs after the response, racing a page purge | the capture could write the purged slug back into `eval_candidates.retrieved_slugs` | the insert keeps only slugs whose page still exists, checked under the same row lock the feedback writers take |
+| A volunteered-context answer whose background volunteer-log write lands after a page purge (or while it is open) | the write put the purged slug and its name-quoting rationale back into `context_volunteer_events` | the write keeps only rows whose page still exists, under the same row lock |
+| A connector, GitHub or Google sync deletes a page (`deletePages`), or a transcript re-ingest deletes a stale part | retrieval logs, ratings, weights, the volunteer log, the gazetteer and captured eval slugs kept naming it | scrubbed in the delete's transaction |
+| `gbrain sources remove`, `sources purge`, the expired-archive sweep, or a managed `remove`/`purge` | the source's retrieval logs, ratings, volunteer rows and captured eval slugs stayed | deleted in the statement that deletes the source, and swept again right after for a write that raced it, unless a source with the same id was created in between |
+| `gbrain sources federate` or `sources restore` on a source with a remote-written `visibility: private` page and no readers | the warning named that page, though no-grant connections still cannot read it | the warning applies the read paths' privacy rules, unless `search.remote_private_pages` or `GBRAIN_REMOTE_PRIVATE_PAGES` relaxes them |
+
+- `src/core/feedback/store.ts`: `insertEvalCandidate` is the one eval capture insert both engines run. A facts-arm result (`facts/<id>`) names a fact, not a page, so it stays while that fact exists.
+- `src/core/context/volunteer-events.ts`: `insertVolunteerEvents`, behind the fire-and-forget volunteer-log sink, inserts only rows whose page exists, probed the same way.
+- `src/core/engine-sql/pages.ts`: `deletePages` runs `scrubPurgedSlugs` and `scrubPurgedNameStores` after the delete, in one transaction. The transcript importer's stale-part delete now calls `deletePages`. `deletePage` is unchanged: the page purge, its main caller, scrubs and records the stores in its receipt.
+- `src/core/source-delete.ts`: `removedSourceScrubCtes` runs inside `deleteSourceRow` and the managed lifecycle's source delete, then once more after it. `deleteSourceRow` skips that second pass when a source with the same id exists again, so a re-created source keeps its rows. `retrieval_weights` and `mention_gazetteer_entries` already cascaded from `sources`.
+- `src/core/access/federation-exposure.ts`: the exposure read adds `privacyPartSql` unless `remotePrivacyRelaxed`.
+- Tests: `test/purge-scrub-followups-9068.test.ts` and `test/federation-exposure-private-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`). `test/eval-candidates.test.ts`, the volunteer round-trip in `test/migrate.test.ts` and the fact-purge case in `test/purge-name-stores-9068.test.ts` now create the pages they log, since a capture or volunteer write keeps only live pages.
+
+## [0.60.658.0] - 2026-11-11
+
+**Pull requests now run the tests that check gbrain's lists, in about 4 minutes, instead of finding those failures in the 30-minute full run.** Some tests fail whenever a change adds an operation, command, `--flag`, error code, doctor check or repair kind without updating the list that tracks it, or changes output a golden file pins. Before this release, pull requests skipped those tests and their first failure came in the full-ci run. A new check, `enumeration and census tests`, runs them on every pull request that changes more than docs. It is advisory: no merge rule reads it. `bash scripts/ci-census-tests.sh --run` runs the same tests on your own machine without Postgres.
+
+### Itemized changes
+
+- `scripts/ci-census-tests.sh` (new) prints the one file list: tests marked `test-reads-source-ok[structural]`, every test that imports `test/helpers/golden`, the tests whose names match its enumeration pattern, the consumer idle-pass bounds (`test/persistence-consumer-*` files that mention idle), and the tests that read every file under `src/` or `test/` (its `WALKERS` list, such as the source-read smell test). It leaves out `test/e2e/`, serial and slow files, and `test/setup.test.ts`. On master that is 141 files. `--run` runs them all and `--run <k> <n>` runs one weight-balanced shard (`scripts/sharding.ts`).
+- `.github/workflows/test.yml`: the `enumeration-census-tests` job runs the list in two shards on 2-vCPU runners, only on pull requests. Trunk Dynamic CI gates it like the other cheap-tier lanes. The `changes` job adds a `census` output that skips a doc-only diff (`scripts/select-e2e.ts --classify-only`), and an unreadable diff still runs the job. `cheap-tier`, `test-status`, `full-suite`, the remote pregate and master-push reuse don't read the job, and `contributor-gate` stays the only required check. On this change's own run the shards took 3 min 40 s and 2 min 47 s, about 6.5 runner-minutes per push.
+- `docs/ci-event-parity.md`: new section "Enumeration and census tests" and a classification row.
+- Tests: `test/scripts/ci-census-tests.test.ts` (new) pins the list's shape and coverage. `full-ci-workflow` and `native-only-workflow` cover the new job's events and its doc-only skip. The PGLite snapshot cache-key census counts the job's key (16 keys).
+
+## [0.60.657.0] - 2026-11-11
+
+**A running `gbrain serve`, worker or autopilot no longer fails writes after another process changes a table's columns (GST-2260).** When `gbrain apply-migrations` or an upgrade in another process added, renamed or dropped a column, every pooled connection that had already prepared a `SELECT *` or `RETURNING *` on that table failed its next run with "cached plan must not change result type". Outside a transaction the driver quietly prepared the statement again, but inside one the error had already aborted the transaction, so the caller saw it. A `put_page` came back `internal_error`, or was accepted and then failed at publication, once for each statement on each pooled connection. Version 0.60.646.0 made the write paths re-run the transaction it aborted. Now the first such error also makes every connection in the process prepare its statements again before its next query, and an OAuth token grant whose client read meets it and a minion job's completion or failure record are re-run too. Pools that do not prepare statements (transaction-mode pooler URLs, `prepare: false`) and PGLite are unchanged.
+
+### Itemized changes
+
+- `vendor/postgres` (`patches/postgres@3.4.9.patch`): the first `RevalidateCachedQuery` error on a statement a connection had cached starts a process-wide plan generation; each connection drops its prepared statements before it builds its next query, and a statement described under an older generation is not cached in the new one.
+- `src/core/retry-matcher.ts`: `retryOnStalePlan`, one more run, on 0.60.646.0's `isStalePlanError`, for a transaction that does only database work.
+- `src/core/oauth-grants.ts`: the client-locked OAuth grant transaction runs once more when a stale plan fails its opening client read, before the callback writes anything.
+- `src/core/minions/queue.ts`: `completeJob` and `failJob`, whose transactions do only database work, run once more after a stale plan.
+- Tests: `test/stale-plan-heal.test.ts` (Postgres; listed in `test/postgres-unit-arms.txt`).
+
+## [0.60.656.0] - 2026-11-11
+
+**`gbrain upgrade` finishes on hosts where autopilot runs outside launchd and systemd, instead of refusing every time.**
+
+The upgrade restarted autopilot only through an installed launchd or systemd service, and refused (`restart_refused`, exit 3) for any other autopilot. That included gbrain's own Linux cron install (`gbrain autopilot --install` on a host without a user systemd bus), so a scheduled stable upgrade on such a host failed on every run. An autopilot whose launcher starts it again is now handed to that launcher. The upgrade stops it (only while `ps` still shows the same process; SIGTERM drains it) and waits up to six minutes for the launcher to start the installed build.
+
+| Situation | Before | Now |
+|---|---|---|
+| Autopilot started by this brain's gbrain cron line | `restart_refused` | handed to the cron line and verified back on the new build |
+| Autopilot started by your own cron entry or wrapper | `restart_refused`, fix `kill <pid>` | still refuses, naming `gbrain autopilot --install` or `gbrain config set self_upgrade.autopilot_launcher external` (declare it only when the launcher starts autopilot again within 5 minutes); declared, it is handed over like the cron line |
+| doctor `self_upgrade_health` | silent until an upgrade failed | runs the same pre-swap plan read-only: warns while `gbrain upgrade` would refuse, naming each process and its step (autopilot outside gbrain's service, a process from another install), and names a hand-off or a second Bun global install the upgrade replaces itself; a harness MCP server does not warn (`--stop-mcp` stops it), and a held or failed auto-upgrade is reported first |
+
+On a host whose autopilot runs from gbrain's cron line, the old binary still refuses with `restart_refused` on the way to this release, because it checks the restart before it installs. Run `gbrain upgrade --no-restart`, then `gbrain upgrade --restart-only`, so the new build does the hand-off.
+
+**The daily stable check no longer sticks on a rolled-back release.** A release that was stable before (its `stable-v<version>` record tag exists) or that `stable.json` lists in `known_bad` is skipped and logged, so the newest release gets its soak instead of a refused promotion on every scheduled run (#8792).
+
+**A release can be marked not promotable when it soaked clean but is known bad from outside evidence.** Dispatch `promote-stable.yml` for the current stable with `not_promotable`, `not_promotable_reason` and `not_promotable_fixed_in`. The stable record gains a `not_promotable` list, and no tag moves. The daily check never soaks or promotes a release on it, on the important path and the weekly floor alike, and a manual promotion of one is refused. Clients ignore the list, so unlike `withdraw` it moves no install to another release. `not_promotable_remove` takes a release off the list. A reason over 500 characters is refused, and so is a record larger than clients accept; nothing is pushed in either case.
+
+## [0.60.655.0] - 2026-11-10
+
+**QM, the AI helper that uses gbrain as one of its memories, can now read a person's own brain safely, read shared rooms only as the room's audience, and suggest edits that wait for the brain owner's yes.** This lands the QM internal-provider chain (#8475, #8480, #8557, #8477, #8483, #8479, #8466) as one release. Nothing changes for a brain with no attested (`x-qm-actor`) client: unattested calls and member-bound credentials behave as before, and every new table is database state, so a repo-less brain works the same.
+
+### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Direct page writes from QM | an attested call could run `add_timeline_entry`, `add_link`, `put_page` and `edit_page` | refused (`actor_not_attested`, reason `op_not_attested`); `--attest-ops` refuses a list that names one, and a queued attested write of one fails when it publishes |
+| Reads that name sources | only `memory_recall` read named sources as their audience | `get_page`, `entity`, `whois`, `get_backlinks`, `get_timeline`, `find_experts`, `volunteer_context` and `query` do too: restricted pages and member pages read as missing, and `__all__` or `all_sources` is refused; an agent job submitted for the person reads the same way, and `context_pack` naming sources is refused on a client that reads them as the scope |
+| How a client reads named sources | always as the audience | `gbrain auth rescope --attest-read person\|scope\|none`; `scope` also refuses any call that names no person; `gbrain doctor` warns (`attest_read_shared_scope`) when a person client reads a source a scope client reads |
+| A person's own DM sources | every attested caller with the grant read every DM source in it | `gbrain access member source add\|remove\|list` binds a source to its member; an attested call reads its grant minus other members' personal sources, and a scope read reads no personal source at all |
+| QM contract | v1 and v2 | v3 (`docs/contracts/qm-memory-provider/v3.json`) adds the person's own-DM tools with frozen result shapes, `structuredContent` on attested personal reads (re-measured against the result cap), an `arm` (`own`/`ranked`) on each `memory_recall` fact, and an opt-in `memory_recall` `query_keep` (`head`/`tail`) that adds `query_truncated`; v1 is byte-identical, and v2 changes only its `deferred_ops` list and its `unknown_arguments` wording |
+| Suggested edits | none | `memory_propose` holds one timeline entry or one link for the owner; `gbrain memory-proposals list\|show\|approve\|deny` on the brain host decides it, and approval publishes through the normal writer door with the member's id in its provenance |
+| Members | id and name | an operator-declared email (`gbrain access member add\|set --email`), and `gbrain access member link --email <addr> --qm <id>` |
+| Remote owner administration | a shell on the brain host | `gbrain mcp admin attest`, `member-add\|member-set\|member-disable\|member-enable\|members` and `link\|unlink\|links` over the owner-session routes `/admin/api/access/attest`, `/members` and `/member-links`; no OAuth token or MCP tool reaches them |
+
+### Itemized changes
+
+- `src/core/access/actor-model.ts`: the four page writes join `ACTOR_DEFERRED_OPS`; `docs/contracts/qm-memory-provider/v2.json` lists them in `deferred_ops` (a published-contract amendment).
+- `src/core/access/scope-read.ts` (new), `src/mcp/dispatch.ts`: `SCOPE_READ_ACCESS`, `SCOPE_READ_OPS`, `attestedReadMode`, also applied to agent job tool calls (`src/core/minions/tools/brain-allowlist.ts`); `attest_read` on `access_tokens` and `oauth_clients` (migration v298).
+- `src/core/access/member-sources.ts` (new): `access_member_sources` (migration v299) and `attestedReadScope`, also applied to agent jobs submitted for an attested actor.
+- `scripts/build-qm-memory-contract.ts`: v2 and v3 `transport.unknown_arguments` now say what every MCP read has done since v0.60.635.0: an undeclared argument named like a source scope or a filter (`source` for `source_id`) is refused with `invalid_params` and nothing is read, and any other undeclared read argument is only reported in `_meta.warnings`. Wording only; `test/qm-memory-contract.test.ts` pins it against the refusal check.
+- `src/core/ops/qm-memory.ts`, `scripts/build-qm-memory-contract.ts`: contract v3, `qmMemoryToolResult` for personal tools, recall arms, `query_keep`, and `boundRecallChars` trimming `facts_groups` and `entity_unspecified` to the facts it delivers.
+- `src/core/persistence/memory-proposals.ts` (new), `src/commands/memory-proposals.ts` (new): `memory_proposals` (migration v300), owner review, TTL and retention; a proposal's request id is scoped to its credential and member, and a proposed link re-checks its target and the approved page revision when it publishes.
+- `src/core/access/members.ts`, `src/core/access/actor.ts`, `src/commands/access.ts`, `src/commands/serve-http-access.ts`, `src/commands/mcp-admin.ts`: member email (migration v301), `linkMemberByEmail`, and the owner HTTP routes with an `access_admin` request-log row per applied change.
+- Inventories: `access_member_sources`, `memory_proposals` and the email column join the deletion and graduation inventories.
+- Docs: `docs/guides/qm.md` (reads that name sources, each person's own sources, proposed writes), `docs/mcp/ADMIN.md`, `docs/architecture/key-files/access.md`.
+- Tests: `test/qm-scope-read.test.ts`, `test/qm-personal-sources.test.ts`, `test/qm-personal-tools.test.ts`, `test/qm-memory-propose.test.ts`, `test/access-members.test.ts`, `test/serve-http-access.test.ts`, `test/mcp-admin-cli.serial.test.ts` (PGLite and Postgres where they touch the database).
+
 ## [0.60.654.0] - 2026-11-10
 
 **A managed sync no longer fetches Git objects in a partial clone (`git clone --filter`).** Every Git read a managed sync makes now runs with Git's transports and lazy fetching switched off. A file whose blob the clone never fetched is imported from your checkout when the checkout holds exactly that blob, and otherwise held alone as `git_object_missing`, with a message that names the partial clone and the `git cat-file -p <blob>` that fetches it. A blobless clone with a normal checkout syncs every file as before; an older object it never fetched (an earlier version of a renamed file or of the folder rules) is read only once you fetch it. A treeless clone (`--filter=tree:0`) that lacks a tree of the commit being synced stops the run with `git_object_missing`, naming the partial clone and the `git ls-tree -r -d <commit>` that fetches the trees; nothing is synced or deleted until then. The folder rules in `.gbrain/access.yml` are read the same way. A rule file or rule history the clone has not fetched makes the source read as nobody to remote members, as a shallow checkout already does, with a message that names the exact `git` command that fetches it. Run that command in the checkout and the next sync applies the rules and clears the mark.

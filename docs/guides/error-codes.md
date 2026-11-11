@@ -100,9 +100,9 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
+| A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, or a declared member email is invalid, taken or ambiguous, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
 
-Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`.
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`.
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
@@ -3666,6 +3666,38 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 |---|---|---|---|---|---|---|
 | The current text projection is not ready. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
 
+### proposal_closed
+
+<a id="proposal_closed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The memory proposal is no longer awaiting the owner (approved, denied, expired, cancelled, failed or in conflict), so it was not approved or denied again. | A proposal is decided once; the decision and the receipt it left stay as they are. | Read how it ended with gbrain memory-proposals show <request_id>; the proposer sends a new proposal if the change is still wanted. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
+### proposal_expired
+
+<a id="proposal_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The memory proposal passed its TTL (proposals.ttl_hours) before the owner decided, so nothing was written. | A held proposal is only as current as the page QM showed the person; an old one is closed rather than applied. | The proposer sends a new proposal if the change is still wanted; the operator raises proposals.ttl_hours to give owners longer. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
+### proposals_pending_limit
+
+<a id="proposals_pending_limit"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Too many memory proposals already await the owner for this person (proposals.max_pending_per_actor) or this credential (proposals.max_pending_per_credential), so this one was not saved. | The caps keep one system credential from flooding the owner with held text. | Wait for the owner to decide or for a proposal to expire, or cancel one with cancel_write_request; the operator sets the caps. | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `actor`, `credential`.
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
 ### provenance_required
 
 <a id="provenance_required"></a>
@@ -4232,7 +4264,7 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `gbrain upgrade` (or `--restart-only`) found a gbrain process on this host it cannot restart onto the new build (a serve or worker started by hand, an autopilot without its service, a running sync, or an MCP server an agent harness started), so it restarted nothing and, before a swap, installed nothing. | A process keeps the build it started with, so restarting only some of them leaves serve, workers and MCP servers on different builds; the upgrade refuses instead of leaving that skew. Each process is named with the exact step that restarts it. | Handle each listed process as the message says (MCP servers only: rerun with --stop-mcp after the user agrees), then run the same command again; `gbrain upgrade --no-restart` installs without restarting. Run: gbrain upgrade --restart-only --dry-run --json | user | `repeat the read that failed` | 3 | no |
+| `gbrain upgrade` (or `--restart-only`) found a gbrain process on this host it cannot restart onto the new build (a serve or worker started by hand, an autopilot started outside its service by a launcher gbrain does not know, a running sync, or an MCP server an agent harness started), so it restarted nothing and, before a swap, installed nothing. | A process keeps the build it started with, so restarting only some of them leaves serve, workers and MCP servers on different builds; the upgrade refuses instead of leaving that skew. Each process is named with the exact step that restarts it. | Handle each listed process as the message says (MCP servers only: rerun with --stop-mcp after the user agrees), then run the same command again; `gbrain upgrade --no-restart` installs without restarting. Run: gbrain upgrade --restart-only --dry-run --json | user | `repeat the read that failed` | 3 | no |
 
 More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
 
