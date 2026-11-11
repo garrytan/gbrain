@@ -22,7 +22,7 @@
  */
 import type { SqlEngine } from './model.ts';
 import { DEFAULT_JOURNAL_LIMITS, type JournalLimits } from './model.ts';
-import { DEFAULT_RECEIPT_RETENTION_DAYS, journalLimitKey, parseJournalConfigValue, readJournalLimits, RECEIPT_RETENTION_KEY, recommendedLimit } from './limits.ts';
+import { DEFAULT_RECEIPT_RETENTION_DAYS, journalLimitKey, parseJournalConfigValue, readJournalLimits, RECEIPT_RETENTION_KEY, recommendedLimit, recordForecastRates } from './limits.ts';
 import { BACKGROUND_PAUSE_KEY, backgroundPauseShare } from './admission-origin.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from './receipt-bytes.ts';
 
@@ -154,8 +154,9 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
       COALESCE(SUM(terminal_bytes) FILTER (WHERE created_at>now()-interval '1 day'),0)::text AS recent_gross,
       COALESCE(SUM(terminal_bytes) FILTER (WHERE created_at>now()-interval '1 day'),0)::text AS recent_net
     FROM persistence_topology_changes WHERE created_at>now()-($1::double precision*interval '1 day') GROUP BY 1,2`, [WINDOW_DAYS]);
-  const history = engine.executeRaw<{ age_days: number | null; compaction_age_days: number | null }>(`SELECT
+  const history = engine.executeRaw<{ age_days: number | null; compaction_age_days: number | null; first_id: string | null }>(`SELECT
       (SELECT EXTRACT(EPOCH FROM now()-created_at)/86400 FROM persistence_requests ORDER BY sequence LIMIT 1)::float8 AS age_days,
+      (SELECT id::text FROM persistence_requests ORDER BY sequence LIMIT 1) AS first_id,
       (SELECT EXTRACT(EPOCH FROM now()-min(completed_at))/86400 FROM persistence_requests
         WHERE recovery IS NULL AND NOT compacted AND state IN ('committed','conflict','failed','cancelled'))::float8 AS compaction_age_days`);
   // The uncompacted terminal receipts (the compactable partial index): what compaction would free, and the legacy under-reserved ones.
@@ -177,6 +178,7 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
   const untilCompaction = Math.max(0, retention - Number(historyRow?.compaction_age_days ?? 0));
   const now = Date.now();
   const rows: CapacityForecastRow[] = [];
+  const means: Parameters<typeof recordForecastRates>[3] = [];
   for (const counter of counters) {
     const scopeDays = counter.key === 'brain' ? days : days.filter(day => day.scope === counter.key);
     const byDay = new Map<string, Day>();
@@ -201,6 +203,7 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
       const maxDay = Math.max(0, ...[...byDay.values()].map(day => ids ? day.ids : day.gross));
       const mean = total(ids ? 'ids' : 'gross') / windowDays;
       const netMean = ids ? mean : total('net') / windowDays;
+      means.push({ scope: counter.key, resource, perDay: mean, netPerDay: netMean });
       const spike = [...byDay.values()].find(day => mean > 0 && (ids ? day.ids : day.gross) > SPIKE_FACTOR * mean)?.day ?? null;
       const remaining = Math.max(0, limit - used);
       let daysLeft: number | null;
@@ -223,6 +226,7 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
         basis, recommended_limit: recommendedLimit(resource, used, limit, { perDay: mean, netPerDay: netMean }, retention), status });
     }
   }
+  recordForecastRates(engine, historyRow?.first_id ?? null, retention, means);
   return { rows, thresholds: { warn_days: warnDays, fail_days: failDays, warn_pct: CAPACITY_WARN_PCT, fail_pct: CAPACITY_FAIL_PCT },
     retention_days: retention, table_bytes: Number.isFinite(tableBytes) ? tableBytes : null, window_days: Number(windowDays.toFixed(2)) };
 }
