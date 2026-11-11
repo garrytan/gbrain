@@ -8,6 +8,9 @@
  *    writes no binding; `--may-act-for` is stored normalized; `gbrain access
  *    member rm` previews without `--yes` and a removed id is refused on re-add
  *    with access_member_id_retired (the contract envelope under --json).
+ *    GST-1158: `member add|set --email` declares a case-folded email, list
+ *    shows it, and `member link --qm <id> --email <addr>` links the member it
+ *    names; an unknown email is not_found and creates nothing.
  * 2. Fails when: a typo mints an unbound token, a rescope preview writes, a
  *    removed id is reused, or the refusal loses its code.
  * 3. Existing coverage: test/access-members.test.ts (the service in process).
@@ -114,6 +117,35 @@ describe('access and auth binding CLI (repo-less PGLite)', () => {
     expect(rebound.exitCode).toBe(0);
     expect(await binding('oauth_clients', 'client_id', clientId)).toEqual({ member_id: 'bob-example', may_act_for: null });
   }, 120_000);
+
+  test('GST-1158: member add and set --email, list shows it, and link --qm --email links the declared member', async () => {
+    expect((await cli(['access', 'member', 'add', 'gina-example', '--email', 'Gina@Example.com'])).exitCode).toBe(0);
+    expect((await cli(['access', 'member', 'add', 'hal-example'])).exitCode).toBe(0);
+    expect((await cli(['access', 'member', 'set', 'hal-example', '--email', 'Hal@Example.com'])).exitCode).toBe(0);
+    const listed = await cli(['access', 'member', 'list']);
+    expect(listed.stdout).toContain('gina-example  enabled  email: gina@example.com');
+    expect(listed.stdout).toContain('email: hal@example.com');
+    const taken = await cli(['access', 'member', 'set', 'hal-example', '--email', 'GINA@example.com', '--json']);
+    expect(taken.exitCode).not.toBe(0);
+    expect(JSON.parse(taken.stdout)).toMatchObject({ code: 'access_member_invalid', reason: 'email_taken' });
+    const preview = await cli(['access', 'member', 'link', '--qm', 'U0GINA', '--email', 'GINA@example.com', '--dry-run']);
+    expect(preview.exitCode).toBe(0);
+    expect(preview.stdout).toContain('Would link qm:U0GINA -> gina-example');
+    const linked = await cli(['access', 'member', 'link', '--qm', 'U0GINA', '--email', 'gina@example.com', '--json']);
+    expect(linked.exitCode).toBe(0);
+    expect(JSON.parse(linked.stdout)).toMatchObject({ applied: true, link: { system: 'qm', external_id: 'U0GINA', member_id: 'gina-example' } });
+    const unknown = await cli(['access', 'member', 'link', '--qm', 'U0NOBODY', '--email', 'nobody@example.com', '--json']);
+    expect(unknown.exitCode).not.toBe(0);
+    expect(JSON.parse(unknown.stdout)).toMatchObject({ code: 'not_found' });
+    const both = await cli(['access', 'member', 'link', 'hal-example', '--qm', 'U0HAL', '--email', 'hal@example.com']);
+    expect(both.exitCode).not.toBe(0);
+    expect((await cli(['access', 'member', 'set', 'hal-example', '--email', 'none'])).exitCode).toBe(0);
+    await withBrain(async engine => {
+      expect(await engine.executeRaw('SELECT id, email FROM access_members WHERE id IN ($1, $2) ORDER BY id', ['gina-example', 'hal-example'])).toEqual([
+        { id: 'gina-example', email: 'gina@example.com' }, { id: 'hal-example', email: null }]);
+      expect(await engine.executeRaw('SELECT external_id, member_id FROM access_member_links ORDER BY external_id')).toEqual([{ external_id: 'U0GINA', member_id: 'gina-example' }]);
+    });
+  }, 180_000);
 
   test('access check reports the binding; member rm previews, --yes removes, and the id is never reused', async () => {
     const check = await cli(['access', 'check', '--token', 'alice-laptop', '--json']);

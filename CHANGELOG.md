@@ -10,6 +10,36 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.655.0] - 2026-11-10
+
+**QM, the AI helper that uses gbrain as one of its memories, can now read a person's own brain safely, read shared rooms only as the room's audience, and suggest edits that wait for the brain owner's yes.** This lands the QM internal-provider chain (#8475, #8480, #8557, #8477, #8483, #8479, #8466) as one release. Nothing changes for a brain with no attested (`x-qm-actor`) client: unattested calls and member-bound credentials behave as before, and every new table is database state, so a repo-less brain works the same.
+
+### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Direct page writes from QM | an attested call could run `add_timeline_entry`, `add_link`, `put_page` and `edit_page` | refused (`actor_not_attested`, reason `op_not_attested`); `--attest-ops` refuses a list that names one, and a queued attested write of one fails when it publishes |
+| Reads that name sources | only `memory_recall` read named sources as their audience | `get_page`, `entity`, `whois`, `get_backlinks`, `get_timeline`, `find_experts`, `volunteer_context` and `query` do too: restricted pages and member pages read as missing, and `__all__` or `all_sources` is refused; an agent job submitted for the person reads the same way, and `context_pack` naming sources is refused on a client that reads them as the scope |
+| How a client reads named sources | always as the audience | `gbrain auth rescope --attest-read person\|scope\|none`; `scope` also refuses any call that names no person; `gbrain doctor` warns (`attest_read_shared_scope`) when a person client reads a source a scope client reads |
+| A person's own DM sources | every attested caller with the grant read every DM source in it | `gbrain access member source add\|remove\|list` binds a source to its member; an attested call reads its grant minus other members' personal sources, and a scope read reads no personal source at all |
+| QM contract | v1 and v2 | v3 (`docs/contracts/qm-memory-provider/v3.json`) adds the person's own-DM tools with frozen result shapes, `structuredContent` on attested personal reads (re-measured against the result cap), an `arm` (`own`/`ranked`) on each `memory_recall` fact, and an opt-in `memory_recall` `query_keep` (`head`/`tail`) that adds `query_truncated`; v1 is byte-identical, and v2 changes only its `deferred_ops` list and its `unknown_arguments` wording |
+| Suggested edits | none | `memory_propose` holds one timeline entry or one link for the owner; `gbrain memory-proposals list\|show\|approve\|deny` on the brain host decides it, and approval publishes through the normal writer door with the member's id in its provenance |
+| Members | id and name | an operator-declared email (`gbrain access member add\|set --email`), and `gbrain access member link --email <addr> --qm <id>` |
+| Remote owner administration | a shell on the brain host | `gbrain mcp admin attest`, `member-add\|member-set\|member-disable\|member-enable\|members` and `link\|unlink\|links` over the owner-session routes `/admin/api/access/attest`, `/members` and `/member-links`; no OAuth token or MCP tool reaches them |
+
+### Itemized changes
+
+- `src/core/access/actor-model.ts`: the four page writes join `ACTOR_DEFERRED_OPS`; `docs/contracts/qm-memory-provider/v2.json` lists them in `deferred_ops` (a published-contract amendment).
+- `src/core/access/scope-read.ts` (new), `src/mcp/dispatch.ts`: `SCOPE_READ_ACCESS`, `SCOPE_READ_OPS`, `attestedReadMode`, also applied to agent job tool calls (`src/core/minions/tools/brain-allowlist.ts`); `attest_read` on `access_tokens` and `oauth_clients` (migration v298).
+- `src/core/access/member-sources.ts` (new): `access_member_sources` (migration v299) and `attestedReadScope`, also applied to agent jobs submitted for an attested actor.
+- `scripts/build-qm-memory-contract.ts`: v2 and v3 `transport.unknown_arguments` now say what every MCP read has done since v0.60.635.0: an undeclared argument named like a source scope or a filter (`source` for `source_id`) is refused with `invalid_params` and nothing is read, and any other undeclared read argument is only reported in `_meta.warnings`. Wording only; `test/qm-memory-contract.test.ts` pins it against the refusal check.
+- `src/core/ops/qm-memory.ts`, `scripts/build-qm-memory-contract.ts`: contract v3, `qmMemoryToolResult` for personal tools, recall arms, `query_keep`, and `boundRecallChars` trimming `facts_groups` and `entity_unspecified` to the facts it delivers.
+- `src/core/persistence/memory-proposals.ts` (new), `src/commands/memory-proposals.ts` (new): `memory_proposals` (migration v300), owner review, TTL and retention; a proposal's request id is scoped to its credential and member, and a proposed link re-checks its target and the approved page revision when it publishes.
+- `src/core/access/members.ts`, `src/core/access/actor.ts`, `src/commands/access.ts`, `src/commands/serve-http-access.ts`, `src/commands/mcp-admin.ts`: member email (migration v301), `linkMemberByEmail`, and the owner HTTP routes with an `access_admin` request-log row per applied change.
+- Inventories: `access_member_sources`, `memory_proposals` and the email column join the deletion and graduation inventories.
+- Docs: `docs/guides/qm.md` (reads that name sources, each person's own sources, proposed writes), `docs/mcp/ADMIN.md`, `docs/architecture/key-files/access.md`.
+- Tests: `test/qm-scope-read.test.ts`, `test/qm-personal-sources.test.ts`, `test/qm-personal-tools.test.ts`, `test/qm-memory-propose.test.ts`, `test/access-members.test.ts`, `test/serve-http-access.test.ts`, `test/mcp-admin-cli.serial.test.ts` (PGLite and Postgres where they touch the database).
+
 ## [0.60.654.0] - 2026-11-10
 
 **A managed sync no longer fetches Git objects in a partial clone (`git clone --filter`).** Every Git read a managed sync makes now runs with Git's transports and lazy fetching switched off. A file whose blob the clone never fetched is imported from your checkout when the checkout holds exactly that blob, and otherwise held alone as `git_object_missing`, with a message that names the partial clone and the `git cat-file -p <blob>` that fetches it. A blobless clone with a normal checkout syncs every file as before; an older object it never fetched (an earlier version of a renamed file or of the folder rules) is read only once you fetch it. A treeless clone (`--filter=tree:0`) that lacks a tree of the commit being synced stops the run with `git_object_missing`, naming the partial clone and the `git ls-tree -r -d <commit>` that fetches the trees; nothing is synced or deleted until then. The folder rules in `.gbrain/access.yml` are read the same way. A rule file or rule history the clone has not fetched makes the source read as nobody to remote members, as a shallow checkout already does, with a message that names the exact `git` command that fetches it. Run that command in the checkout and the next sync applies the rules and clears the mark.

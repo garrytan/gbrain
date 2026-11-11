@@ -2554,6 +2554,17 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         ],
         "description": "Lowest trust tier to return (the connection floor still applies).",
         "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Read only this source."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read)."
       }
     },
     "scope": "read",
@@ -5701,6 +5712,13 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "days": {
         "type": "number",
         "description": "Stats window in days (default 30; stats mode only)."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read)."
       }
     },
     "cliHints": {
@@ -6462,6 +6480,15 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "integer",
         "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
       },
+      "query_keep": {
+        "type": "string",
+        "enum": [
+          "head",
+          "tail"
+        ],
+        "description": "Which end of a query over 2000 characters ranks the facts: head (the default) or tail. Sending it adds query_truncated.",
+        "fullSurfaceOnly": true
+      },
       "acting_user": {
         "type": "string",
         "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
@@ -6549,6 +6576,85 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "scope": "write",
     "annotations": {
       "title": "memory_write (QM memory write)",
+      "idempotentHint": true
+    },
+    "area": "memory"
+  },
+  {
+    "name": "memory_propose",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Propose one timeline entry or link on a shared page for the person this call serves; the brain owner approves it before it is written. Needs an attested person. Poll get_write_request with the request_id; the same idempotency_key replays.",
+    "params": {
+      "kind": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "timeline",
+          "link"
+        ],
+        "description": "timeline (date, summary) or link (to)."
+      },
+      "target": {
+        "type": "string",
+        "required": true,
+        "description": "Slug the write lands on (a link's from page)."
+      },
+      "idempotency_key": {
+        "type": "string",
+        "required": true,
+        "description": "1-128 visible ASCII characters; the same key replays this proposal."
+      },
+      "expected_revision": {
+        "type": "string",
+        "description": "The revision shown to the person; refused when the page moved."
+      },
+      "date": {
+        "type": "string",
+        "description": "timeline: YYYY-MM-DD."
+      },
+      "summary": {
+        "type": "string",
+        "description": "timeline: one line."
+      },
+      "detail": {
+        "type": "string",
+        "description": "timeline: details."
+      },
+      "source": {
+        "type": "string",
+        "description": "timeline: where it came from."
+      },
+      "to": {
+        "type": "string",
+        "description": "link: the page it points to."
+      },
+      "link_type": {
+        "type": "string",
+        "description": "link: a type the schema pack declares."
+      },
+      "context": {
+        "type": "string",
+        "description": "link: context."
+      },
+      "valid_from": {
+        "type": "string",
+        "description": "link: YYYY-MM-DD."
+      },
+      "valid_until": {
+        "type": "string",
+        "description": "link: YYYY-MM-DD."
+      },
+      "acting_user": {
+        "type": "string",
+        "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "title": "memory_propose (QM proposed write)",
       "idempotentHint": true
     },
     "area": "memory"
@@ -6678,6 +6784,13 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "explain": {
         "type": "boolean",
         "description": "Include factor breakdown per result (expertise, recency, salience)."
+      },
+      "source_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Narrow to these sources (omit or [] for all you can read)."
       }
     },
     "cliHints": {
