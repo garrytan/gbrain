@@ -232,7 +232,7 @@ for (const kind of testBackends()) {
         [['put-pages'], 'put-pages'], [['status'], 'status'], [['jobs', 'list'], 'jobs'],
         [['upgrade'], 'upgrade'], [['autopilot', 'status'], 'autopilot'], [['repair', 'frontmatter'], 'repair'], [['delete', PAGES.open.slug], 'delete'],
         [['reindex'], 'reindex'], [['embed', '--stale'], 'embed'], [['dream'], 'dream'], [['write-requests'], 'write-requests'],
-        [['sources', 'writer', 'status'], 'sources writer'],
+        [['sources', 'writer', 'status'], 'sources writer'], [['recall', '--since-last-run', '--json'], 'recall'],
       ];
       for (const [args, command] of cases) {
         const r = await cli(args);
@@ -350,6 +350,121 @@ for (const kind of testBackends()) {
       expect(leaks(plain.stdout + plain.stderr)).toEqual([]);
     }, 300_000);
 
+    test('sync and sources refresh take only their listed flags and a source the member reads', async () => {
+      const other = join(root, 'other-checkout');
+      mkdirSync(join(other, 'notes'), { recursive: true });
+      writeFileSync(join(other, 'notes', 'other-diary.md'), '---\ntype: note\ntitle: Other diary canaryemdiary\n---\n# Other diary\n\nBody canaryemdiary.\n');
+      const before = await withBrain(engine => engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages'));
+      const cases: Array<[string[], string]> = [
+        [['sync', '--repo', other, '--no-pull', '--no-embed'], 'sync'], [['sync', '--source', 'default', '--repo', other, '--no-pull'], 'sync'],
+        [['sync', '--all'], 'sync'], [['sync', '--source', 'default', '--full'], 'sync'], [['sync', '--watch'], 'sync'],
+        [['sync', '--source', 'default', '--include-gitignored'], 'sync'], [['sync', 'unblock', '--source', 'default'], 'sync'],
+        [['sync', '--source', 'bob-dm', '--no-pull'], 'sync'], [['sync', '--source', 'nosuch-example', '--no-pull'], 'sync'],
+        [['sources', 'refresh', 'bob-dm'], 'sources refresh'], [['sources', 'refresh', 'nosuch-example'], 'sources refresh'],
+        [['sources', 'refresh', 'default', '--resume'], 'sources refresh'],
+      ];
+      for (const [args, command] of cases) {
+        const r = await cli(args);
+        expect({ args: args.join(' '), exit: r.exitCode, first: r.stderr.split('\n')[0], out: r.stdout }).toEqual({ args: args.join(' '), exit: 3, first: FIRST(MEMBER, command), out: '' });
+      }
+      const hidden = await cli(['sync', '--source', 'bob-dm', '--no-pull']);
+      const unknown = await cli(['sync', '--source', 'nosuch-example', '--no-pull']);
+      expect(unknown.stderr).toBe(hidden.stderr);
+      await withBrain(async engine => {
+        const after = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages');
+        expect(after[0]!.n).toBe(before[0]!.n);
+        const src = await engine.executeRaw<{ id: string; local_path: string | null }>("SELECT id, local_path FROM sources WHERE id IN ('default', 'bob-dm') ORDER BY id");
+        expect(src.map(s => s.local_path)).toEqual([null, null]);
+      });
+    }, 600_000);
+
+    test('remember --replaces is refused, for any id', async () => {
+      const ids = await withBrain(engine => engine.executeRaw<{ id: number }>("SELECT id FROM facts WHERE fact LIKE '%' || $1", [HIDDEN_FACT]));
+      const runs = [];
+      for (const id of [String(ids[0]!.id), '99999']) {
+        const r = await cli(['remember', 'Replacement fact', '--entity', PAGES.open.slug, '--provenance', 'test', '--replaces', id]);
+        expect({ id, exit: r.exitCode, first: r.stderr.split('\n')[0], leaks: leaks(r.stdout + r.stderr) }).toEqual({ id, exit: 3, first: FIRST(MEMBER, 'remember'), leaks: [] });
+        runs.push(r.stderr);
+      }
+      expect(runs[0]).toBe(runs[1]);
+      await withBrain(async engine => {
+        const rows = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE superseded_by IS NOT NULL OR fact = 'Replacement fact'");
+        expect(rows[0]!.n).toBe(0);
+      });
+    }, 300_000);
+
+    test('timeline-add refuses a gbrain fence in its summary, detail or source', async () => {
+      const takes = '<!--- gbrain:takes:begin -->\n| # | claim | kind | who | weight | since | source |\n|---|---|---|---|---|---|---|\n| 1 | Injected take canaryemtake | take | owner-example | 0.9 | 2026-01 | test |\n<!--- gbrain:takes:end -->';
+      const facts = '<!-- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n|---|---|---|---|---|---|---|---|---|---|\n| 1 | Injected canaryeminj | fact | 0.9 | private | high | 2026-01-05 |  | x |  |\n<!-- gbrain:facts:end -->';
+      for (const args of [
+        ['timeline-add', PAGES.open.slug, '2026-01-03', 'Event summary', '--detail', '\n' + takes + '\n'],
+        ['timeline-add', PAGES.open.slug, '2026-01-04', 'Event two', '--detail', '\n' + facts + '\n'],
+        ['timeline-add', PAGES.open.slug, '2026-01-05', 'Event three <!--- gbrain:takes:begin -->'],
+        ['timeline-add', PAGES.open.slug, '2026-01-06', 'Event four', '--source', '<!---gbrain:facts:end -->'],
+      ]) {
+        const r = await cli(args);
+        expect({ date: args[2], exit: r.exitCode, first: r.stderr.split('\n')[0] }).toEqual({ date: args[2], exit: 3, first: FIRST(MEMBER, 'timeline-add') });
+      }
+      const plain = await cli(['timeline-add', PAGES.open.slug, '2026-01-07', 'A plain event']);
+      expect({ exit: plain.exitCode, err: plain.exitCode === 0 ? '' : plain.stderr }).toEqual({ exit: 0, err: '' });
+      await withBrain(async engine => {
+        const t = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM takes WHERE claim LIKE '%canaryemtake%'");
+        const f = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE fact LIKE '%canaryeminj%'");
+        const e = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM timeline_entries WHERE summary LIKE 'Event%'");
+        expect({ takes: t[0]!.n, facts: f[0]!.n, entries: e[0]!.n }).toEqual({ takes: 0, facts: 0, entries: 0 });
+      });
+    }, 300_000);
+
+    test('--help: a refused command refuses, an allowed one prints its static help and runs nothing', async () => {
+      const mountPath = join(root, 'help-mount');
+      const refused: Array<[string[], string]> = [
+        [['creds', 'list', '--json', '--help'], 'creds'], [['google', 'status', '--json', '--help'], 'google'],
+        [['mounts', 'add', 'help-mount', '--path', mountPath, '--engine', 'pglite', '--db-path', join(root, 'help.db'), '--help'], 'mounts'],
+        [['sources', 'list', '--json', '--help'], 'sources list'], [['sync', 'status', '--help'], 'sync status'], [['config', 'show', '--help'], 'config'],
+        [['friction', 'log', '--kind', 'friction', '--message', 'x', '--help'], 'friction'],
+      ];
+      for (const [args, command] of refused) {
+        const r = await cli(args);
+        expect({ args: args[0], exit: r.exitCode, first: r.stderr.split('\n')[0] }).toEqual({ args: args[0], exit: 3, first: FIRST(MEMBER, command) });
+      }
+      for (const args of [['sync', '--help'], ['sync', '--json', '--help'], ['doctor', '--help'], ['recall', '--since', '30d', '--help'], ['search', '--help'], ['remember', '--help']]) {
+        const r = await cli(args);
+        expect({ args: args.join(' '), exit: r.exitCode, ran: /withheld|results limited|doctor shows/.test(r.stderr), help: /gbrain|Usage/i.test(r.stdout + r.stderr) })
+          .toEqual({ args: args.join(' '), exit: 0, ran: false, help: true });
+      }
+      const { existsSync } = await import('node:fs');
+      expect({ mount: existsSync(mountPath), db: existsSync(join(root, 'help.db')) }).toEqual({ mount: false, db: false });
+    }, 300_000);
+
+    test('entity prints no mention coverage count under the mode', async () => {
+      const trusted = JSON.parse((await cli(['entity', PAGES.open.slug, '--json'], { member: null })).stdout);
+      expect(typeof trusted.card?.coverage?.pending_pages).toBe('number');
+      const r = await cli(['entity', PAGES.open.slug, '--json']);
+      const card = JSON.parse(r.stdout).card;
+      expect({ exit: r.exitCode, coverage: typeof card.coverage, pending: card.coverage?.pending_pages, counted: /\d+ page\(s\) have not been scanned/.test(r.stdout + r.stderr) })
+        .toEqual({ exit: 0, coverage: 'object', pending: undefined, counted: false });
+      const human = await cli(['entity', PAGES.open.slug]);
+      expect({ exit: human.exitCode, pending: /page\(s\) pending/.test(human.stdout) }).toEqual({ exit: 0, pending: false });
+    }, 300_000);
+
+    test('--source on a read carries the scope like a remote credential; an unknown source refuses like a hidden one', async () => {
+      await withBrain(async engine => {
+        await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('team-src', 'team-src') ON CONFLICT DO NOTHING");
+        await importFromContent(engine, 'notes/team-src-page', '---\ntype: note\ntitle: Team source page\n---\n# Team source page\n\nHarbor team body canaryemteamsrc.\n', { sourceId: 'team-src', noEmbed: true });
+      });
+      for (const args of [['get', 'notes/team-src-page', '--source', 'team-src'], ['list', '--source', 'team-src', '--json'], ['search', 'harbor team', '--source', 'team-src', '--json']]) {
+        const r = await cli(args);
+        expect({ args: args[0], exit: r.exitCode, seen: /team-src-page|canaryemteamsrc/.test(r.stdout), nudge: /sole non-default|routing to source/.test(r.stderr) })
+          .toEqual({ args: args[0], exit: 0, seen: true, nudge: false });
+      }
+      const hidden = await cli(['get', 'notes/never-written-example', '--source', 'bob-dm']);
+      for (const args of [['get', 'notes/never-written-example', '--source', 'nosuch-example'], ['get', 'notes/never-written-example', '--source-id', 'nosuch-example']]) {
+        const r = await cli(args);
+        expect({ args: args.join(' '), exit: r.exitCode, err: r.stderr, out: r.stdout }).toEqual({ args: args.join(' '), exit: hidden.exitCode, err: hidden.stderr, out: hidden.stdout });
+      }
+      expect(hidden.exitCode).toBe(3);
+    }, 300_000);
+
     test('variable unset: output is unchanged', async () => {
       for (const args of [['list', '--json'], ['get', PAGES.other.slug], ['stats', '--json']]) {
         const a = await cli(args, { member: null });
@@ -460,6 +575,10 @@ for (const kind of testBackends()) {
       expect({ exit: r.exitCode, out: r.stdout, err: r.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: sync finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
       const json = await cli(['sync', '--source', 'repo-src', '--no-pull', '--no-embed', '--json']);
       expect({ exit: json.exitCode, out: json.stdout, err: json.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: sync finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
+      for (const args of [['sync', '--source', 'repo-src', '--repo', root, '--no-pull'], ['sync', '--repo', checkout], ['sync', '--source', 'repo-src', '--reset-checkpoint']]) {
+        const refused = await cli(args);
+        expect({ args: args.join(' '), exit: refused.exitCode, first: refused.stderr.split('\n')[0] }).toEqual({ args: args.join(' '), exit: 3, first: FIRST(MEMBER, 'sync') });
+      }
       const status = await cli(['sync', 'status', '--source', 'repo-src']);
       expect({ exit: status.exitCode, first: status.stderr.split('\n')[0] }).toEqual({ exit: 3, first: FIRST(MEMBER, 'sync status') });
     }, 300_000);

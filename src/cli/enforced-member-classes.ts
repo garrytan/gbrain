@@ -78,16 +78,17 @@ export const OPERATION_CLASSES: Readonly<Record<string, EnforcedClass>> = Object
 /** Classified operations whose arguments narrow the class further (checked by the gate after parsing). */
 export const ARGUMENT_CONDITIONS: Readonly<Record<string, string>> = {
   get_stats: 'only with --by (grouped counts under the member filter); the plain brain-wide counters are refused',
-  remember: 'only one fact with --entity naming the exact slug of a page the member reads; --items, --visibility and --share are refused',
+  remember: 'only one fact with --entity naming the exact slug of a page the member reads; --items, --visibility, --share and --replaces are refused',
+  add_timeline_entry: 'no gbrain fence marker in the summary, detail or source',
   get_write_request: "only the member's own receipts (writes this mode accepted for it, recorded on this machine); any other id answers exactly as an unknown id",
 };
 
 /** Arguments of classified CLI-only commands the mode refuses. */
 export const CLI_ARGUMENT_CONDITIONS: Readonly<Record<string, string>> = {
-  recall: 'the facts arms (entity, --since, --question, --grep, --query) and the page arm; --pending, --supersessions, --session and --watch are refused',
+  recall: 'the facts arms (entity, --since, --question, --grep, --query) and the page arm; --pending, --supersessions, --session, --watch and --since-last-run are refused',
   'git commit-push': 'named paths (each readable by the member, no label change, no access policy file), --dry-run and --pull; --pending, --push-only, --resolve and --allow-outside-source-root are refused; output withheld',
-  sync: 'output withheld; sync status is refused (it names held paths)',
-  'sources refresh': 'output withheld; every other sources subcommand (status and writer status name held paths) is refused',
+  sync: 'only --source <id> (a source the member reads), --no-pull, --no-embed, --json and --dry-run; output withheld; sync status and every other flag or subcommand are refused',
+  'sources refresh': 'exactly one source id the member reads, with --json or --dry-run only; output withheld; every other sources subcommand (status and writer status name held paths) is refused',
   doctor: 'plain doctor or doctor --json only; output replaced by each check name and status and the count per status',
 };
 

@@ -129,7 +129,7 @@ export async function enforcedGate(input: EnforcedGateInput): Promise<EnforcedCl
   const value = enforcedMemberValue();
   if (value === undefined) return undefined;
   const label = enforcedCommandLabel(input.command, input.args);
-  if (input.helpRequested) return 'allowed';
+  process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE = '1';
   if (input.asFlag) return refuseEnforced(label, 'as_flag');
   const cls = enforcedClassOf(input.command, input.args, input.opName);
   if (cls === 'silent') {
@@ -140,6 +140,7 @@ export async function enforcedGate(input: EnforcedGateInput): Promise<EnforcedCl
     return await new Promise<never>(() => {});
   }
   if (cls === 'refused') return refuseEnforced(label, 'command_not_allowed');
+  if (input.helpRequested) return cls;
   if (cls === 'allowed' && (input.command === 'errors' || input.command === 'protocol')) return cls;
   if (input.thinClient) return refuseEnforced(label, 'thin_client');
   if (value === '' || !ACCESS_ID_RE.test(value)) return refuseEnforced(label, 'member_not_usable');
@@ -185,10 +186,31 @@ export async function enforcedAccess(engine: BrainEngine, command: string): Prom
   return resolved;
 }
 
-/** A read-class operation's own argument checks, before it runs: the member resolves, and get_stats only with --by. */
-export async function checkEnforcedReadArgs(engine: BrainEngine, command: string, opName: string, params: Record<string, unknown>): Promise<void> {
+/** Refuses a named source the member cannot read: another member's personal source, or one that is not registered (the same refusal, so the two read alike). */
+export async function checkEnforcedSource(engine: BrainEngine, command: string, sourceId: string): Promise<void> {
+  const ea = await enforcedAccess(engine, command);
+  const [row] = ea.hiddenSources.has(sourceId) ? [] : await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND archived = false', [sourceId]);
+  if (!row) await refuseEnforced(command, 'target_not_readable', { engine });
+}
+
+/** Every source an operation's arguments name: --source (unless the operation owns a param called source), --source-id, --source-ids. */
+function namedSources(op: { params: Record<string, unknown> }, params: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const add = (v: unknown) => { for (const s of Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : []) if (typeof s === 'string' && s.trim()) out.push(s.trim()); };
+  if (!('source' in op.params)) add(params.source);
+  add(params.source_id);
+  add(params.source_ids);
+  return out;
+}
+
+/**
+ * An operation's argument checks before its context is built: the member resolves, every source it names is one the
+ * member reads (the federated __all__ stays: the read scope already drops hidden sources), and get_stats only with --by.
+ */
+export async function checkEnforcedOpArgs(engine: BrainEngine, command: string, op: { name: string; params: Record<string, unknown> }, params: Record<string, unknown>): Promise<void> {
   await enforcedAccess(engine, command);
-  if (opName === 'get_stats' && params.by === undefined) await refuseEnforced(command, 'arguments_not_allowed', { engine });
+  for (const s of namedSources(op, params)) if (s !== '__all__') await checkEnforcedSource(engine, command, s);
+  if (op.name === 'get_stats' && params.by === undefined) await refuseEnforced(command, 'arguments_not_allowed', { engine });
 }
 
 /**
@@ -202,19 +224,49 @@ export async function runEnforcedCliOnly(command: string, subArgs: string[], dep
 }): Promise<void> {
   const label = enforcedCommandLabel(command, subArgs);
   if (command === 'recall') {
-    if (['--pending', '--supersessions', '--session', '--watch'].some(f => subArgs.some(a => a === f || a.startsWith(f + '=')))) await refuseEnforced(label, 'arguments_not_allowed');
+    if (['--pending', '--supersessions', '--session', '--watch', '--since-last-run'].some(f => subArgs.some(a => a === f || a.startsWith(f + '=')))) await refuseEnforced(label, 'arguments_not_allowed');
     return deps.handleCliOnly(command, subArgs);
   }
   if (command === 'doctor' && subArgs.some(a => a !== '--json')) await refuseEnforced(label, 'arguments_not_allowed');
+  const syncSource = command === 'sync' || command === 'sources' ? syncSourceArg(command, subArgs) : undefined;
+  if (syncSource === null) await refuseEnforced(label, 'arguments_not_allowed');
   const probe = await deps.connectEngine();
   try {
     await enforcedAccess(probe, label);
     if (command === 'git') await (await import('./enforced-commit-push.ts')).checkEnforcedCommitPush(probe, subArgs);
+    if (typeof syncSource === 'string') await checkEnforcedSource(probe, label, syncSource || await (await import('../core/source-resolver.ts')).resolveSourceId(probe, null));
   } finally {
     await probe.disconnect().catch(() => {});
   }
   if (command === 'doctor') return withDoctorCounts(subArgs.includes('--json'), () => deps.handleCliOnly('doctor', ['--json']));
   await withWithheldOutput(label, () => deps.handleCliOnly(command, subArgs));
+}
+
+const SYNC_FLAGS = new Set(['--no-pull', '--no-embed', '--json', '--dry-run']);
+
+/**
+ * The source a sync or sources refresh under the mode names, on its flag allow-list: sync takes --source <id> (or none:
+ * '' then means the brain's resolved source) with --no-pull, --no-embed, --json and --dry-run; sources refresh exactly
+ * one id with --json or --dry-run. null: an argument outside the list (--repo, --all, --full, --watch, a subcommand, ...).
+ */
+function syncSourceArg(command: string, args: readonly string[]): string | null {
+  const rest = command === 'sources' ? args.slice(args.indexOf('refresh') + 1) : args;
+  let source: string | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (command === 'sync' ? SYNC_FLAGS.has(a) : a === '--json' || a === '--dry-run') continue;
+    if (command === 'sync' && (a === '--source' || a.startsWith('--source='))) {
+      if (source !== undefined) return null;
+      source = a === '--source' ? rest[++i] : a.slice('--source='.length);
+      if (!source || source.startsWith('-')) return null;
+      continue;
+    }
+    if (a.startsWith('-') || command === 'sync') return null;
+    positional.push(a);
+  }
+  if (command === 'sources') return positional.length === 1 ? positional[0]! : null;
+  return source ?? '';
 }
 
 export interface EnforcedScope { sourceId?: string; localFederatedSourceIds?: string[]; config?: import('../core/config.ts').GBrainConfig }
@@ -229,8 +281,10 @@ export async function enforcedRead(engine: BrainEngine, command: string, opName:
   if (scope.sourceId && hiddenSources.has(scope.sourceId)) return refuseEnforced(command, 'target_not_readable', { engine });
   emitFilteredNotice();
   const federated = scope.localFederatedSourceIds?.filter(s => !hiddenSources.has(s));
-  const { dispatchToolCall } = await import('../mcp/dispatch.ts');
-  const out = await dispatchToolCall(engine, opName, params, {
+  const [{ dispatchToolCall }, { loadOperation }] = await Promise.all([import('../mcp/dispatch.ts'), import('../core/operation-load.ts')]);
+  const declared = (await loadOperation(opName))?.params ?? {};
+  const wire = Object.fromEntries(Object.entries(params).filter(([k]) => k in declared));
+  const out = await dispatchToolCall(engine, opName, wire, {
     remote: true, transport: 'stdio', stdioMember: member, enforcedMember: true, admissionOrigin: 'interactive',
     takesHoldersAllowList: ['world'],
     ...(scope.config ? { config: scope.config } : {}),
@@ -246,7 +300,23 @@ export async function enforcedRead(engine: BrainEngine, command: string, opName:
     throw reviveOperationError({ code: env.code ?? env.error ?? 'internal_error', message: env.message ?? text, ...(typeof env.suggestion === 'string' ? { suggestion: env.suggestion } : {}),
       ...(typeof env.docs === 'string' ? { docs: env.docs } : {}), ...(env.reason ? { reason: env.reason } : {}) });
   }
-  return parsed;
+  return withoutCoverageCounts(parsed);
+}
+
+const COVERAGE_COUNT_RE = /\b\d+ page\(s\) have not been scanned/g;
+
+/**
+ * Mention coverage counts every page of a source, readable or not, so under the mode its pending_pages is dropped and the
+ * notice that quotes it says "Some pages" instead.
+ */
+function withoutCoverageCounts(value: unknown, depth = 0): unknown {
+  if (depth > 16) return value;
+  if (typeof value === 'string') return value.replace(COVERAGE_COUNT_RE, 'Some pages have not been scanned');
+  if (Array.isArray(value)) return value.map(v => withoutCoverageCounts(v, depth + 1));
+  if (!value || typeof value !== 'object') return value;
+  const entries = Object.entries(value as Record<string, unknown>);
+  const coverage = entries.some(([k]) => k === 'pending_pages') && entries.some(([k]) => k === 'state');
+  return Object.fromEntries(entries.filter(([k]) => !(coverage && k === 'pending_pages')).map(([k, v]) => [k, withoutCoverageCounts(v, depth + 1)]));
 }
 
 type PageView = 'readable' | 'hidden' | 'missing';
@@ -269,7 +339,9 @@ export async function memberPageView(engine: BrainEngine, ea: EnforcedAccess, so
 }
 
 const LABEL_KEYS = ['visibility', 'readable_by', 'access', 'confidentiality', 'pinned_question', 'derived_from'] as const;
-const LABEL_TEXT_RE = /readable_by|visibility|confidentiality|pinned_question|derived_from|\bprivate\b|^\s*(access|type)\s*:|<!--\s*gbrain:|^\s*---\s*$/im;
+/** A gbrain fence marker (<!--- gbrain:takes:begin -->, three dashes; any dash count and spacing). */
+const FENCE_MARKER_RE = /<!--+\s*gbrain\s*:/i;
+const LABEL_TEXT_RE = new RegExp(/readable_by|visibility|confidentiality|pinned_question|derived_from|\bprivate\b|^\s*(access|type)\s*:|^\s*---\s*$/.source + '|' + FENCE_MARKER_RE.source, 'im');
 
 /** The protected-fence text a remote reader never sees (private fact rows and takes), which the member cannot change. */
 async function hiddenResidue(body: string | null | undefined): Promise<string> {
@@ -340,6 +412,9 @@ export async function checkEnforcedWrite(engine: BrainEngine, command: string, o
     const content = typeof params.content === 'string' ? params.content : '';
     if (await pageLabels(await storedPage(engine, source, slug)) !== await markdownLabels(content, slug)) return refuseEnforced(command, 'label_change', { engine });
   }
+  if (opName === 'add_timeline_entry' && [params.summary, params.detail, params.source].some(t => typeof t === 'string' && FENCE_MARKER_RE.test(t))) {
+    return refuseEnforced(command, 'label_change', { engine });
+  }
   if (opName === 'edit_page' || opName === 'append_page') {
     const texts = opName === 'append_page' ? [params.text] : (Array.isArray(params.edits) ? params.edits as Record<string, unknown>[] : []).flatMap(e => [e?.old_text, e?.new_text]);
     const stored = await storedPage(engine, source, slug);
@@ -356,7 +431,7 @@ export const REMEMBER_RETRY = 'gbrain remember "<one fact>" --entity <exact slug
  * Anything else refuses with the retry shape. A later no-entity form would be one branch here.
  */
 async function checkEnforcedRemember(engine: BrainEngine, command: string, ea: EnforcedAccess, source: string, params: Record<string, unknown>): Promise<void> {
-  if (params.items !== undefined || params.visibility !== undefined || params.share !== undefined) return refuseEnforced(command, 'arguments_not_allowed', { engine });
+  if (params.items !== undefined || params.visibility !== undefined || params.share !== undefined || params.replaces !== undefined) return refuseEnforced(command, 'arguments_not_allowed', { engine });
   const entity = typeof params.entity === 'string' ? params.entity.trim() : '';
   if (!entity || entity !== entity.toLowerCase() || /\s/.test(entity) || await memberPageView(engine, ea, source, entity) !== 'readable') {
     return refuseEnforced(command, 'remember_needs_entity', { engine, retry: REMEMBER_RETRY });

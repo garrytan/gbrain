@@ -417,6 +417,7 @@ async function main() {
       printOpHelp(op, command);
       return;
     }
+    if (enforcedClass) { printCliOnlyHelp(command); return; } // GST-2476 G2: static help only; a handler never runs under the mode
     if (!selfHelpSub && CLI_ONLY.has(command) && !CLI_ONLY_SELF_HELP.has(command)) {
       printCliOnlyHelp(command);
       return;
@@ -687,7 +688,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command); // GBRA-218 local --as <member>
   // GST-2476 G2: an enforced read runs as the member's stdio server would answer it; an enforced write is checked first.
   const enforced = enforcedClass ? await import('./enforced-member.ts') : null;
-  if (enforced && enforcedClass === 'read') await enforced.checkEnforcedReadArgs(engine, command, op.name, params);
+  if (enforced) await enforced.checkEnforcedOpArgs(engine, command, op, params);
 
   try {
     const { withTimeout, OperationTimeoutError } = await import('../core/timeout.ts');
