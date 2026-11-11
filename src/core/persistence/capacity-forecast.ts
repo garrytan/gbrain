@@ -24,7 +24,7 @@ import type { SqlEngine } from './model.ts';
 import { DEFAULT_JOURNAL_LIMITS, type JournalLimits } from './model.ts';
 import { DEFAULT_RECEIPT_RETENTION_DAYS, journalLimitKey, parseJournalConfigValue, readJournalLimits, RECEIPT_RETENTION_KEY, recommendedLimit } from './limits.ts';
 import { BACKGROUND_PAUSE_KEY, backgroundPauseShare } from './admission-origin.ts';
-import { COMPACTED_HEADROOM_BYTES } from './receipt-bytes.ts';
+import { COMPACTED_RECEIPT_BYTES_SQL } from './receipt-bytes.ts';
 
 export const CAPACITY_WARN_DAYS_KEY = 'persistence.capacity.warn_days';
 export const CAPACITY_FAIL_DAYS_KEY = 'persistence.capacity.fail_days';
@@ -56,7 +56,7 @@ export interface CapacityForecastRow {
   /** Terminal bytes only: uncompacted receipts holding more intent and authority than they reserved (admitted before #6696). */
   under_reserved_receipts?: number;
   basis: string;
-  /** A cap that covers one more year at this rate (never below double the current cap). */
+  /** A cap that covers one more year at the window's mean rate, so one bulk day is not projected for a year (never below double the current cap). */
   recommended_limit: number;
   status: 'ok' | 'warn' | 'fail';
 }
@@ -134,8 +134,7 @@ async function principalDays(engine: SqlEngine, key: string, net: string): Promi
   return rows.map(row => toDay({ ...row, scope: key }));
 }
 
-const NET_SQL = (r: string, e: string) => `LEAST(${r}.terminal_reservation,octet_length(${r}.authority::text)+COALESCE(octet_length(${r}.outcome::text),0)
-  +COALESCE(octet_length(${r}.error_detail::text),0)+COALESCE(octet_length(${r}.client_request_id),0)+COALESCE(${e}.bytes,0)+${COMPACTED_HEADROOM_BYTES})`;
+const NET_SQL = COMPACTED_RECEIPT_BYTES_SQL;
 
 /** The configured days-to-exhaustion thresholds every capacity finding uses. */
 export async function readCapacityThresholds(engine: SqlEngine): Promise<{ warnDays: number; failDays: number }> {
@@ -194,12 +193,14 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
     for (const resource of ['lifetime_ids', 'terminal_bytes'] as const) {
       const setting = `${prefix}${resource === 'lifetime_ids' ? 'LifetimeIds' : 'TerminalBytes'}` as keyof JournalLimits;
       const limit = limits[setting] ?? DEFAULT_JOURNAL_LIMITS[setting];
+      if (!Number.isFinite(limit)) continue;
       const used = Number(counter[resource]);
       const ids = resource === 'lifetime_ids';
       const perDay = Math.max(total(ids ? 'ids' : 'gross') / windowDays, total(ids ? 'recent_ids' : 'recent_gross'));
       const netPerDay = ids ? perDay : Math.max(total('net') / windowDays, total('recent_net'));
       const maxDay = Math.max(0, ...[...byDay.values()].map(day => ids ? day.ids : day.gross));
       const mean = total(ids ? 'ids' : 'gross') / windowDays;
+      const netMean = ids ? mean : total('net') / windowDays;
       const spike = [...byDay.values()].find(day => mean > 0 && (ids ? day.ids : day.gross) > SPIKE_FACTOR * mean)?.day ?? null;
       const remaining = Math.max(0, limit - used);
       let daysLeft: number | null;
@@ -219,7 +220,7 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
         max_day_7d: maxDay, spike_day: spike,
         days_to_exhaustion: daysLeft === null ? null : Math.floor(daysLeft),
         exhaustion_date: daysLeft === null ? null : new Date(now + daysLeft * 86_400_000).toISOString().slice(0, 10),
-        basis, recommended_limit: recommendedLimit(resource, used, limit, { perDay, netPerDay }, retention), status });
+        basis, recommended_limit: recommendedLimit(resource, used, limit, { perDay: mean, netPerDay: netMean }, retention), status });
     }
   }
   return { rows, thresholds: { warn_days: warnDays, fail_days: failDays, warn_pct: CAPACITY_WARN_PCT, fail_pct: CAPACITY_FAIL_PCT },

@@ -15,7 +15,9 @@ import { __resetCapacityNoticesForTests, cachedCapacitySnapshot, CAPACITY_NOTICE
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { renderCapacityMetrics } from '../src/commands/serve-http-metrics.ts';
 import { NOTICE_CODES } from '../src/core/error-registry.ts';
-import { freshBrainFactory, requestFixture } from './helpers/persistence-request-fixture.ts';
+import { readCapacityForecast } from '../src/core/persistence/capacity-forecast.ts';
+import { oneYearCapacity, recommendedLimit } from '../src/core/persistence/limits.ts';
+import { editRequest, freshBrainFactory, requestFixture } from './helpers/persistence-request-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -62,8 +64,11 @@ for (const kind of testBackends()) {
       const t0 = Date.now() + 100 * CAPACITY_SNAPSHOT_TTL_MS; // past any snapshot an earlier case left on a reused engine
       const first = await capacityNotices(engine, { throttle: true, now: t0 });
       expect(codes(first)).toEqual(['write_capacity_low']);
-      expect(first[0]).toMatchObject({ kind: 'info', fix: { actor: 'host_admin', argv: ['gbrain', 'config', 'set', 'persistence.limits.principal_lifetime_ids', expect.stringMatching(/^\d+$/)] } });
+      // GST-2107: the notice rides a write that succeeded, so its last lines name a read-only check, never a cap raise for the user.
+      expect(first[0]).toMatchObject({ kind: 'info', fix: { actor: 'agent', argv: ['gbrain', 'doctor', '--only', 'persistence_capacity', '--json'] } });
       expect(first[0]!.why).toContain('81%');
+      expect(first[0]!.why).toContain('This write was saved');
+      expect(first[0]!.why).not.toContain('config set');
       expect(await capacityNotices(engine, { throttle: true, now: t0 + 1000 })).toEqual([]);
       expect(codes(await capacityNotices(engine, { throttle: false, now: t0 + 1000 }))).toEqual(['write_capacity_low']);
       expect(codes(await capacityNotices(engine, { throttle: true, now: t0 + CAPACITY_NOTICE_INTERVAL_MS }))).toEqual(['write_capacity_low']);
@@ -98,6 +103,52 @@ for (const kind of testBackends()) {
       const own = await capacityNotices(engine, { throttle: true, now });
       expect(codes(own)).toEqual(['write_capacity_low', 'write_capacity_backpressure']);
       expect(own[0]!.why).toMatch(/principal:local_cli:/);
+    });
+
+    check('the one-year value follows the 7-day mean, not a burst in the last day (GST-2107)', async engine => {
+      const fixture = await requestFixture(engine);
+      const ids: string[] = [];
+      for (let i = 0; i < 71; i++) ids.push((await fixture.admit(`burst-${i}`)).id);
+      // One admission before the window (so it spans a full 7 days), 42 spread over the six days before the last one and 28 in
+      // the last hour: a mean of 10 a day, 28 in the last day.
+      const ageDays = (i: number) => i === 0 ? 10 : 6.5 - Math.floor((i - 1) / 7);
+      for (let i = 0; i < 43; i++) await editRequest(engine, ids[i]!, "created_at=now()-($2::double precision*interval '1 day')", [ageDays(i)]);
+      await engine.setConfig('persistence.limits.principal_lifetime_ids', '100');
+      await engine.setConfig('persistence.limits.principal_terminal_bytes', '1');
+      const forecast = await readCapacityForecast(engine);
+      const row = (resource: string) => forecast.rows.find(r => r.scope.startsWith('principal:') && r.resource === resource)!;
+      expect(row('lifetime_ids').per_day_7d).toBe(28);
+      expect(row('lifetime_ids').recommended_limit).toBe(71 + 10 * 365);
+      const [{ gross }] = await engine.executeRaw<{ gross: string }>('SELECT SUM(terminal_reservation)::text AS gross FROM persistence_requests');
+      const used = row('terminal_bytes').used;
+      const ceiling = recommendedLimit('terminal_bytes', used, 1, { perDay: Number(gross) / 7, netPerDay: Number(gross) / 7 }, forecast.retention_days);
+      expect(row('terminal_bytes').recommended_limit).toBeLessThanOrEqual(ceiling);
+    });
+
+    check('after a burst the admission refusal names the same one-year value as doctor (GST-2107)', async engine => {
+      await engine.setConfig('persistence.limits.principal_outstanding', '5000');
+      await engine.setConfig('persistence.limits.brain_outstanding', '5000');
+      const fixture = await requestFixture(engine);
+      const ids: string[] = [];
+      for (let i = 0; i < 1101; i++) ids.push((await fixture.admit(`dense-${i}`)).id);
+      // One admission before the window, 100 over the week before the last day, then 1,000 in the last hour: the latest
+      // 1,000 admissions are all burst, while the 7-day mean is 1,100 / 7 a day.
+      await engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '10 days' WHERE id=$1::uuid", [ids[0]]);
+        await tx.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '2 days' WHERE id=ANY($1::uuid[])", [ids.slice(1, 101)]);
+      });
+      await engine.setConfig('persistence.limits.principal_lifetime_ids', '1101');
+      await engine.setConfig('persistence.limits.principal_terminal_bytes', String(16 * 1024 ** 3));
+      const refusal = await fixture.admit('one-more').then(() => null, (error: { code?: string; fix?: { argv?: string[] } }) => error);
+      expect(refusal).toMatchObject({ code: 'write_quota_exhausted', reason: 'lifetime_ids' });
+      const forecast = await readCapacityForecast(engine);
+      const doctor = forecast.rows.find(r => r.scope.startsWith('principal:') && r.resource === 'lifetime_ids')!;
+      expect(doctor.recommended_limit).toBe(Math.ceil(1101 + (1100 / 7) * 365));
+      expect(Number(refusal!.fix!.argv!.at(-1))).toBe(doctor.recommended_limit);
+      const principal = forecast.rows.find(r => r.scope.startsWith('principal:'))!.scope;
+      const terminal = forecast.rows.find(r => r.scope === principal && r.resource === 'terminal_bytes')!;
+      expect(await oneYearCapacity(engine, principal, 'TerminalBytes', terminal.used, terminal.limit)).toBe(terminal.recommended_limit);
     });
 
     check('writes within a minute share one snapshot; the next minute reads again', async engine => {

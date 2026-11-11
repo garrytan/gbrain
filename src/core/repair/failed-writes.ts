@@ -60,21 +60,19 @@ import { factsAbsorbWriteKey, factsRetryDeadCommand } from '../facts/dead-absorb
 import { readFactsBackstopJobPage } from '../persistence/effect-facts.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
-import { dispositionOf, PAGE_REMOVAL_OPERATIONS, supersessionOrderSql, supersessionSql } from '../persistence/terminal-classify.ts';
+import { CALLER_REPLAYABLE_OPERATIONS, dispositionOf, DRIFT_REFUSAL_SQL, GUARD_REFUSAL_SQL, PAGE_REMOVAL_OPERATIONS, supersessionOrderSql, supersessionSql } from '../persistence/terminal-classify.ts';
 import { isStatementTimeout } from '../persistence/bounded-reads.ts';
 import { readRequestIndexStates } from '../persistence/checkpoint-validation.ts';
 import { PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX } from '../persistence/schema.ts';
 import { StatementDeadlineError, withStatementDeadline } from '../statement-deadline.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
-const REPLAYABLE = ['put_page', 'add_timeline_entry', 'remember'];
+const REPLAYABLE = [...CALLER_REPLAYABLE_OPERATIONS];
 const REMEMBER_PREPARED_KEYS = ['entity_slug', 'fence', 'valid_from', 'valid_until', 'entity_inferred', 'entity_warning', 'visibility_defaulted'];
 const REMOTE_PREPARED_KEYS = ['source_kind', 'source_uri', 'ingested_via'];
 const PAGE_REMOVALS = PAGE_REMOVAL_OPERATIONS;
-const GUARD_REFUSAL = `(r.state='failed' AND (r.error_code='writer_coordinator_required'
-  OR (r.error_code='storage_error' AND r.error_message LIKE 'Publication failed (P0001)%')))`;
-/** #6429: a refusal from prepareFileTarget (page-prepare.ts); the receipt keeps the code, not the refusal's detail. */
-const DRIFT_REFUSAL = `(r.state='conflict' AND r.error_code='source_changed')`;
+const GUARD_REFUSAL = GUARD_REFUSAL_SQL('r');
+const DRIFT_REFUSAL = DRIFT_REFUSAL_SQL('r');
 /** #7602: a managed fact request refused because its entity page moved; extraction re-admits these since, but older ones stayed refused. */
 const FACTS_MOVED_REFUSAL = `(r.operation='extract_facts' AND r.state='conflict' AND r.error_code='revision_conflict'
   AND r.error_message IN (${FACTS_ENTITY_MOVED_MESSAGES.map(message => `'${message.replaceAll("'", "''")}'`).join(',')}))`;
