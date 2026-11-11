@@ -47,6 +47,13 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     expect(native).toContain('bun scripts/native/compiled-admin-smoke.ts --binary bin/gbrain-native-validation');
   });
 
+  test('the compiled admin smoke makes a fresh bootstrap token each run instead of committing one', () => {
+    const smoke = readFileSync(join(ROOT, 'scripts/native/compiled-admin-smoke.ts'), 'utf8');
+    expect(smoke).not.toMatch(/GBRAIN_ADMIN_BOOTSTRAP_TOKEN:\s*['"`]/);
+    expect(smoke).toMatch(/const bootstrapToken = randomBytes\(\d+\)\.toString\('hex'\);/);
+    expect(smoke).toContain('GBRAIN_ADMIN_BOOTSTRAP_TOKEN: bootstrapToken,');
+  });
+
   test('workflow build matrix produces exactly the assets the updater requests', () => {
     const artifacts = [...WORKFLOW.matchAll(/artifact:\s*(\S+)/g)].map((m) => m[1]).sort();
     expect(artifacts).toEqual([...EXPECTED_ASSETS].sort());

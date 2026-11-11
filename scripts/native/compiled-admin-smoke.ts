@@ -11,6 +11,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
+import { randomBytes } from 'node:crypto';
 
 const arg = process.argv.indexOf('--binary');
 if (arg < 0 || !process.argv[arg + 1]) { console.error('usage: compiled-admin-smoke.ts --binary <compiled gbrain>'); process.exit(2); }
@@ -24,6 +25,7 @@ const home = mkdtempSync(join(tmpdir(), 'gbrain-admin-smoke-'));
 mkdirSync(join(home, '.gbrain', 'brain.pglite'), { recursive: true });
 mkdirSync(join(home, 'tmp'));
 writeFileSync(join(home, '.gbrain', 'config.json'), `${JSON.stringify({ engine: 'pglite', database_path: join(home, '.gbrain', 'brain.pglite'), embedding_dimensions: 1536 })}\n`);
+const bootstrapToken = randomBytes(24).toString('hex');
 const env: Record<string, string> = {
   PATH: process.env.PATH ?? '/usr/bin:/bin',
   HOME: home, USERPROFILE: home, GBRAIN_HOME: home,
@@ -31,9 +33,9 @@ const env: Record<string, string> = {
   TMPDIR: join(home, 'tmp'), TMP: join(home, 'tmp'), TEMP: join(home, 'tmp'),
   LANG: 'C.UTF-8', LC_ALL: 'C',
   GBRAIN_NO_BANNER: '1', GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_BACKUP_CHECK: '0', GBRAIN_SWEEP: '0',
-  GBRAIN_ADMIN_BOOTSTRAP_TOKEN: 'admin-smoke-bootstrap-token-aaaaaaaaaaaa',
+  GBRAIN_ADMIN_BOOTSTRAP_TOKEN: bootstrapToken,
 };
-// Never spread process.env: an inherited GBRAIN_DATABASE_URL or DATABASE_URL outranks config.json, and this server opens /admin with a public token.
+// Never spread process.env: an inherited GBRAIN_DATABASE_URL or DATABASE_URL outranks config.json, and this server opens /admin with a per-run token.
 for (const name of ['SystemRoot', 'WINDIR', 'ComSpec']) if (process.env[name]) env[name] = process.env[name]!;
 const server = Bun.spawn([binary, 'serve', '--http', '--port', String(port), '--bind', '127.0.0.1'], { cwd: home, env, stdin: 'ignore', stdout: 'pipe', stderr: 'pipe' });
 let output = '';
