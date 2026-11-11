@@ -105,13 +105,14 @@ const SENTENCE_OPENERS = new Set([
   'not', 'no', 'yes', 'after', 'before', 'during', 'since', 'until', 'while', 'per', 'via', 're', 'fyi', 'update', 'updated',
   'lunch', 'dinner', 'breakfast', 'coffee', 'drinks', 'call', 'sync', 'standup', 'interview', 'demo', 'pitch', 'board',
   'favorite', 'favourite', 'birthday', 'anniversary', 'allergic', 'vegetarian', 'vegan', 'lives', 'lived', 'works', 'worked',
+  'captured', 'watched', 'reviewed', 'logged',
 ]);
 
 /**
- * #7405: record-label openers ("Invoice total ...", "Work session ..."). Like SENTENCE_OPENERS they are no name evidence
+ * #7405: record-label openers ("Invoice total ...", "Work session ...", "Notes from ..."). Like SENTENCE_OPENERS they are no name evidence
  * when they open a sentence and resolve to no page, but they are never shed from a candidate, so "Work Example" stays a name.
  */
-const LABEL_OPENERS = new Set(['work', 'invoice', 'invoiced', 'billed', 'receipt', 'payment']);
+const LABEL_OPENERS = new Set(['work', 'invoice', 'invoiced', 'billed', 'receipt', 'payment', 'notes', 'capture', 'log', 'review', 'watch']);
 
 /** #7827: the speaker labels the fact extractor writes ("User accepted ...", "Assistant recommended ...", extract.ts ATTRIBUTION_BLOCK). */
 const ATTRIBUTION_LABELS = new Set(['user', 'assistant']);

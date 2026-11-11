@@ -64,6 +64,26 @@ describe('gateWritebackTurn — skip rules, first hit wins', () => {
     expect(gateWritebackTurn(withResidue).ok).toBe(true);
   });
 
+  test('#8410: an accepted turn banks and hashes only the unquoted lines; fenced lines stay', () => {
+    const own = 'No, we deploy on Tuesdays and staging uses Postgres 17.';
+    const quoted = gateWritebackTurn(`> The deploy moves to Fridays.\n\n${own}`);
+    expect(quoted).toEqual({ ok: true, normalized: own, hash24: turnHash24(own) });
+
+    const backtick = gateWritebackTurn(`${own}\n\`\`\`\`\n> code line\n\`\`\`\n> still code\n\`\`\`\`\n> quoted after`);
+    expect(backtick.ok && backtick.normalized).toBe(`${own} \`\`\`\` > code line \`\`\` > still code \`\`\`\``);
+
+    const tilde = gateWritebackTurn(`${own}\n~~~text\n> tilde code\n~~~\n> quoted after`);
+    expect(tilde.ok && tilde.normalized).toBe(`${own} ~~~text > tilde code ~~~`);
+
+    const comparison = gateWritebackTurn(`${own}\n>90% of our traffic is EU.\n>> The deploy moves to Fridays.`);
+    expect(comparison.ok && comparison.normalized).toBe(`${own} >90% of our traffic is EU.`);
+  });
+
+  test('#8410: a turn that is only quoted lines plus a tilde-fenced paste is quoted material', () => {
+    const turn = '> Alice wrote: the deploy failed\n~~~\nERROR: connection refused at db.example:5432\nstack trace line line line\n~~~';
+    expect(gateWritebackTurn(turn)).toEqual({ ok: false, reason: 'quoted_or_tool_output' });
+  });
+
   test('bulk paste over the cap → bulk_paste (imported text needs an explicit ask)', () => {
     const big = 'a decision was made. '.repeat(500); // > 8000 chars
     expect(big.length).toBeGreaterThan(MAX_TURN_CHARS);
