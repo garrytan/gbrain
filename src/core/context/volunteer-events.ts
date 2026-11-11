@@ -168,6 +168,12 @@ export interface VolunteerEventRow {
  * RTTs ≈ 355ms on a cross-region deployment; eng-review D4). Throws on
  * failure; callers run it through the volunteer-events background-work sink
  * with try/catch so logging can never fail the op.
+ *
+ * #9068: it writes only rows whose page still exists, probed under the
+ * feedback writers' key-share lock on the page row, so a write built before a
+ * page purge and landing after it (or while the purge is open) drops that
+ * page's slug and rationale instead of restoring them (insertEvalCandidate
+ * does the same for eval captures).
  */
 export async function insertVolunteerEvents(
   engine: BrainEngine,
@@ -187,13 +193,14 @@ export async function insertVolunteerEvents(
       r.session_id ?? null,
       r.turn ?? null,
     );
-    const ph = Array.from({ length: 8 }, (_, i) => `$${base + i + 1}`);
-    return `(${ph.join(', ')})`;
+    const types = ['text', 'text', 'float8', 'text', 'text', 'text', 'text', 'int'];
+    return `(${types.map((t, i) => `$${base + i + 1}::${t}`).join(', ')})`;
   });
   await engine.executeRaw(
     `INSERT INTO context_volunteer_events
        (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
-     VALUES ${tuples.join(', ')}`,
+     SELECT v.* FROM (VALUES ${tuples.join(', ')}) AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
+     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`,
     params,
   );
 }

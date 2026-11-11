@@ -51,6 +51,50 @@ Before this release it only read skill folders. Now it also reads OpenClaw's ski
 - Compiled builds pass `--define GBRAIN_BUILD_COMMIT`, so build receipts from a compiled binary record `gbrain_commit`.
 - Ubicloud gate VMs install CI's pinned Node 24.18.0 instead of the distribution's Node 18.
 - The tracked scratch file `dbg-tmp.ts` is removed.
+## [0.60.659.0] - 2026-11-11
+
+### A page purge removes the page's name from the volunteer log and the mention gazetteer
+
+**Purging a page now also deletes the rows that kept its name next to its slug.** Before, `delete_page purge:true` and the retention purge left two stores behind, because neither has a foreign key to `pages`: `context_volunteer_events` kept the slug with a rationale that quotes the matched name (`alias match "<name>"`) for up to 90 days, and `mention_gazetteer_entries` kept the page's normalized title and aliases until that source's next mention pass. The purge receipt called the page gone while both were still readable. Reported and first fixed by @alanshurafa (#9072).
+
+| What you did | Before | Now |
+|---|---|---|
+| `delete_page purge:true`, the expired-tombstone purge, or a restore that replays a page purge | the slug and name stayed in the volunteer log and the mention gazetteer | removed in the purge transaction, and the page receipt checks both stores |
+| `purge_fact` on a claim that is also another page's name or quoted in a volunteer rationale | the gazetteer was not checked | both stores are probed and a match is listed as a residual |
+
+- `src/core/persistence/purge-name-stores.ts` (new): `scrubPurgedNameStores` deletes the source's rows for the purged slugs from both stores. `purgePageInTransaction`, `purgeDeletedPages`, `expireRecordedTombstones` and the restore-time purge replay call it beside the retrieval-feedback scrub. A soft delete keeps both, so `restore_page` still brings the page back whole.
+- `src/core/deletion-inventory.ts`: both tables are `swept` (`page_names`); the fact receipt still probes them, since a fact purge sweeps neither.
+- Tests: `test/purge-name-stores-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`).
+
+### Removing a source, a connector delete and a late eval capture no longer leave a deleted page's slug behind
+
+**Four more ways a deleted page's slug outlived the page are closed, and the federation warning stops counting private pages.** Before, only a page purge scrubbed the stores that name a page without a foreign key to it.
+
+| What you did | Before | Now |
+|---|---|---|
+| A query or search with eval capture on, whose capture runs after the response, racing a page purge | the capture could write the purged slug back into `eval_candidates.retrieved_slugs` | the insert keeps only slugs whose page still exists, checked under the same row lock the feedback writers take |
+| A volunteered-context answer whose background volunteer-log write lands after a page purge (or while it is open) | the write put the purged slug and its name-quoting rationale back into `context_volunteer_events` | the write keeps only rows whose page still exists, under the same row lock |
+| A connector, GitHub or Google sync deletes a page (`deletePages`), or a transcript re-ingest deletes a stale part | retrieval logs, ratings, weights, the volunteer log, the gazetteer and captured eval slugs kept naming it | scrubbed in the delete's transaction |
+| `gbrain sources remove`, `sources purge`, the expired-archive sweep, or a managed `remove`/`purge` | the source's retrieval logs, ratings, volunteer rows and captured eval slugs stayed | deleted in the statement that deletes the source, and swept again right after for a write that raced it, unless a source with the same id was created in between |
+| `gbrain sources federate` or `sources restore` on a source with a remote-written `visibility: private` page and no readers | the warning named that page, though no-grant connections still cannot read it | the warning applies the read paths' privacy rules, unless `search.remote_private_pages` or `GBRAIN_REMOTE_PRIVATE_PAGES` relaxes them |
+
+- `src/core/feedback/store.ts`: `insertEvalCandidate` is the one eval capture insert both engines run. A facts-arm result (`facts/<id>`) names a fact, not a page, so it stays while that fact exists.
+- `src/core/context/volunteer-events.ts`: `insertVolunteerEvents`, behind the fire-and-forget volunteer-log sink, inserts only rows whose page exists, probed the same way.
+- `src/core/engine-sql/pages.ts`: `deletePages` runs `scrubPurgedSlugs` and `scrubPurgedNameStores` after the delete, in one transaction. The transcript importer's stale-part delete now calls `deletePages`. `deletePage` is unchanged: the page purge, its main caller, scrubs and records the stores in its receipt.
+- `src/core/source-delete.ts`: `removedSourceScrubCtes` runs inside `deleteSourceRow` and the managed lifecycle's source delete, then once more after it. `deleteSourceRow` skips that second pass when a source with the same id exists again, so a re-created source keeps its rows. `retrieval_weights` and `mention_gazetteer_entries` already cascaded from `sources`.
+- `src/core/access/federation-exposure.ts`: the exposure read adds `privacyPartSql` unless `remotePrivacyRelaxed`.
+- Tests: `test/purge-scrub-followups-9068.test.ts` and `test/federation-exposure-private-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`). `test/eval-candidates.test.ts`, the volunteer round-trip in `test/migrate.test.ts` and the fact-purge case in `test/purge-name-stores-9068.test.ts` now create the pages they log, since a capture or volunteer write keeps only live pages.
+
+## [0.60.658.0] - 2026-11-11
+
+**Pull requests now run the tests that check gbrain's lists, in about 4 minutes, instead of finding those failures in the 30-minute full run.** Some tests fail whenever a change adds an operation, command, `--flag`, error code, doctor check or repair kind without updating the list that tracks it, or changes output a golden file pins. Before this release, pull requests skipped those tests and their first failure came in the full-ci run. A new check, `enumeration and census tests`, runs them on every pull request that changes more than docs. It is advisory: no merge rule reads it. `bash scripts/ci-census-tests.sh --run` runs the same tests on your own machine without Postgres.
+
+### Itemized changes
+
+- `scripts/ci-census-tests.sh` (new) prints the one file list: tests marked `test-reads-source-ok[structural]`, every test that imports `test/helpers/golden`, the tests whose names match its enumeration pattern, the consumer idle-pass bounds (`test/persistence-consumer-*` files that mention idle), and the tests that read every file under `src/` or `test/` (its `WALKERS` list, such as the source-read smell test). It leaves out `test/e2e/`, serial and slow files, and `test/setup.test.ts`. On master that is 141 files. `--run` runs them all and `--run <k> <n>` runs one weight-balanced shard (`scripts/sharding.ts`).
+- `.github/workflows/test.yml`: the `enumeration-census-tests` job runs the list in two shards on 2-vCPU runners, only on pull requests. Trunk Dynamic CI gates it like the other cheap-tier lanes. The `changes` job adds a `census` output that skips a doc-only diff (`scripts/select-e2e.ts --classify-only`), and an unreadable diff still runs the job. `cheap-tier`, `test-status`, `full-suite`, the remote pregate and master-push reuse don't read the job, and `contributor-gate` stays the only required check. On this change's own run the shards took 3 min 40 s and 2 min 47 s, about 6.5 runner-minutes per push.
+- `docs/ci-event-parity.md`: new section "Enumeration and census tests" and a classification row.
+- Tests: `test/scripts/ci-census-tests.test.ts` (new) pins the list's shape and coverage. `full-ci-workflow` and `native-only-workflow` cover the new job's events and its doc-only skip. The PGLite snapshot cache-key census counts the job's key (16 keys).
 
 ## [0.60.657.0] - 2026-11-11
 
