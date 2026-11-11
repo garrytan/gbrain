@@ -4708,6 +4708,26 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_invalid](../../docs/g
 
 More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../docs/guides/skill-resolver.md#skill_resolver_config_unreadable)
 
+### skill_resolver_host_load_cut
+
+<a id="skill_resolver_host_load_cut"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| OpenClaw lists fewer skills than the agent's skill directories hold, so some suggestions name skills OpenClaw dropped at load (skills.limits.maxCandidatesPerRoot) and skills_read cannot open them. | The request itself was wrong or no longer matches the brain; nothing was changed. | Raise skills.limits.maxCandidatesPerRoot in openclaw.json, or split the skill root. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_host_load_cut](../../docs/guides/skill-resolver.md#skill_resolver_host_load_cut)
+
+### skill_resolver_host_not_local
+
+<a id="skill_resolver_host_not_local"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver plugin runs inside the gateway and needs this gbrain home, library and bin on the same machine, but this machine has no openclaw and no OpenClaw state directory. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skill-loading resolve on the OpenClaw host itself. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_host_not_local](../../docs/guides/skill-resolver.md#skill_resolver_host_not_local)
+
 ### skill_resolver_internal
 
 <a id="skill_resolver_internal"></a>
@@ -4718,6 +4738,66 @@ More: [docs/guides/skill-resolver.md#skill_resolver_config_unreadable](../../doc
 
 More: [docs/guides/skill-resolver.md#skill_resolver_internal](../../docs/guides/skill-resolver.md#skill_resolver_internal)
 
+### skill_resolver_library_mismatch
+
+<a id="skill_resolver_library_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver library file is outside the gbrain lib directory, not owned by the gateway user, writable by others, or does not hash to the recorded sha256, so the plugin refused to load it. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only to rewrite the library; check who else writes the gbrain home. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_library_mismatch](../../docs/guides/skill-resolver.md#skill_resolver_library_mismatch)
+
+### skill_resolver_library_missing
+
+<a id="skill_resolver_library_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver plugin found no library file for the sha256 its state names, so turns proceed without suggestions. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only to rebuild the library and state. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_library_missing](../../docs/guides/skill-resolver.md#skill_resolver_library_missing)
+
+### skill_resolver_library_skew
+
+<a id="skill_resolver_library_skew"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The installed gbrain CLI is a different version from the library the OpenClaw plugin runs, and a refresh did not bring them in step, so the plugin keeps the last good library and stops retrying for a day. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only and read its error. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_library_skew](../../docs/guides/skill-resolver.md#skill_resolver_library_skew)
+
+### skill_resolver_pin_unknown
+
+<a id="skill_resolver_pin_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A pinned skill is not in the catalog it is pinned to, so it is left out of the pinned block (an unchecked name never reaches the model). | The request itself was wrong or no longer matches the brain; nothing was changed. | Check the name with gbrain skills pin list --catalog <c>, then remove or correct the pin. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_pin_unknown](../../docs/guides/skill-resolver.md#skill_resolver_pin_unknown)
+
+### skill_resolver_plugin_not_installed
+
+<a id="skill_resolver_plugin_not_installed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup openclaw wrote the skill-resolver plugin, but OpenClaw has not installed or loaded it: no openclaw on PATH, an openclaw command failed, or plugins inspect does not show it loaded. | A partial install injects nothing, so setup never reports it as success; the files and the state are kept so the remaining commands finish it. | Run the remaining openclaw commands the message names on the OpenClaw host, restart the gateway, then gbrain doctor --only skill_resolver. | user | `repeat the read that failed` | 3 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_plugin_not_installed](../../docs/guides/skill-resolver.md#skill_resolver_plugin_not_installed)
+
+### skill_resolver_selftest_failed
+
+<a id="skill_resolver_selftest_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver plugin is installed, but one turn through it under Node did not resolve (the library would not load or the worker did not answer). | The request itself was wrong or no longer matches the brain; nothing was changed. | Read the code in the message (a library or worker code), fix it, then run gbrain setup openclaw --skill-loading resolve again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_selftest_failed](../../docs/guides/skill-resolver.md#skill_resolver_selftest_failed)
+
 ### skill_resolver_setup_incomplete
 
 <a id="skill_resolver_setup_incomplete"></a>
@@ -4727,6 +4807,46 @@ More: [docs/guides/skill-resolver.md#skill_resolver_internal](../../docs/guides/
 | gbrain setup --skill-loading resolve found no skill to index (or could not build the catalog or wire the hook), so it wrote no config keys and no hook. | The request itself was wrong or no longer matches the brain; nothing was changed. | Add a skill to one of the scanned directories (the message names them), then run setup again. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_setup_incomplete](../../docs/guides/skill-resolver.md#skill_resolver_setup_incomplete)
+
+### skill_resolver_state_missing
+
+<a id="skill_resolver_state_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver state file has no entry for this agent, so the self-test had nothing to run. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skill-loading resolve --agent <id>. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_state_missing](../../docs/guides/skill-resolver.md#skill_resolver_state_missing)
+
+### skill_resolver_worker_crash
+
+<a id="skill_resolver_worker_crash"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver worker thread could not start or crashed; turns proceed without suggestions and it restarts with backoff. | The server failed; this is not a caller mistake. | Run gbrain doctor --only skill_resolver; report it if it repeats. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_worker_crash](../../docs/guides/skill-resolver.md#skill_resolver_worker_crash)
+
+### skill_resolver_worker_stuck
+
+<a id="skill_resolver_worker_stuck"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver worker missed the turn deadline three times in a row, so it was restarted with backoff. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Check the deadline-miss rate with gbrain doctor --only skill_resolver; a loaded host misses more often. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_worker_stuck](../../docs/guides/skill-resolver.md#skill_resolver_worker_stuck)
+
+### skill_resolver_worker_unavailable
+
+<a id="skill_resolver_worker_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver worker is restarting after a crash or a stall, so this turn proceeded without suggestions. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Nothing to do if it is rare; gbrain doctor --only skill_resolver shows the rate. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_worker_unavailable](../../docs/guides/skill-resolver.md#skill_resolver_worker_unavailable)
 
 ### skill_retention_capacity
 

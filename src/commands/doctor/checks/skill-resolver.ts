@@ -20,6 +20,7 @@ import { LANE_LOG, readRecentDailyLog } from '../../../core/skills/resolver/dail
 import { projectCatalogPrefix, userCatalogName, type LaneHarness } from '../../../core/skills/resolver/hook-lane.ts';
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
 import { inspectSkillResolverHook } from '../../../core/setup/skill-resolver-hook.ts';
+import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
 
 const name = 'skill_resolver';
 const HARNESSES: LaneHarness[] = ['claude-code', 'codex'];
@@ -33,6 +34,8 @@ export interface SkillResolverView {
   config: 'ok' | 'absent' | 'unreadable';
   harnesses: SkillResolverHarnessView[];
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number> };
+  /** The OpenClaw plugin (gbrain setup openclaw --skill-loading resolve|shadow), when any of it exists. */
+  openclaw?: OpenclawSkillView;
 }
 
 function recentLane(home: string): SkillResolverView['recent'] | null {
@@ -71,8 +74,9 @@ export async function skillResolverView(home = configDir()): Promise<SkillResolv
     }
     harnesses.push({ harness, on: on.includes(harness), hook, catalogs: views });
   }
-  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length)) return null;
-  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} } };
+  const openclaw = await openclawSkillView(home);
+  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw) return null;
+  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}) };
 }
 
 const setupArgv = (harness: string) => ['gbrain', 'setup', harness, '--skill-loading', 'resolve'];
@@ -86,7 +90,8 @@ export function describeSkillResolver(v: SkillResolverView): string {
     return `${h.harness} ${h.on ? 'on' : 'off'}, hook ${h.hook}, ${user?.skills ?? 0} skills, ${fresh}`;
   });
   const errs = Object.entries(v.recent.errors).map(([c, n]) => `${c} x${n}`).join(', ');
-  return `Skill resolver: ${parts.join('; ') || 'no harness on'}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}.`;
+  const oc = v.openclaw ? `; ${describeOpenclawSkill(v.openclaw).line}` : '';
+  return `Skill resolver: ${parts.join('; ') || (v.openclaw ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}.`;
 }
 
 export function skillResolverCheck(v: SkillResolverView | null): Check | null {
@@ -104,6 +109,12 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}, so no skills block is added.`, details,
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };
+  }
+  const oc = v.openclaw ? describeOpenclawSkill(v.openclaw).problem : null;
+  if (oc) {
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
+      fix: { argv: ['gbrain', 'setup', 'openclaw', '--skills-index-only'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
+        why: 'Rebuilds the OpenClaw catalogs, the library and the plugin state without running any OpenClaw command; gbrain setup openclaw --skill-loading resolve reinstalls the plugin itself.' } };
   }
   return { name, status: 'ok', message: describeSkillResolver(v), details };
 }
