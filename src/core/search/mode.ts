@@ -1322,7 +1322,7 @@ export function knobsHash(
     if (access.identity.length) parts.push(`xid=${createHash('sha256').update(access.identity.join(',')).digest('hex').slice(0, 16)}`);
     if (access.audienceIdentities.length) parts.push(`xau=${createHash('sha256').update(JSON.stringify(access.audienceIdentities)).digest('hex').slice(0, 16)}`);
     if (!access.hidePrivate) parts.push('xhp=0');
-    if (access.ownerReadsRestricted) parts.push('xor=1');
+    if (access.ownerLineage) parts.push(access.ownerReadsRestricted ? 'xol=2' : 'xol=1');
   }
   const h = createHash('sha256');
   h.update(parts.join('|'));

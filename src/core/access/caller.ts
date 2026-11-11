@@ -205,8 +205,9 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
  * GST-2059: a caller bound to the brain owner (config access.owner_member) reads with its privacy relaxed in every
  * source its grant reads (owner), with no audience or an audience of the owner alone; member access stays.
  * GST-363: `stdioMember` is the member an unauthenticated stdio server was started with (serve --stdio-member).
- * GST-2490: `readOnly` (a non-mutating operation) lets an owner read under access.owner_reads_restricted; a write's
- * checks keep the owner's ordinary member access, so its pre-check and its publication agree.
+ * GST-2490: `readOnly` (a non-mutating operation) gives an owner read the owner's lineage (a derivative of origins it
+ * reads) and, under access.owner_reads_restricted, the opt-in; a write's checks keep the every-caller rule, so its
+ * pre-check and its publication agree.
  */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null, stdioMember?: string, readOnly = false): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), requestRemotePolicy(engine)]);
@@ -224,6 +225,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
       privateReadableSources: single ? privateSources ?? [] : [],
       hidePrivate: single ? !relaxed && !owner : true,
       owner,
+      ownerLineage: owner && readOnly,
       ownerReadsRestricted: owner && readOnly && remotePolicy.ownerReadsRestricted === true,
       applyRemoteReadPolicy: false,
       restricted,
@@ -240,6 +242,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     privateReadableSources: privateSources ?? [],
     hidePrivate: !relaxed && !owner,
     owner,
+    ownerLineage: owner && readOnly,
     ownerReadsRestricted: owner && readOnly && remotePolicy.ownerReadsRestricted === true,
     applyRemoteReadPolicy: false,
     restricted,

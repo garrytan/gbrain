@@ -178,11 +178,16 @@ function originAllowedSql(p: string): string {
     OR NOT gbrain_access_origin_restricted(${p}.id, ${p}.source_id, ${p}.type, ${p}.frontmatter))`;
 }
 
-/** GST-2490: the owner's own member page, when the current record is an owner read under the opt-in (else null). */
-function ownerOptInPage(access: CallerAccess): string | null {
-  if (!access.ownerReadsRestricted) return null;
+/** GST-2490: the owner's own member page for an owner read (CallerAccess.ownerLineage), else null. */
+function ownerReadPage(access: CallerAccess): string | null {
+  if (!access.ownerLineage) return null;
   const member = access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length);
   return member && ACCESS_ID_RE.test(member) ? `${MEMBER_PAGE_PREFIX}${member}` : null;
+}
+
+/** GST-2490: the owner's own member page for an owner read under the opt-in (access.owner_reads_restricted), else null. */
+function ownerOptInPage(access: CallerAccess): string | null {
+  return access.ownerReadsRestricted ? ownerReadPage(access) : null;
 }
 
 /** GST-2490: `alias` is not another member's own member page (the owner's own one passes). */
@@ -190,28 +195,35 @@ function notOtherMemberPageSql(alias: string, ownPage: string): string {
   return `(NOT starts_with(${alias}.slug, '${MEMBER_PAGE_PREFIX}') OR ${alias}.slug = '${ownPage}')`;
 }
 
+const textArraySql = (values: readonly string[]): string => values.length ? `ARRAY[${values.map(v => `'${v}'`).join(', ')}]::text[]` : 'ARRAY[]::text[]';
+
 /**
- * GST-2490: originAllowedSql for an owner read under the opt-in. A derived page is hidden only when an origin is another
- * member's own member page or reads as nobody (pending coverage), through gbrain_access_origin_hidden_from_owner, the
- * owner twin of gbrain_access_origin_restricted with the same arms.
+ * GST-2490: originAllowedSql for an owner read. A derived page passes when the owner reads every origin of it
+ * (gbrain_access_origin_hidden_for with the owner's identity and satisfied rules, v304), so a page whose readers or rule
+ * name the owner keeps its derivatives for the owner; under the opt-in every origin passes except another member's own
+ * member page and pending coverage. The identity and rule ids are validated on the record, so they embed as literals.
  */
-function ownerOriginAllowedSql(p: string, ownPage: string): string {
+function ownerOriginAllowedSql(p: string, access: CallerAccess, ownPage: string): string {
+  const identity = validIdentity(access.identity) ? access.identity : [];
+  const satisfied = access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : [];
   return `((${p}.type NOT IN ('atom', 'question', 'concept', 'event') AND NOT (${p}.frontmatter ? 'derived_from'))
-    OR NOT gbrain_access_origin_hidden_from_owner(${p}.id, ${p}.source_id, ${p}.type, ${p}.frontmatter, '${ownPage}'))`;
+    OR NOT gbrain_access_origin_hidden_for(${p}.id, ${p}.source_id, ${p}.type, ${p}.frontmatter, ${textArraySql(identity)}, ${textArraySql(satisfied)}, ${access.ownerReadsRestricted}, '${ownPage}'))`;
 }
 
 /**
- * GST-2490: the member-access part for an owner read under the opt-in: what the owner's own identity reads, or any page
- * that is not another member's own member page, outside a prefix that reads as nobody, whose origins pass
- * ownerOriginAllowedSql. Readers lists, folder rules and page rules no longer close a page to the owner.
+ * GST-2490: the member-access part for an owner read: the owner's readers and folder rules as for any member, with the
+ * owner's lineage (ownerOriginAllowedSql) instead of the every-caller one. Under the opt-in, a page that is not another
+ * member's own member page passes too, outside a prefix that reads as nobody.
  */
-function ownerAccessSql(pageAlias: string, access: CallerAccess): string {
-  const ownPage = ownerOptInPage(access);
-  const own = accessAllowedSql(pageAlias, access.identity);
-  if (!ownPage) return own;
+function ownerAccessSql(pageAlias: string, access: CallerAccess, ownPage: string): string {
   const notOther = notOtherMemberPageSql(pageAlias, ownPage);
-  if (!access.restricted) return `(${own} OR ${notOther})`;
-  return `(${own} OR (${notOther}${coverageSql(pageAlias)} AND ${ownerOriginAllowedSql(pageAlias, ownPage)}))`;
+  if (!access.restricted) {
+    const unrestricted = `(${pageAlias}.page_readers IS NULL AND ${pageAlias}.folder_rule_ids IS NULL)`;
+    return access.ownerReadsRestricted ? `(${unrestricted} OR ${notOther})` : unrestricted;
+  }
+  const listed = `(${readersAllowedSql(pageAlias, access.identity)} AND ${folderRulesAllowedSql(pageAlias, access.satisfiedRuleIds)})`;
+  const page = access.ownerReadsRestricted ? `(${listed} OR (${notOther}${coverageSql(pageAlias)}))` : listed;
+  return `(${page} AND ${ownerOriginAllowedSql(pageAlias, access, ownPage)})`;
 }
 
 /**
@@ -287,6 +299,11 @@ export interface CallerAccess {
   hidePrivate: boolean;
   owner: boolean;
   /**
+   * GST-2490: an owner read (owner true, a non-mutating operation): derived pages and facts pass when the owner reads
+   * every origin (ownerOriginAllowedSql) instead of being hidden from every remote caller.
+   */
+  ownerLineage: boolean;
+  /**
    * GST-2490: an owner read (owner true, a non-mutating operation) on a brain whose operator turned on
    * access.owner_reads_restricted: readers lists, folder rules and page rules stop closing pages, their derivatives and
    * their facts to the owner, except another member's own member page and what derives from it (ownerAccessSql).
@@ -302,7 +319,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, ownerReadsRestricted: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, ownerLineage: false, ownerReadsRestricted: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -328,12 +345,18 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
     hidePrivate: access.hidePrivate ?? (fresh ? true : base.hidePrivate),
     owner: access.owner ?? (fresh ? false : base.owner),
-    ownerReadsRestricted: (access.owner ?? (fresh ? false : base.owner)) && audienceIdentities.length <= 1
-      && (access.ownerReadsRestricted ?? (fresh ? false : base.ownerReadsRestricted)),
+    ...ownerReads(access.owner ?? (fresh ? false : base.owner), audienceIdentities.length <= 1,
+      access.ownerLineage ?? (fresh ? false : base.ownerLineage), access.ownerReadsRestricted ?? (fresh ? false : base.ownerReadsRestricted)),
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
   }), fn);
+}
+
+/** GST-2490: the owner-read flags of a record; both need the owner speaking for itself, and the opt-in needs an owner read. */
+function ownerReads(owner: boolean, single: boolean, lineage: boolean, readsRestricted: boolean): Pick<CallerAccess, 'ownerLineage' | 'ownerReadsRestricted'> {
+  const ownerLineage = owner && single && lineage;
+  return { ownerLineage, ownerReadsRestricted: ownerLineage && readsRestricted };
 }
 
 /** Runs `fn` outside any caller's record, for work a request spawns that must not inherit its view. */
@@ -397,7 +420,8 @@ function validAudienceEntry(entry: string): boolean {
 
 function callerAccessSql(pageAlias: string): string {
   const access = currentCallerAccess();
-  if (access.ownerReadsRestricted) return ownerAccessSql(pageAlias, access);
+  const ownPage = ownerReadPage(access);
+  if (ownPage) return ownerAccessSql(pageAlias, access, ownPage);
   return access.audienceIdentities.length ? accessAllowedForAllSql(pageAlias, access.audienceIdentities, access.satisfiedRuleIds)
     : accessAllowedSql(pageAlias, access.identity);
 }
@@ -743,9 +767,9 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const access = currentCallerAccess();
   const hide = !callerRelaxesPrivacy();
   const member = access.actor?.member ?? (access.audienceIdentities.length ? null : access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length));
-  const ownPage = ownerOptInPage(access);
+  const ownPage = ownerReadPage(access);
   const otherwise = ownPage
-    ? `CASE WHEN starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}') THEN ${readPolicyFragment('pp', [], hide)} ELSE (TRUE${coverageSql('pp')} AND ${ownerOriginAllowedSql('pp', ownPage)} AND ${hide ? privacyPartSql('pp') : 'TRUE'}) END`
+    ? `CASE WHEN starts_with(pp.slug, '${MEMBER_PAGE_PREFIX}') THEN ${readPolicyFragment('pp', [], hide)} ELSE (${ownerAccessSql('pp', access, ownPage)} AND ${hide ? privacyPartSql('pp') : 'TRUE'}) END`
     : readPolicyFragment('pp', [], hide);
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds)} ELSE ${otherwise} END`

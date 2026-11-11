@@ -60,6 +60,15 @@ export async function ownerReadsRestrictedOn(engine: Pick<BrainEngine, 'getConfi
 }
 
 /**
+ * GST-2490: what whoami adds for every remote caller while the owner opt-in is on and names a live owner, so a member's
+ * agent can find out that the owner reads the pages kept to it. Empty otherwise.
+ */
+export async function ownerReadsRestrictedNotice(engine: BrainEngine): Promise<{ owner_reads_restricted?: true; owner_reads_restricted_note?: string }> {
+  if (!(await ownerReadsRestrictedOn(engine)) || !(await ownerView(engine)).owner) return {};
+  return { owner_reads_restricted: true, owner_reads_restricted_note: "The brain owner's credentials read every page on this brain that readers lists or folder or page rules keep to members, including pages kept to this connection, and their derived pages and facts; never a member's own member page. The brain operator set this (config access.owner_reads_restricted)." };
+}
+
+/**
  * GST-2490: turns the owner opt-in on or off. Only the trusted local operator may: a remote caller (anything whose
  * `remote` is not strictly false) is refused before anything is written.
  */
@@ -68,7 +77,7 @@ export async function setOwnerReadsRestricted(engine: BrainEngine, on: boolean, 
     throw hostOnlyError({ remote: true, transport: 'http' }, 'permission_denied',
       'Only the brain operator on the brain host turns the owner opt-in on or off, so nothing was changed.',
       ['gbrain', 'access', 'owner', 'reads-restricted', on ? 'on' : 'off'],
-      'Lets the owner's credentials read pages that readers lists and folder or page rules keep to other members. Whether the owner reads them is the brain operator's decision, never an agent's.');
+      'Lets the owner\'s credentials read pages that readers lists and folder or page rules keep to other members. Whether the owner reads them is the brain operator\'s decision, never an agent\'s.');
   }
   if (on) await engine.setConfig(OWNER_READS_RESTRICTED_KEY, '1');
   else await engine.unsetConfig(OWNER_READS_RESTRICTED_KEY);

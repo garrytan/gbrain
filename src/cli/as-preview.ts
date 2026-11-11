@@ -48,7 +48,7 @@ export async function openAsPreview(engine: BrainEngine, member: string | undefi
   }
   const { withCallerAccess } = await import('../core/search/private-visibility.ts');
   const folder = await (await import('../core/access/caller.ts')).folderAccessFor(engine, identity);
-  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, ownerReadsRestricted, privateReadableSources: [] };
+  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, ownerLineage: owner, ownerReadsRestricted, privateReadableSources: [] };
   return {
     run: fn => withCallerAccess(access, fn),
     context: ctx => ({ ...ctx, accessIdentity: identity, applyRemoteReadPolicy: true }),

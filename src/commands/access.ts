@@ -24,7 +24,7 @@ import { readClientGrant } from '../core/grants/service.ts';
 import { resolveTokenGrant } from '../core/grants/legacy-token.ts';
 import { accessAllowedSql, isPrivacyPrivatePage, withCallerAccess } from '../core/search/private-visibility.ts';
 import { folderAccessFor } from '../core/access/caller.ts';
-import { identityFor, normalizePrincipal, normalizeReaders } from '../core/access/principals.ts';
+import { identityFor, MEMBER_PAGE_PREFIX, normalizePrincipal, normalizeReaders } from '../core/access/principals.ts';
 import { mayActForCovers, singleMemberAudience, type AudiencePrincipal } from '../core/access/audience.ts';
 import { linkMember, linkMemberByEmail, listMemberLinks, unlinkMember } from '../core/access/actor.ts';
 import { bindMemberSource, listMemberSources, unbindMemberSource } from '../core/access/member-sources.ts';
@@ -229,7 +229,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
     : `Reads as member "${member!.id}"${member!.groups.length ? ` (groups: ${member!.groups.join(', ')})` : ''}: pages naming readers are visible when they list the member or one of its groups, within the grant below.`
       + (owner ? ' It is the brain owner: it also reads visibility: private pages, privacy-alias pages, derived and pinned-question pages and private facts in every source the grant reads.' : '')
       + (ownerReadsRestricted ? (owner
-        ? ' access.owner_reads_restricted is on: in reads it also reads pages that readers lists and folder or page rules keep to other members, and their derived pages and facts, except another member's own member page.'
+        ? ' access.owner_reads_restricted is on: in reads it also reads pages that readers lists and folder or page rules keep to other members, and their derived pages and facts, except another member\'s own member page.'
         : ` access.owner_reads_restricted is on: the brain owner (${ownerId}) also reads the pages this credential's readers lists and rules keep to it, except its own member page.`) : '');
   const result: AccessCheckResult = {
     credential,
@@ -372,7 +372,7 @@ function ownerLines(v: OwnerView): string[] {
   return [`Owner: ${v.owner}`,
     `  Credentials that read as the owner (${v.bound_credentials.length}): ${v.bound_credentials.map(c => `${c.kind} ${c.name}`).join(', ') || 'none'}`,
     v.reads_restricted
-      ? '  Owner reads member-restricted pages: on (access.owner_reads_restricted). Its credentials read pages that readers lists and folder or page rules keep to other members, and their derived pages and facts; never another member's own member page. Turn off: gbrain access owner reads-restricted off'
+      ? '  Owner reads member-restricted pages: on (access.owner_reads_restricted). Its credentials read pages that readers lists and folder or page rules keep to other members, and their derived pages and facts; never another member\'s own member page. Turn off: gbrain access owner reads-restricted off'
       : '  Owner reads member-restricted pages: off. It reads a page that names readers or sits under a rule only when listed. Turn on: gbrain access owner reads-restricted on',
     `  Bind one: gbrain auth rescope --token <name> --member ${v.owner} (a stdio server: gbrain config set mcp.stdio_member ${v.owner})`];
 }
