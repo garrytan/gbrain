@@ -80,11 +80,26 @@ export const HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE = /[^0-9]/;
 // the sentence's full stop and its bare echoes still scrub.
 // Both keep the 12-4096 bounds and the digit + entropy gates. Each also has
 // an ESCAPE_BOUNDARY twin (#7978): `\\npassword=…` in escaped tool output.
-export const assignmentKey = (boundary: string) =>
-  `${boundary}(?:(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}|[A-Za-z][A-Za-z0-9_-]{0,63}[_-]key)["']?\\s*[:=]\\s*`;
-export const ASSIGNMENT_QUOTED_SOURCE = (key: string) => `(${key}["'])([^"'\\s]{12,4096})`;
-export const ASSIGNMENT_UNQUOTED_SOURCE = (key: string) =>
-  `(${key})([A-Za-z0-9+/_=\\-!#$%*@^~.?<>]{11,4095}[A-Za-z0-9+/_=\\-#$%*@^~<>])`;
+// Keep the encoded syntax in group 1, never in the value/fingerprint. Up to
+// three wire backslashes cover nested JSON quotes without decoding the text
+// (decoding would invalidate every offset). All added lookaheads are bounded.
+const ASSIGNMENT_QUOTE = `\\\\{0,3}["']`;
+// An encoded separator must not make the next form field part of the secret.
+// A literal '%' not starting one of these delimiters remains password data.
+const ENCODED_DELIMITER = '%(?:26|22|27|0[ADad]|20)';
+export const assignmentKey = (boundary: string, encoded = false) =>
+  `${boundary}(?:(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}|[A-Za-z][A-Za-z0-9_-]{0,63}[_-]key)(?:${ASSIGNMENT_QUOTE})?\\s*${encoded ? '%3[ADad]' : '[:=]'}\\s*`;
+export const ASSIGNMENT_QUOTED_SOURCE = (key: string, _encoded = false, quoteDepth = 0) => {
+  const quote = `\\\\{${quoteDepth}}["']`;
+  // Only the opening quote's escape depth is syntax. Extra backslashes
+  // before its closing quote belong to the value and must remain covered.
+  const boundary = quoteDepth > 0 ? `(?!${quote})` : '';
+  return `(${key}${quote})((?:${boundary}[^"'\\s]){12,4096})`;
+};
+export const ASSIGNMENT_UNQUOTED_SOURCE = (key: string, encoded = false) => {
+  const boundary = encoded ? `(?!${ENCODED_DELIMITER})` : '';
+  return `(${key})((?:${boundary}[A-Za-z0-9+/_=\\-!#$%*@^~.?<>]){11,4095}${boundary}[A-Za-z0-9+/_=\\-#$%*@^~<>])`;
+};
 /** The legacy (pre-punctuation) value class, whole-value form. */
 const LEGACY_ASSIGNMENT_VALUE_RE = /^[A-Za-z0-9+/_=-]+$/;
 /** A dotted member path in code (`process.env.DB_PASSWORD_2`): every segment an identifier. */

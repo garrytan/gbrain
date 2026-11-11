@@ -682,15 +682,20 @@ function buildPatterns(opts: ScanOpts): CompiledPattern[] {
     // Group layout matches the core shape: group 1 = the keyword anchor
     // through the `=`/`:` (and opening quote), group 2 = value.
     for (const source of [ASSIGNMENT_QUOTED_SOURCE, ASSIGNMENT_UNQUOTED_SOURCE]) {
-      for (const afterEscape of [false, true]) {
-        out.push({
-          name: 'high_entropy_assignment',
-          // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers, pinned by test/secret-scan-perf.test.ts
-          re: new RegExp(source(assignmentKey(afterEscape ? ESCAPE_BOUNDARY : '(?:^|[^A-Za-z0-9])')), 'gi'),
-          entropyGated: true,
-          validate: assignmentValueIsSecretShaped,
-          ...(afterEscape ? { afterEscape } : {}),
-        });
+      for (const encoded of [false, true]) {
+        for (const quoteDepth of source === ASSIGNMENT_QUOTED_SOURCE ? [0, 1, 2, 3] : [0]) {
+          for (const afterEscape of [false, true]) {
+            out.push({
+              name: 'high_entropy_assignment',
+              // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers, pinned by test/secret-scan-perf.test.ts
+              re: new RegExp(source(assignmentKey(afterEscape ? ESCAPE_BOUNDARY : '(?:^|[^A-Za-z0-9])', encoded), encoded, quoteDepth), 'gi'),
+              entropyGated: true,
+              validate: assignmentValueIsSecretShaped,
+              ...((encoded || quoteDepth > 0) ? { precheck: (line: string) => (!encoded || /%3[ADad]/.test(line)) && (quoteDepth === 0 || line.includes('\\')) } : {}),
+              ...(afterEscape ? { afterEscape } : {}),
+            });
+          }
+        }
       }
     }
   }
