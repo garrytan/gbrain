@@ -350,12 +350,37 @@ export async function denyMemoryProposal(ctx: OperationContext, requestId: strin
   return { status: 'denied', request_id: row.request_id, reason, decided_at: after.decided_at };
 }
 
-/** The owner's list: oldest first, 50 a page, after the upkeep pass. */
-export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?: string; all?: boolean; limit?: number } = {}): Promise<MemoryProposal[]> {
+/** An approve that did not publish: the checks closed the proposal, or the approved write ended without committing. */
+export function approveFailed(result: Record<string, unknown>): boolean {
+  if (result.dry_run) return false;
+  if (result.status !== 'approved') return true;
+  const state = (result.write_request as { state?: string } | undefined)?.state;
+  return state === 'conflict' || state === 'failed' || state === 'cancelled';
+}
+
+/** The opaque page cursor after a listed proposal: its creation time (to the millisecond the list orders by) and request id. */
+export function proposalCursor(row: Pick<MemoryProposal, 'created_at' | 'request_id'>): string {
+  return Buffer.from(JSON.stringify([row.created_at, row.request_id])).toString('base64url');
+}
+
+function parseProposalCursor(cursor: string): [string, string] {
+  let at: unknown, id: unknown;
+  try { [at, id] = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); } catch { /* refused below */ }
+  if (typeof at !== 'string' || !Number.isFinite(Date.parse(at)) || typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw opError('invalid_params', 'The cursor is not one this list returned.', 'Pass next_cursor from the previous page, or omit it for the first page.');
+  }
+  return [at, id];
+}
+
+/** The owner's list: oldest first, 50 a page, after the upkeep pass; `after` is the previous page's proposalCursor. */
+export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?: string; all?: boolean; limit?: number; after?: string } = {}): Promise<MemoryProposal[]> {
+  const [afterAt, afterId] = opts.after === undefined ? [null, null] : parseProposalCursor(opts.after);
   await runMemoryProposalUpkeep(engine);
   const rows = await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE ($1::text IS NULL OR source_id=$1)
-    AND ($2::boolean OR state='awaiting_owner') ORDER BY created_at, request_id LIMIT $3`,
-    [opts.sourceId ?? null, opts.all === true, Math.max(1, Math.min(500, opts.limit ?? 50))]);
+    AND ($2::boolean OR state='awaiting_owner')
+    AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', created_at), request_id) > ($4::timestamptz, $5::uuid))
+    ORDER BY date_trunc('milliseconds', created_at), request_id LIMIT $3`,
+    [opts.sourceId ?? null, opts.all === true, Math.max(1, Math.min(500, opts.limit ?? 50)), afterAt, afterId]);
   return rows.map(normalize);
 }
 

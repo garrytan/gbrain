@@ -84,11 +84,65 @@ export function mountAdminAccess(app: Express, requireAdmin: RequestHandler, eng
   });
 }
 
+const PROPOSAL_PAGE = 50;
+const PROPOSAL_DECISION_FIELDS = ['action', 'reason', 'dryRun'];
+
+/**
+ * GST-2407: the owner's review of memory proposals (memory_propose) over the running server, the remote twin of
+ * gbrain memory-proposals list|show|approve|deny. Approve and deny run the command's own library calls (one transaction,
+ * the stored actor and page revision re-checked, publication through the writer door) with decided_by admin-api. The
+ * proposed text is shown only inside the transcript fence, each decision names exactly one request id, and each
+ * applied decision leaves one audit row that never carries the proposed text.
+ */
+export function mountAdminMemoryProposals(app: Express, requireAdmin: RequestHandler, engine: BrainEngine): void {
+  app.get('/admin/api/memory-proposals', requireAdmin, async (req, res) => {
+    const sourceId = typeof req.query.source === 'string' && req.query.source ? req.query.source : undefined;
+    const after = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : undefined;
+    await answer(res, false, async () => {
+      const { listMemoryProposals, proposalCursor } = await import('../core/persistence/memory-proposals.ts');
+      const { ownerView } = await import('./memory-proposals.ts');
+      const rows = await listMemoryProposals(engine, { sourceId, after, limit: PROPOSAL_PAGE });
+      return { proposals: await Promise.all(rows.map(ownerView)), next_cursor: rows.length === PROPOSAL_PAGE ? proposalCursor(rows.at(-1)!) : null };
+    });
+  });
+
+  app.get('/admin/api/memory-proposals/:request_id', requireAdmin, async (req, res) => {
+    await answer(res, false, async () => {
+      const { ownerProposal } = await import('../core/persistence/memory-proposals.ts');
+      const { ownerView } = await import('./memory-proposals.ts');
+      return ownerView(await ownerProposal(engine, String(req.params.request_id)));
+    });
+  });
+
+  app.post('/admin/api/memory-proposals/:request_id', requireAdmin, express.json(), async (req, res) => {
+    const body = req.body ?? {};
+    const { action, reason, dryRun } = body;
+    if (action !== 'approve' && action !== 'deny') return refuse(res, 'action must be approve or deny.');
+    const unknown = Object.keys(body).find(key => !PROPOSAL_DECISION_FIELDS.includes(key));
+    if (unknown !== undefined) return refuse(res, `Unknown field ${unknown}: a decision takes action, reason and dryRun, for the one request id in the path.`);
+    if (dryRun !== undefined && typeof dryRun !== 'boolean') return refuse(res, 'dryRun must be a boolean.');
+    if (action === 'approve' && reason !== undefined) return refuse(res, 'reason goes with deny; approve takes none.');
+    if (action === 'deny' && typeof reason !== 'string') return refuse(res, 'deny needs reason: 1 to 500 characters the proposer reads on its receipt.');
+    await answer(res, dryRun !== true, async () => {
+      const lib = await import('../core/persistence/memory-proposals.ts');
+      const { ownerContext } = await import('./memory-proposals.ts');
+      const row = await lib.ownerProposal(engine, String(req.params.request_id));
+      const ctx = await ownerContext(engine, dryRun === true);
+      const result = action === 'approve'
+        ? await lib.approveMemoryProposal(ctx, row.request_id, { decidedBy: 'admin-api' })
+        : await lib.denyMemoryProposal(ctx, row.request_id, reason, { decidedBy: 'admin-api' });
+      const applied = dryRun !== true && row.state === 'awaiting_owner';
+      if (applied) await audit(engine, `proposal_${action}`, { request_id: row.request_id, kind: row.kind, slug: row.slug, member: row.member_id, state: result.status });
+      return { applied, ...result, ...(action === 'approve' && lib.approveFailed(result) ? { outcome: 'failed' } : {}) };
+    }, 'Show the proposal (GET /admin/api/memory-proposals/<request_id>)');
+  });
+}
+
 function refuse(res: Response, message: string): void {
   res.status(400).json({ error: 'invalid_params', code: 'invalid_params', message, outcome: 'failed' });
 }
 
-async function answer(res: Response, mutation: boolean, run: () => Promise<Record<string, unknown>>): Promise<void> {
+async function answer(res: Response, mutation: boolean, run: () => Promise<Record<string, unknown>>, inspect = 'List the members, links or client'): Promise<void> {
   res.set('Cache-Control', 'no-store');
   try {
     res.json(await run());
@@ -98,7 +152,7 @@ async function answer(res: Response, mutation: boolean, run: () => Promise<Recor
       return;
     }
     res.status(503).json({ error: 'administration_unavailable', code: 'administration_unavailable', outcome: mutation ? 'unknown' : 'failed',
-      message: mutation ? 'The change outcome is unknown. List the members, links or client before another change.' : 'Administration is temporarily unavailable. Retry the read.' });
+      message: mutation ? `The change outcome is unknown. ${inspect} before another change.` : 'Administration is temporarily unavailable. Retry the read.' });
   }
 }
 

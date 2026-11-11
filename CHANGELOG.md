@@ -10,6 +10,26 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The brain owner can now review QM's memory proposals from another machine.** QM is the AI helper that can use gbrain as one of its memories; it proposes timeline entries and links with `memory_propose`, and nothing lands until the owner says yes. Until now that yes needed a shell on the brain host (`gbrain memory-proposals`). The owner's admin session now reaches the same review over the running server.
+
+### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Reviewing proposals remotely | a shell on the brain host | owner-session routes `GET /admin/api/memory-proposals` (`?source=`, `?cursor=`, oldest first, 50 a page), `GET /admin/api/memory-proposals/<request_id>` and `POST /admin/api/memory-proposals/<request_id>` (`{action: "approve"\|"deny", reason?, dryRun?}`), mirrored by `gbrain mcp admin memory-proposals list\|show\|approve\|deny`; no OAuth token or MCP tool reaches them |
+| Audit | CLI decisions record `decided_by` | HTTP decisions record `decided_by: admin-api` and one `access_admin` request-log row per applied decision, never the proposed text; a change that fails partway answers `outcome: unknown` |
+| `gbrain memory-proposals approve` when the approved write fails | exit 0 | exit 1; the HTTP approve reports `outcome: failed` with the write's receipt |
+
+### Itemized changes
+
+- `src/commands/serve-http-access.ts`, `src/commands/serve-http-admin-api.ts`: `mountAdminMemoryProposals` beside gap 4's access routes, on the same `requireAdmin`, dry-run, audit and `outcome: unknown` pattern; approve and deny call the CLI's library functions, so the one transaction, the re-checked actor and page revision and the writer-door publication are shared.
+- `src/commands/mcp-admin.ts`: the `memory-proposals` mirror; each decision takes exactly one request id, and deny needs a 1-500 character reason.
+- `src/core/persistence/memory-proposals.ts`: a keyset page cursor for the owner list and `approveFailed`, the one rule the CLI exit code and the HTTP outcome share.
+- Docs: `docs/mcp/ADMIN.md`, `docs/guides/qm.md`.
+- Tests: `test/serve-http-memory-proposals.test.ts` (new, PGLite and Postgres), `test/mcp-admin-cli.serial.test.ts`.
+
 ## [0.60.655.0] - 2026-11-10
 
 **QM, the AI helper that uses gbrain as one of its memories, can now read a person's own brain safely, read shared rooms only as the room's audience, and suggest edits that wait for the brain owner's yes.** This lands the QM internal-provider chain (#8475, #8480, #8557, #8477, #8483, #8479, #8466) as one release. Nothing changes for a brain with no attested (`x-qm-actor`) client: unattested calls and member-bound credentials behave as before, and every new table is database state, so a repo-less brain works the same.
