@@ -701,6 +701,12 @@ vars — incident-time escape hatches, not everyday knobs.
    scan: a script's commit holding a secret holds them with `publish_secret_found`
    and nothing is pushed until the user removes it or allowlists a false positive.
 
+   `gbrain sources git-reconcile` does this for every source checkout, and
+   autopilot runs it each tick (`autopilot.git_pull false` skips it). A
+   checkout gbrain cloned also publishes its local commits;
+   `sources.refresh_publish_diverged false` keeps them local. A level
+   checkout costs one fetch, so call it as often as you like.
+
    **Say to your agent:** *"Bring my notes source up to date with its remote."*
 
 9. **Turn automatic pulls off for every source.** On an unmanaged brain,

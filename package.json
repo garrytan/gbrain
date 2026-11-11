@@ -255,7 +255,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.671.0",
+  "version": "0.60.673.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

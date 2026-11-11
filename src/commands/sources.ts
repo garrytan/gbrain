@@ -20,6 +20,7 @@
  *   gbrain sources unfederate <id> — sources.config.federated = false
  *   gbrain sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
  *   gbrain sources refresh <id> — drained worktree-wide ff-only refresh on a managed brain (F0)
+ *   gbrain sources git-reconcile [<id>...] — idempotent publish/fast-forward of every source checkout (sources-git-reconcile.ts)
  *   gbrain sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
  *   gbrain sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
  *   gbrain sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
@@ -1937,6 +1938,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
+    case 'git-reconcile': return (await import('./sources-git-reconcile.ts')).runSourcesReconcile(engine, rest);
     case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
     case 'host-repo':  return (await import('./sources-host-repo.ts')).runHostRepo(engine, rest);
     case 'guard':      return (await import('./sources-guard.ts')).runSourcesGuard(engine, rest);
@@ -2052,6 +2054,10 @@ Subcommands:
                                     Managed brains: drain writes to the source's worktree, fast-forward
                                     it to its upstream (git merge --ff-only) and sync every source bound
                                     to it. --dry-run fetches and previews only.
+  git-reconcile [<id>...] [--dry-run] [--wait <s>] [--json]
+                                    Bring every source checkout level with its upstream: publish local
+                                    commits (merged in memory, secret-scanned) and fast-forward; in sync
+                                    is a no-op. Safe to run concurrently and repeatedly.
   git-gap <id> [--sample <n>] [--json]
                                     Read-only: how far the database is from the commit at HEAD, page by page.
   reindex <id> --from-git [--dry-run | --apply --expect <hash>] [--json]
