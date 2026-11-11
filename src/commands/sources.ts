@@ -605,7 +605,7 @@ function deriveBrainId(created: OpsSourceRow, localPath: string): string {
 // wrapper only parses args, resolves <id> → local_path, and maps statuses
 // to exit codes:
 //   0  pushed / skipped (push already in flight — clean single-flight skip)
-//   5  blocked (secrets / tracked deny-glob) or refused (unverified remote)
+//   5  blocked (secrets / tracked deny-glob / the commits it would push) or refused (unverified remote)
 //   1  pull conflict / push failure / other error
 
 async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
@@ -615,10 +615,12 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
   let message: string | undefined;
   let allowUnverified = false;
   let json = false;
+  let scanTimeout: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--path') { path = args[++i]; continue; }
+    if (a === '--scan-timeout') { scanTimeout = args[++i]; continue; }
     if (a === '--branch') { branch = args[++i]; continue; }
     if (a === '--message') { message = args[++i]; continue; }
     if (a === '--allow-unverified-remote') { allowUnverified = true; continue; }
@@ -628,8 +630,8 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  if ((!id && !path) || (id && path)) {
-    console.error('Usage: gbrain sources push [<id> | --path <dir>] [--branch <b>] [--message <m>] [--allow-unverified-remote] [--json]');
+  if ((!id && !path) || (id && path) || (scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(scanTimeout))) {
+    console.error('Usage: gbrain sources push [<id> | --path <dir>] [--branch <b>] [--message <m>] [--allow-unverified-remote] [--scan-timeout <seconds>] [--json]');
     process.exit(2);
   }
 
@@ -657,6 +659,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     pullStrategy,
     commitMessage: message,
     allowUnverifiedRemote: allowUnverified,
+    ...(scanTimeout ? { scanTimeoutMs: Number(scanTimeout) * 1000 } : {}),
     logger: (l) => console.error(`[gbrain] ${l}`),
   });
 
@@ -706,6 +709,13 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     case 'refused_visibility':
       if (!json) {
         console.error(`PUSH REFUSED: ${res.reason}`);
+      }
+      process.exit(5);
+      break;
+    case 'blocked_history':
+      if (!json) {
+        console.error(`Error [${res.code}]: ${res.reason?.replace(/^\S+: /, '')}`);
+        if (res.suggestion) console.error(`Fix: ${res.suggestion}`);
       }
       process.exit(5);
       break;
@@ -2101,9 +2111,11 @@ Subcommands:
                                     Divergence-safe rebase-pull (skip-on-dirty).
                                     --path is DB-free (the harden cron's entry).
   push <id> | --path <dir> [--branch <b>] [--message <m>]
-       [--allow-unverified-remote] [--json]
+       [--allow-unverified-remote] [--scan-timeout <s>] [--json]
                                     Scan-gated add→commit→pull→push of a workspace
-                                    repo. Blocks on secret-scan findings (override
+                                    repo; every commit it pushes is scanned
+                                    (--scan-timeout: the scan's budget, default
+                                    300 s). Blocks on secret-scan findings (override
                                     per finding via .gbrain-scan-allow) and on
                                     tracked deny-list files (*.pglite, .env*,
                                     *.pem, *.key, .gbrain/**). Refuses remotes not

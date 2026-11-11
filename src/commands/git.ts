@@ -50,8 +50,10 @@ Flags:
   --keep-checkout     With --push-only: never move the checkout and skip its pre-push hook. The one
                       publish allowed in a managed canonical worktree (its Git effects' integrate_conflict
                       fix); gbrain sources refresh brings the merged remote files in afterwards.
-  --scan-secrets      With --push-only: before pushing, scan what the unpublished commits add (messages,
-                      added lines, merge resolutions) and refuse publish_secret_found on a finding.
+  --scan-secrets      Accepted for older scripts: every push scans what the unpublished commits add
+                      (messages, added lines, merge resolutions) and refuses publish_secret_found on a finding.
+  --scan-timeout <s>  The secret scan's time budget in seconds (default 300); a first push of a long
+                      history may need more. The scan still reads every commit.
   --pull              Bring remote commits in (fast-forward, or an in-memory merge); never pushes.
   --require-clean     Unattended rule: --pull skips when the checkout has any local edit;
                       a push never advances a checkout that has one, and never waits for
@@ -83,7 +85,7 @@ is installed.`;
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[];
-  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean;
+  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean; scanTimeout?: string;
 }
 
 function parse(args: string[]): Parsed {
@@ -119,6 +121,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--base' || a.startsWith('--base=')) p.base.push(take('--base'));
     else if (a === '--branch' || a.startsWith('--branch=')) p.branch = take('--branch');
     else if (a === '--expect-remote' || a.startsWith('--expect-remote=')) p.expectRemote = take('--expect-remote');
+    else if (a === '--scan-timeout' || a.startsWith('--scan-timeout=')) p.scanTimeout = take('--scan-timeout');
     else if (!p.sub) p.sub = a;
     else if (a.startsWith('-')) throw opError('commit_paths_invalid', `Unknown flag ${a}.`, HELP.split('\n')[0]);
     else p.paths.push(a);
@@ -191,7 +194,7 @@ export async function runGit(args: string[]): Promise<number> {
     if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
-      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout || p.scanSecrets) && !p.pushOnly)
+      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly) || (p.scanTimeout !== undefined && p.pull)
       || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull) || (p.base.length && (p.pull || p.pushOnly || p.pending))) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
@@ -203,6 +206,9 @@ export async function runGit(args: string[]): Promise<number> {
         'Pass the full object id git rev-parse HEAD:<path> printed when you read the file, or absent for a new file.');
       return [path, blob] as const;
     }));
+    if (p.scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(p.scanTimeout)) {
+      throw opError('commit_paths_invalid', `--scan-timeout ${p.scanTimeout} is not a number of seconds.`, 'Pass whole seconds, for example --scan-timeout 1800.');
+    }
     if ((p.resolve.length && !p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
       throw opError('commit_paths_invalid', '--resolve and --expect-remote <sha> go together.',
         'Copy both from the integrate_conflict report: --expect-remote names the remote commit your choice was made against.');
@@ -231,7 +237,9 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.pending ? { pending: true } : {}),
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
-      ...(p.scanSecrets ? { scanSecrets: true } : {}),
+      scanSecrets: true,
+      ...(p.scanTimeout ? { scanTimeoutMs: Number(p.scanTimeout) * 1000 } : {}),
+      scanProgress: (line: string) => process.stderr.write(`[gbrain] ${line}\n`),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
@@ -282,11 +290,13 @@ export async function runGit(args: string[]): Promise<number> {
         if (d.publish) failed = d.publish;
       } catch { /* best-effort */ }
     }
-    if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root') {
+    if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root'
+      || failed.code === 'publish_secret_found' || failed.code === 'publish_scan_unreadable') {
       try {
         const bi = args.indexOf('--branch');
         const branch = bi !== -1 && args[bi + 1] ? args[bi + 1].replace(/^refs\/heads\//, '') : currentBranchOf(args);
-        appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
+        if (failed.code.startsWith('publish_')) appendPushLog('refused', branch, '', failed.code);
+        else appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
       } catch { /* best-effort */ }
     }
     return writeCliError(e, 'git commit-push', { json });

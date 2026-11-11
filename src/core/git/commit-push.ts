@@ -125,6 +125,9 @@ export interface CommitPushOptions {
   keepCheckout?: boolean;
   /** Before pushing, scan what the commits the upstream lacks add (messages, added lines, merge resolutions) and refuse `publish_secret_found` on a finding: the gate for automatic publishes of commits gbrain did not write. */
   scanSecrets?: boolean;
+  /** The secret scan's time budget (`--scan-timeout`; default 300 s) and where its progress lines go. */
+  scanTimeoutMs?: number;
+  scanProgress?: (line: string) => void;
   /** Commit the pending write-through files (`--pending`) instead of named paths. */
   pending?: boolean;
   /** Commit and publish files outside the configured source root(s): the user's explicit choice, or gbrain's own scaffolding at the checkout root. */
@@ -143,6 +146,8 @@ interface Ctx {
   trackingRef: string;
   keepCheckout?: boolean;
   scanSecrets?: boolean;
+  scanTimeoutMs?: number;
+  scanProgress?: (line: string) => void;
 }
 
 interface GitRun { code: number; stdout: string; stderr: string }
@@ -1044,6 +1049,34 @@ function remoteContains(ctx: Ctx, sha: string): boolean {
   return true;
 }
 
+/**
+ * GST-2456: the commit a scanned push is scanned from and leased on. Normally the remote's tip as fetched (`fetched`); when
+ * the remote pushes to URLs of its own (pushurl, #5138), what those URLs hold, read live, which must be one commit (or the
+ * branch absent everywhere), since one push carries one lease. Anything else refuses push_unconfirmed, with nothing pushed.
+ */
+function pushBase(ctx: Ctx, fetched: string, candidate: string): string {
+  const urls = git(ctx.root, ['remote', 'get-url', '--push', '--all', '--', ctx.remote]).stdout.split('\n').map(u => u.trim()).filter(Boolean);
+  if (urls.length === 1 && urls[0] === git(ctx.root, ['remote', 'get-url', '--', ctx.remote]).stdout.trim()) return fetched;
+  const refuse = (why: string) => opError('push_unconfirmed', `Nothing was pushed: ${why}, so no one scanned range covers what this push would publish to every push URL of ${ctx.remote}.`,
+    `Bring every push URL of ${ctx.remote} to the same commit of ${ctx.mergeRef.replace(/^refs\/heads\//, '')} (git remote get-url --push --all ${ctx.remote} lists them), then rerun gbrain git commit-push --push-only.`,
+    { detail: candidate, retryable: true });
+  const tips = new Set<string>();
+  for (const url of urls) {
+    if (git(ctx.root, ['ls-remote', '--get-url', '--', url]).stdout.trim() !== url) throw refuse(`push URL ${url} names another remote`);
+    const listed = git(ctx.root, [...transportFlags(), 'ls-remote', '--exit-code', '--', url, ctx.mergeRef], { auth: true, timeoutMs: 60_000 });
+    if (listed.code === 2) { tips.add(''); continue; }
+    const tip = listed.code === 0 ? listed.stdout.split(/\s/)[0] ?? '' : '';
+    if (!/^[0-9a-f]{40,64}$/.test(tip)) throw refuse(`push URL ${url} could not be read`);
+    if (git(ctx.root, ['cat-file', '-e', `${tip}^{commit}`]).code !== 0
+      && git(ctx.root, [...transportFlags(), 'fetch', '--quiet', ...fetchFlags(ctx.root), ...GIT_SSRF_SUBCOMMAND_FLAGS, '--', url, tip], { auth: true, timeoutMs: 120_000 }).code !== 0) {
+      throw refuse(`the commit push URL ${url} holds could not be fetched`);
+    }
+    tips.add(tip);
+  }
+  if (tips.size !== 1) throw refuse(`the push URLs hold different commits of ${ctx.mergeRef.replace(/^refs\/heads\//, '')}`);
+  return [...tips][0]!;
+}
+
 interface Published { sha: string; integrated: number; confirmed: 'push' | 'remote'; quarantined?: QuarantineEntry; superseded?: string[] }
 
 // ── Quarantine (opt-in) ─────────────────────────────────────────────────────
@@ -1089,7 +1122,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
   const bound = expectRemote && !resolutions?.size ? gitOk(ctx.root, ['rev-parse', '--verify', `${expectRemote}^{commit}`], 'rev-parse --expect-remote') : undefined;
   // #8896: a scanned publish scans <base>..<candidate> before every push and leases the push on that base, so a remote that
   // moved or was rewound since the tracking ref was fetched (a stale ref hides commits from the scan) is fetched and scanned again.
-  let scannedBase = scanSecrets ? git(ctx.root, ['rev-parse', '--verify', '--quiet', ctx.trackingRef]).stdout.trim() : '';
+  let scannedBase = scanSecrets ? pushBase(ctx, git(ctx.root, ['rev-parse', '--verify', '--quiet', ctx.trackingRef]).stdout.trim(), start) : '';
   let candidate = start;
   let integrated = 0;
   let lastError = '';
@@ -1108,13 +1141,13 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
       const lease = bound ?? (scanSecrets ? scannedBase : undefined);
       if (scanSecrets) assertNoSecretsInRange({ ...ctx, trackingRef: lease! }, candidate);
       const push = lease && !isAncestor(ctx.root, lease, candidate) ? null
-        : remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(lease !== undefined ? [`--force-with-lease=${ctx.mergeRef}:${lease}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+        : remoteGit(ctx.root, 'push', ['--no-follow-tags', ...(ctx.keepCheckout ? ['--no-verify'] : []), ...(lease !== undefined ? [`--force-with-lease=${ctx.mergeRef}:${lease}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
       if (push?.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
       if (push) lastError = push.stderr.trim();
       if (remoteContains(ctx, candidate)) return onRemote();
       remoteTip = fetchTracking(ctx);
       if (!remoteTip) break;
-      scannedBase = remoteTip;
+      if (scanSecrets) scannedBase = pushBase(ctx, remoteTip, candidate);
       if (bound && remoteTip !== bound) {
         throw opError('push_unconfirmed', `The remote moved to ${remoteTip.slice(0, 12)} after --expect-remote ${bound.slice(0, 12)} was checked, so nothing was pushed: publishing now could merge back commits a rewrite removed.`,
           'Check the remote history first (gbrain sources refresh checks it for a force-push), then rerun.', { detail: candidate, retryable: true });
@@ -1193,7 +1226,8 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
 
 /** The automatic-publish secret gate: scan what the commits in trackingRef..target add (publish passes the base it leases its push on, under its lock). */
 function assertNoSecretsInRange(ctx: Ctx, target: string): void {
-  const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, scanRange(ctx.root, ctx.trackingRef, target));
+  const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, scanRange(ctx.root, ctx.trackingRef, target, ctx.scanTimeoutMs, ctx.scanProgress), {
+    timeoutMs: ctx.scanTimeoutMs, retryArgv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--path', ctx.root] });
   if (refusal) throw refusal;
 }
 
@@ -1340,7 +1374,8 @@ export function commitAndPush(opts: CommitPushOptions): CommitPushResult {
     throw opError('commit_paths_invalid', 'A commit message is required.', 'Pass -m "<message>".');
   }
   const upstream = resolveCtx(root);
-  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}), ...(opts.scanSecrets ? { scanSecrets: true } : {}) };
+  const ctx = { ...withBranch(upstream, opts.branch), ...(opts.keepCheckout ? { keepCheckout: true } : {}), ...(opts.scanSecrets ? { scanSecrets: true } : {}),
+    ...(opts.scanTimeoutMs ? { scanTimeoutMs: opts.scanTimeoutMs } : {}), ...(opts.scanProgress ? { scanProgress: opts.scanProgress } : {}) };
   const elsewhere = ctx.mergeRef !== upstream.mergeRef;
   assertNoOperationInProgress(root);
 
