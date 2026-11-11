@@ -41,7 +41,7 @@ import { withAIInvocationGuard } from './ai/invocation-guard.ts';
 import { loadPricingOverrides } from './budget/budget-tracker.ts';
 import type { PricingOverrides } from './budget/reservation-cost.ts';
 import { actualCents, maximumInvocationCents } from './minions/delegated-spend.ts';
-import { UNPRICED_RATE_PER_MTOK } from './held-embedding-action.ts';
+import { ledgerPricePerMTok, UNPRICED_RATE_PER_MTOK } from './held-embedding-action.ts';
 
 export const PAGE_TAIL_USD_KEY = 'embed.page_tail_usd_per_day';
 export const DEFAULT_PAGE_TAIL_USD = 0.25;
@@ -101,17 +101,38 @@ export function embeddingBatchContext(page: { slug: string; title: string; conte
   return createHash('sha256').update(JSON.stringify([page.slug, page.title, page.contextual_retrieval_mode, target.column.name, target.provenanceModel])).digest('hex');
 }
 
-export type BatchReservation = { ok: true } | { ok: false; spentUsd: number; capUsd: number };
+/**
+ * A job's own spend ceiling (`embed.backfill_max_usd`), shared with the embed-page jobs it hands its segmented pages to
+ * and their continuations: the job's ledger rows and theirs are all `job:<jobId>:` rows of its source.
+ */
+export interface JobSpendCeiling { jobId: number; capUsd: number }
+
+const jobSpendPrefix = (jobId: number) => `job:${jobId}:`;
+
+/** A batch's id: tagged with the job whose ceiling it spends under, so the ceiling counts it. */
+export function embeddingBatchId(ceiling?: JobSpendCeiling): string {
+  return ceiling ? `${jobSpendPrefix(ceiling.jobId)}page:${randomUUID()}` : randomUUID();
+}
+
+/** What a job and the pages it handed off have reserved, settled or left uncertain, at any age. */
+async function jobSpend(tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string, jobId: number): Promise<number> {
+  const [row] = await tx.executeRaw<{ usd: number | null }>(
+    "SELECT sum(usd) AS usd FROM embedding_spend WHERE source_id = $1 AND batch_id LIKE $2 AND state <> 'released'", [sourceId, `${jobSpendPrefix(jobId)}%`]);
+  return Number(row?.usd ?? 0);
+}
+
+export type BatchReservation = { ok: true } | { ok: false; spentUsd: number; capUsd: number; jobCapped?: true };
 
 /**
  * Record a batch before its provider call and reserve its spend: under the source's spend lock, refuse when the last
  * 24 hours' reserved, settled and uncertain spend plus this batch would pass the source cap (`enforce`; an explicit
- * approval books without refusing). `pageUsd` is booked as `page` spend, `tailUsd` (the tail allowance's share) as
- * `tail` spend on the same batch.
+ * approval books without refusing), or when `ceiling`'s job has spent so much with the pages it handed off that this
+ * batch would pass its ceiling (`jobCapped`). `pageUsd` is booked as `page` spend, `tailUsd` (the tail allowance's
+ * share) as `tail` spend on the same batch.
  */
 export async function reserveEmbeddingBatch(engine: BrainEngine, batch: {
   batchId: string; pageId: number; sourceId: string; generation: number; column: string; signature: string | null; context: string;
-  rows: readonly EmbeddingBatchRow[]; pageUsd: number; tailUsd: number; enforce: boolean;
+  rows: readonly EmbeddingBatchRow[]; pageUsd: number; tailUsd: number; enforce: boolean; ceiling?: JobSpendCeiling;
 }): Promise<BatchReservation> {
   const capUsd = batch.enforce ? await resolveSourceSpendCapUsd(engine) : Infinity;
   const usd = Math.max(0, batch.pageUsd) + Math.max(0, batch.tailUsd);
@@ -120,6 +141,10 @@ export async function reserveEmbeddingBatch(engine: BrainEngine, batch: {
     if (Number.isFinite(capUsd)) {
       const spent = (await sourceSpend24h(tx, batch.sourceId)).total_usd;
       if (spent + usd > capUsd + USD_EPSILON) return { ok: false, spentUsd: spent, capUsd } as const;
+    }
+    if (batch.ceiling) {
+      const spent = await jobSpend(tx, batch.sourceId, batch.ceiling.jobId);
+      if (spent + usd > batch.ceiling.capUsd + USD_EPSILON) return { ok: false, spentUsd: spent, capUsd: batch.ceiling.capUsd, jobCapped: true } as const;
     }
     await tx.executeRaw(`INSERT INTO embedding_batches (batch_id, page_id, source_id, generation, column_name, signature, rows, state, usd, context)
       VALUES ($1, $2, $3, $4, $5, $6, $7::text::jsonb, 'calling', $8, $9)`,
@@ -135,17 +160,39 @@ export async function reserveEmbeddingBatch(engine: BrainEngine, batch: {
   });
 }
 
+/** Input tokens an embedding request can bill per input beyond its text's UTF-8 bytes (framing and special tokens). */
+const EMBED_INPUT_OVERHEAD_TOKENS = 8;
+
+/** The most input tokens a batch of `texts` can bill: no tokenizer emits more tokens than UTF-8 bytes, plus a per-input overhead. */
+export function embeddingCeilingTokens(texts: readonly string[]): number {
+  return texts.reduce((n, text) => n + Buffer.byteLength(text, 'utf8') + EMBED_INPUT_OVERHEAD_TOKENS, 0);
+}
+
+/** `tokens` at the ledger's rate for `signature`: an unpriced model at UNPRICED_RATE_PER_MTOK, a free recipe at $0. */
+export function ledgerTokensUsd(tokens: number, signature: string | null | undefined): number {
+  return tokens * ledgerPricePerMTok(signature).rate / 1_000_000;
+}
+
 const lockSourceSpend = (tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string) =>
   tx.executeRaw("SELECT pg_advisory_xact_lock(hashtext('gbrain:embedding_spend:' || $1)::bigint)", [sourceId]);
 
 const spendIds = (batchId: string) => [batchId, `${batchId}:tail`];
 
-/** Store a batch's returned vectors before its install and settle its spend; idempotent by batch id (an uncertain batch that answered late settles too). */
-export async function storeBatchVectors(engine: BrainEngine, batchId: string, rows: readonly EmbeddingBatchRow[]): Promise<void> {
+/** Settle a batch's open spend rows to `usd` in all, split between its page and tail rows as they were reserved. */
+const settleBatchSpend = (tx: Pick<BrainEngine, 'executeRaw'>, batchId: string, usd: number) => tx.executeRaw(`UPDATE embedding_spend s SET state = 'settled',
+    usd = CASE WHEN t.total > 0 THEN s.usd * $2::float8 / t.total ELSE s.usd END
+  FROM (SELECT sum(usd) AS total FROM embedding_spend WHERE batch_id = ANY($1::text[])) t
+  WHERE s.batch_id = ANY($1::text[]) AND s.state IN ('reserved','uncertain')`, [spendIds(batchId), Math.max(0, usd)]);
+
+/**
+ * Store a batch's returned vectors before its install and settle its spend to `usd` (its measured cost, or the reserved
+ * ceiling when the provider reported no usage); idempotent by batch id (an uncertain batch that answered late settles too).
+ */
+export async function storeBatchVectors(engine: BrainEngine, batchId: string, rows: readonly EmbeddingBatchRow[], usd: number): Promise<void> {
   await engine.transaction(async tx => {
     await tx.executeRaw(`UPDATE embedding_batches SET rows = $2::text::jsonb, state = 'returned', updated_at = now()
       WHERE batch_id = $1 AND state IN ('calling','uncertain')`, [batchId, JSON.stringify(rows)]);
-    await tx.executeRaw("UPDATE embedding_spend SET state = 'settled' WHERE batch_id = ANY($1::text[]) AND state IN ('reserved','uncertain')", [spendIds(batchId)]);
+    await settleBatchSpend(tx, batchId, usd);
   });
 }
 
@@ -168,11 +215,11 @@ export async function markBatchUncertain(engine: BrainEngine, batchId: string): 
   });
 }
 
-/** The provider answered but the batch is unusable (an incomplete, invalid or refused-vector response): drop it and keep its settled spend. */
-export async function discardAnsweredBatch(engine: BrainEngine, batchId: string): Promise<void> {
+/** The provider answered but the batch is unusable (an incomplete, invalid or refused-vector response): drop it and settle its spend to `usd`. */
+export async function discardAnsweredBatch(engine: BrainEngine, batchId: string, usd: number): Promise<void> {
   await engine.transaction(async tx => {
     await tx.executeRaw("DELETE FROM embedding_batches WHERE batch_id = $1", [batchId]);
-    await tx.executeRaw("UPDATE embedding_spend SET state = 'settled' WHERE batch_id = ANY($1::text[]) AND state IN ('reserved','uncertain')", [spendIds(batchId)]);
+    await settleBatchSpend(tx, batchId, usd);
   });
 }
 
@@ -229,6 +276,14 @@ export function withBatchReserved<T>(run: () => Promise<T>): Promise<T> {
   return batchReserved.run(true, run);
 }
 
+/** A job's ceiling (embed.backfill_max_usd, shared with the pages it handed off) refused its next call before it was sent. */
+export class JobSpendCapped extends Error {
+  constructor(readonly spentUsd: number, readonly capUsd: number) {
+    super(`embed.backfill_max_usd reached: this job and the large pages it handed off spent $${spentUsd.toFixed(2)} of $${capUsd.toFixed(2)}, so this embedding call was not sent`);
+    this.name = 'JobSpendCapped';
+  }
+}
+
 /** The source's 24-hour embedding cap refused a call before it was sent. */
 export class SourceSpendCapped extends Error {
   constructor(readonly spentUsd: number, readonly capUsd: number) {
@@ -240,10 +295,11 @@ export class SourceSpendCapped extends Error {
 /**
  * Run `run` (an embed-backfill drain) with each embedding provider attempt outside a segmented batch reserved in the
  * source's 24-hour ledger before it is sent: its maximum liability (an unpriced model's input ceiling at UNPRICED_RATE_PER_MTOK), one row per attempt, under the source's spend lock,
- * refused past the cap (`onRefused` runs first, then the attempt throws). An answered attempt settles to its measured
- * cost; one with no reported usage keeps its maximum, and a worker killed mid-call leaves the reservation counted.
+ * refused past the cap, or past `capUsd` counting what the job's delegated pages spent (`onRefused` runs first, then
+ * the attempt throws). An answered attempt settles to its measured cost; one with no reported usage keeps its maximum,
+ * and a worker killed mid-call leaves the reservation counted.
  */
-export function withSourceSpendLedger<T>(engine: BrainEngine, opts: { sourceId: string; jobId: number; onRefused?: (refusal: SourceSpendCapped) => void },
+export function withSourceSpendLedger<T>(engine: BrainEngine, opts: { sourceId: string; jobId: number; capUsd?: number; onRefused?: (refusal: SourceSpendCapped | JobSpendCapped) => void },
   run: () => Promise<T>): Promise<T> {
   let pricing: Promise<PricingOverrides | undefined> | undefined;
   return withAIInvocationGuard(async call => {
@@ -252,11 +308,15 @@ export function withSourceSpendLedger<T>(engine: BrainEngine, opts: { sourceId: 
     const maxCents = maximumInvocationCents(call, overrides);
     const usd = maxCents !== null ? maxCents / 100 : (call.maxInputTokens ?? call.estimatedInputTokens ?? 0) * UNPRICED_RATE_PER_MTOK / 1_000_000;
     const capUsd = await resolveSourceSpendCapUsd(engine);
-    const id = `job:${opts.jobId}:${randomUUID()}`;
+    const id = `${jobSpendPrefix(opts.jobId)}${randomUUID()}`;
     const refused = await engine.transaction(async tx => {
       await lockSourceSpend(tx, opts.sourceId);
       const spent = (await sourceSpend24h(tx, opts.sourceId)).total_usd;
       if (spent + usd > capUsd + USD_EPSILON) return new SourceSpendCapped(spent, capUsd);
+      if (opts.capUsd !== undefined) {
+        const jobSpent = await jobSpend(tx, opts.sourceId, opts.jobId);
+        if (jobSpent + usd > opts.capUsd + USD_EPSILON) return new JobSpendCapped(jobSpent, opts.capUsd);
+      }
       await tx.executeRaw("INSERT INTO embedding_spend (batch_id, source_id, page_id, kind, usd, state) VALUES ($1, $2, NULL, 'job', $3, 'reserved')", [id, opts.sourceId, usd]);
       return null;
     });

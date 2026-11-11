@@ -22,13 +22,13 @@ import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { embedSegmentedPage, readSegmentedEmbedPage, type SegmentedEmbedPage } from '../../src/core/page-body/segmented-embedding.ts';
 import { embedStaleForSource } from '../../src/core/embed-stale.ts';
 import {
-  PAGE_TAIL_USD_KEY, SOURCE_SPEND_CAP_KEY, SourceSpendCapped, embedProgressLine, embeddingBatchProbe, readEmbedProgress, readEmbedProgressView,
+  PAGE_TAIL_USD_KEY, SOURCE_SPEND_CAP_KEY, SourceSpendCapped, embedProgressLine, embeddingBatchProbe, embeddingCeilingTokens, ledgerTokensUsd, readEmbedProgress, readEmbedProgressView,
   readSourceEmbedProgress, sourceEmbedProgressLine, sourceSpend24h, withBatchReserved, withSourceSpendLedger,
 } from '../../src/core/embedding-ledger.ts';
 import { invokeAI, sdkInvocationUsage, type AIInvocation } from '../../src/core/ai/invocation-guard.ts';
 import { _setRateLimitFloorsForTests } from '../../src/core/embed-retry.ts';
 import { makeEmbedBackfillHandler } from '../../src/core/minions/handlers/embed-backfill.ts';
-import { estimatePageEmbedUsd, PAGE_EMBED_CAP_KEY } from '../../src/core/page-embedding-budget.ts';
+import { PAGE_EMBED_CAP_KEY } from '../../src/core/page-embedding-budget.ts';
 import { estimateCostFromChars } from '../../src/core/embedding-pricing.ts';
 import { UNPRICED_RATE_PER_MTOK } from '../../src/core/held-embedding-action.ts';
 import { PAGE_INLINE_MAX_BYTES } from '../../src/core/page-size-policy.ts';
@@ -42,6 +42,11 @@ import { testBackends } from '../helpers/test-backends.ts';
 
 const ROW = (i: number) => `Row ${i}: herons wade in the marsh at dawn while the reeds bend, `.padEnd(300, 'and the tide turns slowly. ');
 const ROW_USD = estimateCostFromChars(ROW(0).length, UNPRICED_RATE_PER_MTOK);
+/** A token-dense row: 300 characters of Japanese, three UTF-8 bytes and about one token each, where the estimate assumes 3.5 characters per token. */
+const DENSE = (i: number) => `Row ${i}: ${'夜明けの湿地で鷺が葦の間を歩き、潮はゆっくりと満ちていく。'.repeat(20)}`.slice(0, 300);
+const usdOf = (tokens: number) => tokens * UNPRICED_RATE_PER_MTOK / 1e6;
+const utf8 = (texts: string[]) => texts.reduce((n, text) => n + Buffer.byteLength(text, 'utf8'), 0);
+const BACKFILL_MAX_USD_KEY = 'embed.backfill_max_usd';
 const rowOf = (text: string) => Number(/Row (\d+):/.exec(text)?.[1] ?? -1);
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 const hang = () => new Promise<never>(() => {});
@@ -78,19 +83,19 @@ for (const kind of testBackends()) {
         await engine.executeRaw(`DELETE FROM ${table}`);
       }
       await engine.executeRaw("DELETE FROM gbrain_cycle_locks WHERE id LIKE 'embed-page:%'");
-      await engine.executeRaw('DELETE FROM config WHERE key = ANY($1::text[])', [[PAGE_EMBED_CAP_KEY, PAGE_TAIL_USD_KEY, SOURCE_SPEND_CAP_KEY]]);
+      await engine.executeRaw('DELETE FROM config WHERE key = ANY($1::text[])', [[PAGE_EMBED_CAP_KEY, PAGE_TAIL_USD_KEY, SOURCE_SPEND_CAP_KEY, BACKFILL_MAX_USD_KEY]]);
       sent = [];
     });
     afterEach(() => { embeddingBatchProbe.beforeCall = undefined; embeddingBatchProbe.afterReturned = undefined; });
 
     /** A segmented page of `rows` rows in occurrences of five (the last `append` rows in a generation-2 occurrence). */
-    async function seed(slug: string, rows: number, opts: { type?: string; large?: boolean; embedded?: number; append?: number } = {}) {
+    async function seed(slug: string, rows: number, opts: { type?: string; large?: boolean; embedded?: number; append?: number; text?: (i: number) => string } = {}) {
       const occurrences: FixtureOccurrence[] = [];
       const appendFrom = rows - (opts.append ?? 0);
       for (let start = 0; start < rows; start += 5) {
         const end = Math.min(start + 5, start < appendFrom ? appendFrom : rows);
         occurrences.push({ id: occurrenceBase++, byteStart: start * 300, genFrom: start < appendFrom ? 1 : 2,
-          chunks: Array.from({ length: end - start }, (_, k) => ({ text: ROW(start + k), ...(start + k < (opts.embedded ?? 0) ? { vector: 1 } : {}) })) });
+          chunks: Array.from({ length: end - start }, (_, k) => ({ text: (opts.text ?? ROW)(start + k), ...(start + k < (opts.embedded ?? 0) ? { vector: 1 } : {}) })) });
         if (end !== start + 5 && end < rows) start = end - 5;
       }
       const fixture = await segmentPage(engine, slug, { generation: opts.append ? 2 : 1, occurrences, type: opts.type ?? 'conversation',
@@ -210,7 +215,7 @@ for (const kind of testBackends()) {
     test('two pages competing for the source\'s last batch allowance: one proceeds, the other stops source_capped', async () => {
       const a = await seed('chats/compete-a', 5);
       const b = await seed('chats/compete-b', 5);
-      const batchUsd = estimatePageEmbedUsd(5 * ROW(0).length, undefined);
+      const batchUsd = ledgerTokensUsd(embeddingCeilingTokens(Array.from({ length: 5 }, (_, i) => ROW(i))), undefined);
       await engine.setConfig(SOURCE_SPEND_CAP_KEY, '1');
       await engine.executeRaw("INSERT INTO embedding_spend (batch_id, source_id, page_id, kind, usd, state) VALUES ('job:seed', 'default', NULL, 'job', $1, 'settled')",
         [1 - 1.5 * batchUsd]);
@@ -272,6 +277,42 @@ for (const kind of testBackends()) {
       } finally {
         _setRateLimitFloorsForTests(null);
       }
+    });
+
+    /** A provider that reports its usage, by default one input token per character (what token-dense text bills), counted in `counter`. */
+    const billing = (counter: { tokens: number }, tokensOf = (text: string) => text.length) => (texts: string[]) => {
+      const tokens = texts.reduce((n, text) => n + tokensOf(text), 0);
+      return invokeAI(EMBED_CALL, async () => { counter.tokens += tokens; return embedFn(texts); }, () => ({ inputTokens: tokens, outputTokens: 0 }));
+    };
+    const ledgerUsd = async () => Number((await engine.executeRaw<{ usd: number | null }>("SELECT sum(usd) AS usd FROM embedding_spend WHERE state <> 'released'"))[0]!.usd ?? 0);
+
+    test('a token-dense batch reserves its UTF-8 byte ceiling in the 24-hour ledger and settles to the reported usage, so the cap binds on what was billed', async () => {
+      const { page } = await seed('chats/dense-measured', 30, { text: DENSE });
+      const capUsd = usdOf(7000);
+      await engine.setConfig(SOURCE_SPEND_CAP_KEY, String(capUsd));
+      const billed = { tokens: 0 };
+      const done = await embedSegmentedPage(engine, page, { embedFn: billing(billed), batchRows: 5 });
+      // Each batch bills 1,500 tokens and reserves its ~4,500-token byte ceiling first: two fit under 7,000, a third does not.
+      expect(done).toMatchObject({ complete: false, stopped: 'source_capped', embedded: 10 });
+      expect(usdOf(billed.tokens)).toBeLessThanOrEqual(capUsd);
+      expect(await ledgerUsd()).toBeCloseTo(usdOf(billed.tokens), 12);
+    });
+
+    test('a batch whose provider reports no usage keeps its byte ceiling in the 24-hour ledger', async () => {
+      const { page } = await seed('chats/dense-unmeasured', 5, { text: DENSE });
+      expect(await embedSegmentedPage(engine, page, { embedFn, batchRows: 5 })).toMatchObject({ complete: true, embedded: 5 });
+      expect(await ledgerUsd()).toBeGreaterThanOrEqual(usdOf(utf8(sent)));
+    });
+
+    test('the per-page cap counts what a token-dense batch billed: past the cap by at most the last batch', async () => {
+      const { page } = await seed('chats/dense-page-cap', 40, { text: DENSE, large: true });
+      await engine.setConfig(PAGE_EMBED_CAP_KEY, String(10 * ROW_USD));
+      const billed = { tokens: 0 };
+      const done = await embedSegmentedPage(engine, page, { embedFn: billing(billed), batchRows: 5 });
+      expect(done).toMatchObject({ complete: false, stopped: 'budget' });
+      expect(usdOf(billed.tokens)).toBeLessThanOrEqual(10 * ROW_USD + usdOf(5 * 300));
+      const [budget] = await engine.executeRaw<{ spent_usd: number }>('SELECT spent_usd FROM page_embedding_budget WHERE page_id = $1', [page.id]);
+      expect(Number(budget!.spent_usd)).toBeCloseTo(usdOf(billed.tokens), 12);
     });
 
     test('an approval raises the cap once per approval identity: a reclaimed embed-page job (attempts_made still 0) never raises it again', async () => {
@@ -350,7 +391,9 @@ for (const kind of testBackends()) {
       const { page, occurrences } = await seed('chats/tail', 16, { large: true, embedded: 10, append: 6 });
       await engine.executeRaw("INSERT INTO page_embedding_budget (page_id, state, reason, spent_usd, cap_usd) VALUES ($1, 'capped', 'cap_reached', 2, 2)", [page.id]);
       const appended = occurrences.filter(o => o.genFrom === 2).map(o => o.id);
-      const tail = (p: SegmentedEmbedPage) => embedSegmentedPage(engine, p, { embedFn, occurrenceIds: appended, tail: true });
+      // The provider reports usage at the estimate's 3.5 characters per token, so the tail rows settle to what the grant admitted.
+      const english = billing({ tokens: 0 }, text => Math.ceil(text.length / 3.5));
+      const tail = (p: SegmentedEmbedPage) => embedSegmentedPage(engine, p, { embedFn: english, occurrenceIds: appended, tail: true });
 
       for (const off of ['0', 'off']) {
         await engine.setConfig(PAGE_TAIL_USD_KEY, off);
@@ -372,6 +415,46 @@ for (const kind of testBackends()) {
     });
 
     if (kind === 'postgres') {
+      test('a backfill job\'s delegated embed-page jobs and their continuations share its embed.backfill_max_usd with its own calls', async () => {
+        const a = await seed('chats/ceiling-a', 10);
+        const b = await seed('chats/ceiling-b', 30);
+        await engine.setConfig(BACKFILL_MAX_USD_KEY, '1');
+        const delegating = (e: BrainEngine, s: string, o: Parameters<typeof embedStaleForSource>[2]) => embedStaleForSource(e, s, { ...o, embedFn });
+        expect(await makeEmbedBackfillHandler(engine, { runStale: delegating })(jobCtx(601, { sourceId: 'default' }))).toMatchObject({ status: 'success' });
+        const children = new Map((await engine.executeRaw<{ id: number; data: Record<string, unknown> }>("SELECT id, data FROM minion_jobs WHERE name = 'embed-page' ORDER BY id"))
+          .map(job => [Number(job.data.pageId), job]));
+        expect([...children.keys()].sort()).toEqual([a.page.id, b.page.id].sort());
+        expect(sent).toEqual([]);
+
+        // Page A embeds through a continuation of its slice, so the continuation carries the parent's ceiling too.
+        const sliceA = children.get(a.page.id)!;
+        expect(await makeEmbedPageHandler(engine, { embedFn })(jobCtx(Number(sliceA.id), sliceA.data, { deadlineAtMs: Date.now() - 1 }))).toMatchObject({ status: 'continued' });
+        const [continuation] = await engine.executeRaw<{ id: number; data: Record<string, unknown> }>(
+          "SELECT id, data FROM minion_jobs WHERE name = 'embed-page' AND (data->>'continuation_of')::int = $1", [Number(sliceA.id)]);
+        expect(await makeEmbedPageHandler(engine, { embedFn })(jobCtx(Number(continuation!.id), continuation!.data))).toMatchObject({ status: 'complete', embedded: 10 });
+        const [spentA] = await engine.executeRaw<{ usd: number }>("SELECT sum(usd) AS usd FROM embedding_spend WHERE page_id = $1 AND state <> 'released'", [a.page.id]);
+        const usdA = Number(spentA!.usd);
+        expect(usdA).toBeGreaterThan(0);
+
+        // The parent's own calls leave 3.5x page A's spend; page A already took 1x of it, so page B (3x page A) no longer fits.
+        await engine.executeRaw("INSERT INTO embedding_spend (batch_id, source_id, page_id, kind, usd, state) VALUES ('job:601:inline', 'default', NULL, 'job', $1, 'settled')", [1 - 3.5 * usdA]);
+        const sliceB = children.get(b.page.id)!;
+        expect(await makeEmbedPageHandler(engine, { embedFn })(jobCtx(Number(sliceB.id), sliceB.data))).toMatchObject({ status: 'capped', embedded: 0 });
+        expect(sent.length).toBe(10);
+        expect(await vectored(b.page.id)).toBe(0);
+
+        // The parent's own next call counts what its delegated pages spent: refused before it is sent.
+        let provider = 0;
+        const drain = async (_engine: BrainEngine, _source: string, opts: { signal?: AbortSignal }) => {
+          try { await invokeAI(EMBED_CALL, async () => { provider++; return { usage: { tokens: 1000 } }; }, sdkInvocationUsage); } catch { /* the drain logs a failed key and moves on */ }
+          return { embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, done: true, aborted: opts.signal?.aborted === true, remaining: 0 } as never;
+        };
+        expect(await makeEmbedBackfillHandler(engine, { runStale: drain as never })(jobCtx(601, { sourceId: 'default' }))).toMatchObject({ status: 'budget_exhausted', budgetCapUsd: 1 });
+        expect(provider).toBe(0);
+        const [group] = await engine.executeRaw<{ usd: number }>("SELECT sum(usd) AS usd FROM embedding_spend WHERE state <> 'released'");
+        expect(Number(group!.usd)).toBeLessThanOrEqual(1 + 1e-9);
+      });
+
       test('embed <slug> --background --max-usd N carries the slug and the approval; the job hands the page to embed-page with it and its spend authorization', async () => {
         const { page } = await seed('chats/background-approval', 10, { large: true });
         await engine.executeRaw("INSERT INTO page_embedding_budget (page_id, state, reason, spent_usd, cap_usd) VALUES ($1, 'capped', 'cap_reached', 2, 2)", [page.id]);

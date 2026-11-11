@@ -81,8 +81,8 @@ export interface PageEmbedGrant {
   /** Stale chunks left without a vector because the cap was reached. */
   deferred: number;
   capUsd: number;
-  /** Book the reservation as spent (`ok`) or release it (the provider call failed before billing). */
-  settle(outcome: { ok: boolean }): Promise<void>;
+  /** Book the reservation as spent (`ok`; `usd` when the call's cost is known, else the estimate) or release it (the provider call failed before billing). */
+  settle(outcome: { ok: boolean; usd?: number }): Promise<void>;
 }
 
 export type PageEmbedDecision =
@@ -182,7 +182,7 @@ export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
     const spent = sameLedger ? Number(row.spent_usd) + (row.stale_reservation ? Number(row.reserved_usd) : 0) : 0;
     let reserved = sameLedger && !row.stale_reservation ? Number(row.reserved_usd) : 0;
     const stored = row.cap_usd === null ? configured : Number(row.cap_usd);
-    const capUsd = approved ? Math.max(stored, spent + reserved + (freshApproval ? opts.approvedCapUsd! : 0)) : stored;
+    const capUsd = approved ? Math.max(stored, freshApproval && opts.approvedCapUsd! > 0 ? spent + reserved + opts.approvedCapUsd! : 0) : stored;
     const remaining = Math.max(0, capUsd - spent - reserved);
     const chunkIndexes = new Set<number>();
     let reservedUsd = 0;
@@ -219,8 +219,8 @@ export async function planPageEmbedding(engine: BrainEngine, page: BudgetPage,
       approved && Number.isFinite(capUsd) ? capUsd : row.cap_usd, openWindow, freshApproval ? opts.approvalId ?? null : null]);
     const grant: PageEmbedGrant = {
       chunkIndexes, reservedUsd, deferred, capUsd, ...(tailChunkIndexes.size ? { tailChunkIndexes, tailUsd } : {}),
-      settle: ({ ok }) => settleLedgerReservation(engine, { table: 'page_embedding_budget', pageId: page.id }, written?.reservation_window ?? null,
-        reservedUsd, ok ? reservedUsd : 0, ok && !priced ? 1 : 0),
+      settle: ({ ok, usd }) => settleLedgerReservation(engine, { table: 'page_embedding_budget', pageId: page.id }, written?.reservation_window ?? null,
+        reservedUsd, ok ? usd ?? reservedUsd : 0, ok && !priced ? 1 : 0),
     };
     return { kind: 'grant', grant } as const;
   });
