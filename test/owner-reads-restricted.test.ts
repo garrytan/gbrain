@@ -116,7 +116,7 @@ for (const kind of testBackends()) {
 
       async function call(who: string, op: string, params: Record<string, unknown>): Promise<string> {
         if (who === 'as-owner') {
-          const preview = await openAsPreview(engine, OWNER, op);
+          const preview = await openAsPreview(engine, OWNER, op, true);
           const out = await preview.run(() => dispatchToolCall(engine, op, { ...params }, preview.context({ remote: false, sourceId: SRC }) as never));
           return out.content.map(c => c.text).join('\n');
         }
@@ -293,4 +293,70 @@ for (const kind of testBackends()) {
       }, 60_000);
     });
   }
+}
+
+for (const kind of testBackends()) {
+  describe(`owner opt-in and other members' member pages (${kind}, repo-less)`, () => {
+    let engine: BrainEngine;
+    let close: () => Promise<void>;
+    const tokens: Record<string, string> = {};
+    const MSRC = 'optin-members';
+    const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+    async function read(who: string, op: string, params: Record<string, unknown>): Promise<string> {
+      __resetPrivateVisibilityCacheForTests();
+      const auth = await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
+      const out = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'http', auth, sourceId: auth.sourceId ?? 'default', takesHoldersAllowList: ['world'] });
+      return out.content.map(c => c.text).join('\n');
+    }
+    const note = (title: string, canary: string, fm: string[], type = 'note') => ['---', `type: ${type}`, `title: ${title}`, ...fm, '---', `# ${title}`, '', `Harbor notes ${canary} here.`].join('\n');
+    const optIn = async <T>(on: boolean, fn: () => Promise<T>): Promise<T> => {
+      await setOwnerReadsRestricted(engine, on, { remote: false });
+      __resetPrivateVisibilityCacheForTests();
+      try { return await fn(); } finally { await setOwnerReadsRestricted(engine, false, { remote: false }); __resetPrivateVisibilityCacheForTests(); }
+    };
+
+    beforeAll(async () => {
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else { engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema(); close = () => engine.disconnect(); }
+      for (const id of [OWNER, 'alice-example', 'bob-example', 'dan-example']) await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', [id]);
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [MSRC]);
+      await proposeRevision(engine, MSRC, [{ id: 'bob-page', prefix: 'memory/members/bob-example', readable_by: ['member:bob-example'] }] as never, { origin: 'cli', store: 'database' });
+      await importFromContent(engine, 'memory/members/alice-example', note('alice memory', 'canarympalicevone', ['readable_by: [alice-example]']), { sourceId: MSRC });
+      await importFromContent(engine, 'memory/members/alice-example', note('alice memory', 'canarympalicevtwo', [`readable_by: [alice-example, ${OWNER}]`]), { sourceId: MSRC });
+      await importFromContent(engine, 'memory/members/bob-example', note('bob memory', 'canarympbobpage', [`readable_by: [bob-example, ${OWNER}]`]), { sourceId: MSRC });
+      await importFromContent(engine, 'atoms/bob-atom', note('bob atom', 'canarympbobatom', ['source_slug: memory/members/bob-example'], 'atom'), { sourceId: MSRC });
+      await importFromContent(engine, 'notes/bob-derived', note('bob derived', 'canarympbobderived', ['derived_from: [memory/members/bob-example]']), { sourceId: MSRC });
+      await importFromContent(engine, 'memory/members/dan-example', note('dan memory', 'canarympdanpage', []), { sourceId: MSRC });
+      await importFromContent(engine, 'atoms/dan-atom', note('dan atom', 'canarympdanatom', ['visibility: world', 'source_slug: memory/members/dan-example'], 'atom'), { sourceId: MSRC });
+      for (const [name, member] of [['owner', OWNER], ['unbound', null]] as const) {
+        const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [MSRC] });
+        tokens[name] = minted.token;
+        if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+      }
+      await setOwner(engine, OWNER);
+    }, 300_000);
+    afterAll(async () => { await close?.(); }, 60_000);
+
+    for (const on of [false, true]) {
+      test(`opt-in ${on ? 'on' : 'off'}: an older version of another member's member page kept from the owner stays hidden`, async () => {
+        await optIn(on, async () => {
+          const versions = await read('owner', 'get_versions', { slug: 'memory/members/alice-example', include_body: true, limit: 10 });
+          expect({ on, v1: versions.includes('canarympalicevone') }).toEqual({ on, v1: false });
+          expect(await read('owner', 'get_page', { slug: 'memory/members/alice-example' })).toContain('canarympalicevtwo');
+        });
+      }, 120_000);
+
+      test(`opt-in ${on ? 'on' : 'off'}: derived pages of another member's member page follow that page's rules for the owner`, async () => {
+        await optIn(on, async () => {
+          const seen: string[] = [];
+          for (const [slug, canary] of [['memory/members/bob-example', 'canarympbobpage'], ['atoms/bob-atom', 'canarympbobatom'], ['notes/bob-derived', 'canarympbobderived'],
+            ['memory/members/dan-example', 'canarympdanpage'], ['atoms/dan-atom', 'canarympdanatom']] as const) {
+            if ((await read('owner', 'get_page', { slug })).includes(canary)) seen.push(slug);
+          }
+          expect({ on, seen }).toEqual({ on, seen: ['memory/members/dan-example', 'atoms/dan-atom'] });
+          expect((await read('unbound', 'get_page', { slug: 'atoms/dan-atom' })).includes('canarympdanatom')).toBe(true);
+        });
+      }, 120_000);
+    }
+  });
 }

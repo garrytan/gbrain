@@ -10,8 +10,8 @@ import type { Migration } from './types.ts';
 // gbrain_access_origin_hidden_for has the same arms but asks, per origin, whether a caller with p_identity (and the
 // folder rules it satisfies, p_satisfied) reads that origin (gbrain_access_origin_closed_for): an owner read passes a
 // derivative when it reads every origin. p_open is the owner opt-in (config access.owner_reads_restricted): every
-// origin passes except another member's own member page (memory/members/<id>, p_own_page excluded) and pending
-// coverage. Only owner reads call these; gbrain_access_origin_restricted is untouched, so every other caller reads
+// origin passes except pending coverage and another member's own member page (memory/members/<id>, p_own_page
+// excluded) whose readers and rules the caller does not meet, exactly as that page itself reads. Only owner reads call these; gbrain_access_origin_restricted is untouched, so every other caller reads
 // exactly as before, and letting listed members read derivatives later is a call-site change. Nothing is rewritten.
 // No schema.sql mirror: like v282, v283 and v285, these exist only through migrations. Provisional number: renumbered
 // at the merge slot.
@@ -24,9 +24,9 @@ CREATE OR REPLACE FUNCTION gbrain_access_origin_closed_for(o_source TEXT, o_slug
     p_identity TEXT[], p_satisfied TEXT[], p_open BOOLEAN, p_own_page TEXT) RETURNS boolean
   LANGUAGE sql STABLE PARALLEL SAFE SET search_path = pg_catalog, public, pg_temp AS $fn$
   SELECT gbrain_access_pending_covers(o_source, o_slug)
-    OR (starts_with(o_slug, 'memory/members/') AND o_slug IS DISTINCT FROM p_own_page AND NOT COALESCE(o_readers && p_identity, false))
-    OR (NOT p_open AND NOT (((o_readers IS NULL AND NOT (o_frontmatter ? 'readable_by')) OR COALESCE(o_readers && p_identity, false))
-      AND (o_rules IS NULL OR o_rules <@ p_satisfied)))
+    OR ((NOT p_open OR (starts_with(o_slug, 'memory/members/') AND o_slug IS DISTINCT FROM p_own_page))
+      AND NOT (((o_readers IS NULL AND NOT (o_frontmatter ? 'readable_by')) OR COALESCE(o_readers && p_identity, false))
+        AND (o_rules IS NULL OR o_rules <@ p_satisfied)))
 $fn$;
 CREATE OR REPLACE FUNCTION gbrain_access_origin_hidden_for(p_id INTEGER, p_source_id TEXT, p_type TEXT, fm JSONB,
     p_identity TEXT[], p_satisfied TEXT[], p_open BOOLEAN, p_own_page TEXT) RETURNS boolean

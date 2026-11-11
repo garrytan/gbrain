@@ -409,7 +409,10 @@ export function callerReadersAllow(frontmatter: unknown, slug?: string): boolean
 /** GBRA-231: readersAllowedSql for the current caller, one conjunct per audience entry. */
 export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' = 'page'): string {
   const ownPage = ownerOptInPage(currentCallerAccess());
-  if (ownPage) return row === 'snapshot' ? 'TRUE' : `(${readersAllowedSql(alias, currentCallerAccess().identity)} OR ${notOtherMemberPageSql(alias, ownPage)})`;
+  if (ownPage) {
+    const notOther = row === 'snapshot' ? `EXISTS (SELECT 1 FROM pages sp WHERE sp.id = ${alias}.page_id AND ${notOtherMemberPageSql('sp', ownPage)})` : notOtherMemberPageSql(alias, ownPage);
+    return `(${readersAllowedSql(alias, currentCallerAccess().identity, row)} OR ${notOther})`;
+  }
   return callerIdentities().map(identity => readersAllowedSql(alias, identity, row)).join(' AND ');
 }
 

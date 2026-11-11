@@ -31,7 +31,7 @@ export interface AsPreview {
 
 const PASSTHROUGH: AsPreview = { run: fn => fn(), context: ctx => ctx };
 
-export async function openAsPreview(engine: BrainEngine, member: string | undefined, command: string): Promise<AsPreview> {
+export async function openAsPreview(engine: BrainEngine, member: string | undefined, command: string, readOnly = false): Promise<AsPreview> {
   if (member === undefined) return PASSTHROUGH;
   let identity: string[];
   let owner: boolean;
@@ -48,7 +48,7 @@ export async function openAsPreview(engine: BrainEngine, member: string | undefi
   }
   const { withCallerAccess } = await import('../core/search/private-visibility.ts');
   const folder = await (await import('../core/access/caller.ts')).folderAccessFor(engine, identity);
-  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, ownerLineage: owner, ownerReadsRestricted, privateReadableSources: [] };
+  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, ownerLineage: owner && readOnly, ownerReadsRestricted: ownerReadsRestricted && readOnly, privateReadableSources: [] };
   return {
     run: fn => withCallerAccess(access, fn),
     context: ctx => ({ ...ctx, accessIdentity: identity, applyRemoteReadPolicy: true }),

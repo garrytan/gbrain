@@ -4956,8 +4956,8 @@
         "idempotent": true,
         "name": "access_owner_origin",
         "sql": {
-          "length": 4231,
-          "sha256": "1d1a59070c8965dda0f27a26a927a196f9ab2d5f5a6a93def64a039918fddc19"
+          "length": 4188,
+          "sha256": "6f153b23e8d7bde011ed8dd88649e3a1343c741349ef36b27ec7a60ae17712f6"
         },
         "sqlFor": "absent",
         "transaction": "absent",
