@@ -365,15 +365,14 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       if (!holdsOn) throw syncRunRefusal('page_identity_changed', 'Several pages claim the same imported origin.', retry, `Pages ${entry.originConflict.claimants.map(page => page.slug).join(', ')} of source ${cursor.sourceId} all record ${entry.path} as their origin (sync.holds=fail); ${sharedOriginExit(cursor.sourceId, entry.originConflict.claimants.map(page => page.slug))} Then sync again.`);
       return { hold: originConflictHold(entry) };
     }
+    // GBRA-133: once a stretch (from the entry's start, so its page reads count) has run its budget, the freeze takes a timer turn before and between its synchronous Git reads. A committed
+    // entry reads the pinned commit, or HEAD checked by hash against its first read (`headCommittedBytes`); a working-tree entry reads its file twice with no turn between. So work that runs at a turn changes nothing frozen, and the run is re-checked there.
+    const step = loopYield(), turn = async () => { if (!step.over()) return; await step.pause(); assertActive(); };
     const [occupant, snapshot] = await Promise.all([alreadyImportedAtOrigin(engine, cursor, entry, originScope).catch(error => {
       if (!holdsOn || !(error instanceof OperationError) || error.code !== 'page_identity_changed') throw error;
       return { originFault: error };
     }), engine.readPageSnapshot(entry.slug!, { sourceId: cursor.sourceId, includeDeleted: true })]);
     assertActive();
-    // GBRA-133: once a stretch has run its budget, the freeze takes a timer turn between its synchronous Git reads. A committed entry
-    // reads the pinned commit, or HEAD checked by hash against its first read (`headCommittedBytes`); a working-tree entry reads its
-    // file twice with no turn between. So work that runs at a turn changes nothing frozen, and the run is re-checked there.
-    const step = loopYield(), turn = async () => { if (!step.over()) return; await step.pause(); assertActive(); };
     if (occupant && 'originFault' in occupant) {
       if (entry.action === 'delete' && snapshot?.page.deleted_at != null && !existsSync(join(cursor.root, entry.path))) {
         const done = await idempotentDeletionProof(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, pageId: entry.pageId ?? null, revision: entry.revision ?? null, sourcePath: entry.sourcePath });
@@ -382,6 +381,7 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       }
       return { hold: await originFaultHold(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, entry, observed: snapshot, message: occupant.originFault.message }), overtaken: true };
     }
+    await turn();
     let bytes: Buffer | null = null;
     // G3: a strict source's entry reads its commit alone (a deletion has no bytes); only a blob over the read bound takes the streamed path below.
     const committed = entry.committedOnly === true && !entry.working ? entry.action === 'delete' ? null : pinnedBlob(cursor, entry.path) : undefined;
@@ -489,7 +489,7 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       return { hold: fileDriftHold(entry, slug, pageId, frozenIntent, { sides: entry.drift, revision: snapshot.revision, proof, sharedOrigin: await sharedOriginSurvivor(engine, cursor.sourceId, entry.sourcePath), baseline: entry.driftBaseline ?? null }) };
     }
     if (screening && !image) {
-      const hold = await screenFrozenImport(engine, { cursor, entry, slug, pageId, snapshot, content, rawHash, lineEndingOnly, blob, oversize, streamed: !!bodyRef,
+      const hold = await screenFrozenImport(engine, { cursor, entry, slug, pageId, snapshot, content, rawHash, lineEndingOnly, blob, oversize, streamed: !!bodyRef, turn,
         retryCommand: checkpointRetryCommand(retry) }, screening);
       assertActive();
       if (hold) return { hold };

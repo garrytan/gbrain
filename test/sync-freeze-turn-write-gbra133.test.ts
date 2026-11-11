@@ -7,7 +7,8 @@
  *
  * The fixture pins a first sync at the commit holding version one, then commits version two at the batch build, before
  * the freeze: the working tree holds a commit past the pin, which the freeze imports as HEAD has it (#6340). Every timer
- * turn the freeze asks for is forced, and at the first one after the working-tree read the test commits version three.
+ * turn the freeze asks for is forced, and at the first one after the working-tree read the test commits version three. The
+ * last case commits it instead at the screen's turn after its filter-driver read, which the publication's byte check refuses.
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
@@ -18,6 +19,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import * as syncDiscovery from '../src/core/persistence/sync-discovery.ts';
 import * as syncPageFault from '../src/core/persistence/sync-page-fault.ts';
+import * as syncScreen from '../src/core/persistence/sync-screen.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import * as syncYield from '../src/core/persistence/sync-yield.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -32,16 +34,17 @@ afterEach(() => installFaultHook(undefined));
 const engines = [{ name: 'pglite', databaseUrl: undefined as string | undefined }, ...(process.env.DATABASE_URL ? [{ name: 'postgres', databaseUrl: process.env.DATABASE_URL }] : [])];
 
 for (const { name, databaseUrl } of engines) describe(`GBRA-133: a write at a freeze's timer turn (${name})`, () => {
-  /** Runs the first sync with every freeze turn forced; `interfere` commits version three at the first turn after the working-tree read. */
-  const run = async (interfere: boolean) => {
+  /** Runs the first sync with every freeze turn forced; `interfere` commits version three at the first turn after the working-tree read
+   * (`freeze`), or at the screen's turn after its filter-driver read (`screen`). */
+  const run = async (interfere: false | 'freeze' | 'screen') => {
     let result: { events: string[]; requests: { content: string | null; raw_hash: string | null; state: string }[]; page: string | null } | undefined;
     await managedBrain(async ({ engine, root }) => {
     const events: string[] = [];
-    let readWorking = false, wrote = false;
+    let readWorking = false, readFilter = false, wrote = false;
     installFaultHook(async point => {
       if (point === 'sync:batch_entries' && !events.includes('v2')) { writeFileSync(join(root, 'a.md'), note('two')); commit(root, 'version two, past the pin'); events.push('v2'); }
     });
-    const { readSyncFile } = syncDiscovery, { headCommittedBytes } = syncPageFault, { loopYield } = syncYield;
+    const { readSyncFile } = syncDiscovery, { headCommittedBytes } = syncPageFault, { loopYield } = syncYield, { pinnedFilterDriver } = syncScreen;
     const spies = [
       spyOn(syncDiscovery, 'readSyncFile').mockImplementation(((root: string, path: string) => {
         const bytes = readSyncFile(root, path);
@@ -52,10 +55,14 @@ for (const { name, databaseUrl } of engines) describe(`GBRA-133: a write at a fr
         if (args[1] === 'a.md') events.push('head');
         return headCommittedBytes(...args);
       }) as typeof headCommittedBytes),
+      spyOn(syncScreen, 'pinnedFilterDriver').mockImplementation(((...args: Parameters<typeof pinnedFilterDriver>) => {
+        if (args[1] === 'a.md' && readWorking && !wrote) { readFilter = true; events.push('filter'); }
+        return pinnedFilterDriver(...args);
+      }) as typeof pinnedFilterDriver),
       spyOn(syncYield, 'loopYield').mockImplementation(() => {
         const step = loopYield();
         return { ...step, over: () => true, pause: async () => {
-          if (readWorking && !wrote) { events.push('pause'); if (interfere) { writeFileSync(join(root, 'a.md'), note('three')); commit(root, 'version three, at the freeze turn'); events.push('v3'); } wrote = true; }
+          if (readWorking && !wrote && (interfere !== 'screen' || readFilter)) { events.push('pause'); if (interfere) { writeFileSync(join(root, 'a.md'), note('three')); commit(root, 'version three, at the freeze turn'); events.push('v3'); } wrote = true; }
           await step.pause();
         } };
       }),
@@ -79,12 +86,27 @@ for (const { name, databaseUrl } of engines) describe(`GBRA-133: a write at a fr
   }, 120_000);
 
   test('a commit of the same path at the turn keeps the pinned content, and only a later freeze imports the new bytes', async () => {
-    const { events, requests, page } = await run(true);
+    const { events, requests, page } = await run('freeze');
     expect(events.slice(0, 5)).toEqual(['v2', 'read', 'pause', 'v3', 'head']);
     // The entry frozen across the turn carries the pinned version, never the bytes committed at the turn, and is not published.
     expect(requests[0]).toMatchObject({ content: note('one'), raw_hash: sha256(note('two')) });
     expect(requests[0]!.state).not.toBe('committed');
     // Whatever was published carries the hash of its own bytes.
+    const committed = requests.filter(request => request.state === 'committed');
+    expect(committed.length).toBeGreaterThan(0);
+    for (const request of committed) expect(request.raw_hash).toBe(sha256(request.content!));
+    expect(committed.at(-1)!.content).toBe(note('three'));
+    expect(page).toContain('version three');
+  }, 120_000);
+
+  test('a commit of the same path at the screen\'s turn after its filter-driver read is never published from the frozen request', async () => {
+    const { events, requests, page } = await run('screen');
+    // The write lands at the turn right after the screen's filter-driver read, once the freeze has read HEAD.
+    expect(events.indexOf('head')).toBeGreaterThan(events.indexOf('read'));
+    expect(events.indexOf('filter')).toBeGreaterThan(events.indexOf('head'));
+    expect(events.slice(events.indexOf('filter'), events.indexOf('filter') + 3)).toEqual(['filter', 'pause', 'v3']);
+    // The frozen request keeps the version the freeze read before the turn, with its own hash, and publication refuses it.
+    expect(requests[0]).toEqual({ content: note('two'), raw_hash: sha256(note('two')), state: 'conflict' });
     const committed = requests.filter(request => request.state === 'committed');
     expect(committed.length).toBeGreaterThan(0);
     for (const request of committed) expect(request.raw_hash).toBe(sha256(request.content!));
