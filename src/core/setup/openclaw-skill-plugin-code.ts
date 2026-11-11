@@ -143,10 +143,14 @@ function readState() {
 
 function day(t) { return new Date(t).toISOString().slice(0, 10); }
 
+let logTail = Promise.resolve();
+
 function log(line) {
   try {
     const at = Date.now();
-    appendFile(join(LOG_DIR, 'openclaw-' + day(at) + '.jsonl'), JSON.stringify({ at: new Date(at).toISOString(), ...line }) + '\n', { mode: 0o600 }).catch(() => {});
+    const file = join(LOG_DIR, 'openclaw-' + day(at) + '.jsonl');
+    const text = JSON.stringify({ at: new Date(at).toISOString(), ...line }) + '\n';
+    logTail = logTail.then(() => appendFile(file, text, { mode: 0o600 })).catch(() => {});
   } catch { /* logging never fails a turn */ }
 }
 

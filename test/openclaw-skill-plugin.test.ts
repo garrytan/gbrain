@@ -282,6 +282,20 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     expect(sessions.length).toBeGreaterThan(0);
   });
 
+  test('the daily log keeps event order when a skill read follows a turn at once', async () => {
+    const b = box();
+    await setup(b, ['--skill-loading', 'resolve']);
+    const steps: unknown[] = [];
+    const want: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      steps.push(['turn', { text: 'triage the email inbox', id: 'm' + i, session: 'agent:main:o' + i }]);
+      want.push('suggested');
+      for (let j = 0; j < 40; j++) { steps.push(['read', { name: 'skill-' + i + '-' + j }]); want.push('skill-' + i + '-' + j); }
+    }
+    drive(b, steps);
+    expect(logLines(b).filter((l) => l.agent === 'main').map((l) => l.skill ?? l.outcome)).toEqual(want);
+  });
+
   test('the description floor holds: body-only matches are never suggested', async () => {
     const b = box();
     const skills = join(b.state, 'workspace', 'skills');
