@@ -459,7 +459,7 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
     }
     // #6696 (A12): tagged, so a producer can refuse this before admission and the receipt says which refusal it was.
     throw opError('source_changed', 'The canonical file was removed outside coordinated publication.',
-      'Import the local deletion or recover the canonical file before editing this page.', { detail: CANONICAL_FILE_MISSING });
+      `Import the local deletion or recover the canonical file before editing this page. To narrow who reads it without restoring its file, add a page rule: gbrain access rule add --slug ${row.slug} --readers <member> --source ${row.source_id} (it previews; --yes applies).`, { detail: CANONICAL_FILE_MISSING });
   }
   // A normal edit may replace only the bytes represented by its read snapshot.
   // Unknown local edits require explicit import/recovery, even for force writes.
