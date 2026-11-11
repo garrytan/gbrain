@@ -37,7 +37,6 @@ method	src/core/pglite-engine.ts	PGLiteEngine.getStats
 method	src/core/pglite-engine.ts	PGLiteEngine.listConfigKeys
 method	src/core/pglite-engine.ts	PGLiteEngine.listEvalCandidates
 method	src/core/pglite-engine.ts	PGLiteEngine.listEvalCaptureFailures
-method	src/core/pglite-engine.ts	PGLiteEngine.logEvalCandidate
 method	src/core/pglite-engine.ts	PGLiteEngine.logEvalCaptureFailure
 method	src/core/pglite-engine.ts	PGLiteEngine.logIngest
 method	src/core/pglite-engine.ts	PGLiteEngine.mergeOntologyFact
@@ -66,7 +65,6 @@ method	src/core/postgres-engine.ts	PostgresEngine.initSchema
 method	src/core/postgres-engine.ts	PostgresEngine.listConfigKeys
 method	src/core/postgres-engine.ts	PostgresEngine.listEvalCandidates
 method	src/core/postgres-engine.ts	PostgresEngine.listEvalCaptureFailures
-method	src/core/postgres-engine.ts	PostgresEngine.logEvalCandidate
 method	src/core/postgres-engine.ts	PostgresEngine.logEvalCaptureFailure
 method	src/core/postgres-engine.ts	PostgresEngine.logIngest
 method	src/core/postgres-engine.ts	PostgresEngine.mergeOntologyFact

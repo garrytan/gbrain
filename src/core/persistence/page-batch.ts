@@ -305,6 +305,13 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
         throw new OperationError('queue_capacity', `${error.message} No page of batch ${batchId} was admitted (it needs ${admissions.length} new write slots).`,
           `Wait for this connection's pending writes to finish, or send fewer pages per call; then retry the same put_pages call with the same request_id ${batchId}.`);
       }
+      if (error instanceof OperationError && error.code === 'worktree_refreshing' && error.requestId) {
+        const child = error.requestId, own = String(params.request_id);
+        error.message = error.message.replaceAll(child, () => own);
+        error.suggestion = error.suggestion?.replaceAll(child, () => own);
+        if (error.fix) error.fix = { ...error.fix, why: error.fix.why.replaceAll(child, () => own) };
+        error.requestId = own;
+      }
       throw error;
     }
     admissions.forEach((entry, position) => { results[entry.index]!.row = admitted[position]!; });

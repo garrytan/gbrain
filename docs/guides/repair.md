@@ -2992,6 +2992,8 @@ and recalled from the database with no fence row (`row_num` empty), and page
 write-through reports `skipped: "url_clone"`. A managed brain does the same
 with `gbrain sources mirror-readonly <id>`.
 
+Local commits made in an owned clone are different: `gbrain sources git-reconcile` (autopilot, each tick) publishes them after a secret scan. `gbrain config set sources.refresh_publish_diverged false` (every source) or `gbrain sources set-sync <id> off` (one source) keeps them local.
+
 A clone an older release already dirtied still blocks its pulls. `gbrain sync
 --source <id>` then prints `pull_blocked_local_changes` with the changed files
 and an `ask_user` fix naming this repair (the sync JSON `reason` stays

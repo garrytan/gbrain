@@ -187,18 +187,14 @@ const request_tools: Operation = {
     // callers were never surface-bounded.
     const ceiling = ctx.surfaceCeiling ?? 'full';
 
-    // D5: the three branches are mutually exclusive. {surface, tools}
-    // together is ambiguous (persist vs descriptor fetch) — reject loudly
-    // rather than silently persisting and ignoring the tools list.
+    // GBRA-449: {surface, tools} together runs the surface branch exactly as a surface-only call (its refusals
+    // included), then the descriptor branch against the resulting surface; surface_change carries the first answer.
     if (p.surface !== undefined && p.tools !== undefined) {
-      throw opError(
-        'invalid_params',
-        'pass either {surface} (persist) or {tools} (descriptor fetch), not both.',
-        'Call request_tools once with `tools` to fetch descriptors, and separately with `surface` to change this client\'s tool surface.',
-      );
+      const surfaceChange = await request_tools.handler(ctx, { surface: p.surface });
+      return { ...(await request_tools.handler(ctx, { tools: p.tools }) as Record<string, unknown>), surface_change: surfaceChange };
     }
 
-    // ── persist branch (D5: accepts ONLY {surface}) ─────────────────────
+    // ── persist branch ({surface}) ──────────────────────────────────────
     if (p.surface !== undefined) {
       const requested = p.surface as string;
       if (!isMcpSurface(requested)) {

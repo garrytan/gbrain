@@ -192,7 +192,7 @@ export const UNKNOWN_PARAM_ALLOWLIST: ReadonlySet<string> = new Set(['_meta', 'd
  */
 const PARAM_ALIAS_HINTS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   add_timeline_entry: { content: 'detail', text: 'detail', body: 'detail' },
-  remember: { facts: 'items', text: 'fact' },
+  remember: { facts: 'items', text: 'fact', source: 'provenance' },
 };
 
 /** GBRA-431: source-scope spellings edit distance ties or misses (`sources` is as near `source_id` as `source_ids`). */

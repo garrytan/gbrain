@@ -41,6 +41,7 @@ import { frontmatterWhereFragment } from '../search/frontmatter-where.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { pickCanonicalOrigin } from '../persistence/origin-guard.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
+import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 
 /**
@@ -206,9 +207,12 @@ export async function deletePage(exec: SqlExecutor, slug: string, opts?: { sourc
 
 /**
  * v0.41.19.0 — batch delete primitive. See BrainEngine.deletePages JSDoc.
- * Single SQL round-trip per call; caller is responsible for chunking input
- * to <= DELETE_BATCH_SIZE. RETURNING slug projects the actually-deleted set
- * so the caller can filter pagesAffected.
+ * Caller is responsible for chunking input to <= DELETE_BATCH_SIZE.
+ * RETURNING slug projects the actually-deleted set so the caller can filter
+ * pagesAffected. #9068: the rows that name a deleted page outside any foreign
+ * key (retrieval logs and ratings, the volunteer log, the gazetteer, captured
+ * eval slugs) go in the same transaction, after the page row: a feedback write
+ * holding the row commits first and is scrubbed, and a later one finds no page.
  */
 export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { sourceId: string }): Promise<string[]> {
     if (slugs.length === 0) return [];
@@ -217,12 +221,17 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
         `deletePages: input size ${slugs.length} exceeds DELETE_BATCH_SIZE=${DELETE_BATCH_SIZE}. Caller must chunk.`,
       );
     }
-    const { rows } = await exec.run<{ slug: string }>(sqlFragment`
-      DELETE FROM pages
-       WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}
-      RETURNING slug
-    `);
-    return rows.map(r => r.slug);
+    return exec.transaction(async (tx) => {
+      const { rows } = await tx.run<{ slug: string }>(sqlFragment`
+        DELETE FROM pages
+         WHERE slug = ANY(${slugs}::text[]) AND source_id = ${opts.sourceId}
+        RETURNING slug
+      `);
+      const deleted = rows.map(r => r.slug);
+      await scrubPurgedSlugs(tx, opts.sourceId, deleted);
+      await scrubPurgedNameStores(tx, opts.sourceId, deleted);
+      return deleted;
+    });
   }
 
 /**
@@ -365,7 +374,10 @@ export async function purgeDeletedPages(
           AND NOT ${trustedSql(stagingNeedsTextSql('t'))}`);
       const bySource = new Map<string, string[]>();
       for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], r.slug]);
-      for (const [sourceId, purged] of bySource) await scrubPurgedSlugs(tx, sourceId, purged);
+      for (const [sourceId, purged] of bySource) {
+        await scrubPurgedSlugs(tx, sourceId, purged);
+        await scrubPurgedNameStores(tx, sourceId, purged);
+      }
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length };
     });

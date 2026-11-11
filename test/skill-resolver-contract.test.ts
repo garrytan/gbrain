@@ -48,7 +48,12 @@ describe('turn input', () => {
 
 describe('build input (the --from-json catalog)', () => {
   test('accepted catalogs validate; refused ones do not', () => {
-    for (const g of [SKILLS, { skills: SKILLS }, []]) { expect(validate(CATALOG, g)).toEqual([]); expect(() => readJsonSource(JSON.stringify(g))).not.toThrow(); }
+    const openclaw = { workspaceDir: '/work/acme-example', managedSkillsDir: '/work/acme-example/skills', skills: [{ name: 'deploy', description: 'Ship it', eligible: true, disabled: false, modelVisible: true, emoji: 'x' }] };
+    for (const g of [SKILLS, { skills: SKILLS }, [], openclaw]) { expect(validate(CATALOG, g)).toEqual([]); expect(() => readJsonSource(JSON.stringify(g))).not.toThrow(); }
+    for (const b of [{ workspaceDir: '/w', skills: [{ description: 'no name' }] }, { workspaceDir: '/w', skills: [{ name: 'a', disabled: 'yes' }] }]) {
+      expect(validate(CATALOG, b).length).toBeGreaterThan(0);
+      expect(() => readJsonSource(JSON.stringify(b))).toThrow();
+    }
     for (const b of [[{ id: 'a' }], [{ id: '', name: 'b' }], [{ id: 'a', name: 'b', triggers: 'x' }], [{ id: 'a', name: 'b', eligible: 'no' }], { list: [] }, 'x']) {
       expect(validate(CATALOG, b).length).toBeGreaterThan(0);
       expect(() => readJsonSource(JSON.stringify(b))).toThrow();
@@ -67,7 +72,10 @@ describe('turn output and build receipt', () => {
     writeFileSync(join(root, 'lint', 'SKILL.md'), '---\nname: lint\ndescription: Run the linters before a deploy\n---\nSteps.\n');
     const r2 = await buildSkillIndex({ catalog: 'two', dirs: [root], scope: 'project', harness: 'codex' }, { home });
     const r3 = await buildSkillIndex({ catalog: 'three', fromJson: JSON.stringify(SKILLS), fromJsonStdin: true }, { home });
-    for (const r of [r1, r2, r3]) expect(validate(RECEIPT, JSON.parse(JSON.stringify(r)))).toEqual([]);
+    const r4 = await buildSkillIndex({ catalog: 'four', fromJson: f, dirs: [root] }, { home });
+    mkdirSync(join(root, '..', 'claude', 'plugins'), { recursive: true });
+    const r5 = await buildSkillIndex({ catalog: 'five', claudePlugins: join(root, '..', 'claude') }, { home });
+    for (const r of [r1, r2, r3, r4, r5]) expect(validate(RECEIPT, JSON.parse(JSON.stringify(r)))).toEqual([]);
     const results = [
       await resolveSkills({ message: 'deploy the service', session_id: 's', harness: 'codex' }, { home, catalogs: ['one'] }),
       await resolveSkills({ message: 'thanks' }, { home, catalogs: ['one'] }),

@@ -171,7 +171,7 @@ const extract_facts: Operation = {
     // instruction would silently widen private-default extractions because
     // `remember` hard-defaults to 'world'.
     const visibilityPin = `visibility: "${visibility}"` +
-      (visibility === 'private' ? ' (remember defaults to world — omitting it would widen these facts)' : '');
+      (visibility === 'private' ? ' (remember defaults to world unless your credential is bound to a member — omitting it could widen these facts)' : '');
     if (r.skipped_reason === 'chat_unavailable') {
       return {
         inserted: 0, duplicate: 0, superseded: 0, fact_ids: [],

@@ -691,14 +691,17 @@ async function assertWorktreeNotRefreshing(tx: BrainEngine, input: WriteAdmissio
   // GST-1582: the retry hint comes from the refresh's own state (its phase, how long it has run, how long this worktree's
   // refreshes typically take), never a fixed second that sends the caller back into the same refresh.
   const hint = await refreshRetryHint(tx, refresh);
+  // GST-2353: the retry names the id this write was refused under (minted when the caller sent none), so it can be reused.
+  const retryWith = input.requestId ? `Retry with request_id ${input.requestId}` : 'Retry the same call';
   const error = catalogueError('worktree_refreshing',
-    `This write was not saved: refresh ${refresh.id} is fast-forwarding source ${input.sourceId}'s checkout (${refreshProgress(hint)}). Retry the same request_id in about ${seconds(hint.retryAfterMs)} s.`,
-    `Retry the same request_id after retry_after_ms: ${hint.retryAfterMs}. Check progress with gbrain sources writer status ${input.sourceId}.`);
+    `This write was not saved: refresh ${refresh.id} is fast-forwarding source ${input.sourceId}'s checkout (${refreshProgress(hint)}). ${retryWith} in about ${seconds(hint.retryAfterMs)} s.`,
+    `${retryWith} after retry_after_ms: ${hint.retryAfterMs}. Check progress with gbrain sources writer status ${input.sourceId}.`);
   error.detail = `retry_after_ms=${hint.retryAfterMs}`;
   error.retryable = true;
+  if (input.requestId) error.requestId = input.requestId;
   // GST-1387: nothing was recorded, so the same call is retried after the delay (actor provider renders next: wait).
   error.fix = { argv: ['gbrain', 'sources', 'writer', 'status', '--source', input.sourceId, '--json'], consent: [], actor: 'provider', requires_exclusive: false,
-    why: `A refresh of source ${input.sourceId}'s checkout holds its writes until it finishes syncing; this write was not recorded. Repeat the same call with the same request_id after about ${seconds(hint.retryAfterMs)} s (retry_after_ms=${hint.retryAfterMs}); this read-only command shows the refresh's progress.` };
+    why: `A refresh of source ${input.sourceId}'s checkout holds its writes until it finishes syncing; this write was not recorded. Repeat the same call${input.requestId ? ` with request_id ${input.requestId}` : ''} after about ${seconds(hint.retryAfterMs)} s (retry_after_ms=${hint.retryAfterMs}); this read-only command shows the refresh's progress.` };
   throw markNotAdmitted(error);
 }
 

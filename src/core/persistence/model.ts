@@ -22,6 +22,11 @@ export interface WriteAuthority {
    * link from the id to the same enabled member, so an unlink, a disabled member or a revoked right refuses it.
    */
   actingFor?: string[] | { system: string; external_id: string; member: string };
+  /**
+   * GST-363: the member a local_stdio writer's serve was started with (`gbrain serve --stdio-member`). Preparation and
+   * publication re-resolve it live (a disabled member reads as nobody); absent, they read config mcp.stdio_member.
+   */
+  stdioMember?: string;
   /** GST-359 D: the attested operation this write serves when it differs from the stored one (memory_write as remember). */
   attestedOp?: string;
   /** GST-1113: the scope source an attested memory_write named instead of the principal's own; publication re-checks attest_sources. */

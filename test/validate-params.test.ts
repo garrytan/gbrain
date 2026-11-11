@@ -133,6 +133,12 @@ describe('warn mode (default) — accept + _meta.warnings only, never a content 
     expect(foreign[0].suggestion).not.toBe('query');
   });
 
+  test('remember\'s `source` points at provenance, not source_id: agents pass it for where a fact came from (GST-2351)', () => {
+    const found = findUnknownParams(operationsByName['remember'], { fact: 'x', source: 'user said in chat' });
+    expect(found).toEqual([{ code: 'unknown_param', param: 'source', suggestion: 'provenance' }]);
+    expect(operationsByName['remember'].description).not.toMatch(/\bsource\b/);
+  });
+
   test('buildUnknownParamWarnBlock joins one line per unknown key', () => {
     const block = buildUnknownParamWarnBlock([
       { code: 'unknown_param', param: 'a', suggestion: 'b' },

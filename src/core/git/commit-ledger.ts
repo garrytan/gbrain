@@ -32,12 +32,12 @@ export const LEDGER_ROTATE_BYTES = 4 * 1024 * 1024;
 const LINE_MAX_BYTES = 1023;
 const LOCK_WAIT_MS = 2_000;
 
-export interface LedgerCommit { sha: string; writer: LedgerWriter; ref?: string | null; request_id?: string | null; worktree_id?: string | null; supersedes?: string[]; adopted?: string[] }
+export interface LedgerCommit { sha: string; writer: LedgerWriter; ref?: string | null; request_id?: string | null; worktree_id?: string | null; supersedes?: string[]; adopted?: string[]; verified?: true }
 export interface LedgerIntent { writer: LedgerWriter; head_before: string | null; message: string }
 
 export type LedgerRecord =
   | { v: 1; e: 'start'; t: string }
-  | { v: 1; e: 'commit'; t: string; sha: string; writer: LedgerWriter; request_id: string | null; worktree: string | null; worktree_id: string | null; ref: string | null; pid: number; host: string | null; supersedes?: string[]; adopted?: string[] }
+  | { v: 1; e: 'commit'; t: string; sha: string; writer: LedgerWriter; request_id: string | null; worktree: string | null; worktree_id: string | null; ref: string | null; pid: number; host: string | null; supersedes?: string[]; adopted?: string[]; verified?: true }
   | { v: 1; e: 'intent'; t: string; writer: LedgerWriter; head_before: string | null; msg_sha256: string; worktree: string | null; pid: number; host: string | null };
 
 interface Location { common: string; gitDir: string; worktree: string | null }
@@ -110,7 +110,8 @@ function line(record: LedgerRecord): string {
 function commitRecord(loc: Location, entry: LedgerCommit): LedgerRecord {
   return { v: 1, e: 'commit', t: new Date().toISOString(), sha: entry.sha, writer: entry.writer, request_id: entry.request_id ?? null,
     worktree: loc.worktree, worktree_id: entry.worktree_id ?? null, ref: entry.ref === undefined ? headRef(loc.gitDir) : entry.ref, pid: process.pid, host: hostId(),
-    ...(entry.supersedes?.length ? { supersedes: entry.supersedes } : {}), ...(entry.adopted?.length ? { adopted: entry.adopted } : {}) };
+    ...(entry.supersedes?.length ? { supersedes: entry.supersedes } : {}), ...(entry.adopted?.length ? { adopted: entry.adopted } : {}),
+    ...(entry.verified ? { verified: true } : {}) };
 }
 
 function intentRecord(loc: Location, intent: LedgerIntent): LedgerRecord {
