@@ -3673,6 +3673,8 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     : undefined;
 
   const tools = toAISDKTools(opts.tools);
+  // Responses treats a tool without `strict` as strict and requires every property; keep optional args optional.
+  if (tools && recipe.implementation === 'native-openai') for (const t of Object.values(tools)) t.strict = false;
 
   let providerOptions: Record<string, any> = {};
   if (useCache) {
