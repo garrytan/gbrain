@@ -471,7 +471,7 @@ function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
  * is left out (its commit lives in the nested repository, which hash-object cannot read). Ignored files under a named
  * directory are left out as git leaves them; a named ignored file is refused by `git add` itself.
  */
-function unstagedPaths(root: string, rel: string[], listed: string[]): SkippedPath[] {
+function unstagedPaths(root: string, rel: string[], listed: string[], dirtyBefore: Map<string, string>, sha: string | null): SkippedPath[] {
   const skipped = new Map(flaggedChanges(root, listed).map(s => [s.path, s.reason]));
   for (const path of unindexedFiles(root, rel, listed)) if (!skipped.has(path)) skipped.set(path, 'not_staged');
   // Only a named directory can hide an unstaged change from the two checks above (a nested repository inside it).
@@ -481,14 +481,31 @@ function unstagedPaths(root: string, rel: string[], listed: string[]): SkippedPa
     const parents = path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'));
     if (!skipped.has(path) && parents.some(parent => existsSync(join(root, parent, '.git')))) skipped.set(path, 'not_staged');
   }
-  const status = dirs.length ? gitOk(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames', '--', ...literalPathspecs(dirs)], 'status') : '';
-  for (const entry of status.split('\0').filter(Boolean)) {
-    const path = entry.slice(3);
-    if ((entry[1] !== ' ' || entry.startsWith('??')) && !skipped.has(path)) skipped.set(path, 'not_staged');
+  // GST-2128: an entry that was clean before the add, or a tracked one this commit carried, is another writer's later change, not a skip.
+  const status = directoryStatus(root, dirs);
+  const carried = sha && status.size ? committedModes(root, sha) : new Map<string, string>();
+  for (const [path, xy] of status) {
+    if (xy[1] === ' ' || skipped.has(path) || !dirtyBefore.has(path)) continue;
+    if (xy !== '??' && carried.has(path) && carried.get(path) !== '160000') continue;
+    skipped.set(path, 'not_staged');
   }
   return [...skipped].map(([path, reason]) => ({ path, reason })).sort((a, b) => a.path.localeCompare(b.path));
 }
 
+/** The `git status` entries under the named paths that are directories, as path (a nested repository keeps its trailing /) to XY code. */
+function directoryStatus(root: string, rel: string[]): Map<string, string> {
+  const dirs = rel.filter(path => { try { return lstatSync(join(root, path)).isDirectory(); } catch { return false; } });
+  const status = dirs.length ? gitOk(root, ['--no-optional-locks', 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames', '--', ...literalPathspecs(dirs)], 'status') : '';
+  return new Map(status.split('\0').filter(Boolean).map(entry => [entry.slice(3), entry.slice(0, 2)]));
+}
+
+/** The paths commit `sha` changed, each with its new mode (160000 for a gitlink, 000000 for a removal). */
+function committedModes(root: string, sha: string): Map<string, string> {
+  const fields = gitOk(root, ['diff-tree', '--root', '-r', '--no-renames', '--no-commit-id', '-z', sha], 'diff-tree').split('\0');
+  const modes = new Map<string, string>();
+  for (let i = 0; i + 1 < fields.length; i += 2) if (fields[i]!.startsWith(':')) modes.set(fields[i + 1]!, fields[i]!.split(' ')[1]!);
+  return modes;
+}
 
 /** Named paths that are files on disk yet absent from the index (`listed`: `ls-files -v` after `git add -A`), as a file inside a nested repository is. */
 function unindexedFiles(root: string, rel: string[], listed: string[]): string[] {
@@ -589,13 +606,14 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   if (swept.length) {
     const list = `${swept.slice(0, 10).join(', ')}${swept.length > 10 ? ', ...' : ''}`;
     throw opError('commit_prestaged_paths', `${swept.length} file(s) under the named path(s) were already staged by another writer: ${list}.`,
-      'Nothing was staged or committed. If they are yours, name each file explicitly; otherwise leave them to the writer that staged them, or unstage them with the user\'s agreement (git restore --staged -- <file>; the working tree keeps its bytes).',
+      'Nothing was staged or committed. If they are yours, name each file explicitly; otherwise leave them to the writer that staged them, or unstage them with the user\'s agreement (git restore --staged -- <file>; the working tree keeps its bytes). Files a parked gbrain Git effect left staged are gbrain\'s own: gbrain sources writer status lists the parked effects with their source and request id, and gbrain sources writer retry-effects with that source and --request-id commits them.',
       { detail: JSON.stringify({ paths: swept }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
         argv: ['git', '-C', root, 'restore', '--staged', '--', ...swept],
         why: 'Another writer staged these files; committing them would publish whatever that writer had in progress, and unstaging them drops its staging.',
         user_message: `Files already staged by another writer sit under the path you asked to commit (${list}). Commit only the files you name, or unstage those (their bytes stay on disk)?`,
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
+  const dirtyBefore = directoryStatus(root, rel);
   const before = indexEntries(root, rel);
   // GST-2118: git add refuses a named skip-worktree file that is on disk; it is left to the skipped-path check, so the other paths still commit.
   const sparse = new Set(gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v').split('\0')
@@ -634,7 +652,7 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
   // GST-2116: after the try, so a failure from here on never restores the index under a commit that landed.
   const sha = landed.committed ? gitOk(root, ['rev-parse', 'HEAD'], 'rev-parse HEAD') : null;
   if (sha) recordCommit(root, { sha, writer: 'commit_push' });
-  return { sha, skipped: unstagedPaths(root, landed.paths, landed.listed) };
+  return { sha, skipped: unstagedPaths(root, landed.paths, landed.listed, dirtyBefore, sha) };
 }
 
 // ── Pending write-through ───────────────────────────────────────────────────
