@@ -1126,9 +1126,9 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
     let remoteTip = bound && !isAncestor(ctx.root, bound, candidate) ? bound : null;
     if (!remoteTip) {
       const lease = bound ?? (scanSecrets ? scannedBase : undefined);
-      if (scanSecrets) assertNoSecretsInRange({ ...ctx, trackingRef: lease || ctx.trackingRef }, candidate);
+      if (scanSecrets) assertNoSecretsInRange({ ...ctx, trackingRef: lease! }, candidate);
       const push = lease && !isAncestor(ctx.root, lease, candidate) ? null
-        : remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(lease ? [`--force-with-lease=${ctx.mergeRef}:${lease}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+        : remoteGit(ctx.root, 'push', [...(ctx.keepCheckout ? ['--no-verify'] : []), ...(lease !== undefined ? [`--force-with-lease=${ctx.mergeRef}:${lease}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
       if (push?.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
       if (push) lastError = push.stderr.trim();
       if (remoteContains(ctx, candidate)) return onRemote();

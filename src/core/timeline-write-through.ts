@@ -248,6 +248,8 @@ export function spliceTimelineIntoFileText(fileText: string, date: string, block
     if (m) bullets.push({ index: i, date: m[1] });
   }
 
+  // #7738: a body that ends with an empty sentinel gets the same headed section spliceTimelineBlock('') writes.
+  if (lines.slice(sentinel + 1).every(line => !line.trim())) return `${lines.slice(0, sentinel + 1).join('\n')}\n\n## Timeline\n\n${block}\n`;
   let insertAt: number;
   if (bullets.length === 0) {
     // Empty timeline section (possibly followed by other sections): insert

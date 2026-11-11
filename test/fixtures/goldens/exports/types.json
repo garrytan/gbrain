@@ -6162,6 +6162,13 @@
         ]
       },
       {
+        "kind": "variable",
+        "name": "needsEmptyTimelineSentinel",
+        "signature": [
+          "(body: string) => boolean"
+        ]
+      },
+      {
         "kind": "function",
         "name": "nullBytesError",
         "signature": [

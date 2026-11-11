@@ -1234,8 +1234,10 @@ export interface ManagedSyncBacklog {
 }
 
 /**
- * Unfinished managed cursors with their remaining entries and the rate of
- * their latest drain window (CEO-A18), readable from any process.
+ * Unfinished managed cursors of registered sources with their remaining
+ * entries and the rate of their latest drain window (CEO-A18), readable from
+ * any process. A cursor left by a removed source (#8741), or recorded for an
+ * earlier incarnation of a source re-created under the same id, is not a backlog.
  * #6712 PR 4b (design v3.2 §3.7): plus every source whose pass row is not
  * `nothing_pending` (`passHealth`: converged at the checkout's HEAD and the
  * newest pass ended `synced` or `up_to_date`); a source's pass entry replaces
@@ -1244,7 +1246,9 @@ export interface ManagedSyncBacklog {
 export async function readManagedSyncBacklog(engine: BrainEngine, sourceIds?: string[]): Promise<ManagedSyncBacklog[]> {
   const rows = await engine.executeRaw<{ header: { sourceId: string; index: number; total: number; done?: boolean; discoveredAt?: string; progress?: { startedAt: number; startIndex: number; lastAt: number; lastIndex: number };
     counts?: { held?: number }; processingOptions?: { noEmbed?: boolean; noExtract?: boolean; noSchemaPack?: boolean }; syncOptions?: Parameters<typeof managedSyncResumeArgs>[0]['syncOptions'] } }>(
-    `SELECT completed_keys->0 AS header FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'`);
+    `SELECT completed_keys->0 AS header FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'
+      AND EXISTS (SELECT 1 FROM sources s WHERE s.id = completed_keys->0->>'sourceId'
+        AND s.incarnation::text = COALESCE(completed_keys->0->>'incarnation', s.incarnation::text))`);
   const { readPassReadings, passResumeArgs, passStuck, passStuckSince } = await import('./sync-pass-readers.ts');
   const passes: ManagedSyncBacklog[] = (await readPassReadings(engine, { sourceIds })).filter(r => !r.health.nothing_pending).map(({ source_id, row, head, health }) => {
     const t = row.value.telemetry, args = passResumeArgs(source_id, row), stuck = passStuck(health) ? health.reason as 'blocked' | 'not_converged' | 'settle_mismatch' : null;

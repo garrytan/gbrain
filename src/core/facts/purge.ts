@@ -558,7 +558,10 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
         .then(() => recordDerivationPurge(tx, admitted.id, p.sourceId, pageIds, [current.fact, escapeFenceCell(current.fact)])), current.id, p.sourceId);
       // A segmented page's flip already retired only the chunks of the occurrences it rewrote.
       const inline = pageIds.filter(id => !bodies.segmented.includes(id));
-      const chunks = inline.length ? (await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING 1', [inline])).length : 0;
+      // Deleting a page's chunks voids the seal that certified them (#8502), also on a page whose body held no purged row.
+      const chunks = inline.length ? (await tx.executeRaw(`WITH gone AS (DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING page_id),
+        unsealed AS (UPDATE pages SET text_projection_revision=NULL WHERE id IN (SELECT page_id FROM gone) AND text_projection_revision IS NOT NULL)
+        SELECT 1 FROM gone`, [inline])).length : 0;
       const versions = await redactPageVersions(tx, p.sourceId, current.fact, pageIds);
       const ledger = await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, p.sourceId, { needles: [current.fact] });
       prose = versions.prose;

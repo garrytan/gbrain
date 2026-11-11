@@ -111,6 +111,7 @@ import {
 import { verifyWorkspace, resolveVerifySourceId, deriveWorkspaceSourceId } from '../core/bootstrap/verify.ts';
 import { auditWritebackContract, repairWritebackContract } from '../core/bootstrap/contract.ts';
 import { INSTALL_PIN } from '../core/install-ref.ts';
+import { OperationError } from '../core/ops/contract.ts';
 
 export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)
 
@@ -2143,6 +2144,11 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
     if (e instanceof BootstrapRenderError) {
       console.error(e.message);
       console.error(SUPPORT_HINT);
+      logPhase(logCtx, logPhaseName, 'error', t0);
+      return 1;
+    }
+    if (e instanceof OperationError) {
+      console.error(`bootstrap ${sub} refused: ${e.code}: ${e.message}${e.suggestion ? `\nNext: ${e.suggestion}` : ''}`);
       logPhase(logCtx, logPhaseName, 'error', t0);
       return 1;
     }

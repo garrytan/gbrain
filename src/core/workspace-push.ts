@@ -79,6 +79,7 @@ import { scanTextStream } from './secret-scan-stream.ts';
 import { shellQuote } from './mcp-registration.ts';
 import { gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
+import { stagedScanPublishRefusal } from './git/range-secret-scan.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -882,6 +883,34 @@ export function managedPushRefusal(dir: string, root: string | null | undefined,
   return error;
 }
 
+/**
+ * Step 7 of {@link workspacePush}: the push carries every local commit origin lacks, including ones a script made with
+ * plain `git commit` that the staged scan never saw, so the exact commit pushed is range-scanned against the remote tip
+ * it is leased on (#8902). A scan refusal is recorded and thrown; any other failure is returned; null when pushed.
+ */
+function pushScannedHead(root: string, branch: string, log: (line: string) => void): { status: 'error' | 'push_failed'; reason: string } | null {
+  const target = tryGit(root, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (!target) return { status: 'error', reason: 'HEAD names no commit; nothing to push' };
+  const base = tryGit(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}^{commit}`]) ?? '';
+  if (base && tryGit(root, ['merge-base', '--is-ancestor', base, target]) === null) {
+    return { status: 'push_failed', reason: `local ${branch} does not contain origin/${branch}; nothing pushed (rerun to pull first)` };
+  }
+  const refusal = stagedScanPublishRefusal(root, base, target);
+  if (refusal) {
+    log(`PUSH BLOCKED: ${refusal.code}: ${refusal.message}`);
+    writePushStatus({ ts: new Date().toISOString(), ok: false, code: refusal.code, reason: `${refusal.code}: ${refusal.message}`, ahead: aheadCount(root, branch), repoRoot: root });
+    throw refusal;
+  }
+  try {
+    git(root, [...pushSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, `--force-with-lease=refs/heads/${branch}:${base}`, 'origin', `${target}:refs/heads/${branch}`], {
+      timeoutMs: 120_000, auth: true,
+    });
+    return null;
+  } catch (e) {
+    return { status: 'push_failed', reason: `git push failed: ${(e as Error).message.slice(0, 200)}` };
+  }
+}
+
 export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspacePushResult> {
   const log = (line: string) => opts.logger?.(line);
 
@@ -1158,17 +1187,8 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     }
 
     // 7. push — even with no new commit (a prior failure may have left local ahead).
-    try {
-      git(root, [...pushSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', `HEAD:${branch}`], {
-        timeoutMs: 120_000, auth: true,
-      });
-    } catch (e) {
-      return finish({
-        ok: false, status: 'push_failed', repoRoot: root, branch, committed,
-        ahead: aheadCount(root, branch),
-        reason: `git push failed: ${(e as Error).message.slice(0, 200)}`,
-      });
-    }
+    const failed = pushScannedHead(root, branch, log);
+    if (failed) return finish({ ok: false, ...failed, repoRoot: root, branch, committed, ahead: aheadCount(root, branch) });
 
     const ahead = aheadCount(root, branch) ?? 0;
     log(`pushed ${root} → origin/${branch}${committed ? ' (new commit)' : ''}`);

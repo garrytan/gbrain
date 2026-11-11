@@ -259,6 +259,34 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
 }
 
 /**
+ * Writers that commit only blobs they scanned, staged, with the workspace allowlist the range scan also applies
+ * (`gbrain sources push`, `gbrain bootstrap repo`): the allowlist edit such a commit carries is the user's answer to that
+ * scan, so it is not refused as a gate change. Its content is still scanned. `gbrain sources push` also streams staged
+ * files past the range scan's cap (up to its own 512 MiB ceiling), so a file in its commit the range scan calls too large
+ * was scanned; bootstrap's file scan skips files over the cap, so its large files stay refused.
+ */
+const STAGED_SCAN_WRITERS: ReadonlySet<string> = new Set(['workspace_push', 'bootstrap']);
+const STREAMED_SCAN_WRITERS: ReadonlySet<string> = new Set(['workspace_push']);
+
+/**
+ * The refusal for a push by `gbrain sources push` or `gbrain bootstrap repo` of `base..target` (an empty `base` covers
+ * the whole history): the same scan and refusals as an automatic publish, except for what those writers' own commits
+ * already passed (see STAGED_SCAN_WRITERS).
+ */
+export function stagedScanPublishRefusal(root: string, base: string, target: string): OperationError | null {
+  const scan = scanRange(root, base, target);
+  if (!scan.gate_changes.length && !scan.unscanned.length) return rangeSecretRefusal(root, base, target, scan);
+  const own = new Map<string, string>();
+  try {
+    const common = must(run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], Date.now() + 60_000), 'rev-parse').toString().trim();
+    for (const record of readLedger(common)) if (record.e === 'commit' && STAGED_SCAN_WRITERS.has(record.writer)) own.set(record.sha, record.writer);
+  } catch { /* an unreadable ledger exempts nothing */ }
+  return rangeSecretRefusal(root, base, target, { ...scan,
+    gate_changes: scan.gate_changes.filter(change => !own.has(change.commit)),
+    unscanned: scan.unscanned.filter(item => item.path === MESSAGE_PATH || !STREAMED_SCAN_WRITERS.has(own.get(item.commit) ?? '')) });
+}
+
+/**
  * The automatic-publish refusal for the commits in `base..target` of `root`, shared by every publish that scans: null
  * when the scan read the whole range and found nothing; `publish_scan_unreadable` when it could not read it all;
  * otherwise `publish_secret_found` naming each finding, unscanned file and gate change (never a value).
