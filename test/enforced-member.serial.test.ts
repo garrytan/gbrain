@@ -233,6 +233,8 @@ for (const kind of testBackends()) {
         [['upgrade'], 'upgrade'], [['autopilot', 'status'], 'autopilot'], [['repair', 'frontmatter'], 'repair'], [['delete', PAGES.open.slug], 'delete'],
         [['reindex'], 'reindex'], [['embed', '--stale'], 'embed'], [['dream'], 'dream'], [['write-requests'], 'write-requests'],
         [['sources', 'writer', 'status'], 'sources writer'], [['recall', '--since-last-run', '--json'], 'recall'],
+        [['access', 'owner', 'reads-restricted', 'on'], 'access'], [['access', 'rule', 'add', '--slug', PAGES.open.slug, '--readers', MEMBER], 'access'],
+        [['repair', 'visibility', '--slug', PAGES.open.slug], 'repair'], [['trust', 'backfill', '--label-lowerings'], 'trust'],
       ];
       for (const [args, command] of cases) {
         const r = await cli(args);

@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CLI_COMMANDS } from '../src/cli/command-table.ts';
 import { OPERATION_MANIFEST } from '../src/cli/op-manifest.ts';
+import { ROUTERS } from '../src/cli/subcommands.ts';
 import { CLI_COMMAND_CLASSES, OPERATION_CLASSES, OPERATION_SUBCOMMANDS, enforcedClassOf } from '../src/cli/enforced-member-classes.ts';
 
 const CLASSES_SRC = readFileSync(join(import.meta.dir, '..', 'src', 'cli', 'enforced-member-classes.ts'), 'utf8');
@@ -36,6 +37,27 @@ describe('enforced member allow-list', () => {
     const cliOnly = new Set(CLI_COMMANDS.map(c => c.name));
     const opNames = new Set(OPERATION_MANIFEST.flatMap(o => [o.cliHints?.name ?? o.name, ...(o.cliHints?.aliases ?? [])]));
     for (const name of Object.keys(OPERATION_SUBCOMMANDS)) expect({ name, op: opNames.has(name), cliOnly: cliOnly.has(name) }).toEqual({ name, op: true, cliOnly: false });
+  });
+
+  test('every router subcommand in the live registry has a class, and a refused command refuses every subcommand', () => {
+    const opByCli = new Map(OPERATION_MANIFEST.flatMap(o => [o.cliHints?.name ?? o.name, ...(o.cliHints?.aliases ?? [])].map(n => [n, o.name] as const)));
+    const classes = new Set(['read', 'write', 'allowed', 'silent', 'refused']);
+    for (const [command, router] of Object.entries(ROUTERS)) {
+      const known = CLI_COMMAND_CLASSES[command] !== undefined || opByCli.has(command);
+      expect({ command, known }).toEqual({ command, known: true });
+      const whole = enforcedClassOf(command, [], opByCli.get(command));
+      for (const sub of router.subcommands) {
+        const cls = enforcedClassOf(command, [sub], opByCli.get(command));
+        expect({ command, sub, classified: classes.has(cls), refusedWithParent: whole !== 'refused' || cls === 'refused' }).toEqual({ command, sub, classified: true, refusedWithParent: true });
+      }
+    }
+  });
+
+  test('the commands and flags added since the mode landed are refused', () => {
+    for (const [command, args] of [
+      ['access', ['rule', 'add', '--slug', 'notes/x-example', '--readers', 'alice-example']], ['access', ['owner', 'reads-restricted', 'on']],
+      ['access', ['owner', 'reads-restricted', 'off']], ['repair', ['visibility', '--slug', 'notes/x-example']], ['trust', ['backfill', '--label-lowerings']],
+    ] as const) expect({ command, args: args.join(' '), cls: enforcedClassOf(command, args, undefined) }).toEqual({ command, args: args.join(' '), cls: 'refused' });
   });
 
   test('an unknown command or operation resolves to refused', () => {

@@ -156,7 +156,7 @@ test/e2e/segmented-rls-scope.test.ts	(file-level)	5	readFileSync
 test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTALL_FOR_AGENTS.md flow)	6	readFileSync
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
-test/enforced-member-classes.test.ts	enforced member allow-list	4	readFileSync
+test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
