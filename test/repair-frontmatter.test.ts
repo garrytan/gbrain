@@ -12,6 +12,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { OperationError, type OperationContext } from '../src/core/ops/contract.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
@@ -199,6 +200,50 @@ test('a file edited after the preview is changed_since_preview and keeps its new
 
 const localCtx = (engine: BrainEngine, sourceId: string, remote = false) =>
   ({ engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote, sourceId }) as unknown as OperationContext;
+
+// A byte-identical repair still needs the owner when ordinary file writes are off.
+// Dropping the owner route reproduces owner_unavailable. The other managed
+// repair cases use the default setting; this uses the same repair entry point.
+test('an approved unchanged file import clears its hold with write-through off', () => each(async engine => {
+  const path = 'notes/held.md';
+  const content = note('Held note');
+  const s = await managed(engine, { [path]: content, 'notes/roundup.md': QUOTABLE });
+  const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>(
+    'SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [s.id]);
+  // An earlier sync held the origin; the current preview can import the bytes as-is.
+  await writeGitHold(engine, { source_id: s.id, incarnation, path, source_path: path, slug: 'notes/held', page_id: null,
+    code: 'origin_conflict', message: 'A twin occupied the slug path.', upstream_version: sha256(content),
+    observed_at: new Date().toISOString(), run_id: 'held-origin-fixture', mode: 'managed', meta: { recovery_version: RECOVERY_VERSION, reason: 'twin_slug_path_occupied' } });
+  await engine.setConfig('sync.write_through', 'false');
+  try {
+    const head = git(s.root, 'rev-parse', 'HEAD');
+    const preview = await s.run({ only: [path] });
+    expect(details(preview).counts).toMatchObject({ safe: 1, interpretive: 0 });
+    expect(await engine.getPage('notes/held', { sourceId: s.id })).toBeNull();
+    expect((await s.holds()).map(hold => hold.path)).toEqual([path]);
+
+    const applied = await s.run({ apply: true, expect: preview.preview_hash!, only: [path] });
+    expect(applied).toMatchObject({ applied: 1, complete: true,
+      outcome_items: [{ detail: { written: false, imported: 'created', hold_cleared: true } }] });
+    expect((await engine.getPage('notes/held', { sourceId: s.id }))?.source_path).toBe(path);
+    expect(await s.holds()).toEqual([]);
+    expect(s.read(path)).toBe(content);
+    expect(git(s.root, 'rev-parse', 'HEAD')).toBe(head);
+
+    const rewrite = await s.run({ only: ['notes/roundup.md'] });
+    expect(rewrite.affected).toBe(1);
+    const refused = await s.run({ apply: true, expect: rewrite.preview_hash!, only: ['notes/roundup.md'] });
+    expect(refused).toMatchObject({ applied: 0, complete: false, stopped: { reason: 'owner_unavailable' } });
+    expect(s.read('notes/roundup.md')).toBe(QUOTABLE);
+
+    await submitPageMutation(localCtx(engine, s.id), { operation: 'put_page',
+      params: { slug: 'notes/database-only', content: note('Database only'), source_id: s.id, no_embed: true } });
+    expect(await engine.getPage('notes/database-only', { sourceId: s.id })).toMatchObject({ title: 'Database only', source_path: null });
+    expect(existsSync(join(s.root, 'notes/database-only.md'))).toBe(false);
+  } finally {
+    await engine.unsetConfig('sync.write_through');
+  }
+}), 180_000);
 
 test('a held modified file: put_page stays refused for drift, the repair writes the exact bytes under its hash and updates the page', () => each(async engine => {
   const s = await managed(engine, { 'notes/post.md': note('Original') });

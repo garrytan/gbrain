@@ -521,9 +521,15 @@ export async function preparePageAdmission(ctx: OperationContext,
   const databaseOnly = input.databaseOnly ?? (input.operation === 'restore_page' && p.detach === true && localRoot
     && isSourceDbOnlySlug(localRoot, slug, 'not_db_only') ? 'detached' : undefined);
   const writeThrough = configuredWriteThrough && !sandbox && !databaseOnly;
+  // An unchanged repair imports the file without writing it, but still needs the existing owner's locks.
+  const unchangedRepair = !writeThrough && !sandbox && !databaseOnly && binding !== null
+    && ctx.remote === false && input.operation === 'put_page' && input.managedFileImport === true
+    && intent.kind === 'managed_file_repair' && intent.adoptLocalEdit === undefined
+    && typeof intent.content === 'string' && sha256(intent.content) === intent.beforeHash;
+  const routeToOwner = writeThrough || unchangedRepair;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (databaseOnly) authority.databaseOnlyReason = databaseOnly;
-  else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
+  else if (!routeToOwner && !configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
   else if (!root && !binding) authority.databaseOnlyReason = 'no_repo_configured';
   if (p.local_dir !== undefined) {
     let matches = false;
@@ -558,5 +564,5 @@ export async function preparePageAdmission(ctx: OperationContext,
   return { typeWarning, slugAdvisory, admission: { origin: ctx.admissionOrigin, principal, operation: input.operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId: input.batch ? undefined : clientRequestIdOf(params.request_id), callerIntent, intent, authority,
     ...(input.operation === 'edit_page' ? { terminalReservation: receiptReservation({ intent, authority }, (await import('./page-edit.ts')).EDIT_PAGE_RECEIPT_RESERVE) } : {}),
-    worktreeId: writeThrough ? binding?.worktree_id : null, topologyGeneration: writeThrough ? binding?.topology_generation : null, deferrable: true } };
+    worktreeId: routeToOwner ? binding?.worktree_id : null, topologyGeneration: routeToOwner ? binding?.topology_generation : null, deferrable: true } };
 }
