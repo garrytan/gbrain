@@ -151,6 +151,7 @@ test/held-read-signals.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
 test/hosted-repo-g7b2.test.ts
+test/ignored-privacy-labels.test.ts
 test/import-file-result-callback-gbra130.test.ts
 test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
@@ -472,6 +473,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/privacy-label-ignored.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/purge-expires-page-facts.test.ts

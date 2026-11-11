@@ -115,6 +115,7 @@
       "  [OK] slug_collisions: No slug collisions across 2 source checkout(s).",
       "  [OK] segmented_tiling: Every live page stored in segments has segment rows that cover its whole body.",
       "  [OK] timeline_history: Every timeline row has a bullet in its page (4 page(s) inspected).",
+      "  [OK] privacy_label_ignored: No page relies on an access or confidentiality value gbrain does not recognize.",
       "  [OK] safe_index_pending: Every re-sealable page is at the safe-chunk index version.",
       "  [OK] credential_projection_pending: No page waits for the credential-safe re-chunk.",
       "  [OK] connector_checkpoints: No orphan connector checkpoint rows older than 7 days.",

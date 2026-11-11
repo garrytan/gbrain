@@ -1476,6 +1476,22 @@
             "category": "brain",
             "details": {
               "count": "exact",
+              "pages": 0,
+              "scan_cap": 100000,
+              "truncated": false,
+              "value_count": 0,
+              "values": [],
+              "values_truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "name": "privacy_label_ignored",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": "exact",
               "kept_pages": 0,
               "pages_pending": 0,
               "repair": "safe-chunks",
@@ -6539,6 +6555,22 @@
             "message": "2 timeline row(s) on 2 page(s) exist only in the database. Preview: gbrain repair timeline — apply: gbrain repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
             "name": "timeline_history",
             "status": "warn"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": "exact",
+              "pages": 0,
+              "scan_cap": 100000,
+              "truncated": false,
+              "value_count": 0,
+              "values": [],
+              "values_truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "name": "privacy_label_ignored",
+            "status": "ok"
           },
           {
             "category": "brain",
