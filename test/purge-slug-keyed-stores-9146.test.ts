@@ -54,7 +54,7 @@ async function residue(slug: string) {
     slug_rename_history: await q('slug_rename_history', 'new_slug'),
   };
 }
-const ONLY_B = Object.fromEntries(['take_proposals', 'open_loops', 'core_edit_notices', 'page_aliases', 'slug_aliases', 'slug_rename_history'].map(t => [t, ['source-b']]));
+const ONLY_B = Object.fromEntries(['take_proposals', 'open_loops', 'core_edit_notices', 'page_aliases', 'slug_aliases', 'slug_rename_history'].map(t => [t, ['source-b']])) as Awaited<ReturnType<typeof residue>>;
 
 describe('slug-keyed stores on non-direct hard deletes (#9146)', () => {
   test('the expired-tombstone purge clears them for the purged source only', async () => {
