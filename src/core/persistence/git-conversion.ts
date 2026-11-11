@@ -901,7 +901,7 @@ function changedSincePlan(sourceId: string, paths: ReadonlySet<string>, mode: 'm
 async function pushConversion(engine: BrainEngine, context: ManagedSyncContext): Promise<ConversionPush> {
   const { root } = context;
   const pending = (code: string, why: string): ConversionPush => ({ state: 'pending', code,
-    notice: `The conversion's door commits are committed locally, but their push did not land (${why}). Nothing retries it until the next page write, whose push sends them; to push now, run gbrain git commit-push --push-only --path ${root}.` });
+    notice: `The conversion's door commits are committed locally, but their push did not land (${why}). Nothing retries it until the next page write, whose push sends them; to push now, run gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${root}.` });
   try {
     if (!(await gitDurabilityPolicy(context.binding, root)).durable) return { state: 'skipped', reason: DURABILITY_NOT_ENABLED_REASON };
     if (!(await gitRootAhead(root))) return { state: 'skipped', reason: 'nothing_to_push' };

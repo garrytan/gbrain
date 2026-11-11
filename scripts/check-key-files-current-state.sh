@@ -15,7 +15,9 @@
 #      marker is banned, so this never false-fires on legitimate version mentions.
 #   2. Size caps for CLAUDE.md, the index, each subsystem and
 #      docs/TESTING.md. The TESTING.md cap is a ratchet: lower it when the file
-#      shrinks, never raise it; detail moves next to its code instead.
+#      shrinks, never raise it; detail moves next to its code instead. A subsystem
+#      page at its cap continues on a new page linked from its last line, not
+#      on an unrelated page.
 #   3. One reference bullet per src file across the index and subsystems — a cherry-pick that keeps both sides
 #      of a hunk leaves two "- `src/x.ts`" bullets describing two different
 #      "current states" for one file. Merge into the survivor, never append a twin.
@@ -112,7 +114,7 @@ for doc in "$ROOT"/docs/architecture/key-files/*.md; do
   bytes=$(wc -c < "$doc" | tr -d ' ')
   if [ "$bytes" -gt 60000 ]; then
     fail=1
-    echo "FAIL: ${doc#"$ROOT/"} is $bytes bytes, over the 60000 cap. Split the subsystem and update KEY_FILES.md." >&2
+    echo "FAIL: ${doc#"$ROOT/"} is $bytes bytes, over the 60000 cap. Move its last entries to a continuation page that links back with [Previous entries](<page>.md), and link it from this page's last line; never raise the cap." >&2
   fi
 done
 
