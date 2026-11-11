@@ -122,7 +122,7 @@ jobs:
           if-no-files-found: warn
 
   busy-agent:
-    name: Busy-agent soak cell (informational) / Bun ${{ matrix.bun }} / seed ${{ inputs.seed || github.run_id }}
+    name: Busy-agent soak cell (informational) / Bun ${{ matrix.bun }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 150
     continue-on-error: true
