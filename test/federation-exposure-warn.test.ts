@@ -8,11 +8,11 @@
  */
 import { describe, expect, spyOn, test } from 'bun:test';
 import { pagesExposedLines, remotePagesFederationExposesOrWarn, type PagesExposed } from '../src/core/access/federation-exposure.ts';
-import type { SqlEngine } from '../src/core/persistence/model.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
-function engineWith(executeRaw: () => Promise<never>): { engine: SqlEngine; calls: () => number } {
+function engineWith(executeRaw: () => Promise<never>): { engine: BrainEngine; calls: () => number } {
   let n = 0;
-  return { engine: { executeRaw: async () => { n++; return executeRaw(); } } as unknown as SqlEngine, calls: () => n };
+  return { engine: { executeRaw: async () => { n++; return executeRaw(); } } as unknown as BrainEngine, calls: () => n };
 }
 
 describe('#8982 federation exposure read never changes the federation', () => {

@@ -48,7 +48,7 @@ describe('native-only CI remains separate from full validation', () => {
         for (const flag of [undefined, false, true]) {
           const nativeOnly = event === 'workflow_dispatch' && flag === true;
           const expected = name === 'native-only-status' ? nativeOnly
-            : name === 'cheap-tier' || name === 'dynamic-ci' ? event === 'pull_request'
+            : name === 'cheap-tier' || name === 'dynamic-ci' || name === 'enumeration-census-tests' ? event === 'pull_request'
             : name === 'reused-full-suite' ? false
             : !nativeOnly && !(event === 'pull_request' && FULL_ONLY.has(name));
           expect(Boolean(evaluate(job.if!, event, flag)), `${name}/${event}/${flag}`).toBe(expected);

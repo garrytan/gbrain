@@ -174,7 +174,7 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       const hold = status.git_push_holds[0]!;
       expect(hold).toMatchObject({ retrying: 1, parked: 0, codes: ['integrate_conflict'], conflict: { paths: ['notes/acme-conflict.md'], remote: theirs } });
       expect(hold.fix).toMatchObject({ ask_user: true, actor: 'user',
-        argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', b.root, '--expect-remote', theirs, '--resolve', 'notes/acme-conflict.md=<ours|theirs>'] });
+        argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', b.root, '--expect-remote', theirs, '--resolve', 'notes/acme-conflict.md=<ours|theirs>'] });
       expect(hold.fix.user_message).toContain('Which version should win');
       expect(status.next).toEqual(hold.fix);
       expect((await checkParkedEffects(b.engine, [b.sourceId])).status).toBe('warn');

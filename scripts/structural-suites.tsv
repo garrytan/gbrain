@@ -119,7 +119,7 @@ test/destructive-guard.test.ts	purgeExpiredSources — clone cleanup containment
 test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	source-surface-helper
 test/divergence-safe-pull-5429.serial.test.ts	--no-autostash (#5429, bug fix)	4	readFileSync
 test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#5007)	1	readFileSync,source-surface-helper
-test/docs-navigation.test.ts	primary documentation navigation	1	readFileSync
+test/docs-navigation.test.ts	primary documentation navigation	2	readFileSync
 test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	doctor-source-helper
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
@@ -330,7 +330,7 @@ test/scripts/e2e-runner.test.ts	sequential E2E runner (GITHUB_ACTIONS=${githubAc
 test/scripts/e2e-shard-budget.test.ts	E2E shard-time budget	3	readFileSync
 test/scripts/e2e-wiring.test.ts	(file-level)	14	readFileSync
 test/scripts/fix-wave-gate.test.ts	fix-wave gate workflow	3	readFileSync
-test/scripts/full-ci-workflow.test.ts	full CI on pull requests	6	readFileSync
+test/scripts/full-ci-workflow.test.ts	full CI on pull requests	7	readFileSync
 test/scripts/full-ci-workflow.test.ts	master-push reuse of a passed full-suite run	2	readFileSync
 test/scripts/heavy-door-workflow.test.ts	heavy door supply chain and coverage gates	8	readFileSync
 test/scripts/native-lock-prebuilds.test.ts	native lock distribution integrity	2	readFileSync
