@@ -258,8 +258,11 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
  * One fact item: a fenced row gets `private` in its page's `## Facts` fence by a
  * revision-bound label write (labelWrite; the projection then stores it private); a
  * database-only row is updated in place (a database-only maintenance request
- * on a managed brain). A page stored in segments is left for the owner.
+ * on a managed brain). A page stored in segments is left for the owner. A fenced row that stays world and live is
+ * reported `fact_left_readable` (counted in the apply's outcomes), never as done: remote callers still read it.
  */
+const leftReadable = (factId: number, why: string): RepairItemOutcome => ({ applied: false, outcome: 'fact_left_readable', detail: { fact_id: factId },
+  reason: `${why}; the fact row is still world, so remote callers can still read it` });
 async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, factId: number): Promise<boolean | RepairItemOutcome> {
   const [fact] = await worldFactsFromPrivateSources(ctx.engine, [item.source_id], [factId]);
   if (!fact) return false;
@@ -276,13 +279,15 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
     return ((receipt.tightened as number[] | undefined) ?? []).includes(factId);
   }
   const snapshot = fact.source_markdown_slug ? await ctx.engine.readPageSnapshot(fact.source_markdown_slug, { sourceId: item.source_id }) : null;
-  if (!snapshot || isSegmentedPage(snapshot.page)) return false;
+  if (!snapshot) return false;
+  if (isSegmentedPage(snapshot.page)) return leftReadable(factId, 'its page is stored in segments, which this repair does not rewrite');
   const body = strikeFenceRow(snapshot.page.compiled_truth ?? '', fact.row_num, row => ({ ...row, visibility: 'private' }));
-  if (body === null) return false;
+  if (body === null) return leftReadable(factId, 'its row was not found in the page\'s facts fence');
   const held = await labelWrite(ctx, item, snapshot, serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), { set: {}, remove: [] });
   if (held) return held;
-  const [stored] = await ctx.engine.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id=$1', [factId]);
-  return stored?.visibility === 'private';
+  const [stored] = await ctx.engine.executeRaw<{ visibility: string; live: boolean }>('SELECT visibility, expired_at IS NULL AS live FROM facts WHERE id=$1', [factId]);
+  if (!stored || stored.visibility === 'private' || !stored.live) return true;
+  return leftReadable(factId, 'its fence row was written private, but the original row is more trusted than the repair and was kept beside it');
 }
 
 /**

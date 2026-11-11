@@ -24,7 +24,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { withCoordinatedWrite, withTrustBackfill } from '../src/core/persistence/context.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { runRepairCommand } from '../src/commands/repair.ts';
+import { renderRepairResult, runRepairCommand } from '../src/commands/repair.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { listLabelLowerings, renderLabelLowerings } from '../src/core/trust/label-lowerings.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
@@ -126,8 +126,14 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
       + '<!--- gbrain:facts:begin -->' + NL + NL + header + '| 1 | Alice Example works at acme-example. | fact | 1.0 | ' + visibility + ' | medium | 2026-10-01 |  | test |  |' + NL
       + '<!--- gbrain:facts:end -->' + NL);
     await seed(engine, root, { [slug]: withFacts('world') });
-    await previewApply(engine, ['visibility', '--class', 'facts']);
+    const { applied } = await previewApply(engine, ['visibility', '--class', 'facts']);
     await settleManagedGitEffects(engine);
+    // The original world row is more trusted than the repair and stays live (GST-2487): the apply must say so, never "done".
+    expect(applied.applied).toBe(0);
+    expect(applied.outcomes).toMatchObject({ fact_left_readable: 1 });
+    expect(applied.outcome_items).toEqual([expect.objectContaining({ item: 'default:' + slug, outcome: 'fact_left_readable' })]);
+    expect(renderRepairResult(applied)).toContain('NOT CLOSED: 1 fact row(s) could not be made private and stay readable by remote callers');
+    expect(await engine.executeRaw("SELECT visibility FROM facts WHERE source_markdown_slug=$1 AND expired_at IS NULL AND visibility='world'", [slug])).toEqual([{ visibility: 'world' }]);
     expect((await page(engine, slug)).tier).toBe('operator_curated');
     expect(await engine.executeRaw("SELECT id FROM trust_proposals WHERE action='lower_page'")).toEqual([]);
     expect(onDisk(root, slug)).toBe(withFacts('private'));

@@ -456,6 +456,9 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   const render = repairSpec(result.kind).handler.render;
   if (result.details && render) lines.push(...render(result.details, opts));
   if (result.mode === 'apply' && result.outcomes) lines.push(`  outcomes: ${Object.entries(result.outcomes).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+  if (result.mode === 'apply' && result.outcomes?.fact_left_readable) {
+    lines.push(`  NOT CLOSED: ${result.outcomes.fact_left_readable} fact row(s) could not be made private and stay readable by remote callers (listed below).`);
+  }
   for (const outcome of result.mode === 'apply' ? result.outcome_items ?? [] : []) {
     if (!outcome.detail) continue;
     lines.push(`  ${outcome.outcome}: ${outcome.item} ${Object.entries(outcome.detail).filter(([key]) => key !== 'commit_step' && key !== 'fix').map(([k, v]) => `${k}=${v}`).join(', ')}${outcome.reason ? ` (${outcome.reason})` : ''}`);

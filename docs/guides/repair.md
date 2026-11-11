@@ -92,6 +92,14 @@ without managed persistence, a page whose file sits in its source's checkout get
 the same edit in that file and in the database together, so the next sync reads
 the same page.
 
+A fenced fact row the apply could not make private is counted as
+`fact_left_readable` in the outcomes (`--json`: `outcomes.fact_left_readable`,
+each row in `outcome_items`), and the text output says `NOT CLOSED`: those rows
+are still world and remote callers can still read them. Today that happens when
+the original row is more trusted than the repair (it is kept beside the new
+private row), when the page is stored in segments, or when the row is not found
+in the page's facts fence.
+
 The apply touches only the listed items and resumes after its last applied
 item if it stops. Apply the window (or decide not to), then preview again for
 the next one. Each plan statement is bounded at 120 s; a class that overruns is
