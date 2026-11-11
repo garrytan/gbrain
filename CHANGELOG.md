@@ -10,6 +10,24 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The skill resolver's hook lane now cleans up old session files before it exits, each harness can add its own skill folders, and a new experimental `top_gate` setting can hold back weak suggestions.** The skill resolver is the optional feature that offers your agent the right installed skill on each turn. It is still off by default, `top_gate` is off too, and none of this blocks a turn.
+
+Before, the hook lane exited right after its turn, so idle session files waited for the next CLI run to be cleaned up. Now the lane runs one cleanup pass of at most 64 files before it exits, and never runs past its deadline. Before, Claude Code and Codex catalogs were built only from each harness's default skill folder. Now you can list extra folders per harness, and setup keeps them on every later run.
+
+### How to use it
+
+- Extra skill folders: `gbrain config set skills.resolver.per_harness.claude-code.dirs /abs/dir,/abs/other` (or `.codex.dirs`, at most 32 absolute paths), then run setup again. Setup builds the user catalog from the default folder plus every listed folder that exists, and the catalog's automatic rebuild keeps them. Unset the key and run setup again to drop them.
+- `top_gate`: `gbrain config set skills.resolver.top_gate <0-100>`, `--top-gate` on `gbrain skill-resolver`, or `top_gate` in the turn input. It empties the block when the best skill the block would show scores below the threshold, after dividing the score by the catalog's maximum idf so the number means the same thing at any catalog size. A skill named in the turn bypasses it. `skills.resolver.per_harness.<harness>.top_gate` overrides it for one harness.
+
+### Things to watch
+
+- `top_gate` stays off because no threshold has yet removed suggestions on no-skill turns without hiding many right ones. On held-out turns written to break length-based gates, threshold 1.33 kept false suggestions at 0.17 to 0.19 but cut hit@5 on skill turns from 0.515-0.611 to 0.26-0.28. The guide shows both measurements; treat it as a setting to measure, not one to turn on.
+- An empty block can now carry `block_reason: "weak_top_match"`.
+- `min_match` behaves as before. Its docs now say it filters candidates and is not a gate.
+- A bad `top_gate` or `dirs` value makes the lane log `skill_resolver_config_invalid` and deliver nothing, like the other turn settings.
+
 ## [0.60.668.0] - 2026-11-11
 
 **The skill resolver can now find skills from more places, stays fresh when your harness writes into its skills folder, and runs inside Hermes.** The skill resolver is the optional feature that offers your agent the right installed skill on each turn. It is still off by default and never blocks a turn.
