@@ -41,7 +41,7 @@ import { stableJson } from './digest.ts';
 import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { assertOriginUnclaimed } from './origin-guard.ts';
 import { OperationError } from '../ops/contract.ts';
-import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from './verb-errors.ts';
+import { PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from '../page-state/types.ts';
 
 const BODY_KEYS = new Set(['compiled_truth', 'timeline', 'content']);
 

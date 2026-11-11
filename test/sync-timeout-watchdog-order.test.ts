@@ -29,7 +29,8 @@ describe('sync --timeout (CLI)', () => {
   test('a plain-directory --timeout stop is a partial with exit 0, before the watchdog backstop', async () => {
     const home = join(dir, 'home');
     const notes = join(dir, 'notes');
-    writeLargeWorktree(notes, 3000);
+    const files = 3000;
+    writeLargeWorktree(notes, files);
     const init = await runCli(['init', '--pglite', '--no-embedding'], { home, env: KEYS, timeoutMs: 120_000 });
     expect(init.exitCode, init.stderr).toBe(0);
     const add = await runCli(['sources', 'add', 'source-a', '--path', notes, '--force'], { home, env: KEYS, timeoutMs: 120_000 });
