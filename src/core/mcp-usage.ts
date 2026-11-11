@@ -53,6 +53,8 @@ export const NON_OP_LOG_ROWS: ReadonlySet<string> = new Set([
   'surface_change',
   // GBRA-219 memory settings audit rows (src/core/facts/writeback-settings.ts).
   'memory_setting_change',
+  // GST-1094 owner access administration audit rows (src/commands/serve-http-access.ts).
+  'access_admin',
 ]);
 
 /** Legacy bearer transport row prefix — 'tools/call:query' means op 'query'. */

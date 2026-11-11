@@ -620,6 +620,49 @@
         {
           "handlers": [
             "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/access/members"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/members"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/access/member-links"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/member-links"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/attest"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
             "jsonParser",
             "<anonymous>"
           ],
@@ -1342,6 +1385,49 @@
           ],
           "method": "post",
           "path": "/admin/api/rescope-client"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/access/members"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/members"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/access/member-links"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/member-links"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/access/attest"
         },
         {
           "handlers": [
