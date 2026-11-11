@@ -663,6 +663,7 @@
   "test/serve-http-run-teardown.serial.test.ts": 1400,
   "test/serve-sync-handoff.serial.test.ts": 4100,
   "test/setup-brain-first.test.ts": 62000,
+  "test/setup-serves-several.test.ts": 134100,
   "test/setup.test.ts": 432400,
   "test/shared-content-freshness.test.ts": 6900,
   "test/shared-skills-catalog.test.ts": 17200,

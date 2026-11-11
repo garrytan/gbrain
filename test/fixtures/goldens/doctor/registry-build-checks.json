@@ -391,6 +391,10 @@
       },
       {
         "category": "brain",
+        "name": "unlabeled_people_folders"
+      },
+      {
+        "category": "brain",
         "name": "access_may_act_for_wildcard"
       },
       {
