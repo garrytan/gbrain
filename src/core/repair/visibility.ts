@@ -28,10 +28,14 @@
  * class past a full window is not read; apply the window and preview again for the next one. Each
  * plan statement runs under PLAN_STATEMENT_MS; a class that overruns it is reported and skipped.
  * Progress goes to stderr. A bare `--apply` (`--all`, the remediation plan) applies every class.
+ *
+ * `--slug <page>` (repeatable, GST-2468) replaces the classes with the named pages (class `pages`): each is made
+ * private, tighten-only, preview-bound (a bare `--apply` refuses). It is the operator's single-page label change.
+ * Every item writes through the label-only door (repair/label-write.ts): the page keeps its trust tier, files no
+ * lower_page proposal and its file changes only on the visibility line (a fact item: its fence row).
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { derivationPrivateSql, effectiveVisibility, folderRestrictedSql, privacyAliasSql, privateSnapshotFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
 import { opError } from '../ops/contract.ts';
@@ -43,7 +47,10 @@ import type { WriteRequest } from '../persistence/model.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairCursor } from './core.ts';
+import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairCursor } from './core.ts';
+import { filesInCheckout, writeLabelPage } from './label-write.ts';
+import type { LabelEdit } from '../persistence/label-edit.ts';
+import type { PageSnapshot } from '../page-state/types.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
@@ -54,7 +61,7 @@ interface InputRow { concept_id: number; atom_id: number; linked: boolean }
 
 interface EventRow extends DerivedRow { origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean }
 
-export interface VisibilityChange { id: number; source_id: string; slug: string; phase: 0 | 1 | 2 | 3; from: string | null; to: Visibility }
+export interface VisibilityChange { id: number; source_id: string; slug: string; phase: 0 | 1 | 2 | 3 | 5; from: string | null; to: Visibility }
 
 /** Tighten-only: never loosen an explicit value; stamp a missing one. */
 function tightened(current: string | null, target: Visibility): Visibility | null {
@@ -157,6 +164,21 @@ async function planAliases(engine: BrainEngine, sourceIds: string[], only?: numb
 }
 
 /**
+ * GST-2468: the pages an operator named with --slug, made private (tighten-only: an explicit private stays). The
+ * operator's own single-page label change, which a put_page would rate as an agent edit (trust/channel.ts).
+ */
+async function planNamed(engine: BrainEngine, sourceIds: string[], slugs: string[]) {
+  const rows = await engine.executeRaw<DerivedRow>(`SELECT p.id,p.source_id,p.slug,p.type,p.frontmatter->>'visibility' AS visibility,length(p.compiled_truth) AS chars
+    FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND p.slug=ANY($2::text[]) ORDER BY p.id`, [sourceIds, slugs], bounded);
+  const changes = rows.flatMap(page => {
+    const next = tightened(page.visibility, 'private');
+    return next ? [{ id: Number(page.id), source_id: page.source_id, slug: page.slug, phase: 5 as const, from: page.visibility, to: next }] : [];
+  });
+  const found = new Set(rows.map(row => row.slug));
+  return { changes, rows, residuals: { named_already_private: rows.length - changes.length, named_not_found: slugs.filter(slug => !found.has(slug)).length } };
+}
+
+/**
  * Every atom / synthesized concept / chronicle event / alias-only page in scope
  * whose stored visibility should change. `only` narrows the plan to one page
  * (and, for a concept, its inputs) so an item is re-decided against current
@@ -234,11 +256,11 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
 
 /**
  * One fact item: a fenced row gets `private` in its page's `## Facts` fence by a
- * revision-bound put_page (the projection then stores it private); a
+ * revision-bound label write (labelWrite; the projection then stores it private); a
  * database-only row is updated in place (a database-only maintenance request
  * on a managed brain). A page stored in segments is left for the owner.
  */
-async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, factId: number): Promise<boolean> {
+async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, factId: number): Promise<boolean | RepairItemOutcome> {
   const [fact] = await worldFactsFromPrivateSources(ctx.engine, [item.source_id], [factId]);
   if (!fact) return false;
   if (fact.row_num === null) {
@@ -257,28 +279,45 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
   if (!snapshot || isSegmentedPage(snapshot.page)) return false;
   const body = strikeFenceRow(snapshot.page.compiled_truth ?? '', fact.row_num, row => ({ ...row, visibility: 'private' }));
   if (body === null) return false;
-  await submitPageMutation(ctx, { operation: 'put_page', params: { slug: snapshot.page.slug, source_id: item.source_id,
-    content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), expected_revision: snapshot.revision,
-    request_id: await repairRequestId(ctx, 'visibility', item, snapshot.revision) } });
+  const held = await labelWrite(ctx, item, snapshot, serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), { set: {}, remove: [] });
+  if (held) return held;
   const [stored] = await ctx.engine.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id=$1', [factId]);
   return stored?.visibility === 'private';
 }
 
-export type VisibilityClass = 'facts' | 'events' | 'aliases' | 'lineage';
+/**
+ * GST-2468: one item's page write is a label-only maintenance write (repair/label-write.ts): it keeps the page's trust
+ * tier, files no lower_page proposal and changes only the label lines of the page's file (a fact item: its fence row).
+ * Null once written; the held outcome on a brain without managed persistence whose page has a file in its source's
+ * checkout (the database-only write would be undone from the file), or for a page stored in segments.
+ */
+async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, snapshot: PageSnapshot, content: string, edit: LabelEdit): Promise<RepairItemOutcome | null> {
+  if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit it by hand on the brain host.' };
+  const file = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).get(Number(snapshot.page.id));
+  if (file) return { applied: false, outcome: 'file_backed', detail: { path: file },
+    reason: `${item.source_id}:${snapshot.page.slug} has a file in its source's checkout (${file}); on a brain without managed persistence this repair writes only the database, `
+      + `so the next sync or re-import would undo it from the file. Make the change in that file (${edit.set.visibility ? `add visibility: ${edit.set.visibility}` : 'its facts row visibility: private'}), commit it, then run: gbrain sync --source ${item.source_id}` };
+  await writeLabelPage(ctx, item, { revision: snapshot.revision, content, edit, requestId: await repairRequestId(ctx, 'visibility', item, snapshot.revision),
+    embed: true, preview: 'gbrain repair visibility' });
+  return null;
+}
+
+export type VisibilityClass = 'facts' | 'events' | 'aliases' | 'lineage' | 'pages';
 /** Plan order: what a remote caller can read first; only `lineage` reads concept-provenance links. */
 export const VISIBILITY_CLASSES: readonly VisibilityClass[] = ['facts', 'events', 'aliases', 'lineage'];
 /** Items one preview lists and one `--apply --expect` applies (`--limit` sets it, up to VISIBILITY_WINDOW_MAX). */
 export const VISIBILITY_WINDOW = 1000;
 export const VISIBILITY_WINDOW_MAX = 10_000;
-const CLASS_OF_PHASE: Record<number, VisibilityClass> = { 0: 'lineage', 1: 'lineage', 2: 'events', 3: 'aliases', 4: 'facts' };
+const CLASS_OF_PHASE: Record<number, VisibilityClass> = { 0: 'lineage', 1: 'lineage', 2: 'events', 3: 'aliases', 4: 'facts', 5: 'pages' };
 
-/** One planned change; `target` is the page (phases 0-3) or fact (phase 4) it changes. */
+/** One planned change; `target` is the page (phases 0-3, 5) or fact (phase 4) it changes. */
 interface VisibilityItem extends RepairItem { target: RepairCursor; hash?: string; last?: boolean }
 interface ApprovedVisibility { target: RepairCursor; source_id: string; slug: string; chars: number; action: string; change: { from: string | null; to: string }; selection: Selection }
-interface Selection { source_ids: string[]; class: VisibilityClass | null }
+/** `slugs` (GST-2468): the pages an operator named with --slug, the whole selection when present. */
+interface Selection { source_ids: string[]; class: VisibilityClass | null; slugs?: string[] }
 
 const visibilityPreviewCommand = (scope: RepairScope, selection: Selection, sourceFlag?: boolean) =>
-  `gbrain repair visibility${sourceFlag && scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.class ? ` --class ${selection.class}` : ''}`;
+  `gbrain repair visibility${sourceFlag && scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${selection.class ? ` --class ${selection.class}` : ''}${(selection.slugs ?? []).map(slug => ` --slug ${slug}`).join('')}`;
 
 function selectedClass(opts?: RepairPlanOptions): VisibilityClass | null {
   const value = opts?.driftClass;
@@ -291,7 +330,7 @@ function selectedClass(opts?: RepairPlanOptions): VisibilityClass | null {
 const isStatementTimeout = (error: unknown) => (error as { code?: string } | null)?.code === '57014';
 
 /** Every planned change of one class, as items in their stable (phase, id) cursor order. */
-async function planClass(engine: BrainEngine, sourceIds: string[], cls: VisibilityClass): Promise<{ items: VisibilityItem[]; residuals: Record<string, number> }> {
+async function planClass(engine: BrainEngine, sourceIds: string[], cls: VisibilityClass, slugs?: string[]): Promise<{ items: VisibilityItem[]; residuals: Record<string, number> }> {
   const toItems = (part: { changes: VisibilityChange[]; rows: DerivedRow[] }) => {
     const chars = new Map(part.rows.map(row => [Number(row.id), Number(row.chars)]));
     return part.changes.map(change => ({ cursor: { phase: change.phase, id: change.id }, target: { phase: change.phase, id: change.id }, source_id: change.source_id,
@@ -305,20 +344,26 @@ async function planClass(engine: BrainEngine, sourceIds: string[], cls: Visibili
       action: `fact ${fact.id} visibility world -> private${fact.readable ? ' (remotely readable now)' : ''}`, change: { from: 'world', to: 'private' } }));
     return { items, residuals: { world_facts_remotely_readable: facts.filter(fact => fact.readable).length } };
   }
-  const part = cls === 'events' ? await planEvents(engine, sourceIds) : cls === 'aliases' ? await planAliases(engine, sourceIds) : await planLineage(engine, sourceIds);
+  const part = cls === 'pages' ? await planNamed(engine, sourceIds, slugs ?? []) : cls === 'events' ? await planEvents(engine, sourceIds) : cls === 'aliases' ? await planAliases(engine, sourceIds) : await planLineage(engine, sourceIds);
   return { items: toItems(part), residuals: part.residuals };
 }
 
 export const visibilityRepair: RepairHandler = {
   kind: 'visibility',
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null, opts?: RepairPlanOptions): Promise<RepairPlan> {
-    const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts) };
-    const classes = selection.class ? [selection.class] : VISIBILITY_CLASSES;
+    const named = [...new Set(opts?.slugs ?? [])].sort();
+    if (named.length && opts?.driftClass !== undefined) throw opError('invalid_params', 'gbrain repair visibility takes --slug or --class, not both.',
+      'Name pages with --slug to make exactly them private, or preview a class with --class.');
+    const selection: Selection = { source_ids: scope.source_ids, class: selectedClass(opts), ...(named.length ? { slugs: named } : {}) };
+    const classes: readonly VisibilityClass[] = named.length ? ['pages'] : selection.class ? [selection.class] : VISIBILITY_CLASSES;
     const command = visibilityPreviewCommand(scope, selection, true);
+    if (named.length && opts?.apply && !opts.expect) throw opError('invalid_params', 'gbrain repair visibility --slug applies only the set a preview printed.',
+      `Preview first: ${command} — then run the apply command it prints: ${command} --apply --expect <preview-hash>`);
     if (opts?.apply && opts.expect) {
       const approved = await loadApprovedSet<ApprovedVisibility>(engine, { command: 'visibility', hash: opts.expect, previewCommand: command,
         emptyHash: async () => previewHash(hashParts(scope, selection, [])) });
-      if (approved.items.some(entry => (entry.selection.class ?? null) !== selection.class || JSON.stringify(entry.selection.source_ids) !== JSON.stringify(selection.source_ids))) {
+      if (approved.items.some(entry => (entry.selection.class ?? null) !== selection.class || JSON.stringify(entry.selection.source_ids) !== JSON.stringify(selection.source_ids)
+        || JSON.stringify(entry.selection.slugs ?? []) !== JSON.stringify(named))) {
         throw previewChangedError(opts.expect, command);
       }
       const items: VisibilityItem[] = approved.items.map(({ selection: _selection, ...entry }, index) => ({ ...entry, cursor: { phase: 0, id: index },
@@ -327,7 +372,7 @@ export const visibilityRepair: RepairHandler = {
     }
     if (opts?.apply) {
       // A bare --apply (--all, the remediation plan) applies every planned change in (phase, id) order, resumable by that cursor.
-      const planned = await Promise.all(classes.map(cls => planClass(engine, scope.source_ids, cls)));
+      const planned = await Promise.all(classes.map(cls => planClass(engine, scope.source_ids, cls, named)));
       return { items: planned.flatMap(part => part.items).sort((a, b) => a.cursor.phase - b.cursor.phase || a.cursor.id - b.cursor.id)
         .filter(item => afterCursor(item.cursor, after)), residuals: Object.assign({}, ...planned.map(part => part.residuals)) };
     }
@@ -346,7 +391,7 @@ export const visibilityRepair: RepairHandler = {
       progress?.heartbeat(`reading ${cls}`);
       const stopHeartbeat = progress ? startHeartbeat(progress, `still reading ${cls}`, 10_000) : () => {};
       let planned: Awaited<ReturnType<typeof planClass>>;
-      try { planned = await planClass(engine, scope.source_ids, cls); } catch (error) {
+      try { planned = await planClass(engine, scope.source_ids, cls, named); } catch (error) {
         if (!isStatementTimeout(error)) throw error;
         timedOut.push(cls); progress?.heartbeat(`${cls}: over the ${PLAN_STATEMENT_MS} ms statement bound, skipped`); progress?.tick(1); continue;
       } finally { stopHeartbeat(); }
@@ -383,14 +428,12 @@ export const visibilityRepair: RepairHandler = {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });
       if (!snapshot || !item.change || Number(snapshot.page.id) !== target.id) return false;
-      // Re-decide against current origins and inputs; a changed decision waits for the next run.
-      const fresh = (await planVisibilityRepair(ctx.engine, [item.source_id], target.id)).changes.find(c => c.id === target.id);
+      // Re-decide against current origins and inputs (a named page: its current visibility); a changed decision waits for the next run.
+      const fresh = (target.phase === 5 ? await planNamed(ctx.engine, [item.source_id], [item.slug]) : await planVisibilityRepair(ctx.engine, [item.source_id], target.id))
+        .changes.find(c => c.id === target.id);
       if (!fresh || fresh.from !== item.change.from || fresh.to !== item.change.to) return false;
       const page = { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, visibility: item.change.to } };
-      await submitPageMutation(ctx, { operation: 'put_page', params: { slug: item.slug, source_id: item.source_id,
-        content: serializePageToMarkdown(page, snapshot.tags), expected_revision: snapshot.revision,
-        request_id: await repairRequestId(ctx, 'visibility', item, snapshot.revision) } });
-      return true;
+      return await labelWrite(ctx, item, snapshot, serializePageToMarkdown(page, snapshot.tags), { set: { visibility: item.change.to }, remove: [] }) ?? true;
     } finally {
       if (item.last && item.hash) await clearApprovedSet(ctx.engine, { command: 'visibility', hash: item.hash });
     }

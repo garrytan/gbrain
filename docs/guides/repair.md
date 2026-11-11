@@ -78,7 +78,19 @@ concept-provenance links), reports progress on stderr, lists one window
 ```bash
 gbrain repair visibility --class facts        # one class: facts, events, aliases or lineage
 gbrain repair visibility --class facts --apply --expect <hash>   # exactly that window
+gbrain repair visibility --slug notes/a-example                  # make named pages private (repeatable)
+gbrain repair visibility --slug notes/a-example --apply --expect <hash>
 ```
+
+Every visibility write is label-only: the page keeps its trust tier, files no
+`lower_page` proposal, and its file changes only on the `visibility` line (a fact
+item: its fence row). A file that cannot take the change without being
+re-rendered (a label with a block value or a duplicate key, no frontmatter
+block) is refused with nothing written; make that edit by hand. `--slug` is the operator's way to make one page private;
+a `put_page` that adds the label is an agent edit and lowers the page. On a brain
+without managed persistence, a page whose file sits in its source's checkout is
+held (`file_backed`) with the file edit to make, since a database-only write
+would be undone by the next sync.
 
 The apply touches only the listed items and resumes after its last applied
 item if it stops. Apply the window (or decide not to), then preview again for
@@ -2175,7 +2187,10 @@ refused. On a brain without managed persistence the repair writes only the
 database, so a page whose file sits in its source's checkout is held with
 outcome `file_backed`. The next sync or re-import would put the label back from
 the file, so edit the file's frontmatter, commit it, and run
-`gbrain sync --source <id>`. Repo-less pages clear as usual.
+`gbrain sync --source <id>`. Repo-less pages clear as usual. A clear or restore
+changes only the label lines of the page's file and keeps its trust tier; a
+restore whose label value isn't a plain word is held as `label_not_plain`, so
+add that label to the file by hand.
 
 **Windows and resume.** `--limit <n>` sets the window size (default 1000, at
 most 10000). When more pages remain past the window, the preview says so: apply

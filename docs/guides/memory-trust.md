@@ -271,6 +271,26 @@ The marker becomes the page's stored tier (pages at "your notes" or higher
 get no marker), and the page keeps its tier. This runs on the local CLI only.
 Run the preview again to verify: repaired pages no longer show.
 
+## Label lowerings
+
+A privacy label is not content. `gbrain repair visibility` (including
+`--slug <page>` for one page) and `gbrain repair private-labels` keep a
+page's tier, file no `lower_page` item, and change only the label lines of its
+file. A `put_page` that adds the same label is an agent edit and lowers the
+page, because a local agent with a shell is indistinguishable from you.
+
+```bash
+gbrain trust backfill --label-lowerings [--source <id>] [--json]   # read-only
+```
+
+It lists every `lower_page` item and compares the version the lowering
+replaced with the page now: `label_only` when only `visibility`, `access` or
+`confidentiality` and the server's stamps (`trust_tier`, `source_kind`,
+`ingested_via`, `ingested_at`) changed, `content` otherwise, and
+`unreadable` when the replaced version is gone. Counts are grouped by proposer
+(`agent_page_edit:put_page`, `derived_page:submit_job`, ...). It changes no
+tier: raising a page back is your decision in `gbrain trust review`.
+
 ## Scan older memory (only when you agree)
 
 ```bash
