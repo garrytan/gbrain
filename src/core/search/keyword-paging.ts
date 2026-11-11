@@ -46,7 +46,8 @@ export const KEYWORD_COUNT_GRACE_MS = 250;
 /** Params a keyword `next` carries over unchanged. */
 const CARRIED_PARAMS = ['limit', 'types', 'source_id', 'snippet_chars', 'return_unit', 'return_window', 'token_budget', 'fields'] as const;
 
-interface KeywordCursor extends KeywordPageAfter { shown: number }
+/** `names`: the entity names a first page ORed into the query, so later pages still mark rows found only under another name. */
+interface KeywordCursor extends KeywordPageAfter { shown: number; names?: string[] }
 
 export interface SearchPaging { match: SearchMatch; offset: number; cursor: KeywordCursor | null }
 
@@ -55,16 +56,17 @@ function fingerprint(p: Record<string, unknown>): string {
   return createHash('sha256').update(JSON.stringify([p.query, p.types ?? null, p.source_id ?? null])).digest('base64url').slice(0, 12);
 }
 
-function encodeCursor(after: KeywordPageAfter, shown: number, p: Record<string, unknown>): string {
-  return Buffer.from(JSON.stringify({ v: 1, s: after.score, p: after.page_id, n: shown, f: fingerprint(p) })).toString('base64url');
+function encodeCursor(after: KeywordPageAfter, shown: number, p: Record<string, unknown>, names: string[] | null): string {
+  return Buffer.from(JSON.stringify({ v: 1, s: after.score, p: after.page_id, n: shown, f: fingerprint(p), ...(names ? { m: names } : {}) })).toString('base64url');
 }
 
 function decodeCursor(raw: string, p: Record<string, unknown>): KeywordCursor | 'mismatch' | null {
   try {
-    const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as { v?: unknown; s?: unknown; p?: unknown; n?: unknown; f?: unknown };
+    const c = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) as { v?: unknown; s?: unknown; p?: unknown; n?: unknown; f?: unknown; m?: unknown };
     if (c.v !== 1 || typeof c.s !== 'number' || !Number.isFinite(c.s) || !Number.isInteger(c.p) || !Number.isInteger(c.n) || (c.n as number) < 0) return null;
     if (c.f !== fingerprint(p)) return 'mismatch';
-    return { score: c.s, page_id: c.p as number, shown: c.n as number };
+    const names = Array.isArray(c.m) && c.m.length > 1 && c.m.length <= 16 && c.m.every(n => typeof n === 'string') ? c.m as string[] : undefined;
+    return { score: c.s, page_id: c.p as number, shown: c.n as number, ...(names ? { names } : {}) };
   } catch {
     return null;
   }
@@ -177,7 +179,7 @@ export interface KeywordPage {
  * One `match: "keyword"` page: limit + 1 rows probe `truncated` (so `next`
  * never depends on the count), the count runs beside them.
  */
-export async function readKeywordPage(engine: BrainEngine, p: Record<string, unknown>, opts: SearchOpts, paging: SearchPaging, limit: number): Promise<KeywordPage> {
+export async function readKeywordPage(engine: BrainEngine, p: Record<string, unknown>, opts: SearchOpts, paging: SearchPaging, limit: number, names: string[] | null = null): Promise<KeywordPage> {
   const queryText = String(p.query);
   const [probe, count] = await Promise.all([
     engine.searchKeywordPages(queryText, opts, { limit: limit + 1, ...(paging.cursor ? { after: paging.cursor } : { offset: paging.offset }) }),
@@ -191,7 +193,7 @@ export async function readKeywordPage(engine: BrainEngine, p: Record<string, unk
   if (truncated && last) {
     next = { query: queryText, match: 'keyword' };
     for (const key of CARRIED_PARAMS) if (p[key] !== undefined) next[key] = p[key];
-    next.cursor = encodeCursor({ score: last.score, page_id: last.page_id }, start + rows.length, p);
+    next.cursor = encodeCursor({ score: last.score, page_id: last.page_id }, start + rows.length, p, names);
   }
   const counted = 'unavailable' in count ? null : count;
   const degraded = counted ? undefined : keywordCountMeta(count, 0).degraded;

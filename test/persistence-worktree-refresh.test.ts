@@ -215,7 +215,7 @@ test('4b. Q1: the diverged refusal names the keep-checkout publish; running it, 
   const local = f.head();
   const error = await refusedWith(refreshWorktree(f.engine, f.alpha), 'refresh_diverged') as { suggestion?: string; fix?: { argv: string[]; ask_user?: boolean; actor?: string } };
   expect(error.suggestion).toContain('1 local commit(s)');
-  expect(error.fix).toMatchObject({ argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', f.root, '--json'], ask_user: true, actor: 'user' });
+  expect(error.fix).toMatchObject({ argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', f.root, '--json'], ask_user: true, actor: 'user' });
   git(f.root, 'config', 'user.name', 'Example'); git(f.root, 'config', 'user.email', 'example@example.invalid');
   expect(commitAndPush({ repo: f.root, pushOnly: true, keepCheckout: true })).toMatchObject({ outcome: 'pushed', integrated: 1, checkout: 'unchanged' });
   expect(f.head()).toBe(local);
@@ -238,7 +238,7 @@ test('4e. #7685: sources refresh --json emits the diverged refusal\'s structured
   try {
     const refusal = JSON.parse(out.join('\n'));
     expect(refusal).toMatchObject({ status: 'refused', code: 'refresh_diverged', contract_version: 1,
-      fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', f.root, '--json'], next: 'ask_user', actor: 'user' } });
+      fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', f.root, '--json'], next: 'ask_user', actor: 'user' } });
     expect(refusal.fix.user_message).toContain(f.alpha);
     expect(refusal.suggestion).toContain('1 local commit(s)');
     expect(currentExitCode()).toBe(1);
@@ -279,7 +279,7 @@ test('4d. Q1: writer status and doctor name each commit a diverged managed check
   const root = (check?.details as { roots: Array<Record<string, any>> }).roots.find(r => r.root === f.root)!;
   expect(root).toMatchObject({ managed: true, diverged: true, ahead: 1, behind: 1, porcelain: { untracked: 1 } });
   expect(root.unpushed_commits[0]).toMatchObject({ sha, author, paths: ['beta/local.md'] });
-  expect(check?.fix).toMatchObject({ ask_user: true, actor: 'user', argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', f.root, '--json'] });
+  expect(check?.fix).toMatchObject({ ask_user: true, actor: 'user', argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', f.root, '--json'] });
 }), 120_000);
 
 test('5. dirt overlapping the incoming diff refuses naming the path; unrelated dirt is preserved and listed', () => each(async f => {

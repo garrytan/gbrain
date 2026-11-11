@@ -134,6 +134,15 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   // unknown) keeps the per-item envelope so its child request_id is never lost.
   if (failures.length && failed === results.length && failures.every(f => !f.error.writeRequest && f.error.writeError !== 'write_outcome_unknown')) {
     const [{ index, error }] = failures as [{ index: number; error: OperationError }];
+    // A fence refusal names the batch's request_id, never an item's derived id: a retry under an item's id derives new
+    // item ids, so retrying it and the batch's own id would save every item twice.
+    if (error.requestId === childRequestId(rootId, index)) {
+      const child = error.requestId;
+      error.message = error.message.replaceAll(child, () => rootId);
+      error.suggestion = error.suggestion?.replaceAll(child, () => rootId);
+      if (error.fix) error.fix = { ...error.fix, why: error.fix.why.replaceAll(child, () => rootId) };
+      error.requestId = rootId;
+    }
     error.message = `items[${index}]: ${error.message} None of the ${results.length} item(s) was saved.`;
     throw error;
   }

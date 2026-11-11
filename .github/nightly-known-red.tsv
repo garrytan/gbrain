@@ -10,3 +10,4 @@
 #   kind       known-red | known-skipped
 #   todo       the TODOS.md entry title that owns the fix (must appear in TODOS.md)
 #   review_by  YYYY-MM-DD; after it the incident asks for a fix or a re-justified date
+Convergence nightly	Busy-agent soak cell (informational) / Bun 1.4.4	Run the busy-agent modes	known-red	Refresh diverged-publish child waits 0 s for the push lock	2026-11-25
