@@ -44,7 +44,9 @@ another writer has half-written.
    instead of skipping silently. The push itself runs under a separate push
    lock, so a slow remote never blocks commits or gbrain's own page writes.
 2. **Commits only the paths you name.** It stages and commits exactly those
-   paths (`git add -A -- <paths>`, `git commit --only -- <paths>`), each
+   paths (`git add -u -- <paths>` for tracked ones, so a deletion under an
+   ignored directory still commits, `git add -A -- <paths>` for new files,
+   then `git commit --only -- <paths>`), each
    marked literal (`:(literal)<path>`), so a name with `*`, `?` or `[` matches
    only itself. The repository's hooks run as they do for a plain
    `git commit`: a pre-commit check that picks files by pattern still sees
@@ -306,7 +308,10 @@ commits come in. Four rules keep that checkout able to move:
    with durability off too), after scanning the local commits for secrets
    ([live sync](live-sync.md)); it never publishes over a rewritten upstream.
    `gbrain sources git-reconcile` runs that publish for every source checkout
-   on the host, and autopilot runs it each tick.
+   on the host, and autopilot runs it each tick. To keep one source's local
+   commits on this machine while it still syncs, set
+   `sources.auto_reconcile.source.<id> false`; `set-sync off` (below) stops
+   its sync as well.
 3. **Stop syncing a source before rewriting its history.** Before a
    force-push or `git filter-repo`, run `gbrain sources set-sync <id> off`
    (with the user's agreement) so automatic sync skips it, and

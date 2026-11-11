@@ -46,17 +46,19 @@ export const LIVE_READ_ATTEMPTS = 3;
  * when a body is published between the statements; reading the live rows and the page in two statements compared one
  * generation's rows with the next one's size and refused a healthy page `page_body_rows_unreadable`. A live read whose
  * generation no longer tiles because a publish retired it meanwhile (its rows gone) reads the new live generation, up to
- * LIVE_READ_ATTEMPTS times; an explicit generation, or a live one that did not move, refuses as before.
+ * LIVE_READ_ATTEMPTS times; an explicit generation, or a live one that did not move, refuses as before. `bodyBytes`: the
+ * size the caller read with an explicit generation (a snapshot's body_bytes), checked instead of the size a retained
+ * version records, so a generation whose version was pruned never passes on the prefix the live generation shares.
  */
 export async function readTiledManifest(engine: Pick<BrainEngine, 'executeRaw' | 'readManifest'>, pageId: number,
-  generation?: number): Promise<{ generation: number | null; rows: ManifestRow[] }> {
+  generation?: number, bodyBytes?: number): Promise<{ generation: number | null; rows: ManifestRow[] }> {
   const live = async () => (await engine.executeRaw<{ body_generation: unknown; body_bytes: unknown }>('SELECT body_generation, body_bytes FROM pages WHERE id=$1', [pageId]))[0];
   for (let attempt = 1; ; attempt++) {
     const page = generation === undefined ? await live() : null;
     const at = generation ?? (page ? Number(page.body_generation) : null);
     const rows = await engine.readManifest(pageId, at === null ? {} : { generation: at });
     try {
-      await assertGenerationTiles(engine, pageId, at ?? undefined, rows, page ? Number(page.body_bytes ?? 0) : undefined);
+      await assertGenerationTiles(engine, pageId, at ?? undefined, rows, page ? Number(page.body_bytes ?? 0) : bodyBytes);
       return { generation: at, rows };
     } catch (error) {
       const now = generation === undefined && attempt < LIVE_READ_ATTEMPTS ? await live() : undefined;

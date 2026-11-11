@@ -96,7 +96,7 @@ export async function commitPushChild(root: string, args: string[], timeoutMs = 
   if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to reconcile ${root}; nothing changed.`,
     `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry.`);
   const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', ...args, '--path', root, '--json'],
-    { timeout: timeoutMs, termGraceMs: 10_000, maxBuffer: 1024 * 1024, env: process.env });
+    { timeout: timeoutMs, termGraceMs: 10_000, maxBuffer: 1024 * 1024, env: process.env, killTree: true });
   let doc: Record<string, unknown> | null = null;
   try { doc = JSON.parse(String(child.stdout).trim()); } catch { /* reported below */ }
   if (!child.error && doc && typeof doc.code !== 'string') return doc;

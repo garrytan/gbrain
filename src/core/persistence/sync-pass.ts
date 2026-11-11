@@ -288,7 +288,7 @@ export interface ShadowLevel {
   /** Holds on paths outside the level's domain (no file at L, no page, or no longer eligible): the stamp releases them, as discovery did (#6278 B7). */
   releasableHolds: string[];
   /**
-   * GBRA-133: deleted-side `file_drift` holds whose file is gone from `L` and the disk. The stamp releases each whose page is
+   * GBRA-133: deleted-side `file_drift` and `concurrent_write` holds whose file is gone from `L` and the disk. The stamp releases each whose page is
    * no longer live (`settledDeletionHolds`): a soft delete, a purge or the file's removal decided it.
    */
   deletionCandidates: DeletionCandidate[];
@@ -631,9 +631,12 @@ async function reclassifyByOrigin(gitRoot: string, tips: Array<string | null | u
   return true;
 }
 
-/** GBRA-133: the deleted-side `file_drift` holds whose file is gone (`gone`, on the Git path); the stamp releases those whose page is no longer live. */
+/**
+ * GBRA-133: the deleted-side `file_drift` holds and the `concurrent_write` holds (#8751) whose file is gone (`gone`, on the
+ * Git path); the stamp releases those whose page is no longer live, where both sides agree the path is deleted.
+ */
 function deletionCandidates(holds: readonly GitHoldRecord[], gone: (path: string) => boolean, toGit: (path: string) => string): DeletionCandidate[] {
-  return holds.filter(hold => hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'deleted' && gone(toGit(hold.path)))
+  return holds.filter(hold => (hold.code === 'concurrent_write' || hold.code === 'file_drift' && fileDriftSide(hold.meta) === 'deleted') && gone(toGit(hold.path)))
     .map(hold => ({ path: hold.path, page_id: hold.page_id ?? null, slug: hold.slug ?? null }));
 }
 

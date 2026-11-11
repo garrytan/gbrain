@@ -450,6 +450,7 @@ test/persistence-managed-lifecycle.test.ts
 test/persistence-managed-sync.test.ts
 test/persistence-manifest-git-scope.test.ts
 test/persistence-memory-mutations.test.ts
+test/persistence-opt-in-caps.test.ts
 test/persistence-owner-activity.test.ts
 test/persistence-page-authority.test.ts
 test/persistence-physical-root-device.test.ts
@@ -493,6 +494,7 @@ test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
 test/reconcile-clears-stalled-hold-7364.test.ts
+test/reconcile-publish-opt-out-gst2250.test.ts
 test/recorded-read-gate.test.ts
 test/recreated-takes-section-keeps-stored-takes.test.ts
 test/refresh-barrier-gst1623.test.ts
@@ -572,6 +574,7 @@ test/sync-apply-held-deletions-gbra133.test.ts
 test/sync-capacity-preflight.test.ts
 test/sync-checkpoint-moved-6834.test.ts
 test/sync-classic-drift-7199.test.ts
+test/sync-concurrent-write-deleted-hold-8751.test.ts
 test/sync-disabled-cycle-window.test.ts
 test/sync-discovery-legacy-origin-7130.test.ts
 test/sync-drain-claims.test.ts

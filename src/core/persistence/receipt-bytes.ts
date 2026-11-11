@@ -8,6 +8,12 @@ export const RECEIPT_HEADROOM_BYTES = 4096;
 export const COMPACTED_HEADROOM_BYTES = 1024;
 /** Space an admission reserves beyond its intent and authority: the outcome, error, effect rows and headroom a completion may add. */
 export const RECEIPT_COMPLETION_BYTES = 12_288;
+/**
+ * A request row `r`'s reservation once compacted, with `e.bytes` its effect rows' bytes (a LEFT JOIN, so null is none): what
+ * the capacity forecast and the one-year value count as the net, retained rate.
+ */
+export const COMPACTED_RECEIPT_BYTES_SQL = (r: string, e: string) => `LEAST(${r}.terminal_reservation,octet_length(${r}.authority::text)+COALESCE(octet_length(${r}.outcome::text),0)
+  +COALESCE(octet_length(${r}.error_detail::text),0)+COALESCE(octet_length(${r}.client_request_id),0)+COALESCE(${e}.bytes,0)+${COMPACTED_HEADROOM_BYTES})`;
 /** Bytes one effect row holds on its receipt; the SQL twin of `effectBytes`. */
 export const EFFECT_BYTES_SQL = 'octet_length(data::text)+octet_length(kind)+1024';
 
