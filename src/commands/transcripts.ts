@@ -398,6 +398,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
   // No paths: discovery. Without the all flag, show what WOULD be imported
   // and stop (a safe default for a command that can touch five harness
   // histories); with it, import the discovered set.
+  let discoveredFormats: Map<string, TranscriptFormat> | undefined;
   if (parsed.paths.length === 0) {
     const { discoverTranscriptFiles } = await import('../core/transcripts/discover.ts');
     // #4472: discovery excludes gbrain's own claude-cli subprocess sessions
@@ -423,6 +424,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       return;
     }
     parsed.paths = discovered.map((d) => d.path);
+    discoveredFormats = new Map(discovered.map((d) => [d.path, d.format]));
   }
 
   // Source: the canonical 6-tier chain (capture.ts pattern) — one resolved
@@ -502,6 +504,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     result = await runTranscriptsIngest(engine, {
       paths,
       format: parsed.format,
+      discoveredFormats,
       dryRun: parsed.dryRun,
       limit: parsed.limit,
       sinceIso,

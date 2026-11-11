@@ -342,6 +342,7 @@
           {
             "category": "brain",
             "details": {
+              "body_unchanged": 0,
               "drift_pct": 0,
               "drifted": 0,
               "slug_unbound": 0,
@@ -5483,6 +5484,7 @@
           {
             "category": "brain",
             "details": {
+              "body_unchanged": 0,
               "drift_pct": 0,
               "drifted": 0,
               "slug_unbound": 0,

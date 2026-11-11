@@ -113,6 +113,9 @@ const SENTENCE_OPENERS = new Set([
  */
 const LABEL_OPENERS = new Set(['work', 'invoice', 'invoiced', 'billed', 'receipt', 'payment']);
 
+/** #7827: the speaker labels the fact extractor writes ("User accepted ...", "Assistant recommended ...", extract.ts ATTRIBUTION_BLOCK). */
+const ATTRIBUTION_LABELS = new Set(['user', 'assistant']);
+
 /** #7405: ISO 4217 codes; one counts as a unit (not a name) only where every use sits next to an amount ("CHF 80", "80 CHF"). */
 const CURRENCY_CODES = new Set(Intl.supportedValuesOf('currency'));
 
@@ -130,24 +133,48 @@ const SLUG_IN_TEXT_RE = new RegExp(`(?<!${SLUG_EDGE})${SLUG_SEG}(?:/${SLUG_SEG})
 /** Two distinct entities already make the subject unknown; more resolution is wasted work. */
 const DISTINCT_ENTITY_LIMIT = 2;
 
+/**
+ * #7827: a run of capitalised and digit-led tokens ("Acme 42", "42 Acme"). extractCandidates keeps only the capitalised
+ * words of such a name, so inference tries the whole run as well; it counts only when it resolves to a page.
+ */
+const NAME_TOKEN = "(?:\\p{Lu}[\\p{L}\\p{N}'’-]*|\\p{N}[\\p{L}\\p{N}'’-]*)";
+const DIGIT_NAME_RUN_RE = new RegExp(`(?<![\\p{L}\\p{N}'’-])${NAME_TOKEN}(?:\\s+${NAME_TOKEN}){1,3}(?![\\p{L}\\p{N}'’-])`, 'gu');
+
 export async function inferFactSubject(engine: BrainEngine, sourceId: string, input: InferSubjectInput): Promise<InferResult> {
+  const memo = new Map<string, StrictResolution>();
+  const resolve = async (query: string): Promise<StrictResolution> => {
+    const key = query.toLowerCase();
+    let r = memo.get(key);
+    if (!r) {
+      r = await resolveStrictEntityReference(engine, sourceId, query,
+        { sameName: input.mode === 'relink', excludePrivate: input.excludePrivate });
+      memo.set(key, r);
+    }
+    return r;
+  };
+  // A digit-led name that resolves replaces the capitalised words inside it, which alone name no page.
+  const digitNames: Array<{ query: string; start: number; end: number }> = [];
+  for (const m of input.fact.matchAll(DIGIT_NAME_RUN_RE)) {
+    const tokens = m[0].split(/\s+/);
+    if (!tokens.some(t => /^\p{N}/u.test(t)) || !tokens.some(t => /^\p{Lu}/u.test(t))) continue;
+    const query = (SENTENCE_OPENERS.has(tokens[0]!.toLowerCase()) ? tokens.slice(1) : tokens).join(' ');
+    if ((await resolve(query)).slug !== null) digitNames.push({ query, start: m.index, end: m.index + m[0].length });
+  }
+  const insideDigitName = (query: string) => {
+    const uses = referenceUses(input.fact, query);
+    return uses.length > 0 && uses.every(at => digitNames.some(d => at >= d.start && at + query.length <= d.end));
+  };
   const candidates: Array<{ query: string; sentenceStart?: true }> = [
     ...[...new Set(input.fact.match(SLUG_IN_TEXT_RE) ?? [])].map(query => ({ query })),
-    ...extractCandidates(input.fact).filter(c => !c.weak).map(shedOpener),
+    ...digitNames.map(({ query }) => ({ query })),
+    ...extractCandidates(input.fact).filter(c => !c.weak).map(shedOpener).filter(c => !insideDigitName(c.query)),
   ];
   const resolved = new Set<string>();
   const subjects = new Set<string>();
   const misses: Array<Exclude<StrictResolution, { slug: string }>['miss']> = [];
   let vetoed = false;
-  const memo = new Map<string, StrictResolution>();
   for (const candidate of candidates) {
-    const key = candidate.query.toLowerCase();
-    let r = memo.get(key);
-    if (!r) {
-      r = await resolveStrictEntityReference(engine, sourceId, candidate.query,
-        { sameName: input.mode === 'relink', excludePrivate: input.excludePrivate });
-      memo.set(key, r);
-    }
+    const r = await resolve(candidate.query);
     if (r.slug !== null) {
       resolved.add(r.slug);
       if (!onlyExampleUses(input.fact, candidate.query)) subjects.add(r.slug);
@@ -186,7 +213,7 @@ function shedOpener<T extends { query: string }>(c: T): T {
 
 function isNonName(query: string): boolean {
   if (/\s/.test(query)) return false;
-  return isCommonCapitalizedWord(query) || ROLE_AND_TERM_TOKENS.has(query.toLowerCase());
+  return isCommonCapitalizedWord(query) || ROLE_AND_TERM_TOKENS.has(query.toLowerCase()) || ATTRIBUTION_LABELS.has(query.toLowerCase());
 }
 
 const WORD_CHAR = /[\p{L}\p{N}_/-]/u;

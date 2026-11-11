@@ -82,6 +82,8 @@ export interface TranscriptsIngestOpts {
   paths: string[];
   /** Explicit format wins over detection. */
   format?: TranscriptFormat;
+  /** Per-file format harness discovery already established; used when no explicit format is set. */
+  discoveredFormats?: ReadonlyMap<string, TranscriptFormat>;
   /** Parse + redact + render + report; ZERO engine writes. */
   dryRun?: boolean;
   /** Max sessions imported this run (session granularity; truncation ⇒ not a clean scan). */
@@ -265,7 +267,7 @@ export async function runTranscriptsIngest(
     result.files.push(fileOutcome);
 
     const detected = detectAdapter(path, {
-      explicitFormat: opts.format,
+      explicitFormat: opts.format ?? opts.discoveredFormats?.get(path),
       adapters: opts.adapters,
     });
     if (!detected.ok) {
