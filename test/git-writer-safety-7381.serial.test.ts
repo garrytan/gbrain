@@ -16,6 +16,8 @@ import { commitAndPush, commitPathsLocked, pullShared, readPendingWriteThrough, 
 import { renderCommitPushHelper } from '../src/core/brain-repo-durability.ts';
 
 let root: string;
+/** These spawn `flock` (Git for Windows ships none) or a POSIX PATH; they run on Linux and macOS only. */
+const POSIX_ONLY = process.platform === 'win32';
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
 
 function git(cwd: string, ...args: string[]): string {
@@ -268,7 +270,7 @@ describe('commit scope: staged files and source roots', () => {
     expect(status(a)).toBe(' M x.md');
   });
 
-  test('--pending commits and pushes the files write-through could not commit', async () => {
+  test.skipIf(POSIX_ONLY)('--pending commits and pushes the files write-through could not commit', async () => {
     const { bare, a } = setup();
     const lockPath = join(a, '.git', 'brain-commit.lock');
     writeFileSync(lockPath, '');
@@ -333,7 +335,7 @@ describe('opt-in commit guard', () => {
 });
 
 describe('the helper\'s no-gbrain fallback', () => {
-  test('marks its children with the real lock path and releases the commit lock before it pushes', async () => {
+  test.skipIf(POSIX_ONLY)('marks its children with the real lock path and releases the commit lock before it pushes', async () => {
     const { bare, a } = setup();
     mkdirSync(join(a, 'scripts'), { recursive: true });
     writeFileSync(join(a, 'scripts', 'brain-commit-push.sh'), renderCommitPushHelper(), { mode: 0o755 });
