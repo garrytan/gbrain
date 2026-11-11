@@ -15,6 +15,10 @@
  * - the model-visible `listing_truncated` notice (kind info, never deduped):
  *   `_meta` is not a channel the model sees, so a full page would otherwise
  *   read as a complete listing.
+ *
+ * GBRA-449: an empty listing filtered by a type no page the caller can read
+ * has gets an `empty_retrieval` info notice naming the types present
+ * (`unusedTypeNotice`), so a guessed type is not read as "no such pages".
  */
 import type { Action, Notice } from '../agent-output.ts';
 
@@ -75,5 +79,20 @@ export function listingTruncatedNotice(pagination: ListPagesPagination, params: 
     kind: 'info',
     why: `More pages match than the ${pagination.limit} returned${clamp}; this listing is not complete.`,
     fix,
+  };
+}
+
+/** How many page types the unused-type notice names, most pages first. */
+export const UNUSED_TYPE_NAMED = 12;
+
+/** The notice for an empty list_pages whose `type` no visible page has; null when some visible page has it or the type count failed (null). */
+export function unusedTypeNotice(type: string, visible: Array<{ type: string; pages: number }> | null): Notice | null {
+  if (!visible || visible.some(t => t.type === type)) return null;
+  const named = visible.slice(0, UNUSED_TYPE_NAMED).map(t => `${t.type} (${t.pages})`).join(', ');
+  const more = visible.length > UNUSED_TYPE_NAMED ? `, and ${visible.length - UNUSED_TYPE_NAMED} more` : '';
+  return {
+    code: 'empty_retrieval',
+    kind: 'info',
+    why: `No page you can read has type "${type}". ${named ? `Page types here, most pages first: ${named}${more}.` : 'No page you can read has a type yet.'}`,
   };
 }

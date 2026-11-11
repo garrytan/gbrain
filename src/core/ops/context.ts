@@ -21,7 +21,7 @@ import { validateSlug } from '../utils.ts';
 import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
-import { stampEvidence } from '../search/evidence.ts';
+import { stampEvidence, type EvidenceOpts } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
 import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
@@ -1236,8 +1236,8 @@ export function resolvePerCallMode(ctx: OperationContext, raw: unknown, opName =
 }
 
 /** T4 — stamp evidence/create_safety on a result set, fail-soft. */
-export function stampEvidenceSafe(results: SearchResult[]): void {
-  try { stampEvidence(results); } catch { /* non-fatal */ }
+export function stampEvidenceSafe(results: SearchResult[], opts?: EvidenceOpts): void {
+  try { stampEvidence(results, opts); } catch { /* non-fatal */ }
 }
 
 export function stampDeepResearchIds(results: SearchResult[]): void {

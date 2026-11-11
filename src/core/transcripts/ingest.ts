@@ -530,7 +530,7 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
       // #5235: on a managed brain the stale part goes through the coordinator like the parts
       // themselves, bound to its revision; the direct delete is refused there.
       if (coordinator) await deleteStaleTranscriptPart(coordinator, engine, opts.sourceId, row.slug);
-      else await engine.deletePage(row.slug, { sourceId: opts.sourceId });
+      else await engine.deletePages([row.slug], { sourceId: opts.sourceId });
       result.partsDeleted++;
     }
   }
