@@ -25,7 +25,8 @@ import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from '.
 import { canonicalFilesystemPath, nativeFilesystemPath } from './root-registry.ts';
 import { flushTopologyDirectory } from './topology-filesystem.ts';
 import { claimPhysicalRoot, movedPhysicalRootRefusal } from './physical-root.ts';
-import { inspectRelocatedPhysicalRoot, relocatePhysicalRoot } from './physical-root-record.ts';
+import { inspectRelocatedPhysicalRoot, physicalRootMovedError, relocatePhysicalRoot } from './physical-root-record.ts';
+import { sourceCheckoutMissingRefusal } from './verb-errors.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
 import { rebindContentReceipts } from '../shared-skills/receipt-root.ts';
@@ -203,7 +204,10 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
         if(input.operation==='add'&&input.createDirectory&&path===root?.worktree)continue;
         // #5219: retiring may skip a vanished checkout; the transaction proves the source is empty and its sole member.
         if(retire&&!root){missingCheckout=path;continue;}
-        throw (root&&await movedPhysicalRootRefusal(engine,root.worktree,exit,hostIdFor(engine),path))||missingCheckoutError(input.sourceId,path);
+        const moved=root&&await movedPhysicalRootRefusal(engine,root.worktree,exit,hostIdFor(engine),path);
+        // #8625: the automatic first-write claim stays path-free, since a remote page write can reach it.
+        if(input.automaticClaim) throw moved?physicalRootMovedError():sourceCheckoutMissingRefusal(input.sourceId,null);
+        throw moved||missingCheckoutError(input.sourceId,path);
       }
       if(!manifestRequired)continue;
       const manifest=worktreeManifest(path,{progress:humanManifestProgress()});

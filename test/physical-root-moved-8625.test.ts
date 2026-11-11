@@ -291,3 +291,34 @@ if (testBackends().includes('pglite')) describe('#8625 a remote page write never
     });
   }, 120_000);
 });
+
+if (testBackends().includes('pglite')) describe('#8625 a remote page write never sees the moved checkout\'s paths (pglite, activated brain)', () => {
+  const directory = realpathSync.native(mkdtempSync(join(tmpdir(), 'gbrain-moved-remote-active-')));
+  let engine: PGLiteEngine;
+  beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 120_000);
+  afterAll(async () => { await engine.disconnect(); rmSync(directory, { recursive: true, force: true }); });
+
+  test('remote put_page to an unbound source above a moved bound checkout refuses without a path or worktree id', async () => {
+    const home = join(directory, 'home'), parent = join(directory, 'brains', 'a'), root = join(parent, 'brain'), aside = join(directory, 'brains', 'aside');
+    mkdirSync(root, { recursive: true }); writeFileSync(join(root, 'alice-example.md'), '# Alice Example\n\nA note.\n');
+    await withEnv({ GBRAIN_HOME: home, GBRAIN_BRAIN_ID: 'host', GBRAIN_SOURCE: undefined }, async () => {
+      try {
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['source-a', root]);
+        const worktreeId = (await claimWorktree(engine, 'source-a', root)).worktree_id;
+        await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', ['source-b', parent]);
+        await engine.setConfig('sync.write_through', 'true');
+        await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+        await registerLocalWriter(engine, 'cli');
+        renameSync(root, aside); rmSync(parent, { recursive: true }); renameSync(aside, parent);
+        const result = await dispatchToolCall(engine, 'put_page', { slug: 'notes/alice-example', content: '---\ntype: note\ntitle: Alice Example\n---\n# Alice Example\n' },
+          { remote: true, transport: 'stdio', sourceId: 'source-b', admissionOrigin: 'interactive' });
+        expect(result.isError).toBe(true);
+        const text = result.content[0]!.text;
+        expect(JSON.parse(text)).toMatchObject({ code: 'recovery_required' });
+        for (const secret of [directory, root, parent, worktreeId]) expect(text).not.toContain(secret);
+        expect(existsSync(join(parent, 'notes'))).toBe(false);
+      } finally { await disposePersistenceConsumer(engine); }
+    });
+  }, 120_000);
+});
