@@ -131,7 +131,7 @@ export function mountAdminMemoryProposals(app: Express, requireAdmin: RequestHan
       const result = action === 'approve'
         ? await lib.approveMemoryProposal(ctx, row.request_id, { decidedBy: 'admin-api' })
         : await lib.denyMemoryProposal(ctx, row.request_id, reason, { decidedBy: 'admin-api' });
-      const applied = dryRun !== true && row.state === 'awaiting_owner';
+      const applied = dryRun !== true && result.decided === true;
       if (applied) await audit(engine, `proposal_${action}`, { request_id: row.request_id, kind: row.kind, slug: row.slug, member: row.member_id, state: result.status });
       return { applied, ...result, ...(action === 'approve' && lib.approveFailed(result) ? { outcome: 'failed' } : {}) };
     }, 'Show the proposal (GET /admin/api/memory-proposals/<request_id>)');

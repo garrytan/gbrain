@@ -15,7 +15,7 @@
  *    an attested OAuth client-credentials token through MCP dispatch; publication through the persistence consumer;
  *    on a repo-less brain (PGLite, and Postgres when DATABASE_URL is set).
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import express from 'express';
 import cookieParser from 'cookie-parser';
 import { randomUUID } from 'node:crypto';
@@ -29,6 +29,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { linkMember } from '../src/core/access/actor.ts';
+import * as persistenceService from '../src/core/persistence/service.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { mountAdminAccess, mountAdminMemoryProposals } from '../src/commands/serve-http-access.ts';
 import { createRequireAdmin } from '../src/commands/serve-http-admin-api.ts';
@@ -85,6 +86,21 @@ for (const kind of testBackends()) {
         return out;
       })) as typeof engine.transaction;
       return restore;
+    }
+    /** Holds every proposal-closing conditional UPDATE until n of them have arrived, so concurrent decisions all pass their reads first. */
+    function barrierOnClose(requestId: string, n: number): () => void {
+      const original = engine.executeRaw;
+      const held: Array<() => void> = [];
+      let open = false;
+      const release = () => { open = true; held.splice(0).forEach(go => go()); };
+      const timer = setTimeout(release, 10_000);
+      engine.executeRaw = (async function (this: BrainEngine, sql: string, params?: unknown[], ...rest: unknown[]) {
+        if (!open && params?.[2] === requestId && /^UPDATE memory_proposals SET state=\$4/.test(sql.trim())) {
+          await new Promise<void>(go => { held.push(go); if (held.length >= n) release(); });
+        }
+        return (original as (...args: unknown[]) => Promise<unknown>).call(this, sql, params, ...rest);
+      }) as typeof engine.executeRaw;
+      return () => { clearTimeout(timer); engine.executeRaw = original; };
     }
     const unlinkInside = (externalId: string) => (tx: BrainEngine) => tx.executeRaw("DELETE FROM access_member_links WHERE system = 'qm' AND external_id = $1", [externalId]).then(() => undefined);
     async function cli(args: string[]) {
@@ -276,6 +292,63 @@ for (const kind of testBackends()) {
       expect(await journalRows(id)).toEqual([]);
       expect((await proposalAudits()).length).toBe(before);
       expect((await call('POST', '/admin/api/memory-proposals/' + id, { action: 'approve' })).json).toMatchObject({ applied: true, status: 'approved' });
+    }, 90_000);
+
+    test('concurrent decisions on one proposal: exactly one is applied and audited, and both answers carry the stored decision', async () => {
+      const id = await propose(BOB_ID, 'Race deny canaryracedeny');
+      const before = (await proposalAudits()).length;
+      let restore = barrierOnClose(id, 2);
+      let answers: Array<Awaited<ReturnType<typeof call>>>;
+      try {
+        answers = await Promise.all([
+          call('POST', '/admin/api/memory-proposals/' + id, { action: 'deny', reason: 'First reason' }),
+          call('POST', '/admin/api/memory-proposals/' + id, { action: 'deny', reason: 'Second reason' }),
+        ]);
+      } finally { restore(); }
+      const stored = await proposalRow(id);
+      expect(stored.state).toBe('denied');
+      expect(answers.filter(a => a.json.applied === true)).toHaveLength(1);
+      for (const a of answers) expect(a.json).toMatchObject({ status: 'denied', reason: stored.reason });
+      expect((await proposalAudits()).slice(before)).toEqual([
+        { actor: 'admin-api', action: 'proposal_deny', request_id: id, kind: 'timeline', slug: ACME, member: 'bob-example', state: 'denied' },
+      ]);
+
+      await linkMember(engine, 'alice-example', 'qm', 'U0ALICE4');
+      const refused = await propose('U0ALICE4', 'Race refused canaryracerefused');
+      await engine.executeRaw("DELETE FROM access_member_links WHERE system = 'qm' AND external_id = 'U0ALICE4'");
+      const mark = (await proposalAudits()).length;
+      restore = barrierOnClose(refused, 2);
+      try {
+        answers = await Promise.all([
+          call('POST', '/admin/api/memory-proposals/' + refused, { action: 'approve' }),
+          call('POST', '/admin/api/memory-proposals/' + refused, { action: 'deny', reason: 'Owner said no' }),
+        ]);
+      } finally { restore(); }
+      const after = await proposalRow(refused);
+      expect(['failed', 'denied']).toContain(after.state);
+      expect(answers.filter(a => a.json.applied === true)).toHaveLength(1);
+      const audited = (await proposalAudits()).slice(mark);
+      expect(audited).toHaveLength(1);
+      expect(audited[0]).toMatchObject({ action: after.state === 'denied' ? 'proposal_deny' : 'proposal_approve', state: after.state, request_id: refused });
+      for (const a of answers.filter(x => x.json.applied !== true)) expect(a.status === 400 ? a.json.code : a.json.status).toBe(a.status === 400 ? 'proposal_closed' : after.state);
+    }, 90_000);
+
+    test('a failure after the approval commits still answers applied with one audit row, and a retry writes none', async () => {
+      const id = await propose(ALICE_ID, 'Post-commit failure canarypostcommit');
+      const before = (await proposalAudits()).length;
+      const waiting = spyOn(persistenceService, 'waitForWrite').mockImplementation(async () => { throw new Error('injected failure after commit'); });
+      let res: Awaited<ReturnType<typeof call>>;
+      try { res = await call('POST', '/admin/api/memory-proposals/' + id, { action: 'approve' }); } finally { waiting.mockRestore(); }
+      expect(res.status).toBe(200);
+      expect(res.json).toMatchObject({ applied: true, status: 'approved', request_id: id, write_request: { request_id: id } });
+      expect(res.text).not.toContain('injected');
+      expect((await proposalRow(id))).toMatchObject({ state: 'approved', decided_by: 'admin-api' });
+      expect(await journalRows(id)).toHaveLength(1);
+      const retry = await call('POST', '/admin/api/memory-proposals/' + id, { action: 'approve' });
+      expect(retry.json).toMatchObject({ applied: false, status: 'approved' });
+      expect((await proposalAudits()).slice(before)).toEqual([
+        { actor: 'admin-api', action: 'proposal_approve', request_id: id, kind: 'timeline', slug: ACME, member: 'alice-example', state: 'approved' },
+      ]);
     }, 90_000);
   });
 }
