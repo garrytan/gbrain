@@ -8,11 +8,15 @@
  *    transaction; the delete_page result counts both, and its receipt reports the gazetteer as deleted (the
  *    volunteer log stays a probed store in the receipt, as on master). A fact purge sweeps neither table: when the
  *    claim is also a live page's name, its receipt reports the gazetteer entry as out-of-scope prose, like the title.
+ *    A restore that replays a page purge scrubs both tables in the restored brain, and skips a table the restored
+ *    archive predates.
  * 2. Fails when: a purged slug or the name it was matched by stays readable in either table, the scrub reaches
- *    another source's rows or another page's rows, or a fact purge is reported incomplete over a live page's name.
+ *    another source's rows or another page's rows, a fact purge is reported incomplete over a live page's name, or
+ *    a backup taken before the purge brings the rows back on restore.
  * 3. Existing coverage: page-purge pins the page-keyed stores and the retrieval logs; nothing pinned these two.
- * 4. Real seams: PGLite, insertVolunteerEvents, runMentionPass, enableBeliefLedger, the delete_page op and
- *    purgeDeletedPagesCoordinated; repo-less brain, local blob storage, no provider calls.
+ * 4. Real seams: PGLite, insertVolunteerEvents, runMentionPass, enableBeliefLedger, the delete_page op,
+ *    purgeDeletedPagesCoordinated, createPgliteBackup and restorePgliteBackup; repo-less brain, local blob storage,
+ *    no provider calls.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -28,10 +32,13 @@ import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
 import { insertVolunteerEvents } from '../src/core/context/volunteer-events.ts';
 import { runMentionPass } from '../src/core/mentions/pass.ts';
+import { scrubPurgedPageNames } from '../src/core/persistence/purged-page-names.ts';
 import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { beliefPage, openFileBeliefBrain, withFileBeliefBrain } from './helpers/belief-ledger.ts';
+import { createPgliteBackup, restorePgliteBackup } from '../src/core/backup/snapshot.ts';
 
 let engine: PGLiteEngine;
 const home = mkdtempSync(join(tmpdir(), 'gbrain-purge-volunteer-'));
@@ -139,3 +146,46 @@ describe('a page purge removes the slug and its name from the volunteer log and 
     expect(await engine.executeRaw(named, [claim])).toHaveLength(1);
   }), 60_000);
 });
+
+test('a restore that replays a page purge scrubs the same rows from the restored brain', () => withFileBeliefBrain('restore-names', async fb => {
+  const src = 'restore-names';
+  const named = async (e: { executeRaw: PGLiteEngine['executeRaw'] }, slug: string) => ({
+    volunteer: (await e.executeRaw('SELECT 1 FROM context_volunteer_events WHERE source_id = $1 AND slug = $2', [src, slug])).length,
+    gazetteer: (await e.executeRaw('SELECT 1 FROM mention_gazetteer_entries WHERE source_id = $1 AND target_slug = $2', [src, slug])).length > 0,
+  });
+  await fb.open(async b => {
+    for (const slug of [SLUG, OTHER]) await b.put(slug, beliefPage({ title: NAMES[slug], type: 'person', prose: 'Body of the page.' }));
+    await insertVolunteerEvents(b.engine, [SLUG, OTHER].map(slug => ({
+      source_id: src, slug, confidence: 0.9, match_arm: 'alias', rationale: `alias match "${NAMES[slug].toLowerCase()}"`, channel: 'reflex' as const, session_id: 's1', turn: 1 })));
+    expect((await runMentionPass(b.engine)).state).toBe('complete');
+    expect(await named(b.engine, SLUG)).toEqual({ volunteer: 1, gazetteer: true });
+  });
+  const archive = join(fb.home, 'archive.gbrain-backup');
+  await createPgliteBackup({ root: fb.home, output: archive });
+  await fb.open(async b => {
+    const snapshot = await b.engine.readPageSnapshot(SLUG, { sourceId: src });
+    await operations.find(o => o.name === 'delete_page')!.handler(b.ctx, { slug: SLUG, purge: true, expected_revision: snapshot!.revision, request_id: randomUUID() });
+  });
+  const into = join(fb.home, 'restored');
+  const result = await restorePgliteBackup({ archive, into });
+  expect(result.purge_replay.replays.map(x => x.scope)).toEqual(['page']);
+  const { brain, close } = await openFileBeliefBrain(join(into, '.gbrain', 'brain.pglite'), src, join(into, 'content'));
+  try {
+    expect((await brain.engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id = $1 ORDER BY slug', [src])).map(p => p.slug)).toEqual([OTHER]);
+    expect(await named(brain.engine, SLUG)).toEqual({ volunteer: 0, gazetteer: false });
+    expect(await named(brain.engine, OTHER)).toEqual({ volunteer: 1, gazetteer: true });
+    expect(await brain.engine.executeRaw('SELECT 1 FROM context_volunteer_events WHERE source_id = $1 AND strpos(rationale, $2) > 0', [src, NAMES[SLUG].toLowerCase()])).toEqual([]);
+    expect(await brain.engine.executeRaw('SELECT 1 FROM mention_gazetteer_entries WHERE source_id = $1 AND name_norm = $2', [src, NAMES[SLUG].toLowerCase()])).toEqual([]);
+  } finally { await close(); }
+}), 300_000);
+
+test('the replay scrub skips a table the restored archive predates and still clears the other', async () => {
+  await engine.executeRaw('ALTER TABLE mention_gazetteer_entries RENAME TO mention_gazetteer_entries_absent');
+  try {
+    await expect(scrubPurgedPageNames(engine, 'no-such-source', [SLUG])).rejects.toThrow();
+    expect(await scrubPurgedPageNames(engine, 'default', [SLUG], { ifPresent: true })).toEqual({ context_volunteer_events: 1, mention_gazetteer_entries: 0 });
+  } finally {
+    await engine.executeRaw('ALTER TABLE mention_gazetteer_entries_absent RENAME TO mention_gazetteer_entries');
+  }
+  expect((await residue()).volunteer_slug).toEqual(['source-b']);
+}, 60_000);

@@ -32,6 +32,7 @@ import { appendBeliefEvents, type BeliefEventDraft } from './append.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers } from './purge.ts';
 import { derivedRowsFrom, hideDerivedRows, type DerivationRef } from '../facts/derivation-inputs.ts';
 import { writeOriginDeletedMarker } from '../persistence/sync-markers.ts';
+import { scrubPurgedPageNames } from '../persistence/purged-page-names.ts';
 
 export const PURGE_MIRROR_FILE = 'purge-events.jsonl';
 
@@ -147,6 +148,7 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
           const { scrubPurgedSlugs } = await import('../feedback/store.ts');
           await scrubPurgedSlugs(tx, src, [restored.slug]);
         }
+        await scrubPurgedPageNames(tx, src, [restored.slug], { ifPresent: true });
       };
     }
   } else {
