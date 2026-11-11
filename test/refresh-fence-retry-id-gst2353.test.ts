@@ -111,6 +111,26 @@ test('put_page without request_id gets the same retry id and fix; a caller\'s ow
   });
 }), 180_000);
 
+test('put_pages names its own request_id, never a page\'s internal id, in the fence refusal; the retry with fix.mcp commits the batch', () => each(async f => {
+  _setRefreshFenceWaitForTests(0);
+  const args = { request_id: 'fenced-batch-1', pages: [{ slug: 'notes/fenced-a', content: page('Fenced A', 'refused during the refresh') }, { slug: 'notes/fenced-b', content: page('Fenced B', 'refused during the refresh') }] };
+  let retry: { tool: string; arguments: Record<string, unknown> } | undefined;
+  await duringRefresh(f, async () => {
+    const before = await f.requestCount();
+    const out = await call(f, 'put_pages', args);
+    expect(out.body).toMatchObject({ code: 'worktree_refreshing', retryable: true });
+    expect(out.body.fix.mcp).toEqual({ tool: 'put_pages', arguments: args });
+    expect(out.body.message).toContain('request_id fenced-batch-1');
+    expect(out.body.fix.why).toContain('request_id fenced-batch-1');
+    expect(await f.requestCount()).toBe(before);
+    retry = out.body.fix.mcp;
+  });
+  const done = await call(f, retry!.tool, retry!.arguments);
+  expect(done.isError ? done.body : 'ok').toBe('ok');
+  expect(done.body.client_request_id).toBe('fenced-batch-1');
+  expect(done.body.counts).toMatchObject({ total: 2, failed: 0 });
+}), 180_000);
+
 test('a database-only (repo-less) source is never fenced: remember without request_id commits during the refresh', () => each(async f => {
   _setRefreshFenceWaitForTests(0);
   await duringRefresh(f, async () => {
