@@ -46,6 +46,7 @@ import {
   logBatchRetry as auditLogBatchRetry,
   logBatchExhausted as auditLogBatchExhausted,
 } from '../audit/batch-retry-audit.ts';
+import { retryOnStalePlan } from '../retry-matcher.ts';
 /** Trusted 4th argument, kept outside user-spread job options. */
 export interface TrustedSubmitOpts {
   submissionAuthority?: SubmissionAuthority;
@@ -1716,7 +1717,7 @@ export class MinionQueue {
    * stranding the parent in waiting-children forever.
    */
   async completeJob(id: number, lockToken: string, result?: Record<string, unknown>): Promise<MinionJob | null> {
-    return this.engine.transaction(async (tx) => {
+    return retryOnStalePlan(() => this.engine.transaction(async (tx) => {
       // Peek at parent_job_id before the UPDATE so we can lock the parent row
       // FIRST. Without this SELECT FOR UPDATE, two siblings completing
       // concurrently each see the other as still active (pre-commit snapshot
@@ -1806,7 +1807,7 @@ export class MinionQueue {
       }
 
       return completed;
-    });
+    }));
   }
 
   /**
@@ -1831,7 +1832,7 @@ export class MinionQueue {
     backoffMs?: number,
     result?: Record<string, unknown>,
   ): Promise<MinionJob | null> {
-    return this.engine.transaction(async (tx) => {
+    return retryOnStalePlan(() => this.engine.transaction(async (tx) => {
       // Lock the parent row first so concurrent sibling completions/failures
       // serialize on the parent — same race fix as completeJob.
       const peek = await tx.executeRaw<{ parent_job_id: number | null }>(
@@ -1943,7 +1944,7 @@ export class MinionQueue {
       }
 
       return failed;
-    });
+    }));
   }
 
   /**
