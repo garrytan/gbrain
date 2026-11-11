@@ -9,7 +9,7 @@
 import { describe, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { planRestart, restartProblems, runRestartSteps, verifyRestart, PENDING_BUILD, type AutopilotLauncher, type HostProcess, type RestartContext, type RestartExecutor } from '../src/core/upgrade-restart.ts';
-import { autopilotLauncher, restartRefusal } from '../src/commands/upgrade-restart.ts';
+import { autopilotLauncher, launcherFor, restartRefusal } from '../src/commands/upgrade-restart.ts';
 import { checkSelfUpgradeHealth } from '../src/commands/doctor/checks/upgrade-health.ts';
 import { resolveAutopilotJob } from '../src/core/autopilot-paths.ts';
 import { parseSelfUpgradeConfigValue, SELF_UPGRADE_CONFIG_LEAVES } from '../src/core/self-upgrade.ts';
@@ -166,6 +166,22 @@ describe('autopilotLauncher', () => {
     expect(autopilotLauncher(() => `0 0 * * * gbrain autopilot pause${job.cronMarker ? ` ${job.cronMarker}` : ''}\n`, undefined, 30)).toBeNull();
     expect(autopilotLauncher(() => `${line.replace('*/5 * * * *', '0 3 * * *')}\n`, undefined, 30)).toBeNull();
     expect(autopilotLauncher(() => null, 'external', null)).toEqual({ kind: 'declared', wait_ms: 360_000, pid: null });
+  });
+
+  test('the plan reads the crontab only when an autopilot is running: none, no read and no launcher; one, the cron line is read and the hand-off plans', () => {
+    const job = resolveAutopilotJob();
+    const line = `*/5 * * * * '${join(job.homeDir, 'autopilot-run.sh')}' >> '${job.logPath}' 2>&1${job.cronMarker ? ` ${job.cronMarker}` : ''}`;
+    let reads = 0;
+    const launcher = () => autopilotLauncher(() => { reads++; return `${line}\n`; }, undefined, 30);
+    const serve: HostProcess = { pid: 8, ppid: null, role: 'serve', version: OLD, started_ms: 1_000, ancestors: [1], args: ['serve'] };
+    expect(launcherFor([], launcher)).toBeNull();
+    expect(launcherFor([serve], launcher)).toBeNull();
+    expect(reads).toBe(0);
+    const found = launcherFor([serve, autopilot()], launcher);
+    expect(reads).toBe(1);
+    expect(found).toEqual(CRON);
+    expect(planRestart([autopilot()], ctx({ expected: PENDING_BUILD, autopilotLauncher: found })).steps)
+      .toEqual([{ kind: 'handoff', role: 'autopilot', pid: 30, started_ms: 1_000, launcher: CRON }]);
   });
 
   test('self_upgrade.autopilot_launcher is a registered leaf that accepts external only', () => {
