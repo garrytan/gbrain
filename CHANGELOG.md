@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.672.0] - 2026-11-11
 
 **OpenClaw agents can now be shown the few installed skills that fit each message, the OpenClaw guide shows how one bot can serve several people over DMs with each person reading only their own pages, and running gbrain's own tests no longer writes into your brain.** Three changes for people who run gbrain with OpenClaw and for contributors, landed together.
 
