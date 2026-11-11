@@ -374,6 +374,8 @@ test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	source-surf
 test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	source-surface-helper
 test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two defects of the original PR)	2	source-surface-helper
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
+test/setup-serves-several.test.ts	gbrain setup --serves (spawned, PGLite)	11	readFileSync
+test/setup-serves-several.test.ts	labelling refuses or reports what it cannot make safe (pglite, repo-less)	8	readFileSync
 test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	7	readFileSync
@@ -385,11 +387,13 @@ test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.test.ts	shared-skills migration recovery (#5569, #5476, A-NEW-4)	4	readFileSync
 test/shared-skills-setup.test.ts	staged skill migration	7	readFileSync
 test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
+test/skill-resolver-hook-lane.test.ts	skill-resolver lane: codex project catalog	2	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: compiled binaries	1	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: delivery per harness	4	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: fail open	6	readFileSync
+test/skill-resolver-module-graph.test.ts	the skill resolver module graph	4	readFileSync
 test/skill-resolver-off-pin.test.ts	(file-level)	1	readFileSync
-test/skill-resolver-packaging.test.ts	skill resolver packaging	3	bun-file,readFileSync
+test/skill-resolver-packaging.test.ts	skill resolver packaging	4	bun-file,readFileSync
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync
