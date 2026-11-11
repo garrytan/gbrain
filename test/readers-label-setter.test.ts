@@ -208,8 +208,13 @@ for (const backend of testBackends()) describe('[' + backend + '] repair visibil
     expect(text).toContain('outcomes: readers_set=3');
     expect(text).toMatch(/git: committed=\d+, pending=\d+, failed=0, skipped=\d+/);
     await settleManagedGitEffects(engine);
-    // The two tracked files reach Git through the Git effect (the one door), committed together; the db_only page has no file.
-    expect(git(root, 'rev-list', '--count', head + '..HEAD').trim()).toBe('1');
+    // The two tracked files reach Git through the Git effect (the one door); the db_only page has no file. The run admits its pages
+    // together: Postgres publishes them as one group, so both files land in one commit. PGLite publishes one page at a time and
+    // its Git effects share a commit only when both are ready, so there each file lands in at most its own commit.
+    const commits = git(root, 'rev-list', head + '..HEAD').trim().split(NL);
+    if (backend === 'postgres') expect(commits).toHaveLength(1);
+    else expect(commits.length).toBeLessThanOrEqual(filed.length);
+    for (const commit of commits) expect(filed.map(slug => slug + '.md')).toEqual(expect.arrayContaining(git(root, 'show', '--name-only', '--format=', commit).trim().split(NL)));
     expect(git(root, 'diff', '--name-only', head, 'HEAD').trim().split(NL).sort()).toEqual(filed.map(slug => slug + '.md'));
     expect(await readersGitCounts(engine, { brain_id: preview.scope?.brain_id ?? '', source_ids: ['default'] }, preview.preview_hash)).toEqual({ committed: 2, pending: 0, failed: 0, skipped: 1 });
     for (const slug of filed) expect(onDisk(root, slug)).toBe(withLine(before[slug]!, readersLine('group:team-example', OWNER)));

@@ -114,7 +114,7 @@ async function planPages(engine: BrainEngine, selection: Selection) {
 }
 
 /** The maintenance batch id an approved readers apply carries on its managed writes (one per approved set and source). */
-const readersBatch = (hash: string, sourceId: string) => digest(['visibility-readers-batch-v1', hash, sourceId]);
+export const readersBatch = (hash: string, sourceId: string) => digest(['visibility-readers-batch-v1', hash, sourceId]);
 
 /**
  * How the managed writes of the approved set `hash` reached Git: their Git effects by state. The Git effect runner commits
@@ -181,24 +181,45 @@ export async function planReaders(engine: BrainEngine, scope: RepairScope, after
     listing: items.map(item => ({ item: item.source_id + ':' + item.slug, class: 'readers', detail: item.action })) };
 }
 
+/** A readers item ready to write: the page as read and its rendering with only `readable_by` changed. */
+export interface ReadersWrite { snapshot: PageSnapshot; content: string; edit: LabelEdit }
+
 /**
- * One page's readers write: re-checked against the page (a page whose readers moved since the plan is skipped), then the
- * label-only write (`write`, visibility.ts labelWrite) of the page with only `readable_by` changed. Its held outcome
- * when the write could not be made; `readers_set` or `readers_removed` once written.
+ * One page's readers write, re-checked against the page: false when its readers moved since the plan (skipped), the held
+ * outcome of a page stored in segments, else the page and its rendering with only `readable_by` changed.
+ */
+export async function readersWrite(engine: BrainEngine, item: ReadersItem): Promise<false | RepairItemOutcome | ReadersWrite> {
+  const snapshot = await engine.readPageSnapshot(item.slug, { sourceId: item.source_id });
+  if (!snapshot || Number(snapshot.page.id) !== item.target.id || !same(normalizeReaders(snapshot.page.frontmatter), item.readers.from)) return false;
+  if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit its readable_by line by hand on the brain host.' };
+  const { [READERS_KEY]: _readers, ...rest } = snapshot.page.frontmatter;
+  const to = item.readers.to;
+  const frontmatter = to ? { ...snapshot.page.frontmatter, [READERS_KEY]: to } : rest;
+  const edit: LabelEdit = to ? { set: { [READERS_KEY]: to }, remove: [] } : { set: {}, remove: [READERS_KEY] };
+  return { snapshot, content: serializePageToMarkdown({ ...snapshot.page, frontmatter }, snapshot.tags), edit };
+}
+
+/** The outcome of a written readers item. */
+export const readersOutcome = (item: ReadersItem): RepairItemOutcome => ({ applied: true, outcome: item.readers.to ? 'readers_set' : 'readers_removed' });
+
+/** Retires the approved set once its last item has been tried. */
+export async function retireReaders(engine: BrainEngine, items: ReadersItem[]): Promise<void> {
+  const last = items.find(item => item.last && item.hash);
+  if (last) await clearApprovedSet(engine, { command: 'visibility', hash: last.hash! });
+}
+
+/**
+ * One page's readers write on its own (visibility.ts applyBatch admits a managed run's pages together): readersWrite, then
+ * the label-only write (`write`, visibility.ts labelWrite). Its held outcome when the write could not be made;
+ * `readers_set` or `readers_removed` once written.
  */
 export async function applyReaders(engine: BrainEngine, item: ReadersItem,
   write: (snapshot: PageSnapshot, content: string, edit: LabelEdit, batch?: string) => Promise<RepairItemOutcome | null>): Promise<boolean | RepairItemOutcome> {
   try {
-    const snapshot = await engine.readPageSnapshot(item.slug, { sourceId: item.source_id });
-    if (!snapshot || Number(snapshot.page.id) !== item.target.id || !same(normalizeReaders(snapshot.page.frontmatter), item.readers.from)) return false;
-    if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit its readable_by line by hand on the brain host.' };
-    const { [READERS_KEY]: _readers, ...rest } = snapshot.page.frontmatter;
-    const to = item.readers.to;
-    const frontmatter = to ? { ...snapshot.page.frontmatter, [READERS_KEY]: to } : rest;
-    const edit: LabelEdit = to ? { set: { [READERS_KEY]: to }, remove: [] } : { set: {}, remove: [READERS_KEY] };
-    const held = await write(snapshot, serializePageToMarkdown({ ...snapshot.page, frontmatter }, snapshot.tags), edit, item.hash ? readersBatch(item.hash, item.source_id) : undefined);
-    return held ?? { applied: true, outcome: to ? 'readers_set' : 'readers_removed' };
+    const ready = await readersWrite(engine, item);
+    if (ready === false || !('snapshot' in ready)) return ready;
+    return await write(ready.snapshot, ready.content, ready.edit, item.hash ? readersBatch(item.hash, item.source_id) : undefined) ?? readersOutcome(item);
   } finally {
-    if (item.last && item.hash) await clearApprovedSet(engine, { command: 'visibility', hash: item.hash });
+    await retireReaders(engine, [item]);
   }
 }

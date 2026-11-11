@@ -49,12 +49,12 @@ import type { PreparedMutation } from '../persistence/coordinator.ts';
 import { digest } from '../persistence/digest.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, publishMaintenancePages, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairCursor } from './core.ts';
+import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
 import { filesInCheckout, writeLabelFile, writeLabelPage } from './label-write.ts';
-import { applyReaders, planReaders, readersGitCounts, READERS_PHASE, type ReadersItem } from './readers.ts';
+import { applyReaders, planReaders, readersBatch, readersGitCounts, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -300,6 +300,18 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
 }
 
 /**
+ * The held outcome of a managed page whose canonical file is missing outside any declared storage.db_only path (the
+ * maintenance door refused it before admission, nothing written); any other error is rethrown.
+ */
+function missingFileHeld(item: Pick<RepairItem, 'source_id' | 'slug'>, error: unknown): RepairItemOutcome {
+  if (!(error instanceof OperationError) || error.detail !== CANONICAL_FILE_MISSING) throw error;
+  return { applied: false, outcome: CANONICAL_FILE_MISSING, detail: { path: `${item.slug}.md` },
+    reason: `${item.source_id}:${item.slug} has no file in its source's checkout and is not under a declared storage.db_only path, so a label write would put the `
+      + `database ahead of Git; nothing was written. If the page belongs in the database only, declare its folder under storage.db_only in gbrain.yml, commit it `
+      + `and preview again; if its file was removed by mistake, restore it (gbrain repair ghost-pages --source ${item.source_id} lists pages whose file is gone).` };
+}
+
+/**
  * GST-2468: one item's page write is a label-only maintenance write (repair/label-write.ts): it keeps the page's trust
  * tier, files no lower_page proposal and changes only the label lines of the page's file (a fact item: its fence row).
  * On a brain without managed persistence a page whose file sits in its source's checkout gets the same splice in that
@@ -317,11 +329,7 @@ async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: Repa
     written = path ? await writeLabelFile(ctx.engine, item, { ...write, path })
       : await writeLabelPage(ctx, item, { ...write, requestId: await repairRequestId(ctx, 'visibility', item, snapshot.revision) });
   } catch (error) {
-    if (!(error instanceof OperationError) || error.detail !== CANONICAL_FILE_MISSING) throw error;
-    return { applied: false, outcome: CANONICAL_FILE_MISSING, detail: { path: `${item.slug}.md` },
-      reason: `${item.source_id}:${item.slug} has no file in its source's checkout and is not under a declared storage.db_only path, so a label write would put the `
-        + `database ahead of Git; nothing was written. If the page belongs in the database only, declare its folder under storage.db_only in gbrain.yml, commit it `
-        + `and preview again; if its file was removed by mistake, restore it (gbrain repair ghost-pages --source ${item.source_id} lists pages whose file is gone).` };
+    return missingFileHeld(item, error);
   }
   if (written === null) throw opError('revision_conflict', `${item.source_id}:${item.slug} changed after it was read, so it was not written.`,
     'Preview gbrain repair visibility again; the page is listed with its current state.');
@@ -457,6 +465,41 @@ export const visibilityRepair: RepairHandler = {
   render(details) {
     const git = details.git as Record<string, number> | undefined;
     return git ? [`  git: ${Object.entries(git).map(([key, value]) => `${key}=${value}`).join(', ')} (file(s) by Git effect state; queued files commit together, up to 100 per commit)`] : [];
+  },
+  /**
+   * GST-2476: a run of readers items of one managed source at once. Each page is re-checked as apply does; the pages are
+   * admitted together under the run's maintenance batch (publishMaintenancePages; Postgres publishes them in groups of up to
+   * 8), so the Git effect commits their ready files together (up to 100 per commit), each page its own fate. Other classes, a source
+   * without managed persistence, and a run of one apply item by item (no settlement leaves an item to apply).
+   */
+  async applyBatch(ctx, entries) {
+    const items = entries as ReadersItem[];
+    const sourceId = items[0]?.source_id;
+    const end = items.findIndex(item => (item.target ?? item.cursor).phase !== READERS_PHASE || item.source_id !== sourceId || !item.hash);
+    const run = end < 0 ? items : items.slice(0, end);
+    if (run.length < 2) return [];
+    const authority = await maintenancePreflight(ctx.engine, sourceId!);
+    if (!authority) return [];
+    const out: RepairSettlement[] = [];
+    const pages: Array<{ index: number; item: ReadersItem; ready: ReadersWrite; requestId: string }> = [];
+    try {
+      for (const [index, item] of run.entries()) {
+        const ready = await readersWrite(ctx.engine, item).catch((error: unknown) => ({ error }));
+        if (ready !== false && 'snapshot' in ready) pages.push({ index, item, ready, requestId: await repairRequestId(ctx, 'visibility', { ...item, cursor: item.target }, ready.snapshot.revision) });
+        else out[index] = ready !== false && 'error' in ready ? { error: ready.error } : { value: ready };
+      }
+      if (!pages.length) return out;
+      const published = await publishMaintenancePages(ctx.engine, authority, pages.map(({ item, ready, requestId }) => ({ slug: item.slug, content: ready.content,
+        expectedRevision: ready.snapshot.revision, requestId, keepTrust: true as const, labelEdit: ready.edit })), { batch: readersBatch(run[0]!.hash!, sourceId!) });
+      pages.forEach(({ index, item }, position) => {
+        const settled = published[position]!;
+        if (!('error' in settled)) { out[index] = { value: readersOutcome(item) }; return; }
+        try { out[index] = { value: missingFileHeld(item, settled.error) }; } catch (error) { out[index] = { error }; }
+      });
+      return out;
+    } finally {
+      await retireReaders(ctx.engine, run);
+    }
   },
   async apply(ctx, entry) {
     const item = entry as VisibilityItem;

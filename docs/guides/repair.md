@@ -112,9 +112,14 @@ and its own keys would stop reading the page; a group the owner belongs to does
 not count. Pass `--allow-without-owner` when that is what you want. A page whose
 readers changed after the preview is skipped.
 
-Each page is its own write, so no lock or transaction spans the run and a long
-list does not hold up other writers. On a managed brain the Git effect commits
-the tracked files, grouping queued files up to 100 per commit; `--json` reports
+No lock or transaction spans the run, so a long list does not hold up other
+writers. On a managed brain the apply admits a source's pages together, one
+admission window at a time; on Postgres the owner publishes them in groups of
+up to 8 pages (PGLite publishes one at a time). The Git effect then commits the
+files that are ready together, up to 100 per commit, and waits briefly while
+more of the run's writes are still publishing, so a long list lands in a few
+large commits rather than one per page. Each page still succeeds or fails on
+its own. `--json` reports
 `details.git`, the run's files by effect state (`committed`, `pending`,
 `failed`, and `skipped` for a `storage.db_only` page, which has no file). A
 managed page with no file, outside any declared `storage.db_only` path, is held
