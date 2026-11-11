@@ -199,7 +199,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
  * row is gone (nothing in a file to strike). The page write is prepared unprojected, as remember's own is.
  */
 export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, slug: string,
-  retire: { rowNum: number | readonly number[]; note: string; validUntil: Date | null; forgotten?: boolean; dropEntity?: boolean }, signal?: AbortSignal): Promise<CompanionPage | null> {
+  retire: { rowNum: number | readonly number[]; note: string; validUntil: Date | null; forgotten?: boolean; remove?: boolean }, signal?: AbortSignal): Promise<CompanionPage | null> {
   const retired = new Set([retire.rowNum].flat());
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: row.source_id, includeDeleted: true });
   if (!snapshot || snapshot.page.deleted_at) return null;
@@ -213,9 +213,10 @@ export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteR
   const until = retire.validUntil ? formatFenceDate(retire.validUntil) : undefined;
   const parsed = parseFactsFenceFor(fenced[section], { slug });
   refuseUnparsedRewrite(target.page, slug, row.source_id, () => assertFenceRewritable('facts', parsed));
-  // GBRA-449: a forgotten held row is struck as a withdrawal strikes a row (`forgotten: <note>`), so it reads back forgotten.
-  const rows = parsed.facts.map(f => !retired.has(f.rowNum) || !f.active ? f : retire.forgotten ? withdrawnFact(f, (retire.validUntil ?? new Date()).toISOString().slice(0, 10), retire.note)
-    : { ...f, active: false, context: [retire.note, f.context?.trim()].filter(Boolean).join(' | '), ...(until ? { validUntil: until } : {}), ...(retire.dropEntity ? { entity: undefined } : {}) });
+  // GBRA-449: a forgotten held row is struck as a withdrawal strikes a row (`forgotten: <note>`), so it reads back forgotten;
+  // `remove` takes the rows out (a fact moved into a page not every reader can read leaves nothing on the holding page).
+  const rows = parsed.facts.filter(f => !retire.remove || !retired.has(f.rowNum) || !f.active).map(f => !retired.has(f.rowNum) || !f.active ? f : retire.forgotten ? withdrawnFact(f, (retire.validUntil ?? new Date()).toISOString().slice(0, 10), retire.note)
+    : { ...f, active: false, context: [retire.note, f.context?.trim()].filter(Boolean).join(' | '), ...(until ? { validUntil: until } : {}) });
   const content = serializePageToMarkdown({ ...base, ...fenced, [section]: replaceOrInsertFactsFence(fenced[section], renderFactsTable(rows)) }, snapshot.tags);
   const prepared = await preparePageMutation(engine, { ...row, slug, page_id: snapshot.page.id,
     intent: { ...row.intent, content, expected_revision: snapshot.revision, force: false } }, config, undefined, signal, { unprojected: true });

@@ -44,7 +44,7 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Prom
       if (!page) continue;
       // The holding row is in Git; a move into a page kept out of Git would strike it there with no file holding the fact.
       if (!await pageHasFile(engine, sourceId, slug, page)) { unmovable(slug, group.map(r => r.id), 'entity_page_database_only'); continue; }
-      // A page not every reader of the source can read is not named on the world-readable holding page: its struck row loses its entity cell.
+      // A fact moved into a page not every reader of the source can read leaves the world-readable holding page altogether.
       const plan = await planManagedPage(engine, authority, sourceId, slug, group, { note: page.visible === true ? `moved to ${slug}` : 'moved' });
       if (plan.kind === 'no_page') continue;
       if (plan.kind === 'warnings') { unmovable(slug, group.map(r => r.id), `entity_fence_malformed: ${plan.warnings.join('; ')}`); continue; }

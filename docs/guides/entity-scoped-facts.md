@@ -117,9 +117,10 @@ column names the entity, before the reply returns. The reply then names
 `page: memory/unattributed`, `persistence: {"mode": "filesystem"}` and
 `write_through: {"written": true, "held_for": "<entity>"}`. Once the entity
 has a page, the next maintenance cycle moves the row into it in one commit
-and strikes the held row (`moved to <entity>`, or just `moved` when the page
-is restricted); a page kept out of Git does not take it, and the run warns
-`HELD_FACT_UNMOVABLE`. Forgetting or replacing a held fact strikes its row
+and strikes the held row (`moved to <entity>`; a restricted page's held row is
+removed instead); a page kept out of Git does not take it, and the run warns
+`HELD_FACT_UNMOVABLE`. An entity under a folder access rule is not held: its
+fact stays in the database, as on other sources. Forgetting or replacing a held fact strikes its row
 too. A brain with no Git
 repository gets no notice: there the database is the record, and the fact is
 as safe as everything else in it.

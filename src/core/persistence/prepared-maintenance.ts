@@ -541,7 +541,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   await check(engine, false);
   const pageRow = { ...row, intent: { kind: 'managed_maintenance_page', content: p.content, expected_revision: p.expected_revision } };
   const prepared = await preparePageMutation(unbounded, pageRow, config, undefined, undefined, { clock });
-  const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, UNATTRIBUTED_MEMORY_SLUG, { note: String(p.note), dropEntity: p.note === 'moved',
+  const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, UNATTRIBUTED_MEMORY_SLUG, { note: String(p.note), remove: p.note === 'moved',
     rowNum: (await readFacts(engine, row.source_id, facts.map(f => f.id))).map(f => Number(f.value.row_num)), validUntil: null }) : null;
   return { ...prepared, ...(holding ? { companions: [holding] } : {}), validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
     // Runs ahead of the page import and its canonical projection, so the
@@ -630,7 +630,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
       return { ...outcome, event_projected: projected };
     } };
   }
-  if (row.intent?.kind === 'managed_maintenance_adopt_fact_fence' || row.intent?.kind === HELD_FACT_MOVE) return prepareFactFenceAdoption(engine, row, config, clock);
+  if (row.intent?.kind === 'managed_maintenance_adopt_fact_fence' || row.intent?.kind === 'managed_maintenance_move_held_fact') return prepareFactFenceAdoption(engine, row, config, clock);
   if (row.intent?.kind === 'managed_maintenance_phantom_merge') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomMerge(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_phantom_delete') return (await import('../cycle/phantom-redirect-managed.ts')).preparePhantomDelete(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_chronicle_event' || row.intent?.kind === 'managed_maintenance_chronicle_retire') {

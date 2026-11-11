@@ -26,7 +26,7 @@ import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
-import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { callerIsOwner, currentCallerAccess, folderRestricted, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
@@ -120,10 +120,12 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   // GBRA-449: on a strict source (Git is the record) a named entity with no page holds its fact in Git, as a row of
   // memory/unattributed that names the entity, until the entity's page exists. The fences and the authority above ran on
   // the entity (decision D1); the holding row is gbrain's own companion write, authorized as a write to that entity.
+  // An entity under a folder access rule is not named on the world-readable holding page, and a holding page kept out of
+  // Git would not commit it: both keep the fact database-only, as before.
   const holding = !inferred && memberPage === null && entitySlug !== null && !snapshot && writeThrough
-    && (await getWorktreeBinding(ctx.engine, sourceId))?.canonical_git === true
+    && (await getWorktreeBinding(ctx.engine, sourceId))?.canonical_git === true && !await folderRestricted(ctx.engine, sourceId, entitySlug)
     ? await ctx.engine.readPageSnapshot(UNATTRIBUTED_MEMORY_SLUG, { sourceId, includeDeleted: true }) ?? 'absent' : null;
-  const held = holding !== null && (holding === 'absent' || !holding.page.deleted_at);
+  const held = holding !== null && (holding === 'absent' || !holding.page.deleted_at && Boolean(holding.page.source_path));
   const page = held && holding !== 'absent' ? holding : snapshot;
   if (held) fence = true;
   // An inferred link never designates an owner or reports a missing one.

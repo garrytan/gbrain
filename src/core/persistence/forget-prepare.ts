@@ -132,7 +132,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   // GBRA-449: a fact held on memory/unattributed for an entity with no page is struck at its own row, in the file and the
   // page, so a rebuild from Git does not bring it back; the claim-wide strike would also reach other entities' rows there.
   const held = row.slug === UNATTRIBUTED_MEMORY_SLUG && fact.source_markdown_slug === row.slug && fact.entity_slug !== null && fact.row_num !== null
-    && plan.subject !== '*' && own && !own.page.deleted_at && !isSegmentedPage(own.page) && row.worktree_id
+    && plan.subject !== '*' && own && !own.page.deleted_at && row.worktree_id
     ? await prepareFenceRowRetirement(engine, row, _config, row.slug, { rowNum: Number(fact.row_num), note: 'memory withdrawn', validUntil: new Date(withdrawnAt), forgotten: true }, signal)
     : null;
   const file = held ? held.file : await strike(row.slug, own);

@@ -179,19 +179,55 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
     expect(rebuilt[claim]!.filter(row => row.active)).toEqual([{ entity_slug: PAGELESS, source_markdown_slug: PAGELESS, active: true }]);
   }), 240_000);
 
-  test('a move into a restricted page strikes with a neutral note that does not name it', () => strict(async ({ engine, ctx, root }) => {
+  test('a move into a restricted page leaves nothing of the fact on the holding page', () => strict(async ({ engine, ctx, root }) => {
     const secret = 'notes/surprise-party';
     const claim = 'The surprise party is on Saturday.';
     await remember(ctx, claim, secret);
     await putPage(ctx, secret, 'Surprise party', 'readable_by: [alice-example]\n');
     expect((await runExtractFacts(engine, { sourceId: 'default' })).heldFactsMoved).toBe(1);
     await settleManagedGitEffects(engine);
-    const held = lineOf(head(root, HOLD_FILE), claim);
-    expect(held).toContain(`~~${claim}~~`);
-    expect(held).toContain('moved');
-    expect(held).not.toContain(secret);
+    expect(head(root, HOLD_FILE)).not.toContain(claim);
+    expect(head(root, HOLD_FILE)).not.toContain(secret);
     expect(lineOf(head(root, `${secret}.md`), claim)).toContain(claim);
+    const holding = await call(ctx, 'get_page', { slug: HOLD });
+    expect(JSON.stringify(holding)).not.toContain(claim);
+    const rebuilt = await rebuild(root, databaseUrl, [claim]);
+    expect(rebuilt[claim]).toEqual([{ entity_slug: secret, source_markdown_slug: secret, active: true }]);
   }), 240_000);
+
+  test('an entity under a folder access rule is not held on the world-readable page', () => strict(async ({ engine, ctx, root }) => {
+    await engine.executeRaw(`INSERT INTO access_policy_state(source_id) VALUES('default') ON CONFLICT DO NOTHING`);
+    await engine.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','r1','secret/',ARRAY['member:alice-example'],1)`);
+    const claim = 'The secret plan has a codename.';
+    const saved = await remember(ctx, claim, 'secret/plan-x');
+    expect(saved.write_through).not.toHaveProperty('held_for');
+    expect(saved.persistence).toEqual({ mode: 'database' });
+    expect(head(root, HOLD_FILE)).not.toContain(claim);
+  }), 180_000);
+
+  test('a segmented holding page reads its entity column: forget strikes the row and a rebuild keeps the rest', () => strict(async ({ engine, ctx, root }) => {
+    const prose = Array.from({ length: 16000 }, (_, i) => `Line ${i} of a long note kept on the holding page so it is stored in segments.`).join('\n');
+    await call(ctx, 'put_page', { slug: HOLD, content: `---\ntype: note\ntitle: Unattributed memory\n---\n\n${prose}\n` });
+    const [shape] = await engine.executeRaw<{ segmented: boolean }>("SELECT compiled_truth IS NULL AS segmented FROM pages WHERE source_id='default' AND slug=$1", [HOLD]);
+    expect(shape!.segmented).toBe(true);
+    const loose = 'The spare key is with the neighbour.';
+    const kept = 'The garden plan adds two raised beds.';
+    const gone = 'The kitchen remodel starts in March.';
+    await call(ctx, 'remember', { fact: loose, provenance: 'chat 2026-11-11', infer_entity: false });
+    await remember(ctx, kept, 'notes/garden-plan');
+    const saved = await remember(ctx, gone, PAGELESS);
+    expect(saved.write_through).toEqual({ written: true, held_for: PAGELESS });
+    const result = await runExtractFacts(engine, { sourceId: 'default' });
+    expect(result.warnings.join('\n')).not.toContain('FACTS_TABLE_MALFORMED');
+    const forgot = await call(ctx, 'forget', { id: String(saved.id) });
+    expect(forgot.error).toBeUndefined();
+    await settleManagedGitEffects(engine);
+    expect(lineOf(head(root, HOLD_FILE), gone)).toContain(`~~${gone}~~`);
+    const rebuilt = await rebuild(root, databaseUrl, [loose, kept, gone]);
+    expect(rebuilt[loose]).toEqual([{ entity_slug: null, source_markdown_slug: HOLD, active: true }]);
+    expect(rebuilt[kept]).toEqual([{ entity_slug: 'notes/garden-plan', source_markdown_slug: HOLD, active: true }]);
+    expect(rebuilt[gone]!.filter(row => row.active)).toEqual([]);
+  }), 300_000);
 
   test('a page kept out of Git does not take the fact: it stays held in Git and the run says why', () => strict(async ({ engine, ctx, root }) => {
     const secret = 'notes/surprise-party';
