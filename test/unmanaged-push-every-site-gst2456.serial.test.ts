@@ -121,6 +121,35 @@ describe('gbrain git commit-push', () => {
     expect(remoteTip()).toBe(base);
   }, T);
 
+  test('gbrain git scan previews what the next push would refuse and writes nothing; the fingerprint in .gbrain-scan-allow clears it', () => {
+    removedSecret();
+    const head = git(root, 'rev-parse', 'HEAD');
+    const status = git(root, 'status', '--porcelain');
+    const r = cli(['git', 'scan', '--json']);
+    expect(r.status).toBe(0);
+    const doc = JSON.parse(r.stdout) as { from: string; to: string; commits: number; would_refuse: string | null; findings: Array<{ path: string; fingerprint: string }> };
+    expect(doc).toMatchObject({ from: base, to: head, commits: 2, would_refuse: 'publish_secret_found' });
+    expect(doc.findings.map(f => f.path)).toEqual(['notes.md']);
+    expect(r.stdout + r.stderr).not.toContain(TOKEN);
+    expect([remoteTip(), git(root, 'rev-parse', 'HEAD'), git(root, 'status', '--porcelain'), pushLog()]).toEqual([base, head, status, '']);
+    const human = cli(['git', 'scan', '--from', base, '--to', head]);
+    expect(human.status).toBe(0);
+    expect(human.stdout).toContain(`notes.md:1`);
+    expect(human.stdout).toContain(doc.findings[0]!.fingerprint);
+    writeFileSync(join(root, '.gbrain-scan-allow'), `# a synthetic test credential\n${doc.findings[0]!.fingerprint}\n`);
+    expect(JSON.parse(cli(['git', 'scan', '--json']).stdout)).toMatchObject({ would_refuse: null, findings: [] });
+    expect(cli(['git', 'commit-push', '--push-only', '--keep-checkout', '--json']).status).toBe(0);
+    expect(remoteTip()).toBe(head);
+    for (const args of [['--from', 'no-such-rev'], ['--scan-timeout', 'soon']]) expect(envelope(cli(['git', 'scan', ...args, '--json']).stdout).code ?? '').toBe('commit_paths_invalid');
+  }, T);
+
+  test('--dry-run names the managed-worktree marker, or none', () => {
+    expect(JSON.parse(cli(['git', 'commit-push', '--dry-run', '--push-only', '--json']).stdout).managed).toBeNull();
+    writeFileSync(join(git(root, 'rev-parse', '--absolute-git-dir'), 'gbrain-managed.json'), '{}');
+    const doc = JSON.parse(cli(['git', 'commit-push', '--dry-run', '--push-only', '--json']).stdout) as { managed: { root: string; evidence: string } };
+    expect(doc.managed.evidence).toEndWith('gbrain-managed.json');
+  }, T);
+
   test('push.followTags never publishes an annotated tag, whose message nothing scans', () => {
     git(root, 'config', 'push.followTags', 'true');
     plainCommit('notes.md', 'clean\n');

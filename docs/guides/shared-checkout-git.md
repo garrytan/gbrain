@@ -168,6 +168,29 @@ The agent reads `gbrain sync status --source <id> --json` (`git_push_holds`) or
 failures go through `gbrain sources writer retry-effects <source> --parked-pushes`
 (preview with `--dry-run`); a conflict names the user's choice first.
 
+<a id="preview-the-secret-scan"></a>
+### Preview the secret scan
+
+`gbrain git scan [--path <dir>] [--from <rev>] [--to <rev>] [--json]` runs the
+scan a push runs, over `--from..--to` (by default the upstream as last fetched,
+up to `HEAD`), with the checkout's `.gbrain-scan-allow`, and changes nothing:
+no fetch, lock, commit or push. It says whether a push would refuse
+(`would_refuse`) and lists each finding's commit, path, line, rule and
+fingerprint, never the value. Before an upgrade,
+`--from $(git rev-list -1 --before="30 days ago" HEAD)` shows what the last 30
+days of commits would have hit. `gbrain git commit-push --dry-run` names the
+marker that makes a checkout a managed canonical worktree, or none; every push
+mode scans either way.
+
+A finding that is not a secret: add its fingerprint (`sha256:` and 16 hex
+characters, as the preview prints it) as a line of `.gbrain-scan-allow` at the
+checkout root (`#` starts a comment). The scan reads the file from the working
+tree, so the next push uses it without a commit. Keep it out of commits (list it
+in `.git/info/exclude`): a commit that changes it changes what the scan sees, so
+no automatic push publishes it. A fingerprint accepts that exact value wherever
+it appears; a line without `sha256:` is a path glob and accepts every finding in
+the files it matches.
+
 <a id="outcomes"></a>
 ## Outcomes
 
