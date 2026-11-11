@@ -330,6 +330,12 @@ export async function runAutopilotDaemon(engine: BrainEngine, args: string[]): P
     // (single SELECT). See the NO_WORKER_WARN_TICKS comment for caveats.
     if (noWorker && useMinionsDispatch) await probeNoWorkerPeer(engine, state, baseInterval);
 
+    if (!(await (await import('../core/persistence/automatic-sync-policy.ts')).automaticGitPullDisabled(engine))) {
+      const reconciled = await (await import('./autopilot-git-reconcile.ts')).autopilotReconcile(engine);
+      for (const line of reconciled.lines) (reconciled.ok ? console.log : console.error)(`[autopilot] git-reconcile: ${line}`);
+      if (configurationBlocked()) continue;
+    }
+
     const tick = useMinionsDispatch
       ? await dispatchAutopilotTick(engine, state, { repoPath, baseInterval, jsonMode })
       : { cycleOk: await runInlineCycle(engine, state, repoPath, shutdownAbort, jsonMode) };

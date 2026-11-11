@@ -107,14 +107,15 @@ On a managed brain, install this line instead, on the host that owns the
 sources:
 
 ```cron
-*/15 * * * * gbrain-run sources refresh <id> >> /tmp/gbrain-cron.log 2>&1; gbrain-run sync --all --no-pull --hard-deadline 13m >> /tmp/gbrain-cron.log 2>&1
+*/15 * * * * gbrain-run sources git-reconcile >> /tmp/gbrain-cron.log 2>&1; gbrain-run sync --all --no-pull --hard-deadline 13m >> /tmp/gbrain-cron.log 2>&1
 ```
 
-- `gbrain sources refresh <id>` is the only way a managed checkout takes
-  upstream commits (a fetch and `git merge --ff-only`, then a managed sync of
-  the sources on that checkout). Add one refresh per checkout that tracks a
-  remote, with its real source id; drop it for checkouts with no remote. The
-  `;` is deliberate: the sync still runs when a refresh refuses.
+- `gbrain sources git-reconcile` brings every checkout on the host level with
+  its upstream; a managed checkout goes through `gbrain sources refresh` (a
+  fetch and `git merge --ff-only`, then a managed sync of its sources), the
+  only way it takes upstream commits. A level checkout costs one fetch, and
+  autopilot already runs it each tick. The `;` is deliberate: the sync still
+  runs when a reconcile refuses.
 - `refresh_diverged`: the checkout has commits its upstream lacks, so
   something commits outside gbrain (usually a script that writes files and
   runs `git commit` in the checkout). Fix that writer so it commits with
