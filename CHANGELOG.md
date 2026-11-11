@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.660.0] - 2026-11-11
 
 **Agent reads answer "nothing here" instead of refusing, and say why a list came back empty.** These fixes come from agent transcripts where models kept getting refused or got bare empty answers.
 
