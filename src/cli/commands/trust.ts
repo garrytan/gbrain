@@ -138,7 +138,7 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
   if (rest.includes('--label-lowerings')) {
     await ctx.completeStartup?.(engine);
     const at = rest.indexOf('--source');
-    const source = rest.find(arg => arg.startsWith('--source='))?.slice('--source='.length) ?? (at >= 0 ? rest[at + 1] : null);
+    const source = at >= 0 ? rest[at + 1] ?? '' : null;
     if (source !== null && (!source || source.startsWith('-'))) {
       await refuse(args, '--source needs a source id.', 'Run gbrain trust backfill --label-lowerings --source <id>, or omit --source to list every source.');
       return;
