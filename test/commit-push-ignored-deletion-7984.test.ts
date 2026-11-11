@@ -70,4 +70,14 @@ describe('commit-push: tracked deletions under a wildcard ignore (#7984)', () =>
     }
     expect(remoteFiles(bare)).toEqual(['.gitignore', 'artifact/a.bin', 'artifact/b.bin', 'artifact/c.bin']);
   });
+
+  test('a named skip-worktree file beside a tracked deletion: the deletion publishes and the flagged file is reported skipped (GST-2118)', async () => {
+    const { bare, repo } = ignoredCheckout();
+    rmSync(join(repo, 'artifact', 'a.bin'));
+    git(repo, 'update-index', '--skip-worktree', '--', 'artifact/b.bin');
+    writeFileSync(join(repo, 'artifact', 'b.bin'), 'edited\n');
+    await expect(publish(repo, ['artifact/a.bin', 'artifact/b.bin'])).rejects.toMatchObject({ code: 'commit_paths_skipped' });
+    expect(remoteFiles(bare)).toEqual(['.gitignore', 'artifact/b.bin', 'artifact/c.bin']);
+    expect(git(bare, 'show', 'main:artifact/b.bin')).toBe('b.bin');
+  });
 });
