@@ -2198,7 +2198,7 @@ export async function extractStaleFromDB(
   // #4611: mirrors extractLinksFromDB — configured default, resolved once.
   const linkDefaultSourceId = await resolveLinkFallbackDefault(engine);
   // Nothing link-stale: skip the whole-brain resolver reads; the mention pass still runs.
-  const [readAt, allRefs] = totalStale ? [await wantedReadAt(engine), await engine.listAllPageRefs()] : [undefined, []];
+  const [readAt, allRefs] = [await wantedReadAt(engine), totalStale ? await engine.listAllPageRefs() : []];
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
   for (const ref of allRefs) {

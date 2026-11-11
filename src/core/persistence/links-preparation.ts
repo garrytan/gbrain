@@ -96,6 +96,7 @@ export const LINK_ENDPOINTS_SQL = `WITH own AS (
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'> & { id?: number }, sourceId: string, primeSemantics = false) {
   if (primeSemantics) await primeRelationSemantics(engine);
+  const readAt = await wantedReadAt(engine);
   const resolver = makeResolver(engine, { mode: 'live', sourceId, basenameIndex: () => sourceBasenameIndex(engine, sourceId) });
   // One settings snapshot for the whole extraction; publication validates it (derived-links.ts). An unreadable
   // setting leaves the page's links unpublished (stale) rather than extracted under defaults.
@@ -119,7 +120,6 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     roleText ??= await segmentedRoleText(engine, segmented);
     return extractSegmentedPageLinks(engine, segmented, resolver, { ...o, roleText });
   };
-  const readAt = await wantedReadAt(engine);
   const referenced = new Set([slug]);
   const initial = await extract({ ...opts, onResolvedFrontmatterTarget: target => referenced.add(target) });
   // A link written against a renamed page's old slug follows its slug alias, like get_page does.
