@@ -27,6 +27,7 @@ import {
   resolveTakesRepoDir,
   resolveTakesWritePath,
   TakesWriteError,
+  withStoredTakesFence,
 } from './takes-write.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from './persistence/ownership.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from './write-through.ts';
@@ -374,9 +375,16 @@ export async function extractTakesFromPages(
     // Never append a claim the page's takes fence already holds (a rerun with
     // includeCovered, or a hand-added take): duplicate gradeable takes skew
     // calibration. The fence is canonical, so dedupe against its active rows.
-    const duplicateBody = fromDatabase
-      ? serializePageToMarkdown(managedSnapshot!.page, managedSnapshot!.tags)
-      : readFileSync(mdPath!, 'utf-8');
+    let duplicateBody: string;
+    try {
+      duplicateBody = await withStoredTakesFence(engine, page.id, fromDatabase
+        ? serializePageToMarkdown(managedSnapshot!.page, managedSnapshot!.tags)
+        : readFileSync(mdPath!, 'utf-8'));
+    } catch (err) {
+      if (!(err instanceof TakesWriteError)) throw err;
+      skipPage(page.slug, err.code);
+      continue;
+    }
     const held = new Set(parseTakesFence(duplicateBody).takes
       .filter((t) => t.active).map((t) => claimKey(t.claim, t.holder)));
     const safeClaims = claims.filter((c) => {
@@ -399,7 +407,7 @@ export async function extractTakesFromPages(
           source: 'cli:takes-bootstrap-from-pages',
         }));
       if (fromDatabase) {
-        const body = await materializeTakeResolutions(engine, managedSnapshot!.page.id, serializePageToMarkdown(managedSnapshot!.page, managedSnapshot!.tags));
+        const body = await materializeTakeResolutions(engine, managedSnapshot!.page.id, duplicateBody);
         const composed = appendTakesToPageBody(body, rows);
         const { operations } = await import('./operations.ts');
         const putPage = operations.filter(operation => !operation.localOnly).find(operation => operation.name === 'put_page');

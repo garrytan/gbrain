@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { closeSync, existsSync, fstatSync, mkdirSync, mkdtempSync, openSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve as resolvePath, sep } from 'node:path';
 import { execFileBounded } from '../brain-repo-durability.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
@@ -14,6 +15,7 @@ import type { NativeLockHandle } from './native-lock.ts';
 import { proveIndexLockAbandoned, reclaimIndexLock, type IndexLockReclaim } from './index-lock-reclaim.ts';
 import { recordCommitAsync, recordIntentAsync } from '../git/commit-ledger.ts';
 import { supersededBy } from './import-deferral.ts';
+import { rangeSecretRefusal, scanRange } from '../git/range-secret-scan.ts';
 
 /** An index lock younger than this is contention; an older one is reported as stale. */
 const INDEX_LOCK_GRACE_MS = 10 * 60 * 1000;
@@ -282,7 +284,7 @@ export function commitMessageArgs(paragraphs: string[], dir: string | (() => str
 }
 
 /**
- * #5530: commit a group of single-file targets with one `commit --only`. The
+ * #5530: commit a group of single-file targets with one commit (`effectCommit`). The
  * caller owns the native worktree lock and has probed durability. Each
  * target's outcome (or its own error) is keyed by its requested relative
  * path; a failing target never enters the commit. Nothing is pushed.
@@ -298,7 +300,7 @@ export function commitMessageArgs(paragraphs: string[], dir: string | (() => str
  * that is provably abandoned is reclaimed and the step retried (#6932).
  */
 export async function commitGitTargets(root: string, relativePaths: string[], signal?: AbortSignal,
-  notes?: ReadonlyMap<string, GitCommitNote>, owner?: GitEffectOwner): Promise<Map<string, GitOutcome | OperationError>> {
+  notes?: ReadonlyMap<string, GitCommitNote>, owner?: GitEffectOwner, expected?: ReadonlyMap<string, string | null>): Promise<Map<string, GitOutcome | OperationError>> {
   const results = new Map<string, GitOutcome | OperationError>();
   await withSession(root, signal, owner, true, async session => {
     // One ls-files, one status, one add and one diff for the group; targets
@@ -393,30 +395,22 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
       }
     }
     if (!changed.length) return;
-    // --only keeps unrelated staged paths out of this commit. After a lost
+    // Only these paths are committed; unrelated staged paths stay staged. After a lost
     // database acknowledgment the same HEAD/file state is an exact no-op.
     const commitPaths = [...new Set(changed.map(c => c.path))];
     const noted = new Map<string, GitCommitNote>();
     for (const c of changed) { const note = notes?.get(c.requested); if (note && !noted.has(c.path)) noted.set(c.path, note); }
-    let messageDir: string | undefined;
-    let result;
-    try {
-      const paragraphs = commitMessage(commitPaths, noted);
-      const message = commitMessageArgs(paragraphs, () => {
-        mkdirSync(persistenceHome(), { recursive: true, mode: 0o700 });
-        return messageDir = mkdtempSync(join(persistenceHome(), 'commit-message-'));
-      });
-      const before = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']);
-      await recordIntentAsync(root, { writer: 'effect', head_before: before.code === 0 ? before.stdout.trim() : null, message: paragraphs.join('\n\n') });
-      result = await git(session, [...(commitPaths.some(path => removed.has(path)) ? NO_FSCACHE : []), 'commit', '--only', ...message, '--', ...literalPathspecs(commitPaths)]);
-    } finally { if (messageDir) rmSync(messageDir, { recursive: true, force: true }); }
-    if (result.code === 0) {
-      const head = await git(session, ['rev-parse', 'HEAD']);
-      const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
-      const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
-      if (head.code === 0) await recordCommitAsync(root, { sha: head.stdout.trim(), writer: 'effect', ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
+    const wanted = new Map<string, string | null>();
+    for (const c of changed) {
+      const hash = expected?.get(c.requested);
+      wanted.set(c.path, hash !== undefined && (!wanted.has(c.path) || wanted.get(c.path) === hash) ? hash : '');
     }
-    const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
+    mkdirSync(persistenceHome(), { recursive: true, mode: 0o700 });
+    const scratch = mkdtempSync(join(persistenceHome(), 'effect-commit-'));
+    let created: string | null;
+    try { created = await effectCommit(session, root, prefix, scratch, commitPaths, wanted, commitMessage(commitPaths, noted).map(stripspace).filter(Boolean), noted); }
+    finally { rmSync(scratch, { recursive: true, force: true }); }
+    const outcome = created ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);
     if (!('git' in outcome)) await session.undoStaging();
@@ -472,6 +466,87 @@ async function restoreIndex(session: GitSession, prefix: string, paths: string[]
   } catch { /* the step's own failure is what the effect reports and retries */ }
 }
 
+/** Git's whitespace cleanup of a `-m` paragraph, as `git commit -m` applies it: trailing blanks, repeated and edge blank lines go. */
+export function stripspace(paragraph: string): string {
+  const lines: string[] = [];
+  for (const line of paragraph.split('\n').map(text => text.replace(/[ \t\r]+$/, ''))) if (line || lines.length && lines[lines.length - 1]) lines.push(line);
+  while (lines.length && !lines[lines.length - 1]) lines.pop();
+  return lines.join('\n');
+}
+
+/**
+ * #8896: a Git effect's commit, made by plumbing so its sha is gbrain's own before any ref names it. The index entries
+ * `git add` just staged for `paths` are laid over HEAD's tree in a scratch index, `commit-tree` writes the commit, the
+ * ledger records its sha, and `update-ref HEAD <new> <old>` moves the branch only if HEAD is still the commit it was
+ * built on; a moved HEAD is read again and the commit rebuilt once. Null when git fails or HEAD moved twice. The
+ * secret scan skips an effect commit only by this recorded sha, so an amend, reset or reword is a different commit and
+ * is scanned. The record is `verified` only when every path's staged blob is the bytes the effect wrote (`wanted`: the
+ * sha256 the effect recorded, null for a removal, '' for none known): the file, read once, hashes to it and has the
+ * staged blob's id; an outside edit that reached the index first fails that, and the commit is scanned. An index that
+ * no longer holds what was staged (an entry for a file that is gone, none for one on disk), or a tree that equals
+ * HEAD's, fails the commit, so the effect retries rather than reporting a commit of the wrong state.
+ */
+async function effectCommit(session: GitSession, root: string, prefix: string, scratch: string, paths: string[],
+  wanted: ReadonlyMap<string, string | null>, paragraphs: string[], noted: ReadonlyMap<string, GitCommitNote>): Promise<string | null> {
+  const format = await git(session, ['rev-parse', '--show-object-format']);
+  const listed = await git(session, ['ls-files', '-s', '-z', '--', ...literalPathspecs(paths)]);
+  if (format.code !== 0 || listed.code !== 0) return null;
+  const staged = new Map(listed.stdout.split('\0').filter(Boolean).map(entry => {
+    const [mode, oid, stage] = entry.slice(0, entry.indexOf('\t')).split(' ');
+    return [entry.slice(entry.indexOf('\t') + 1), { mode: mode!, oid: oid!, stage: stage! }] as const;
+  }));
+  if ([...staged.values()].some(entry => entry.stage !== '0') || paths.some(path => staged.has(path) !== existsSync(join(root, path)))) return null;
+  const verified = paths.every(path => {
+    const hash = wanted.get(path), entry = staged.get(path);
+    if (hash === undefined || hash === '') return false;
+    return hash === null ? !entry : !!entry && entry.mode.startsWith('100') && fileDigests(join(root, path), format.stdout.trim()) === `${hash} ${entry.oid}`;
+  });
+  const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
+  const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
+  const message = commitMessageArgs(paragraphs, scratch);
+  for (let attempt = 0; ; attempt++) {
+    const before = await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']);
+    const head = before.code === 0 ? before.stdout.trim() : null;
+    await recordIntentAsync(root, { writer: 'effect', head_before: head, message: paragraphs.join('\n\n') });
+    // update-index reads --cacheinfo paths from the toplevel and --force-remove paths from the working directory (root).
+    const index: GitSession = { ...session, indexFile: join(scratch, `index-${attempt}`) };
+    const removals = paths.filter(path => !staged.has(path));
+    const entries = paths.flatMap(path => { const entry = staged.get(path); return entry ? ['--cacheinfo', `${entry.mode},${entry.oid},${prefix}${path}`] : []; });
+    if ((await git(index, head ? ['read-tree', head] : ['read-tree', '--empty'])).code !== 0
+      || entries.length && (await git(index, ['update-index', '--add', ...entries])).code !== 0
+      || removals.length && (await git(index, ['update-index', '--force-remove', '--', ...removals])).code !== 0) return null;
+    const tree = await git(index, ['write-tree']);
+    const base = head ? await git(session, ['rev-parse', '--verify', '--quiet', `${head}^{tree}`]) : null;
+    if (tree.code !== 0 || base && (base.code !== 0 || base.stdout.trim() === tree.stdout.trim())) return null;
+    const commit = await git(session, ['commit-tree', tree.stdout.trim(), ...(head ? ['-p', head] : []), ...message]);
+    if (commit.code !== 0) return null;
+    const created = commit.stdout.trim();
+    await recordCommitAsync(root, { sha: created, writer: 'effect', ...(verified ? { verified: true } : {}),
+      ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
+    const moved = await git(session, ['update-ref', '-m', `commit: ${paragraphs[0]!.split('\n')[0]}`, 'HEAD', created, head ?? '']);
+    if (moved.code === 0) {
+      const detached = await git(session, ['maintenance', 'run', '--auto', '--quiet', '--detach']).catch(() => null);
+      if (detached?.code === 129) await git(session, ['maintenance', 'run', '--auto', '--quiet']).catch(() => undefined);
+      return created;
+    }
+    if (attempt) return null;
+  }
+}
+
+/** `<sha256> <git blob id>` of the file's bytes, read once; null when it cannot be read or changes size while read. */
+function fileDigests(path: string, objectFormat: string): string | null {
+  let fd: number;
+  try { fd = openSync(path, 'r'); } catch { return null; }
+  try {
+    const size = fstatSync(fd).size;
+    const content = createHash('sha256'), blob = createHash(objectFormat === 'sha256' ? 'sha256' : 'sha1').update(`blob ${size}\0`);
+    const buffer = Buffer.alloc(1024 * 1024);
+    let read = 0;
+    for (let n; (n = readSync(fd, buffer, 0, buffer.length, null)); read += n) { content.update(buffer.subarray(0, n)); blob.update(buffer.subarray(0, n)); }
+    return read === size ? `${content.digest('hex')} ${blob.digest('hex')}` : null;
+  } finally { closeSync(fd); }
+}
+
 /**
  * #7089: whether `root`'s branch has commits its upstream (the local remote-tracking ref, never fetched) lacks; false
  * without an upstream. A Git effect whose target is absent asks this before completing: its removal may have been
@@ -486,6 +561,10 @@ export async function gitRootAhead(root: string, signal?: AbortSignal): Promise<
 
 /** Git's refusal of a push because the remote branch moved (LC_ALL=C keeps it untranslated). */
 export const NON_FAST_FORWARD = /\[rejected\][^\n]*\((?:non-fast-forward|fetch first)\)/;
+/** Git's refusal of a leased push because the remote branch moved after its tip was read. */
+const STALE_LEASE = /\[rejected\][^\n]*\(stale info\)/;
+/** The in-process secret scan's budget on the owner's event loop: under the consumer heartbeat's live window (CONSUMER_LIVE_MS). */
+const OWNER_SCAN_BUDGET_MS = 10_000;
 
 /**
  * Push the current branch to its tracking remote. A plain push is tried first (idempotent, cannot import remote
@@ -494,19 +573,52 @@ export const NON_FAST_FORWARD = /\[rejected\][^\n]*\((?:non-fast-forward|fetch f
  * without moving the checkout, so `gbrain sources refresh` stays the only importer of remote files. That publish
  * runs synchronously; it starts only after the remote answered this push. Both sides changing one file holds the
  * effect with `integrate_conflict` and the user's choice as its fix.
+ * #8896: a script's plain `git commit` in the checkout never passed the write path's scan, so both paths scan what
+ * they publish. The plain push reads the remote branch tip (`git ls-remote`, never a possibly stale tracking ref,
+ * which would hide a commit a rewound remote no longer has), scans exactly `<tip>..<HEAD sha>` and pushes that sha
+ * only as a fast-forward of the tip, leased on it; a tip that is not an ancestor, or a remote that moves before the
+ * push lands, goes to the shared publish, which fetches first and runs with `--scan-secrets`. A remote with no such
+ * branch (a first push to a new remote) gets HEAD's whole history scanned and the branch created only if it does not
+ * exist yet. A finding, an unscannable file or a commit changing what the scan sees holds the effect with
+ * `publish_secret_found`; a range git cannot read in full holds it with `publish_scan_unreadable`. The in-process scan
+ * runs synchronously on the owner's event loop, so it gets `scanBudgetMs` (well inside the consumer heartbeat's live
+ * window); a range it cannot finish in that time goes to the shared publish, whose child process scans with the full budget,
+ * except a whole history for a missing branch, which holds the effect with `publish_scan_unreadable` naming the upstream.
  */
-export async function pushGitRoot(root: string, signal?: AbortSignal): Promise<{ push: 'committed'; integrated?: number } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
+export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudgetMs = OWNER_SCAN_BUDGET_MS): Promise<{ push: 'committed'; integrated?: number } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
   return withSession(root, signal, undefined, false, async session => {
     const branch = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
     if (branch.code !== 0) return { push: 'skipped', reason: 'no_tracking_remote' } as const;
     const remote = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.remote`]);
     const merge = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.merge`]);
     if (remote.code !== 0 || merge.code !== 0 || !remote.stdout.trim() || remote.stdout.trim() === '.') return { push: 'skipped', reason: 'no_tracking_remote' } as const;
-    const push = await git(session, ['push', '--', remote.stdout.trim(), `HEAD:${merge.stdout.trim()}`]);
-    if (push.code === 0) return { push: 'committed' } as const;
-    if (!NON_FAST_FORWARD.test(push.stderr)) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
+    const head = await git(session, ['rev-parse', '--verify', 'HEAD']);
+    if (head.code !== 0) throw gitFailure('Cannot read the canonical checkout\'s HEAD.', 'git rev-parse HEAD failed, so nothing was scanned or pushed.');
+    const sha = head.stdout.trim(), short = merge.stdout.trim().replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
+    const unavailable = () => opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
       `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
       { fix: effectStatusFix });
+    const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
+    if (listed.code !== 0) throw unavailable();
+    const tip = listed.stdout.split('\n').map(line => line.split('\t')).find(([, name]) => name === ref)?.[0] ?? '';
+    if (!tip || (await git(session, ['merge-base', '--is-ancestor', tip, sha])).code === 0) {
+      const scan = scanRange(root, tip, sha, scanBudgetMs);
+      if (!scan.timed_out) {
+        const refusal = rangeSecretRefusal(root, tip, sha, scan);
+        if (refusal) throw heldSecret(root, refusal);
+        signal?.throwIfAborted();
+        const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', remote.stdout.trim(), `${sha}:${ref}`]);
+        if (push.code === 0) return { push: 'committed' } as const;
+        if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw unavailable();
+      } else if (!tip) throw heldSecret(root, opError('publish_scan_unreadable',
+        `${remote.stdout.trim()} has no branch ${short}, and the secret scan of the whole history a first push would create it with ran past its in-process budget. Nothing was pushed.`,
+        `Check that the checkout's upstream (branch.${branch.stdout.trim()}.merge) names a branch the remote should have (git ls-remote --heads ${remote.stdout.trim()}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the history and push the branch yourself; gbrain never creates a remote branch from history it has not scanned.`,
+        { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+          argv: ['git', '-C', root, 'ls-remote', '--heads', '--', remote.stdout.trim()],
+          why: 'Read-only: lists the branches the remote has, to check the checkout\'s upstream.',
+          user_message: `The remote ${remote.stdout.trim()} has no branch ${short} for ${root}, and its whole history is too large to scan here, so nothing was pushed. Should the checkout's upstream point at another branch, or will you review the history and push this branch yourself?`,
+          docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } }));
+    }
     signal?.throwIfAborted();
     return publishKeepingCheckout(root, signal);
   });
@@ -527,7 +639,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
   if (!cli) throw opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
     `The remote branch moved, and publishing over it runs gbrain git commit-push --push-only --keep-checkout, but this process could not locate its own gbrain executable (set ${CHILD_ENV.childCliOverride} to it). Nothing is lost locally.`,
     { fix: effectStatusFix });
-  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', root, '--json'], {
+  const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--json'], {
     timeout: KEEP_CHECKOUT_PUBLISH_TIMEOUT_MS, termGraceMs: GIT_TERM_GRACE_MS, maxBuffer: 1024 * 1024, signal,
     env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
   });
@@ -538,7 +650,7 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal): Promi
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     const error = opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
       { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
-    throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error;
+    throw error.code === 'integrate_conflict' ? heldConflict(root, error) : error.code === 'publish_secret_found' || error.code === 'publish_scan_unreadable' ? heldSecret(root, error) : error;
   }
   throw opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
     `The remote branch moved and the keep-checkout publish did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}). Nothing is lost locally; the worker pushes again on a later pass.`,
@@ -561,6 +673,21 @@ function heldConflict(root: string, error: OperationError): OperationError {
   return held;
 }
 
+/**
+ * #8896: a secret scan that refuses the unpublished commits (`publish_secret_found`) or cannot read them all
+ * (`publish_scan_unreadable`) holds the checkout's Git effects (they retry, then park): no retry can succeed until the
+ * user removes the values or allowlists a false positive, or repairs what kept the scan from reading the commits.
+ */
+function heldSecret(root: string, error: OperationError): OperationError {
+  const fix = error.fix as Action | undefined;
+  return opError(error.code as 'publish_secret_found' | 'publish_scan_unreadable', `Git backups of canonical page writes are held: ${error.message}`,
+    `${error.suggestion ?? ''} The page writes themselves are committed in the database and in local commits; nothing is lost, and nothing is pushed from ${root} until the scan passes. Afterwards, gbrain sources writer retry-effects with --parked-pushes for the source this checkout backs (gbrain sources writer status names it) retries the Git effects that parked meanwhile.`,
+    { ...(error.detail ? { detail: error.detail } : {}), fix: { ...(fix ?? { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Rewriting unpublished commits, allowlisting a value or repairing the checkout is the user\'s call.' }),
+    user_message: `${fix?.user_message ?? `The secret scan refused the unpublished commits in ${root}.`} Until then, Git backups of new page writes from ${root} are held (nothing is lost; the database has every write).`,
+    verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] } } });
+}
+
 /** The outcome a Git effect records when its root has no durability hook: no git command ran. */
 export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_enabled', push: 'skipped' } as const;
 
@@ -575,9 +702,11 @@ export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_
  * root that is not ahead it completes without a push, as before.
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
-  hardened?: boolean, note?: GitCommitNote, binding?: Pick<WorktreeBinding, 'git_durability'> | null, owner?: GitEffectOwner): Promise<Record<string, unknown>> {
+  hardened?: boolean, note?: GitCommitNote, binding?: Pick<WorktreeBinding, 'git_durability'> | null, owner?: GitEffectOwner,
+  expectedHash?: string | null): Promise<Record<string, unknown>> {
   if (!(hardened ?? (await gitDurabilityPolicy(binding, root)).durable)) return { ...DURABILITY_NOT_ENABLED };
-  const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined, owner)).get(relativePath)!;
+  const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined, owner,
+    expectedHash === undefined ? undefined : new Map([[relativePath, expectedHash]]))).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent' && !(await gitRootAhead(root, signal))) return outcome;
   const pushed = await pushGitRoot(root, signal);

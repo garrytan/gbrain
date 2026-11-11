@@ -29,6 +29,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../takes-fence.ts';
+import { LINKS_FENCE_BEGIN, LINKS_FENCE_END } from '../links-fence.ts';
 import { parseMarkdown, serializePageToMarkdown, timelineSentinelKind } from '../markdown.ts';
 import { buildContentFlagMarker, CONTENT_FLAG_KEY, isQuarantined } from '../quarantine.ts';
 import { sizeStateField } from '../page-embedding-budget.ts';
@@ -111,6 +112,15 @@ function assertAppendText(text: string): void {
   if (MARKERS.some(marker => text.includes(marker))) {
     throw invalid('append_page text contains a protected facts or takes fence marker.',
       'Write facts with remember and takes with takes_add; append_page adds ordinary text only.');
+  }
+  if (text.includes(LINKS_FENCE_BEGIN) || text.includes(LINKS_FENCE_END)) {
+    throw opError('append_links_fence', 'append_page text contains a links fence marker, so nothing was appended.',
+      'Write each link with add_link (from, to, link_type); append_page adds ordinary text only.', { fix: {
+        mcp: { tool: 'add_link', arguments: { from: '<FROM>', to: '<TO>', link_type: '<LINK_TYPE>' } },
+        inputs: [{ name: 'FROM', how: 'The slug of the page you appended to.' }, { name: 'TO', how: 'The slug of the page one row of your links table points to.' },
+          { name: 'LINK_TYPE', how: 'That row\'s type (omit link_type for an untyped link).' }],
+        consent: [], actor: 'agent', requires_exclusive: false,
+        why: 'Adds the link as one row of the page\'s links section, keeping the rows already there; repeat it for each row.' } });
   }
   if (text.split('\n').some(line => timelineSentinelKind(line.trim()) === 'marker')) {
     throw invalid('append_page text contains a timeline sentinel line.', 'Pass region: \'timeline\' to add to the timeline, and drop the sentinel line from text.');

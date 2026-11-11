@@ -51,6 +51,18 @@ export function memberFactPage(ctx: Pick<OperationContext, 'remote'>): string | 
   return slug;
 }
 
+/**
+ * GST-2249 W1: a save made for an attested person (x-qm-actor) stays on that person's member page. Sharing it would be
+ * a write every reader of the source sees, made with no owner approval, so remember refuses share: true (and an explicit
+ * visibility "world") at the call, and a stored write that carries it is refused when it is prepared.
+ */
+export function attestedShareRefused(make: (code: 'invalid_params', message: string, suggestion: string) => OperationError): OperationError {
+  return Object.assign(make('invalid_params',
+    'remember: a fact saved for a person (x-qm-actor) stays on that person\'s own member page and is never shared with every reader of the source; nothing was saved.',
+    'Retry with no share and no visibility to keep the fact on the person\'s own member page. Knowledge for the whole team waits for the brain owner: propose it as a dated timeline entry or a link with memory_propose, which holds it until the owner approves.'),
+  { reason: 'attested_share_refused' });
+}
+
 /** Whether a member page is that member's own: its readers are exactly the member (a squatted or widened page is not). */
 export function memberPageIsOwn(slug: string, frontmatter: unknown): boolean {
   const readers = normalizeReaders(frontmatter);
