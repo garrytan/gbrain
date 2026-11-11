@@ -7,7 +7,7 @@ import { isFrontmatterHoldMessage } from '../markdown.ts';
 import { fenceLocationFromMessage, fenceWhere } from '../fence-repair/refusal.ts';
 import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
-import { PAGE_CHANGED_AFTER_READ_MESSAGE } from '../page-state/types.ts';
+import { PAGE_CHANGED_AFTER_READ_MESSAGE, PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from '../page-state/types.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { codeEntry, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { SOURCE_CHECKOUT_MISSING, type CheckoutRefusalOrigin } from './publication-failure.ts';
@@ -54,9 +54,7 @@ export const FACTS_BATCH_INCOMPLETE_MESSAGE = 'Some extracted facts have not com
 export const FACTS_ENTITY_CHANGED_MESSAGE = 'The fact entity changed after extraction admission.';
 export const FACTS_ENTITY_CHANGED_IN_PREPARATION_MESSAGE = 'The fact entity changed during preparation.';
 export const FACTS_DEDUP_CHANGED_MESSAGE = 'The fact deduplication state changed before publication.';
-/** The coordinator's refusal when the page moved between preparation and publication (coordinator.ts, group-publish.ts), also
- * thrown when a staged large file no longer matches its stage (large-file.ts); fact requests never stage large files. */
-export const PAGE_CHANGED_DURING_PREPARATION_MESSAGE = 'The page changed during preparation.';
+export { PAGE_CHANGED_DURING_PREPARATION_MESSAGE };
 /**
  * #7602: entity request refusals a follow-up batch re-admits at the entity's current revision (facts-maintenance.ts), and
  * that `gbrain repair failed-writes` lists. Stored receipts are matched by this exact text, so never reword these messages.
