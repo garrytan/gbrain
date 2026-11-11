@@ -127,12 +127,13 @@ the person it serves. Nothing is written until the brain owner says yes. Grant i
   person it was made for reads it; anyone else gets `not_found`.
 - `cancel_write_request {request_id}` withdraws a proposal still awaiting the owner.
 
-The owner reviews on the brain host, never over MCP:
+The owner reviews on the brain host, or from another machine with `gbrain mcp admin
+memory-proposals list|show|approve|deny` (owner session only), never over MCP:
 
 ```bash
 gbrain memory-proposals list                       # awaiting your decision, oldest first
 gbrain memory-proposals show <request_id>          # the proposed text, fenced as untrusted transcript text
-gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it
+gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it; exits 1 if the write fails
 gbrain memory-proposals deny <request_id> --reason "<why>"
 ```
 
