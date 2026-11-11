@@ -302,7 +302,12 @@ Save ONE fact with mandatory attribution.
   consent line. An omitted `visibility` saves `private` when the target page is
   private (by `visibility` or a privacy alias such as `access: private`) or the
   operator set `facts.default_visibility` to private; a save never lands wider
-  than the page it is written into.
+  than the page it is written into. In gbrain, a remote credential bound to
+  one member saves `private` on its own member page unless it passes
+  `share: true`, and its `visibility: "world"` is refused; the brain owner's
+  own credential saves as above (shared by default, `private` on its member
+  page when it asks or the page or default keeps facts private). The response
+  names the `page` and `visibility` the fact got.
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —
@@ -742,6 +747,9 @@ forgetting the unlinked fact is refused with `invalid_params`, message prefix
 says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
+In gbrain, a credential bound to one member withdraws only facts on its own
+member page (another fact it reads is refused naming the brain host); the
+brain owner's own credential also withdraws a shared fact it reads.
 
 #### forget publishes like a page write (additive note)
 

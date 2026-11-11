@@ -89,7 +89,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "share": {
         "type": "boolean",
-        "description": "Members save privately; true: all source readers recall it. Share team work, not facts about a person."
+        "description": "Members save privately, owner shared; true: all source readers recall it. Not for facts about a person."
       },
       "visibility": {
         "type": "string",

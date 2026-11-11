@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The brain owner's own agents now save facts shared by default, the way they already save pages.** A credential bound to the brain owner (`gbrain access owner set`) reads the whole brain, but its `remember` kept every fact private on the owner's member page unless the call passed `share: true`, its `visibility: "world"` was refused, and its `forget` refused a fact it had just shared. Those private facts also stayed out of hot memory, turn context and context packs, which carry shared facts only. Now, speaking for itself, the owner's credential saves a fact with no `visibility` on its subject's page for every reader of the source, keeps it private on its member page when the call passes `visibility: "private"` or the page or `facts.default_visibility` keeps facts private, and withdraws a shared fact it reads. The reply still names the `page` and `visibility` the fact got. The trade-off: an owner agent that follows a planted instruction can now share a fact without passing a flag, so pass `visibility: "private"` for a fact that must stay with the owner. Member credentials, attested QM calls (`x-qm-actor`), audiences, subagent jobs and slug-fenced clients keep what they had. Works the same on a brain with no Git repository and on a managed one.
+
+Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
+
+### Itemized changes
+
+- `src/core/access/member-facts.ts`: `ownerSpeaksForItself` (`CallerAccess.owner`, no attested actor, no audience, not a subagent, no slug fence).
+- `src/core/persistence/memory-mutations.ts`: `remember` takes the ordinary route for the owner and moves a default save the page or brain default keeps private to the owner's member page; `forget` takes the ordinary remote path for the owner when that path reads the fact. `src/core/verbs.ts`: no `member_share_required` for the owner.
+- `src/core/facts/writeback-config.ts`, `src/core/ops/memory-settings.ts`, `src/mcp/http-transport.ts`, `src/commands/serve-http-mcp.ts`: with writeback on, the owner's credential gets the instructions of a credential bound to no member.
+- Docs: access designations, the company-brain tutorial, `TOOL_REFERENCE.md`, `MEMORY_VERBS_v1.md`, the access key-files entry, `skills/brain-ops/SKILL.md`; behaviour-change row `owner_facts_shared_gst2346`.
+- Tests: `test/owner-facts-d1-gst2346.test.ts` (every caller shape, repo-less and managed, PGLite and Postgres); `test/member-forget-refusal-9101.test.ts` now expects the owner to withdraw a fact it shared.
+
 ## [0.60.678.0] - 2026-11-11
 
 **Pushes from an unmanaged checkout now scan every commit they publish for secrets, not only the files they just wrote.** Four gbrain pushes from a checkout that is not a managed worktree carried earlier local commits to the remote unscanned: the access-policy commit, the durability-scaffolding commit, `gbrain sources push` (which scanned only its own staged files, then pushed the whole branch tip, even with nothing new to commit) and the first push of `gbrain bootstrap repo` after the remote branch was gone (which scanned only the current tree). A credential a script committed with plain `git commit`, including one a later commit removed or one in a commit message, went out with them. Each now runs the range scan managed publishes use over what the remote lacks (the whole history when the remote has no such branch) and refuses `publish_secret_found` or `publish_scan_unreadable`, with nothing pushed and the local commits kept. `gbrain sources push` pushes the exact commit it scanned, leased on the remote tip it read, so a remote rewound in between is scanned again. An allowlist edit that `gbrain sources push` or `gbrain bootstrap repo` commits itself, after scanning it, still publishes; one a script committed is left to the user. Remoteless checkouts, managed worktrees and repo-less brains are unchanged, and the policy command's retry hint keeps `--scan-secrets`.
