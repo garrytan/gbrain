@@ -1,6 +1,7 @@
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
 import { guardRemoteForget, remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError, OperationError, verbError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -30,7 +31,7 @@ import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { callerMember, factVisibilitySql, memberFactPage, memberPageIsOwn, memberPageNotOwned, memberPageSlug, ownMemberFactIds, scopePageIsShared, scopePageNotShared, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
-import { classifyGitCheckout } from '../git-checkout.ts';
+import { isGitCheckoutRoot } from '../git-checkout.ts';
 import { entityPageMissingNotice } from '../interop-notices.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
@@ -129,7 +130,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   // is the missing page, never a missing repository.
   if (!fence && entitySlug !== null && writeThrough) {
     const root = source.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
-    authority.databaseOnlyReason = root || await getWorktreeBinding(ctx.engine, sourceId) ? 'entity_page_missing' : 'no_repo_configured';
+    authority.databaseOnlyReason = root && isAbsolute(root) || await getWorktreeBinding(ctx.engine, sourceId) ? 'entity_page_missing' : 'no_repo_configured';
   }
   let binding = target?.kind === 'publish' ? target.binding : null;
   if (target?.kind === 'publish' && target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
@@ -266,7 +267,8 @@ async function rememberLanded<T extends Record<string, unknown>>(ctx: OperationC
     const binding = await getWorktreeBinding(ctx.engine, row.source_id);
     const root = binding?.local_path || (await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [row.source_id]))[0]?.local_path
       || (row.source_id === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
-    if (binding?.canonical_git === true || binding?.git_durability === 'enabled' || root && classifyGitCheckout(root) === 'git') {
+    // The checkout itself must be the repository: a folder that merely sits under one (a home directory kept in Git) is not.
+    if (binding?.canonical_git === true || binding?.git_durability === 'enabled' || root && isGitCheckoutRoot(root)) {
       ctx.emitNotice?.(entityPageMissingNotice(row.source_id, intent.entity_slug));
     }
   }

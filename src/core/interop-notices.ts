@@ -335,7 +335,7 @@ export function entityPageMissingNotice(sourceId: string, entitySlug: string): N
     code: 'entity_page_missing',
     kind: 'info',
     dedupe_key: `${sourceId}\0${entitySlug}`,
-    why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save. To give it a file, create the page; the next maintenance cycle (gbrain dream) then moves every fact saved for ${entitySlug} into the page's Facts table and commits it.`,
+    why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save. To give it a file, create the page; the next maintenance cycle (gbrain dream) can then move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,
     fix: {
       argv: ['gbrain', 'put', entitySlug],
       mcp: { tool: 'put_page', arguments: { slug: entitySlug, content: '<content>' } },

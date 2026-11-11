@@ -22,14 +22,13 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import type { Notice } from '../src/core/agent-output.ts';
 import { operationsByName } from '../src/core/operations.ts';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { fenceUnfencedFacts, planUnfencedFacts } from '../src/core/facts/unfenced-facts.ts';
 import { formatRememberResult } from '../src/cli/remember-format.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
-import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
 const PAGED = 'people/hana-example';
@@ -62,9 +61,7 @@ for (const backend of testBackends()) describe(`[${backend}] remember on an enti
     managedBrain(async brain => { await putPage(brain.ctx, PAGED, 'Hana Example'); await run(brain); }, { databaseUrl, ...(kind === 'git' ? { setup: gitRepo } : {}) });
   /** A brain whose source has no checkout at all: the database is the record. */
   async function noCheckout(run: (brain: { engine: BrainEngine; ctx: OperationContext }) => Promise<void>): Promise<void> {
-    let engine: BrainEngine; let close: () => Promise<void>;
-    if (backend === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(databaseUrl!));
-    else { const pglite = new PGLiteEngine(); await pglite.connect({ engine: 'pglite' } as never); await pglite.initSchema(); engine = pglite; close = () => pglite.disconnect(); }
+    const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
     try {
       const ctx: OperationContext = { engine, config: { engine: engine.kind, embedding_disabled: true } as never, sourceId: 'default', remote: false, dryRun: false,
         logger: { info() {}, warn() {}, error() {} } };
@@ -78,7 +75,10 @@ for (const backend of testBackends()) describe(`[${backend}] remember on an enti
     expect(pageless).toMatchObject({ status: 'inserted', entity_slug: PAGELESS, visibility: 'world' });
     expect(pageless).not.toHaveProperty('page');
     expect(await engine.executeRaw('SELECT 1 FROM pages WHERE slug=$1', [PAGELESS])).toHaveLength(0);
-    expect(await remember(ctx, 'Hana Example prefers tea.', PAGED)).toMatchObject({ status: 'inserted', page: PAGED });
+    const paged = await remember(ctx, 'Hana Example prefers tea.', PAGED);
+    expect(paged).toMatchObject({ status: 'inserted', page: PAGED });
+    // A replay of that request names the page again.
+    expect(await call(ctx, 'remember', { fact: 'Hana Example prefers tea.', entity: PAGED, provenance: 'chat 2026-11-11', request_id: paged.request_id })).toMatchObject({ page: PAGED });
     const { items } = await batch(ctx);
     expect(items[0]).toMatchObject({ status: 'inserted', entity_slug: PAGED, page: PAGED });
     expect(items[1]).toMatchObject({ status: 'inserted', entity_slug: PAGELESS });
@@ -166,6 +166,11 @@ for (const backend of testBackends()) describe(`[${backend}] remember on an enti
     expect(local.notices.map(n => n.code)).not.toContain(NOTICE);
     const mcp = await overMcp(engine, { fact: 'The remodel contractor is acme-example.', entity: PAGELESS });
     expect(mcp.blocks.join('\n')).not.toContain(NOTICE);
+    // Once the owner records that it commits this checkout's pages to Git, the reply says how to give the fact a file.
+    await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
+    const durable = caller(ctx);
+    await remember(durable.ctx, 'The remodel permit was filed in November.', PAGELESS);
+    expect(durable.notices.filter(n => n.code === NOTICE)).toHaveLength(1);
   }), 180_000);
 
   test('a source with no checkout: the database is the record, so the reply asks for nothing', () => noCheckout(async ({ engine, ctx }) => {
