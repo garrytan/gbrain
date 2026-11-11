@@ -654,8 +654,7 @@ for (const kind of testBackends()) {
       await engine.insertFact({ fact: 'Acme harbor buoy inspection canaryownpageworld', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
       await engine.insertFact({ fact: 'Harbor buoy note on her page path canaryownpagepath', kind: 'fact', entity_slug: null, source: 'test', visibility: 'world' }, { source_id: SRC });
       await engine.executeRaw("UPDATE facts SET source_markdown_slug = 'memory/members/alice-example' WHERE source_id = $1 AND fact LIKE '%canaryownpagepath%'", [SRC]);
-      await engine.insertFact({ fact: 'Bob logs the harbor buoy canaryownpagebob', kind: 'fact', entity_slug: null, source: 'test', visibility: 'private' }, { source_id: SRC });
-      await engine.executeRaw("UPDATE facts SET source_markdown_slug = 'memory/members/bob-example' WHERE source_id = $1 AND fact LIKE '%canaryownpagebob%'", [SRC]);
+      expect((await write(bob, [{ fact: 'Bob logs the harbor buoy canaryownpagebob', provenance: 'turn 61' }])).structured?.status).toBe('committed');
       __resetPrivateVisibilityCacheForTests();
       for (const [as, mine, others] of [[alice, ['canaryownpagerecent', 'canaryownpageold'], ['canaryownpageworld', 'canaryownpagepath']], [{ token: 'bob' }, ['canaryownpagebob'], ['canaryownpageworld']]] as const) {
         const out = await recall(as, 'harbor buoy', { max_chars: 12_000 });

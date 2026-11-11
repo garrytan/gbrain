@@ -18,13 +18,15 @@ identifiers and attribution are available in the pre-removal Git revision
 
 | Area | Before | Now |
 |---|---|---|
-| `memory_recall` fact rows | `id`, `text`, `date`, `kind`, `arm` | also `own_page`: `true` when the fact is on the person's own member page in the connection's source, the same check `forget_fact` makes, so `forget_fact` accepts it; `false` when `forget_fact` answers `fact_not_found`. `arm` is unchanged |
-| QM contract | v3: no proposal, no scope marking, no `own_page` | v4 adds `memory_propose` (arguments, caps, the held answer, the proposal receipt and its states, `cancel_write_request` as the proposer's cancel, and "a state not listed means unknown, not published"), `scope_read: true`/`false` on each personal tool, and `own_page`; v1-v3 unchanged |
+| `memory_recall` fact rows | `id`, `text`, `date`, `kind`, `arm` | also `own_page`: `true` when the fact is on the person's own member page in the connection's source, the same check `forget_fact` makes, so `forget_fact` accepts it on ownership; `false` when `forget_fact` for that attested person answers `fact_not_found`. `arm` is unchanged |
+| `get_write_request` / `cancel_write_request` on a proposal | `request_id`, `state`, `retry_after_ms`, `operation`, `source_id`, `slug`, `proposal`, and `decision` / `write_error` when closed | also `created_at` and `updated_at`, as a write's receipt carries them |
+| QM contract | v3: no proposal, no scope marking, no `own_page` | v4 adds `memory_propose` (arguments, caps, the held answer, the proposal receipt and its states, `cancel_write_request` as the proposer's cancel, how long a closed proposal is kept, and "a state not listed means unknown, not published"), `scope_read: true`/`false` on each personal tool, and `own_page`; v1-v3 unchanged |
 
 ### Itemized changes
 
 - `src/core/access/member-facts.ts`: `ownMemberFactIds` returns the facts on the caller's own member page. `forget` and `forget_fact` decide ownership with it, and `memory_recall` sets `own_page` from it, so the two cannot disagree.
 - `src/core/ops/qm-memory.ts`: each recalled row carries `own_page`.
+- `src/core/persistence/memory-proposals.ts`: the proposal receipt carries `created_at` and `updated_at`.
 - `scripts/build-qm-memory-contract.ts`, `docs/contracts/qm-memory-provider/v4.json` (new): contract v4, generated from the live registry; the `actor_required` fix row names `memory_propose` from v4 on.
 - Docs: `docs/contracts/qm-memory-provider/README.md`, `docs/guides/qm.md`, `docs/architecture/key-files/access.md`.
 - Tests: `test/qm-memory-tools.test.ts` checks on PGLite and Postgres that every `own_page: true` row is one `forget_fact` withdraws and every `false` row is refused `fact_not_found`, whichever arm found it; `test/qm-memory-contract.test.ts` pins the v1-v3 bytes and checks v4 against the registry; `test/qm-memory-propose.test.ts` checks the held answer, the receipt and the cancel against v4.

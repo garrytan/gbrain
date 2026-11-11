@@ -270,8 +270,8 @@ describe('QM memory-provider contract v4 (GST-2407: memory_propose, E1 scope_rea
       expect(fixture[key]).toEqual(v3[key]);
     }
     expect(fixture.tools.filter((t: { name: string }) => t.name !== 'memory_propose')).toEqual(v3.tools);
-    const { structured_content: shape, own_page: _own, ...recallRest } = fixture.memory_recall;
-    const { structured_content: v3Shape, ...v3Rest } = v3.memory_recall;
+    const { structured_content: shape, own_page: _own, arm: _arm, ...recallRest } = fixture.memory_recall;
+    const { structured_content: v3Shape, arm: _v3Arm, ...v3Rest } = v3.memory_recall;
     expect(recallRest).toEqual(v3Rest);
     const { own_page: ownPage, ...row } = shape.facts[0];
     expect({ ...shape, facts: [row] }).toEqual(v3Shape);
@@ -279,7 +279,8 @@ describe('QM memory-provider contract v4 (GST-2407: memory_propose, E1 scope_rea
     const { read_as: readAs, scope_read: _marks, tools: personalTools, ...personalRest } = fixture.personal_tools;
     const { read_as: v3ReadAs, tools: v3Tools, ...v3PersonalRest } = v3.personal_tools;
     expect(personalRest).toEqual(v3PersonalRest);
-    expect(personalTools.map(({ scope_read: _s, ...t }: { scope_read: boolean }) => t)).toEqual(v3Tools);
+    expect(personalTools.map(({ scope_read: _s, proposal_receipt: _p, ...t }: { scope_read: boolean; proposal_receipt?: string }) => t)).toEqual(v3Tools);
+    expect(personalTools.filter((t: { proposal_receipt?: string }) => t.proposal_receipt).map((t: { name: string }) => t.name)).toEqual(['get_write_request']);
     expect(v3ReadAs).toContain('no tool here is marked as a shared-scope read yet');
     expect(readAs).not.toContain('not marked');
     expect(fixture.errors.shape).toEqual(v3.errors.shape);
@@ -309,7 +310,8 @@ describe('QM memory-provider contract v4 (GST-2407: memory_propose, E1 scope_rea
 
   test('memory_recall rows carry own_page beside an unchanged arm', () => {
     expect(fixture.memory_recall.structured_content.facts[0]).toEqual({ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string', arm: '"own" | "ranked"', own_page: 'boolean' });
-    expect(fixture.memory_recall.arm).toBe(v3.memory_recall.arm);
+    expect(fixture.memory_recall.arm.startsWith(v3.memory_recall.arm)).toBe(true);
+    expect(fixture.memory_recall.arm).toContain('--attest-read person');
     expect(fixture.memory_recall.own_page).toContain('forget_fact');
     expect(fixture.memory_recall.own_page).toContain('fact_not_found');
   });
@@ -331,6 +333,8 @@ describe('QM memory-provider contract v4 (GST-2407: memory_propose, E1 scope_rea
     expect(propose.receipt.states.closed).toEqual(['denied', 'expired', 'cancelled', 'failed', 'conflict']);
     expect(propose.receipt.states.unknown).toContain('unknown, not published');
     expect(propose.cancel).toContain('cancel_write_request');
+    expect(propose.retention).toContain(PROPOSAL_LIMIT_KEYS.retentionDays.key);
+    expect(fixture.personal_tools.tools.find((t: { name: string }) => t.name === 'get_write_request').proposal_receipt).toContain('memory_propose.receipt');
     expect(propose.awaiting.structuredContent.status).toBe('awaiting_owner');
     const notes = Object.fromEntries(fixture.errors.codes.map((c: { code: string; note?: string }) => [c.code, c.note]));
     for (const reason of ['proposal_kind_field', 'proposal_too_large', 'proposal_revision_changed']) expect(notes.invalid_params).toContain(reason);

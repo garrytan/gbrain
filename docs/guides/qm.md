@@ -211,8 +211,8 @@ On success the result is in `structuredContent`, and `content` holds only the te
 for the model. Each fact in `structuredContent.facts` carries `arm`: `own` (the
 person's own recent fact) or `ranked` (matched by `query`); a recall that names
 sources has only `ranked` rows. Each fact also carries `own_page`: `true` when it sits on
-the person's own member page, the same test `forget_fact` uses, so `forget_fact` accepts it;
-`false` means `forget_fact` for that person answers `fact_not_found`. An older own fact can be `ranked` with
+the person's own member page, the same test `forget_fact` uses, so `forget_fact` accepts it on
+ownership; `false` means `forget_fact` for that person answers `fact_not_found`. An older own fact can be `ranked` with
 `own_page: true`. A query over 2,000 characters is ranked on its start;
 send `query_keep: "tail"` when QM puts its preamble ahead of the turn, and read
 `query_truncated` to tell a cut query from a short one. An attested call to a v3 personal tool also gets its

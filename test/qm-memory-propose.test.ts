@@ -346,6 +346,7 @@ for (const kind of testBackends()) {
       const id = held.structured!.request_id as string;
       const waiting = await receipt(alice, id);
       for (const key of Object.keys(contract.receipt.structured_content)) expect(waiting.structured).toHaveProperty(key);
+      expect(Object.keys(waiting.structured!).filter(k => !(k in contract.receipt.structured_content) && !(k in contract.receipt.optional))).toEqual([]);
       expect(Object.keys(waiting.structured!.proposal).sort()).toEqual(Object.keys(contract.receipt.structured_content.proposal).sort());
       expect(contract.receipt.states.known).toContain(waiting.structured!.state);
       expect(waiting.structured!.retry_after_ms).toBeLessThanOrEqual(PROPOSAL_RETRY_AFTER_MS);

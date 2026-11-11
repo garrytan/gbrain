@@ -28,7 +28,8 @@ answers, the proposal states (a state not listed means unknown, not published) a
 `cancel_write_request` as the proposer's cancel. Each personal tool carries
 `scope_read: true` or `false`: a marked tool reads named sources as their audience,
 never as the person. Each `memory_recall` fact carries `own_page`, true when the fact
-sits on the person's own member page, which is exactly when `forget_fact` accepts it.
+sits on the person's own member page, which is exactly when `forget_fact` accepts it on
+ownership (it can still ask the owner for a fact more trusted than the person's own writes).
 
 They are generated from the live operation registry by
 `bun scripts/build-qm-memory-contract.ts` (part of `bun run regen:all`), and

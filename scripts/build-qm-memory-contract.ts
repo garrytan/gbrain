@@ -212,7 +212,8 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
         as_person: 'a credential the brain operator binds with --attest-read person reads named sources as the person instead, narrowed to those sources',
         without_sources: 'the person read (read_as above)',
       } } : {}),
-      tools: [...QM_PERSONAL_OPS].sort().map(name => ({ ...toolEntry(name, version), personal_only: true, ...(v4 ? { scope_read: SCOPE_READ_OPS.has(name) } : {}), result: PERSONAL_RESULTS[name] })),
+      tools: [...QM_PERSONAL_OPS].sort().map(name => ({ ...toolEntry(name, version), personal_only: true, ...(v4 ? { scope_read: SCOPE_READ_OPS.has(name) } : {}), result: PERSONAL_RESULTS[name],
+        ...(v4 && name === 'get_write_request' ? { proposal_receipt: 'the fields and states in result are a write\'s receipt; a request_id from memory_propose that no write holds yet answers memory_propose.receipt instead, with its own fields and states (awaiting_owner, denied, expired, cancelled, failed, conflict)' } : {}) })),
     } } : {}),
     memory_recall: {
       limits: { max_chars: { ...MEMORY_RECALL_MAX_CHARS, whole_number: true, unit: 'UTF-16 code units (JavaScript string length)' }, query_chars_ranked: MEMORY_RECALL_QUERY_CHARS, own_recent_window_hours: OWN_RECENT_WINDOW_HOURS },
@@ -225,7 +226,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       order: ['own facts from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours, newest first', 'facts the person may read, ranked by query'],
       ranking: 'keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)',
       structured_content: { facts: [{ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string', ...(v3 ? { arm: '"own" | "ranked"' } : {}), ...(v4 ? { own_page: 'boolean' } : {}) }], truncated: 'boolean', ...(v3 ? { query_truncated: 'boolean, only when the call sent query_keep' } : {}), code: 'actor_unlinked (only on unlinked_recall)' },
-      ...(v3 ? { arm: 'own: the person\'s own fact from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only' } : {}),
+      ...(v3 ? { arm: 'own: the person\'s own fact from the last ' + OWN_RECENT_WINDOW_HOURS + ' hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only' + (v4 ? ', unless the credential reads named sources as the person (--attest-read person)' : '') } : {}),
       ...(v4 ? { own_page: 'true: the fact sits on the person\'s own member page in the connection\'s source, the same test forget_fact applies, so forget_fact accepts it on ownership; false: forget_fact for this person answers fact_not_found. Independent of arm (an own-page fact older than ' + OWN_RECENT_WINDOW_HOURS + ' hours is ranked); false on every row of a scope read (a call that names sources, unless the credential reads them as the person)' } : {}),
       ...(v2 ? { scope_read: {
         arguments: ['source_id', 'source_ids'],
@@ -276,14 +277,15 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       held: 'nothing is written until the brain owner approves; while it waits the proposed text is never in search, recall, git or an export, and no receipt carries it',
       request_id: 'derived from the credential, the person and idempotency_key: one request id from proposal to publication',
       replay: 'the same idempotency_key with the same fields, from the same person and credential, returns that proposal\'s current state in status; with other fields it is idempotency_conflict; from another person or credential it is a separate proposal',
+      retention: `a closed proposal (denied, expired, cancelled, failed, conflict or approved) is deleted ${PROPOSAL_LIMIT_KEYS.retentionDays.key} days after it closed (default ${PROPOSAL_LIMIT_KEYS.retentionDays.default}); after that its request_id answers not_found while no write holds it, an approved write\'s receipt no longer carries proposal, and the same idempotency_key starts a new proposal under the same request_id, so never resend an old key to learn how a proposal ended`,
       awaiting: { content: 'the result as JSON', structuredContent: { status: 'awaiting_owner', request_id: 'uuid', kind: '"timeline" | "link"', target: 'string', expires_at: 'string (ISO 8601)', text: 'string' } },
       receipt: {
         read: 'get_write_request {request_id}',
-        structured_content: { request_id: 'string', state: PROPOSAL_STATES.filter(s => s !== 'approved').map(s => '"' + s + '"').join(' | '), retry_after_ms: 'number | null', operation: '"add_timeline_entry" | "add_link"', source_id: 'string', slug: 'string', proposal: { kind: '"timeline" | "link"', target: 'string', expires_at: 'string' } },
+        structured_content: { request_id: 'string', state: PROPOSAL_STATES.filter(s => s !== 'approved').map(s => '"' + s + '"').join(' | '), retry_after_ms: 'number | null', operation: '"add_timeline_entry" | "add_link"', source_id: 'string', slug: 'string', created_at: 'string', updated_at: 'string', proposal: { kind: '"timeline" | "link"', target: 'string', expires_at: 'string' } },
         optional: { 'proposal.to': 'string: a link\'s to page', decision: 'object {reason, decided_at} once the proposal is closed: denied carries the owner\'s reason', write_error: 'string: why approval closed it (failed: actor_unlinked, actor_not_attested, permission_denied, page_not_found or source_changed; conflict: revision_changed or link_target_changed)' },
         states: {
           known: [...PROPOSAL_STATES], held: 'awaiting_owner', closed: PROPOSAL_STATES.filter(s => s !== 'awaiting_owner' && s !== 'approved'),
-          approved: 'get_write_request answers the write\'s own receipt (personal_tools get_write_request, published when committed) plus proposal {kind, target, to?, decided_at}',
+          approved: 'get_write_request answers the write\'s own receipt (personal_tools get_write_request, published when committed) plus proposal {kind, target, to?, decided_at} until the proposal row is deleted (retention)',
           unknown: 'a state not listed here means unknown, not published: never report the proposal as written; poll again or report it as unknown',
           poll: `while awaiting_owner, after retry_after_ms (${PROPOSAL_RETRY_AFTER_MS}, or the time to expiry when sooner)`,
         },

@@ -918,7 +918,8 @@
             "unknown": "a state not listed here means unknown, not published: never report the write as saved; poll again or report it as unknown",
             "poll": "until a terminal state, after retry_after_ms when it is set"
           }
-        }
+        },
+        "proposal_receipt": "the fields and states in result are a write's receipt; a request_id from memory_propose that no write holds yet answers memory_propose.receipt instead, with its own fields and states (awaiting_owner, denied, expired, cancelled, failed, conflict)"
       },
       {
         "name": "query",
@@ -1303,7 +1304,7 @@
       "query_truncated": "boolean, only when the call sent query_keep",
       "code": "actor_unlinked (only on unlinked_recall)"
     },
-    "arm": "own: the person's own fact from the last 24 hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only",
+    "arm": "own: the person's own fact from the last 24 hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only, unless the credential reads named sources as the person (--attest-read person)",
     "own_page": "true: the fact sits on the person's own member page in the connection's source, the same test forget_fact applies, so forget_fact accepts it on ownership; false: forget_fact for this person answers fact_not_found. Independent of arm (an own-page fact older than 24 hours is ranked); false on every row of a scope read (a call that names sources, unless the credential reads them as the person)",
     "scope_read": {
       "arguments": [
@@ -1467,6 +1468,7 @@
     "held": "nothing is written until the brain owner approves; while it waits the proposed text is never in search, recall, git or an export, and no receipt carries it",
     "request_id": "derived from the credential, the person and idempotency_key: one request id from proposal to publication",
     "replay": "the same idempotency_key with the same fields, from the same person and credential, returns that proposal's current state in status; with other fields it is idempotency_conflict; from another person or credential it is a separate proposal",
+    "retention": "a closed proposal (denied, expired, cancelled, failed, conflict or approved) is deleted proposals.retention_days days after it closed (default 30); after that its request_id answers not_found while no write holds it, an approved write's receipt no longer carries proposal, and the same idempotency_key starts a new proposal under the same request_id, so never resend an old key to learn how a proposal ended",
     "awaiting": {
       "content": "the result as JSON",
       "structuredContent": {
@@ -1487,6 +1489,8 @@
         "operation": "\"add_timeline_entry\" | \"add_link\"",
         "source_id": "string",
         "slug": "string",
+        "created_at": "string",
+        "updated_at": "string",
         "proposal": {
           "kind": "\"timeline\" | \"link\"",
           "target": "string",
@@ -1516,7 +1520,7 @@
           "failed",
           "conflict"
         ],
-        "approved": "get_write_request answers the write's own receipt (personal_tools get_write_request, published when committed) plus proposal {kind, target, to?, decided_at}",
+        "approved": "get_write_request answers the write's own receipt (personal_tools get_write_request, published when committed) plus proposal {kind, target, to?, decided_at} until the proposal row is deleted (retention)",
         "unknown": "a state not listed here means unknown, not published: never report the proposal as written; poll again or report it as unknown",
         "poll": "while awaiting_owner, after retry_after_ms (300000, or the time to expiry when sooner)"
       },
