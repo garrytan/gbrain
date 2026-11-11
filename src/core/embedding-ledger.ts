@@ -41,7 +41,7 @@ import { withAIInvocationGuard } from './ai/invocation-guard.ts';
 import { loadPricingOverrides } from './budget/budget-tracker.ts';
 import type { PricingOverrides } from './budget/reservation-cost.ts';
 import { actualCents, maximumInvocationCents } from './minions/delegated-spend.ts';
-import { UNPRICED_RATE_PER_MTOK } from './held-embedding-action.ts';
+import { ledgerPricePerMTok, UNPRICED_RATE_PER_MTOK } from './held-embedding-action.ts';
 
 export const PAGE_TAIL_USD_KEY = 'embed.page_tail_usd_per_day';
 export const DEFAULT_PAGE_TAIL_USD = 0.25;
@@ -160,17 +160,39 @@ export async function reserveEmbeddingBatch(engine: BrainEngine, batch: {
   });
 }
 
+/** Input tokens an embedding request can bill per input beyond its text's UTF-8 bytes (framing and special tokens). */
+const EMBED_INPUT_OVERHEAD_TOKENS = 8;
+
+/** The most input tokens a batch of `texts` can bill: no tokenizer emits more tokens than UTF-8 bytes, plus a per-input overhead. */
+export function embeddingCeilingTokens(texts: readonly string[]): number {
+  return texts.reduce((n, text) => n + Buffer.byteLength(text, 'utf8') + EMBED_INPUT_OVERHEAD_TOKENS, 0);
+}
+
+/** `tokens` at the ledger's rate for `signature`: an unpriced model at UNPRICED_RATE_PER_MTOK, a free recipe at $0. */
+export function ledgerTokensUsd(tokens: number, signature: string | null | undefined): number {
+  return tokens * ledgerPricePerMTok(signature).rate / 1_000_000;
+}
+
 const lockSourceSpend = (tx: Pick<BrainEngine, 'executeRaw'>, sourceId: string) =>
   tx.executeRaw("SELECT pg_advisory_xact_lock(hashtext('gbrain:embedding_spend:' || $1)::bigint)", [sourceId]);
 
 const spendIds = (batchId: string) => [batchId, `${batchId}:tail`];
 
-/** Store a batch's returned vectors before its install and settle its spend; idempotent by batch id (an uncertain batch that answered late settles too). */
-export async function storeBatchVectors(engine: BrainEngine, batchId: string, rows: readonly EmbeddingBatchRow[]): Promise<void> {
+/** Settle a batch's open spend rows to `usd` in all, split between its page and tail rows as they were reserved. */
+const settleBatchSpend = (tx: Pick<BrainEngine, 'executeRaw'>, batchId: string, usd: number) => tx.executeRaw(`UPDATE embedding_spend s SET state = 'settled',
+    usd = CASE WHEN t.total > 0 THEN s.usd * $2::float8 / t.total ELSE s.usd END
+  FROM (SELECT sum(usd) AS total FROM embedding_spend WHERE batch_id = ANY($1::text[])) t
+  WHERE s.batch_id = ANY($1::text[]) AND s.state IN ('reserved','uncertain')`, [spendIds(batchId), Math.max(0, usd)]);
+
+/**
+ * Store a batch's returned vectors before its install and settle its spend to `usd` (its measured cost, or the reserved
+ * ceiling when the provider reported no usage); idempotent by batch id (an uncertain batch that answered late settles too).
+ */
+export async function storeBatchVectors(engine: BrainEngine, batchId: string, rows: readonly EmbeddingBatchRow[], usd: number): Promise<void> {
   await engine.transaction(async tx => {
     await tx.executeRaw(`UPDATE embedding_batches SET rows = $2::text::jsonb, state = 'returned', updated_at = now()
       WHERE batch_id = $1 AND state IN ('calling','uncertain')`, [batchId, JSON.stringify(rows)]);
-    await tx.executeRaw("UPDATE embedding_spend SET state = 'settled' WHERE batch_id = ANY($1::text[]) AND state IN ('reserved','uncertain')", [spendIds(batchId)]);
+    await settleBatchSpend(tx, batchId, usd);
   });
 }
 
@@ -193,11 +215,11 @@ export async function markBatchUncertain(engine: BrainEngine, batchId: string): 
   });
 }
 
-/** The provider answered but the batch is unusable (an incomplete, invalid or refused-vector response): drop it and keep its settled spend. */
-export async function discardAnsweredBatch(engine: BrainEngine, batchId: string): Promise<void> {
+/** The provider answered but the batch is unusable (an incomplete, invalid or refused-vector response): drop it and settle its spend to `usd`. */
+export async function discardAnsweredBatch(engine: BrainEngine, batchId: string, usd: number): Promise<void> {
   await engine.transaction(async tx => {
     await tx.executeRaw("DELETE FROM embedding_batches WHERE batch_id = $1", [batchId]);
-    await tx.executeRaw("UPDATE embedding_spend SET state = 'settled' WHERE batch_id = ANY($1::text[]) AND state IN ('reserved','uncertain')", [spendIds(batchId)]);
+    await settleBatchSpend(tx, batchId, usd);
   });
 }
 

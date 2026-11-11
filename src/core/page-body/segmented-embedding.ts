@@ -15,10 +15,10 @@ import type { ChunkInput, CRMode } from '../types.ts';
 import { jsonRowBatches } from '../batch-rows.ts';
 import { wrapChunkTextsForStoredMode } from '../embedding-context.ts';
 import { embeddingInputHash, plainEmbeddingTier } from '../embedding-input-hash.ts';
-import { estimatePageEmbedUsd, meterPageBatch } from '../page-embedding-budget.ts';
+import { meterPageBatch } from '../page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, vectorlessChunkIndexes } from '../page-embedding-lease.ts';
 import {
-  discardAnsweredBatch, embeddingBatchContext, embeddingBatchId, embeddingBatchProbe, markBatchUncertain, readEmbedProgress, recoverPageBatches, releaseEmbeddingBatch,
+  discardAnsweredBatch, embeddingBatchContext, embeddingBatchId, embeddingBatchProbe, embeddingCeilingTokens, ledgerTokensUsd, markBatchUncertain, readEmbedProgress, recoverPageBatches, releaseEmbeddingBatch,
   releaseUncertainBatches, reserveEmbeddingBatch, resolvePageTailUsdPerDay, saveEmbedProgress, storeBatchVectors, textMd5, withBatchReserved,
   type EmbedOrder, type EmbedProgress, type EmbeddingBatchRow, type JobSpendCeiling,
 } from '../embedding-ledger.ts';
@@ -240,36 +240,39 @@ export async function embedSegmentedRows(engine: BrainEngine, page: SegmentedEmb
   const batchRows: EmbeddingBatchRow[] = chunks.map(chunk => ({ chunk_index: chunk.chunk_index, text_md5: textMd5(chunk.chunk_text),
     hash: embeddingInputHash(provenance, tier, chunk), expected: asRead.get(chunk.chunk_index) ?? null }));
   const grant = metered.grant;
-  const tailUsd = grant?.tailUsd ?? 0;
-  const pageUsd = grant ? grant.reservedUsd : estimatePageEmbedUsd(chunks.reduce((n, chunk) => n + chunk.chunk_text.length, 0), opts.signature);
+  const texts = wrapChunkTextsForStoredMode(page, chunks);
+  const usdFor = (tokens: number | null) => ledgerTokensUsd(tokens ?? embeddingCeilingTokens(texts), opts.signature);
+  const ceilingUsd = usdFor(null);
+  const tailShare = grant?.tailUsd ? grant.tailUsd / (grant.reservedUsd + grant.tailUsd) : 0;
   const batchId = embeddingBatchId(opts.ceiling);
   const reserved = await reserveEmbeddingBatch(engine, { batchId, pageId: page.id, sourceId: page.source_id, generation: page.body_generation,
     column: target.column.name, signature: opts.signature ?? null, context: embeddingBatchContext(page, target), rows: batchRows,
-    pageUsd, tailUsd, enforce: opts.approvedCapUsd === undefined, ceiling: opts.ceiling });
+    pageUsd: ceilingUsd * (1 - tailShare), tailUsd: ceilingUsd * tailShare, enforce: opts.approvedCapUsd === undefined, ceiling: opts.ceiling });
   if (!reserved.ok) {
     await grant?.settle({ ok: false });
     return reserved.jobCapped ? null : { pending: rows.length, installed: replayed, sourceCapped: true };
   }
   await embeddingBatchProbe.beforeCall?.(batchId);
-  const call = await callBatchProvider(opts.embedFn ?? segmentedProviderEmbed, wrapChunkTextsForStoredMode(page, chunks), opts.signal);
+  const call = await callBatchProvider(opts.embedFn ?? segmentedProviderEmbed, texts, opts.signal);
+  const usd = usdFor(call.tokens);
   if ('error' in call) {
     if (call.billed === 'no') await releaseEmbeddingBatch(engine, batchId).catch(() => {});
-    else if (call.billed === 'answered') await discardAnsweredBatch(engine, batchId).catch(() => {});
+    else if (call.billed === 'answered') await discardAnsweredBatch(engine, batchId, usd).catch(() => {});
     else await markBatchUncertain(engine, batchId).catch(() => {});
-    await grant?.settle({ ok: call.billed !== 'no' }).catch(() => {});
+    await grant?.settle({ ok: call.billed !== 'no', usd: usd * (1 - tailShare) }).catch(() => {});
     throw call.error;
   }
   const vectors = call.vectors;
   if (vectors.length !== chunks.length || vectors.some(v => !v?.length || !v.every(Number.isFinite))) {
-    await discardAnsweredBatch(engine, batchId);
-    await grant?.settle({ ok: true });
+    await discardAnsweredBatch(engine, batchId, usd);
+    await grant?.settle({ ok: true, usd: usd * (1 - tailShare) });
     throw new Error('Embedding provider returned an incomplete or invalid batch');
   }
-  await storeBatchVectors(engine, batchId, batchRows.map((row, i) => ({ ...row, embedding: `[${Array.from(vectors[i]!).join(',')}]` })));
-  await grant?.settle({ ok: true });
+  await storeBatchVectors(engine, batchId, batchRows.map((row, i) => ({ ...row, embedding: `[${Array.from(vectors[i]!).join(',')}]` })), usd);
+  await grant?.settle({ ok: true, usd: usd * (1 - tailShare) });
   await embeddingBatchProbe.afterReturned?.(batchId);
   const installed = await installEmbeddingBatch(engine, page, target, batchId, guard);
-  return { pending: rows.length, installed: installed + replayed, usd: pageUsd + tailUsd, ...(uncertain ? { uncertain } : {}) };
+  return { pending: rows.length, installed: installed + replayed, usd, ...(uncertain ? { uncertain } : {}) };
 }
 
 /**
@@ -280,26 +283,33 @@ export async function embedSegmentedRows(engine: BrainEngine, page: SegmentedEmb
  * attempt was sent and never answered: the batch turns uncertain and waits for approval), `answered` (attempts
  * answered and the response was refused: their spend stands) or `no` (nothing was sent, or each attempt was refused
  * unbilled or rate limited: the batch is released). A rate-limited batch with nothing answered is retried here with
- * the rate-limit backoff, at most MAX_RATE_LIMIT_RETRIES times.
+ * the rate-limit backoff, at most MAX_RATE_LIMIT_RETRIES times. `tokens` is the input the attempts billed when every
+ * answered attempt reported its usage, null otherwise (the batch then keeps its reserved ceiling).
  */
 async function callBatchProvider(embedFn: SegmentedEmbedFn, texts: string[], signal?: AbortSignal):
-  Promise<{ vectors: Float32Array[] } | { error: unknown; billed: 'no' | 'answered' | 'unknown' }> {
+  Promise<{ vectors: Float32Array[]; tokens: number | null } | { error: unknown; billed: 'no' | 'answered' | 'unknown'; tokens: number | null }> {
   for (let retry = 0; ; retry++) {
-    const attempts = { sent: 0, unbilled: 0, answered: 0 };
+    const attempts = { sent: 0, unbilled: 0, answered: 0, tokens: 0, unmeasured: 0 };
+    const tokens = () => (attempts.unmeasured ? null : attempts.tokens);
     try {
-      return { vectors: await withBatchReserved(() => withAIInvocationMeter(event => {
+      const vectors = await withBatchReserved(() => withAIInvocationMeter(event => {
         if (event.call.kind === 'embedding' && event.outcome === 'ok') attempts.answered++;
       }, () => withAIInvocationGuard(async () => {
         if (attempts.sent > attempts.unbilled + attempts.answered) throw new Error('An earlier attempt of this embedding batch may have been billed without an answer, so the batch is not sent again without approval.');
         attempts.sent++;
-        return { settle: async usage => { if (usage && usage.inputTokens === 0 && usage.outputTokens === 0) attempts.unbilled++; } };
-      }, () => embedFn(texts, { abortSignal: signal }), { inherit: true }))) };
+        return { settle: async usage => {
+          if (!usage) { attempts.unmeasured++; return; }
+          if (usage.inputTokens === 0 && usage.outputTokens === 0) attempts.unbilled++;
+          attempts.tokens += usage.inputTokens + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+        } };
+      }, () => embedFn(texts, { abortSignal: signal }), { inherit: true })));
+      return { vectors, tokens: attempts.answered ? tokens() : null };
     } catch (error) {
       const open = attempts.sent - attempts.unbilled - attempts.answered;
       const limited = open === 1 && detect429FromCause(error);
-      if (open > 0 && !limited) return { error, billed: 'unknown' };
-      if (attempts.answered > 0) return { error, billed: 'answered' };
-      if (!limited || retry >= MAX_RATE_LIMIT_RETRIES || signal?.aborted) return { error, billed: 'no' };
+      if (open > 0 && !limited) return { error, billed: 'unknown', tokens: null };
+      if (attempts.answered > 0) return { error, billed: 'answered', tokens: tokens() };
+      if (!limited || retry >= MAX_RATE_LIMIT_RETRIES || signal?.aborted) return { error, billed: 'no', tokens: null };
       await abortableSleep(rateLimitDelayMs(error instanceof Error ? error.message : String(error), retry), signal);
     }
   }
