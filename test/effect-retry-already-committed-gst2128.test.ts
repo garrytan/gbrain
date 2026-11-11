@@ -118,3 +118,19 @@ test('one retried target tracked under a folder an ignore rule now covers does n
   expect((await gitAsync(root, 'status', '--porcelain')).trim()).toBe('');
   expect((await gitAsync(remote, 'rev-parse', 'main')).trim()).toBe((await gitAsync(root, 'rev-parse', 'HEAD')).trim());
 }), 120_000);
+
+test('a push the secret scan holds keeps the effect commit standing and leaves nothing staged', isolated(async () => {
+  const { root, remote, sourceId } = await claimedRepo('scan');
+  const tip = (await gitAsync(remote, 'rev-parse', 'main')).trim();
+  // A script's plain commit below the effect's adds a value that looks like a token, so the effect's push is held.
+  mkdirSync(join(root, 'notes')); writeFileSync(join(root, 'notes', 'script.md'), `token: ghp_${'Zt4q'.repeat(9)}\n`);
+  await gitAsync(root, 'add', 'notes/script.md'); await gitAsync(root, 'commit', '-q', '-m', 'A script commit');
+  const w = await write(root, sourceId, 'people/alice-example');
+  await retryParkedEffects(engine, sourceId, w.requestId, false);
+  await runEffects();
+  const [held] = await engine.executeRaw<{ data: { parked?: { error_code: string }[] } }>("SELECT data FROM persistence_effects WHERE request_id=$1::uuid AND kind='git'", [w.id]);
+  expect(held!.data.parked).toEqual([expect.objectContaining({ error_code: 'publish_secret_found' })]);
+  expect(await gitAsync(root, 'show', 'HEAD:people/alice-example.md')).toContain('After');
+  expect((await gitAsync(root, 'status', '--porcelain')).trim()).toBe('');
+  expect((await gitAsync(remote, 'rev-parse', 'main')).trim()).toBe(tip);
+}), 120_000);

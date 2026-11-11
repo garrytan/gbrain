@@ -133,7 +133,8 @@ test('a group step that throws after the add leaves no staged paths', async () =
 
 test('a commit that lands but reports a failure is not reversed in the index', async () => {
   const { top, root } = checkout();
-  const path = failingGit(has(' commit '));
+  // The effect commit lands when update-ref moves the branch; this one moves it and still exits 1.
+  const path = failingGit(has(' update-ref '));
   writeFileSync(join(root, 'people', 'alice-example.md'), 'Alice, second version.\n');
   const results = await withEnv({ PATH: path }, () => commitGitTargets(root, ['people/alice-example.md']));
   expect(results.get('people/alice-example.md')).toMatchObject({ code: 'git_unavailable' });
