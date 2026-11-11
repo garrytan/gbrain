@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.661.0] - 2026-11-11
 
 **A take or a dated link no longer disappears when a page rewrite drops its section and a later write brings the section back.** Two writers rebuilt a dropped section from scratch: the takes writers numbered their new take from 1 over the stored takes, and `add_link` wrote a links section holding only the new link. Both now start from what the brain still stores.
 
