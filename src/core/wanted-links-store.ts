@@ -83,7 +83,7 @@ export async function replaceWantedLinks(
   const written = await executeRawJsonb<{ id: number }>(tx, `INSERT INTO wanted_links
       (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at)
     SELECT $1, $2, v.producer, v.ref_kind, v.target_source_id, v.target_ref, v.link_type, v.context,
-      CASE WHEN EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id AND t.deleted_at IS NULL
+      CASE WHEN EXISTS (SELECT 1 FROM pages t WHERE v.ref_kind = 'slug' AND t.source_id = v.target_source_id AND t.deleted_at IS NULL
         AND t.slug = v.target_ref)
       THEN '-infinity'::timestamptz ELSE now() END
     FROM jsonb_to_recordset(($3::jsonb)->'rows')
