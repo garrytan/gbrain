@@ -709,8 +709,8 @@ vars — incident-time escape hatches, not everyday knobs.
    source out of publishing and keep its sync, run
    `gbrain config set sources.auto_reconcile.source.<id> false`. Neither
    git-reconcile nor refresh then pushes that checkout's local commits (a
-   checkout several sources share stays unpublished while any of them is
-   off), but it still fast-forwards and syncs. `gbrain sources status` and
+   Git repository several sources share stays unpublished while any of
+   them is off, even one whose sync is off), but it still fast-forwards and syncs. `gbrain sources status` and
    `gbrain sources git-reconcile --dry-run` show which sources are off.
 
    **Say to your agent:** *"Bring my notes source up to date with its remote."*

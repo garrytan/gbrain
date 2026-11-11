@@ -73,23 +73,27 @@ async function reconcileManaged(engine: BrainEngine, sourceId: string, root: str
 
 export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptions = {}): Promise<SourceReconcile[]> {
   const explicit = !!opts.sourceIds?.length;
-  const listed = (await listSources(engine)).filter(s => s.local_path && (!explicit || opts.sourceIds!.includes(s.id)));
+  const all = (await listSources(engine)).filter(s => s.local_path);
+  const listed = all.filter(s => !explicit || opts.sourceIds!.includes(s.id));
   const unknown = (opts.sourceIds ?? []).filter(id => !listed.some(s => s.id === id));
   if (unknown.length) throw new OperationError('unknown_source', `No source with a local checkout named ${unknown.join(', ')}.`, 'gbrain sources list shows each source and its local path.');
   const configs = new Map((await engine.executeRaw<{ id: string; config: unknown }>('SELECT id, config FROM sources')).map(row => [row.id, row.config]));
   const managed = await managedPersistenceEnabled(engine);
   const configured = (await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY))?.trim();
   const publishSetting = configured ? isTruthy(configured) : null;
-  const groups = new Map<string, { sources: string[]; root: string; managed: boolean; cloned: boolean }>();
-  for (const source of listed) {
-    if (!explicit && isSyncDisabledConfig(configs.get(source.id))) continue;
+  const groups = new Map<string, { sources: string[]; root: string; top: string; managed: boolean; cloned: boolean }>();
+  const sharers = new Map<string, string[]>();
+  for (const source of all) {
     const binding = managed ? await getWorktreeBinding(engine, source.id, existingHostIdFor(engine)) : null;
     if (managed && !binding) continue;
     const root = binding?.local_path ?? source.local_path!;
     if (!existsSync(root) || classifyGitCheckout(root) === 'not_git') continue;
+    const top = gitTopLevel(root) ?? realpathSync(root);
+    sharers.set(top, [...(sharers.get(top) ?? []), source.id]);
+    if (!listed.includes(source) || (!explicit && isSyncDisabledConfig(configs.get(source.id)))) continue;
     const key = binding ? `worktree:${binding.worktree_id}` : `path:${root}`;
-    const cloned = isOwnedClone({ id: source.id, local_path: source.local_path, config: configs.get(source.id) }) && gitTopLevel(root) === realpathSync(root);
-    const group = groups.get(key) ?? { sources: [], root, managed: !!binding, cloned };
+    const cloned = isOwnedClone({ id: source.id, local_path: source.local_path, config: configs.get(source.id) }) && top === realpathSync(root);
+    const group = groups.get(key) ?? { sources: [], root, top, managed: !!binding, cloned };
     group.sources.push(source.id);
     group.cloned &&= cloned;
     groups.set(key, group);
@@ -97,11 +101,12 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
   if (!groups.size) return [{ sources: [], root: '', managed: false, status: 'no_repo', ahead: 0, behind: 0 }];
   const out: SourceReconcile[] = [];
   for (const group of groups.values()) {
+    const { cloned, top, ...entry } = group;
+    let off: { publish_off?: string[] } = {};
     try {
-      const { cloned, ...entry } = group;
-      const optedOut = await publishOptedOut(engine, group.sources);
+      const optedOut = await publishOptedOut(engine, sharers.get(top) ?? group.sources);
       const publish = optedOut.length ? false : group.managed ? publishSetting !== false : publishSetting ?? cloned;
-      const off = optedOut.length ? { publish_off: optedOut } : {};
+      if (optedOut.length) off = { publish_off: optedOut };
       const offReason = `automatic publishing is off for ${optedOut.join(', ')} (sources.auto_reconcile.source.<id> false)`;
       const result = group.managed
         ? await withReconcileLock(group.root, opts.waitMs ?? 300_000, () => reconcileManaged(engine, group.sources[0], group.root, publish, opts,
@@ -112,8 +117,7 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
     } catch (error) {
       const failure = classifyItemFailure(error);
       if (!(error instanceof OperationError) && failure.scope === 'run') throw error;
-      const { cloned: _cloned, ...entry } = group;
-      out.push({ ...entry, ahead: 0, behind: 0, ...groupRefusal(error, failure) });
+      out.push({ ...entry, ahead: 0, behind: 0, ...off, ...groupRefusal(error, failure) });
     }
   }
   return out;

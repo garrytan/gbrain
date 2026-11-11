@@ -6,7 +6,7 @@
  * `brain-repo-durability.ts` re-exports it for its older callers.
  */
 import { readFileSync } from 'fs';
-import { execFile, execFileSync, type ChildProcess, type ExecFileException } from './spawn.ts';
+import { execFile, type ChildProcess, type ExecFileException } from './spawn.ts';
 
 /** Default time a stopped child gets to exit after SIGTERM before SIGKILL; a caller passes `termGraceMs` for children that need longer to clean up. */
 const BOUNDED_EXEC_TERM_GRACE_MS = 2_000;
@@ -34,18 +34,27 @@ function pidGone(pid: number): boolean {
   try { process.kill(pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
 }
 
-/** GST-2250: every process below `pids` in the POSIX process table, so a stopped child's git, ssh or hook descendants are stopped with it. */
-function descendantsOf(pids: number[]): number[] {
-  let listing = '';
-  try { listing = execFileSync('ps', ['-A', '-o', 'pid=', '-o', 'ppid='], { encoding: 'utf8', timeout: 5_000 }) as string; } catch { return []; }
-  const children = new Map<number, number[]>();
-  for (const row of listing.split('\n')) {
-    const [pid, ppid] = row.trim().split(/\s+/).map(Number);
-    if (pid && ppid) children.set(ppid, [...(children.get(ppid) ?? []), pid]);
-  }
-  const found: number[] = [], queue = [...pids];
-  while (queue.length) for (const pid of children.get(queue.shift()!) ?? []) if (!found.includes(pid)) { found.push(pid); queue.push(pid); }
-  return found;
+/**
+ * GST-2250: every process below `pids` in the POSIX process table, so a stopped child's git, ssh or hook descendants are
+ * stopped with it. Read with an async `ps` (bounded by its own timer, since the runtime can drop its exit) so the event
+ * loop never waits on it; an unreadable table means no descendants, the behaviour without killTree.
+ */
+function descendantsOf(pids: number[]): Promise<number[]> {
+  return new Promise(resolve => {
+    const done = (found: number[]) => { clearTimeout(bound); resolve(found); };
+    const bound = setTimeout(() => done([]), 2_000);
+    execFile('ps', ['-A', '-o', 'pid=', '-o', 'ppid='], { encoding: 'utf8', timeout: 2_000 }, (error: ExecFileException | null, listing: string) => {
+      if (error) { done([]); return; }
+      const children = new Map<number, number[]>();
+      for (const row of listing.split('\n')) {
+        const [pid, ppid] = row.trim().split(/\s+/).map(Number);
+        if (pid && ppid) children.set(ppid, [...(children.get(ppid) ?? []), pid]);
+      }
+      const found: number[] = [], queue = [...pids];
+      while (queue.length) for (const pid of children.get(queue.shift()!) ?? []) if (!found.includes(pid)) { found.push(pid); queue.push(pid); }
+      done(found);
+    });
+  });
 }
 
 export interface BoundedExecOptions {
@@ -56,7 +65,7 @@ export interface BoundedExecOptions {
   termGraceMs?: number;
   /** 'buffer' returns stdout and stderr as raw bytes (NUL-delimited git listings); default 'utf8'. */
   encoding?: 'utf8' | 'buffer';
-  /** Stop the child's descendants too (read before the first signal, again before SIGKILL), and settle only once none runs. POSIX only. */
+  /** Stop the child's descendants too (read before the first signal, again before SIGKILL) and settle only once none of them runs. POSIX only. */
   killTree?: boolean;
 }
 
@@ -98,26 +107,32 @@ export function execFileBounded(file: string, args: string[], options: BoundedEx
       clearInterval(poll);
       finish(stopped, empty, empty);
     };
+    let tree: number[] = [];
+    const live = () => tree.filter(pid => !pidGone(pid));
+    const signalTree = (name: NodeJS.Signals) => { for (const pid of live()) try { process.kill(pid, name); } catch { /* already gone */ } };
     const child = execFile(file, args, { ...rest, encoding: encoding as BufferEncoding }, (error: ExecFileException | null, stdout: string | Buffer, stderr: string | Buffer) => {
+      if (stopped && live().length) return;
       clearTimeout(escalation);
       clearInterval(poll);
       if (stopped) finish(stopped, empty, empty);
       else finish(error, stdout, stderr);
     });
-    const stop = (message: string, code: string) => {
-      if (stopped) return;
-      stopped = Object.assign(new Error(message), { code, killed: true, signal: 'SIGTERM' as const });
-      const tree = killTree && process.platform !== 'win32' && child.pid !== undefined ? descendantsOf([child.pid]) : [];
-      const signalTree = (name: NodeJS.Signals) => { for (const pid of tree) try { process.kill(pid, name); } catch { /* already gone */ } };
+    const terminate = () => {
       child.kill('SIGTERM');
       signalTree('SIGTERM');
-      poll = setInterval(() => { if (childHasExited(child) && tree.every(pidGone)) settleStopped(); }, 25);
-      escalation = setTimeout(() => {
-        if (tree.length) for (const pid of descendantsOf([child.pid!, ...tree])) if (!tree.includes(pid)) tree.push(pid);
+      poll = setInterval(() => { if (childHasExited(child) && !live().length) settleStopped(); }, 25);
+      escalation = setTimeout(async () => {
+        if (killTree) tree = [...new Set([...live(), ...await descendantsOf([...(childHasExited(child) ? [] : [child.pid!]), ...live()])])];
         child.kill('SIGKILL');
         signalTree('SIGKILL');
         settleStopped();
       }, termGraceMs);
+    };
+    const stop = (message: string, code: string) => {
+      if (stopped) return;
+      stopped = Object.assign(new Error(message), { code, killed: true, signal: 'SIGTERM' as const });
+      if (!killTree || process.platform === 'win32' || child.pid === undefined) { terminate(); return; }
+      void descendantsOf([child.pid]).then(found => { tree = found; terminate(); });
     };
     const timer = setTimeout(() => stop(`${file} did not finish within ${timeout}ms`, 'ETIMEDOUT'), timeout);
     const onAbort = () => stop(`${file} was aborted`, 'ABORT_ERR');
