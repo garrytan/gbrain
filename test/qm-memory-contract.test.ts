@@ -1,5 +1,5 @@
 /**
- * GST-359 D: the QM memory-provider contract fixtures (docs/contracts/qm-memory-provider/v1.json, v2.json and v3.json).
+ * GST-359 D: the QM memory-provider contract fixtures (docs/contracts/qm-memory-provider/v1.json to v4.json).
  *
  * 1. Protects: the committed fixture QM vendors equals what the live registry, actor model and error registry produce,
  *    and it pins the r3 contract values (actor id pattern, stateless session, success codes in structuredContent).
@@ -20,9 +20,14 @@ import { findUnknownParams, narrowingUnknownParams } from '../src/mcp/validate-p
 import { QM_PERSONAL_OPS, unlinkedRecallResult } from '../src/core/ops/qm-memory.ts';
 import { WRITE_REQUEST_STATES } from '../src/core/persistence/types.ts';
 import { DEFAULT_ATTEST_OPS } from '../src/core/access/actor-model.ts';
+import { SCOPE_READ_OPS } from '../src/core/access/scope-read.ts';
+import { PROPOSAL_LIMIT_KEYS, PROPOSAL_STATES } from '../src/core/persistence/memory-proposals.ts';
 
 /** The v1 bytes QM vendored for the 11-06 tag (GBRA-108, GST-359): v1 never changes while QM depends on it. */
 const V1_SHA256 = 'c80a7a5f8133f875ef90a2b5052a53c4d2bb0ab95facfa3975ba626c00daae78';
+/** The v2 and v3 bytes as they landed (v0.60.662.0): a published version never changes. */
+const V2_SHA256 = '5458aa92d9495c391b7ec96978a16d4f7ea9841994e8e9163da1205223f1f6a6';
+const V3_SHA256 = 'cf4e3f514c57bcd381c1bc0846a0de105dd2a0fbbf361aaa08175cd8bfe0760b';
 
 describe('QM memory-provider contract v1', () => {
   const fixture = JSON.parse(readFileSync(QM_CONTRACT_PATH, 'utf8'));
@@ -239,5 +244,101 @@ describe('QM memory-provider contract v3 (GST-1158 F1: personal tools, frozen re
     for (const code of ['page_not_found', 'result_too_large']) expect(codes).toContain(code);
     for (const c of fixture.errors.codes) expect(CODES[c.code as keyof typeof CODES]).toBeDefined();
     expect(fixture.errors.applies_to).toContain('personal');
+  });
+});
+
+describe('QM memory-provider contract v4 (GST-2407: memory_propose, E1 scope_read markings, own_page)', () => {
+  const fixture = JSON.parse(readFileSync(QM_CONTRACT_PATHS[4], 'utf8'));
+  const v3 = JSON.parse(readFileSync(QM_CONTRACT_PATHS[3], 'utf8'));
+  const sha = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+  test('the committed fixture matches the live registry (regenerate with bun scripts/build-qm-memory-contract.ts)', () => {
+    expect(QM_CONTRACT_PATHS[4].endsWith(join('docs', 'contracts', 'qm-memory-provider', 'v4.json'))).toBe(true);
+    expect(readFileSync(QM_CONTRACT_PATHS[4], 'utf8')).toBe(renderQmMemoryContract(4));
+  });
+
+  test('v1, v2 and v3 stay byte for byte as published, on disk and as the builder renders them', () => {
+    for (const [version, want] of [[1, V1_SHA256], [2, V2_SHA256], [3, V3_SHA256]] as const) {
+      expect({ version, disk: sha(readFileSync(QM_CONTRACT_PATHS[version])), built: sha(renderQmMemoryContract(version)) }).toEqual({ version, disk: want, built: want });
+    }
+  });
+
+  test('it keeps everything v3 has; only the tools, recall\'s rows, the personal tools\' markings, memory_propose and the error list grow', () => {
+    expect(fixture.version).toBe(4);
+    for (const key of Object.keys(v3)) {
+      if (['version', 'tools', 'memory_recall', 'personal_tools', 'errors'].includes(key)) continue;
+      expect(fixture[key]).toEqual(v3[key]);
+    }
+    expect(fixture.tools.filter((t: { name: string }) => t.name !== 'memory_propose')).toEqual(v3.tools);
+    const { structured_content: shape, own_page: _own, ...recallRest } = fixture.memory_recall;
+    const { structured_content: v3Shape, ...v3Rest } = v3.memory_recall;
+    expect(recallRest).toEqual(v3Rest);
+    const { own_page: ownPage, ...row } = shape.facts[0];
+    expect({ ...shape, facts: [row] }).toEqual(v3Shape);
+    expect(ownPage).toBe('boolean');
+    const { read_as: readAs, scope_read: _marks, tools: personalTools, ...personalRest } = fixture.personal_tools;
+    const { read_as: v3ReadAs, tools: v3Tools, ...v3PersonalRest } = v3.personal_tools;
+    expect(personalRest).toEqual(v3PersonalRest);
+    expect(personalTools.map(({ scope_read: _s, ...t }: { scope_read: boolean }) => t)).toEqual(v3Tools);
+    expect(v3ReadAs).toContain('no tool here is marked as a shared-scope read yet');
+    expect(readAs).not.toContain('not marked');
+    expect(fixture.errors.shape).toEqual(v3.errors.shape);
+    for (const code of v3.errors.codes) {
+      const now = fixture.errors.codes.find((c: { code: string }) => c.code === code.code);
+      const { note, reasons, ...rest } = now;
+      const { note: v3Note, reasons: v3Reasons, ...v3RestCode } = code;
+      expect(rest).toEqual(v3RestCode);
+      if (code.code !== 'not_found' && v3Note) expect(note.startsWith(v3Note)).toBe(true);
+      if (v3Reasons) expect(reasons.map((r: { reason: string }) => r.reason)).toEqual(v3Reasons.map((r: { reason: string }) => r.reason));
+    }
+    expect(v3.memory_propose).toBeUndefined();
+  });
+
+  test('each personal tool is marked scope_read from SCOPE_READ_OPS, and every scope-read op QM sees is marked', () => {
+    const marks = Object.fromEntries(fixture.personal_tools.tools.map((t: { name: string; scope_read: boolean }) => [t.name, t.scope_read]));
+    expect(marks).toEqual({ context_pack: false, entity: true, find_experts: true, forget_fact: false, get_backlinks: true, get_page: true, get_timeline: true, get_write_request: false, query: true, volunteer_context: true, whois: true });
+    for (const name of Object.keys(marks)) expect(marks[name]).toBe(SCOPE_READ_OPS.has(name));
+    for (const op of SCOPE_READ_OPS) expect(op === 'memory_recall' || marks[op] === true).toBe(true);
+    expect(fixture.memory_recall.scope_read).toEqual(v3.memory_recall.scope_read);
+    const rules = fixture.personal_tools.scope_read;
+    expect(rules.marked).toContain('never as the person');
+    expect(rules.every_source).toContain('invalid_params');
+    expect(rules.unmarked).toContain('context_pack');
+    expect(rules.as_person).toContain('--attest-read person');
+  });
+
+  test('memory_recall rows carry own_page beside an unchanged arm', () => {
+    expect(fixture.memory_recall.structured_content.facts[0]).toEqual({ id: 'string', text: 'string', date: 'YYYY-MM-DD', kind: 'string', arm: '"own" | "ranked"', own_page: 'boolean' });
+    expect(fixture.memory_recall.arm).toBe(v3.memory_recall.arm);
+    expect(fixture.memory_recall.own_page).toContain('forget_fact');
+    expect(fixture.memory_recall.own_page).toContain('fact_not_found');
+  });
+
+  test('memory_propose: the served schema, opt-in, the caps from the registry, the proposal states and the unknown-state rule', () => {
+    const tool = fixture.tools.find((t: { name: string }) => t.name === 'memory_propose');
+    const def = buildToolDefs(operations.filter(o => o.name === 'memory_propose'))[0]!;
+    expect({ description: tool.description, ...tool.input_schema }).toEqual({ description: def.description, ...def.inputSchema });
+    expect({ scope: tool.scope, mutating: tool.mutating }).toEqual({ scope: 'write', mutating: true });
+    expect(fixture.actor.default_attest_ops).not.toContain('memory_propose');
+    expect(fixture.actor.deferred_ops).not.toContain('memory_propose');
+    const propose = fixture.memory_propose;
+    expect(propose.opt_in).toContain('cancel_write_request,get_write_request,memory_propose');
+    expect(propose.limits.payload_chars.max).toBe(PROPOSAL_LIMIT_KEYS.maxPayloadChars.default);
+    expect(propose.limits.pending_per_actor.default).toBe(PROPOSAL_LIMIT_KEYS.maxPendingPerActor.default);
+    expect(propose.limits.pending_per_credential.default).toBe(PROPOSAL_LIMIT_KEYS.maxPendingPerCredential.default);
+    expect(propose.limits.ttl_hours.default).toBe(PROPOSAL_LIMIT_KEYS.ttlHours.default);
+    expect(propose.receipt.states.known).toEqual([...PROPOSAL_STATES]);
+    expect(propose.receipt.states.closed).toEqual(['denied', 'expired', 'cancelled', 'failed', 'conflict']);
+    expect(propose.receipt.states.unknown).toContain('unknown, not published');
+    expect(propose.cancel).toContain('cancel_write_request');
+    expect(propose.awaiting.structuredContent.status).toBe('awaiting_owner');
+    const notes = Object.fromEntries(fixture.errors.codes.map((c: { code: string; note?: string }) => [c.code, c.note]));
+    for (const reason of ['proposal_kind_field', 'proposal_too_large', 'proposal_revision_changed']) expect(notes.invalid_params).toContain(reason);
+    for (const code of ['idempotency_conflict', 'proposals_pending_limit', 'source_changed']) expect(notes[code]).toContain('memory_propose');
+    for (const reason of CODES.proposals_pending_limit.reasons ?? []) expect(notes.proposals_pending_limit).toContain('reason ' + reason);
+    for (const c of fixture.errors.codes) expect(CODES[c.code as keyof typeof CODES]).toBeDefined();
+    const fixes = fixture.errors.codes.find((c: { code: string }) => c.code === 'actor_not_attested').reasons;
+    expect(fixes.find((r: { reason: string }) => r.reason === 'actor_required').fix).toContain('memory_propose');
+    expect(fixture.errors.applies_to).toContain('memory_propose');
   });
 });

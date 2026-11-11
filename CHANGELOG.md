@@ -10,6 +10,25 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**QM, the AI helper that can use gbrain as one of its memories, gets a fourth contract version, and each fact it recalls now says whether the person can forget it.** `docs/contracts/qm-memory-provider/v4.json` describes owner-approved proposals (`memory_propose`), marks which personal tools read named sources as a shared scope, and adds `own_page` to every recalled fact. v1, v2 and v3 are byte-identical, so QM keeps whatever version it vendors until it moves.
+
+### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| `memory_recall` fact rows | `id`, `text`, `date`, `kind`, `arm` | also `own_page`: `true` when the fact is on the person's own member page in the connection's source, the same check `forget_fact` makes, so `forget_fact` accepts it; `false` when `forget_fact` answers `fact_not_found`. `arm` is unchanged |
+| QM contract | v3: no proposal, no scope marking, no `own_page` | v4 adds `memory_propose` (arguments, caps, the held answer, the proposal receipt and its states, `cancel_write_request` as the proposer's cancel, and "a state not listed means unknown, not published"), `scope_read: true`/`false` on each personal tool, and `own_page`; v1-v3 unchanged |
+
+### Itemized changes
+
+- `src/core/access/member-facts.ts`: `ownMemberFactIds` returns the facts on the caller's own member page. `forget` and `forget_fact` decide ownership with it, and `memory_recall` sets `own_page` from it, so the two cannot disagree.
+- `src/core/ops/qm-memory.ts`: each recalled row carries `own_page`.
+- `scripts/build-qm-memory-contract.ts`, `docs/contracts/qm-memory-provider/v4.json` (new): contract v4, generated from the live registry; the `actor_required` fix row names `memory_propose` from v4 on.
+- Docs: `docs/contracts/qm-memory-provider/README.md`, `docs/guides/qm.md`, `docs/architecture/key-files/access.md`.
+- Tests: `test/qm-memory-tools.test.ts` checks on PGLite and Postgres that every `own_page: true` row is one `forget_fact` withdraws and every `false` row is refused `fact_not_found`, whichever arm found it; `test/qm-memory-contract.test.ts` pins the v1-v3 bytes and checks v4 against the registry; `test/qm-memory-propose.test.ts` checks the held answer, the receipt and the cancel against v4.
+
 ## [0.60.662.0] - 2026-11-11
 
 **QM, the AI helper that can use gbrain as one of its memories, can no longer write any page directly, and the brain owner can now review its proposals from another machine.** Every page write QM makes for a person waits for the owner's approval, a fact it saves for a person stays private, and the owner's admin session reaches the proposal review over the running server. Unattested calls and member-bound credentials behave as before.

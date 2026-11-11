@@ -19,7 +19,16 @@ states, and a state not listed means unknown, not published. v3 also adds each
 call that sends it gets `query_truncated`. None of the v3 tools is a
 default attested operation (only `get_write_request` is): the brain operator lists
 each one in the client's `--attest-ops`. No v3 tool is marked as a shared-scope
-read yet; a later version adds those markings.
+read; v4 adds those markings.
+
+`v4.json` keeps all of v3 and adds three things. `memory_propose` lets QM propose
+one timeline entry or link on a shared page that the brain owner approves before
+anything is written, with its arguments, caps, the proposal receipt `get_write_request`
+answers, the proposal states (a state not listed means unknown, not published) and
+`cancel_write_request` as the proposer's cancel. Each personal tool carries
+`scope_read: true` or `false`: a marked tool reads named sources as their audience,
+never as the person. Each `memory_recall` fact carries `own_page`, true when the fact
+sits on the person's own member page, which is exactly when `forget_fact` accepts it.
 
 They are generated from the live operation registry by
 `bun scripts/build-qm-memory-contract.ts` (part of `bun run regen:all`), and
