@@ -328,6 +328,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'url_source_origin',
   // F4b: PGLite row-delta planner statistics / Postgres autovacuum ANALYZE lag on the hot tables.
   'planner_stats_stale',
+  // #6770: MCP request-log size and the opt-in retention prune (mcp-request-log-retention.ts).
+  'mcp_request_log_retention',
   'alternative_providers',
   'autopilot_fanout_concurrency',
   'autopilot_lock_scope',

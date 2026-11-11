@@ -1127,6 +1127,10 @@
       },
       {
         "category": "ops",
+        "name": "mcp_request_log_retention"
+      },
+      {
+        "category": "ops",
         "name": "search_mode"
       },
       {

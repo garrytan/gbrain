@@ -98,6 +98,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('link_transitions', 'user_data', 'Dated start/end evidence for relationships, including manual add_link dates that exist nowhere else.'),
     carry('loop_suppressions', 'user_data', 'Open-loop mutes the user chose.'),
     carry('mcp_request_log', 'operational', 'MCP request log.'),
+    carry('mcp_request_log_rollup', 'operational', 'Per-token tally of request-log rows the retention prune removed; the dashboard\'s lifetime totals and the usage windows\' pruned-before date read it.'),
     carry('mcp_spend_log', 'operational', 'MCP spend log.'),
     carry('mcp_spend_reservations', 'operational', 'Pending and unresolved MCP charges; admission counts them and late settlement needs them.'),
     carry('memory_proposals', 'user_data', 'Held QM proposals awaiting owner review and their closed outcomes until retention; replays and receipts read them.'),

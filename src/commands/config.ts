@@ -414,6 +414,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   if (key === 'sync.slug_conflicts.auto_remove') { const err = (await import('../core/repair/slug-autoheal.ts')).slugAutoRemoveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.origin_twins.auto_resolve') { const err = (await import('../core/repair/origin-twins-heal.ts')).originAutoResolveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.repo_path') { const err = (await import('../core/sync-config-keys.ts')).syncRepoPathRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
+  if (key === 'cycle.purge.mcp_request_log_retention_days') { const err = (await import('../core/mcp-request-log-retention.ts')).mcpLogRetentionRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key.startsWith('search.')) (await import('./config/keyword-timeout-value.ts')).refuseInvalidKeywordTimeoutValue(key, value);
   if (key === 'persistence.max_claim_ms') {
     const { validateMaxClaimConfigValue } = await import('../core/persistence/claim-phase.ts');
