@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.658.0] - 2026-11-11
 
 **Pull requests now run the tests that check gbrain's lists, in about 4 minutes, instead of finding those failures in the 30-minute full run.** Some tests fail whenever a change adds an operation, command, `--flag`, error code, doctor check or repair kind without updating the list that tracks it, or changes output a golden file pins. Before this release, pull requests skipped those tests and their first failure came in the full-ci run. A new check, `enumeration and census tests`, runs them on every pull request that changes more than docs. It is advisory: no merge rule reads it. `bash scripts/ci-census-tests.sh --run` runs the same tests on your own machine without Postgres.
 
