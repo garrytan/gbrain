@@ -16,8 +16,8 @@
 #   2. Size caps for CLAUDE.md, the index, each subsystem and
 #      docs/TESTING.md. The TESTING.md cap is a ratchet: lower it when the file
 #      shrinks, never raise it; detail moves next to its code instead. A subsystem
-#      page at its cap continues on a new page linked from its last line (the
-#      index links only a chain's first page), not on an unrelated page.
+#      page at its cap continues on a new page linked from its last line, not
+#      on an unrelated page.
 #   3. One reference bullet per src file across the index and subsystems — a cherry-pick that keeps both sides
 #      of a hunk leaves two "- `src/x.ts`" bullets describing two different
 #      "current states" for one file. Merge into the survivor, never append a twin.
