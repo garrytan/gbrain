@@ -25,6 +25,8 @@ const DISPLAY_CHARS = 80;
 const NOTICE_VALUES = 5;
 /** Pages a bulk run's notice or the doctor check reads at most. */
 export const SCAN_CAP = 100_000;
+/** A notice read on a write or sync path ends on the server after this long, and a read it ends gives no notice. */
+export const NOTICE_READ_TIMEOUT_MS = 1_000;
 const LABEL_LINE_RE = new RegExp(`^\\s*["']?(?:${PRIVACY_LABEL_KEYS.join('|')})["']?\\s*:`, 'im');
 
 export interface IgnoredPrivacyLabel { key: string; value: string }
@@ -85,7 +87,7 @@ export async function sourceHasRepo(engine: Pick<BrainEngine, 'executeRaw'>, sou
     const [row] = await engine.executeRaw<{ repo: boolean }>(
       `SELECT (COALESCE(s.local_path, '') <> '' OR s.config->>'canonical' = 'git'
           OR (s.id = 'default' AND EXISTS (SELECT 1 FROM config c WHERE c.key = 'sync.repo_path' AND COALESCE(c.value, '') <> ''))) AS repo
-        FROM sources s WHERE s.id = $1`, [sourceId]);
+        FROM sources s WHERE s.id = $1`, [sourceId], { timeoutMs: NOTICE_READ_TIMEOUT_MS });
     return row ? row.repo === true : false;
   } catch {
     return true;
@@ -157,7 +159,7 @@ export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'ex
         WHERE p.source_id = $1 AND ${'slugs' in scope ? 'p.slug = ANY($2::text[])' : 'p.updated_at >= $2::timestamptz'} AND p.deleted_at IS NULL
           AND NOT (p.frontmatter ? 'readable_by') AND p.folder_rule_ids IS NULL
           AND ${privacyLabelKeySql('p')} AND ${ignoredPrivacyLabelSql('p')}
-        LIMIT ${SCAN_CAP}`, [sourceId, 'slugs' in scope ? [...new Set(scope.slugs)] : scope.since]);
+        LIMIT ${SCAN_CAP}`, [sourceId, 'slugs' in scope ? [...new Set(scope.slugs)] : scope.since], { timeoutMs: NOTICE_READ_TIMEOUT_MS });
     const tally = tallyIgnoredLabels(rows.map(row => ignoredPrivacyLabels(row)));
     if (!tally.pages) return null;
     return ignoredPrivacyLabelNotice({ ...tally, repo: await sourceHasRepo(engine, sourceId), sourceId, run });
@@ -179,7 +181,9 @@ export async function withIgnoredPrivacyLabelNotice<R>(ctx: Pick<OperationContex
     const written = (result ?? {}) as Record<string, unknown>;
     const stored = typeof written.slug === 'string' ? written.slug : String(params.slug);
     const committed = written.status === 'created_or_updated' || written.status === 'skipped';
-    const page = committed ? await ctx.engine.getPage(stored, { sourceId }) : null;
+    const [page] = committed ? await ctx.engine.executeRaw<{ type: string | null; frontmatter: Record<string, unknown> | null }>(
+      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, stored],
+      { timeoutMs: NOTICE_READ_TIMEOUT_MS }) : [];
     const labels = ignoredPrivacyLabels(page ?? parseMarkdown(content, `${stored}.md`));
     if (labels.length) ctx.emitNotice(ignoredPrivacyLabelNotice({ labels: labels.map(l => ({ ...l, pages: 1 })), pages: 1,
       repo: await sourceHasRepo(ctx.engine, sourceId), sourceId, slug: stored }));
