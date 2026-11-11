@@ -458,6 +458,7 @@ describe('gbrain setup --serves (spawned, PGLite)', () => {
       [['--stdio-member', 'Alice Example'], 'needs a member id', {}],
       [['--stdio-member', 'alice-example', '--stdio-member=bob-example'], 'was given 2 times', {}],
       [['--stdio-member', 'alice-example'], 'OpenClaw is installed on this host', { PATH: `${fakeOpenclaw(b)}:${process.env.PATH}` }],
+      [['--stdio-member', 'alice-example'], 'Hermes is installed on this host', { HERMES_HOME: b.root }],
     ];
     for (const [args, says, env] of serveRefusals) {
       const r = await gbrain(b, ['serve', ...args], env);
