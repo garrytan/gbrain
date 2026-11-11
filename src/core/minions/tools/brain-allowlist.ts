@@ -331,7 +331,7 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
           return withCallerAccess(access, () => withReadMode(readMode, async () => run(await attestedReadScope(ctx.engine, opCtx, actor.member, readMode === 'scope'))));
         })()
         : opCtx.auth
-        ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor), run)
+        ? await withCallerAccess(await remoteCallerAccess(ctx.engine, opCtx.auth, [], undefined, actingFor, undefined, op.mutating === false), run)
         : await run();
       const rejection = op.name === 'put_page' ? putPageRejection(output) : null;
       if (rejection) throw new Error(rejection);
