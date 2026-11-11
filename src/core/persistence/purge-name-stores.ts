@@ -17,5 +17,13 @@ export async function scrubPurgedNameStores(
   return {
     context_volunteer_events: await count('DELETE FROM context_volunteer_events WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
     mention_gazetteer_entries: await count('DELETE FROM mention_gazetteer_entries WHERE source_id = $1 AND target_slug = ANY($2::text[]) RETURNING 1'),
+    // #9146: slug-keyed stores with no foreign key to pages; every hard delete clears them, not only the direct purge.
+    // #6619: a redirect from the purged slug to another page stays; only redirects that resolve to it go.
+    take_proposals: await count('DELETE FROM take_proposals WHERE source_id = $1 AND page_slug = ANY($2::text[]) RETURNING 1'),
+    open_loops: await count('DELETE FROM open_loops WHERE source_id = $1 AND page_slug = ANY($2::text[]) RETURNING 1'),
+    core_edit_notices: await count('DELETE FROM core_edit_notices WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
+    page_aliases: await count('DELETE FROM page_aliases WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
+    slug_aliases: await count('DELETE FROM slug_aliases WHERE source_id = $1 AND canonical_slug = ANY($2::text[]) RETURNING 1'),
+    slug_rename_history: await count('DELETE FROM slug_rename_history WHERE source_id = $1 AND new_slug = ANY($2::text[]) RETURNING 1'),
   };
 }
