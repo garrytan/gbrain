@@ -690,6 +690,7 @@ src/core/persistence/ipc.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/journal.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/journal.ts	process_env	1	W6: settings plane out of the core
 src/core/persistence/large-file.ts	fs_import	1	W5: repo-less persistence for hosts
+src/core/persistence/limits.ts	module_collection	1	W6: per-engine state (the forecast rates recordForecastRates keeps per engine for a minute, GST-2107)
 src/core/persistence/links-preparation.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/persistence/local-client.ts	fs_import	1	W5: repo-less persistence for hosts
 src/core/persistence/local-edit-adoption.ts	fs_import	1	W5: repo-less persistence for hosts (reads the drifted canonical file it adopts)

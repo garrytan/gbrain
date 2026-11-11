@@ -182,9 +182,12 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // entry, or reset by a retry marker) that a NEWER migration already ran
     // past were skipped, not merely not reached yet. Versions above the newest
     // run are the next apply-migrations' ordinary work and stay quiet here.
+    // #8720: without an engine (--fast) the config that declines an opt-out
+    // migration is unreadable, so such a version is unknown, never pending.
     const newestRun = completedVersions.reduce<string | null>((a, v) => (a === null || compareVersions(v, a) > 0 ? v : a), null);
     const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION, declined).pending.filter(v =>
-      (newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry');
+      (engine || !(v in MIGRATION_OPT_OUT_KEYS))
+      && ((newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry'));
 
     if (declined.size > 0) {
       const keys = [...declined].map(v => `${MIGRATION_OPT_OUT_KEYS[v]}=false`);

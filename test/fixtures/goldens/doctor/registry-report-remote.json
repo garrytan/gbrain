@@ -199,6 +199,10 @@
       },
       {
         "category": "brain",
+        "name": "privacy_label_ignored"
+      },
+      {
+        "category": "brain",
         "name": "safe_index_pending"
       },
       {

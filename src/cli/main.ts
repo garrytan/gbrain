@@ -685,7 +685,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // because the import.meta.main seam exits explicitly on every one-shot path.
   const READ_OP_TIMEOUT_MS = 180_000;
   const configSnapshot = op.scope === 'read' ? takeStartupConfigSnapshot(engine) ?? openRequestConfigSnapshot(engine) : null;
-  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command); // GBRA-218 local --as <member>
+  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command, op.mutating === false); // GBRA-218 local --as <member>; GST-2490: owner lineage on reads only
   // GST-2476 G2: an enforced read runs as the member's stdio server would answer it; an enforced write is checked first.
   const enforced = enforcedClass ? await import('./enforced-member.ts') : null;
   if (enforced) await enforced.checkEnforcedOpArgs(engine, command, op, params);

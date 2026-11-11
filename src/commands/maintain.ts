@@ -3,7 +3,8 @@
  *
  * This command automates the safe parts of the operator runbook:
  *   - stale link/timeline extraction
- *   - stale per-source dream cycles when doctor reports cycle_freshness
+ *   - stale per-source dream cycles when doctor reports cycle_freshness,
+ *     limited to the free phases that never hard-delete (MAINTAIN_SAFE_PHASES)
  *
  * It deliberately does NOT mutate source files, apply schema-pack upgrades, or
  * invent semantic hub links. Those need review or a separate command with an
@@ -12,11 +13,18 @@
 
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
+import { isAvailable } from '../core/ai/gateway.ts';
+import { fenceRepairLlmEnabled } from '../core/fence-repair/config.ts';
+import { resolveFenceRepairModel } from '../core/fence-repair/model.ts';
+import { resolveContentRepairModel } from '../core/content-repair/llm.ts';
+import { loadConfigSnapshot } from '../core/config-snapshot.ts';
+import { readDecideConfig } from '../core/ai/decide/config.ts';
+import { hasTypesafeKey } from '../core/ai/decide/index.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { BrainHealth } from '../core/types.ts';
 import { buildChecks, computeDoctorReport, type DoctorReport, type Check } from './doctor.ts';
 import { extractStaleFromDB } from './extract.ts';
-import { runCycle, type CycleReport } from '../core/cycle.ts';
+import { resolveCyclePhases, runCycle, type CycleReport, type CyclePhase } from '../core/cycle.ts';
 import { ItemRun } from '../core/item-failure.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
@@ -70,6 +78,45 @@ export function extractCycleFreshnessSourceIds(checks: Check[]): string[] {
     }
   }
   return [...ids].sort();
+}
+
+/**
+ * The cycle phases `--safe` may run: free, and never hard-deleting. The page
+ * purge and every phase that calls a model stay with `gbrain dream` and
+ * `gbrain pages purge-deleted`.
+ */
+export const MAINTAIN_SAFE_PHASES: readonly CyclePhase[] = [
+  'lint', 'backlinks', 'sync', 'fence_repair', 'content_repair', 'unindexed_files',
+  'extract', 'extract_facts', 'resolve_symbol_edges', 'recompute_emotional_weight',
+  'consolidate', 'orphans', 'schema-suggest',
+];
+
+/** Which providers a safe phase would call on this brain; those phases are held back. */
+export interface SafePhaseProviders {
+  embedding: boolean;
+  decideConflict: boolean;
+  fenceRepairModel: boolean;
+  contentRepairModel: boolean;
+}
+
+export function maintainSafePhases(sourceId: string, providers: SafePhaseProviders): { phases: CyclePhase[]; held: CyclePhase[] } {
+  const held: CyclePhase[] = [];
+  if (providers.embedding || providers.decideConflict) held.push('extract_facts');
+  if (providers.fenceRepairModel || providers.embedding) held.push('fence_repair');
+  if (providers.contentRepairModel || providers.embedding) held.push('content_repair');
+  const phases = resolveCyclePhases(undefined, sourceId)
+    .filter((phase) => MAINTAIN_SAFE_PHASES.includes(phase) && !held.includes(phase));
+  return { phases, held };
+}
+
+async function readSafePhaseProviders(engine: BrainEngine): Promise<SafePhaseProviders> {
+  const repairLlm = await fenceRepairLlmEnabled(engine);
+  return {
+    embedding: isAvailable('embedding'),
+    decideConflict: readDecideConfig(await loadConfigSnapshot(engine), { typesafeKey: hasTypesafeKey() }).slots.conflict.mode !== 'off',
+    fenceRepairModel: repairLlm && (await resolveFenceRepairModel(engine)) !== null,
+    contentRepairModel: repairLlm && (await resolveContentRepairModel(engine)) !== null,
+  };
 }
 
 async function buildDoctorReport(engine: BrainEngine): Promise<DoctorReport> {
@@ -128,13 +175,17 @@ async function runCycleFreshnessMaintenance(
     return [{ name: 'cycle_freshness', status: 'ok', message: 'All sources cycled recently.' }];
   }
 
+  const providers = await readSafePhaseProviders(engine);
   if (dryRun) {
-    return sourceIds.map((sourceId) => ({
-      name: 'cycle_freshness',
-      status: 'would_apply',
-      message: `Would run source-scoped dream cycle for ${sourceId}.`,
-      details: { source_id: sourceId },
-    }));
+    return sourceIds.map((sourceId) => {
+      const { phases, held } = maintainSafePhases(sourceId, providers);
+      return {
+        name: 'cycle_freshness',
+        status: 'would_apply',
+        message: `Would run the free source cycle for ${sourceId} (no page purge, no paid phases).`,
+        details: { source_id: sourceId, phases, held_phases: held },
+      };
+    });
   }
 
   const sources = await engine.listAllSources();
@@ -147,6 +198,7 @@ async function runCycleFreshnessMaintenance(
     const localPath = source?.local_path ?? null;
     // #7630: a relative local_path names whatever directory maintain runs from, so it is no checkout.
     const brainDir = localPath && isAbsolute(localPath) && existsSync(localPath) ? localPath : null;
+    const { phases, held } = maintainSafePhases(sourceId, providers);
     let report: CycleReport;
     try {
       report = await runCycle(engine, {
@@ -154,6 +206,7 @@ async function runCycleFreshnessMaintenance(
         dryRun: false,
         pull: false,
         sourceId,
+        phases,
       });
       run.succeed();
     } catch (error) {
@@ -170,12 +223,13 @@ async function runCycleFreshnessMaintenance(
     actions.push({
       name: 'cycle_freshness',
       status: report.status === 'failed' ? 'blocked' : 'applied',
-      message: `Ran source-scoped dream cycle for ${sourceId}: ${report.status}.`,
+      message: `Ran the free source cycle for ${sourceId}: ${report.status}.`,
       details: {
         source_id: sourceId,
         brain_dir: brainDir,
         cycle_status: report.status,
         phases: report.phases.map((p) => ({ phase: p.phase, status: p.status })),
+        held_phases: held,
       },
     });
   }
@@ -198,6 +252,8 @@ Modes:
 Not auto-applied:
   source-file frontmatter fixes, schema-pack upgrades, atom-pack changes,
   semantic hub-link guesses, and destructive cleanup.
+  The source cycle skips the page purge (\`gbrain pages purge-deleted\`) and
+  every phase that calls a model (\`gbrain dream\`).
 `);
     return;
   }

@@ -126,6 +126,8 @@ export interface WritePageThroughOpts {
   expectedFileBytes?: string | null;
   /** The caller commits the file itself (#8073: one commit per batch), so the hardened per-file commit is skipped. */
   deferCommit?: boolean;
+  /** GST-2468: the exact file to write instead of the page rendered from its row (a label-only write keeps the file's own bytes). Inline pages only. */
+  fileText?: string;
 }
 
 export function withNoRepoWriteThroughWarning<T extends { written: boolean; skipped?: string; warning?: string }>(result: T, sourceId: string, operation = 'put_page'): T {
@@ -471,11 +473,11 @@ export async function writePageThrough(
     }
 
     const segmented = isSegmentedPage(writtenPage);
-    if (segmented && opts.inlineOnly) return { written: false, skipped: 'segmented_page' };
+    if (segmented && (opts.inlineOnly || opts.fileText !== undefined)) return { written: false, skipped: 'segmented_page' };
     if (segmented && opts.frontmatterOverrides) {
       return { written: false, error: `page ${slug} is stored in segments, and its file is streamed as gbrain export writes it, without frontmatter overrides` };
     }
-    const md = segmented ? null : serializePageToMarkdown(writtenPage, await engine.getTags(slug, { sourceId }), {
+    const md = segmented ? null : opts.fileText ?? serializePageToMarkdown(writtenPage, await engine.getTags(slug, { sourceId }), {
       frontmatterOverrides: opts.frontmatterOverrides,
     });
     // A segmented body alone over the cap is refused before its segments are streamed to measure the file.
