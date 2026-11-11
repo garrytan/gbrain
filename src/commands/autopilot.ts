@@ -448,7 +448,7 @@ export async function attemptAutopilotSelfUpgrade(
         /* fail-open */
       }
     }
-    if (!entry || entry.error || entry.marker?.kind !== 'upgrade_available' || !entry.marker.latest) return;
+    if (!entry || !isCacheFresh(entry, Date.now()) || entry.error || entry.marker?.kind !== 'upgrade_available' || !entry.marker.latest) return;
     const latestVersion = entry.marker.latest;
 
     const idle = await computeAutopilotIdle(engine, engineType);
