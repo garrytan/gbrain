@@ -57,20 +57,24 @@ async function residue(slug: string) {
 const ONLY_B = Object.fromEntries(['take_proposals', 'open_loops', 'core_edit_notices', 'page_aliases', 'slug_aliases', 'slug_rename_history'].map(t => [t, ['source-b']]));
 
 describe('slug-keyed stores on non-direct hard deletes (#9146)', () => {
-  test('the expired-tombstone purge clears them for the purged source only', () => withEnv({ GBRAIN_HOME: home }, async () => {
-    const slug = 'people/alice-example';
-    await seed(slug);
-    await engine.softDeletePage(slug, { sourceId: 'default' });
-    expect((await residue(slug)).take_proposals).toEqual(['default', 'source-b']);
-    const purged = await purgeDeletedPagesCoordinated(engine, 0);
-    expect(purged.slugs).toContain(slug);
-    expect(await residue(slug)).toEqual(ONLY_B);
-  }), 120_000);
+  test('the expired-tombstone purge clears them for the purged source only', async () => {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const slug = 'people/alice-example';
+      await seed(slug);
+      await engine.softDeletePage(slug, { sourceId: 'default' });
+      expect((await residue(slug)).take_proposals).toEqual(['default', 'source-b']);
+      const purged = await purgeDeletedPagesCoordinated(engine, 0);
+      expect(purged.slugs).toContain(slug);
+      expect(await residue(slug)).toEqual(ONLY_B);
+    });
+  }, 120_000);
 
-  test('deletePages clears them for the purged source only', () => withEnv({ GBRAIN_HOME: home }, async () => {
-    const slug = 'people/bob-sample';
-    await seed(slug);
-    await engine.deletePages([slug], { sourceId: 'default' });
-    expect(await residue(slug)).toEqual(ONLY_B);
-  }), 120_000);
+  test('deletePages clears them for the purged source only', async () => {
+    await withEnv({ GBRAIN_HOME: home }, async () => {
+      const slug = 'people/bob-sample';
+      await seed(slug);
+      await engine.deletePages([slug], { sourceId: 'default' });
+      expect(await residue(slug)).toEqual(ONLY_B);
+    });
+  }, 120_000);
 });
