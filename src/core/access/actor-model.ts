@@ -19,13 +19,24 @@ export const SCOPE_ATTEST_OPS: ReadonlySet<string> = new Set(['forget', 'forget_
  * keyed remember (the member page), delta cursors, write receipts and agent jobs to the person and removed them; D keyed
  * forget and forget_fact (the person's own member-page facts, withdrawn there alone). GST-1158 F9 deferred the direct
  * page writes (timeline entries, links, page puts and edits land on pages every reader of them sees) until an owner can
- * approve them. Refused at `--attest-ops`, at every call and when a stored write or job tool call is re-resolved.
+ * approve them, and GST-2249 W1 deferred every other page write: anything that writes a page's content, frontmatter,
+ * links, tags, timeline, facts, attached data or files, or deletes or restores a page. The only attested writes left
+ * are the person's own (memory_write, remember, forget and forget_fact on the member page) and memory_propose, which
+ * holds a write for the owner. W1 also deferred the writes whose rows every reader shares without a page: answer
+ * feedback (rate_answer, keyed to the client, not the person), the ingest log (log_ingest) and loop suppression
+ * (loops_mute, loops_unmute). test/qm-attest-write-boundary.test.ts checks every attestable mutating operation in the
+ * registry is either here or reviewed as not a page write. Refused at `--attest-ops`, at every call and when a stored
+ * write or job tool call is re-resolved.
  */
 export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
   'list_write_conflicts',
-  'capture', 'extract_facts',
+  'capture', 'extract_facts', 'ontology_propose', 'confirm_memory', 'loops_close',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
-  'add_timeline_entry', 'add_link', 'put_page', 'edit_page',
+  'add_timeline_entry', 'add_link', 'remove_link', 'add_tag', 'remove_tag',
+  'put_page', 'put_pages', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version',
+  'begin_page_upload', 'upload_page_part', 'commit_page_upload', 'abort_page_upload',
+  'put_raw_data', 'extract_entities', 'questions_pin', 'questions_refresh', 'questions_unpin',
+  'rate_answer', 'log_ingest', 'loops_mute', 'loops_unmute',
 ]);
 
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */
