@@ -48,10 +48,67 @@ function anchors(markdown: string): Set<string> {
 }
 
 describe('primary documentation navigation', () => {
-  test('every subsystem is directly discoverable from the bounded index', () => {
-    const index = readFileSync(join(root, 'docs/architecture/KEY_FILES.md'), 'utf8');
-    for (const name of subsystems) expect(index).toContain(`](key-files/${name})`);
+  const linkedPages = (markdown: string, prefix: string) => new Set(
+    [...markdown.matchAll(/\]\(([^)#\s]+\.md)(?:#[^)\s]*)?\)/g)]
+      .map(match => match[1])
+      .filter(href => href.startsWith(prefix))
+      .map(href => href.slice(prefix.length))
+      .filter(name => subsystems.includes(name)),
+  );
+  const pageText = (name: string) => readFileSync(join(root, subsystemDir, name), 'utf8');
+  const lastLine = (name: string) => pageText(name).trimEnd().split('\n').at(-1) ?? '';
+  const indexed = linkedPages(readFileSync(join(root, 'docs/architecture/KEY_FILES.md'), 'utf8'), 'key-files/');
+
+  test('every subsystem page is reachable from the bounded index', () => {
     expect(subsystems.length).toBeGreaterThan(1);
+    const reached = new Set(indexed);
+    const queue = [...indexed];
+    while (queue.length > 0) {
+      for (const next of linkedPages(pageText(queue.shift()!), '')) {
+        if (!reached.has(next)) {
+          reached.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    expect(subsystems.filter(name => !reached.has(name))).toEqual([]);
+  });
+
+  test('a page the index does not link continues exactly one chain from its predecessor', () => {
+    const failures: string[] = [];
+    const predecessorOf = new Map<string, string>();
+    for (const name of subsystems.filter(page => !indexed.has(page))) {
+      const previous = [...pageText(name).matchAll(/\[Previous entries\]\(([^)#\s]+\.md)\)/g)].map(match => match[1]);
+      if (previous.length !== 1 || !subsystems.includes(previous[0])) {
+        failures.push(`${name}: not linked from the index and has no single [Previous entries](<page>.md) link`);
+        continue;
+      }
+      predecessorOf.set(name, previous[0]);
+      if (!linkedPages(lastLine(previous[0]), '').has(name)) failures.push(`${name}: the last line of ${previous[0]} does not link it`);
+    }
+    for (const [name] of predecessorOf) {
+      const seen = new Set([name]);
+      let page = name;
+      while (!indexed.has(page)) {
+        const previous = predecessorOf.get(page);
+        if (!previous || seen.has(previous)) {
+          failures.push(`${name}: its chain never reaches a page the index links`);
+          break;
+        }
+        seen.add(previous);
+        page = previous;
+      }
+    }
+    for (const name of subsystems) {
+      for (const next of linkedPages(lastLine(name), '')) {
+        if (!indexed.has(next) && predecessorOf.get(next) !== name) failures.push(`${next}: continued from ${name}, which is not its [Previous entries] page`);
+      }
+    }
+    const continuations = [...predecessorOf.values()];
+    for (const previous of new Set(continuations)) {
+      if (continuations.filter(page => page === previous).length > 1) failures.push(`${previous}: continued by more than one page`);
+    }
+    expect(failures).toEqual([]);
   });
 
   const anchorCache = new Map<string, Set<string>>();

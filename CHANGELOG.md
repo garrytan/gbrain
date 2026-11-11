@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.663.0] - 2026-11-11
+
+### The doc size budgets have room again
+
+**llms-full.txt is 751,119 bytes, 48,881 under its 800,000-byte budget, and the two key-files pages that most merges touch are under 54,000 bytes again. No budget was raised and no text was removed.** Before, llms-full.txt sat 532 bytes under its budget and `engines-2.md` and `core-services-2.md` were within 8 bytes of the 60,000-byte page cap. So any change that added a sentence to those pages failed `check:doc-history` or the build-llms size test, and splitting a page cost bytes in `KEY_FILES.md`, which is 9,994 of its 10,000-byte cap.
+
+- `scripts/llms-config.ts`: the Grok Bot, Muse and in-agent setup guides are listed in llms.txt and no longer inlined in llms-full.txt. They only apply inside those hosted agents, and the inlined AGENTS.md routes those agents to them.
+- A key-files page at its cap continues on a new page linked from its last line, and the new page links back with `[Previous entries](<page>.md)`. A page the index doesn't link is reached from its predecessor's last line. `engines-2.md` continues on `engines-2-continued.md` and `core-services-2.md` on `core-services-2-more.md`; the moved entries are unchanged.
+- `test/docs-navigation.test.ts` checks that every key-files page is reachable from `KEY_FILES.md` by following key-files links. A page the index does not link must name one predecessor whose last line links it, its chain must reach an indexed page, and no page has two continuations. The `check:doc-history` failure message and `KEY_FILES.md` state the rule.
+
 ## [0.60.662.0] - 2026-11-11
 
 **QM, the AI helper that can use gbrain as one of its memories, can no longer write any page directly, and the brain owner can now review its proposals from another machine.** Every page write QM makes for a person waits for the owner's approval, a fact it saves for a person stays private, and the owner's admin session reaches the proposal review over the running server. Unattested calls and member-bound credentials behave as before.
