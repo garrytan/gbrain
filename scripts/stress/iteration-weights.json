@@ -440,6 +440,7 @@
   "test/origin-twins-6948.test.ts": 4300,
   "test/oversize-hold-rescreen-8072.test.ts": 66700,
   "test/overwritten-edits-6712.test.ts": 18600,
+  "test/owner-reads-restricted.test.ts": 95000,
   "test/owner-refusal.test.ts": 5700,
   "test/pack-relation-direction-engine.test.ts": 5100,
   "test/page-embedding-budget.test.ts": 3100,
