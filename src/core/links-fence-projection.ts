@@ -7,7 +7,7 @@
  * source of the row whose cell stated it (link_source), and transitions are
  * compared per row, so a row whose dates changed replaces only its own
  * statements; one with no source (written before the column existed) is
- * replaced by the row that states the same date. While migration v303 has added the column but not yet swapped in the
+ * replaced by the row that states the same date. While migration v302 has added the column but not yet swapped in the
  * identity index that includes it, statements are written without a source, as before the migration, so a second
  * row's same-date statement is not dropped in place of a stored one. Database-only manual edges
  * (origin_field NULL) and every derived producer are left alone. A row whose
@@ -20,7 +20,7 @@ import { sanitizeForJsonb } from './batch-rows.ts';
 import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
 import { loadActivePackForLocalEngine } from './schema-pack/best-effort.ts';
 import { LINKS_FENCE_ORIGIN_FIELD, readPageLinksFence, type LinksFenceRow } from './links-fence.ts';
-import { identityIndexHasSource } from './schema-migrations/v303-link-transitions-source.ts';
+import { identityIndexHasSource } from './schema-migrations/v302-link-transitions-source.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;
 

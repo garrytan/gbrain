@@ -35,7 +35,7 @@ export const LINK_TRANSITIONS_IDENTITY_NEXT_INDEX = {
 const POSTGRES_15_GATE = `DO $$ BEGIN
   IF current_setting('server_version_num')::int < 150000 THEN
     RAISE EXCEPTION
-      'v303 migration requires Postgres 15+. Current: %. '
+      'v302 migration requires Postgres 15+. Current: %. '
       'Upgrade your Postgres (Supabase: migrate project to a newer PG major). '
       'This migration intentionally stops before touching the schema to preserve data integrity.',
       current_setting('server_version');
@@ -64,27 +64,27 @@ export async function swapIdentityIndex(engine: BrainEngine): Promise<void> {
     });
   } catch (error) {
     if (engine.kind === 'postgres' && isLockTimeoutError(error)) {
-      throw schemaLockBlockedError({ step: 'migration v303 (link_transitions identity index swap)', timeoutMs: lockTimeoutMs, sessions: null, sampledDuringWait: false });
+      throw schemaLockBlockedError({ step: 'migration v302 (link_transitions identity index swap)', timeoutMs: lockTimeoutMs, sessions: null, sampledDuringWait: false });
     }
     throw error;
   }
 }
 
 async function widenIdentityIndex(engine: BrainEngine): Promise<void> {
-  const built = await buildIndexOnline(engine, 303, LINK_TRANSITIONS_IDENTITY_NEXT_INDEX, { notice: migrationNotice });
+  const built = await buildIndexOnline(engine, 302, LINK_TRANSITIONS_IDENTITY_NEXT_INDEX, { notice: migrationNotice });
   if (built === 'building') throw new Error(`${LINK_TRANSITIONS_IDENTITY_NEXT_INDEX.name} is being built by another session; rerun the migration once it finishes`);
   await swapIdentityIndex(engine);
 }
 
-export const v303: Migration = {
-  version: 303,
+export const v302: Migration = {
+  version: 302,
   name: 'link_transitions_source',
   idempotent: true,
   transaction: false,
   sql: '',
   handler: async engine => {
-    await runMigrationStatement(engine, 303, POSTGRES_15_GATE);
-    await runMigrationStatement(engine, 303, 'ALTER TABLE link_transitions ADD COLUMN IF NOT EXISTS link_source TEXT');
+    await runMigrationStatement(engine, 302, POSTGRES_15_GATE);
+    await runMigrationStatement(engine, 302, 'ALTER TABLE link_transitions ADD COLUMN IF NOT EXISTS link_source TEXT');
     if (await identityIndexHasSource(engine)) return;
     await widenIdentityIndex(engine);
   },

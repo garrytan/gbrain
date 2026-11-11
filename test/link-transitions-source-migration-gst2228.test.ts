@@ -1,5 +1,5 @@
 /**
- * GST-2228: migration v303 adds link_transitions.link_source and widens the identity index to include it, without
+ * GST-2228: migration v302 adds link_transitions.link_source and widens the identity index to include it, without
  * holding a long lock on a large brain and without rewriting a row.
  *
  * 1. Protects: the column is added on its own (metadata only), the widened index is built online under a temporary
@@ -16,7 +16,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { MIGRATIONS, runMigrations } from '../src/core/migrate.ts';
 import { buildIndexOnline } from '../src/core/schema-migrations/helpers.ts';
-import { LINK_TRANSITIONS_IDENTITY_NEXT_INDEX } from '../src/core/schema-migrations/v303-link-transitions-source.ts';
+import { LINK_TRANSITIONS_IDENTITY_NEXT_INDEX } from '../src/core/schema-migrations/v302-link-transitions-source.ts';
 import { projectLinksFence } from '../src/core/links-fence-projection.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -52,8 +52,8 @@ afterAll(async () => {
   await closePostgres?.();
 });
 
-describe('GST-2228 v303 link_transitions_source', () => {
-  test('v303 runs outside a transaction, through its handler', () => {
+describe('GST-2228 v302 link_transitions_source', () => {
+  test('v302 runs outside a transaction, through its handler', () => {
     const m = MIGRATIONS.find(x => x.name === 'link_transitions_source');
     expect({ found: !!m, transaction: m?.transaction, sql: m?.sql, handler: typeof m?.handler }).toEqual({ found: true, transaction: false, sql: '', handler: 'function' });
   });
@@ -71,8 +71,8 @@ describe('GST-2228 v303 link_transitions_source', () => {
     };
     const WIDENED = 'CREATE UNIQUE INDEX link_transitions_identity_idx ON link_transitions USING btree (origin_page_id, from_page_id, to_page_id, link_type, link_source, kind, occurred_on, producer) NULLS NOT DISTINCT';
     const DONE = { def: WIDENED, valid: true, next: false, column: true };
-    /** The schema a brain one migration before v303 has: no link_source, the seven-column identity index. */
-    const beforeV303 = async () => {
+    /** The schema a brain one migration before v302 has: no link_source, the seven-column identity index. */
+    const beforeV302 = async () => {
       const { engine } = brain();
       await engine.executeRaw('DELETE FROM link_transitions');
       await engine.executeRaw('DROP INDEX IF EXISTS link_transitions_identity_next_idx');
@@ -88,7 +88,7 @@ describe('GST-2228 v303 link_transitions_source', () => {
 
     test(`[${backend}] upgrading from the previous schema adds the column, swaps the index and rewrites no row`, async () => {
       const { engine, alice, acme } = brain();
-      await beforeV303();
+      await beforeV302();
       await engine.executeRaw(`INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
         VALUES ('default', $1, $2, 'works_at', 'start', '2020-01-01', 'manual', $1)`, [alice, acme]);
       const [before] = await engine.executeRaw<{ id: string; xmin: string }>('SELECT id::text, xmin::text FROM link_transitions');
@@ -100,7 +100,7 @@ describe('GST-2228 v303 link_transitions_source', () => {
 
     test(`[${backend}] stopped after the column was added: a rerun swaps the index`, async () => {
       const { engine } = brain();
-      await beforeV303();
+      await beforeV302();
       await engine.executeRaw('ALTER TABLE link_transitions ADD COLUMN link_source TEXT');
       await runMigrations(engine);
       expect(await identity()).toEqual(DONE);
@@ -108,9 +108,9 @@ describe('GST-2228 v303 link_transitions_source', () => {
 
     test(`[${backend}] stopped after the build, before the swap: a rerun swaps the built index in`, async () => {
       const { engine } = brain();
-      await beforeV303();
+      await beforeV302();
       await engine.executeRaw('ALTER TABLE link_transitions ADD COLUMN link_source TEXT');
-      expect(await buildIndexOnline(engine, 303, LINK_TRANSITIONS_IDENTITY_NEXT_INDEX)).toBe('created');
+      expect(await buildIndexOnline(engine, 302, LINK_TRANSITIONS_IDENTITY_NEXT_INDEX)).toBe('created');
       expect((await identity()).next).toBe(true);
       await runMigrations(engine);
       expect(await identity()).toEqual(DONE);
@@ -119,7 +119,7 @@ describe('GST-2228 v303 link_transitions_source', () => {
     if (backend === 'postgres') {
       test('[postgres] an INVALID leftover of an interrupted concurrent build is dropped and rebuilt', async () => {
         const { engine, alice, acme } = brain();
-        await beforeV303();
+        await beforeV302();
         await engine.executeRaw('ALTER TABLE link_transitions ADD COLUMN link_source TEXT');
         await engine.executeRaw('DROP INDEX link_transitions_identity_idx');
         const duplicate = `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
@@ -144,7 +144,7 @@ describe('GST-2228 v303 link_transitions_source', () => {
       ];
       const statements = async () => (await engine.executeRaw<{ source: string | null }>(
         "SELECT link_source AS source FROM link_transitions WHERE origin_page_id=$1 AND producer='manual' ORDER BY 1", [alice])).map(r => r.source);
-      await beforeV303();
+      await beforeV302();
       await engine.executeRaw('ALTER TABLE link_transitions ADD COLUMN link_source TEXT');
       await projectLinksFence(engine, { id: alice, source_id: 'default' }, rows);
       expect(await statements()).toEqual([null]);

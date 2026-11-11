@@ -302,7 +302,7 @@ import { v298 } from './v298-attest-read.ts';
 import { v299 } from './v299-access-member-sources.ts';
 import { v300 } from './v300-memory-proposals.ts';
 import { v301 } from './v301-member-email.ts';
-import { v303 } from './v303-link-transitions-source.ts';
+import { v302 } from './v302-link-transitions-source.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -603,5 +603,5 @@ export const MIGRATIONS: Migration[] = [
   v299,
   v300,
   v301,
-  v303,
+  v302,
 ];

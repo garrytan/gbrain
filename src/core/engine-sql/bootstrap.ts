@@ -316,8 +316,8 @@ export function forwardReferenceGaps(probe: ProbeRow, dialect: ForwardReferenceB
   // (the table exists since v265) wedged on the replay before any migration ran.
   const needsDerivedGenerationItemsPending = probe.derived_generation_items_exists
     && !probe.derived_generation_items_pending_exists;
-  // v303 (GST-2228): the blob's link_transitions_identity_idx includes
-  // link_source, a column only v303 adds, so a brain at v204-v302 would wedge on
+  // v302 (GST-2228): the blob's link_transitions_identity_idx includes
+  // link_source, a column only v302 adds, so a brain at v204-v301 would wedge on
   // the replay (CREATE INDEX IF NOT EXISTS checks columns before the name).
   const needsLinkTransitionsLinkSource = probe.link_transitions_exists
     && !probe.link_transitions_link_source_exists;
@@ -742,8 +742,8 @@ async function applyLaterColumnGaps(target: ForwardReferenceBootstrapTarget, gap
   }
 
   if (needsLinkTransitionsLinkSource) {
-    // Column only, exactly as v303 adds it (nullable, no default: metadata only);
-    // v303 still runs and swaps the identity index online.
+    // Column only, exactly as v302 adds it (nullable, no default: metadata only);
+    // v302 still runs and swaps the identity index online.
     await exec(`
       ALTER TABLE link_transitions ADD COLUMN IF NOT EXISTS link_source TEXT;
     `);

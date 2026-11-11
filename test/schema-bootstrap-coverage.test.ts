@@ -244,8 +244,8 @@ const REQUIRED_BOOTSTRAP_COVERAGE: ForwardReference[] = [
   // Authority remains nullable: bootstrap must never authorize historical work.
   { kind: 'column', table: 'minion_jobs', column: 'submission_authority' },
   { kind: 'column', table: 'minion_jobs', column: 'claim_generation' },
-  // v303 (GST-2228): the blob's unique link_transitions_identity_idx includes
-  // link_source, which only v303 adds to a brain at v204-v302.
+  // v302 (GST-2228): the blob's unique link_transitions_identity_idx includes
+  // link_source, which only v302 adds to a brain at v204-v301.
   { kind: 'column', table: 'link_transitions', column: 'link_source' },
 ];
 
@@ -376,7 +376,7 @@ test('applyForwardReferenceBootstrap covers every forward reference declared in 
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS submission_authority;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS claim_generation;
 
-      -- v303 strip: a v204-v302 link_transitions has no link_source and the
+      -- v302 strip: a v204-v301 link_transitions has no link_source and the
       -- narrower identity index under the same name.
       ALTER TABLE link_transitions DROP COLUMN IF EXISTS link_source;
       CREATE UNIQUE INDEX IF NOT EXISTS link_transitions_identity_idx
@@ -495,7 +495,7 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS submission_authority;
       ALTER TABLE minion_jobs DROP COLUMN IF EXISTS claim_generation;
 
-      -- v303 strip: a v204-v302 link_transitions has no link_source and the
+      -- v302 strip: a v204-v301 link_transitions has no link_source and the
       -- narrower identity index under the same name.
       ALTER TABLE link_transitions DROP COLUMN IF EXISTS link_source;
       CREATE UNIQUE INDEX IF NOT EXISTS link_transitions_identity_idx
