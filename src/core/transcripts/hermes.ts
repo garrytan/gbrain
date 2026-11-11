@@ -175,6 +175,8 @@ export const hermesAdapter: TranscriptAdapter = {
     // state (WAL frames included) even while it commits and checkpoints. A
     // store at rest, or one the read-only open cannot use (an unwritable
     // directory), is copied instead, so nothing is ever created beside it.
+    // Any other failure, a busy writer included, surfaces: copying a store
+    // mid-transaction is the torn read the snapshot exists to prevent.
     const tmp = mkdtempSync(join(tmpdir(), 'gbrain-hermes-'));
     const copyPath = join(tmp, basename(path));
     let sessions = 0;
@@ -190,8 +192,10 @@ export const hermesAdapter: TranscriptAdapter = {
           } finally {
             source.close();
           }
-        } catch {
+        } catch (err) {
           rmSync(copyPath, { force: true });
+          const code = (err as { code?: unknown }).code;
+          if (typeof code !== 'string' || !(code.startsWith('SQLITE_READONLY') || code === 'SQLITE_CANTOPEN')) throw err;
         }
       }
       if (!vacuumed) {
