@@ -92,6 +92,22 @@ Writers never add them to new pages: write `visibility: private` when a page nee
 keeps `restricted`, `confidential` and `confidentiality` as real restrictions
 ([how to run and undo it](repair.md#private-labels-over-stamped-access-private)).
 
+#### Unrecognized label values
+
+Any other value of `access` or `confidentiality` is ignored: `access: personal`, a confidentiality value naming a
+health record, or free text such as `access: "PRIVATE - do not share"` makes nothing private. A page that carries one
+and no `visibility` reads like an unlabelled page: every remote caller of its source can read it (unless `readable_by`
+or a folder rule limits it), and on a source with a git checkout the label does not keep it out of git, so it can be
+committed and pushed to the brain's git remote. gbrain does not add values to the lists or rewrite the label.
+
+Instead it says so. A `put_page`, `gbrain import` or `gbrain sync` that stores such a page carries one
+`privacy_label_ignored` safety notice: it names the key and the value (an import or sync counts pages by value and names
+no page), leaves out the git sentence on a repo-less source, and its fix asks the user before adding
+`visibility: private`. `gbrain doctor --only privacy_label_ignored` counts the stored pages by value: a value containing
+private, confidential, secret, restricted, personal, health or therapy (any case) is a warning, any other value is
+information, and the fix is the read-only listing `gbrain list --where <key>=<value> --json`. To keep such a page private,
+add `visibility: private` to its frontmatter.
+
 ### Derived pages and lineage
 
 These rules follow the origin, so nobody writes them by hand:
@@ -110,7 +126,9 @@ Pinned-question pages are the owner's own and read as private. The owner reads t
 ### `readable_by` and folder rules (member access)
 
 `readable_by: [alice-example, group:team-a]` keeps a page to the members and groups it lists; `gbrain access rule
-add --prefix <folder>/ --readers <list>` does the same for a folder. This is the boundary between people in a
+add --prefix <folder>/ --readers <list>` does the same for a folder, and `--slug <page>` for exactly one page (a page
+at the source root, or one whose file left git, which a `visibility` edit cannot reach; upgrade every host that shares
+the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
 shared brain, and it binds the owner too: the owner reads such a page only when listed. No grant, hatch or owner
 binding relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a

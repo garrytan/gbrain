@@ -266,7 +266,7 @@ function route(input: TerminalInput): Partial_ {
     if (known === 'canonical_file_missing') {
       return { category: 'canonical_file_missing', code, origin: origin ?? known, ...row('canonical_file_missing'),
         action: { argv: ['gbrain', 'repair', 'ghost-pages', '--source', source], consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Previews the live pages whose canonical file is missing and writes nothing; apply only after the user agrees, or restore the file and sync.',
+          why: `Previews the live pages whose canonical file is missing and writes nothing; apply only after the user agrees, or restore the file and sync. To keep ${input.slug} and only narrow who reads it, with no file written, preview a page rule instead: gbrain access rule add --slug ${input.slug} --readers <member> --source ${source} (writes nothing without --yes).`,
           verify: { argv: failuresArgv(source) }, docs: 'docs/guides/write-refusals.md#canonical_file_missing' } };
     }
     if (known === 'source_binding_changed' || known === 'unsafe_file_target') {

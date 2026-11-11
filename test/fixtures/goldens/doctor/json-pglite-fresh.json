@@ -1313,6 +1313,22 @@
           "category": "brain",
           "details": {
             "count": "exact",
+            "pages": 0,
+            "scan_cap": 100000,
+            "truncated": false,
+            "value_count": 0,
+            "values": [],
+            "values_truncated": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+          "name": "privacy_label_ignored",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": "exact",
             "kept_pages": 0,
             "pages_pending": 0,
             "repair": "safe-chunks",

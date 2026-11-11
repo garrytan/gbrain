@@ -379,7 +379,7 @@ const put_page: Operation = {
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
     (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
-    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error)).then(result => import('../search/ignored-privacy-labels.ts').then(m => m.withIgnoredPrivacyLabelNotice(ctx, sourceId, p, result), () => result));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
