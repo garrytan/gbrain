@@ -102,8 +102,8 @@ export interface SafePhaseProviders {
 export function maintainSafePhases(sourceId: string, providers: SafePhaseProviders): { phases: CyclePhase[]; held: CyclePhase[] } {
   const held: CyclePhase[] = [];
   if (providers.embedding || providers.decideConflict) held.push('extract_facts');
-  if (providers.fenceRepairModel) held.push('fence_repair');
-  if (providers.contentRepairModel) held.push('content_repair');
+  if (providers.fenceRepairModel || providers.embedding) held.push('fence_repair');
+  if (providers.contentRepairModel || providers.embedding) held.push('content_repair');
   const phases = resolveCyclePhases(undefined, sourceId)
     .filter((phase) => MAINTAIN_SAFE_PHASES.includes(phase) && !held.includes(phase));
   return { phases, held };

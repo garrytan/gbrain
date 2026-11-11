@@ -53,7 +53,7 @@ export async function staleMentionsCheck(engine: BrainEngine): Promise<Check> {
       .map(([k, n]) => `${n} ${k}`)
       .join(', ');
     const unlink = res.examples.map(e => {
-      const argv = ['gbrain', 'unlink', e.from, e.to, '--link-type', e.link_type, '--link-source', 'mentions'];
+      const argv = ['gbrain', 'unlink', '--link-type', e.link_type, '--link-source', 'mentions', '--', e.from, e.to];
       return { argv, command: shellQuote(argv) };
     });
     const eg = unlink.map((u, i) => `${res.examples[i]!.from} -> ${res.examples[i]!.to}: ${u.command}`).join('; ');

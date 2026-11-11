@@ -134,6 +134,11 @@ describe('maintainSafePhases', () => {
     expect(phases).toContain('extract');
   });
 
+  test('an embedding provider alone holds the repair lanes too, whose publications embed', () => {
+    const { held } = maintainSafePhases('default', { ...NO_PROVIDERS, embedding: true });
+    expect(held).toEqual(['extract_facts', 'fence_repair', 'content_repair']);
+  });
+
   test('a non-default source keeps its source-freshness subset', () => {
     expect(maintainSafePhases('wiki', NO_PROVIDERS).phases).toEqual(['lint', 'backlinks', 'sync', 'extract', 'extract_facts', 'recompute_emotional_weight']);
   });
