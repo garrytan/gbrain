@@ -10,12 +10,15 @@ import { collectWantedLinks, possibleWantedRows } from '../src/core/wanted-links
 import { LINK_EXTRACTOR_VERSION_TS, type LinkCandidate } from '../src/core/link-extraction.ts';
 import { bareNameReferenceSettles, BRACKETED_CODE, disabledClearsRows, FOREIGN_PREFIXES, forwardReferenceHeals,
   impossibleTargetsNeverAbortTheSweep, impossibleTargetsStayOutOfWrites, onlyUnresolvedAuthoredReferences, POSSIBLE_WANTED,
-  privateOriginsStayPrivate, restoredTargetHeals, unreachableBareNameAtExactSlugSettles, wantedKeys } from './helpers/wanted-links-scenarios.ts';
+  privateOriginsStayPrivate, restoredTargetHeals, exactSlugNamePageEditWakesOnce,
+  exactSlugNameWrittenAfterTheReadWakesItsOrigin, unreachableBareNameAtExactSlugSettles, wantedKeys } from './helpers/wanted-links-scenarios.ts';
 
 test('a link written before its target exists becomes an edge after the target is created', () => forwardReferenceHeals(), 120_000);
 test('resolved references, prose paths and code spans are never wanted', () => onlyUnresolvedAuthoredReferences(), 120_000);
 test('a bare-name reference matched only by basename settles after one re-extraction', () => bareNameReferenceSettles(), 120_000);
 test('a bare-name frontmatter reference the resolver cannot reach does not re-list its origin', () => unreachableBareNameAtExactSlugSettles(), 120_000);
+test('a bare name\'s exact-slug page written after the read wakes its origin', () => exactSlugNameWrittenAfterTheReadWakesItsOrigin(), 120_000);
+test('editing a bare name\'s exact-slug page wakes its origin once', () => exactSlugNamePageEditWakesOnce(), 120_000);
 test('remote callers never see targets or counts from private origins', () => privateOriginsStayPrivate(), 120_000);
 test('restoring a deleted target heals links written while it was deleted', () => restoredTargetHeals(), 120_000);
 test('wanted_pages.enabled=false clears an origin\'s rows on its next extraction', () => disabledClearsRows(), 120_000);

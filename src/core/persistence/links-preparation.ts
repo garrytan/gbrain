@@ -6,7 +6,7 @@ import { buildBasenameIndex, extractPageLinks, isGlobalBasenameEnabled, makeReso
 import { loadActivePackForLocalEngine } from '../schema-pack/best-effort.ts';
 import { DerivedLinkEndpointChangedError } from '../derived-links.ts';
 import { capturedLinkEndpoints, indexLinkSources, loadLinkSourcePolicy, makeLinkSourceResolver } from '../link-reconciliation.ts';
-import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows } from '../wanted-links.ts';
+import { collectWantedLinks, isWantedPagesEnabled, possibleWantedRows, wantedReadAt } from '../wanted-links.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { readLineGrammarSettings, type LineGrammarSettings } from '../line-grammar.ts';
 import { primeRelationSemantics } from '../link-semantics-pack.ts';
@@ -96,6 +96,8 @@ export const LINK_ENDPOINTS_SQL = `WITH own AS (
 export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   page: Pick<ParsedPage, 'type' | 'compiled_truth' | 'timeline' | 'frontmatter'> & { id?: number }, sourceId: string, primeSemantics = false) {
   if (primeSemantics) await primeRelationSemantics(engine);
+  // #9140: before the first resolution read; stamps this preparation's bare-name wanted rows.
+  const readAt = await wantedReadAt(engine);
   const resolver = makeResolver(engine, { mode: 'live', sourceId, basenameIndex: () => sourceBasenameIndex(engine, sourceId) });
   // One settings snapshot for the whole extraction; publication validates it (derived-links.ts). An unreadable
   // setting leaves the page's links unpublished (stale) rather than extracted under defaults.
@@ -164,7 +166,7 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     const stored = isSegmentedPage(snapshot.page) ? { temporalBody: temporalBody ?? temporalBodyOf(page) } : {};
     try {
       const result = await tx.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
-        sourceIncarnation: snapshot.sourceIncarnation, snapshot }, rows, { preserveExisting: true, semanticsPrimed: primeSemantics, lineGrammar: settings, wanted: { ...wanted, producers: [...wanted.producers] },
+        sourceIncarnation: snapshot.sourceIncarnation, snapshot }, rows, { preserveExisting: true, semanticsPrimed: primeSemantics, lineGrammar: settings, wanted: { ...wanted, producers: [...wanted.producers], readAt },
         expectedEndpoints: capturedLinkEndpoints(rows, metadata, { slug, sourceId }), ...stored });
       if (fenceLinks) {
         const fence = await projectLinksFence(tx, snapshot.page, fenceLinks);

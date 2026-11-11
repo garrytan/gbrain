@@ -4,10 +4,11 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
-import { replaceWantedLinks } from '../../src/core/wanted-links.ts';
+import { wantedReadAt, replaceWantedLinks } from '../../src/core/wanted-links.ts';
 import { bareNameReferenceSettles, disabledClearsRows, forwardReferenceHeals, impossibleTargetsNeverAbortTheSweep,
   impossibleTargetsStayOutOfWrites, onlyUnresolvedAuthoredReferences, privateOriginsStayPrivate,
-  restoredTargetHeals, unreachableBareNameAtExactSlugSettles } from '../helpers/wanted-links-scenarios.ts';
+  restoredTargetHeals, exactSlugNamePageEditWakesOnce,
+  exactSlugNameWrittenAfterTheReadWakesItsOrigin, unreachableBareNameAtExactSlugSettles } from '../helpers/wanted-links-scenarios.ts';
 
 const url = process.env.DATABASE_URL;
 describe.skipIf(!url)('Postgres wanted pages', () => {
@@ -15,6 +16,8 @@ describe.skipIf(!url)('Postgres wanted pages', () => {
   test('only unresolved authored references are wanted', () => onlyUnresolvedAuthoredReferences(url), 180_000);
   test('a bare-name reference settles', () => bareNameReferenceSettles(url), 180_000);
   test('an unreachable bare-name reference at an exact slug settles', () => unreachableBareNameAtExactSlugSettles(url), 180_000);
+  test('a bare name\'s exact-slug page written after the read wakes its origin', () => exactSlugNameWrittenAfterTheReadWakesItsOrigin(url), 180_000);
+  test('editing a bare name\'s exact-slug page wakes its origin once', () => exactSlugNamePageEditWakesOnce(url), 180_000);
   test('private origins stay private', () => privateOriginsStayPrivate(url), 180_000);
   test('restoring a deleted target heals', () => restoredTargetHeals(url), 180_000);
   test('disabling clears rows', () => disabledClearsRows(url), 180_000);
@@ -35,7 +38,7 @@ describe.skipIf(!url)('Postgres wanted pages: source registration race (#6225)',
       const [origin] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug = 'notes/origin'");
       let deleteError = null as { code?: string } | null;
       await engine.transaction(async tx => {
-        await replaceWantedLinks(tx, { pageId: Number(origin.id), sourceId: 'default' }, { producers: ['body'], rows: [
+        await replaceWantedLinks(tx, { pageId: Number(origin.id), sourceId: 'default' }, { producers: ['body'], readAt: await wantedReadAt(tx), rows: [
           { producer: 'body', ref_kind: 'name', target_source_id: 'archive', target_ref: 'erin-example', link_type: 'mentions', context: '' }] });
         try {
           await other.begin(async sql => {

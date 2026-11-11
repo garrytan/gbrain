@@ -19,7 +19,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { extractSegmentedPageLinks } from '../page-body/segment-links.ts';
 import { inlineRegions } from '../page-body/tail-digest.ts';
 import { validateSlug } from '../utils.ts';
-import { isRemoteWantedPagesEnabled, replaceWantedLinks } from '../wanted-links.ts';
+import { isRemoteWantedPagesEnabled, wantedReadAt, replaceWantedLinks } from '../wanted-links.ts';
 
 /** `mcp.remote_auto_links`: unset is on; false/0/no/off (any case) turns the remote `links` effect off. */
 export async function isRemoteAutoLinksEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
@@ -113,6 +113,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
   const snapshot = await engine.readPageSnapshot(effect.data.slug, { sourceId });
   if (!snapshot || snapshot.page.id !== effect.data.page_id || snapshot.revision !== effect.revision) return skip(engine, 'superseded');
   if (!await isAutoLinkEnabled(engine) || !await isRemoteAutoLinksEnabled(engine)) return skip(engine, 'disabled');
+  const readAt = await wantedReadAt(engine);
   const { targets, skipped } = await mentionTargets(engine, snapshot, sourceId);
   const beliefs = unmanagedBeliefPoint(sourceId, [snapshot.page.slug], 'remote_auto_links');
   await engine.transaction(async tx => {
@@ -129,7 +130,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
     });
     // Wanted pages: a missing mention target is recorded so the edge appears once that page is written (core/wanted-links.ts).
     if (await isRemoteWantedPagesEnabled(tx)) {
-      await replaceWantedLinks(tx, { pageId: Number(live.page.id), sourceId }, { producers: ['body'], rows: skipped
+      await replaceWantedLinks(tx, { pageId: Number(live.page.id), sourceId }, { producers: ['body'], readAt, rows: skipped
         .filter(target => target.reason === 'missing' && !hidden.has(target.slug))
         .map(target => ({ producer: 'body', ref_kind: 'slug', target_source_id: sourceId, target_ref: target.slug,
           link_type: 'mentions', context: (targets.get(target.slug) ?? '').slice(0, 240) })) });

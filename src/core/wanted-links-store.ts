@@ -23,6 +23,20 @@ export interface WantedLinksReplacement {
   rows: WantedLinkInput[];
   /** Producers whose rows this replacement owns; others stay untouched. */
   producers: readonly WantedProducer[];
+  /** `wantedReadAt`, taken before the extraction read the pages it resolved these rows against. */
+  readAt: string;
+}
+
+/**
+ * The time an extraction starts reading, for its bare-name rows' `checked_at`.
+ * Take it before the first resolution read: a page written by a transaction that
+ * starts later has a later `updated_at`, so it wakes the origin even when the
+ * read did not see it. Inside a transaction `now()` is the transaction start,
+ * which is never after the transaction's own reads.
+ */
+export async function wantedReadAt(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
+  const [row] = await engine.executeRaw<{ at: string }>('SELECT now()::text AS at');
+  return row!.at;
 }
 
 /**
@@ -54,10 +68,17 @@ function pageSlugShaped(target: string): boolean {
  * one that replaces its derived links), keeping only possibleWantedRows. Slug targets are locked first, so a
  * concurrent writer creating the target either committed before this check
  * (and the row is stamped `-infinity`, leaving the origin stale) or commits
- * after it with an `updated_at` past `checked_at`. Only an exact slug counts
- * here: a bare-name reference matching some page's basename may legitimately
- * stay unresolved (basename resolution is opt-in), and stamping it
- * `-infinity` would re-list its origin forever.
+ * after it with an `updated_at` past `checked_at`.
+ *
+ * A bare-name row is stamped with the replacement's `readAt` instead, never
+ * `-infinity`. Such a reference may stay unresolved while a page's basename, or
+ * its whole slug, equals the name: basename resolution is opt-in, and a field's
+ * directory hint can miss a top-level page. Stamping it `-infinity` whenever that
+ * page exists re-listed its origin forever (#9140). With `readAt`, a page whose
+ * writer transaction starts after the read wakes the origin, and one written
+ * before it does not. A writer that starts before the read but commits after the
+ * resolution read is missed until the page is written again; master has the
+ * same window for basename matches.
  */
 export async function replaceWantedLinks(
   tx: Pick<BrainEngine, 'executeRaw' | 'lockPageKeys'>,
@@ -83,14 +104,15 @@ export async function replaceWantedLinks(
   const written = await executeRawJsonb<{ id: number }>(tx, `INSERT INTO wanted_links
       (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at)
     SELECT $1, $2, v.producer, v.ref_kind, v.target_source_id, v.target_ref, v.link_type, v.context,
-      CASE WHEN EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id AND t.deleted_at IS NULL
-        AND t.slug = v.target_ref)
-      THEN '-infinity'::timestamptz ELSE now() END
-    FROM jsonb_to_recordset(($3::jsonb)->'rows')
+      CASE WHEN v.ref_kind = 'name' THEN $3::timestamptz
+        WHEN EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id AND t.deleted_at IS NULL
+          AND t.slug = v.target_ref)
+        THEN '-infinity'::timestamptz ELSE now() END
+    FROM jsonb_to_recordset(($4::jsonb)->'rows')
       AS v(producer text, ref_kind text, target_source_id text, target_ref text, link_type text, context text)
     ON CONFLICT ON CONSTRAINT wanted_links_reference_unique DO UPDATE
       SET link_type = EXCLUDED.link_type, context = EXCLUDED.context, checked_at = EXCLUDED.checked_at
-    RETURNING id`, [origin.pageId, origin.sourceId], [{ rows }]);
+    RETURNING id`, [origin.pageId, origin.sourceId, replacement.readAt], [{ rows }]);
   return written.length;
 }
 

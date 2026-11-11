@@ -11,6 +11,7 @@ import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts
 import { extractStaleFromDB } from '../../src/commands/extract.ts';
 import { LINK_EXTRACTOR_VERSION_TS } from '../../src/core/link-extraction.ts';
 import { operationsByName } from '../../src/core/operations.ts';
+import { replaceWantedLinks, wantedReadAt } from '../../src/core/wanted-links.ts';
 import { managedBrain } from './managed-brain.ts';
 
 const put = (ctx: OperationContext, slug: string, body: string, type = 'note', frontmatter = '', expectedRevision?: string) =>
@@ -100,6 +101,56 @@ export async function unreachableBareNameAtExactSlugSettles(databaseUrl?: string
     expect(await stale(engine)).toBe(0);
     await extractStale(engine);
     expect(await stale(engine)).toBe(0);
+  }, { databaseUrl });
+}
+
+const staleSlugs = async (engine: BrainEngine) => (await engine.listStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS, batchSize: 100 }))
+  .map(page => page.slug).sort();
+const acmeRow = { producer: 'frontmatter' as const, ref_kind: 'name' as const, target_source_id: 'default', target_ref: 'acme-toolkit',
+  link_type: '', context: 'founded: acme-toolkit' };
+const publishWanted = async (engine: BrainEngine, readAt: string) => {
+  const [origin] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug = 'people/erin-example'");
+  await engine.transaction(tx => replaceWantedLinks(tx, { pageId: Number(origin.id), sourceId: 'default' },
+    { producers: ['frontmatter'], rows: [acmeRow], readAt }));
+};
+
+/**
+ * Extractions that read the brain before a bare name's exact-slug page was
+ * written publish after it: each leaves the origin stale, however many overlap,
+ * and the next extraction, which sees the page, settles it.
+ */
+export async function exactSlugNameWrittenAfterTheReadWakesItsOrigin(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    await put(ctx, 'people/erin-example', 'Erin.', 'person', 'founded: ["acme-toolkit"]\n');
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    const first = await wantedReadAt(engine);
+    const second = await wantedReadAt(engine);
+    await put(ctx, 'acme-toolkit', 'A project page at the top level.', 'project');
+    await publishWanted(engine, first);
+    await publishWanted(engine, second);
+    expect(await staleSlugs(engine)).toContain('people/erin-example');
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+  }, { databaseUrl });
+}
+
+/** A later write of a bare name's exact-slug page wakes its origin once more. */
+export async function exactSlugNamePageEditWakesOnce(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    const first = await put(ctx, 'acme-toolkit', 'A project page at the top level.', 'project');
+    await put(ctx, 'people/erin-example', 'Erin.', 'person', 'founded: ["acme-toolkit", "beta-toolkit"]\n');
+    await put(ctx, 'beta-toolkit', 'Another top-level project page.', 'project');
+    await extractStale(engine);
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    await put(ctx, 'acme-toolkit', 'An edited project page.', 'project', '', (first.outcome ?? first).revision);
+    expect(await staleSlugs(engine)).toContain('people/erin-example');
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    expect((await wantedRows(engine)).map(row => row.target_ref)).toEqual(['acme-toolkit', 'beta-toolkit']);
   }, { databaseUrl });
 }
 
