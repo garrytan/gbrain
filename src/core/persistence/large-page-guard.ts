@@ -32,9 +32,11 @@ export async function assertLargePageAdmission(engine: Pick<BrainEngine, 'execut
   const ref = intent.body_ref as { bytes?: unknown } | undefined;
   const next = typeof intent.content === 'string' ? Buffer.byteLength(intent.content, 'utf8') : Number.isSafeInteger(ref?.bytes) ? Number(ref!.bytes) : null;
   if (next === null) return;
+  // Wave C (ceo-r3-outside-1): a committed head whose index is pending is the stored body; the rows are the generation before it.
   const [row] = await engine.executeRaw<{ bytes: unknown }>(
-    `SELECT CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(compiled_truth) + COALESCE(octet_length(timeline), 0) END AS bytes
-      FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL`, [slug, sourceId]);
+    `SELECT COALESCE((SELECT body_bytes FROM page_pending_heads WHERE source_id = $2 AND slug = $1),
+      (SELECT CASE WHEN body_storage = 'segmented' THEN body_bytes ELSE octet_length(compiled_truth) + COALESCE(octet_length(timeline), 0) END
+        FROM pages WHERE slug = $1 AND source_id = $2 AND deleted_at IS NULL)) AS bytes`, [slug, sourceId]);
   const stored = Number(row?.bytes ?? 0);
   if (stored <= DEFAULT_INLINE_BODY_BYTES) return;
   if (intent.expected_revision === undefined && intent.force === true) {

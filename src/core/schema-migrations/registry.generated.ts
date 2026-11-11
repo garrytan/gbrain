@@ -305,6 +305,7 @@ import { v301 } from './v301-member-email.ts';
 import { v302 } from './v302-page-read-pins.ts';
 import { v303 } from './v303-page-body-manifest-closed-index.ts';
 import { v304 } from './v304-embedding-progress-ledger.ts';
+import { v305 } from './v305-git-first-strict-path.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -608,4 +609,5 @@ export const MIGRATIONS: Migration[] = [
   v302,
   v303,
   v304,
+  v305,
 ];

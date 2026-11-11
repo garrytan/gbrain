@@ -38,6 +38,7 @@ import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
 import { defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders } from './page-visibility.ts';
+import { pendingPrecondition, readPendingHead } from './git-first.ts';
 
 const text = (value: unknown) => (typeof value === 'string' ? value : null);
 
@@ -73,7 +74,8 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
       PAGE_OVER_LIMIT_SUGGESTION, { legacy_error: 'request_too_large' });
   }
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  assertPageRevision(snapshot, { expectedRevision: text(p.expected_revision) });
+  const pending = await readPendingHead(engine, row.source_id, row.slug);
+  assertPageRevision(pending ? { revision: pendingPrecondition(row.slug, pending, snapshot?.revision, p.expected_revision) } : snapshot, { expectedRevision: text(p.expected_revision) });
   if ((snapshot?.page.id ?? null) !== row.page_id) throw pageIdentityError(!!snapshot, 'The accepted page was deleted or recreated.');
   const remote = row.authority.remote === true;
   if (remote && snapshot && !snapshot.page.deleted_at) await assertNothingHiddenDropped(engine, row, snapshot, p);

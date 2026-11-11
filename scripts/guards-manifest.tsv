@@ -18,6 +18,7 @@
 check-no-double-retry.sh	scanner	yes	regex hole fixed in W0 (could not match `() =>`); perl multi-line pass replaces never-installed pcregrep
 check-jsonb-pattern.sh	scanner	yes	nested-paren hole fixed in W0; safe ::text::jsonb spelling stays unflagged
 check-jsonb-params.mjs	scanner	yes	positional $N::jsonb AST-lite scanner; argv/env root override; in verify CHECKS (check:jsonb-params) over the real tree
+check-request-state-lists.mjs	scanner	yes	literal write-request state lists over src/ against a per-file baseline (Wave C ceo-r3-native-2); argv root override; in verify CHECKS (check:request-state-lists)
 check-batch-audit-site.sh	scanner	yes	auditSite literals in src/ must be in BATCH_AUDIT_SITES (src/core/retry.ts); GBRAIN_GUARD_ROOT seam
 check-bun-test-timeout.sh	scanner	todo	not in verify CHECKS: runs directly as a test.yml verify-job step
 check-fixture-privacy.sh	scanner	yes	conversation-formats + transcripts fixtures (all tokens); evals/ and docs/test-audit/ (real-entity tokens, V-12); GBRAIN_GUARD_ROOT seam

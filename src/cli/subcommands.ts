@@ -17,7 +17,7 @@
  * returns before startup side effects, strict argument checks and engine
  * access.
  */
-export const PAGES_SUBCOMMANDS = ['purge-deleted', 'purges', 'unpurge', 'unsearchable', 'ghosts', 'status'] as const;
+export const PAGES_SUBCOMMANDS = ['purge-deleted', 'purges', 'unpurge', 'unsearchable', 'ghosts', 'status', 'verify', 'reindex'] as const;
 export const CACHE_SUBCOMMANDS = ['stats', 'clear', 'prune'] as const;
 export const INTEGRITY_SUBCOMMANDS = ['check', 'auto', 'review', 'reset-progress'] as const;
 export const HOOK_SUBCOMMANDS = ['session-start', 'user-prompt', 'stop', 'session-end', 'compact'] as const;

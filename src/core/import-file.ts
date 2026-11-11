@@ -1,3 +1,4 @@
+import { deferredToIndexImport } from './persistence/prepared-import.ts';
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
@@ -325,6 +326,8 @@ export async function importFromContent(
     segmentedOwner?: SegmentedStagingOwner;
     /** Wave B: a segmented body an earlier preparation of this write staged (`PreparedContentImport.segmented`), reused when its inputs are unchanged. */
     reuseSegments?: SegmentedImport;
+    /** Wave C, with `prepare`: a segmented body is not staged; the preparation says `deferredToIndex` (strict git-first writes). */
+    deferSegmented?: boolean;
     /** Untrusted caller (remote MCP put_page: `ctx.remote !== false`); drives the remote fence merge and hidden rows. */
     remote?: boolean;
     /**
@@ -640,6 +643,11 @@ export async function importFromContent(
     // dispositions) in the provider-free path used by background rebuilds too.
     const bodyBytes = Buffer.byteLength(parsed.compiled_truth, 'utf-8') + Buffer.byteLength(parsed.timeline ?? '', 'utf-8');
     const storage = await stringWriteStorage(engine, bodyBytes, bodyStorageOf(existing));
+    // Wave C (spec §3.1): a strict git-first segmented body stages nothing; the door commits its file and index-split-page derives the rows.
+    if (opts.deferSegmented && opts.prepare && storage.storage === 'segmented') return opts.prepare(deferredToIndexImport({ slug, parsedPage, contentHash: hash,
+      observedRevision: (existing as (typeof existing & { knowledge_revision?: string }) | null)?.knowledge_revision ?? null,
+      result: { slug, status: 'imported', chunks: 0, parsedPage, ...(pageQuarantined ? { quarantined: true } : {}), ...(pageFlagged ? { flagged: true, flag_reason: pageFlagReason } : {}), ...(disposition.gate ? { gate: disposition.gate } : {}), ...fences.fields },
+      validate: tx => assertPreparedFactWithdrawals(tx, sourceId ?? 'default', parsed.compiled_truth, parsed.timeline || '', slug) }));
     const { chunks, chunkerVersion: chunkerSeal } = storage.storage === 'segmented' ? { chunks: [], chunkerVersion: MARKDOWN_CHUNKER_VERSION } : await prepareFenceAwareMarkdownChunks(engine, sourceId ?? 'default', slug, parsed, existing);
 
     // Embedding failures propagate unless onPostCommitEmbedding lets the caller

@@ -397,7 +397,7 @@
           "structured_content": {
             "id": "number",
             "request_id": "string",
-            "state": "\"queued\" | \"running\" | \"recovering\" | \"committed\" | \"conflict\" | \"failed\" | \"cancelled\""
+            "state": "\"queued\" | \"running\" | \"recovering\" | \"indexing\" | \"committed\" | \"conflict\" | \"failed\" | \"cancelled\""
           },
           "optional": {
             "expired": "boolean: the fact is withdrawn"
@@ -771,7 +771,7 @@
         "result": {
           "structured_content": {
             "request_id": "string",
-            "state": "\"queued\" | \"running\" | \"recovering\" | \"committed\" | \"conflict\" | \"failed\" | \"cancelled\"",
+            "state": "\"queued\" | \"running\" | \"recovering\" | \"indexing\" | \"committed\" | \"conflict\" | \"failed\" | \"cancelled\"",
             "retry_after_ms": "number | null",
             "operation": "string",
             "source_id": "string",
@@ -788,6 +788,7 @@
               "queued",
               "running",
               "recovering",
+              "indexing",
               "committed",
               "conflict",
               "failed",

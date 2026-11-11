@@ -2504,7 +2504,7 @@ CREATE TABLE IF NOT EXISTS persistence_requests (
     intent jsonb,
     authority jsonb NOT NULL,
     sequence bigserial NOT NULL UNIQUE,
-    state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','recovering','committed','conflict','failed','cancelled')),
+    state text NOT NULL DEFAULT 'queued' CHECK (state IN ('queued','running','recovering','indexing','committed','conflict','failed','cancelled')),
     execution_token uuid,
     claim_expires_at timestamptz,
     recovery jsonb,
@@ -2719,6 +2719,59 @@ BEGIN
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/persistence/git-canonical-schema.ts (GIT_CANONICAL_SCHEMA_SQL)
+
+-- Wave C 1H git-first strict write path (migration v275; src/core/persistence/git-first.ts).
+-- BEGIN GENERATED from src/core/persistence/git-first-schema.ts (GIT_FIRST_SCHEMA_SQL). Edit that file, then run: bun run build:schema
+CREATE TABLE IF NOT EXISTS page_pending_heads (
+  source_id    TEXT        NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  slug         TEXT        NOT NULL,
+  page_id      INTEGER     REFERENCES pages(id) ON DELETE CASCADE,
+  request_id   UUID        NOT NULL,
+  commit_oid   TEXT        NOT NULL,
+  head_oid     TEXT        NOT NULL,
+  path         TEXT        NOT NULL,
+  revision     UUID        NOT NULL,
+  body_bytes   BIGINT      NOT NULL CHECK (body_bytes >= 0),
+  body_sha256  BYTEA       NOT NULL CHECK (octet_length(body_sha256) = 32),
+  tail_sha256  BYTEA       CHECK (tail_sha256 IS NULL OR octet_length(tail_sha256) = 32),
+  title        TEXT,
+  type         TEXT,
+  frontmatter  JSONB,
+  lead_text    TEXT,
+  access_state TEXT        NOT NULL DEFAULT 'world' CHECK (access_state IN ('world','private')),
+  hold_code    TEXT,
+  queued_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (source_id, slug)
+);
+CREATE INDEX IF NOT EXISTS page_pending_heads_request ON page_pending_heads (request_id);
+CREATE TABLE IF NOT EXISTS page_upload_spools (
+  staging_id UUID        PRIMARY KEY REFERENCES page_body_stagings(id) ON DELETE CASCADE,
+  host_id    UUID        NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  removed_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS page_upload_spools_present ON page_upload_spools (host_id) WHERE removed_at IS NULL;
+CREATE TABLE IF NOT EXISTS page_upload_spool_parts (
+  staging_id UUID    NOT NULL REFERENCES page_upload_spools(staging_id) ON DELETE CASCADE,
+  part_no    INTEGER NOT NULL CHECK (part_no >= 0),
+  byte_start BIGINT  NOT NULL CHECK (byte_start >= 0),
+  byte_len   INTEGER NOT NULL CHECK (byte_len BETWEEN 1 AND 4194304),
+  sha256     BYTEA   NOT NULL CHECK (octet_length(sha256) = 32),
+  PRIMARY KEY (staging_id, part_no)
+);
+DO \$rls\$
+DECLARE target text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    FOREACH target IN ARRAY ARRAY['page_pending_heads','page_upload_spools','page_upload_spool_parts'] LOOP
+      IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = current_schema() AND c.relname = target AND c.relkind = 'r' AND NOT c.relrowsecurity) THEN
+        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', target);
+      END IF;
+    END LOOP;
+  END IF;
+END \$rls\$;
+-- END GENERATED from src/core/persistence/git-first-schema.ts (GIT_FIRST_SCHEMA_SQL)
 -- Verified text projection work (migration 153).
 -- BEGIN GENERATED from src/core/page-state/projection-schema.ts (PAGE_PROJECTION_SCHEMA_SQL). Edit that file, then run: bun run build:schema
 DROP TRIGGER IF EXISTS trg_pages_search_vector ON pages;
@@ -3824,7 +3877,7 @@ BEGIN
   FOR f IN SELECT p.oid::regprocedure AS sig, substr(c.setting, 13) AS path
     FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace CROSS JOIN LATERAL unnest(p.proconfig) AS c(setting)
     WHERE n.nspname = 'public' AND p.prokind = 'f' AND c.setting IN ('search_path=pg_catalog, public', 'search_path=pg_catalog')
-      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_access_derive_page_readers', 'gbrain_access_folder_rules', 'gbrain_access_mark_restricted', 'gbrain_access_norm_readers', 'gbrain_access_origin_restricted', 'gbrain_access_pending_covers', 'gbrain_access_readers', 'gbrain_access_stamp_folder_rules', 'gbrain_access_state_unreadable', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_release_refresh_barrier', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
+      AND p.proname IN ('auto_enable_rls', 'bump_page_generation_clock_fn', 'bump_page_generation_fn', 'enforce_minion_queue_protocol', 'gbrain_access_derive_page_readers', 'gbrain_access_folder_rules', 'gbrain_access_mark_restricted', 'gbrain_access_norm_readers', 'gbrain_access_origin_restricted', 'gbrain_access_pending_covers', 'gbrain_access_readers', 'gbrain_access_stamp_folder_rules', 'gbrain_access_state_unreadable', 'gbrain_advance_page_revision', 'gbrain_advance_tag_revision', 'gbrain_bump_trust_generation', 'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals', 'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts', 'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication', 'gbrain_index_effect_barrier', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal', 'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page', 'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_release_refresh_barrier', 'gbrain_require_managed_writer', 'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution', 'gbrain_stamp_trust_tier', 'gbrain_stamp_version_attribution', 'gbrain_stamp_write_attribution', 'gbrain_try_jsonb', 'notify_minion_job_change', 'update_chunk_search_vector', 'update_page_search_vector')
       AND pg_has_role(current_user, p.proowner, 'USAGE')
     ORDER BY 1
   LOOP

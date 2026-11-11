@@ -23,12 +23,14 @@ export function writeHealth(row: { state: WriteRequestState; created_at: Date | 
   let reason: WriteDiagnostic['reason'] = unexpected || facts.inspect_owner || facts.recovery_required || row.state === 'recovering'
     ? 'recovery_required' : facts.owner_unavailable || facts.owner?.stale ? 'owner_unavailable' : facts.earlier_write ? 'waiting_on_earlier_write'
     : raw ? (WRITE_HEALTH_REASONS as readonly string[]).includes(raw) ? raw as WriteDiagnostic['reason'] : 'cause_unknown' : 'pending';
-  const aged = age >= 120_000;
+  // Wave C: an indexing write is committed in Git and waits only for its index step, which no operator action speeds up.
+  const indexing = row.state === 'indexing';
+  const aged = !indexing && age >= 120_000;
   const unknown = reason === 'pending' || reason === 'cause_unknown';
   if (aged && unknown) reason = 'cause_unknown';
-  const inspect = aged || unexpected || facts.inspect_owner || ['writer_pool_capacity', 'owner_unavailable', 'writer_lock_unavailable'].includes(reason);
+  const inspect = !indexing && (aged || unexpected || facts.inspect_owner || ['writer_pool_capacity', 'owner_unavailable', 'writer_lock_unavailable'].includes(reason));
   const owner = facts.owner?.stale ? { last_active: facts.owner.last_active } : undefined;
-  return { retry_after_ms: inspect ? INSPECT_OWNER_RETRY_MS : !unknown || age >= 30_000 ? 5000 : 1000,
+  return { retry_after_ms: inspect ? INSPECT_OWNER_RETRY_MS : indexing || !unknown || age >= 30_000 ? 5000 : 1000,
     diagnostic: { age_ms: age, assessment: unknown ? aged ? 'stalled' : 'pending' : 'blocked', reason,
       next_action: inspect ? 'inspect_owner' : 'poll', ...(facts.observed_at ? { observed_at: facts.observed_at } : {}), ...(owner ? { owner } : {}) } };
 }

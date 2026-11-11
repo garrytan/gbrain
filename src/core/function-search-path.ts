@@ -30,7 +30,7 @@ export const PINNED_FUNCTION_NAMES = [
   'gbrain_clear_atom_page_state', 'gbrain_count_git_canonical_sources', 'gbrain_count_modifications', 'gbrain_forget_page_retrievals',
   'gbrain_fts_input', 'gbrain_graduation_fence', 'gbrain_guard_deferred_request', 'gbrain_guard_effect_protocol', 'gbrain_guard_inserted_facts',
   'gbrain_guard_protocol_activation', 'gbrain_guard_request_protocol', 'gbrain_guard_skill_publication',
-  'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal',
+  'gbrain_index_effect_barrier', 'gbrain_lease_shared_skill_delivery', 'gbrain_mark_derivation_scope_entry', 'gbrain_preserve_fact_withdrawal',
   'gbrain_queue_page_projection', 'gbrain_refuse_purged_fact', 'gbrain_refuse_purged_page',
   'gbrain_refuse_purged_take', 'gbrain_refuse_purging_derivation', 'gbrain_release_refresh_barrier', 'gbrain_require_managed_writer',
   'gbrain_require_persistence_protocol', 'gbrain_snapshot_version_trust', 'gbrain_stamp_revision_attribution',

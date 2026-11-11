@@ -32,4 +32,11 @@ export interface PreparedContentImport {
   afterCommit?(engine: BrainEngine): Promise<void>;
   /** Wave B: the segmented body this preparation staged, for a later preparation of the same write to reuse (`importFromContent`'s `reuseSegments`). */
   segmented?: SegmentedImport;
+  /** Wave C: a segmented body left for the index step (importFromContent `deferSegmented`); `apply` must not run. */
+  deferredToIndex?: true;
+}
+
+/** Wave C (spec §3.1): the preparation of a segmented body deferred to the index step; nothing is staged and it has no apply. */
+export function deferredToIndexImport(input: Pick<PreparedContentImport, 'slug' | 'parsedPage' | 'observedRevision' | 'contentHash' | 'result' | 'validate'>): PreparedContentImport {
+  return { ...input, noop: false, deferredToIndex: true, apply: async () => { throw new Error('A write deferred to the index step has no database apply.'); } };
 }

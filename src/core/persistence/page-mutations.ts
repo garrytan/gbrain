@@ -51,6 +51,7 @@ import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscri
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
+import { indexPendingError, readPendingHead } from './git-first.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -239,7 +240,7 @@ export async function submitPageMutation(ctx: OperationContext,
   // cache could explain drops it and prepares the write once more, uncached, so it ends as it would without it.
   const cached = await preadmitReads(ctx.engine);
   let prepared = await preparePageAdmission(cached ? { ...ctx, engine: cached } : ctx, { ...input, params });
-  if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
+  if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs(), ctx.waitIndexedMs)), false));
   const brainId = cached ? cachedPreadmitBrain(ctx.engine) : undefined;
   // Phase 4.4: the admission transaction runs on the warm single-write lane when it is free.
   // GST-1387: an explicit wait_ms also bounds the refresh-fence wait, so wait_ms 0 is refused at once, never held.
@@ -251,10 +252,10 @@ export async function submitPageMutation(ctx: OperationContext,
     if (!cached || !preadmitRecheckFailed(error)) throw error;
     dropPreadmitCache(ctx.engine);
     prepared = await preparePageAdmission(ctx, { ...input, params: { ...params, request_id: prepared.admission.requestId } });
-    if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs())), false));
+    if (prepared.prior) return withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, prepared.prior, ctx.config, waitMs(), ctx.waitIndexedMs)), false));
     row = await admit(prepared.admission);
   }
-  const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs())), false));
+  const response = await withLiveSearchable(ctx, throwIfHeld(pendingAwareResponse(ctx, await waitForWrite(ctx.engine, row, ctx.config, waitMs(), ctx.waitIndexedMs)), false));
   emitFenceNotice(ctx, response, row.slug);
   return { ...response, ...(prepared.typeWarning ? { type_warning: prepared.typeWarning } : {}), ...(prepared.slugAdvisory ? { slug_advisory: prepared.slugAdvisory } : {}) };
 }
@@ -493,6 +494,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   }
   const slugAdvisory = (input.operation === 'put_page' || input.operation === 'capture') && input.managedFileImport !== true
     ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at, input.operation) : null;
+  // Wave C (ceo-r3-outside-1): a page whose committed head waits for its index exists (a create may have no rows yet), and
+  // an edit, which applies to the page's body, refuses index_pending until the flip; an append is admitted and its preparation decides.
+  const pending = input.operation === 'edit_page' || input.operation === 'append_page' ? await readPendingHead(ctx.engine, sourceId, slug) : null;
+  if (input.operation === 'edit_page' && pending) throw indexPendingError(slug, pending);
   // #5616: typed edit refusals before admission; publication repeats them on the locked snapshot.
   if (input.operation === 'edit_page') {
     const { applyPageEdits, assertEditRevision, assertSegmentedEditFences, parseEditWithin, parsePageEdits } = await import('./page-edit.ts');
@@ -504,7 +509,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     else { parsePageEdits(p.edits); await assertSegmentedEditFences(ctx.engine, snapshot.page, within, ctx.remote !== false); }
   }
   // Wave B: an append names an existing page; its preconditions are checked when it is prepared, on the page it extends.
-  if (input.operation === 'append_page' && (!snapshot || snapshot.page.deleted_at)) {
+  if (input.operation === 'append_page' && (!snapshot || snapshot.page.deleted_at) && !pending) {
     throw new OperationError('page_not_found', `Page not found: ${slug}`, 'append_page adds to an existing page; create it with put_page.');
   }
   let binding = boundAtStart;
