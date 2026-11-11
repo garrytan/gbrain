@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Pushes from an unmanaged checkout now scan every commit they publish for secrets, not only the files they just wrote.** Four gbrain pushes from a checkout that is not a managed worktree carried earlier local commits to the remote unscanned: the access-policy commit, the durability-scaffolding commit, `gbrain sources push` (which scanned only its own staged files, then pushed the whole branch tip, even with nothing new to commit) and the first push of `gbrain bootstrap repo` after the remote branch was gone (which scanned only the current tree). A credential a script committed with plain `git commit`, including one a later commit removed or one in a commit message, went out with them. Each now runs the range scan managed publishes use over what the remote lacks (the whole history when the remote has no such branch) and refuses `publish_secret_found` or `publish_scan_unreadable`, with nothing pushed and the local commits kept. `gbrain sources push` pushes the exact commit it scanned, leased on the remote tip it read, so a remote rewound in between is scanned again. An allowlist edit that `gbrain sources push` or `gbrain bootstrap repo` commits itself, after scanning it, still publishes; one a script committed is left to the user. Remoteless checkouts, managed worktrees and repo-less brains are unchanged, and the policy command's retry hint keeps `--scan-secrets`.
+
+Reported and first fixed by @javieraldape (#9159).
+
+### Itemized changes
+
+- `src/core/access/policy-git.ts`, `src/core/brain-repo-durability.ts`: the policy and scaffolding commits publish with `scanSecrets`; a scaffolding refusal names its code in the harden step.
+- `src/core/workspace-push.ts`: before the push, `stagedScanPublishRefusal` over `origin/<branch>..HEAD`, then `git push --force-with-lease=refs/heads/<branch>:<scanned tip> origin <sha>:refs/heads/<branch>`; a local branch that does not contain the remote tip is not pushed.
+- `src/core/bootstrap/repo.ts`: both first pushes scan the branch they push, with its whole history, and refuse if it moved during the scan (`scanHistory` option, a seam for runner fakes); `src/commands/bootstrap.ts` prints a refusal's code and next step.
+- `src/core/git/commit-push.ts`: a scanned publish whose remote has no such branch yet (no tracking ref) scans the whole history and leases the push on the branch being absent, where it used to refuse `publish_scan_unreadable`.
+- `src/core/git/range-secret-scan.ts`: `stagedScanPublishRefusal`, the range refusal with gate changes in `workspace_push` and `bootstrap` ledger commits exempt, and files over the range scan's cap exempt in `workspace_push` commits (its staged scan streams them up to 512 MiB).
+- Tests: `test/unmanaged-push-history-scan-8902.serial.test.ts` (each path against a local bare remote: a removed credential, a credential in a commit message, clean history, a remoteless policy commit, allowlist edits, a rewound remote).
+
 ## [0.60.675.0] - 2026-11-11
 
 **Tool calls through native OpenAI models no longer fill every optional argument with a placeholder.** gbrain's tool loop (subagent jobs and SkillOpt rollouts) sends OpenAI models through the Responses API, and that API treats a tool definition with no `strict` field as strict: it marks every property required, so the model has to invent a value for each optional argument. A `get_page` call came back with a zero-line window and an empty byte range, which gbrain's own argument checks then refused. Native OpenAI tool definitions now say `strict: false`, so the schema's own `required` list holds and the model sends only the arguments it means. Anthropic, Google and the OpenAI-compatible providers (chat completions) send the same request as before. Reported and first fixed by @akinduroifedayo.
