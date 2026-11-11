@@ -172,3 +172,33 @@ test('an untracked target that an ignore rule covers by the time the group adds 
   expect(git(top, 'ls-tree', '-r', '--name-only', 'HEAD', '--', 'brain/private')).toBe('');
   expect(git(top, 'diff', '--cached', '--name-only')).toBe('');
 });
+
+test('a landed commit is not reversed for a file whose name starts with a colon, edited or new', async () => {
+  const { top, root } = checkout();
+  writeFileSync(join(root, ':colon-example.md'), 'Colon, first version.\n');
+  git(top, 'add', '-A'); git(top, 'commit', '-qm', 'colon page');
+  writeFileSync(join(root, ':colon-example.md'), 'Colon, second version.\n');
+  writeFileSync(join(root, ':new-example.md'), 'New.\n');
+  const path = failingGit(has(' update-ref '));
+  await withEnv({ PATH: path }, () => commitGitTargets(root, [':colon-example.md', ':new-example.md']));
+  expect(git(top, 'show', 'HEAD:brain/:colon-example.md')).toBe('Colon, second version.');
+  expect(git(top, 'show', 'HEAD:brain/:new-example.md')).toBe('New.');
+  expect(git(top, 'status', '--porcelain')).toBe('');
+});
+
+test('putting the index back never tracks again a target another writer untracked meanwhile', async () => {
+  const { top, root } = checkout();
+  mkdirSync(join(root, 'archive'));
+  writeFileSync(join(root, 'archive', 'carol-example.md'), 'Carol, first version.\n');
+  git(top, 'add', '-A'); git(top, 'commit', '-qm', 'archive');
+  writeFileSync(join(root, '.gitignore'), 'archive/\n');
+  git(top, 'add', '-A'); git(top, 'commit', '-qm', 'ignore the archive folder');
+  writeFileSync(join(root, 'people', 'alice-example.md'), 'Alice, second version.\n');
+  // While the effect commits, another writer runs git rm --cached on the ignored file; the commit then fails.
+  const path = failingGit('false');
+  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+  writeFileSync(join(path.split(':')[0]!, 'git'), `#!/bin/sh\n${has(' update-ref ')} && { ${realGit} -C '${top}' rm -q --cached -- brain/archive/carol-example.md; exit 1; }\nexec ${realGit} "$@"\n`, { mode: 0o755 });
+  await withEnv({ PATH: path }, () => commitGitTargets(root, ['people/alice-example.md', 'archive/carol-example.md']));
+  expect(git(top, 'ls-files', '--', 'brain/archive')).toBe('');
+  expect(git(top, 'diff', '--cached', '--name-only')).toBe('brain/archive/carol-example.md');
+});

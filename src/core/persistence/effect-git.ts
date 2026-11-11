@@ -446,8 +446,8 @@ async function restoreIndex(session: GitSession, prefix: string, paths: string[]
     session = { ...session, signal: undefined };
     const now = await indexSnapshot(session, paths);
     const local = (path: string) => path.startsWith(prefix) ? path.slice(prefix.length) : path;
-    // ls-tree reads its paths literally and relative to the root, like update-index.
-    const tree = await git(session, ['ls-tree', '-r', '--full-name', '-z', 'HEAD', '--', ...paths]);
+    // ls-tree takes no wildcards but does read pathspec magic (a leading ':'), so each path goes literal.
+    const tree = await git(session, ['ls-tree', '-r', '--full-name', '-z', 'HEAD', '--', ...literalPathspecs(paths)]);
     const head = new Map(tree.code !== 0 ? [] : tree.stdout.split('\0').filter(Boolean).map(record => {
       const [mode, , oid] = record.slice(0, record.indexOf('\t')).split(' ');
       return [record.slice(record.indexOf('\t') + 1), `${mode} ${oid} 0`] as const;
@@ -455,7 +455,10 @@ async function restoreIndex(session: GitSession, prefix: string, paths: string[]
     const staged = (path: string) => now.entries.get(path) !== head.get(path);
     const wanted = new Set(paths);
     const added = [...now.entries.keys()].filter(path => !before.entries.has(path) && staged(path));
-    const changed = [...before.entries].filter(([path, entry]) => wanted.has(local(path)) && now.entries.get(path) !== entry && staged(path));
+    // An entry gone from the index comes back only for a file gone from disk, as the group's own removals are: a file
+    // still on disk was untracked by another writer (git rm --cached), and putting it back would track it again.
+    const changed = [...before.entries].filter(([path, entry]) => wanted.has(local(path)) && now.entries.get(path) !== entry && staged(path)
+      && (now.entries.has(path) || !existsSync(join(session.root, local(path)))));
     if (added.length) await git(session, ['update-index', '--force-remove', '--', ...added.map(local)]);
     const cacheinfo = changed.filter(([, entry]) => entry.endsWith(' 0')).flatMap(([path, entry]) => ['--cacheinfo', `${entry.split(' ')[0]},${entry.split(' ')[1]},${path}`]);
     if (cacheinfo.length) await git(session, ['update-index', '--add', ...cacheinfo]);
