@@ -141,7 +141,7 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     };
     if (message === 'The canonical file was removed outside coordinated publication.') return {
       reason: 'canonical_file_missing', message: 'The canonical file is missing; the database page was not overwritten.',
-      suggestion: 'Review the deletion and recover the intended canonical file or import the intended deletion before retrying. Reconciliation does not restore missing files.',
+      suggestion: 'Review the deletion and recover the intended canonical file or import the intended deletion before retrying. Reconciliation does not restore missing files. To narrow who reads the page without restoring its file, add a page rule: gbrain access rule add --slug <slug> --readers <member> --source <source>.',
     };
     if (message === 'An unindexed file already occupies the canonical page path.') return {
       reason: 'canonical_path_occupied', message: 'An unindexed file already occupies this page path; it was not overwritten.',

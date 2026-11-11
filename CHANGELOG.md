@@ -14,6 +14,8 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **gbrain now tells you when a privacy label it doesn't recognize leaves a page readable.** A page with no `visibility` counts as private only when `access` is private, restricted or confidential, or `confidentiality` is confidential, secret, private or restricted. Any other value, such as `access: personal` or a confidentiality value naming a health record, was ignored without a word: the page read as world to every remote caller and could be committed to the brain's git remote. Writes and doctor now say so. Who can read a page does not change.
 
+**You can now keep one page to some members, even when gbrain can't write the page.** A page at the root of a source (one named after a folder, say) could not be covered by a folder rule, and a page whose file was removed from git outside gbrain refused a `visibility: private` edit with `source_changed`, whose receipt only offered the ghost-page repair, which deletes the page. `gbrain access rule add --slug <page> --readers <list>` now restricts exactly that page without writing it, and the refusal names that route. Removing the rule is the undo.
+
 ### Itemized changes
 
 #### Ignored privacy labels: a write-time notice and a doctor check (GST-2462)
@@ -24,6 +26,14 @@ identifiers and attribution are available in the pre-removal Git revision
 - Unchanged on purpose: the recognized values, `visibility.honor_aliases`, and every read and git placement decision. No repair rewrites labels.
 - Docs: `docs/guides/access-designations.md` (unrecognized label values), `docs/guides/troubleshooting.md`, `skills/conventions/page-privacy.md`, key-files entries.
 - Tests: `test/privacy-label-ignored.test.ts` (put_page, import, sync and a managed git source, doctor, and a pin that reads stay the same; PGLite and Postgres), `test/ignored-privacy-labels.test.ts` (the TypeScript and SQL rules agree on both engines).
+
+#### Page rules: restrict one exact page (GST-2462)
+
+- `src/core/access/folder-rules.ts`: a rule can name one page with `slug:` instead of `prefix:` (`gbrain access rule add --slug <page>`, `src/commands/access-rules.ts`). It is stored in the same rulebook without the trailing `/` and covers only that slug, never a folder of the same name or a longer slug. A `prefix:` without `/` is still refused and now names the slug form.
+- Migration v303 (provisional number, `access_page_rules`): both prefix checks accept the page form, and `gbrain_access_folder_rules` / `gbrain_access_pending_covers` match a slash-less prefix only when it equals the slug; `src/core/search/private-visibility.ts` and the rule preview use the same matcher. Folder prefixes match exactly as before, so no page is restamped on upgrade. Reads are decided in the database, so they are right for every gbrain sharing it once it is migrated; an older gbrain that syncs an `access.yml` holding a page rule reads the file as invalid, so that source reads as nobody remotely until it is upgraded.
+- `src/core/persistence/service.ts`, `terminal-classify.ts`, `verb-errors.ts`, `page-prepare.ts`: a write refused because the page's canonical file is missing names the page rule as the way to narrow who reads the page, beside the ghost-page repair.
+- Docs: `docs/guides/access-designations.md`, `docs/tutorials/company-brain.md`, `docs/guides/write-refusals.md#canonical_file_missing`.
+- Tests: `test/access-page-rule-fileless.test.ts` (a root page named after its folder and a page whose file left git on a managed git source, and a repo-less brain, on PGLite and Postgres: put refuses and names the route, the rule hides each page from unbound callers while the owner reads it, nothing else is covered, no page file is written, and removing the rule restores the reads after approval).
 
 ## [0.60.676.0] - 2026-11-11
 
