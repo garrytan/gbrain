@@ -65,7 +65,7 @@ export interface BoundedExecOptions {
   termGraceMs?: number;
   /** 'buffer' returns stdout and stderr as raw bytes (NUL-delimited git listings); default 'utf8'. */
   encoding?: 'utf8' | 'buffer';
-  /** Stop the child's descendants too (read before the first signal, again before SIGKILL) and settle only once none of them runs. POSIX only. */
+  /** Stop the child's descendants too (read before the first signal, again before SIGKILL) and settle only once none of them runs, waiting at most 1 s after SIGKILL. POSIX only. */
   killTree?: boolean;
 }
 
@@ -125,7 +125,10 @@ export function execFileBounded(file: string, args: string[], options: BoundedEx
         if (killTree) tree = [...new Set([...live(), ...await descendantsOf([...(childHasExited(child) ? [] : [child.pid!]), ...live()])])];
         child.kill('SIGKILL');
         signalTree('SIGKILL');
-        settleStopped();
+        if (!live().length) { settleStopped(); return; }
+        clearInterval(poll);
+        const until = Date.now() + 1_000;
+        poll = setInterval(() => { if (!live().length || Date.now() >= until) settleStopped(); }, 10);
       }, termGraceMs);
     };
     const stop = (message: string, code: string) => {
