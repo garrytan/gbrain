@@ -187,6 +187,8 @@ export class ConnectionManager {
   /** #1915: single-flight guard for the session-pooler retry. */
   private _sessionInit: Promise<Sql> | null = null;
   private _sessionFallbackLogged = false;
+  /** #8478: bumped by disconnect() and retire(); a pool whose init began in an earlier epoch has no owner. */
+  private _epoch = 0;
 
   constructor(opts: ConnectionManagerOpts) {
     this.opts = opts;
@@ -323,14 +325,12 @@ export class ConnectionManager {
 
   private async getDirectPool(): Promise<Sql> {
     if (this._directPool) return this._directPool;
+    const epoch = this._epoch;
     // A1: cache the Promise so concurrent first callers await the same init.
     if (!this._directInit) {
-      this._directInit = this.initDirectPool().then(pool => {
-        this._directPool = pool;
-        return pool;
-      }).catch(err => {
+      this._directInit = this.initDirectPool().then(pool => this.adoptDirectPool(pool, epoch)).catch(err => {
         // Reset cache on failure so next caller can retry.
-        this._directInit = null;
+        if (this._epoch === epoch) this._directInit = null;
         throw err;
       });
     }
@@ -338,6 +338,8 @@ export class ConnectionManager {
     try {
       pool = await this._directInit;
     } catch (err) {
+      // #8478: a manager closed while this init was in flight starts no fallback.
+      if (this._epoch !== epoch) throw err;
       // #1641: the derived direct host (db.<ref>.supabase.co) is IPv6-only
       // without Supabase's IPv4 add-on. On IPv4-only networks the direct
       // pool can never connect — permanently fall back to the read pool
@@ -366,10 +368,7 @@ export class ConnectionManager {
             if (sessionUrl && sessionUrl !== this._directUrl) {
               const prevHost = this._directUrl ? this.hostOnly(this._directUrl) : 'unknown host';
               this._directUrl = sessionUrl;
-              this._sessionInit = this.initDirectPool().then(p => {
-                this._directPool = p;
-                return p;
-              });
+              this._sessionInit = this.initDirectPool().then(p => this.adoptDirectPool(p, epoch));
               const p = await this._sessionInit;
               if (!this._sessionFallbackLogged) {
                 this._sessionFallbackLogged = true;
@@ -381,7 +380,8 @@ export class ConnectionManager {
               }
               return p;
             }
-          } catch {
+          } catch (sessionErr) {
+            if (this._epoch !== epoch) throw sessionErr;
             // Session pooler also failed → fall through to the #1641
             // read-pool kill-switch below (the original behavior).
           }
@@ -403,6 +403,16 @@ export class ConnectionManager {
       // Defensive — initDirectPool should have thrown.
       throw new Error('connection-manager: direct pool init returned null');
     }
+    return pool;
+  }
+
+  /** #8478: a pool that finished opening after disconnect() or retire() is ended here; nobody else holds it. */
+  private async adoptDirectPool(pool: Sql, epoch: number): Promise<Sql> {
+    if (this._epoch !== epoch) {
+      await endPoolBounded(pool);
+      throw Object.assign(new Error('connection-manager: the direct pool finished opening after this manager was closed'), { code: 'CONNECTION_ENDED' });
+    }
+    this._directPool = pool;
     return pool;
   }
 
@@ -497,10 +507,12 @@ export class ConnectionManager {
     // instance/module pool is added downstream) and neither can hang teardown
     // past the CLI's 10s force-exit. endPoolBounded never throws.
     const ends: Promise<void>[] = [];
+    this._epoch++;
+    this._sessionInit = null;
+    this._directInit = null;
     if (this._directPool) {
       ends.push(endPoolBounded(this._directPool));
       this._directPool = null;
-      this._directInit = null;
     }
     if (this._readPool && !this._readPoolOwnedExternally) {
       ends.push(endPoolBounded(this._readPool));
@@ -512,6 +524,8 @@ export class ConnectionManager {
   /** Ends a manager a reconnect superseded once its in-flight work finishes, with no hard bound (a long hold such as CREATE INDEX CONCURRENTLY completes). */
   retire(): void {
     const pools = [this._directPool, this._readPoolOwnedExternally ? null : this._readPool];
+    this._epoch++;
+    this._sessionInit = null;
     this._directPool = null;
     this._directInit = null;
     this._readPool = null;

@@ -12,6 +12,9 @@ import { publicationEnabled, setSharedSkillPolicy } from './policy.ts';
 import type { BrainEngine } from '../engine.ts';
 import { assertPackagedSkillSource, sharedSkillSourcePolicy } from './setup-source-policy.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { initializeLocalPersistence, requestPrincipalForContext } from '../persistence/page-mutations.ts';
+import { waitForWrite } from '../persistence/service.ts';
+import { isTerminal, type WriteRequest } from '../persistence/model.ts';
 
 export async function isNewContentDatabase(engine: BrainEngine): Promise<boolean> {
   const [row] = await engine.executeRaw<{ fresh: boolean }>("SELECT to_regclass('public.pages') IS NULL AND to_regclass('public.config') IS NULL AND to_regclass('public.persistence_brain') IS NULL AS fresh");
@@ -233,6 +236,17 @@ export async function setupSharedBrainContent(ctx: OperationContext, options: Sh
 
 export async function installPackagedSharedSkills(ctx: OperationContext, sourceId: string, preservePaths: string[] = []): Promise<void> {
   await assertPackagedSkillSource(ctx.engine, sourceId);
+  // #8453: the adoption key binds the release-stamped payload, so an install begun on an earlier release left its adoption
+  // under another key. Resume (or keep) that request instead of admitting a second publication of the pack.
+  await initializeLocalPersistence(ctx);
+  const principal = await requestPrincipalForContext(ctx);
+  const [open] = await ctx.engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
+    WHERE r.operation='put_skill' AND r.source_id=$1 AND r.principal_kind=$2 AND r.principal_id=$3 AND r.intent->>'pack_id'=$4
+      AND r.authority ? 'skillAdoptionPreconditions' AND r.state IN ('queued','deferred','running','recovering','committed') ORDER BY r.sequence DESC LIMIT 1`,
+    [sourceId, principal.kind, principal.id, DEFAULT_SHARED_PACK_ID]);
+  const resumed = open ? await waitForWrite(ctx.engine, open, ctx.config, ctx.writeWaitMs) : null;
+  if (resumed?.state === 'committed') return;
+  if (resumed && !isTerminal(resumed)) throw packagedPublicationPending(resumed.request_id);
   const files = packagedSharedSkills();
   for (const path of preservePaths) if (['README.md', 'LICENSE'].includes(path)) delete files[path];
   const { adoptSharedSkillpack } = await import('./catalog.ts');
@@ -245,9 +259,11 @@ export async function installPackagedSharedSkills(ctx: OperationContext, sourceI
     })),
   });
   const pending = result.receipts.map(receipt => receipt.write_request as { state?: string; request_id?: string } | undefined).find(request => request?.state !== 'committed');
-  if (pending) {
-    throw opError('publication_pending', 'The default pack was accepted but is not fully committed; rerun init to resume its durable requests.',
-      `Inspect the accepted request${pending.request_id ? ` ${pending.request_id}` : ''} first; gbrain init resumes the same durable request (same request_id), so it never publishes the pack twice.`,
-      pending.request_id ? { fix: readFix('Shows whether the default pack publication committed, is still pending, or failed.', { argv: ['gbrain', 'write-request', '--', pending.request_id] }) } : {});
-  }
+  if (pending) throw packagedPublicationPending(pending.request_id);
+}
+
+function packagedPublicationPending(requestId: string | undefined) {
+  return opError('publication_pending', 'The default pack was accepted but is not fully committed; rerun init to resume its durable requests.',
+    `Inspect the accepted request${requestId ? ` ${requestId}` : ''} first; gbrain init resumes the same durable request (same request_id), so it never publishes the pack twice.`,
+    requestId ? { fix: readFix('Shows whether the default pack publication committed, is still pending, or failed.', { argv: ['gbrain', 'write-request', '--', requestId] }) } : {});
 }

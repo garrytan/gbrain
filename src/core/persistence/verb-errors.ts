@@ -9,7 +9,7 @@ import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
 import { PAGE_CHANGED_AFTER_READ_MESSAGE } from '../page-state/types.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { ERROR_CATALOGUE } from '../error-catalogue.ts';
+import { codeEntry, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { SOURCE_CHECKOUT_MISSING, type CheckoutRefusalOrigin } from './publication-failure.ts';
 import { ownershipRecordNotPrivateError, physicalRootDirectoryChangedError } from './physical-root-record.ts';
 
@@ -199,6 +199,8 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     suggestion: 'A company-brain source never rewrites repository files: fix the named fence in the repository, commit it, and resume the sync.' };
   // Wave B: a page whose body is stored in segments refuses a whole-body write; a deliberate per-page verdict, never a server fault.
   if (code === 'page_body_segmented') return { reason: code, message: message ?? SEGMENTED_WRITE_MESSAGE, suggestion: SEGMENTED_WRITE_SUGGESTION };
+  // #8522: a page whose segment rows readable here do not cover its body refuses every whole-body write the same way; the message names the page.
+  if (code === 'page_body_rows_unreadable') return { reason: code, message: message ?? codeEntry(code)!.summary, suggestion: codeEntry(code)!.suggestion };
   // #5575: a purged claim or page content is refused for good; the owner alone can clear its tombstone.
   if (code === 'purged_content') return { reason: code, message: 'This content was purged from this source and cannot be saved again.',
     suggestion: PURGED_SUGGESTION };
@@ -331,6 +333,7 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
   if (!pending) error.detail = diagnostic.reason;
   if (writeError === 'purged_content') error.canonical = 'purged_content';
   if (writeError === 'page_body_segmented') Object.assign(error, { canonical: 'page_body_segmented', fix: segmentedRememberFix() });
+  if (writeError === 'page_body_rows_unreadable') error.canonical = 'page_body_rows_unreadable';
   error.writeError = writeError;
   error.writeRequest = receipt;
   return error;

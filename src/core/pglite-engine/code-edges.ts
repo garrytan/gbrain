@@ -1,11 +1,9 @@
 /**
  * PGLite-only code-edge read (refactor wave 1 C13). The rest of the domain
  * lives once in src/core/engine-sql/code-edges.ts. `getEdgesByChunk` stays
- * dialect-specific because its PGLite SQL behaves differently from Postgres's
- * on master: one UNION ALL under a single shared LIMIT, and an edge-type
- * filter that binds only to the `to_chunk_id` arm for direction 'both'
- * (operator precedence). Unifying it would change PGLite results, so it is
- * listed in docs/designs/refactor-wave-1/w1-inventory.md and left as is.
+ * dialect-specific because it runs on the PGLite query API, but it applies the
+ * same filters as the shared Postgres read: the edge-type filter covers every
+ * direction arm and is bound, and each table gets its own LIMIT.
  */
 import type { PGlite } from '@electric-sql/pglite';
 import { rowToCodeEdge } from '../engine-sql/code-edges.ts';
@@ -23,37 +21,34 @@ export async function getEdgesByChunk(
   ): Promise<import('../types.ts').CodeEdgeResult[]> {
     const direction = opts?.direction ?? 'both';
     const limit = Math.min(opts?.limit ?? 50, 200);
-    const edgeTypeClause = opts?.edgeType ? `AND edge_type = '${opts.edgeType.replace(/'/g, "''")}'` : '';
-    // Build the chunk-table filter based on direction. Unresolved edges
-    // (code_edges_symbol) only carry from_chunk_id — there's no inbound
-    // direction into them from a chunk ID, so we include them only when
-    // direction is 'out' or 'both'.
-    let chunkFilter = '';
-    if (direction === 'in') chunkFilter = `WHERE to_chunk_id = $1`;
-    else if (direction === 'out') chunkFilter = `WHERE from_chunk_id = $1`;
-    else chunkFilter = `WHERE from_chunk_id = $1 OR to_chunk_id = $1`;
-
-    let symbolFilter = '';
-    if (direction === 'out' || direction === 'both') {
-      symbolFilter = `WHERE from_chunk_id = $1`;
+    const params: unknown[] = [chunkId, limit];
+    let typeClause = '';
+    if (opts?.edgeType) {
+      params.push(opts.edgeType);
+      typeClause = 'AND edge_type = $3';
     }
-
-    const unionClause = symbolFilter ? `
-      UNION ALL
-      SELECT id, from_chunk_id, NULL as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
-             edge_type, edge_metadata, source_id, false as resolved
-        FROM code_edges_symbol
-        ${symbolFilter} ${edgeTypeClause}
-    ` : '';
-
-    const { rows } = await deps.db.query(
+    const chunkFilter = direction === 'in' ? 'to_chunk_id = $1'
+      : direction === 'out' ? 'from_chunk_id = $1'
+      : '(from_chunk_id = $1 OR to_chunk_id = $1)';
+    const { rows: chunkRows } = await deps.db.query(
       `SELECT id, from_chunk_id, to_chunk_id, from_symbol_qualified, to_symbol_qualified,
               edge_type, edge_metadata, source_id, true as resolved
          FROM code_edges_chunk
-         ${chunkFilter} ${edgeTypeClause}
-       ${unionClause}
-       LIMIT $2`,
-      [chunkId, limit],
+        WHERE ${chunkFilter} ${typeClause}
+        LIMIT $2`,
+      params,
     );
-    return (rows as Record<string, unknown>[]).map(rowToCodeEdge);
+    let symbolRows: unknown[] = [];
+    if (direction !== 'in') {
+      const { rows } = await deps.db.query(
+        `SELECT id, from_chunk_id, NULL::int as to_chunk_id, from_symbol_qualified, to_symbol_qualified,
+                edge_type, edge_metadata, source_id, false as resolved
+           FROM code_edges_symbol
+          WHERE from_chunk_id = $1 ${typeClause}
+          LIMIT $2`,
+        params,
+      );
+      symbolRows = rows;
+    }
+    return [...chunkRows, ...symbolRows].map(r => rowToCodeEdge(r as Record<string, unknown>));
   }

@@ -1013,7 +1013,7 @@ export class MinionWorker extends EventEmitter {
           await this.engine.executeRaw(
             `UPDATE minion_jobs
              SET status = 'cancelled', error_text = 'skipped_quiet_hours', updated_at = now()
-             WHERE id = $1 AND status NOT IN ('completed','failed','dead')`,
+             WHERE id = $1 AND status NOT IN ('completed','failed','dead','cancelled')`,
             [job.id],
           );
         }

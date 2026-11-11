@@ -147,20 +147,22 @@ export function parseDelegatedSyncArgs(args: string[]): ParsedDelegatedArgs {
  * explicitly waived the bound (--no-hard-deadline) — the ONLY unbounded
  * encoding; an interactive TTY default (null from resolveSyncHardDeadline)
  * maps to the same 3600s the non-TTY default uses, so a job whose client
- * dies is always bounded.
+ * dies is always bounded. A single-source --timeout bounds the job itself,
+ * not the watchdog's later backstop.
  */
 export async function deriveDelegatedTimeoutSeconds(
   args: string[],
   opts: { isTty?: boolean; env?: Record<string, string | undefined> } = {},
 ): Promise<number> {
   if (args.includes('--no-hard-deadline')) return 0;
-  const { resolveSyncHardDeadline } = await import('../core/sync-reconcile.ts');
+  const { resolveSyncHardDeadline, HARD_DEADLINE_GRACE_SEC } = await import('../core/sync-reconcile.ts');
   const res = resolveSyncHardDeadline(args, {
     isTty: opts.isTty ?? Boolean(process.stdout.isTTY),
     env: opts.env ?? process.env,
   });
   if (!res) return 3600;
-  return Math.max(1, Math.round(res.deadlineMs / 1000));
+  const hard = Math.max(1, Math.round(res.deadlineMs / 1000));
+  return res.reason === 'flag:--timeout' ? hard - HARD_DEADLINE_GRACE_SEC : hard;
 }
 
 async function setVerdict(code: number): Promise<void> {
