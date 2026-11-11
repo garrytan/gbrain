@@ -35,6 +35,7 @@ import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
 import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { dbOnlyVerdict, storageConfigFromYaml, unresolvedDbOnlyIn } from '../storage-config.ts';
@@ -111,14 +112,32 @@ export async function syncExcludePatterns(engine: Pick<BrainEngine, 'getConfig'>
   return [...extra, ...(await engine.getConfig('sync.exclude') ?? '').split(/[\n,]/).map(v => v.trim()).filter(Boolean)]
     .map(v => v.endsWith('/') ? `${v}**` : v);
 }
+/** GST-2331: one managed-sync Git read, under `HARDENED_GIT_ARGS` and `NO_LAZY_FETCH_ENV`: no repository program runs, and a partial clone fetches nothing (a missing object fails the read). */
 export function syncGit(root: string, args: string[]): string {
-  return execFileSync('git', ['-c', 'core.quotepath=false', '-C', root, ...args],
-    { env: gitChildEnv(), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args],
+    { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+/** GST-2331: whether the repository at `gitRoot` is a partial clone (`extensions.partialClone`, or a remote marked `promisor`), whose missing objects sync never fetches. */
+export function syncPartialClone(gitRoot: string): boolean {
+  try { return syncGit(gitRoot, ['config', '--get-regexp', '^(extensions\\.partialclone|remote\\..*\\.promisor)$']).split('\n').some(line => /^extensions\.partialclone \S|^remote\..*\.promisor (true|yes|on|1)$/i.test(line)); } catch { return false; }
+}
+/**
+ * GST-2331: the stop for a partial clone that lacks a tree of `commit` (sync fetches nothing, so it cannot list the commit's
+ * files), or null when the repository is no partial clone or holds every tree of the commit.
+ */
+export function partialCloneTreeRefusal(gitRoot: string, sourceId: string, commit: string): OperationError | null {
+  if (!syncPartialClone(gitRoot)) return null;
+  try { syncGit(gitRoot, ['ls-tree', '-r', '-d', '-z', commit]); return null; } catch { /* a tree is missing */ }
+  return opError('git_object_missing', `A Git tree of commit ${commit} that source ${sourceId} syncs is missing from the repository.`,
+    `The repository of source ${sourceId} is a partial clone (git clone --filter) that never fetched every tree of commit ${commit}, and sync fetches nothing from a remote, so it cannot list the commit's files; nothing was synced and no page was deleted. `
+      + `Fetch the trees in the checkout (git -C ${gitRoot} ls-tree -r -d ${commit} fetches them from the partial clone's remote) or use a clone without --filter, then run gbrain sync --source ${sourceId} --no-pull.`,
+    { detail: commit, fix: { argv: ['git', '-C', gitRoot, 'ls-tree', '-r', '-d', commit], consent: [], actor: 'user', requires_exclusive: false,
+      why: 'Fetches the commit\'s missing trees from the partial clone\'s remote, so the next sync can list its files.', verify: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] } } });
 }
 /** `syncGit` without blocking the event loop while Git runs (a level read: a synchronous spawn held timers for 200+ ms on a loaded host). */
 const execFileAsync = promisify(execFile);
 export async function syncGitAsync(root: string, args: string[]): Promise<string> {
-  return (await execFileAsync('git', ['-c', 'core.quotepath=false', '-C', root, ...args], { env: gitChildEnv(), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2 })).stdout;
+  return (await execFileAsync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args], { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2 })).stdout;
 }
 /**
  * A sync file or root failed a confinement or identity check. These helpers
@@ -507,7 +526,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     for (const path of delta.manifest.deleted) put(path, 'delete');
     for (const rename of delta.manifest.renamed) putRename(rename);
   } else {
-    const listed = syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]).split('\0')
+    const listed = ((): string => { try { return syncGit(gitRoot, ['ls-tree', '-r', '--name-only', '-z', target]); } catch (error) { throw partialCloneTreeRefusal(gitRoot, sourceId, target) ?? error; } })().split('\0')
       .filter(path => path && (!scope || path.startsWith(`${scope}/`)));
     const paths = listed.filter(path => !refuse(path));
     assertDistinctSyncOrigins(paths);

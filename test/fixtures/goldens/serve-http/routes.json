@@ -457,6 +457,82 @@
     {
       "handlers": [
         "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/access/members",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/access/members",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/access/member-links",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/access/member-links",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/access/attest",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/memory-proposals",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/memory-proposals/:request_id",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/memory-proposals/:request_id",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
         "express.json()",
         "<inline>"
       ],
@@ -523,7 +599,9 @@
     },
     {
       "handlers": [
+        "ipLimit",
         "withBearerScopeHint(requireBearerAuth({ verifier : resourceVerifier , resourceMetadataUrl }), [ 'read' , 'write' ])",
+        "tokenLimit",
         "<inline>"
       ],
       "method": "post",

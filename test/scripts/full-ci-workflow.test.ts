@@ -45,7 +45,7 @@ const step = (job: Job, name: string) => job.steps!.find(s => s.name === name)!;
 const bash = (script: string, env: Record<string, string>, cwd = root) =>
   spawnSync('bash', ['-c', script], { cwd, encoding: 'utf8', env: { PATH: process.env.PATH, ...env } });
 
-const CHEAP = ['changes', 'cheap-tier', 'dependency-audit', 'executed-receipts', 'gitleaks', 'security-regressions', 'stress-changed-tests', 'typecheck', 'verify'];
+const CHEAP = ['changes', 'cheap-tier', 'dependency-audit', 'enumeration-census-tests', 'executed-receipts', 'gitleaks', 'security-regressions', 'stress-changed-tests', 'typecheck', 'verify'];
 const FULL_ONLY = ['serial-tests', 'slow-brainbench-e2e', 'brainbench', 'slow-entity-resolve-perf', 'test', 'admin-browser',
   'shared-skills-compatibility', 'coverage-report', 'test-status', 'full-suite'];
 
@@ -59,7 +59,19 @@ describe('full CI on pull requests', () => {
       for (const job of [...FULL_ONLY, 'native-locks', 'persistence-validation']) expect(full, `${event}: ${job}`).toContain(job);
       expect(full).not.toContain('cheap-tier');
       expect(full).not.toContain('dynamic-ci');
+      expect(full).not.toContain('enumeration-census-tests');
     }
+  });
+
+  // docs/ci-event-parity.md#enumeration-and-census-tests: a doc-only pull request skips the job, a failed
+  // classifier runs it, and no aggregate, merge check or reuse rule waits for it.
+  test('the enumeration and census tests run on every pull request that is not doc-only and nothing needs them', () => {
+    const smoke = { 'native-scope': 'smoke', convergence: 'skip' };
+    expect(runs(unit, { event: 'pull_request', outputs: { ...smoke, census: 'skip' } })).not.toContain('enumeration-census-tests');
+    expect(runs(unit, { event: 'pull_request', outputs: { ...smoke, census: 'run' } })).toContain('enumeration-census-tests');
+    expect(runs(unit, { event: 'pull_request', outputs: smoke, changes: 'failure' })).not.toContain('enumeration-census-tests');
+    for (const [name, job] of Object.entries(unit.jobs)) expect(job.needs ?? [], name).not.toContain('enumeration-census-tests');
+    expect(step(unit.jobs['enumeration-census-tests']!, 'Run shard ${{ matrix.shard }} of 2').run).toBe('bash scripts/ci-census-tests.sh --run ${{ matrix.shard }} 2');
   });
 
   // Trunk Dynamic CI (docs/ci-event-parity.md#trunk-dynamic-ci): the filter runs only on pull requests, so every other event
@@ -67,7 +79,7 @@ describe('full CI on pull requests', () => {
   // waits for its other needs to succeed.
   test('Dynamic CI skips a gated pull-request lane only on an exact false verdict and never filters another event', () => {
     const gated = Object.keys(unit.jobs['dynamic-ci']!.outputs!).sort();
-    expect(gated).toEqual(['native-locks', 'persistence-validation', 'security-regressions', 'stress-changed-tests']);
+    expect(gated).toEqual(['enumeration-census-tests', 'native-locks', 'persistence-validation', 'security-regressions', 'stress-changed-tests']);
     const selected = { 'native-scope': 'primary', convergence: 'run' };
     const all = runs(unit, { event: 'pull_request', outputs: selected });
     for (const verdict of ['', 'true']) {
@@ -78,7 +90,7 @@ describe('full CI on pull requests', () => {
     }
     for (const event of ['push', 'merge_group', 'schedule', 'workflow_dispatch']) {
       expect(Boolean(evaluate(unit.jobs['dynamic-ci']!.if!, { event })), event).toBe(false);
-      for (const job of gated) expect(runs(unit, { event }), `${event}: ${job}`).toContain(job);
+      for (const job of gated.filter(name => name !== 'enumeration-census-tests')) expect(runs(unit, { event }), `${event}: ${job}`).toContain(job);
     }
     for (const job of ['native-locks', 'persistence-validation']) {
       expect(runs(unit, { event: 'push', changes: 'failure' }), job).not.toContain(job);

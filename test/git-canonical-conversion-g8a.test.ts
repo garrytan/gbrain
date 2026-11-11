@@ -806,7 +806,7 @@ for (const backend of testBackends()) describe(`[${backend}] G8a: sources canoni
     const applied = await text(['default', '--to', 'git', '--apply', '--expect', preview.preview_hash, '--no-embed', '--no-extract']);
     expect(applied).toContain('Source default is git-canonical: 0 page(s) committed in 0 door commit(s), 1 private page(s) withheld (1 removal commit(s))');
     expect(applied).toContain("Push pending (git_push_unavailable): The conversion's door commits are committed locally");
-    expect(applied).toContain(`gbrain git commit-push --push-only --path ${brain.root}`);
+    expect(applied).toContain(`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${brain.root}`);
   }, { databaseUrl, setup: closedRemoteSetup }), 180_000);
 
   test('work that lands after the strict-equivalent pass leaves the source strict and reports incomplete', () => managedBrain(async brain => {

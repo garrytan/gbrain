@@ -495,6 +495,7 @@ function repairArgv(v: InstructionBlockView): Action {
   const argv = ['gbrain', 'setup', v.harness, '--instructions-only',
     ...(access?.kind === 'mcp' && access.server !== 'gbrain' ? ['--name', access.server] : []),
     ...(access?.kind === 'mcp' && access.surface ? ['--surface', access.surface] : []),
+    ...(access?.kind === 'mcp' && access.serves === 'several' ? ['--serves', 'several'] : []),
     ...(v.harness === 'openclaw' ? ['--workspace', dirname(v.path)] : []),
     ...(v.harness === 'claude-code' && basename(v.path) === 'CLAUDE.local.md' ? ['--scope', 'project'] : [])];
   const why = `Writes or upgrades only the marked brain-first block in ${v.path}; text outside the markers is left as it is. \`--no-instructions\` opts out instead.`;

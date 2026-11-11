@@ -298,6 +298,11 @@ import { v294 } from './v294-refresh-barrier-import-deferral.ts';
 import { v295 } from './v295-refresh-retry-hint-history-index.ts';
 import { v296 } from './v296-ingest-applied-captures.ts';
 import { v297 } from './v297-chronicle-judge-window.ts';
+import { v298 } from './v298-attest-read.ts';
+import { v299 } from './v299-access-member-sources.ts';
+import { v300 } from './v300-memory-proposals.ts';
+import { v301 } from './v301-member-email.ts';
+import { v302 } from './v302-link-transitions-source.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -594,4 +599,9 @@ export const MIGRATIONS: Migration[] = [
   v295,
   v296,
   v297,
+  v298,
+  v299,
+  v300,
+  v301,
+  v302,
 ];

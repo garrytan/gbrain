@@ -44,7 +44,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import type { Notice } from '../agent-output.ts';
 import { literalPathspecs } from '../git-env.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { commitMessage, commitMessageArgs, git, gitBytes, gitFailure, gitStepTimeoutMs, ignoredTargetError, reclaimAbandonedIndexLock, withSession, type GitSession } from './effect-git.ts';
+import { commitMessage, commitMessageArgs, git, gitBytes, gitFailure, gitStepTimeoutMs, ignoredTargetError, reclaimAbandonedIndexLock, stripspace, withSession, type GitSession } from './effect-git.ts';
 import { adoptedBy, type GitCommitNote } from './effect-model.ts';
 import { persistenceHome } from './identity.ts';
 import { ignoreCandidates } from './ignore-rules.ts';
@@ -182,14 +182,6 @@ function rewriteTree(dir: Dir, oidBytes: number): Buffer {
   for (const op of ops) { chunks.push(dir.raw.subarray(at, op.start), op.bytes); at = op.end; }
   chunks.push(dir.raw.subarray(at));
   return Buffer.concat(chunks);
-}
-
-/** Git's whitespace cleanup of a `-m` paragraph, as `git commit -m` applies it: trailing blanks, repeated and edge blank lines go. */
-function stripspace(paragraph: string): string {
-  const lines: string[] = [];
-  for (const line of paragraph.split('\n').map(text => text.replace(/[ \t\r]+$/, ''))) if (line || lines.length && lines[lines.length - 1]) lines.push(line);
-  while (lines.length && !lines[lines.length - 1]) lines.pop();
-  return lines.join('\n');
 }
 
 async function doorCommit(session: GitSession, root: string, files: DoorFile[], onIndexRestored?: (paths: string[]) => void): Promise<string> {

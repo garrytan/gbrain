@@ -183,6 +183,54 @@ analyzes the tables. If a refresh is skipped (a lock, or a role that does not
 own the tables), run `ANALYZE content_chunks(model, modality, page_id, body_generation)` and
 `ANALYZE pages` as the table owner.
 
+### TLS for Postgres connections
+
+Every Postgres connection gbrain opens to a host that is **not on this
+machine** requires TLS unless the database URL says otherwise. On this
+machine means `localhost`, `127.0.0.0/8`, `::1` or a Unix socket path;
+everything else needs TLS, including private addresses (`10.x`,
+`192.168.x`) and Docker service names such as `postgres-1`, because gbrain
+cannot tell a trusted network from an untrusted one by its name.
+(`src/core/pg-tls.ts` is the one resolver every connection pool uses.)
+
+| URL says | What gbrain does |
+|---|---|
+| no `sslmode`, host on this machine | plaintext, as before |
+| no `sslmode`, any other host | `sslmode=require` |
+| `?sslmode=require` | encrypts the connection; does **not** verify the server certificate |
+| `?sslmode=verify-full` | encrypts and verifies the certificate and host name against the CA store |
+| `?sslmode=disable` | plaintext; the one opt-out, for a network you trust |
+
+An sslmode (or `ssl=`, or `sslrootcert=system`) in the URL is always
+honored and never weakened, and so is the driver's own `PGSSL` variable.
+
+`require` stops anyone on the network from reading the traffic, but it would
+not notice an attacker who sits in the middle and presents their own
+certificate. For that, use `verify-full`. It checks the server certificate
+against Node's CA store, so a provider with its own CA needs that CA added:
+Supabase publishes it under **Project Settings → Database → SSL
+Configuration → Download certificate**. Put the file on the brain host and set
+`NODE_EXTRA_CA_CERTS=/path/to/prod-ca-2021.crt` in the environment gbrain
+runs in (for the installed service, `~/.gbrain/env`), then use
+`?sslmode=verify-full`. A `sslrootcert=<file>` parameter is not read by the
+driver; use `NODE_EXTRA_CA_CERTS` instead.
+
+A server that does not accept TLS fails the connection with
+[`postgres_tls_required`](guides/error-codes.md#postgres_tls_required),
+which names both choices: turn TLS on at the server, or add
+`sslmode=disable` to the URL. Nothing falls back to plaintext on its own.
+`gbrain doctor --only postgres_tls` reports whether this machine's own
+connection to a non-local server uses TLS. It judges that from the client side:
+`sslmode=require`, `verify-ca` and `verify-full` make the driver refuse a
+server without TLS. It warns on `sslmode=disable`, and on `sslmode=prefer` when
+the server does not offer TLS or reports the session unencrypted (prefer falls
+back to plaintext without saying so, so doctor never certifies a prefer
+connection as encrypted). Behind a
+pooler, the server's `pg_stat_ssl` row describes the pooler's own hop to the
+database, which can't be checked from your machine, so doctor shows it as detail
+and never warns about it. PGLite opens no network connection, so none of this
+applies to it.
+
 ### Vector index sizing
 
 The chunk HNSW index stores each vector beside its graph links, so at 1,024
@@ -963,6 +1011,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
 | `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
+| `tls_required_default` | `postgres_tls_required`: gbrain's TLS default met a non-local server without TLS — db-repair stops at manual; turn TLS on at the server or add `sslmode=disable` ([TLS](#tls-for-postgres-connections)) |
 | `unknown` | unclassified — redacted error + `gbrain doctor` |
 
 The classifier lives in `src/core/pg-access-classify.ts`; remediation copy has

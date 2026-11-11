@@ -166,6 +166,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   recall: { entity: WORLD_PAGE_SLUG },
   memory_recall: { query: WORLD.fact },
   memory_write: { facts: [{ fact: 'fresh sweep fact', provenance: 'sweep' }], idempotency_key: 'sweep-key' },
+  memory_propose: { kind: 'timeline', target: WORLD_PAGE_SLUG, date: '2026-01-01', summary: 'sweep proposal', idempotency_key: 'sweep-propose-key' },
   entity: { name: WORLD_PAGE_SLUG },
   synthesize: { entity: WORLD_PAGE_SLUG },
   delta: { since: SINCE_EPOCH },
@@ -371,6 +372,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   remember: 'ok',
   // GST-359 D: memory_write saves only as an attested person; the sweep's callers attest none (actor_required).
   memory_write: 'error',
+  // memory_propose also needs an attested person; the sweep's callers attest none (actor_required).
+  memory_propose: 'error',
   forget: 'error',
   purge_fact: 'error',
   list_page_purges: 'error',

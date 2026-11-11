@@ -609,7 +609,8 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
 - **Refs.** `refs/tags/stable` is an annotated tag on the promoted release
   commit, moved only by this workflow. Clients peel it (`refs/tags/stable^{}`)
   and take the `v<VERSION>` tag on that commit. The same push commits the
-  evidence record `stable.json` (the tag fields plus `known_bad`) to the
+  evidence record `stable.json` (the tag fields plus `known_bad` and
+  `not_promotable`) to the
   `stable-record` branch; clients read only that file and refuse a record
   without its evidence (`stable_invalid`, `src/core/stable-channel.ts`).
   `refs/tags/stable-v<VERSION>` is an immutable annotated record created on a
@@ -624,7 +625,28 @@ gh workflow run promote-stable.yml -f version=<VERSION> \
   `/attempts/<n>`), `scoreboard_url` (optional, defaults to the run URL),
   `rollback` (default false), `reason` (required with rollback) and
   `withdraw` (versions added to the carried-forward `known_bad` list;
-  clients on one are offered the current stable, even when older).
+  clients on one are offered the current stable, even when older), and
+  `not_promotable` with `not_promotable_reason` and `not_promotable_fixed_in`,
+  and `not_promotable_remove` (see below).
+- **Not promotable.** A release can soak clean and still be bad, when the
+  evidence comes from outside the soak (a regression found on a large brain,
+  say). Record it so the daily check never soaks or promotes it: dispatch this
+  workflow for the current stable version and its own soak run (the re-record
+  path: no tag moves), with `not_promotable` set to the bad versions,
+  `not_promotable_reason` saying why and `not_promotable_fixed_in` naming the
+  newer release that fixes them. The list is carried forward on every later
+  record, and `promote()` refuses a release on it. Clients never read it, so
+  unlike `withdraw` it offers nobody a different release. To take a release
+  off the list (one listed by mistake), pass it in `not_promotable_remove` the
+  same way. A reason is at most 500 characters (link the evidence), and a
+  record larger than clients accept (64 KiB) is refused before anything is
+  pushed. Use `withdraw` only for a release that was stable, so its installs
+  move off it:
+
+  ```bash
+  gh workflow run promote-stable.yml -f version=<current stable> -f soak_run_url=<its soak run> \
+    -f not_promotable=<v1>,<v2> -f not_promotable_reason='<why>' -f not_promotable_fixed_in=<fix release>
+  ```
 - **Who.** Only an actor with the admin or maintain role; anyone else is
   refused. The one exception is the scheduled daily check below.
 - **Soak run.** The run must belong to this repository, be completed with
@@ -699,6 +721,11 @@ and keeps stable between one day and one week behind what matters:
   the full default one: both the 65 ms and 2 ms cells, at least 2 hours each,
   on the requested 600,000-page fixture, with privacy probes run and none
   erroring, so a smaller smoke dispatch never qualifies. On the important-only path the candidate must contain the fix.
+  A release that was stable before (its `stable-v<version>` record tag exists,
+  so it was promoted and rolled back) or that `stable.json` lists in `known_bad`
+  or `not_promotable` is skipped, logged, and never promoted or soaked by the
+  schedule, on the important path and the weekly floor alike; a maintainer
+  re-promotes it by hand if it should return.
   It is promoted through the same `promote()` as a manual promotion, so every
   check above still applies and the record's `promoted_by` is
   `schedule (.github/workflows/stable-daily.yml)` with the reason in `reason`.

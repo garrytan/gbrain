@@ -327,6 +327,30 @@ for (const kind of testBackends()) {
       expect({ code: after.json.code }).toEqual({ code: 'page_not_found' });
     }, 240_000);
 
+    test('GST-363: a stdio server started with --stdio-member writes as that member, ahead of config, and stamps it on the stored write', async () => {
+      const call = async (op: string, params: Record<string, unknown>, stdioMember?: string) => {
+        const out = await dispatchToolCall(engine, op, { ...params }, { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'], ...(stdioMember ? { stdioMember } : {}) });
+        const text = out.content.map(c => c.text).join('\n');
+        let json: Record<string, unknown> = {};
+        try { json = JSON.parse(text); } catch { /* prose */ }
+        return { isError: out.isError === true, json };
+      };
+      await engine.setConfig(STDIO_MEMBER_KEY, 'bob-example');
+      try {
+        expect((await call('append_page', { slug: ALICE_PAGE, text: 'Config bob cannot.', request_id: randomUUID() })).json.code).toBe('page_not_found');
+        const requestId = randomUUID();
+        const appended = await call('append_page', { slug: ALICE_PAGE, text: 'Registered alice wrote this.', request_id: requestId }, 'alice-example');
+        expect({ isError: appended.isError, code: appended.json.code }).toEqual({ isError: false, code: undefined });
+        const rows = await engine.executeRaw<{ member: string | null }>("SELECT authority->>'stdioMember' AS member FROM persistence_requests WHERE slug = $1 AND authority->>'stdioMember' IS NOT NULL", [ALICE_PAGE]);
+        expect(rows.map(r => r.member)).toContain('alice-example');
+        expect((await call('get_write_request', { request_id: requestId }, 'alice-example')).isError).toBe(false);
+        expect((await call('get_write_request', { request_id: requestId }, 'bob-example')).isError).toBe(true);
+        expect((await call('get_write_request', { request_id: requestId })).isError).toBe(true);
+      } finally {
+        await engine.setConfig(STDIO_MEMBER_KEY, '');
+      }
+    }, 240_000);
+
     test('under a privacy hatch the links effect resolves a stdio writer bound to a reader as that member: its mention edge is kept', async () => {
       await engine.setConfig(STDIO_MEMBER_KEY, 'alice-example');
       try {

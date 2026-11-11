@@ -6,8 +6,10 @@
  * against. The verifiers (src/core/oauth-provider.ts, src/mcp/http-transport.ts)
  * join the binding once and carry it on AuthInfo.member, so dispatch costs no
  * query; an AuthInfo no verifier built (member undefined) is looked up from
- * its principal. A local stdio server reads its binding from config
- * `mcp.stdio_member`. A brain with no member-access restriction skips all of
+ * its principal. A local stdio server reads its binding from its own
+ * `gbrain serve --stdio-member <id>` (the harness's MCP entry, so one
+ * registration on one machine), else from config `mcp.stdio_member` set by
+ * hand. A brain with no member-access restriction skips all of
  * it. Every failure (pre-migration schema, unreadable row, unknown or
  * disabled member) yields an empty identity, which reads no restricted page.
  */
@@ -18,6 +20,7 @@ import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
+import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { parseMayActFor } from './members.ts';
 
@@ -43,14 +46,15 @@ async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: 
 
 /**
  * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal (a local
- * stdio principal reads config mcp.stdio_member, as stdio reads do); empty when unbound, unknown or unreadable. A
- * write's publication passes only its stored principal, so a member disabled or a binding removed after submission
- * takes effect.
+ * stdio principal reads the member its serve was started with, stamped as `stdioMember` on a stored write, else
+ * config mcp.stdio_member, as stdio reads do); empty when unbound, unknown or unreadable. A write's publication passes
+ * only its stored principal, so a member disabled or a binding removed after submission takes effect.
  */
-export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string } } | undefined): Promise<string[]> {
+export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
   const principal = auth?.principal;
-  if (principal?.kind === 'local_stdio') return liveIdentity(engine, 'SELECT btrim(value) FROM config WHERE key = $1', STDIO_MEMBER_KEY);
+  if (principal?.kind === 'local_stdio') return auth?.stdioMember !== undefined ? liveIdentity(engine, '$1', auth.stdioMember)
+    : liveIdentity(engine, `SELECT ${edgeTrimSql('value')} FROM config WHERE key = $1`, STDIO_MEMBER_KEY);
   if (!principal || (principal.kind !== 'legacy_token' && principal.kind !== 'oauth_client')) return [];
   return liveIdentity(engine, principal.kind === 'legacy_token'
     ? 'SELECT member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL'
@@ -67,9 +71,13 @@ export async function stdioMemberId(engine: BrainEngine): Promise<string | null>
   }
 }
 
-/** The identity of a local stdio server: its bound live member, else empty (unbound stdio reads no restricted page). */
-export async function stdioMemberIdentity(engine: BrainEngine): Promise<string[]> {
-  const member = await stdioMemberId(engine);
+/**
+ * The identity of a local stdio server: the live member its serve was started with (--stdio-member), else the live
+ * member config mcp.stdio_member names, else empty. A named member that is disabled or unknown reads as nobody and
+ * never falls back to the config key.
+ */
+export async function stdioMemberIdentity(engine: BrainEngine, registered?: string): Promise<string[]> {
+  const member = registered ?? await stdioMemberId(engine);
   return member ? liveIdentity(engine, '$1', member) : [];
 }
 
@@ -196,15 +204,16 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
  * (several entries, a group or a guest) sees no visibility: private page.
  * GST-2059: a caller bound to the brain owner (config access.owner_member) reads with its privacy relaxed in every
  * source its grant reads (owner), with no audience or an audience of the owner alone; member access stays.
+ * GST-363: `stdioMember` is the member an unauthenticated stdio server was started with (serve --stdio-member).
  */
-export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null): Promise<Partial<CallerAccess>> {
+export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null, stdioMember?: string): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), requestRemotePolicy(engine)]);
   const restricted = remotePolicy.restricted;
   if (audience?.length) {
     const identities = await resolveAudienceIdentities(engine, { auth, transport }, audience);
     const single = singleMemberAudience(audience);
     const owner = single && audience[0] === `member:${remotePolicy.ownerMember}`
-      && isOwner(await boundIdentity(engine, auth, transport), remotePolicy);
+      && isOwner(await boundIdentity(engine, auth, transport, stdioMember), remotePolicy);
     return {
       identity: identities.length === 1 ? identities[0]! : [],
       audience: [...audience],
@@ -218,7 +227,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
       remotePolicy,
     };
   }
-  const identity = restricted || remotePolicy.ownerMember ? await boundIdentity(engine, auth, transport) : [];
+  const identity = restricted || remotePolicy.ownerMember ? await boundIdentity(engine, auth, transport, stdioMember) : [];
   const owner = isOwner(identity, remotePolicy);
   return {
     identity,
@@ -234,9 +243,9 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
   };
 }
 
-/** The member identity a remote caller's credential (or, unauthenticated over stdio, config mcp.stdio_member) is bound to. */
-async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string): Promise<string[]> {
-  return !auth && transport === 'stdio' ? stdioMemberIdentity(engine) : memberIdentityFor(engine, auth);
+/** The member identity a remote caller's credential (or, unauthenticated over stdio, serve --stdio-member, else config mcp.stdio_member) is bound to. */
+async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string, stdioMember?: string): Promise<string[]> {
+  return !auth && transport === 'stdio' ? stdioMemberIdentity(engine, stdioMember) : memberIdentityFor(engine, auth);
 }
 
 /** GST-2059: the live identity is the brain owner's (config access.owner_member). Only a live, enabled member has an identity. */
@@ -288,7 +297,7 @@ export interface CallerAccessView {
   member: string | null;
   groups: string[];
   may_act_for: string[] | null;
-  bound_by: 'credential' | 'stdio_config' | 'as' | 'none';
+  bound_by: 'credential' | 'stdio_registration' | 'stdio_config' | 'as' | 'none';
   note?: string;
 }
 
@@ -311,9 +320,14 @@ export async function credentialAccessView(engine: BrainEngine, auth: AuthInfo):
   return accessView(identity, 'credential', auth.mayActFor ?? null, identity.length ? undefined : UNBOUND_NOTE);
 }
 
-/** The access view of a local stdio server (config mcp.stdio_member). */
-export async function stdioAccessView(engine: BrainEngine): Promise<CallerAccessView> {
-  const [configured, identity] = await Promise.all([stdioMemberId(engine), stdioMemberIdentity(engine)]);
+/** The access view of a local stdio server: serve --stdio-member (`registered`) when it was started with one, else config mcp.stdio_member. */
+export async function stdioAccessView(engine: BrainEngine, registered?: string): Promise<CallerAccessView> {
+  const [configured, identity] = await Promise.all([stdioMemberId(engine), stdioMemberIdentity(engine, registered)]);
+  if (registered !== undefined) {
+    const ignored = configured && configured !== registered ? ` config mcp.stdio_member names "${configured}", which this server ignores: its own --stdio-member wins.` : '';
+    if (identity.length) return accessView(identity, 'stdio_registration', null, ignored.trim() || undefined);
+    return accessView([], 'none', null, `This server was started with --stdio-member ${registered}, which is not an enabled member, so it reads no page that names readers.${ignored}`);
+  }
   if (identity.length) return accessView(identity, 'stdio_config');
   return accessView([], 'none', null, configured
     ? `mcp.stdio_member names "${configured}", which is not an enabled member, so this server reads no page that names readers.`

@@ -16,8 +16,11 @@ Five kinds of caller read a brain:
 - **Local CLI** on the brain host (`remote = false`). Reads everything.
 - **The owner**: a remote credential (token or OAuth client) or stdio server bound to the member named by
   `gbrain access owner set <member>` (config `access.owner_member`). Bind each of the owner's agents, delegates and
-  sub-agents included, with `gbrain auth rescope --token <name> --member <owner>` (stdio: `gbrain config set
-  mcp.stdio_member <owner>`). On a single-user brain this is how the owner's own agent reads the whole brain.
+  sub-agents included, with `gbrain auth rescope --token <name> --member <owner>`. A Claude Code or Codex install
+  only the owner uses: `gbrain setup <claude-code|codex> --stdio-member <owner>`, which binds that harness's stdio
+  entry on that machine and nothing else (PGLite or Postgres); for a harness several people talk to, one key per
+  person over `gbrain serve --http` (`gbrain auth create <name> --member <id>`). On a single-user brain this is how the owner's own
+  agent reads the whole brain.
 - **Other members**: credentials bound to any other enabled member.
 - **Public or unbound callers**: credentials bound to no member, and audiences that include a guest.
 - **Shared rooms**: a shared agent speaking for an audience of several people (`X-Gbrain-On-Behalf-Of` /
@@ -34,12 +37,14 @@ Five kinds of caller read a brain:
 | `readable_by: [...]` | reads | only when listed | only when listed | hidden | only when every entry is listed |
 | folder rule (`gbrain access rule`) | reads | only when listed | only when listed | hidden | only when every entry is listed |
 | derived from a `readable_by` page | reads | hidden | hidden | hidden | hidden |
-| fact `visibility: private` | reads | `recall` reads | hidden | hidden | hidden |
+| fact `visibility: private` | reads | reads | hidden | hidden | hidden |
 
 "Hidden" means the same `not_found` a missing page gets, on every read path (get_page, search, query, recall, lists,
 links, timelines, versions). The owner reads through `get_page`, `search`, `query`, `recall` and the other page
-reads in every source its grant reads; the owner's source grant still bounds which sources those are. Facts outside
-`recall` (hot memory, turn context, context packs) stay world-only for every remote caller, the owner included.
+reads in every source its grant reads; the owner's source grant still bounds which sources those are. It also gets
+private facts from `recall`, the `query` facts arm, `think` trajectories, hot memory, `delta` and `context_pack` hot
+facts, except a fact taken from a page it cannot read. Facts on `entity` and `context_pack` cards stay world-only for
+every remote caller, the owner included.
 
 Two grants relax privacy for callers that are not the owner, and both are operator decisions:
 `gbrain auth rescope --private-pages granted-sources` (private pages in the sources that grant names) and the
@@ -84,7 +89,8 @@ with no `visibility` read exactly like `visibility: private` (unless the operato
 
 Writers never add them to new pages: write `visibility: private` when a page needs privacy, and nothing otherwise.
 `gbrain repair private-labels` previews and clears `access: private` labels that were stamped on ordinary pages, and
-keeps `restricted`, `confidential` and `confidentiality` as real restrictions.
+keeps `restricted`, `confidential` and `confidentiality` as real restrictions
+([how to run and undo it](repair.md#private-labels-over-stamped-access-private)).
 
 ### Derived pages and lineage
 
@@ -116,7 +122,7 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
 explicit private `facts.default_visibility`; extracted facts follow `facts.default_visibility` (private when unset)
-and are never wider than their page. Remote `recall` returns private facts to the owner only.
+and are never wider than their page. Remote fact reads return private facts to the owner only.
 
 ### The owner (`gbrain access owner`)
 

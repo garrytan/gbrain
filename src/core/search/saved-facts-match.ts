@@ -13,7 +13,7 @@ import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { factsFtsDocument, getFtsLanguage } from '../fts-language.ts';
 import { hasCJK } from '../cjk.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from './private-visibility.ts';
+import { privateFactFilterForCaller, resolveExcludePrivatePages } from './private-visibility.ts';
 import { SAVED_FACT_COLLAPSE_COLUMNS, type CollapseColumns } from './entity-facts.ts';
 
 /** Words too common to count toward a saved-fact match; also the coverage relevance stopwords in ops/search.ts. */
@@ -97,7 +97,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
          AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
          AND f.source != ALL($2::text[])
          ${ctx.remote !== false ? `AND f.visibility = 'world'` : ''}`;
-  const eligible = `${excludePrivate ? `AND ${privateProvenanceFilterFragment('f')}` : ''}
+  const eligible = `${excludePrivate ? `AND ${privateFactFilterForCaller('f', true)}` : ''}
          AND ${projectionEligibleSql('facts', 'f', { floor: scope.minTrust })}`;
   const lang = getFtsLanguage();
   const doc = factsFtsDocument('f');

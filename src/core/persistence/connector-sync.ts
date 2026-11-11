@@ -28,6 +28,7 @@ import type { PreparedContentImport } from './prepared-import.ts';
 import { persistenceFileHash, type PreparedMutation } from './coordinator.ts';
 import { isTerminal, type WriteRequest } from './model.ts';
 import { databaseOnlyPublication, prepareFileTarget, preparePrivateTransition } from './page-prepare.ts';
+import { materializedSnapshot } from './segmented-apply.ts';
 import { sourceCanonicalGit } from './git-door.ts';
 import { isPrivacyPrivatePage } from '../search/private-visibility.ts';
 import { assertPhysicalRoot } from './physical-root.ts';
@@ -628,7 +629,7 @@ export class ManagedConnectorSync {
   async page(slug: string) {
     slug = slugifyPath(`${slug}.md`);
     await this.recover(slug);
-    const snapshot = await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId });
+    const snapshot = await materializedSnapshot(this.engine, await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId }));
     if (snapshot && this.binding) await prepareFileTarget(this.engine,
       { source_id: this.sourceId, worktree_id: this.binding.worktree_id, slug }, snapshot, serializePageToMarkdown(snapshot.page, snapshot.tags));
     return snapshot?.page ?? null;
@@ -1147,7 +1148,8 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       [row.source_id, row.source_incarnation, p.newestContentAt ?? null]);
     return { status: 'checkpointed', source_id: row.source_id };
   } };
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
+  // #9062: a page stored in segments is read back as strings (up to PAGE_MAX_BYTES), so its re-render carries its timeline and fences like an inline page's.
+  const snapshot = await materializedSnapshot(engine, await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true }));
   if ((snapshot?.revision ?? null) !== p.expected_revision || (snapshot?.page.id ?? null) !== row.page_id ||
       snapshot?.page.source_path != null && snapshot.page.source_path !== p.sourcePath) {
     throw connectorPublicationRefusal('revision_conflict', 'The connector page changed after admission.', row,
@@ -1222,9 +1224,11 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     `The canonical file of ${row.slug} in ${row.source_id} changed on disk while this connector write was being prepared.`);
   return { observedRevision: ready.observedRevision, sourceExclusive: true,
     validate: async tx => { await validate(tx); await ready.validate(tx); },
-    file, ...databaseOnlyPublication(row, file), noop: ready.noop, deferEmbedding: p.noEmbed, apply: async tx => {
-    await ready.apply(tx);
-    if (!ready.noop) { await project(tx); await sealPageTextProjection(tx, row.slug, row.source_id); }
+    file, ...databaseOnlyPublication(row, file), noop: ready.noop, deferEmbedding: p.noEmbed,
+    ...(ready.afterCommit ? { afterCommit: (target: BrainEngine) => ready.afterCommit!(target) } : {}), apply: async tx => {
+    const installed = await ready.apply(tx);
+    // A body stored in segments was sealed by its import's apply when complete (sealSegmentedPage); the inline text seal reads the whole timeline.
+    if (!ready.noop) { await project(tx); if (!installed?.segmented) await sealPageTextProjection(tx, row.slug, row.source_id); }
     return { status: ready.noop ? 'skipped' : snapshot ? 'updated' : 'created', slug: row.slug, source_id: row.source_id,
       chunks: result.chunks, noop: ready.noop, imported_file: true, connector_database: !row.worktree_id };
   } };

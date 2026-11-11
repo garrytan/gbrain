@@ -11,7 +11,8 @@
  * stdio resolves GBRAIN_SURFACE > --surface, an invalid value is ignored
  * with a stderr line and one `surface_env_invalid` notice, and whoami /
  * gbrain://capabilities report the surface and its source. HTTP keeps its
- * per-client branch (test/request-tools.test.ts).
+ * per-client branch (test/request-tools.test.ts). GBRA-449: {tools, surface}
+ * together widens the session and returns the requested schemas.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
@@ -94,6 +95,22 @@ describe('request_tools {surface} on stdio', () => {
       expect(await names(next)).not.toContain('get_health');
     } finally {
       await next.close();
+    }
+  }, 90_000);
+
+  test('{tools, surface} together (GBRA-449): the session widens as a surface-only call does and the schemas come back', async () => {
+    const s = await session(['--surface', 'starter']);
+    try {
+      const res = await s.client.callTool({ name: 'request_tools', arguments: { tools: ['search', 'get_page', 'list_pages', 'get_health'], surface: 'full' } });
+      expect(isError(res)).toBe(false);
+      const body = parsed(res) as { surface_change: Record<string, unknown>; tools: Array<{ name: string }> };
+      expect(body.surface_change).toMatchObject({ persisted: false, scope: 'session', surface: 'full', previous: 'starter' });
+      expect(body.tools.map(t => t.name)).toEqual(['search', 'get_page', 'list_pages', 'get_health']);
+      expect(isError(await s.client.callTool({ name: 'get_health', arguments: {} }))).toBe(false);
+      await waitFor(() => s.listChanged() > 0, { timeoutMs: 10_000 });
+      expect(await names(s)).toContain('get_health');
+    } finally {
+      await s.close();
     }
   }, 90_000);
 
