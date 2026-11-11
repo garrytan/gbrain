@@ -5,7 +5,7 @@ import {
   commentValueKeys, frontmatterKeyHazard, recoverFrontmatter, unclosedFenceProtectedKey, yamlLocationMessage,
   RECOVERY_VERSION, type FrontmatterRecovery, type RecoveryKind,
 } from './frontmatter-recovery.ts';
-import { findLineOutsideFencedCode } from './fence-scan.ts';
+import { findLineOutsideFencedCode, stepFenceWalk, type FenceWalk } from './fence-scan.ts';
 
 export {
   recoverFrontmatter, RECOVERY_VERSION, PROTECTED_FRONTMATTER_KEYS, IDENTITY_FRONTMATTER_KEYS,
@@ -1233,20 +1233,20 @@ function inferTypeWithPrefixes(
  * mistaken for the page title.
  */
 function inferTitleFromBody(body: string): string {
-  let inFence = false;
+  const walk: FenceWalk = { opener: null, mispaired: false };
   for (const raw of body.split('\n')) {
-    if (FENCE_TOGGLE_RE.test(raw)) {
-      inFence = !inFence;
-      continue;
+    // Quoted headings stay quoted until a matching, sufficiently long blank
+    // closer. A shorter inner example (or a different marker) is only code.
+    if (!walk.opener) {
+      const title = h1TitleLineValue(raw);
+      if (title !== null) return title;
     }
-    if (inFence) continue;
-    const title = h1TitleLineValue(raw);
-    if (title !== null) return title;
+    stepFenceWalk(walk, raw);
   }
   return '';
 }
 
-/** A line that toggles the simple fence state of inferTitleFromBody and findBareTimelineSection. */
+/** A line that toggles the legacy simple fence state of findBareTimelineSection. */
 export const FENCE_TOGGLE_RE = /^\s*(`{3,}|~{3,})/;
 
 /** The title an H1 line gives (exactly one leading `#`, whitespace, then the heading text), or null. */

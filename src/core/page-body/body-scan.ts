@@ -655,6 +655,8 @@ export class BodyScanner {
   private bare: BareSection | null = null;
 
   private bodyTitle: string | null = null;
+  /** Independent of the legacy bare-timeline toggle; same grammar as stepFenceWalk. */
+  private readonly titleWalk: RunWalk = { open: null, mispaired: false };
   /** The current line is read for the body H1 title. */
   private titleLine = false;
   private readonly embedded = { state: 'start' as 'start' | 'block' | 'done', opener: -1, first: null as string | null, title: '' };
@@ -836,7 +838,7 @@ export class BodyScanner {
       const line: Line = { index, start: this.pos, text: '', hasNewline: false, contentStart: null, contentEnd: null };
       const e = this.embedded;
       long = this.long = new LongLine(line, this.quoteWatched(line.start),
-        !this.frontmatterTitle && this.bodyTitle === null && !this.inFence,
+        !this.frontmatterTitle && this.bodyTitle === null && !this.titleWalk.open,
         !this.frontmatterTitle && e.state === 'block' && e.first === null);
       const carry = this.carry;
       this.carry = [];
@@ -963,7 +965,7 @@ export class BodyScanner {
     const inFence = this.inFence;
     if (toggle) this.inFence = !inFence;
     this.stepBare(line, toggle || inFence, targets);
-    this.titleLine = this.bodyTitle === null && !toggle && !inFence;
+    this.titleLine = this.bodyTitle === null && !this.titleWalk.open;
     targets.push(this.allWalk);
     return targets;
   }
@@ -975,6 +977,7 @@ export class BodyScanner {
       bodyScanWork.chars += value.length;
       this.bodyTitle = h1TitleLineValue(value);
     }
+    stepToken(this.titleWalk, fence);
     this.stepEmbeddedTitle(line, value);
     if (line.contentStart) {
       this.firstContent ??= line;
