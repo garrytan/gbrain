@@ -1,5 +1,5 @@
 /**
- * GBRA-449: on a strict git-canonical source, `remember` for an entity that has no page holds the fact as a row of
+ * GST-2492: on a strict git-canonical source, `remember` for an entity that has no page holds the fact as a row of
  * memory/unattributed whose `entity` cell names the entity (memory-mutations.ts planRememberTarget), so Git has it
  * before the database does. Once the entity has a page, the extract_facts phase moves the held rows here: one
  * maintenance publication per entity appends them to the entity page's Facts fence and strikes their holding rows,

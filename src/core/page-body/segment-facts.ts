@@ -122,7 +122,7 @@ interface RegionFence { parsed: FactsFenceParseResult; holds: boolean; marker: b
 
 function regionFenceOf(parsedText: string | null, holds: boolean, endOnly: boolean, marker: boolean, slug: string | undefined): RegionFence {
   const reduced = parsedText ?? (holds ? FACTS_FENCE_BEGIN : endOnly ? `${'\n'.repeat(FACTS_FENCE_BEGIN.length)}${FACTS_FENCE_END}` : '');
-  // GBRA-449: a segmented memory/unattributed reads its `entity` column as the inline page does.
+  // GST-2492: a segmented memory/unattributed reads its `entity` column as the inline page does.
   return { parsed: parseFactsFenceFor(reduced, { slug }), holds, marker, text: parsedText };
 }
 

@@ -427,7 +427,7 @@ const MALFORMED_ADOPTION = 'A fact adoption assigns one fact or fence position t
  */
 export const FACT_FENCE_PLANNER = 2;
 /**
- * GBRA-449: the same publication moves facts held on memory/unattributed (a strict source's facts for an entity that had
+ * GST-2492: the same publication moves facts held on memory/unattributed (a strict source's facts for an entity that had
  * no page) into their entity page's fence: the rows keep their ids and move in place, and their holding rows are struck.
  */
 export const HELD_FACT_MOVE = 'managed_maintenance_move_held_fact';

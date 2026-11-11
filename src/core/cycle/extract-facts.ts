@@ -726,7 +726,7 @@ export interface ExtractFactsResult {
   legacyPages: string[];
   /** Unfenced rows this run appended to their page's fence and stamped with a row number (#5299). */
   unfencedRowsFenced: number;
-  /** GBRA-449: facts held on memory/unattributed this run moved into their new entity page (present only when it moved any). */
+  /** GST-2492: facts held on memory/unattributed this run moved into their new entity page (present only when it moved any). */
   heldFactsMoved?: number;
   /** Active fence-owned rows expired because their page was soft-deleted. */
   factsExpiredForDeletedPages: number;
@@ -846,7 +846,7 @@ export async function runExtractFacts(
       fenceStepFailed = !isFenceHold(e);
       result.warnings.push(`FACTS_FENCE_FAILED: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
     }
-    // GBRA-449: facts a strict source held on memory/unattributed move into their entity page once it exists.
+    // GST-2492: facts a strict source held on memory/unattributed move into their entity page once it exists.
     try {
       const held = await moveHeldFacts(engine, sourceId);
       if (held.moved) result.heldFactsMoved = held.moved;

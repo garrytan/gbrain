@@ -117,7 +117,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   const writeThrough = configuredWriteThrough && !sandbox;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
-  // GBRA-449: on a strict source (Git is the record) a named entity with no page holds its fact in Git, as a row of
+  // GST-2492: on a strict source (Git is the record) a named entity with no page holds its fact in Git, as a row of
   // memory/unattributed that names the entity, until the entity's page exists. The fences and the authority above ran on
   // the entity (decision D1); the holding row is gbrain's own companion write, authorized as a write to that entity.
   // An entity under a folder access rule is not named on the world-readable holding page, and a holding page kept out of
@@ -273,7 +273,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
  * GST-2243: every remember reply names the page the fact went to and who can recall it. GST-2446: a fact saved for an
  * entity with no page is on no page, so the reply names none; where the source's pages are in Git, one notice gives
  * the call that creates the page (a brain with no repository keeps the database as its record and is told nothing).
- * GBRA-449: on a strict git-canonical source the fact is held on memory/unattributed instead (`authority.heldFor`), so
+ * GST-2492: on a strict git-canonical source the fact is held on memory/unattributed instead (`authority.heldFor`), so
  * the reply names that page and the notice says it is committed and when it moves.
  */
 async function rememberLanded<T extends Record<string, unknown>>(ctx: OperationContext, row: WriteRequest, response: T): Promise<T> {
@@ -394,7 +394,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // root has no owner refuses when a canonical file carries the claim (Git is the parent: a database-only withdrawal
   // would come back on a rebuild from Git); a claim only database-only pages carry is withdrawn database-only.
   const plan = await planFactWithdrawal(ctx.engine, id, sourceId, remote, ownPage ? undefined : excludePrivate, ownPage);
-  // GBRA-449: a fact held on memory/unattributed for an entity with no page is struck there too (its row names the entity).
+  // GST-2492: a fact held on memory/unattributed for an entity with no page is struck there too (its row names the entity).
   const heldOn = fact.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG && fact.entity_slug !== null ? UNATTRIBUTED_MEMORY_SLUG : null;
   const struck = plan ? plan.slugs.filter(page => plan.subject === '*' || plan.subject === page || page === heldOn) : [];
   const fileBacked = struck.length > 0 && (await ctx.engine.executeRaw(

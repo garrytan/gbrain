@@ -91,7 +91,7 @@ async function insertFenceFactRow(tx: BrainEngine, row: WriteRequest, rowNum: nu
     { fix: requestReceiptFix(row) });
 }
 
-/** One fact as its fence cell at `rowNum` (`fenceRowOf`, the one renderer); on memory/unattributed a held fact names its entity (GBRA-449). */
+/** One fact as its fence cell at `rowNum` (`fenceRowOf`, the one renderer); on memory/unattributed a held fact names its entity (GST-2492). */
 function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: string): ReturnType<typeof fenceRowOf> {
   const entity = slug === UNATTRIBUTED_MEMORY_SLUG && fact.entity_slug ? { entity: fact.entity_slug } : {};
   return { ...entity, ...fenceRowOf({ kind: (fact.kind ?? 'fact') as FenceRowInput['kind'], visibility: fact.visibility ?? 'private', context: fact.context ?? null, valid_from: fact.valid_from,
@@ -213,7 +213,7 @@ export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteR
   const until = retire.validUntil ? formatFenceDate(retire.validUntil) : undefined;
   const parsed = parseFactsFenceFor(fenced[section], { slug });
   refuseUnparsedRewrite(target.page, slug, row.source_id, () => assertFenceRewritable('facts', parsed));
-  // GBRA-449: a forgotten held row is struck as a withdrawal strikes a row (`forgotten: <note>`), so it reads back forgotten;
+  // GST-2492: a forgotten held row is struck as a withdrawal strikes a row (`forgotten: <note>`), so it reads back forgotten;
   // `remove` takes the rows out (a fact moved into a page not every reader can read leaves nothing on the holding page).
   const rows = parsed.facts.filter(f => !retire.remove || !retired.has(f.rowNum) || !f.active).map(f => !retired.has(f.rowNum) || !f.active ? f : retire.forgotten ? withdrawnFact(f, (retire.validUntil ?? new Date()).toISOString().slice(0, 10), retire.note)
     : { ...f, active: false, context: [retire.note, f.context?.trim()].filter(Boolean).join(' | '), ...(until ? { validUntil: until } : {}) });

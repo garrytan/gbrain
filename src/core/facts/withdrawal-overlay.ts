@@ -5,7 +5,7 @@ import { OperationError } from '../ops/contract.ts';
 import { normalizeLoweredClaim } from './withdrawal-schema.ts';
 
 export const WITHDRAWAL_MARKER_LIMIT = 16_384;
-/** A withdrawal reads a held row's `entity` cell wherever writes let it be (memory/unattributed, GBRA-449). */
+/** A withdrawal reads a held row's `entity` cell wherever writes let it be (memory/unattributed, GST-2492). */
 const READER = { reader: true } as const;
 
 /** Preserve historical expiry and context while emitting the parser's explicit withdrawal marker. */

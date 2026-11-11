@@ -121,6 +121,6 @@ export interface FenceCtx {
 export interface FencePage {
   compiled_truth: string;
   timeline: string;
-  /** The page's slug when known: only `memory/unattributed` reads the facts `entity` column (GBRA-449). */
+  /** The page's slug when known: only `memory/unattributed` reads the facts `entity` column (GST-2492). */
   slug?: string;
 }

@@ -1,14 +1,15 @@
 /**
- * GBRA-449 (GST-2492): `remember` for an entity with no page, on a strict git-canonical source.
+ * GST-2492: `remember` for an entity with no page, on a strict git-canonical source.
  *
  * 1. Protects: on a source whose pages are canonical in Git, a fact saved for an entity that has no page is written to
  *    Git before its database row, as a row of memory/unattributed whose `entity` cell names the entity. The reply,
  *    batch item and receipt say where it is (`page: memory/unattributed`, `write_through.held_for`). A rebuild from a
  *    clone of HEAD brings the fact back for its entity. Once the entity has a page, the extract_facts phase moves the
- *    row into that page in one commit and strikes the holding row; forget and supersede strike the held row.
+ *    row into that page in one commit and strikes the holding row; forget and supersede strike the held row, and purge
+ *    removes it from the file.
  * 2. Fails when: a strict source keeps such a fact in the database alone (a rebuild loses it), a rebuild brings back a
- *    forgotten or superseded held fact, a move duplicates or loses the fact, or a private entity page is named on the
- *    world-readable holding page.
+ *    forgotten, superseded or purged held fact, a move duplicates or loses the fact, or a private entity page is named
+ *    on the world-readable holding page.
  * 3. Existing coverage: test/remember-pageless-entity-gst2446.test.ts pins the non-strict and repo-less answers.
  * 4. Real seams: the coordinated write and the write door on PGLite and Postgres (DATABASE_URL), a managed Git checkout,
  *    the operation handler as the local CLI calls it, MCP dispatch as a remote and a prefix-bound caller, and a rebuild
@@ -58,7 +59,7 @@ async function overMcp(engine: BrainEngine, params: Record<string, unknown>, aut
 
 /** A fresh database indexed from a clone of HEAD, with the facts step run, as a rebuild would: the rows of each claim. */
 async function rebuild(root: string, databaseUrl: string | undefined, claims: string[]) {
-  const home = mkdtempSync(join(tmpdir(), 'gbra449-rebuild-'));
+  const home = mkdtempSync(join(tmpdir(), 'gst2492-rebuild-'));
   try {
     const clone = join(home, 'content');
     git(home, 'clone', '--quiet', root, clone);
@@ -74,7 +75,7 @@ async function rebuild(root: string, databaseUrl: string | undefined, claims: st
   } finally { rmSync(home, { recursive: true, force: true }); }
 }
 
-for (const backend of testBackends()) describe(`[${backend}] a strict source holds a pageless fact in Git (GBRA-449)`, () => {
+for (const backend of testBackends()) describe(`[${backend}] a strict source holds a pageless fact in Git (GST-2492)`, () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
   afterEach(() => installFaultHook(undefined));
   const strict = (run: (brain: ManagedBrain) => Promise<void>) => managedBrain(async brain => {
@@ -257,6 +258,25 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
     expect(rebuilt[other]).toEqual([{ entity_slug: 'notes/garden-plan', source_markdown_slug: HOLD, active: true }]);
   }), 240_000);
 
+  test('purge removes a held fact from the file, as it removes a fact with no entity, so a rebuild does not bring it back', () => strict(async ({ engine, ctx, root }) => {
+    const held = 'The kitchen remodel starts in March.';
+    const loose = 'The spare key is with the neighbour.';
+    const a = await remember(ctx, held, PAGELESS);
+    const b = await call(ctx, 'remember', { fact: loose, provenance: 'chat 2026-11-11', infer_entity: false });
+    for (const saved of [a, b]) {
+      await settleManagedGitEffects(engine);
+      const dry = await call(ctx, 'purge_fact', { id: Number(saved.id), dry_run: true });
+      expect(await call(ctx, 'purge_fact', { id: Number(saved.id), confirm: dry.confirm_token, expected_revision: dry.expected_revision })).toMatchObject({ state: 'committed' });
+    }
+    await settleManagedGitEffects(engine);
+    expect(head(root, HOLD_FILE)).not.toContain(held);
+    expect(head(root, HOLD_FILE)).not.toContain(loose);
+    expect(await factRows(engine, held)).toEqual([]);
+    const rebuilt = await rebuild(root, databaseUrl, [held, loose]);
+    expect(rebuilt[held]!.filter(row => row.active)).toEqual([]);
+    expect(rebuilt[loose]!.filter(row => row.active)).toEqual([]);
+  }), 240_000);
+
   test('supersede: held by held, and held by an entity page row before the move, each survive a rebuild', () => strict(async ({ engine, ctx, root }) => {
     const a = 'The kitchen remodel starts in March.';
     const b = 'The kitchen remodel starts in April.';
@@ -294,7 +314,7 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
   }), 180_000);
 });
 
-describe('the entity column of the facts fence (GBRA-449)', () => {
+describe('the entity column of the facts fence (GST-2492)', () => {
   const table = (entity: string) => [
     '## Facts', '', '<!--- gbrain:facts:begin -->',
     '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | entity |',

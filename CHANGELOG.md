@@ -28,10 +28,10 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - The reply, each batch item and the write receipt say where the fact is: `page: "memory/unattributed"`, `persistence: {mode: "filesystem"}`, `write_through: {written: true, held_for: "<entity>"}`, and the `entity_page_missing` notice says the fact is saved and committed and when it moves.
 - The `extract_facts` maintenance phase moves held facts into a new entity page in one commit: the fact keeps its id, provenance and embedding, and the held row is struck (`moved to <entity>`); when the page is restricted the held row is removed instead, so the world-readable holding page keeps nothing of it. A page kept out of Git does not take the fact; the run warns `HELD_FACT_UNMOVABLE` and the fact stays held.
-- `forget` strikes a held fact's own row; `remember … replaces` supersedes a held fact from `memory/unattributed` or from the entity's page.
+- `forget` strikes a held fact's own row, and `purge_fact` removes it from `memory/unattributed` as it removes a fact with no entity, so a rebuild does not bring it back; `remember … replaces` supersedes a held fact from `memory/unattributed` or from the entity's page.
 - A client bound to slug prefixes may save a held fact for an entity inside its prefixes; a fact with no entity is still refused for it. An entity under a folder access rule is never held on the world-readable page: its fact stays in the database, as before.
 - Only `memory/unattributed` reads the `entity` column, and an invalid entity cell makes its fence malformed. Every other page parses exactly as before. An older gbrain holds a `memory/unattributed` file that carries the column as a malformed fence, so upgrade every host of a strict source together.
-- Tests: `test/remember-strict-held-gbra449.test.ts` on PGLite and Postgres: the commit before the reply (handler, batch, MCP), rebuilds from a clone of HEAD, the move (one commit, interrupted after its commit and replayed), restricted and database-only pages, forget, both supersede paths, a prefix-bound client, duplicates and the fence column.
+- Tests: `test/remember-strict-held-gst2492.test.ts` on PGLite and Postgres: the commit before the reply (handler, batch, MCP), rebuilds from a clone of HEAD, the move (one commit, interrupted after its commit and replayed), restricted and database-only pages, forget, purge, both supersede paths, a prefix-bound client, duplicates and the fence column.
 
 ## [0.60.679.0] - 2026-11-11
 

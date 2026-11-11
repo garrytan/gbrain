@@ -47,7 +47,7 @@ import { computeEffectiveDate } from '../effective-date.ts';
 /**
  * The page a fact saved without an entity is a row of (GBRA-190 G4, D3). A row with no `entity` cell belongs to no
  * entity: it projects with `entity_slug` NULL, so its withdrawal is source-wide ('*'), as a subjectless fact's always
- * was. A held row (GBRA-449: its entity has no page yet, on a strict source) projects the entity its cell names.
+ * was. A held row (GST-2492: its entity has no page yet, on a strict source) projects the entity its cell names.
  */
 export { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';

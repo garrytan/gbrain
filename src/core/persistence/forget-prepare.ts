@@ -129,7 +129,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   };
   const own = await engine.readPageSnapshot(row.slug, { sourceId, includeDeleted: true });
   if ((own?.page.id ?? null) !== row.page_id) throw pageIdentityError(own != null || row.page_id === null, 'The page of the forgotten fact was deleted or recreated.');
-  // GBRA-449: a fact held on memory/unattributed for an entity with no page is struck at its own row, in the file and the
+  // GST-2492: a fact held on memory/unattributed for an entity with no page is struck at its own row, in the file and the
   // page, so a rebuild from Git does not bring it back; the claim-wide strike would also reach other entities' rows there.
   const held = row.slug === UNATTRIBUTED_MEMORY_SLUG && fact.source_markdown_slug === row.slug && fact.entity_slug !== null && fact.row_num !== null
     && plan.subject !== '*' && own && !own.page.deleted_at && row.worktree_id

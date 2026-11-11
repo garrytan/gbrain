@@ -335,7 +335,7 @@ export function entityPageMissingNotice(sourceId: string, entitySlug: string, he
     code: 'entity_page_missing',
     kind: 'info',
     dedupe_key: `${sourceId}\0${entitySlug}`,
-    // GBRA-449: on a strict source the fact is held in Git, as a row of memory/unattributed that names the entity.
+    // GST-2492: on a strict source the fact is held in Git, as a row of memory/unattributed that names the entity.
     why: held
       ? `Saved and committed to Git; held on memory/unattributed until ${entitySlug} has a page. Say that when you report the save. Once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table, in its file.`
       : `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save. To give it a file, create the page; the next maintenance cycle (gbrain dream) can then move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,

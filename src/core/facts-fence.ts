@@ -53,7 +53,7 @@ import { isOpPageSlug } from './page-slug-grammar.ts';
 
 /**
  * The page a fact saved without an entity is a row of (GBRA-190 G4, D3). On a strict source it also holds a fact whose
- * entity has no page yet (GBRA-449): such a row names the entity in its `entity` cell, a column no other page accepts.
+ * entity has no page yet (GST-2492): such a row names the entity in its `entity` cell, a column no other page accepts.
  */
 export const UNATTRIBUTED_MEMORY_SLUG = 'memory/unattributed';
 
@@ -146,7 +146,7 @@ export interface ParsedFact {
    * the cell on rewrite.
    */
   attributedTo?: FactAttribution;
-  /** GBRA-449: on `memory/unattributed` only, the entity a held row is about (its page does not exist yet). */
+  /** GST-2492: on `memory/unattributed` only, the entity a held row is about (its page does not exist yet). */
   entity?: string;
 }
 
@@ -190,7 +190,7 @@ export const FACTS_FENCE_COLUMNS = [
   '#', 'claim', 'kind', 'confidence', 'visibility', 'notability', 'valid_from', 'valid_until', 'source', 'context',
   'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to',
 ] as const;
-/** GBRA-449: `memory/unattributed`'s columns, the canonical ones then `entity`; every other page keeps FACTS_FENCE_COLUMNS. */
+/** GST-2492: `memory/unattributed`'s columns, the canonical ones then `entity`; every other page keeps FACTS_FENCE_COLUMNS. */
 export const HOLDING_FACTS_COLUMNS = [...FACTS_FENCE_COLUMNS, 'entity'] as const;
 export type FactsFenceColumn = typeof HOLDING_FACTS_COLUMNS[number];
 /** Columns a header may leave out, and a row may omit at its end. */
@@ -255,7 +255,7 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
   return parseFactsFenceFor(body);
 }
 
-/** parseFactsFence for a known page: `memory/unattributed` also reads its `entity` column (GBRA-449). */
+/** parseFactsFence for a known page: `memory/unattributed` also reads its `entity` column (GST-2492). */
 export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): FactsFenceParseResult {
   const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   const warnings: string[] = [];
@@ -378,7 +378,7 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
       continue;
     }
 
-    // GBRA-449: a held row's entity is a page slug; any other cell is a fence problem, so the page is held, never misfiled.
+    // GST-2492: a held row's entity is a page slug; any other cell is a fence problem, so the page is held, never misfiled.
     const entity = entityRaw.trim();
     if (entity && (!isOpPageSlug(entity) || entity === UNATTRIBUTED_MEMORY_SLUG)) {
       warnings.push(`FACTS_TABLE_MALFORMED: invalid entity "${entity}" in row ${rowNumStr} (expected a page slug such as people/alice-example)`);
@@ -491,7 +491,7 @@ export function renderFactsTable(facts: ParsedFact[]): string {
   );
   // Speaker attribution widens the header to 15; only rows that carry it
   // are written 15 cells wide (typed cells padded), others keep their width.
-  // GBRA-449: a held row (memory/unattributed) names its entity in a 16th column, after attributed_to.
+  // GST-2492: a held row (memory/unattributed) names its entity in a 16th column, after attributed_to.
   const anyEntity = facts.some(f => f.entity !== undefined);
   const anyAttributed = anyEntity || facts.some(f => f.attributedTo !== undefined);
   const wide = anyTyped || anyAttributed;
