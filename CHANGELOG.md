@@ -16,7 +16,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **A remote `think` now runs on the brain host's own think model unless the host allows the model the caller asked for.** Every `think` answer is a paid call on the host's key, and before this change any MCP or HTTP client (or a thin-client `gbrain think --model`) could pick the most expensive model the host could reach. Now the requested `model` runs only when it is the host's think model (`models.think`, then `models.default`) or the host lists it in the new `think.remote_models` key (comma-separated, empty by default). Any other model, or a listed one the host cannot run (no key for its provider, or no chat support), no longer fails the call: the host model answers, `warnings` carries `MODEL_OVERRIDE_IGNORED:not_allowed` or `MODEL_OVERRIDE_IGNORED:unusable`, and the result carries a `model_override_ignored` notice that says how the owner can allow it. Remote `rounds` runs one round. The local CLI `--model` is unchanged and still exits 1 on an unusable model. A keyless brain answers a remote think the same way with or without `model`.
 
-**Moved your brain folder? gbrain now tells you how to bring it back.** When a managed checkout was moved to a new path, or a folder above it was renamed, `gbrain sources set-path` and `gbrain sources add` used to refuse with a generic "identity changed" or "checkout missing" error that offered no way out, and their `--dry-run` said everything was fine. Now the preview and the real command refuse the same way, name where gbrain recorded the folder and where it is now, and give the exact commands that get you back without losing the folder's ownership or Git history. Nothing new can rebind ownership: the commands are the ones that already worked, and gbrain still checks everything they do.
+**Moved your brain folder? gbrain now tells you how to bring it back.** When a managed checkout was moved to a new path, or a folder above it was renamed, `gbrain sources set-path` and `gbrain sources add` used to refuse with a generic "identity changed" or "checkout missing" error that offered no way out, and their `--dry-run` said everything was fine. Now the preview and the real command refuse the same way, name where gbrain recorded the folder and where it is now, and give the exact commands that get you back without losing the folder's ownership or Git history. Nothing new can rebind ownership. The commands are the ones that already worked, and gbrain still checks everything they do.
 
 ### A moved brain folder: how to use it
 
@@ -39,7 +39,7 @@ The refusal (`recovery_required`, detail `physical_root_moved`) carries its exit
 
 - `gbrain sources add --dry-run` and `gbrain sources writer claim --dry-run` now refuse a folder that holds a copied ownership stamp, and `gbrain sources set-path --dry-run` refuses a missing checkout, as their real runs always did. They still write nothing.
 - A remote agent whose page write reaches such a folder sees only the detail, never a path.
-- A brain without a Git repository is unaffected: the default keyless brain's `gbrain sources set-path` stays a plain path update.
+- A brain without a Git repository is unaffected, and the default keyless brain's `gbrain sources set-path` stays a plain path update.
 
 Proposed and first implemented by @Kkkkkuro (#8625).
 
