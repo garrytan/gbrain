@@ -34,7 +34,10 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 
-/** Attestable mutating operations that write no page every reader of it sees, each with the reason. */
+/**
+ * Attestable mutating operations that write nothing another person reads or relies on, each with the reason. A row
+ * here is a reviewed claim; rate_answer, log_ingest and loops_mute|unmute were deferred because their rows are shared.
+ */
 const NOT_PAGE_WRITES: Record<string, string> = {
   remember: "the person's own member page; share: true is refused when attested",
   memory_write: "the person's own member page, or a scope page the credential's attest_sources allows",
@@ -43,10 +46,6 @@ const NOT_PAGE_WRITES: Record<string, string> = {
   memory_propose: 'holds the write for the brain owner; nothing is written until the owner approves',
   cancel_write_request: "cancels the caller's own queued request",
   memory_conversation_mode: 'returns a rule for the conversation and stores nothing',
-  rate_answer: 'retrieval feedback tables only',
-  log_ingest: 'ingest_log audit rows only',
-  loops_mute: 'loop suppression rows only',
-  loops_unmute: 'loop suppression rows only',
   mute_notice: 'a local notice mute list, outside the brain database',
   request_tools: "the calling client's own MCP tool surface",
   think: 'read-only for remote callers; only a local --save writes',
@@ -126,6 +125,16 @@ for (const kind of testBackends()) {
       const kept = await remember({ fact: 'Acme audit worried me canaryw1kept', entity: ACME });
       expect(kept.isError).toBe(false);
       expect(await factRow('canaryw1kept')).toMatchObject({ visibility: 'private', source_markdown_slug: 'memory/members/alice-example' });
+    }, 120_000);
+
+    test('a shared agent acting for an audience (on_behalf_of, not an attested person) still shares', async () => {
+      const c = await provider().registerClientManual('w1-shared-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      await bindCredential(engine, { kind: 'client', id: c.clientId }, { mayActFor: ['member:alice-example'] });
+      const auth = await verify((await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token);
+      const out = await dispatchToolCall(engine, 'remember', { fact: 'Acme renewed canaryw1audience', provenance: 'qm test', entity: ACME, share: true },
+        { remote: true, transport: 'http', auth, sourceId: SRC, onBehalfOf: { header: 'member:alice-example' } });
+      expect(out.isError === true).toBe(false);
+      expect(await factRow('canaryw1audience')).toMatchObject({ visibility: 'world', source_markdown_slug: ACME });
     }, 120_000);
 
     test('a stored shared save made for a person is refused when it is prepared', async () => {

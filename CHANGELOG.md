@@ -18,15 +18,15 @@ identifiers and attribution are available in the pre-removal Git revision
 
 | Area | Before | Now |
 |---|---|---|
-| Page writes from QM | `add_timeline_entry`, `add_link`, `put_page` and `edit_page` were refused; every other page write could be listed in `--attest-ops` | every operation that writes a page's content, frontmatter, tags, links, timeline, facts, raw data or uploads, or deletes or restores it, is refused (`actor_not_attested`, reason `op_not_attested`), at `--attest-ops`, on every call and when a queued write publishes |
+| Page writes from QM | `add_timeline_entry`, `add_link`, `put_page` and `edit_page` were refused; every other page write could be listed in `--attest-ops` | every operation that writes a page's content, frontmatter, tags, links, timeline, facts, raw data or uploads, or deletes or restores it, is refused, and so are the shared rows with no page (`rate_answer` feedback, `log_ingest`, `loops_mute` and `loops_unmute`) (`actor_not_attested`, reason `op_not_attested`), at `--attest-ops`, on every call and when a queued write publishes |
 | A fact saved for a person | `share: true` put it on its subject's page for every reader of the source | refused (`invalid_params`, reason `attested_share_refused`), as is `visibility: "world"`; the reply points at `memory_propose` |
 | Writeback instructions for a service acting for a person | "share: true shares a fact about the team's work" | never pass `share: true`; propose team knowledge with `memory_propose` |
 | QM contract | v2 and v3 `deferred_ops` named 11 operations | they name every deferred operation; v1 is byte-identical |
 
 ### Itemized changes
 
-- `src/core/access/actor-model.ts`: `ACTOR_DEFERRED_OPS` gains every remaining page write. `test/qm-attest-write-boundary.test.ts` checks that every attestable mutating operation in the registry is either deferred or reviewed as not a page write, so a new page write cannot become attestable unnoticed.
-- `src/core/verbs.ts`, `src/core/access/member-facts.ts`, `src/core/persistence/memory-prepare.ts`: an attested `remember` refuses `share: true` and `visibility: "world"` at the call (a batch included), and a stored shared save made for a person is refused when it is prepared.
+- `src/core/access/actor-model.ts`: `ACTOR_DEFERRED_OPS` gains every remaining page write, plus `rate_answer` (its feedback is keyed to the client, not the person, so one person could see another's restricted page in a refusal and move its ranking), `log_ingest` (text every reader of the ingest log sees) and `loops_mute`/`loops_unmute` (they close or reopen other people's loops). `test/qm-attest-write-boundary.test.ts` checks that every attestable mutating operation in the registry is either deferred or reviewed as not a page write, so a new page write cannot become attestable unnoticed.
+- `src/core/verbs.ts`, `src/core/access/member-facts.ts`, `src/core/persistence/memory-prepare.ts`: an attested `remember` refuses `share: true` and `visibility: "world"` at the call (a batch included), and a stored shared save made for a person is refused when it is prepared; a shared agent acting for an audience (`on_behalf_of`) still shares.
 - `src/core/facts/writeback-instructions.ts`: the instruction line for a service acting for a person.
 - `docs/contracts/qm-memory-provider/v2.json`, `v3.json`: regenerated `deferred_ops` (a published-contract amendment).
 - Docs: `docs/guides/qm.md`, `docs/mcp/ADMIN.md`, `docs/guides/write-refusals.md`, `docs/tutorials/company-brain.md`.

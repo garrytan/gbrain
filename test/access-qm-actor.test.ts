@@ -515,6 +515,9 @@ for (const kind of testBackends()) {
         ['extract_entities', { text: 'Alice met Bob.' }], ['ontology_propose', { subject: PAGES.alice.slug, fact: 'x' }],
         ['confirm_memory', { ref: 'p:' + SRC + '/' + PAGES.alice.slug }], ['loops_close', { id: 1 }],
         ['questions_pin', { question: 'x?' }], ['questions_refresh', { id: 1 }], ['questions_unpin', { id: 1 }],
+        // Shared rows with no page: answer feedback, the ingest log and loop suppression.
+        ['rate_answer', { answer_id: 'x', rating: 'up' }], ['log_ingest', { source_type: 'note', source_ref: 'x', pages_updated: [], summary: 'x' }],
+        ['loops_mute', { sender: 'x@example.com' }], ['loops_unmute', { sender: 'x@example.com' }],
       ];
       expect(new Set(deferredCalls.map(([op]) => op))).toEqual(new Set(ACTOR_DEFERRED_OPS));
       for (const [op, params] of deferredCalls) {

@@ -22,7 +22,9 @@ export const SCOPE_ATTEST_OPS: ReadonlySet<string> = new Set(['forget', 'forget_
  * approve them, and GST-2249 W1 deferred every other page write: anything that writes a page's content, frontmatter,
  * links, tags, timeline, facts, attached data or files, or deletes or restores a page. The only attested writes left
  * are the person's own (memory_write, remember, forget and forget_fact on the member page) and memory_propose, which
- * holds a write for the owner. test/qm-attest-write-boundary.test.ts checks every attestable mutating operation in the
+ * holds a write for the owner. W1 also deferred the writes whose rows every reader shares without a page: answer
+ * feedback (rate_answer, keyed to the client, not the person), the ingest log (log_ingest) and loop suppression
+ * (loops_mute, loops_unmute). test/qm-attest-write-boundary.test.ts checks every attestable mutating operation in the
  * registry is either here or reviewed as not a page write. Refused at `--attest-ops`, at every call and when a stored
  * write or job tool call is re-resolved.
  */
@@ -34,6 +36,7 @@ export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
   'put_page', 'put_pages', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version',
   'begin_page_upload', 'upload_page_part', 'commit_page_upload', 'abort_page_upload',
   'put_raw_data', 'extract_entities', 'questions_pin', 'questions_refresh', 'questions_unpin',
+  'rate_answer', 'log_ingest', 'loops_mute', 'loops_unmute',
 ]);
 
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */
