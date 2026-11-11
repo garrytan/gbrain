@@ -306,7 +306,7 @@ export async function pruneRetrievalFeedback(engine: BrainEngine, retentionDays:
  */
 /** A captured slug is the purged page's unless another source the candidate covers still has a page by that name. */
 const purgedCandidateSlug = (slug: string) =>
-  `${slug} = ANY($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages po WHERE po.slug = ${slug} AND po.source_id = ANY(eval_candidates.source_ids) AND po.source_id <> $1)`;
+  `${slug} = ANY($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages po WHERE po.slug = ${slug} AND (po.source_id = ANY(eval_candidates.source_ids) OR cardinality(eval_candidates.source_ids) = 0) AND po.source_id <> $1)`;
 
 export async function scrubPurgedSlugs(
   engine: Pick<BrainEngine, 'executeRaw'>,
@@ -325,7 +325,7 @@ export async function scrubPurgedSlugs(
       AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
     'eval_candidates.retrieved_slugs': await count(`UPDATE eval_candidates
       SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE NOT (${purgedCandidateSlug('u.s')}) ORDER BY n)
-      WHERE $1 = ANY(source_ids) AND EXISTS (SELECT 1 FROM unnest(retrieved_slugs) AS r(s) WHERE ${purgedCandidateSlug('r.s')}) RETURNING 1`),
+      WHERE ($1 = ANY(source_ids) OR cardinality(source_ids) = 0) AND EXISTS (SELECT 1 FROM unnest(retrieved_slugs) AS r(s) WHERE ${purgedCandidateSlug('r.s')}) RETURNING 1`),
   };
 }
 
