@@ -68,7 +68,7 @@
  * reads the last day of it.
  */
 import { createHash } from 'node:crypto';
-import { unlinkSync } from 'node:fs';
+import { mkdirSync, unlinkSync } from 'node:fs';
 import { mkdir, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -78,7 +78,7 @@ import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } fr
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
 import { laneTurnSettings, type LaneTurnSettings } from './config.ts';
-import { appendDailyLog, LANE_LOG } from './daily-log.ts';
+import { appendDailyLog, appendDailyLogSync, LANE_LOG } from './daily-log.ts';
 import { HOOK_FIELD_CAP, readJsonFields } from './hook-input.ts';
 import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome } from './paths.ts';
 import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
@@ -276,7 +276,8 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
   const elapsed = () => performance.now() - t0;
   const ctl: LaneCtl = { expired: false, worker: null, logged: false, commit: {} };
   if (event === 'user-prompt') ctl.worker = startLaneWorker(env);
-  const log = (t: Turn) => appendLaneLog(home, { at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
+  const line = (t: Turn): LaneLogLine => ({ at: new Date().toISOString(), harness, event, outcome: t.outcome, ...(t.code ? { code: t.code } : {}), ms: Math.round(elapsed() * 10) / 10, ...(t.catalogs ? { catalogs: t.catalogs } : {}), ...(t.dropped_chars ? { dropped_chars: t.dropped_chars } : {}) });
+  const log = (t: Turn) => appendLaneLog(home, line(t));
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<'deadline'>((resolve) => { timer = setTimeout(() => resolve('deadline'), deadlineMs); });
@@ -288,7 +289,10 @@ export async function runSkillResolverLane(event: string, harness: LaneHarness, 
     const { tmp, lease } = ctl.commit;
     if (tmp) try { unlinkSync(tmp); } catch { /* renamed or never created */ }
     if (lease) releaseLease(lease);
-    if (ctl.logged) await Promise.race([log({ outcome: 'timeout', code: 'skill_resolve_timeout' }), new Promise(r => setTimeout(r, 5))]);
+    if (ctl.logged) try {
+      mkdirSync(logsDir(home), { recursive: true, mode: 0o700 });
+      appendDailyLogSync(logsDir(home), LANE_LOG, `${JSON.stringify(line({ outcome: 'timeout', code: 'skill_resolve_timeout' }))}\n`);
+    } catch { /* logging never fails a turn */ }
     (io.exit ?? ((c: number) => process.exit(c)))(0);
     return 0;
   }
