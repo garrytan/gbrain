@@ -127,7 +127,8 @@ Pinned-question pages are the owner's own and read as private. The owner reads t
 
 `readable_by: [alice-example, group:team-a]` keeps a page to the members and groups it lists; `gbrain access rule
 add --prefix <folder>/ --readers <list>` does the same for a folder, and `--slug <page>` for exactly one page (a page
-at the source root, or one whose file left git, which a `visibility` edit cannot reach). This is the boundary between people in a
+at the source root, or one whose file left git, which a `visibility` edit cannot reach; upgrade every host that shares
+the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
 shared brain, and it binds the owner too: the owner reads such a page only when listed. No grant, hatch or owner
 binding relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a

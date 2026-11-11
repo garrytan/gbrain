@@ -12,9 +12,9 @@ import type { Migration } from './types.ts';
 // pending-coverage matchers cover a slash-less prefix only when it equals the
 // slug (the SQL twin of folder-rules.ts ruleCovers). Folder prefixes match as
 // before, so no stamp changes on upgrade; nothing is rewritten. Reads are
-// decided here, so an older binary sharing the database reads them right; one
-// that syncs an access.yml holding slug: finds it invalid, which reads as
-// nobody (fail closed). No schema.sql mirror: like v283, these exist only through
+// decided here, so an older binary sharing the database keeps the page
+// restricted; its rule commands and its sync of a git-backed source refuse the
+// stored rulebook until it is upgraded (fail closed). No schema.sql mirror: like v283, these exist only through
 // migrations. Provisional number: renumbered at the merge slot.
 const FOLDER_OR_PAGE = "(length(prefix) <= 512 AND prefix ~ '^(([a-z0-9][a-z0-9._-]*/)+|([a-z0-9][a-z0-9._-]*/)*[a-z0-9][a-z0-9._-]*)$' AND position('..' in prefix) = 0)";
 
