@@ -88,9 +88,9 @@ item: its fence row). A file that cannot take the change without being
 re-rendered (a label with a block value or a duplicate key, no frontmatter
 block) is refused with nothing written; make that edit by hand. `--slug` is the operator's way to make one page private;
 a `put_page` that adds the label is an agent edit and lowers the page. On a brain
-without managed persistence, a page whose file sits in its source's checkout is
-held (`file_backed`) with the file edit to make, since a database-only write
-would be undone by the next sync.
+without managed persistence, a page whose file sits in its source's checkout gets
+the same edit in that file and in the database together, so the next sync reads
+the same page.
 
 The apply touches only the listed items and resumes after its last applied
 item if it stops. Apply the window (or decide not to), then preview again for

@@ -4,9 +4,10 @@
  * and its canonical file changes only in the label lines (persistence/label-edit.ts):
  *   - a managed brain publishes it through the maintenance door with keep_trust and the label edit (the Git door on a
  *     repo source; a repo-less managed source writes the database only);
- *   - a brain without managed persistence imports it in a maintenance transaction under the page lock and withTrustKeep,
- *     database only (the default keyless install has no file to keep). A page there whose file sits in its source's
- *     checkout is held by the caller (`filesInCheckout`): the next sync or re-import would undo a database-only edit.
+ *   - a brain without managed persistence imports it in a maintenance transaction under the page lock and withTrustKeep:
+ *     database only when the page has no file (the default keyless install), and for a page whose file sits in its
+ *     source's checkout (`filesInCheckout`) the file's own bytes with only the label lines edited, imported and written
+ *     back in that transaction, so the next sync reads the same page (writeLabelFile).
  * An ordinary put_page, local or remote, stays an agent content write (trust/channel.ts): it is never used here.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -16,6 +17,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { withTrustKeep } from '../persistence/context.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { labelEditFile } from '../persistence/page-prepare.ts';
 import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 
 const bounded = { timeoutMs: 120_000 };
@@ -40,14 +42,40 @@ export async function filesInCheckout(engine: BrainEngine, pageIds: number[]): P
  * null when the page moved. `preview` names the command whose preview lists the page again.
  */
 export async function importAtRevision(engine: BrainEngine, page: { source_id: string; slug: string }, revision: string, content: string, embed: boolean,
-  preview: string): Promise<string | null> {
+  preview: string, afterImport?: (tx: BrainEngine) => Promise<void>): Promise<string | null> {
   return maintenanceTransaction(engine, async tx => {
     await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
     if ((await tx.readPageSnapshot(page.slug, { sourceId: page.source_id }))?.revision !== revision) return null;
     const result = await withTrustKeep(tx, ['pages'], () => importFromContent(tx, page.slug, content, { sourceId: page.source_id, noEmbed: !embed, preserveGateMarkers: true }));
     if (result.status === 'error') throw opError('invalid_params', `${page.source_id}:${page.slug} was not written: ${result.error ?? 'the import refused it'}`,
       `Preview ${preview} again; the page is listed with its current state.`);
+    await afterImport?.(tx);
     return (await tx.readPageSnapshot(page.slug, { sourceId: page.source_id }))?.revision ?? null;
+  });
+}
+
+/**
+ * T1: an unmanaged page whose file sits in its source's checkout. The file must still hold the page (a file holding an
+ * edit the database lacks refuses); its own bytes with only the label lines edited (labelEditFile, the managed brain's
+ * splice) are imported under withTrustKeep at `revision` and written back with their preimage checked, in one
+ * transaction, so the file and the row agree and the tier is kept. A recorded file that is gone writes the database only.
+ */
+async function writeLabelFile(engine: BrainEngine, page: { source_id: string; slug: string }, write: { revision: string; content: string; edit: LabelEdit; embed: boolean; preview: string }): Promise<string | null> {
+  const ref = `${page.source_id}:${page.slug}`;
+  const { ownerRepairFile } = await import('../trust/page-handlers.ts');
+  const file = await ownerRepairFile(engine, page.source_id, page.slug);
+  if (!file.ok) throw opError('source_changed', `${ref} was not written: its file in the source's checkout cannot take the label edit (${file.reason}).`,
+    `If the file holds the newer edit, run gbrain sync --source ${page.source_id}; then preview ${write.preview} again.`);
+  const before = file.target?.expectedFileBytes ?? null;
+  const snapshot = before === null ? null : await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
+  if (before === null || !snapshot) return importAtRevision(engine, page, write.revision, write.content, write.embed, write.preview);
+  if (snapshot.revision !== write.revision) return null;
+  const text = labelEditFile(page.slug, Buffer.from(before, 'utf8'), write.content, write.edit, snapshot);
+  const { writePageThrough } = await import('../write-through.ts');
+  return importAtRevision(engine, page, write.revision, text, write.embed, write.preview, async tx => {
+    const written = await writePageThrough(tx, page.slug, { sourceId: page.source_id, expectedFileBytes: before, fileText: text });
+    if (!written.written) throw opError('source_changed', `${ref} was not written: its file changed or could not be written (${written.skipped ?? written.error ?? 'unknown'}).`,
+      `Preview ${write.preview} again; the page is listed with its current state.`);
   });
 }
 
@@ -56,9 +84,10 @@ export async function importAtRevision(engine: BrainEngine, page: { source_id: s
  * the import under the page lock otherwise. The revision it wrote; null when the page moved before an unmanaged import.
  */
 export async function writeLabelPage(ctx: OperationContext, page: { source_id: string; slug: string }, write: { revision: string; content: string; edit: LabelEdit;
-  requestId: string; embed: boolean; preview: string }, authority?: MaintenanceAuthority | null): Promise<string | null> {
+  requestId: string; embed: boolean; preview: string; /** The page has a file in its source's checkout (filesInCheckout). */ file?: boolean },
+  authority?: MaintenanceAuthority | null): Promise<string | null> {
   const door = authority === undefined ? await maintenancePreflight(ctx.engine, page.source_id) : authority;
-  if (!door) return importAtRevision(ctx.engine, page, write.revision, write.content, write.embed, write.preview);
+  if (!door) return write.file ? writeLabelFile(ctx.engine, page, write) : importAtRevision(ctx.engine, page, write.revision, write.content, write.embed, write.preview);
   await publishMaintenancePage(ctx.engine, door, page.slug, write.content, { expectedRevision: write.revision, requestId: write.requestId, keepTrust: true, labelEdit: write.edit });
   return (await ctx.engine.readPageSnapshot(page.slug, { sourceId: page.source_id }))?.revision ?? null;
 }

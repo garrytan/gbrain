@@ -179,32 +179,53 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
 /** A repo-less brain (no managed persistence, no checkout: the default keyless install) is the database record. */
 for (const backend of testBackends()) describe('[' + backend + '] label-only operator repairs on a repo-less brain', () => {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
-  test('repair visibility --slug keeps the tier and files no proposal; a page whose file is in a checkout is held', async () => {
+  test('repair visibility --slug keeps the tier and files no proposal', async () => {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-label-repoless-'));
     try {
       await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
         const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
         try {
-          await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('source-b', 'source-b', $1) ON CONFLICT (id) DO NOTHING", [join(home, 'checkout')]);
           const seed = async (sourceId: string, slug: string) => {
             expect((await importFromContent(engine, slug, file(slug), { noEmbed: true, sourceId })).status).toBe('imported');
             await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => withTrustBackfill(tx, () =>
               tx.executeRaw("UPDATE pages SET trust_tier='operator_curated' WHERE source_id=$1 AND slug=$2", [sourceId, slug])), TEST_WRITE_ATTRIBUTION));
           };
           await seed('default', 'notes/plain-example');
-          await seed('source-b', 'notes/filed-example');
-          await engine.executeRaw("UPDATE pages SET source_path='notes/filed-example.md' WHERE source_id='source-b'");
           const { applied } = await previewApply(engine, ['visibility', '--source', 'default', '--slug', 'notes/plain-example']);
           expect(applied.applied).toBe(1);
           const [row] = await engine.executeRaw<{ tier: string; visibility: string }>(
             "SELECT trust_tier::text AS tier, frontmatter->>'visibility' AS visibility FROM pages WHERE source_id='default' AND slug='notes/plain-example'");
           expect(row).toEqual({ tier: 'operator_curated', visibility: 'private' });
           expect(await proposals(engine)).toEqual([]);
-          const held = await previewApply(engine, ['visibility', '--source', 'source-b', '--slug', 'notes/filed-example']);
-          expect(held.applied.applied).toBe(0);
-          expect(held.applied.outcome_items).toEqual([expect.objectContaining({ item: 'source-b:notes/filed-example', outcome: 'file_backed' })]);
-          expect((await engine.executeRaw<{ v: string | null }>("SELECT frontmatter->>'visibility' AS v FROM pages WHERE source_id='source-b'"))[0]!.v).toBeNull();
           expect((await listLabelLowerings(engine)).counts.lower_page).toBe(0);
+        } finally { await disposePersistenceConsumer(engine); await close(); }
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 180_000);
+
+  test('without managed persistence, a page whose file is in a checkout gets the same label-line splice in its file', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-label-checkout-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
+        try {
+          const slug = 'notes/filed-example', checkout = join(home, 'checkout');
+          mkdirSync(join(checkout, 'notes'), { recursive: true });
+          const before = file(slug);
+          writeFileSync(join(checkout, slug + '.md'), before);
+          await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('source-b', 'source-b', $1) ON CONFLICT (id) DO NOTHING", [checkout]);
+          expect((await importFromContent(engine, slug, before, { noEmbed: true, sourceId: 'source-b' })).status).toBe('imported');
+          await engine.transaction(tx => withCoordinatedWrite(tx, ['source-b'], () => withTrustBackfill(tx, () =>
+            tx.executeRaw("UPDATE pages SET trust_tier='operator_curated', source_path=$2 WHERE source_id='source-b' AND slug=$1", [slug, slug + '.md'])), TEST_WRITE_ATTRIBUTION));
+          const { applied } = await previewApply(engine, ['visibility', '--source', 'source-b', '--slug', slug]);
+          expect(applied.applied).toBe(1);
+          const [row] = await engine.executeRaw<{ tier: string; frontmatter: Record<string, unknown> }>(
+            "SELECT trust_tier::text AS tier, frontmatter FROM pages WHERE source_id='source-b' AND slug=$1", [slug]);
+          expect(row!.tier).toBe('operator_curated');
+          expect(row!.frontmatter.visibility).toBe('private');
+          expect(row!.frontmatter.source_kind).toBe('email-example');
+          expect(await proposals(engine)).toEqual([]);
+          expect(readFileSync(join(checkout, slug + '.md'), 'utf8')).toBe(withLine(before, 'visibility: private'));
         } finally { await disposePersistenceConsumer(engine); await close(); }
       });
     } finally { rmSync(home, { recursive: true, force: true }); }

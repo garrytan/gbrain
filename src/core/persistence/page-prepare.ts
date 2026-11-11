@@ -277,7 +277,7 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
  * as `content`, the file the write would otherwise render; a label line that cannot be edited as a line refuses, so the
  * file is never re-rendered under a label edit.
  */
-function labelEditFile(slug: string, before: Buffer | FileBytes, content: string, edit: LabelEdit, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): string {
+export function labelEditFile(slug: string, before: Buffer | FileBytes, content: string, edit: LabelEdit, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): string {
   const read = (text: string, file: boolean) => {
     const parsed = parseMarkdown(text, slug, { activePack });
     return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type: file ? importedFileType(parsed, snapshot.page, false) : parsed.type }, parsed.tags));

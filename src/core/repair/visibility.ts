@@ -288,17 +288,14 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
 /**
  * GST-2468: one item's page write is a label-only maintenance write (repair/label-write.ts): it keeps the page's trust
  * tier, files no lower_page proposal and changes only the label lines of the page's file (a fact item: its fence row).
- * Null once written; the held outcome on a brain without managed persistence whose page has a file in its source's
- * checkout (the database-only write would be undone from the file), or for a page stored in segments.
+ * On a brain without managed persistence a page whose file sits in its source's checkout gets the same splice in that
+ * file (label-write.ts writeLabelFile). Null once written; the held outcome for a page stored in segments.
  */
 async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, snapshot: PageSnapshot, content: string, edit: LabelEdit): Promise<RepairItemOutcome | null> {
   if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit it by hand on the brain host.' };
-  const file = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).get(Number(snapshot.page.id));
-  if (file) return { applied: false, outcome: 'file_backed', detail: { path: file },
-    reason: `${item.source_id}:${snapshot.page.slug} has a file in its source's checkout (${file}); on a brain without managed persistence this repair writes only the database, `
-      + `so the next sync or re-import would undo it from the file. Make the change in that file (${edit.set.visibility ? `add visibility: ${edit.set.visibility}` : 'its facts row visibility: private'}), commit it, then run: gbrain sync --source ${item.source_id}` };
+  const file = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).has(Number(snapshot.page.id));
   await writeLabelPage(ctx, item, { revision: snapshot.revision, content, edit, requestId: await repairRequestId(ctx, 'visibility', item, snapshot.revision),
-    embed: true, preview: 'gbrain repair visibility' });
+    embed: true, preview: 'gbrain repair visibility', file });
   return null;
 }
 
