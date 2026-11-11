@@ -326,6 +326,27 @@ export function privateFactNotice(factId?: string | number): Notice {
   };
 }
 
+/**
+ * GST-2446: remember saved a fact for an entity that has no page, on a source whose pages are in Git. The fact is in
+ * the database alone until the page exists; the fix is the call that creates it. Once per entity per session.
+ */
+export function entityPageMissingNotice(sourceId: string, entitySlug: string): Notice {
+  return {
+    code: 'entity_page_missing',
+    kind: 'info',
+    dedupe_key: `${sourceId}\0${entitySlug}`,
+    why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save. To give it a file, create the page; the next maintenance cycle (gbrain dream) can then move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,
+    fix: {
+      argv: ['gbrain', 'put', entitySlug],
+      mcp: { tool: 'put_page', arguments: { slug: entitySlug, content: '<content>' } },
+      inputs: [{ name: 'content', how: `The page as Markdown: frontmatter with type and title, then what is known about ${entitySlug}. On the CLI, pass it on stdin.` }],
+      consent: [], actor: 'agent', requires_exclusive: false,
+      why: `Creates the page ${entitySlug}, so its facts have a file.`,
+      verify: { argv: ['gbrain', 'get', entitySlug], mcp: { tool: 'get_page', arguments: { slug: entitySlug } } },
+    },
+  };
+}
+
 // ── dispatch producer ──────────────────────────────────────────────────────
 
 /** think's warning when the brain opted out of embedding and the question was never embedded. */

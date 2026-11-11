@@ -103,6 +103,17 @@ slug that has no page, still saves and still shows up in question recall, but
 it has no file to live in: its only copy is in the database
 ([where your memory lives](where-your-memory-lives.md)). Create the page first.
 
+The reply tells you when that happened. A fact that landed on a page names it
+in `page`. A fact saved for an entity with no page has no `page`, and its
+`write_through` reads `{"written": false, "skipped": "entity_page_missing"}`;
+each item of an `items` batch says the same for itself. If the brain's pages
+are in a Git repository, the reply also carries an `entity_page_missing`
+notice with the `put_page` call that creates the page. Once the page exists,
+the next maintenance cycle (`gbrain dream`) can move the facts saved for that
+entity into the page's Facts table and its file. A brain with no Git
+repository gets no notice: there the database is the record, and the fact is
+as safe as everything else in it.
+
 ## Related
 
 - [Entity recall](entity-recall.md): how gbrain resolves a name to an entity.
