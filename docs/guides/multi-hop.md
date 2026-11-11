@@ -57,8 +57,9 @@ traverse_graph {"slug": "people/alice-example",
 written in: `object` walks subject → object (investor → company, person →
 employer), `subject` walks object → subject (company → founder). Chain link
 types: `founded`, `invested_in` (with `led_round`), `advises`, `works_at`,
-`attended`, `yc_partner`. `hops` cannot be combined with `depth`, `link_type`
-or `direction`; up to 3 hops. MCP advertises `hops` on the full surface (the
+`attended`, `yc_partner`. Up to 3 hops. With `hops`, the chain sets the walk, so
+`depth`, `link_type` and `direction` are ignored and the response names them in
+`set_aside`. MCP advertises `hops` on the full surface (the
 default); the starter surface leaves it out to stay inside its size budget.
 
 ## Try it keyless (about a minute)

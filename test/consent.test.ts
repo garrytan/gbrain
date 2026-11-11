@@ -441,6 +441,8 @@ describe("memorable's relay-only gate (stays hard)", () => {
     const errSpy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.join(' ')); });
     const logSpy = spyOn(console, 'log').mockImplementation(() => {});
     const exitSpy = spyOn(process, 'exit').mockImplementation(((code?: number) => { throw new Error(`exit:${code}`); }) as never);
+    const origStdinTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
     try {
       await inHome(async () => {
         const engine = { getConfig: async () => null, setConfig: async () => {}, unsetConfig: async () => 0 } as never;
@@ -451,6 +453,8 @@ describe("memorable's relay-only gate (stays hard)", () => {
       errSpy.mockRestore();
       logSpy.mockRestore();
       exitSpy.mockRestore();
+      if (origStdinTTY) Object.defineProperty(process.stdin, 'isTTY', origStdinTTY);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
     }
     const relay = errors.find(l => l.startsWith('[AGENT] Relay this to your operator'));
     expect(relay).toContain("If the user has no terminal on this machine, this can't be enabled from this session.");

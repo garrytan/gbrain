@@ -54,6 +54,7 @@ import {
   summarizeCrashes,
 } from '../core/minions/handlers/supervisor-audit.ts';
 import { formatSyncFreshness, readSyncFreshness, type SourceFreshness } from '../core/persistence/sync-freshness.ts';
+import { pendingProposalSummary } from '../core/persistence/memory-proposals.ts';
 import { withReadMeta } from '../core/read-heartbeat.ts';
 
 const SCHEMA_VERSION = 1 as const;
@@ -167,6 +168,8 @@ export interface StatusReport {
   workers?: WorkerSummary | RemoteWorkersSnapshot | SectionUnavailable | RemoteUnsupported | { local_only_remote: true };
   queue?: QueueCounts | RemoteQueueSnapshot | SectionUnavailable | RemoteUnsupported | { local_only_remote: true };
   autopilot?: AutopilotStatus | { local_only_remote: true };
+  /** GBRA-284: held QM proposals awaiting the owner (local mode, full snapshot; counts only, never the proposed text). */
+  memory_proposals?: { pending: number; oldest_hours: number | null };
   warnings?: string[];
   /** #1984: true when a --deadline-ms budget elided one or more sections. */
   partial?: boolean;
@@ -529,6 +532,14 @@ async function buildLocalReport(
       warnings.push(`cycle section failed: ${(err as Error).message}`);
     }
   }
+  if (!opts.sections) {
+    try {
+      const proposals = await withSectionDeadline(pendingProposalSummary(engine), remaining(), () => {});
+      if (proposals?.pending) report.memory_proposals = proposals;
+    } catch (err) {
+      warnings.push(`memory proposals read failed: ${(err as Error).message}`);
+    }
+  }
   if (want('locks')) {
     report.locks = await withSectionDeadline(buildLocks(engine), remaining(), () => markStale('locks'));
   }
@@ -777,6 +788,12 @@ export function renderHuman(report: StatusReport): string {
         lines.push('  not running. Install with `gbrain autopilot --install`.');
       }
     }
+    lines.push('');
+  }
+
+  if (report.memory_proposals?.pending) {
+    const { pending, oldest_hours: oldest } = report.memory_proposals;
+    lines.push(`Memory proposals: ${pending} awaiting the owner${oldest === null ? '' : ` (oldest ${oldest}h)`} (review: gbrain memory-proposals list)`);
     lines.push('');
   }
 

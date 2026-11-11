@@ -226,6 +226,10 @@
         "name": "harness_wiring"
       },
       {
+        "category": "ops",
+        "name": "skill_resolver"
+      },
+      {
         "category": "meta",
         "name": "agent_contract"
       },
@@ -387,7 +391,15 @@
       },
       {
         "category": "brain",
+        "name": "unlabeled_people_folders"
+      },
+      {
+        "category": "brain",
         "name": "access_may_act_for_wildcard"
+      },
+      {
+        "category": "brain",
+        "name": "attest_read_shared_scope"
       },
       {
         "category": "ops",
@@ -395,7 +407,15 @@
       },
       {
         "category": "ops",
+        "name": "postgres_tls"
+      },
+      {
+        "category": "ops",
         "name": "function_search_path"
+      },
+      {
+        "category": "ops",
+        "name": "database_encoding"
       },
       {
         "category": "meta",
@@ -596,6 +616,10 @@
       {
         "category": "brain",
         "name": "atom_retirements_restorable"
+      },
+      {
+        "category": "brain",
+        "name": "atom_fence_rows"
       },
       {
         "category": "brain",
@@ -903,6 +927,10 @@
       },
       {
         "category": "brain",
+        "name": "memory_proposals_pending"
+      },
+      {
+        "category": "brain",
         "name": "unlinked_facts"
       },
       {
@@ -916,6 +944,10 @@
       {
         "category": "brain",
         "name": "chronicle_config_invalid"
+      },
+      {
+        "category": "brain",
+        "name": "chronicle_duplicate_events"
       },
       {
         "category": "brain",

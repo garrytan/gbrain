@@ -89,6 +89,7 @@ export async function requestGrowthCheck(engine: BrainEngine): Promise<Check> {
         WHERE created_at >= now() - interval '${WINDOW_DAYS} days'`, principal ? [principal[1], principal[2]] : []);
       const setting = principal ? 'principalLifetimeIds' : 'brainLifetimeIds';
       const used = Number(counter.lifetime_ids), limit = limits[setting];
+      if (!Number.isFinite(limit)) continue;
       const windowDays = sample.admissions >= SAMPLE && sample.oldest
         ? Math.max(1 / 24, (now - Date.parse(sample.oldest)) / 86_400_000) : WINDOW_DAYS;
       const perDay = sample.admissions / windowDays;

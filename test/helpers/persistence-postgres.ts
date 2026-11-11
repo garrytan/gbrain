@@ -16,12 +16,26 @@ export async function isolatedPersistencePostgres(databaseUrl:string, connection
   catch(error){await close();throw error;}
 }
 
+/** A fresh database in `encoding` with the C locale, no schema applied; `close` drops it. */
+export async function encodedPostgres(databaseUrl:string, encoding:'UTF8'|'SQL_ASCII'|'LATIN1'):Promise<{engine:PostgresEngine;close:()=>Promise<void>}> {
+  assertSafeE2eDatabaseUrl(databaseUrl);
+  const database=`gbrain_test_encoding_${encoding.toLowerCase()}_${randomUUID().replace(/-/g,'')}`;
+  const admin=postgres(databaseUrl,{max:1,prepare:false});
+  await admin.unsafe(`CREATE DATABASE ${database} TEMPLATE template0 ENCODING '${encoding}' LC_COLLATE 'C' LC_CTYPE 'C'`);
+  const url=new URL(databaseUrl);url.pathname=`/${database}`;
+  const engine=new PostgresEngine();
+  const close=async()=>{await engine.disconnect();await admin.unsafe(`DROP DATABASE ${database} WITH (FORCE)`);await admin.end();};
+  try {await engine.connect({database_url:url.toString(),poolSize:4});return{engine,close};}
+  catch(error){await close();throw error;}
+}
+
 /**
  * One migrated template per test file: each clone (CREATE DATABASE ... TEMPLATE) is its own fresh brain,
  * so permanent receipt IDs never cross tests, without re-running every migration per test.
  */
-export async function persistencePostgresTemplate(databaseUrl:string, poolSize=4):Promise<{clone:()=>Promise<{engine:PostgresEngine;close:()=>Promise<void>}>;dispose:()=>Promise<void>}> {
+export async function persistencePostgresTemplate(databaseUrl:string, poolSize=4, prepare?:(engine:PostgresEngine)=>Promise<void>):Promise<{clone:()=>Promise<{engine:PostgresEngine;close:()=>Promise<void>}>;dispose:()=>Promise<void>}> {
   const template=await isolatedPersistencePostgres(databaseUrl);
+  try { await prepare?.(template.engine); } catch (error) { await template.close(); throw error; }
   await template.engine.disconnect();
   const name=new URL(template.databaseUrl).pathname.slice(1);
   const admin=postgres(databaseUrl,{max:1,prepare:false});

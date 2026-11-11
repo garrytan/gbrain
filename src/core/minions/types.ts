@@ -843,17 +843,25 @@ export interface SubagentResult {
 }
 
 /**
- * GST-359 C2: the attested actor an agent job belongs to. submit_agent stores it in the accepted grant
- * (`submission_authority.grant.actor`); every owner-fenced job read and cancel also matches it, so behind one attest
- * client a job is visible only to the person it was submitted for, and a job without one only to unattested calls.
+ * GST-359 C2: the attested actor an agent job belongs to, then its audience (GBRA-231). submit_agent stores one of them in
+ * the accepted grant (`submission_authority.grant.actor` or `.actingFor`); every owner-fenced job read and cancel also
+ * matches both, so behind one client a job is visible only to the person or audience it was submitted for, and a job
+ * with neither only to calls asserting neither.
  */
-export type JobActor = readonly [string, string, string];
+export type JobActor = readonly [string, string, string, string];
 
-/** The actor of a caller without an attested one. */
-export const NO_JOB_ACTOR: JobActor = ['', '', ''];
+/** The actor of a caller without an attested actor or an audience. */
+export const NO_JOB_ACTOR: JobActor = ['', '', '', ''];
 
-/** SQL: the job's accepted actor equals the three parameters starting at `$first`. `alias` is a code-provided table alias. */
+/** An audience as jobActorSql compares it: its distinct entries sorted and joined by commas ('' for none). */
+export function jobAudienceKey(audience: readonly string[] | null | undefined): string {
+  return [...new Set(audience ?? [])].sort().join(',');
+}
+
+/** SQL: the job's accepted actor and audience equal the four parameters starting at `$first`. `alias` is a code-provided table alias. */
 export function jobActorSql(first: number, alias?: string): string {
-  const actor = `${alias ? alias + '.' : ''}submission_authority->'grant'->'actor'`;
-  return ['system', 'external_id', 'member'].map((key, i) => `COALESCE(${actor}->>'${key}', '') = $${first + i}::text`).join(' AND ');
+  const grant = `${alias ? alias + '.' : ''}submission_authority->'grant'`;
+  const actingFor = `${grant}->'actingFor'`;
+  const audience = `COALESCE(CASE WHEN jsonb_typeof(${actingFor}) = 'array' THEN (SELECT string_agg(DISTINCT e COLLATE "C", ',' ORDER BY e COLLATE "C") FROM jsonb_array_elements_text(${actingFor}) e) WHEN ${actingFor} IS NOT NULL THEN '!' END, '') = $${first + 3}::text`;
+  return [...['system', 'external_id', 'member'].map((key, i) => `COALESCE(${grant}->'actor'->>'${key}', '') = $${first + i}::text`), audience].join(' AND ');
 }

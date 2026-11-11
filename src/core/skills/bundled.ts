@@ -19,6 +19,7 @@
  */
 import { createHash } from 'node:crypto';
 import { parseSkillFrontmatter } from '../skill-frontmatter.ts';
+import { oneLineDescription } from '../skill-description.ts';
 import { BUNDLED_SKILLS, BUNDLED_SKILL_FILES, type BundledSkillMeta } from './bundled-skills.generated.ts';
 
 export type BundledSkill = BundledSkillMeta;
@@ -45,7 +46,6 @@ export function bundledSkillTriggers(skill: BundledSkill): string[] {
 
 /** The skill's one-line description, as the skill catalog derives it. */
 export async function bundledSkillDescription(skill: BundledSkill): Promise<string> {
-  const { oneLineDescription } = await import('../skill-catalog.ts');
   const text = bundledSkillText(skill);
   return oneLineDescription(parseSkillFrontmatter(text)?.raw ?? '', text.replace(/^---\n[\s\S]*?\n---\n?/, '')).replace(/\s+/g, ' ').trim();
 }

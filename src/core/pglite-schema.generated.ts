@@ -1366,6 +1366,10 @@ CREATE TABLE IF NOT EXISTS chronicle_page_state (
   pricing_policy TEXT,
   campaign_max_usd NUMERIC,
   cost_attempts INTEGER[] NOT NULL DEFAULT '{}',
+  judge_input_hash TEXT,
+  judge_window_chars INTEGER CHECK (judge_window_chars >= 0),
+  judge_window_hash TEXT,
+  judge_input_failures INTEGER NOT NULL DEFAULT 0 CHECK (judge_input_failures >= 0),
   PRIMARY KEY (source_id, page_id, content_hash, extractor_version)
 );
 CREATE INDEX IF NOT EXISTS chronicle_page_state_work_idx
@@ -2527,10 +2531,11 @@ CREATE TABLE IF NOT EXISTS link_transitions (
   producer        TEXT NOT NULL CHECK (producer IN ('timeline','explicit','frontmatter','manual','inline','dream')),
   origin_page_id  INTEGER REFERENCES pages(id) ON DELETE CASCADE,
   line_hash       TEXT NOT NULL DEFAULT '',
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  link_source     TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS link_transitions_identity_idx
-  ON link_transitions (origin_page_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer) NULLS NOT DISTINCT;
+  ON link_transitions (origin_page_id, from_page_id, to_page_id, link_type, link_source, kind, occurred_on, producer) NULLS NOT DISTINCT;
 CREATE INDEX IF NOT EXISTS link_transitions_relationship_idx ON link_transitions (from_page_id, to_page_id, link_type);
 CREATE INDEX IF NOT EXISTS link_transitions_origin_idx ON link_transitions (origin_page_id);
 DO \$rls\$ BEGIN

@@ -18,7 +18,8 @@ import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } f
 import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
 import { admitWrite, admitWriteInTransaction, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { assertRefusalBreakerClosed } from './refusal-breaker.ts';
-import { retryWriteAdmission } from './admission-retry.ts';
+import { retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
+import { resolveAdmissionOrigin } from './admission-origin.ts';
 import { declareDurablePersistence } from './protocol.ts';
 import { CANONICAL_FILE_MISSING } from './publication-failure.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
@@ -26,6 +27,7 @@ import { preparePageMutation, prepareFileTarget } from './page-prepare.ts';
 import { prepareTakesMutation } from './takes-prepare.ts';
 import { digest, sha256 } from './digest.ts';
 import type { PreparedMutation } from './coordinator.ts';
+import { withTrustKeep } from './context.ts';
 import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import { authorizePageVisibility } from './page-visibility.ts';
 import { nativeLockCapability } from './native-lock.ts';
@@ -236,17 +238,19 @@ export function maintenanceGhostRefusal(sourceId: string, slug: string): Operati
 /** #5523: a Life Chronicle timeline row projected onto the depth page in the same publication. */
 export interface MaintenanceEventProjection { depth_slug: string; date: string; summary: string; }
 
+/** `keepTrust`: the edit authors nothing (it only removes privacy labels), so the page keeps its stored trust tier (withTrustKeep). */
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
-  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration };
+  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
 function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, content: string, options: MaintenancePageOptions, batch?: string) {
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
-  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped },
+  const keep = options.keepTrust ? { keep_trust: true } : {};
+  return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...keep },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
-      ...projection, ...derivation, ...grouped }) };
+      ...projection, ...derivation, ...grouped, ...keep }) };
 }
 
 /** `derivation` (#5575 I2): the deriver's taint declaration; the page and its edges are stamped from it at publication. */
@@ -261,12 +265,15 @@ export async function publishMaintenancePage(engine: BrainEngine, authority: Mai
  * before any is waited on, each carrying the batch id, so the owner claims them as one contiguous run and publishes them
  * in groups of up to PAGE_BATCH_GROUP_MAX on Postgres (journal.ts publicationGroupKey: an independent group, one page's
  * failure never cancels another). The batch id is derived from its pages, so a rerun over the same pages and revisions
- * replays the same requests. Each page settles on its own: its receipt, or the error publishMaintenancePage would throw.
+ * replays the same requests; a caller that names each page's request id passes a `batch` id that a rerun over a different
+ * split of the same pages repeats (GBRA-443: a repair window resumed mid-window). An interactive admission waits out a
+ * refresh fence like a single write does (admission-retry.ts). Each page settles on its own: its receipt, or the error
+ * publishMaintenancePage would throw.
  */
 export async function publishMaintenancePages(engine: BrainEngine, authority: MaintenanceAuthority,
-  pages: Array<{ slug: string; content: string } & Omit<MaintenancePageOptions, 'requestId'>>): Promise<Array<{ receipt: Record<string, unknown> } | { error: unknown }>> {
+  pages: Array<{ slug: string; content: string } & MaintenancePageOptions>, opts: { batch?: string } = {}): Promise<Array<{ receipt: Record<string, unknown> } | { error: unknown }>> {
   if (new Set(pages.map(page => page.slug)).size !== pages.length) throw new TypeError('A maintenance batch publishes each page once.');
-  const batch = digest(['maintenance-batch-v1', authority.writer.sourceId, pages.map(page => [page.slug, page.expectedRevision, sha256(page.content)])]);
+  const batch = opts.batch ?? digest(['maintenance-batch-v1', authority.writer.sourceId, pages.map(page => [page.slug, page.expectedRevision, sha256(page.content)])]);
   const prepared: Array<{ prior: WriteRequest } | { admission: WriteAdmission } | { error: unknown }> = [];
   for (const page of pages) {
     const { intent, requestId } = maintenancePageRequest(authority, page.slug, page.content, page, batch);
@@ -274,12 +281,13 @@ export async function publishMaintenancePages(engine: BrainEngine, authority: Ma
   }
   const fresh = prepared.flatMap(entry => 'admission' in entry ? [entry.admission] : []);
   // One admission transaction, retried on contention as admitWrite is; when it fails, every page it carried fails with it.
-  const admitted: WriteRequest[] | { error: unknown } = !fresh.length ? [] : await retryWriteAdmission(`maintenance batch ${batch}`, remaining => engine.transaction(async tx => {
-    await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
-    const rows: WriteRequest[] = [];
-    for (const admission of fresh) rows.push(await admitWriteInTransaction(tx, admission));
-    return rows;
-  }), 30_000, error => engine.reconnect({ error })).catch(error => ({ error }));
+  const admitted: WriteRequest[] | { error: unknown } = !fresh.length ? [] : await waitOutRefreshFence(resolveAdmissionOrigin() === 'interactive',
+    () => retryWriteAdmission(`maintenance batch ${batch}`, remaining => engine.transaction(async tx => {
+      await declareDurablePersistence(tx, `${Math.min(1000, remaining)}ms`, `${remaining}ms`);
+      const rows: WriteRequest[] = [];
+      for (const admission of fresh) rows.push(await admitWriteInTransaction(tx, admission));
+      return rows;
+    }), 30_000, error => engine.reconnect({ error }))).catch(error => ({ error }));
   const out: Array<{ receipt: Record<string, unknown> } | { error: unknown }> = [];
   let next = 0;
   for (const entry of prepared) {
@@ -595,8 +603,9 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_meeting_timeline') return (await import('../extract-timeline-from-meetings.ts')).prepareMeetingTimeline(engine, row);
   if (row.intent?.kind === 'managed_maintenance_page') {
-    const prepared = await preparePageMutation(engine, row.intent.expected_revision === null
+    const page = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
+    const prepared: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], () => page.apply(tx, preimage)) } : page;
     const projection = row.intent.event_projection as MaintenanceEventProjection | undefined;
     if (!projection) return prepared;
     // #5523: the event page and its depth-page timeline row commit together in

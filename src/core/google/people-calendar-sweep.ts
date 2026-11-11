@@ -2,7 +2,8 @@
  * people-calendar-sweep — the Contacts and Calendar sweeps of the google
  * source kind (peeled from google-source.ts). Cursor discipline per service:
  * the syncToken is committed only after that service's fully-successful
- * sweep; an expired token drops it and re-lists windowed.
+ * sweep; an expired token drops it and re-lists windowed. A full contacts
+ * re-list checkpoints its pageToken page by page and resumes there (#8906).
  *
  * GBRA-130 A-3: each contact (`contact:<resourceName>`) and each event
  * (`event:<calendarId>:<eventId>`) goes through the connector item holds
@@ -31,6 +32,9 @@ import { deletePageByRelPath, importRendered, type ActivePack, type GoogleSyncDe
 
 // ── Contacts sweep ───────────────────────────────────────────────────────────
 
+/** #8906: pages of a full re-list one run applies before the rest of the sync gets its turn; the next run resumes after them. */
+export const CONTACT_RELIST_PAGES_PER_RUN = 10;
+
 export async function sweepContacts(
   deps: GoogleSyncDeps,
   people: PeopleClient,
@@ -39,6 +43,7 @@ export async function sweepContacts(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
   holds?: ConnectorHoldSession,
+  checkpoint: () => Promise<void> = async () => {},
 ): Promise<void> {
   const signal = deps.opts.signal ? { signal: deps.opts.signal } : {};
   // #6324: a syncToken is only valid with the request parameters that minted
@@ -46,28 +51,79 @@ export async function sweepContacts(
   // recorded) is unusable, so the sweep lists fully once and then records the
   // new token with the mask it was minted under.
   const maskChanged = state.contacts_person_fields !== CONTACT_PERSON_FIELDS;
-  const syncToken = deps.opts.full || maskChanged ? null : state.contacts_sync_token;
-  if (maskChanged && state.contacts_sync_token && !deps.opts.full) deps.log('[google] contacts field mask changed; full re-list');
-  let result;
-  try {
-    result = await people.listConnections({ syncToken, ...signal });
-  } catch (e) {
-    // One bounded recovery: an expired or rejected token drops to a single
-    // full list; a failure of that list propagates and commits nothing.
-    if (!syncToken) throw e;
-    if (e instanceof GoogleCursorExpiredError) deps.log('[google] contacts syncToken expired; full re-list');
-    else if (e instanceof GoogleSyncTokenRejectedError) deps.log('[google] contacts syncToken rejected (HTTP 400); one full re-list');
-    else throw e;
-    state.contacts_sync_token = null;
-    result = await people.listConnections({ syncToken: null, ...signal });
+  // #8906: a full re-list that a deadline or the page budget stopped resumes at its checkpointed page. --full lists
+  // from page 1 to the end in one run, as it did before the checkpoint.
+  const relist = !deps.opts.full && state.contacts_relist?.person_fields === CONTACT_PERSON_FIELDS ? state.contacts_relist : null;
+  const resumeToken = relist?.page_token ?? null;
+  const pageBudget = deps.opts.full ? Infinity : CONTACT_RELIST_PAGES_PER_RUN;
+  if (deps.opts.full) state.contacts_relist = null;
+  const syncToken = deps.opts.full || maskChanged || resumeToken ? null : state.contacts_sync_token;
+  if (maskChanged && state.contacts_sync_token && !deps.opts.full && !resumeToken) deps.log('[google] contacts field mask changed; full re-list');
+  let groupNames: Record<string, string> | null = null;
+  const sweep = () => ({ activePack, summary, countedSlugs, groupNames: groupNames ?? state.contact_groups ?? {} });
+  // A re-list that passed a failing contact not yet held stays blocked until it ends, so its sync token is never saved.
+  let blocked = relist?.blocked === true;
+  // One listed batch through the holds; false when the run was aborted part-way.
+  const apply = async (contacts: ContactData[]): Promise<boolean> => {
+    groupNames ??= contacts.some((c) => !c.deleted && c.groups.length > 0) ? await resolveContactGroups(deps, people, state) : null;
+    const ctx = sweep();
+    for (const c of contacts) {
+      if (deps.opts.signal?.aborted) return false;
+      const item = { key: contactHoldKey(c.resourceName), version: c.etag ?? null, title: c.displayName };
+      if (!await throughHolds(deps, summary, holds, item, () => applyContact(deps, c, ctx))) blocked = true;
+    }
+    return true;
+  };
+  let delta = null;
+  if (syncToken) {
+    try {
+      delta = await people.listConnections({ syncToken, ...signal });
+    } catch (e) {
+      // One bounded recovery: an expired or rejected token drops to a single
+      // full re-list; a failure of that list propagates and commits nothing.
+      if (e instanceof GoogleCursorExpiredError) deps.log('[google] contacts syncToken expired; full re-list');
+      else if (e instanceof GoogleSyncTokenRejectedError) deps.log('[google] contacts syncToken rejected (HTTP 400); one full re-list');
+      else throw e;
+      state.contacts_sync_token = null;
+    }
   }
-  const groupNames = await resolveContactGroups(deps, people, state, result.contacts);
-  const sweep = { activePack, summary, countedSlugs, groupNames };
-  let blocked = false;
-  for (const c of result.contacts) {
-    if (deps.opts.signal?.aborted) return;
-    const item = { key: contactHoldKey(c.resourceName), version: c.etag ?? null, title: c.displayName };
-    if (!await throughHolds(deps, summary, holds, item, () => applyContact(deps, c, sweep))) blocked = true;
+  let nextSyncToken: string | null = null;
+  let listed = false;
+  if (delta) {
+    if (!await apply(delta.contacts)) return;
+    nextSyncToken = delta.nextSyncToken;
+    listed = true;
+  } else {
+    // #8906: a full re-list goes page by page. Once a page has landed the
+    // next page's token is checkpointed, so a run its job deadline stops keeps
+    // every page before it. A saved token Google no longer honors restarts the
+    // list from page 1, once.
+    let pageToken = resumeToken;
+    if (resumeToken) deps.log('[google] contacts full re-list resuming at its checkpointed page');
+    for (let pages = 0; pages < pageBudget && !listed; pages++) {
+      let page;
+      try {
+        page = await people.listConnectionsPage(pageToken, signal);
+      } catch (e) {
+        if (pages > 0 || !resumeToken || !(e instanceof GoogleCursorExpiredError)) throw e;
+        deps.log('[google] contacts re-list page token expired; restarting the full re-list from page 1');
+        state.contacts_relist = null;
+        blocked = false;
+        page = await people.listConnectionsPage(pageToken = null, signal);
+      }
+      if (!await apply(page.contacts)) return;
+      if (!page.nextPageToken) {
+        nextSyncToken = page.nextSyncToken;
+        listed = true;
+        continue;
+      }
+      pageToken = page.nextPageToken;
+      // A managed lease cannot write once aborted.
+      if (deps.opts.signal?.aborted) continue;
+      state.contacts_relist = { page_token: pageToken, person_fields: CONTACT_PERSON_FIELDS, ...(blocked ? { blocked: true } : {}) };
+      await checkpoint();
+    }
+    if (!listed) deps.log(`[google] contacts full re-list paused after ${CONTACT_RELIST_PAGES_PER_RUN} pages; the next sync resumes it`);
   }
   const prefix = contactHoldKey('');
   for (const key of holds?.dueHeldKeys().filter(k => k.startsWith(prefix)) ?? []) {
@@ -76,17 +132,23 @@ export async function sweepContacts(
       const resourceName = key.slice(prefix.length);
       const c = await people.getContact(resourceName, signal)
         ?? { resourceName, displayName: null, emails: [], phones: [], organization: null, title: null, groups: [], deleted: true };
-      await applyContact(deps, c, sweep);
+      await applyContact(deps, c, sweep());
     });
   }
-  if (blocked) return;
+  // A blocked re-list that reached its last page starts over at page 1 next sync, retrying the contact that failed.
+  if (blocked && listed) {
+    state.contacts_relist = null;
+    if (!delta) state.contacts_sync_token = null;
+  }
+  if (blocked || !listed) return;
   // Cursor and the mask it was minted under commit together, only after the
   // whole sweep succeeded. A full list that returned no replacement token
   // leaves no cursor behind (the next sweep lists fully again); a same-mask
   // list without one keeps the token it already had.
-  if (result.nextSyncToken) state.contacts_sync_token = result.nextSyncToken;
+  if (nextSyncToken) state.contacts_sync_token = nextSyncToken;
   else if (maskChanged) state.contacts_sync_token = null;
   state.contacts_person_fields = CONTACT_PERSON_FIELDS;
+  state.contacts_relist = null;
 }
 
 /**
@@ -204,10 +266,11 @@ async function throughHolds(deps: GoogleSyncDeps, summary: GoogleSyncSummary, ho
 }
 
 /**
- * #6324: group names for this sweep's pages. Read the directory only when a
- * listed contact carries a user group; a complete read replaces the cache (a
- * deleted or renamed group is current for every page rendered from now on,
- * an untouched contact's page refreshes when it next changes or on `--full`),
+ * #6324: group names for this sweep's pages. The sweep reads the directory
+ * once, when a listed contact first carries a user group; a complete read
+ * replaces the cache (a deleted or renamed group is current for every page
+ * rendered from now on, an untouched contact's page refreshes when it next
+ * changes or on `--full`),
  * an incomplete read is merged over it and said so, an unreadable directory
  * falls back to the cache. A group no entry names is rendered as its raw id.
  */
@@ -215,10 +278,8 @@ async function resolveContactGroups(
   deps: GoogleSyncDeps,
   people: PeopleClient,
   state: GoogleSourceState,
-  contacts: ContactData[],
 ): Promise<Record<string, string>> {
   const cached = state.contact_groups ?? {};
-  if (!contacts.some((c) => !c.deleted && c.groups.length > 0)) return cached;
   try {
     const { names, complete } = await people.listContactGroups(deps.opts.signal ? { signal: deps.opts.signal } : {});
     if (!complete) deps.log('[google] contact groups directory exceeds the bounded read; groups it did not name keep their ids');

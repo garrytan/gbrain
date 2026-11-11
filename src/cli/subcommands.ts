@@ -23,6 +23,7 @@ export const INTEGRITY_SUBCOMMANDS = ['check', 'auto', 'review', 'reset-progress
 export const HOOK_SUBCOMMANDS = ['session-start', 'user-prompt', 'stop', 'session-end', 'compact'] as const;
 export const SEARCH_SUBCOMMANDS = ['modes', 'stats', 'tune', 'diagnose'] as const;
 export const EDGE_PROPOSALS_SUBCOMMANDS = ['list', 'show', 'accept', 'reject', 'undo', 'date', 'retry'] as const;
+export const MEMORY_PROPOSALS_SUBCOMMANDS = ['list', 'show', 'approve', 'deny'] as const;
 export const CONFIG_SUBCOMMANDS = ['show', 'get', 'set', 'unset'] as const;
 export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan', 'release', 'drop'] as const;
 export const CORE_SUBCOMMANDS = ['list', 'show', 'status', 'add', 'remove', 'diff', 'ack', 'init', 'suggest'] as const;
@@ -51,6 +52,7 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   hook: { subcommands: HOOK_SUBCOMMANDS, bareHelpFirst: true },
   search: { subcommands: SEARCH_SUBCOMMANDS, bareHelpFirst: false },
   'edge-proposals': { subcommands: EDGE_PROPOSALS_SUBCOMMANDS, bareHelpFirst: true },
+  'memory-proposals': { subcommands: MEMORY_PROPOSALS_SUBCOMMANDS, bareHelpFirst: true },
   schema: { subcommands: SCHEMA_SUBCOMMANDS, bareHelpFirst: true },
   config: { subcommands: CONFIG_SUBCOMMANDS, bareHelpFirst: true },
   quarantine: { subcommands: QUARANTINE_SUBCOMMANDS, bareHelpFirst: true },

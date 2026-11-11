@@ -15,6 +15,7 @@ import { opError, OperationError } from './contract.ts';
 import { hostFix } from './op-fix.ts';
 import { opAllowedForBoundClient } from './context.ts';
 import { hasScope } from '../scope.ts';
+import { callerMember } from '../access/member-facts.ts';
 import { buildAmbientWritebackSection } from '../facts/writeback-instructions.ts';
 import { CAPTURE_GATE_LANES, CAPTURE_LANE_LABELS, captureGateDecision, resolveWritebackConfig, type WritebackMode } from '../facts/writeback-config.ts';
 import {
@@ -74,6 +75,7 @@ function ruleFor(res: AgentWritebackResolution, mode: WritebackMode, ctx: Operat
     visibility: res.operator.visibility,
     extractFactsAvailable: callerCan(ctx, EXTRACT_FACTS_OP),
     origin,
+    ...(ctx.remote !== false && callerMember() ? { member: true } : {}),
   });
 }
 

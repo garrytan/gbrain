@@ -145,6 +145,7 @@ for (const kind of testBackends()) {
         await tx.executeRaw("UPDATE persistence_requests SET created_at=now()-interval '2 days' WHERE id=ANY($1::uuid[])", [ids.slice(1, 101)]);
       });
       await engine.setConfig('persistence.limits.principal_lifetime_ids', '1101');
+      await engine.setConfig('persistence.limits.principal_terminal_bytes', String(16 * 1024 ** 3));
       // The forecast a receipt, doctor or /metrics read in the last minute records the rates the refusal uses under its locks.
       const forecast = await readCapacityForecast(engine);
       const refusal = await fixture.admit('one-more').then(() => null, (error: { code?: string; fix?: { argv?: string[] } }) => error);

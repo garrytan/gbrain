@@ -195,6 +195,7 @@ export async function readCapacityForecast(engine: SqlEngine & { kind?: string }
     for (const resource of ['lifetime_ids', 'terminal_bytes'] as const) {
       const setting = `${prefix}${resource === 'lifetime_ids' ? 'LifetimeIds' : 'TerminalBytes'}` as keyof JournalLimits;
       const limit = limits[setting] ?? DEFAULT_JOURNAL_LIMITS[setting];
+      if (!Number.isFinite(limit)) continue;
       const used = Number(counter[resource]);
       const ids = resource === 'lifetime_ids';
       const perDay = Math.max(total(ids ? 'ids' : 'gross') / windowDays, total(ids ? 'recent_ids' : 'recent_gross'));

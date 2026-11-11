@@ -23,6 +23,7 @@ import { laneClaim, laneOf, laneRoots, laneTask } from './sync-lanes.ts';
 import { runPersistenceEffects } from './effects.ts';
 import { settleNoopEmbeddingEffects, type NoopSettleCursor } from './embedding-noop-settle.ts';
 import { runCompactionPass } from './compaction-pass.ts';
+import { runMemoryProposalUpkeep } from './memory-proposals.ts';
 import { claimHousekeepingTurn, completeHousekeepingTurn, housekeepingIntervalMs } from './housekeeping-turn.ts';
 import { currentEmbeddingSignature } from '../embedding.ts';
 import { isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
@@ -619,6 +620,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
             this.engine.kind === 'pglite' ? this.config.database_path : undefined, signal));
           // F4b: idle maintenance also refreshes stale PGLite planner statistics (a no-op on Postgres).
           this.maintenanceWorker = runCompactionPass(this.engine, { hostId: this.hostId, notice: this.opts.drainNotice }).then(yieldToEventLoop).then(() => maybeRefreshPlannerStats(this.engine, 'idle'))
+            .then(yieldToEventLoop).then(() => runMemoryProposalUpkeep(this.engine).catch(error => this.report(error)))
             .catch(error => this.report(error)).finally(() => { this.maintenanceWorker = undefined; });
         }
         return;
@@ -657,6 +659,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       this.publishedSinceMaintenance = 0;
       this.maintenanceWorker = runCompactionPass(this.engine, { hostId: this.hostId, notice: this.opts.drainNotice })
         .then(yieldToEventLoop).then(() => sweepSegmentStorage(this.engine).catch(error => this.report(error)))
+        .then(yieldToEventLoop).then(() => runMemoryProposalUpkeep(this.engine).catch(error => this.report(error)))
         .then(yieldToEventLoop).then(() => vacuumPersistenceQueues(this.engine))
         .then(rows => { this.maintenanceVolume = 50 + Math.ceil(rows * 0.2); }).catch(error => this.report(error))
         .finally(() => { this.maintenanceWorker = undefined; });

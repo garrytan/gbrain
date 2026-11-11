@@ -147,7 +147,10 @@ key lists every run (schedule, seed, seam and occurrence or process fault),
 and no `faults_not_reached` (a worker that finished without reaching its
 requested seam, outside the per-scenario `UNREACHED_FAULT_ALLOWLIST` in
 `robot-driver.ts`); either kind of run also fails validation with a nonzero
-exit and is listed in `failing_runs` for `--replay`.
+exit and is listed in `failing_runs` for `--replay`. A run with no violations that
+misses its fault by exactly one slot of its count run, which a concurrent
+group's other legal outcome makes, runs once more at its last slot and is
+listed in `faults_retargeted`.
 
 A failing run prints two commands. `--replay=<manifest>` re-runs exactly the
 manifest's failing runs. `--shrink=<manifest>` removes ops from the first
@@ -161,10 +164,10 @@ For a local Postgres and PgBouncer replay:
 
 ```sh
 docker network create gbrain-robot
-docker run -d --name robot-pg --network gbrain-robot -p 5432:5432 \
+docker run -d --name robot-pg --network gbrain-robot -p 127.0.0.1:5432:5432 \
   -e POSTGRES_USER=gbrain_test -e POSTGRES_PASSWORD=gbrain_test -e POSTGRES_DB=gbrain_test \
   pgvector/pgvector:pg16
-docker run -d --name robot-pgbouncer --network gbrain-robot -p 55433:5432 \
+docker run -d --name robot-pgbouncer --network gbrain-robot -p 127.0.0.1:55433:5432 \
   -e DB_HOST=robot-pg -e DB_PORT=5432 -e DB_USER=gbrain_test -e DB_PASSWORD=gbrain_test \
   -e POOL_MODE=transaction -e AUTH_TYPE=plain -e MAX_CLIENT_CONN=200 -e DEFAULT_POOL_SIZE=10 \
   -e IGNORE_STARTUP_PARAMETERS=extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path \
@@ -563,7 +566,7 @@ The chaos modes, each named in failures and selectable with
 
 | Mode | What happens | Expected end state | On master |
 | --- | --- | --- | --- |
-| (a) client kills, (b) serve kills | A kill loop of `GBRAIN_TEST_CONVERGENCE_KILLS` change rounds, each ending in one `kill -9` at a point of the curated list (`publication:before_commit`, `publication:after_commit`, `consumer:preparing`, `lane:applied`, `sync:before_group_admission`, `sync:mid_checkpoint`, `sync:held_settled`, `sync:passed_over`, `sync:batch_entries`, `sync:tail_started`), cycling a `--no-delegate` client, a serve running a delegated catch-up, and a serve with its delegating client | strict convergence | runs |
+| (a) client kills, (b) serve kills | A kill loop of `GBRAIN_TEST_CONVERGENCE_KILLS` change rounds, each ending in one `kill -9` at a point of the curated list (`publication:before_commit`, `publication:after_commit`, `consumer:preparing`, `lane:applied`, `sync:before_group_admission`, `sync:mid_checkpoint`, `sync:held_settled`, `sync:passed_over`, `sync:batch_entries`, `sync:tail_started`), cycling a `--no-delegate` client, a serve running a delegated catch-up, and a serve with its delegating client; a `sync:passed_over` round syncs with `--no-bulk`, so its primed edit is admitted before any re-freeze can read it (#8838) | strict convergence | runs |
 | (c) concurrent writers | During the kill loop: `gbrain put` rewrites of 5% of the notes, `remember` facts on an entity page, `gbrain extract timeline --source db` (a managed maintenance job) | strict convergence; every acknowledged write in the ledger | runs |
 | (c-db) DB-only competitor | With `sync.write_through=false`, a DB-only `put` lands while the run is stalled on that page's frozen entry, and another on a page whose file did not change | the raced page is held `concurrent_write` (needs a person), its file keeps the committed bytes and its page the DB write; both pages are left out of disk == DB | runs |
 | (d) out-of-band Git | While a run is stalled mid-manifest: `git mv` and `git rm` of 1% of the files, committed, and deletion of 1% uncommitted | moves and removals converge strictly; each uncommitted deletion is listed by `gbrain pages ghosts` with the `gbrain repair ghost-pages` exit and left out of disk == DB | runs |
@@ -579,7 +582,9 @@ anyway, which is how the PR that fixes it turns it on.
 
 After the chaos every scenario gets a fresh serve (what a supervisor restarts)
 and at most two plain `gbrain sync --no-pull` runs, with no operator step; only
-exit 0 with outcome `synced` counts. Then the oracle, each check its own test
+exit 0 with outcome `synced` counts, and a synced run that HEAD
+has moved past since (a queued write's Git commit landing during or after it, the
+commits named in the log) is followed by the second. Then the oracle, each check its own test
 named by this gate's violation class: disk == database both ways (except the
 pages the mode's end state names), no request queued, running, recovering or
 holding a recovery record, every non-committed terminal request superseded or
@@ -621,11 +626,11 @@ plus a PgBouncer in front of it:
 ```bash
 docker network create gbtest
 docker run -d --name gbrain-test-pg --network gbtest -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gbrain_test -p 5434:5432 pgvector/pgvector:pg16
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gbrain_test -p 127.0.0.1:5434:5432 pgvector/pgvector:pg16
 docker run -d --name gbrain-test-pgbouncer --network gbtest -e DB_HOST=gbrain-test-pg \
   -e DB_USER=postgres -e DB_PASSWORD=postgres -e POOL_MODE=transaction -e AUTH_TYPE=plain \
   -e IGNORE_STARTUP_PARAMETERS=extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path \
-  -p 6543:5432 edoburu/pgbouncer:latest
+  -p 127.0.0.1:6543:5432 edoburu/pgbouncer:latest
 export GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@localhost:6543/gbrain_test
 export GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test
 GBRAIN_TEST_CONVERGENCE_LATENCY_MS=10 bun run test:convergence     # the PR cell
@@ -658,6 +663,49 @@ cleanup step (it kills any harness process a timed-out step left), the failure
 summary (every failing test with its seed, fault plan, fired faults and repro
 line) and the upload of `LOG_DIR` still run. The nightly watcher
 (`nightly-watch.yml`) files its failures like every other scheduled workflow.
+
+### Busy-agent soak cell
+
+`test/busy-agent-soak.serial.test.ts` (L5) runs the convergence gate's
+real-process brain (`test/helpers/convergence-brain.ts`, shared with
+`test/sync-convergence.serial.test.ts`: Postgres behind transaction-mode
+PgBouncer through latency proxies, real `src/cli.ts` processes, a resident
+serve, the fault seam, the acknowledged-write ledger and the oracle) under the
+workload a busy personal agent puts on one managed checkout. Its counts and
+cadences come from a profile: the committed generic one,
+`test/fixtures/busy-agent-profile.json`, unless
+`GBRAIN_TEST_BUSY_AGENT_PROFILE` names another (a profile derived from a real
+deployment stays private). A profile holds exactly the test's `PROFILE_SHAPE`
+keys, each a positive integer, plus an optional `description`; it never holds
+content.
+
+| Mode | What happens | Expected end state |
+| --- | --- | --- |
+| (h) refresh ticks | With `persistence.refresh_barrier` on, scheduled `sources refresh` ticks pull upstream commits while foreground `put`s land inside the fence, some on notes the tick changes, and an agent writes across every tick | every tick's refresh completes and releases its fence; every write that reached the refreshing checkout is answered pending with a receipt naming the refresh, never refused, and commits after it, or ends `revision_conflict` with nothing applied when the refresh changed its file |
+| (i) foreign writers | Plain-git committers and an uncommitted-file writer beside gbrain | `doctor` `foreign_writers` names every commit gbrain did not make and none it made, and the aged uncommitted files |
+| (j) legacy rows | Rows with no import record in every content-evidence direction | `sources git-gap` classifies each by its direction evidence; `both_moved` and `no_evidence` rows end held `file_drift` |
+| (k) strict conversion | `sources canonical --to git` over several adopt groups, stalled after the first (`conversion:group_committed`) while another clone pushes, door writes land and a refresh runs | the conversion ends `converted`, strict, with nothing left to plan; every door write and refresh is accepted or refused with a registered code; the other agent's commit reaches HEAD |
+| (l) segmented staging | A segmented write whose staging expires or is aborted at `segmented:manifest_staged` | the write refuses `body_staging_expired`, the page keeps its body, a resend commits and the sweep leaves no live staging |
+| (m) lost update | A file-writing cron (`git commit-push --base`) and an MCP `edit_page` writer race on one page | `edit_page` refuses `revision_conflict`, `commit-push --base` refuses `commit_base_moved`, and no acknowledged write is silently reverted |
+
+Every scenario then gets the convergence gate's oracle (above). It skips
+unless `GBRAIN_TEST_BUSY_AGENT=1`; with the Postgres and PgBouncer of the
+gate above:
+
+```bash
+GBRAIN_TEST_BUSY_AGENT_LATENCY_MS=0 bun run test:busy-agent      # every mode, fast local loop
+GBRAIN_TEST_BUSY_AGENT_MODES=k bun run test:busy-agent           # one mode
+```
+
+Knobs (`GBRAIN_TEST_BUSY_AGENT_*`): `SEED` (default 8800), `MODES`,
+`PROFILE`, `LATENCY_MS` (default 50), `SYNC_TIMEOUT_MS` (default 900000),
+`SCENARIO_TIMEOUT_MS` (default 3600000) and `LOG_DIR`.
+
+CI: the `busy-agent` job of `.github/workflows/convergence-nightly.yml`, on
+the same runner class, at 50 ms with the run id as the seed. It is
+informational (`continue-on-error`) for its first seven nights; after that a
+release touching persistence, sync or Git needs it green on the release's
+exact sha.
 
 ## Engine graduation tests
 

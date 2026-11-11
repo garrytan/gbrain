@@ -15,6 +15,7 @@
  * automatic session-pooler fallback for this operation.
  */
 import postgres from '#postgres';
+import { withPgTls } from '../pg-tls.ts';
 import { createHash, randomInt } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { PostgresEngine } from '../postgres-engine.ts';
@@ -89,7 +90,7 @@ function classifyConnectError(error: unknown): { reachable: boolean; auth: boole
 }
 
 function probeClient(url: string, timeoutSeconds: number) {
-  return postgres(url, { max: 1, prepare: false, connect_timeout: timeoutSeconds, idle_timeout: 1, onnotice: () => {} });
+  return postgres(url, withPgTls(url, { max: 1, prepare: false, connect_timeout: timeoutSeconds, idle_timeout: 1, onnotice: () => {} }));
 }
 
 function versionAtLeast(version: string | null, min: string): boolean {

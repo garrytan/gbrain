@@ -1,0 +1,1470 @@
+{
+  "contract": "gbrain.qm-memory-provider",
+  "version": 3,
+  "transport": {
+    "protocol": "mcp",
+    "session": "stateless",
+    "session_header_issued": false,
+    "success_codes_in": "structuredContent",
+    "unknown_arguments": "an argument a read tool does not declare is refused with invalid_params, and nothing is read, when its nearest declared argument is a source scope or a filter (source for source_id, sources for source_ids, type for types) or its own name is in a scope or filter family the tool declares (source_name on a tool that declares source_id); any other argument a read tool does not declare is ignored and reported only in _meta.warnings ([{code: \"unknown_param\", param, suggestion?}]), never in content, unless the brain sets mcp.strict_params to reject; a write tool refuses every argument it does not declare with invalid_params"
+  },
+  "actor": {
+    "header": "x-qm-actor",
+    "argument": "acting_user",
+    "argument_rule": "optional; on an attested call it must equal the header; with no header it is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it), and the call then runs exactly as the credential; never chooses the person on its own",
+    "actor_id": {
+      "pattern": "^[\\x21-\\x7e]{1,256}$",
+      "case_folding": false
+    },
+    "system": "qm",
+    "default_attest_ops": [
+      "get_write_request",
+      "memory_recall",
+      "memory_write"
+    ],
+    "deferred_ops": [
+      "abort_page_upload",
+      "add_link",
+      "add_tag",
+      "add_timeline_entry",
+      "append_page",
+      "begin_page_upload",
+      "capture",
+      "commit_page_upload",
+      "confirm_memory",
+      "delete_page",
+      "edit_page",
+      "extract_entities",
+      "extract_facts",
+      "list_write_conflicts",
+      "log_ingest",
+      "loops_close",
+      "loops_mute",
+      "loops_unmute",
+      "ontology_propose",
+      "put_page",
+      "put_pages",
+      "put_raw_data",
+      "questions_pin",
+      "questions_refresh",
+      "questions_unpin",
+      "rate_answer",
+      "remove_link",
+      "remove_tag",
+      "restore_page",
+      "revert_version",
+      "takes_add",
+      "takes_resolve",
+      "takes_supersede",
+      "takes_update",
+      "upload_page_part"
+    ],
+    "audit": "the audit trail and stored writes record the canonical external id as sent, with its linked member"
+  },
+  "tools": [
+    {
+      "name": "memory_recall",
+      "description": "Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. Never page bodies. For QM; agents use recall.",
+      "scope": "read",
+      "mutating": false,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "What the turn is about; ranks the facts."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Text cap in UTF-16 code units, 200-12000 (default 6000)."
+          },
+          "query_keep": {
+            "type": "string",
+            "description": "Which end of a query over 2000 characters ranks the facts: head (the default) or tail. Sending it adds query_truncated.",
+            "enum": [
+              "head",
+              "tail"
+            ]
+          },
+          "acting_user": {
+            "type": "string",
+            "description": "Set by the trusted system: equal to the x-qm-actor header, or omit."
+          },
+          "source_id": {
+            "type": "string",
+            "description": "Read this one source as its audience (a shared scope): never the person's own facts."
+          },
+          "source_ids": {
+            "type": "array",
+            "description": "Read only these sources as their audience (a shared scope): never the person's own facts.",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "name": "memory_write",
+      "description": "Save facts for the person this call serves, readable by them alone. Needs an attested person. The same idempotency_key replays the first receipt. For QM; agents use remember.",
+      "scope": "write",
+      "mutating": true,
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "facts": {
+            "type": "array",
+            "description": "1-20 facts.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "fact": {
+                  "type": "string",
+                  "description": "One claim."
+                },
+                "provenance": {
+                  "type": "string",
+                  "description": "Where it came from (<=200 chars)."
+                },
+                "kind": {
+                  "type": "string",
+                  "description": "Default fact.",
+                  "enum": [
+                    "event",
+                    "preference",
+                    "commitment",
+                    "belief",
+                    "fact"
+                  ]
+                },
+                "valid_from": {
+                  "type": "string",
+                  "description": "When it became true (ISO 8601)."
+                }
+              },
+              "required": [
+                "fact",
+                "provenance"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "idempotency_key": {
+            "type": "string",
+            "description": "1-128 visible ASCII characters; the same key replays this write."
+          },
+          "acting_user": {
+            "type": "string",
+            "description": "Set by the trusted system: equal to the x-qm-actor header, or omit."
+          },
+          "source_id": {
+            "type": "string",
+            "description": "One of this credential's scope sources: save on its shared memory/scope page."
+          }
+        },
+        "required": [
+          "facts",
+          "idempotency_key"
+        ]
+      }
+    }
+  ],
+  "personal_tools": {
+    "read_as": "the attested person (x-qm-actor): what that person may read, their own restricted pages included, so use these tools only in the person's own conversations; no tool here is marked as a shared-scope read yet",
+    "opt_in": "only get_write_request is in default_attest_ops: the brain operator lists each other tool in the client's --attest-ops (gbrain auth rescope --client <id> --attest-actor qm --attest-ops <list>), or it is refused with actor_not_attested reason op_not_attested",
+    "structured_content": "an attested success carries the result in structuredContent and keeps it as JSON in content (notice blocks follow it); a list arrives as structuredContent.results; context_pack's text alone fills content, as memory_recall's does; an unattested call to the same tool gets no structuredContent",
+    "result_rule": "each result lists the fields every success carries; other fields may appear and must be ignored",
+    "tools": [
+      {
+        "name": "context_pack",
+        "description": "Core memory, budget-packed cards, open threads and hot facts for up to 8 entities, zero LLM. Call at session start and after compaction.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "entities": {
+              "type": "string",
+              "description": "Comma-separated names or slugs (max 8)."
+            },
+            "budget_tokens": {
+              "type": "number",
+              "description": "Token budget; cards pack first."
+            },
+            "since": {
+              "type": "string",
+              "description": "Open-thread events after this ISO time."
+            },
+            "session_id": {
+              "type": "string",
+              "description": "Opaque session id."
+            },
+            "include_private": {
+              "type": "boolean",
+              "description": "Local trusted callers only."
+            },
+            "min_trust": {
+              "type": "string",
+              "description": "Lowest trust tier to return (the connection floor still applies).",
+              "enum": [
+                "user_confirmed",
+                "operator_curated",
+                "tool_observed",
+                "agent_written",
+                "unknown",
+                "external_untrusted"
+              ]
+            },
+            "include_quarantined": {
+              "type": "boolean",
+              "description": "Admin or memory_confirm: quarantined cards."
+            },
+            "counterparty": {
+              "type": "string",
+              "description": "Person or company (name or slug): adds a pulled brief of dated items about them."
+            },
+            "intent": {
+              "type": "string",
+              "description": "With counterparty: the task the brief is for.",
+              "enum": [
+                "meeting",
+                "reply"
+              ]
+            },
+            "source_id": {
+              "type": "string",
+              "description": "Resolve entities in this source only. Default: your source first, then every source you can read."
+            },
+            "entity_refs": {
+              "type": "array",
+              "description": "Source-qualified entities: [{\"source_id\":\"wiki\",\"slug\":\"people/alice-example\"}].",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "source_id": {
+                    "type": "string"
+                  },
+                  "slug": {
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "additionalProperties": false
+              }
+            },
+            "prefer_source_id": {
+              "type": "string",
+              "description": "Source to try first (thin clients send .gbrain-source here); never narrows."
+            }
+          },
+          "required": []
+        },
+        "personal_only": true,
+        "result": {
+          "content": "the rendered pack text alone, as memory_recall's; it is not repeated in structuredContent",
+          "structured_content": {
+            "protocol_version": "number",
+            "entities": [
+              "string"
+            ],
+            "cards": [
+              {
+                "slug": "string",
+                "source_id": "string",
+                "title": "string",
+                "type": "string"
+              }
+            ],
+            "open_threads": "array",
+            "facts": [
+              {
+                "fact": "string",
+                "kind": "string",
+                "fact_id": "string"
+              }
+            ],
+            "entity_facts": "array"
+          }
+        }
+      },
+      {
+        "name": "entity",
+        "description": "Person/company/account card, zero LLM. Previews are not evidence: fetch the page before stating status or dates. Miss: found:false with near matches (create_safety). Facts: recall.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name, alias or slug."
+            },
+            "names": {
+              "type": "array",
+              "description": "Or up to 50 names/codes at once: compact rows.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source_id": {
+              "type": "string",
+              "description": "Read only this source. Default: your source first, then every source you can read."
+            },
+            "prefer_source_id": {
+              "type": "string",
+              "description": "Source to try first (thin clients send .gbrain-source here); never narrows."
+            },
+            "variants": {
+              "type": "boolean",
+              "description": "false: exact names only. Default true: with no exact match, one unambiguous name variant (card.match says which)."
+            }
+          },
+          "required": []
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "protocol_version": "number",
+            "found": "boolean"
+          },
+          "optional": {
+            "card": "object when found: card.entity holds slug, source_id, title and type",
+            "suggestions": "array of {slug, title} when not found",
+            "ambiguous": "true: the name matched several entities"
+          },
+          "with_names": {
+            "protocol_version": "number",
+            "results": [
+              {
+                "name": "string",
+                "found": "boolean"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "find_experts",
+        "description": "Answers 'who in my brain knows about <topic>'. Returns ranked person/company pages by expertise depth (sub-linear match score), relationship recency (exp decay with 6-month half-life), and salience. Use this for questions like 'who should I talk to about X', 'who knows about Y', 'find me someone who's worked on Z', or any expertise-routing intent. Filters at SQL to person + company pages — does NOT return notes or articles. Pair with --explain (CLI) to surface the per-result factor breakdown.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "description": "The topic to route. Free-form natural language."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max results (default 5)."
+            },
+            "explain": {
+              "type": "boolean",
+              "description": "Include factor breakdown per result (expertise, recency, salience)."
+            },
+            "source_ids": {
+              "type": "array",
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": []
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "results": [
+              {
+                "slug": "string",
+                "source_id": "string",
+                "title": "string",
+                "type": "string",
+                "score": "number"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "name": "forget_fact",
+        "description": "Forget a fact by recording a durable withdrawal in its source and visibility. Strikes the Markdown facts fence when writable; otherwise keeps the withdrawal in the database. Stale imports cannot reactivate the same normalized claim. This retracts memory; original prose, files and backups may retain the text. Idempotent on already-expired or unknown ids.",
+        "scope": "write",
+        "mutating": true,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "description": "Reuse only to retry."
+            },
+            "id": {
+              "type": "number",
+              "description": "Fact id to forget."
+            },
+            "reason": {
+              "type": "string",
+              "description": "Optional reason; written to the fence row's context cell as \"forgotten: <reason>\". Default: \"forgotten\"."
+            }
+          },
+          "required": [
+            "id"
+          ]
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "id": "number",
+            "request_id": "string",
+            "state": "\"queued\" | \"running\" | \"recovering\" | \"committed\" | \"conflict\" | \"failed\" | \"cancelled\""
+          },
+          "optional": {
+            "expired": "boolean: the fact is withdrawn"
+          },
+          "note": "withdraws only a fact on the person's own member page (any other id is fact_not_found); send request_id (a UUID) so a retry replays the same withdrawal; a state other than committed is read with get_write_request"
+        }
+      },
+      {
+        "name": "get_backlinks",
+        "description": "Links to a page, ≤500/call; group:\"page\" by referrer, newest first.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "slug": {
+              "type": "string",
+              "description": "Page slug."
+            },
+            "status": {
+              "type": "string",
+              "description": "Default live.",
+              "enum": [
+                "live",
+                "all"
+              ]
+            },
+            "as_of": {
+              "type": "string",
+              "description": "YYYY-MM-DD"
+            },
+            "source_id": {
+              "type": "string",
+              "description": "One source, or '__all__'."
+            },
+            "all_sources": {
+              "type": "boolean",
+              "description": "Same as source_id __all__."
+            },
+            "type": {
+              "type": "string",
+              "description": "Referrer type."
+            },
+            "group": {
+              "type": "string",
+              "description": "Per page.",
+              "enum": [
+                "page"
+              ]
+            },
+            "limit": {
+              "type": "number",
+              "description": "≤5000"
+            },
+            "cursor": {
+              "type": "string",
+              "description": "Next."
+            },
+            "all": {
+              "type": "boolean",
+              "description": "Local CLI only: every row, paging internally."
+            }
+          },
+          "required": [
+            "slug"
+          ]
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "results": [
+              {
+                "from_slug": "string",
+                "from_source_id": "string",
+                "to_slug": "string",
+                "to_source_id": "string",
+                "link_type": "string"
+              }
+            ]
+          },
+          "optional": {
+            "results[].truncated": "true on the last row when more remain",
+            "results[].next_cursor": "string on that row: pass it as cursor"
+          },
+          "with_group_page": {
+            "rows": [
+              {
+                "slug": "string",
+                "source_id": "string",
+                "title": "string",
+                "type": "string"
+              }
+            ],
+            "total": "number",
+            "truncated": "boolean",
+            "cursor": "string | null"
+          }
+        }
+      },
+      {
+        "name": "get_page",
+        "description": "Read a page; `section`/`grep` reads one part. Window selector order: cursor, around_chunk_id, lines, bytes (context only with grep). Edit: include_content:true, `content` to put_page, or edit_page. >256 KB: outline+window, then `next`.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "slug": {
+              "type": "string",
+              "description": "Page slug."
+            },
+            "fuzzy": {
+              "type": "boolean",
+              "description": "Fuzzy match."
+            },
+            "include_content": {
+              "type": "boolean",
+              "description": "Markdown + revision."
+            },
+            "content_only": {
+              "type": "boolean",
+              "description": "Round-trip fields."
+            },
+            "body": {
+              "type": "string",
+              "description": "auto: whole up to 256 KB, else outline + window; a window's edit_target is edit_page `within`. none: revision + size + tail_sha256 (append_page expected_tail_sha256).",
+              "enum": [
+                "auto",
+                "full",
+                "none",
+                "outline",
+                "window"
+              ]
+            },
+            "lines": {
+              "type": "object",
+              "description": "Window: 1-based lines.",
+              "properties": {
+                "from": {
+                  "type": "number"
+                },
+                "count": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "from",
+                "count"
+              ],
+              "additionalProperties": false
+            },
+            "bytes": {
+              "type": "object",
+              "description": "Window: UTF-8 bytes of size.total_bytes, not body_bytes (snapped to a line start).",
+              "properties": {
+                "offset": {
+                  "type": "number"
+                },
+                "length": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "offset",
+                "length"
+              ],
+              "additionalProperties": false
+            },
+            "around_chunk_id": {
+              "type": "number",
+              "description": "Window around a search hit chunk_id."
+            },
+            "context_lines": {
+              "type": "number",
+              "description": "Lines around around_chunk_id (20)."
+            },
+            "cursor": {
+              "type": "string",
+              "description": "next_cursor: read on."
+            },
+            "max_bytes": {
+              "type": "number",
+              "description": "Window bytes (40000)."
+            },
+            "view": {
+              "type": "string",
+              "description": "markdown: page the round-trip content.",
+              "enum": [
+                "read",
+                "markdown"
+              ]
+            },
+            "outline_from": {
+              "type": "number",
+              "description": "Outline next_from_index."
+            },
+            "section": {
+              "type": "string",
+              "description": "Only the section under this heading (case-insensitive, first match), with its heading_path."
+            },
+            "grep": {
+              "type": "string",
+              "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches."
+            },
+            "context": {
+              "type": "number",
+              "description": "Applies only with grep (ignored without it): paragraphs of context either side (default 1, max 5)."
+            },
+            "include_deleted": {
+              "type": "boolean",
+              "description": "Soft-deleted too."
+            },
+            "include_timeline_entries": {
+              "type": "boolean",
+              "description": "Timeline rows."
+            },
+            "grammar_diagnostics": {
+              "type": "boolean",
+              "description": "Also return every line-grammar finding for the page."
+            },
+            "source_id": {
+              "type": "string",
+              "description": "One source, or '__all__'."
+            },
+            "include_quarantined": {
+              "type": "boolean",
+              "description": "Admin: quarantined body."
+            },
+            "min_trust": {
+              "type": "string",
+              "description": "Lowest trust tier to return (the connection floor still applies).",
+              "enum": [
+                "user_confirmed",
+                "operator_curated",
+                "tool_observed",
+                "agent_written",
+                "unknown",
+                "external_untrusted"
+              ]
+            },
+            "known_as_of": {
+              "type": "string",
+              "description": "Recorded time: the page as this brain had recorded it at this ISO 8601 instant (2026-10-01T12:00:00Z), from the belief ledger. Not as_of, which is valid time (a date)."
+            },
+            "as_of": {
+              "type": "string",
+              "description": "YYYY-MM-DD: edition in force then. No valid_time in reply: current page."
+            }
+          },
+          "required": [
+            "slug"
+          ]
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "slug": "string",
+            "source_id": "string",
+            "type": "string",
+            "title": "string",
+            "revision": "string"
+          },
+          "optional": {
+            "compiled_truth": "string: a whole read",
+            "timeline": "string: a whole read",
+            "body": "\"none\" | \"outline\" | \"window\": a partial read (a page over the inline size, or the body argument); it carries no compiled_truth",
+            "truncated": "boolean: a partial read left text out",
+            "resolved_slug": "string: the slug an alias resolved to"
+          },
+          "note": "a page the person may not read answers page_not_found, the same as a missing one"
+        }
+      },
+      {
+        "name": "get_timeline",
+        "description": "Get timeline entries for a page, optionally filtered by date window. To change or remove an entry, edit its bullet in the page's Timeline section with edit_page (expected_revision from get_page include_content:true): the row follows the page.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "slug": {
+              "type": "string",
+              "description": "Slug of the page whose timeline entries to return."
+            },
+            "after": {
+              "type": "string",
+              "description": "Return entries on or after this date (YYYY-MM-DD)"
+            },
+            "before": {
+              "type": "string",
+              "description": "Return entries on or before this date (YYYY-MM-DD)"
+            },
+            "since": {
+              "type": "string",
+              "description": "Alias for after; accepted for agent callers"
+            },
+            "until": {
+              "type": "string",
+              "description": "Alias for before; accepted for agent callers"
+            },
+            "limit": {
+              "type": "number",
+              "description": "Maximum number of timeline entries to return"
+            },
+            "min_trust": {
+              "type": "string",
+              "description": "Lowest trust tier to return (the connection floor still applies).",
+              "enum": [
+                "user_confirmed",
+                "operator_curated",
+                "tool_observed",
+                "agent_written",
+                "unknown",
+                "external_untrusted"
+              ]
+            },
+            "source_id": {
+              "type": "string",
+              "description": "Read only this source."
+            },
+            "source_ids": {
+              "type": "array",
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "slug"
+          ]
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "results": [
+              {
+                "id": "number",
+                "date": "string",
+                "summary": "string",
+                "source": "string",
+                "detail": "string"
+              }
+            ]
+          },
+          "note": "a page the person may not read answers an empty list"
+        }
+      },
+      {
+        "name": "get_write_request",
+        "description": "Your write's receipt by request_id (after write_pending or a lost reply). Poll at retry_after_ms until final.",
+        "scope": "write",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "request_id": {
+              "type": "string",
+              "description": "The id you sent, or the receipt's."
+            },
+            "applied": {
+              "type": "boolean",
+              "description": "Also return applied: searchable yet, the gap, the write watermark."
+            }
+          },
+          "required": [
+            "request_id"
+          ]
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "request_id": "string",
+            "state": "\"queued\" | \"running\" | \"recovering\" | \"committed\" | \"conflict\" | \"failed\" | \"cancelled\"",
+            "retry_after_ms": "number | null",
+            "operation": "string",
+            "source_id": "string",
+            "slug": "string | null",
+            "created_at": "string",
+            "updated_at": "string"
+          },
+          "optional": {
+            "write_error": "string: why a write ended without publishing",
+            "outcome": "object: the published write's result"
+          },
+          "states": {
+            "known": [
+              "queued",
+              "running",
+              "recovering",
+              "committed",
+              "conflict",
+              "failed",
+              "cancelled"
+            ],
+            "terminal": [
+              "committed",
+              "conflict",
+              "failed",
+              "cancelled"
+            ],
+            "published": "committed",
+            "unknown": "a state not listed here means unknown, not published: never report the write as saved; poll again or report it as unknown",
+            "poll": "until a terminal state, after retry_after_ms when it is set"
+          }
+        }
+      },
+      {
+        "name": "query",
+        "description": "Hybrid search for concept/landscape questions and people/companies/projects by topic; adds fact rows. expand: one LLM call (expansion recovers synonyms; rarely helps). Still top-K; return_unit: sections or conversations. Lists: list_pages. Exact tokens: `search` is cheaper. Personal: get_recent_salience, find_anomalies; transcripts: `gbrain transcripts recent`. Do NOT assume 'crazy' means impressive (often difficult or emotionally charged). Needs an embedding key (else keyword-only); expansion needs a chat key. Fact rows: use follow_up. fields: \"full\" adds diagnostics.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Question or topic (required unless image)."
+            },
+            "image": {
+              "type": "string",
+              "description": "Base64 image."
+            },
+            "image_mime": {
+              "type": "string",
+              "description": "MIME type of image."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Default 10/25/50 by search mode."
+            },
+            "offset": {
+              "type": "number",
+              "description": "Rows to skip."
+            },
+            "types": {
+              "type": "array",
+              "description": "Page types, e.g. ['person'].",
+              "items": {
+                "type": "string"
+              }
+            },
+            "where": {
+              "type": "object",
+              "description": "Frontmatter equality, e.g. {status: \"active\"}; a list matches any."
+            },
+            "snippet_chars": {
+              "type": "number",
+              "description": "Chars per row (0 = full)."
+            },
+            "return_unit": {
+              "type": "string",
+              "description": "Default auto: whole conversations.",
+              "enum": [
+                "chunk",
+                "window",
+                "section",
+                "page",
+                "auto"
+              ]
+            },
+            "return_window": {
+              "type": "number",
+              "description": "Window radius 1-3."
+            },
+            "token_budget": {
+              "type": "number",
+              "description": "Evidence token cap."
+            },
+            "expand": {
+              "type": "boolean",
+              "description": "Default off; one LLM call, rarely helps."
+            },
+            "detail": {
+              "type": "string",
+              "description": "low (compiled truth), medium (default) or high (all chunks)."
+            },
+            "fields": {
+              "type": "string",
+              "description": "lean (remote default) or full.",
+              "enum": [
+                "lean",
+                "full"
+              ]
+            },
+            "mode": {
+              "type": "string",
+              "description": "Local callers only."
+            },
+            "lang": {
+              "type": "string",
+              "description": "Code language."
+            },
+            "symbol_kind": {
+              "type": "string",
+              "description": "Code symbol type."
+            },
+            "near_symbol": {
+              "type": "string",
+              "description": "Anchor code symbol."
+            },
+            "walk_depth": {
+              "type": "number",
+              "description": "Code walk depth 1-2."
+            },
+            "salience": {
+              "type": "string",
+              "description": "Boost emotional pages.",
+              "enum": [
+                "off",
+                "on",
+                "strong"
+              ]
+            },
+            "recency": {
+              "type": "string",
+              "description": "Boost recent pages.",
+              "enum": [
+                "off",
+                "on",
+                "strong"
+              ]
+            },
+            "since": {
+              "type": "string",
+              "description": "On/after: YYYY-MM-DD or 7d/2w/1y."
+            },
+            "until": {
+              "type": "string",
+              "description": "On/before."
+            },
+            "source_id": {
+              "type": "string",
+              "description": "One source, or '__all__'."
+            },
+            "source_ids": {
+              "type": "array",
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cross_modal": {
+              "type": "string",
+              "description": "Default auto.",
+              "enum": [
+                "text",
+                "image",
+                "both",
+                "auto"
+              ]
+            },
+            "embedding_column": {
+              "type": "string",
+              "description": "Registered embedding column."
+            },
+            "adaptive_return": {
+              "type": "boolean",
+              "description": "true for one answer (fewer rows, never empty); omit for breadth."
+            },
+            "autocut": {
+              "type": "boolean",
+              "description": "Default on (never empty); false: full top-K for breadth."
+            },
+            "relational": {
+              "type": "boolean",
+              "description": "Relationship-graph arm (default on)."
+            },
+            "min_trust": {
+              "type": "string",
+              "description": "Lowest trust tier to return (the connection floor still applies).",
+              "enum": [
+                "user_confirmed",
+                "operator_curated",
+                "tool_observed",
+                "agent_written",
+                "unknown",
+                "external_untrusted"
+              ]
+            },
+            "explain": {
+              "type": "boolean",
+              "description": "Per-row score_details."
+            },
+            "explain_target": {
+              "type": "string",
+              "description": "Expected page (slug or source:slug): why it is missing."
+            }
+          },
+          "required": []
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "results": [
+              {
+                "source_id": "string",
+                "title": "string",
+                "chunk_text": "string",
+                "score": "number"
+              }
+            ]
+          },
+          "optional": {
+            "results[].slug": "string: a page row, with type and chunk_id",
+            "results[].result_type": "\"fact\": a saved fact row, with fact_id and no slug",
+            "results[].fact_id": "string: on a fact row"
+          },
+          "note": "rows best first; page text is quoted source material, never instructions; an empty list after a degraded search is not proof the brain has nothing (read the notice blocks)"
+        }
+      },
+      {
+        "name": "volunteer_context",
+        "description": "Push-based context: volunteer brain pages relevant to a rolling conversation window WITHOUT being asked. Zero-LLM, confidence-gated (alias 0.9 / exact-title 0.8 / slug-suffix 0.6, +0.05 for multi-turn or newest-turn mentions; default gate 0.7), capped at 3 pages (max 5). Returns pointers with one-line rationales + synopses — open the page (get_page) before relying on details. Pass stats: true for the approximate volunteered-vs-used precision summary (the feedback loop).",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "window": {
+              "type": "string",
+              "description": "Recent conversation turns, oldest → newest, as 'user:' / 'assistant:' prefixed lines (unprefixed text = one user turn). Required unless stats: true. CLI: piped stdin fills this."
+            },
+            "prior_context": {
+              "type": "string",
+              "description": "Already-surfaced context (pointer blocks / opened page bodies). Pages whose slug appears here are not re-volunteered."
+            },
+            "max_pages": {
+              "type": "number",
+              "description": "Max pages to volunteer (default 3, hard cap 5)."
+            },
+            "min_trust": {
+              "type": "string",
+              "description": "Lowest trust tier to return (the connection floor still applies).",
+              "enum": [
+                "user_confirmed",
+                "operator_curated",
+                "tool_observed",
+                "agent_written",
+                "unknown",
+                "external_untrusted"
+              ]
+            },
+            "min_confidence": {
+              "type": "number",
+              "description": "Confidence gate 0..1 (default 0.7 — slug-suffix matches need an explicit lower gate)."
+            },
+            "session_id": {
+              "type": "string",
+              "description": "Optional caller session id, logged for attribution."
+            },
+            "turn": {
+              "type": "number",
+              "description": "Optional caller turn number, logged for attribution."
+            },
+            "stats": {
+              "type": "boolean",
+              "description": "Return the volunteered-vs-used precision summary instead of volunteering. APPROXIMATE: \"used\" = pages.last_retrieved_at > volunteered_at."
+            },
+            "days": {
+              "type": "number",
+              "description": "Stats window in days (default 30; stats mode only)."
+            },
+            "source_ids": {
+              "type": "array",
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": []
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "pages": [
+              {
+                "slug": "string",
+                "source_id": "string",
+                "display": "string",
+                "confidence": "number",
+                "rationale": "string"
+              }
+            ],
+            "count": "number",
+            "window_turns": "number"
+          },
+          "note": "stats: true answers a usage summary instead, which this contract does not freeze"
+        }
+      },
+      {
+        "name": "whois",
+        "description": "Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. Never fuzzy: empty matches means no exact match; ambiguous means several.",
+        "scope": "read",
+        "mutating": false,
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Email address or name, e.g. 'alice@acme-example.com'."
+            },
+            "types": {
+              "type": "array",
+              "description": "Page types; default: the schema pack's entity types.",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source_id": {
+              "type": "string",
+              "description": "One source; '__all__' spans your sources."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "personal_only": true,
+        "result": {
+          "structured_content": {
+            "query": "string",
+            "query_kind": "\"email\" | \"name\"",
+            "matches": [
+              {
+                "slug": "string",
+                "source_id": "string",
+                "title": "string",
+                "type": "string",
+                "match": "string"
+              }
+            ],
+            "ambiguous": "boolean"
+          },
+          "optional": {
+            "truncated": "true: more candidates share the key than were returned",
+            "note": "string"
+          },
+          "note": "exact, never fuzzy: no matches means no exact match; ambiguous: true means several, so ask which one and never take the first"
+        }
+      }
+    ]
+  },
+  "memory_recall": {
+    "limits": {
+      "max_chars": {
+        "min": 200,
+        "max": 12000,
+        "default": 6000,
+        "whole_number": true,
+        "unit": "UTF-16 code units (JavaScript string length)"
+      },
+      "query_chars_ranked": 2000,
+      "own_recent_window_hours": 24
+    },
+    "arguments_checked": "query, max_chars and query_keep are checked before any read, also for an unlinked person (invalid_params); a longer query is never refused (recall's question is refused over 2000: invalid_params reason question_too_long) and is ranked on its first 2000 characters, or on its last 2000 with query_keep tail; a call that sends query_keep gets structuredContent.query_truncated, true when the query was cut",
+    "content": {
+      "line": "- <fact> (<YYYY-MM-DD>; <kind>)",
+      "never": [
+        "page bodies",
+        "fence markers",
+        "heading markers",
+        "line breaks or control characters inside a fact"
+      ],
+      "bounded_by": "max_chars: as many whole lines as fit; facts left out set structuredContent.truncated, with no marker line, because every line is one fact"
+    },
+    "order": [
+      "own facts from the last 24 hours, newest first",
+      "facts the person may read, ranked by query"
+    ],
+    "ranking": "keyword-only unless an embedding provider is configured (no embedding call on a keyless brain)",
+    "structured_content": {
+      "facts": [
+        {
+          "id": "string",
+          "text": "string",
+          "date": "YYYY-MM-DD",
+          "kind": "string",
+          "arm": "\"own\" | \"ranked\""
+        }
+      ],
+      "truncated": "boolean",
+      "query_truncated": "boolean, only when the call sent query_keep",
+      "code": "actor_unlinked (only on unlinked_recall)"
+    },
+    "arm": "own: the person's own fact from the last 24 hours; ranked: matched by query (a fact found both ways is own); a call that names sources answers ranked rows only",
+    "scope_read": {
+      "arguments": [
+        "source_id",
+        "source_ids"
+      ],
+      "rule": "a call that names sources is read as their audience, never as the person: no own facts first and no member-page fact; a page restricted to named readers stays hidden; privacy is never relaxed",
+      "sources": "narrowed inside the credential's read grant like recall's source_ids; a source outside it is permission_denied; source_id and source_ids together read their intersection, and an empty intersection reads nothing",
+      "without_sources": "the person read above (own recent facts, then what the person may read across the read grant): use it only for the person's own conversations"
+    }
+  },
+  "unlinked_recall": {
+    "isError": false,
+    "content": [
+      {
+        "type": "text",
+        "text": ""
+      }
+    ],
+    "structuredContent": {
+      "facts": [],
+      "truncated": false,
+      "code": "actor_unlinked"
+    }
+  },
+  "memory_write": {
+    "limits": {
+      "facts": {
+        "min": 1,
+        "max": 20
+      },
+      "provenance_chars": 200,
+      "idempotency_key": {
+        "pattern": "^[\\x21-\\x7e]{1,128}$"
+      },
+      "kinds": [
+        "event",
+        "preference",
+        "commitment",
+        "belief",
+        "fact"
+      ],
+      "provenance": "one line: no line breaks or control characters, and not starting with qm: (gbrain adds qm:<actor id> itself)",
+      "valid_from": "YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS[.fraction]][Z|±HH:MM], a real calendar day in years 0001-9999"
+    },
+    "validation": "every fact is checked before any is saved: one bad fact refuses the whole call with invalid_params and the idempotency_key stays unused",
+    "saved_as": {
+      "page": "memory/members/<member>",
+      "readers": [
+        "member:<member>"
+      ],
+      "visibility": "private",
+      "provenance": "qm:<actor id>; <caller provenance>"
+    },
+    "request_id": "uuidv5(uuidv5(namespace, \"member:<member>\"), idempotency_key) for the first fact; later facts derive from it",
+    "replay": "the same idempotency_key from the same person returns the first receipt; from another person it is a separate write",
+    "retries": "never retried server-side; a write still publishing answers pending",
+    "committed": {
+      "content": "Saved <N> fact(s).",
+      "structuredContent": {
+        "status": "committed",
+        "request_id": "uuid",
+        "fact_ids": [
+          "string"
+        ]
+      },
+      "fact_ids": "distinct; facts repeating one claim in a call share one id, and <N> counts distinct facts"
+    },
+    "pending": {
+      "content": "Accepted <N> fact(s); <M> still publishing.",
+      "structuredContent": {
+        "status": "pending",
+        "request_id": "uuid",
+        "fact_ids": [
+          "string"
+        ],
+        "pending_request_ids": [
+          "uuid"
+        ]
+      },
+      "poll": "get_write_request {request_id}"
+    },
+    "scope_write": {
+      "argument": "source_id",
+      "rule": "names one of the credential's scope sources (attest_sources, which the brain operator sets on the host); checked on the call and again when the write publishes, so a source the operator drops refuses queued writes; omit it to save for the person alone, exactly as without it",
+      "saved_as": {
+        "page": "memory/scope",
+        "readers": "none: whoever holds read on the scope source, which only scope credentials may",
+        "visibility": "world",
+        "provenance": "qm:<actor id>; <caller provenance>"
+      },
+      "request_id": "uuidv5(uuidv5(namespace, \"member:<member>#source:<source_id>\"), idempotency_key) for the first fact; later facts derive from it; without source_id the member derivation above is unchanged",
+      "replay": "per person and source: the same idempotency_key in another source is a separate write",
+      "pending": "a scope source with a repository publishes git-first through its writer and answers pending until it commits; a source without one commits to the database",
+      "recall": "read it with memory_recall source_id (read as the scope); a memory_recall without sources never reads a scope source",
+      "withdrawal": "forget and forget_fact reach only the person's own member page, so a scope fact is not_found remotely"
+    }
+  },
+  "errors": {
+    "shape": {
+      "isError": true,
+      "content": "one JSON text block with top-level code, message, suggestion and optional reason and fix",
+      "structuredContent": {
+        "error": {
+          "code": "string",
+          "message": "string",
+          "reason": "string?",
+          "write_error": "string?",
+          "fix": "object?"
+        }
+      }
+    },
+    "applies_to": "every refusal of memory_recall and memory_write, and of a personal tool called with x-qm-actor, including the transport's scope and unknown-tool refusals",
+    "codes": [
+      {
+        "code": "actor_not_attested",
+        "class": "host_only",
+        "summary": "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header, names anyone but a member-bound credential's own member, or comes without an attested header from a credential bound to no member, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
+        "suggestion": "Read reason: no_attest_right and op_not_attested are the brain operator's call (gbrain auth rescope --client <id> --attest-actor qm [--attest-ops <list>]); argument_mismatch, argument_without_attestation, invalid_actor_id, actor_required and audience_not_supported are fixed in the calling harness.",
+        "docs": "docs/guides/write-refusals.md#actor_not_attested",
+        "reasons": [
+          {
+            "reason": "no_attest_right",
+            "fixed_by": "brain_operator",
+            "fix": "gbrain auth rescope --client <id> --attest-actor qm on the brain host; a client that already holds the right takes a new token with grant_type=client_credentials."
+          },
+          {
+            "reason": "op_not_attested",
+            "fixed_by": "brain_operator",
+            "fix": "gbrain auth rescope --client <id> --attest-actor qm --attest-ops <list>; a deferred operation cannot be attested yet."
+          },
+          {
+            "reason": "argument_mismatch",
+            "fixed_by": "calling_harness",
+            "fix": "Send acting_user equal to the x-qm-actor header (with no header, on a credential bound to a member: that member id or a canonical id linked to it), or omit it."
+          },
+          {
+            "reason": "argument_without_attestation",
+            "fixed_by": "calling_harness",
+            "fix": "Remove acting_user, or send the x-qm-actor header from a credential holding the attest right; a credential bound to no member never sends acting_user alone. detail missing=<attest_right|x-qm-actor, comma-separated> names what this call lacked."
+          },
+          {
+            "reason": "invalid_actor_id",
+            "fixed_by": "calling_harness",
+            "fix": "Send the canonical id unchanged: 1-256 visible ASCII characters, no spaces."
+          },
+          {
+            "reason": "actor_required",
+            "fixed_by": "calling_harness",
+            "fix": "memory_write saves only as an attested person: send x-qm-actor from a credential holding the attest right."
+          },
+          {
+            "reason": "audience_not_supported",
+            "fixed_by": "calling_harness",
+            "fix": "Send the call without x-qm-audience; channel turns are refused until wave 2 and nothing is read or written."
+          }
+        ],
+        "note": "With no x-qm-actor header, acting_user is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it); the call then runs exactly as the credential."
+      },
+      {
+        "code": "actor_unlinked",
+        "class": "host_only",
+        "summary": "An attested call named a person whose canonical id is not linked to an enabled member of this brain (never linked, unlinked, or the member is disabled or removed), so nothing was read or written.",
+        "suggestion": "The brain operator links the id to its member: gbrain access member link <member> --qm <id> (or enables the member).",
+        "docs": "docs/guides/write-refusals.md#actor_unlinked",
+        "note": "Refuses memory_write. memory_recall answers it as a success instead (unlinked_recall)."
+      },
+      {
+        "code": "on_behalf_of_invalid_audience",
+        "class": "caller",
+        "summary": "A shared agent's request named its audience (the X-Gbrain-On-Behalf-Of header or request-level _meta.on_behalf_of) in a form gbrain does not accept: empty, more than 50 entries, an entry that is not a member id, group:<id> or guest, or a header and _meta that name different audiences. Nothing was read.",
+        "suggestion": "Fix the harness code that sets the audience: 1-50 entries, each a member id, group:<id> or guest, the same in the header and _meta when both are sent.",
+        "docs": "docs/guides/write-refusals.md#on_behalf_of_invalid_audience",
+        "note": "Sent when x-qm-actor is combined with an on_behalf_of audience (X-Gbrain-On-Behalf-Of or request-level _meta.on_behalf_of). QM classifies it as a failed call."
+      },
+      {
+        "code": "invalid_params",
+        "class": "caller",
+        "summary": "A parameter is missing, has the wrong type, or has an invalid value.",
+        "docs": "docs/guides/error-codes.md#invalid_params",
+        "note": "Bad arguments, refused before anything is saved. A reused idempotency_key with different facts carries write_error idempotency_conflict; a claim the person forgot carries the fact_withdrawn message. A memory_write whose source_id is the credential's own source carries reason source_is_member_source (omit source_id instead). recall refuses a question over 2000 UTF-16 code units with reason question_too_long and detail max_chars=2000 received_chars=<n>; nothing is read and the question is never cut, so shorten it and retry."
+      },
+      {
+        "code": "scope_denied",
+        "class": "host_only",
+        "summary": "The connection lacks the scope this memory verb requires.",
+        "docs": "docs/guides/error-codes.md#scope_denied",
+        "note": "The write is not authorized, including a member page whose readers name anyone but its member (squatted or widened): nothing is saved."
+      },
+      {
+        "code": "insufficient_scope",
+        "class": "host_only",
+        "summary": "The connection lacks the OAuth scope the operation requires.",
+        "docs": "docs/guides/error-codes.md#insufficient_scope",
+        "note": "The credential lacks the OAuth scope the tool needs (memory_write needs write); refused by the transport before the call runs."
+      },
+      {
+        "code": "unknown_tool",
+        "class": "caller",
+        "summary": "The named tool does not exist or is not callable on this connection.",
+        "docs": "docs/guides/error-codes.md#unknown_tool",
+        "note": "The tool is not callable on this connection (its surface or bound-operation list leaves it out)."
+      },
+      {
+        "code": "not_found",
+        "class": "caller",
+        "summary": "The requested resource does not exist or is not visible to this caller.",
+        "docs": "docs/guides/error-codes.md#not_found",
+        "note": "get_write_request for a receipt that is not this person's, or forget for a fact that is not on this person's own member page."
+      },
+      {
+        "code": "fact_not_found",
+        "class": "caller",
+        "summary": "Fact not found.",
+        "docs": "docs/guides/error-codes.md#fact_not_found",
+        "note": "forget_fact for a fact that is not on this person's own member page."
+      },
+      {
+        "code": "unavailable",
+        "class": "unavailable",
+        "summary": "A required dependency or capability cannot serve this request.",
+        "docs": "docs/guides/error-codes.md#unavailable",
+        "note": "memory_recall could not read the fact candidates (a database failure); retry the same call."
+      },
+      {
+        "code": "permission_denied",
+        "class": "host_only",
+        "summary": "This caller is not authorized for the operation.",
+        "docs": "docs/guides/error-codes.md#permission_denied",
+        "note": "memory_recall named a source (source_id or source_ids) outside the credential's read grant; nothing was read. memory_write named a source_id that is not one of the credential's scope sources (reason source_not_attested, also at publication after the operator drops it), or the scope page names readers (reason scope_page_not_shared); nothing was saved."
+      },
+      {
+        "code": "page_not_found",
+        "class": "caller",
+        "summary": "No page with that slug exists in the selected source.",
+        "docs": "docs/guides/error-codes.md#page_not_found",
+        "note": "get_page for a page that does not exist or that the person may not read; one answer for both."
+      },
+      {
+        "code": "result_too_large",
+        "class": "caller",
+        "summary": "The tool's result is larger than this connection can carry in one response, so it was replaced by this error; nothing was cut.",
+        "suggestion": "Ask for less in one call: a window (get_page body: 'window'), a page of rows (limit / from_index), or metadata only (get_versions include_body: false).",
+        "docs": "docs/guides/windowed-reads.md#result_too_large",
+        "note": "A personal read whose answer, with structuredContent, is over the connection's result cap; nothing was returned. Ask for less: get_page body: \"outline\" or \"window\", or a smaller limit."
+      }
+    ]
+  },
+  "wave_2": {
+    "audience_header": "x-qm-audience",
+    "encoding": "base64url of a JSON array of canonical ids",
+    "status": "refused until wave 2",
+    "refusal": {
+      "code": "actor_not_attested",
+      "reason": "audience_not_supported",
+      "tools_call": "errors.shape, with or without x-qm-actor",
+      "other_methods": "JSON-RPC error -32600 whose data carries code and reason (tools/list, resources/list, resources/read)"
+    }
+  }
+}

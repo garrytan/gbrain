@@ -68,7 +68,7 @@ import {
 export { MANAGED_LINK_SOURCES };
 
 /** add_link valid_from / valid_until: calendar dates on a dated relation type. Null when neither is given. */
-function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, linkType: string): { validFrom?: string; validUntil?: string } | null {
+export function validateLinkDates(ctx: OperationContext, p: Record<string, unknown>, linkType: string): { validFrom?: string; validUntil?: string } | null {
   const validFrom = p.valid_from, validUntil = p.valid_until;
   if (validFrom === undefined && validUntil === undefined) return null;
   for (const [name, value] of [['valid_from', validFrom], ['valid_until', validUntil]] as const) {
@@ -510,11 +510,6 @@ const DEFAULT_TRAVERSE_DEPTH = 5;
  * successful result carrying a `relational_chain` notice with the next call.
  */
 async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, slug: string) {
-  const conflicts = (['depth', 'link_type', 'direction'] as const).filter(k => p[k] !== undefined);
-  if (conflicts.length) {
-    throw opError('invalid_params', `traverse_graph: hops cannot be combined with ${conflicts.join(', ')}.`,
-      `Drop ${conflicts.map(k => paramUse(ctx, k)).join(' and ')}: each hop already names its link type and direction (toward), and the chain length is the number of hops.`);
-  }
   const parsed = validateChainHops(p.hops);
   if (!parsed.ok) {
     throw opError('invalid_params', `traverse_graph: ${parsed.path}: ${parsed.problem}.`,
@@ -533,11 +528,13 @@ async function traverseChain(ctx: OperationContext, p: Record<string, unknown>, 
   const status = diagnostics.status;
   const fix = chainFix(slug, status, rawHops, diagnostics.empty_hop);
   if (status !== 'fired' && fix) ctx.emitNotice?.({ code: 'relational_chain', kind: 'degraded', why: fix.why, fix });
+  const ignored = (['depth', 'link_type', 'direction'] as const).filter(k => p[k] !== undefined);
   return {
     anchor: slug,
     answers: answers.map(r => ({ slug: r.slug, source_id: r.source_id, path_count: r.path_count, score: r.score })),
     paths: answers.map(r => ({ nodes: r.best_path.nodes, edges: r.best_path.edges.map(edge) })),
     diagnostics,
+    ...(ignored.length ? { set_aside: { ignored, note: `Walked the hops chain; ignored ${ignored.length > 1 ? `${ignored.slice(0, -1).join(', ')} and ${ignored[ignored.length - 1]}` : ignored[0]}: each hop names its link type and direction (toward), and the chain length is the number of hops.` } } : {}),
   };
 }
 

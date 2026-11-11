@@ -17,7 +17,7 @@
  * An item is only ever made stricter than it is now: explicit `private` stays,
  * explicit `world` becomes `private` when its origin is stricter, and a missing
  * field (read as private) is stamped with the origin's value. A concept with no
- * recoverable lineage is left unchanged and counted. Atoms are applied before
+ * recoverable lineage is counted; a missing value on it is stamped private and an explicit one is left unchanged. Atoms are applied before
  * concepts so a concept is judged against its repaired inputs.
  *
  * The preview plans one class at a time (`--class facts|events|aliases|lineage`, default all), in the
@@ -120,9 +120,10 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
   let noLineage = 0;
   for (const concept of concepts) {
     const rows = inputsByConcept.get(Number(concept.id)) ?? [];
-    if (!rows.length) { noLineage++; continue; }
+    if (!rows.length) noLineage++;
+    if (!rows.length && concept.visibility === 'world') continue;
     const members = rows.map(row => row.linked ? atomVisibility.get(Number(row.atom_id)) ?? 'private' : 'private');
-    const next = tightened(concept.visibility, strictestVisibility(members));
+    const next = tightened(concept.visibility, rows.length ? strictestVisibility(members) : 'private');
     if (next) changes.push({ id: Number(concept.id), source_id: concept.source_id, slug: concept.slug, phase: 1, from: concept.visibility, to: next });
   }
   return { changes, rows: [...atoms, ...concepts], residuals: { atoms_origin_gone_to_private: originGone, concepts_without_lineage: noLineage } };

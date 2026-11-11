@@ -296,6 +296,8 @@ export interface GBrainConfig {
     /** Epoch ms of the last auto-channel check (24h throttle). */
     last_check_ts?: number;
     last_applied_version?: string;
+    /** #8776: a launcher outside gbrain's service starts autopilot again when it exits (`gbrain upgrade` hands it over). */
+    autopilot_launcher?: 'external';
   };
 
   /**
@@ -730,6 +732,8 @@ export function loadConfig(): GBrainConfig | null {
   const dbUrl = effectiveEnvDatabaseUrl();
 
   if (!fileConfig && !dbUrl) return null;
+  // GBRA-377: a file holding only skills.resolver settings is no brain; every other file keeps its file-plane reads.
+  if (!dbUrl && fileConfig && Object.keys(fileConfig).every((k) => k === 'skills')) return null;
 
   // Infer engine type. A DATABASE_URL-style env var is always a Postgres
   // connection target and must override a file-backed PGLite engine
@@ -1679,6 +1683,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'self_upgrade.attempting_version',
   'self_upgrade.last_check_ts',
   'self_upgrade.last_applied_version',
+  'self_upgrade.autopilot_launcher',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',
@@ -1811,7 +1816,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'persistence.limits.principal_lifetime_ids', 'persistence.limits.brain_lifetime_ids',
   'persistence.limits.principal_terminal_bytes', 'persistence.limits.brain_terminal_bytes',
   'persistence.limits.brain_recovery_bytes', 'persistence.limits.worktree_recovery_bytes', 'persistence.limits.principal_staged_bytes', 'persistence.limits.brain_staged_bytes', 'persistence.limits.principal_uploads', 'persistence.limits.upload_idle_seconds', 'persistence.limits.upload_max_seconds',
-  'persistence.receipt_retention_days', 'persistence.unbound_write', 'persistence.max_claim_ms', // #5254: persistence/unbound-source.ts; #6176: persistence/claim-phase.ts
+  'persistence.receipt_retention_days', 'persistence.housekeeping.receipt_target_bytes', 'persistence.unbound_write', 'persistence.max_claim_ms', // #5254: persistence/unbound-source.ts; #6176: persistence/claim-phase.ts
   'persistence.sync_preparation_ms', 'persistence.maintenance_preparation_ms', 'persistence.preparation_ceiling_ms', 'persistence.max_preparation_attempts', 'persistence.preparation_deadlines', 'persistence.max_transient_retries', // #6278: persistence/preparation-budget.ts, switches.ts; transient-retry.ts
   'persistence.publication_ceiling_ms', 'persistence.terminal_failures.window_days', 'persistence.terminal_failures.spike_factor', 'persistence.terminal_failures.spike_min', // #6405: persistence/sync-drain.ts (in-pass publication ceiling); #6650: persistence/terminal-failures.ts
   'persistence.capacity.warn_days', 'persistence.capacity.fail_days', 'persistence.capacity.background_pause_pct', // #6696: persistence/capacity-forecast.ts, admission-origin.ts

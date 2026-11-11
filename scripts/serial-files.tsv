@@ -398,6 +398,7 @@ test/spawn-seam-batch1-4992.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HO
 test/stdio-stderr-redirect.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/subagent-put-page-rejection.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests; configureGateway changes the process-wide AI gateway; spyOn putPage.handler
 test/sync-convergence.serial.test.ts	global-state	global-state: binds local servers/ports (two latency proxies per scenario) and spawns serve/sync/put/call processes against each scenario's brain; its oracle tests read the chaos scenario their describe's beforeAll ran, across it() boundaries
+test/busy-agent-soak.serial.test.ts	global-state	global-state: binds local servers/ports (two latency proxies per scenario) and spawns serve/sync/put/sources/git/doctor processes against each scenario's brain; its mode tests read the scenario their describe's beforeAll ran, across it() boundaries
 test/sync-cost-gate.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
 test/sync-default-write-guard.serial.test.ts	global-state	global-state: spyOn console.error, console.log, process.exit
 test/sync-delegated-options-6696.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests and the embedding transport; binds local servers/ports; patches process stdout/stderr/console

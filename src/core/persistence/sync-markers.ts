@@ -50,22 +50,55 @@ const TREE_READ_LIMITS = { timeoutMs: 10_000, maxBytes: 1024 * 1024 };
  * cannot answer counts as present (fail closed), so an unreadable checkout or tree writes the marker.
  */
 function originStillBacked(root: string | null, lastCommit: string | null, slugMode: string | null, sourcePath: string): boolean {
-  if (!root) return true;
+  const origin = originGitPaths(root, slugMode, sourcePath);
+  if (!origin) return true;
+  for (const gitPath of origin.candidates) {
+    try { if (readSyncFile(root!, origin.scope ? gitPath.slice(origin.scope.length + 1) : gitPath) !== null) return true; } catch { return true; }
+  }
+  return originInTree(origin, lastCommit);
+}
+
+/** The Git paths `sourcePath` may have in `root`'s repository, or null when the checkout cannot be read. */
+function originGitPaths(root: string | null, slugMode: string | null, sourcePath: string): { gitRoot: string; scope: string; candidates: Set<string> } | null {
+  if (!root) return null;
   const toplevel = hardenedGitSync(root, ['rev-parse', '--show-toplevel'], { timeoutMs: 10_000, maxBytes: 4096 });
-  if (!toplevel.ok) return true;
+  if (!toplevel.ok) return null;
   const gitRoot = toplevel.stdout.toString('utf8').trim();
   let scope: string;
-  try { scope = relative(realpathSync.native(gitRoot), realpathSync.native(root)).split(sep).join('/'); } catch { return true; }
-  if (scope.startsWith('..')) return true;
+  try { scope = relative(realpathSync.native(gitRoot), realpathSync.native(root)).split(sep).join('/'); } catch { return null; }
+  if (scope.startsWith('..')) return null;
   const candidates = new Set<string>();
   if (slugMode !== 'git-root') candidates.add(scope ? `${scope}/${sourcePath}` : sourcePath);
   if (slugMode !== 'source-root' && (!scope || sourcePath.startsWith(`${scope}/`))) candidates.add(sourcePath);
-  for (const gitPath of candidates) {
-    try { if (readSyncFile(root, scope ? gitPath.slice(scope.length + 1) : gitPath) !== null) return true; } catch { return true; }
-  }
-  if (!lastCommit || candidates.size === 0) return false;
-  const tree = hardenedGitSync(gitRoot, ['ls-tree', '-z', '--full-tree', lastCommit, '--', ...candidates], TREE_READ_LIMITS);
+  return { gitRoot, scope, candidates };
+}
+
+/** Whether one of the origin's paths is in `lastCommit`'s tree; a tree that cannot be read counts as present. */
+function originInTree(origin: { gitRoot: string; candidates: Set<string> }, lastCommit: string | null): boolean {
+  if (!lastCommit || origin.candidates.size === 0) return false;
+  const tree = hardenedGitSync(origin.gitRoot, ['ls-tree', '-z', '--full-tree', lastCommit, '--', ...origin.candidates], TREE_READ_LIMITS);
   return !tree.ok || tree.stdout.length > 0;
+}
+
+/**
+ * GST-2201: whether a page's file is committed at its source's `last_commit` or at the checkout's HEAD (a commit sync has not
+ * read yet), so a retention purge must not remove it. False on an unmanaged brain, for a source with no worktree binding (a
+ * repo-less brain), a company-brain source or a checkout with no commit yet; a checkout or tree that cannot be read counts as committed (fail closed: the
+ * file stays).
+ */
+export async function originCommitted(engine: BrainEngine, sourceId: string, sourcePath: string | null | undefined): Promise<boolean> {
+  if (!sourcePath || !await managedPersistenceEnabled(engine)) return false;
+  const [source] = await engine.executeRaw<{ last_commit: string | null; config: Record<string, unknown> | null }>('SELECT last_commit, config FROM sources WHERE id=$1', [sourceId]);
+  if (!source || companyBrainProfile(source.config) !== null) return false;
+  const binding = await getWorktreeBinding(engine, sourceId);
+  if (!binding) return false;
+  const root = binding.local_path ? resolve(binding.local_path, binding.relative_path) : null;
+  const origin = originGitPaths(root, typeof source.config?.slug_root_mode === 'string' ? source.config.slug_root_mode : null, sourcePath);
+  if (!origin) return true;
+  if (originInTree(origin, source.last_commit)) return true;
+  const head = hardenedGitSync(origin.gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], TREE_READ_LIMITS);
+  if (!head.ok) return !(head.reason === 'exit' && head.status === 1);
+  return originInTree(origin, head.stdout.toString('utf8').trim());
 }
 
 /**

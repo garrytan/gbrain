@@ -21,7 +21,7 @@ import { validateSlug } from '../utils.ts';
 import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
-import { stampEvidence } from '../search/evidence.ts';
+import { stampEvidence, type EvidenceOpts } from '../search/evidence.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from '../eval-capture.ts';
 import type { SearchResult, HybridSearchMeta, PageReadScope, PageReadPolicy } from '../types.ts';
 import { resolveExcludePrivatePages, isPrivatePage } from '../search/private-visibility.ts';
@@ -1065,8 +1065,9 @@ export async function requireWritablePage(
     sourceId: writeSource,
     includeDeleted: true,
   });
-  // GBRA-218: a page the remote caller cannot read under the member-access part answers exactly as a missing slug.
-  const hidden = !!writable && await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, slug);
+  // GBRA-218 / GBRA-431: a page the remote caller cannot read answers exactly as a missing slug. A delegated subagent
+  // write keeps its own privacy refusal below.
+  const hidden = !!writable && await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, slug, ctx.viaSubagent === true);
   if (writable && !hidden) {
     if (ctx.viaSubagent === true && ctx.auth && isPrivatePage(writable)
       && await resolveExcludePrivatePages(ctx.engine, ctx.remote)) {
@@ -1235,8 +1236,8 @@ export function resolvePerCallMode(ctx: OperationContext, raw: unknown, opName =
 }
 
 /** T4 — stamp evidence/create_safety on a result set, fail-soft. */
-export function stampEvidenceSafe(results: SearchResult[]): void {
-  try { stampEvidence(results); } catch { /* non-fatal */ }
+export function stampEvidenceSafe(results: SearchResult[], opts?: EvidenceOpts): void {
+  try { stampEvidence(results, opts); } catch { /* non-fatal */ }
 }
 
 export function stampDeepResearchIds(results: SearchResult[]): void {

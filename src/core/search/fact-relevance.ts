@@ -82,7 +82,9 @@ export const FACTS_ARM_COSINE_MIN = 0.6;
 export const FACT_ADMISSION_FLOOR_EVIDENCE: Readonly<Record<string, string>> = {};
 
 export interface FactPoolScope {
-  sourceId?: string; sourceIds?: string[]; remote: boolean;
+  sourceId?: string; sourceIds?: string[];
+  /** World-only facts: worldOnlyFacts(remote) for the caller (private facts only for the local CLI and the brain owner). */
+  worldOnly: boolean;
   /** #5575 read floor and activation control, applied in the pool SQL like every retrieval arm. */
   minTrust?: TrustTier; suppressFlagged?: boolean;
   /** Hide facts whose provenance page is private (resolveExcludePrivatePages for the caller). */
@@ -151,7 +153,7 @@ function poolPredicate(scope: FactPoolScope, filters: FactPoolFilters | undefine
     filters?.includeExpired ? 'f.source_id = ANY($1::text[])' : 'f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL',
     filters?.includeExpired ? 'f.source != ALL($2::text[])' : '(f.valid_until IS NULL OR f.valid_until > now()) AND f.source != ALL($2::text[])',
     quarantinedProvenanceFilterFragment('f'),
-    ...(scope.remote ? [factVisibilitySql('f', ['world'])] : []),
+    ...(scope.worldOnly ? [factVisibilitySql('f', ['world'])] : []),
     ...(scope.excludePrivate ? [privateProvenanceFilterUnderPolicy('f')] : []),
     projectionEligibleSql('facts', 'f', { floor: scope.minTrust, suppressFlagged: scope.suppressFlagged }),
   ];
