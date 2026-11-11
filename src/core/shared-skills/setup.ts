@@ -242,7 +242,7 @@ export async function installPackagedSharedSkills(ctx: OperationContext, sourceI
   const principal = await requestPrincipalForContext(ctx);
   const [open] = await ctx.engine.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r JOIN sources s ON s.id=r.source_id AND s.incarnation=r.source_incarnation
     WHERE r.operation='put_skill' AND r.source_id=$1 AND r.principal_kind=$2 AND r.principal_id=$3 AND r.intent->>'pack_id'=$4
-      AND r.authority ? 'skillAdoptionPreconditions' AND r.state IN ('queued','running','recovering','committed') ORDER BY r.sequence DESC LIMIT 1`,
+      AND r.authority ? 'skillAdoptionPreconditions' AND r.state IN ('queued','deferred','running','recovering','committed') ORDER BY r.sequence DESC LIMIT 1`,
     [sourceId, principal.kind, principal.id, DEFAULT_SHARED_PACK_ID]);
   const resumed = open ? await waitForWrite(ctx.engine, open, ctx.config, ctx.writeWaitMs) : null;
   if (resumed?.state === 'committed') return;

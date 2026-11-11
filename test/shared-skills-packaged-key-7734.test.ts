@@ -118,3 +118,21 @@ test('#8453: an init retried after an upgrade keeps the pack an earlier release 
   expect(await requestIds(f.engine)).toEqual(admitted);
   expect((await f.engine.executeRaw<{ state: string }>("SELECT state FROM persistence_requests WHERE operation='put_skill'")).map((r) => r.state)).toEqual(['committed']);
 }), 120_000);
+
+test('#8453: an init retried while the earlier adoption is deferred behind a refresh reports it pending instead of admitting a second', () => fixture(async (f) => {
+  const older = packaged((files) => { for (const path of ['skillpack.json', 'README.md']) files[path] = files[path].replaceAll(VERSION, '0.0.1.0'); });
+  const broken = interrupted(f.local, () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+  await adoptSharedSkillpack(broken, 'default', older).catch(() => undefined);
+  await disposePersistenceConsumer(broken.engine);
+  await disposePersistenceConsumer(f.engine);
+  const admitted = await requestIds(f.engine);
+  expect(admitted).toHaveLength(1);
+  // A write admitted during a worktree refresh waits as deferred until the refresh releases it; it is still the open adoption.
+  await f.engine.transaction(async (tx) => {
+    await tx.executeRaw('SET LOCAL session_replication_role = replica');
+    await tx.executeRaw("UPDATE persistence_requests SET state='deferred' WHERE operation='put_skill'");
+  });
+  const error = await installPackagedSharedSkills({ ...f.local, writeWaitMs: 50 }, 'default').then(() => null, (e: unknown) => e);
+  expect((error as { code?: string } | null)?.code).toBe('publication_pending');
+  expect(await requestIds(f.engine)).toEqual(admitted);
+}), 120_000);

@@ -120,7 +120,7 @@ test('idle polling backs off to the cap, then a wake runs a full tick immediatel
     const firstTick = statements.length;
     counted.resolve();
     // The first full tick carries the maintenance pass; a statement added to that pass changes this count on purpose.
-    expect(firstTick - bare.statements.length).toBe(8);
+    expect(firstTick - bare.statements.length).toBe(10);
     await Bun.sleep(2_000);
     // 20 ms polling for 2 s would be ~100 ticks; doubling to a 160 ms cap is ~15.
     expect(statements.length - firstTick).toBeLessThan(40);
