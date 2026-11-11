@@ -5,7 +5,9 @@
  * becomes readable by every connection with no source grant. This read names those pages so the operator sees them;
  * it writes nothing and never refuses the change.
  *
- * A page counts when it names no readers and no folder rule and the writer of its live revision or of any earlier
+ * A page counts when it names no readers and no folder rule, the read paths' privacy rules (privacyPartSql: visibility,
+ * aliases, pinned questions, lineage) do not hide it from a no-grant connection (#9068; the search.remote_private_pages
+ * and GBRAIN_REMOTE_PRIVATE_PAGES opt-outs relax them here too), and the writer of its live revision or of any earlier
  * version (the write attribution columns) is a remote credential: a token or OAuth client, revoked or deleted since. No
  * record keeps which member a credential was bound to when it wrote, so a credential unbound or rebound since then
  * counts too, and each example names the member it is bound to now (null when none or deleted). A write that moves
@@ -13,7 +15,8 @@
  * repo-less brain answers the same way.
  */
 import { shellQuote } from '../agent-output.ts';
-import type { SqlEngine } from '../persistence/model.ts';
+import type { BrainEngine } from '../engine.ts';
+import { privacyPartSql, remotePrivacyRelaxed } from '../search/private-visibility.ts';
 
 export interface PagesExposed {
   count: number;
@@ -23,10 +26,11 @@ export interface PagesExposed {
 }
 
 /** The pages of `sourceId` a remote credential wrote that name no readers (the first five by slug), or null when there are none. */
-export async function remotePagesFederationExposes(engine: SqlEngine, sourceId: string): Promise<PagesExposed | null> {
+export async function remotePagesFederationExposes(engine: BrainEngine, sourceId: string): Promise<PagesExposed | null> {
+  const hidden = await remotePrivacyRelaxed(engine) ? '' : ` AND ${privacyPartSql('p')}`;
   const rows = await engine.executeRaw<{ slug: string; member: string | null; total: number }>(
-    `WITH open AS (SELECT id, slug, revision_principal_kind, revision_principal_id FROM pages
-       WHERE source_id = $1 AND deleted_at IS NULL AND page_readers IS NULL AND folder_rule_ids IS NULL),
+    `WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
+       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
      authored AS (
        SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
        UNION ALL
@@ -54,7 +58,7 @@ export async function remotePagesFederationExposes(engine: SqlEngine, sourceId: 
  * remotePagesFederationExposes when `federating` (the change added the source to the no-grant floor), else null. A
  * failed read is reported on stderr and reads as null, so the check never changes whether or how the federation happens.
  */
-export async function remotePagesFederationExposesOrWarn(engine: SqlEngine, sourceId: string, federating: boolean): Promise<PagesExposed | null> {
+export async function remotePagesFederationExposesOrWarn(engine: BrainEngine, sourceId: string, federating: boolean): Promise<PagesExposed | null> {
   if (!federating) return null;
   return remotePagesFederationExposes(engine, sourceId).catch((e: unknown) => {
     console.error(`Warning: could not check ${shellQuote([sourceId])} for remote-written pages without readers: ${e instanceof Error ? e.message : String(e)}`);

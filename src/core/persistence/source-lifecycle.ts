@@ -8,7 +8,7 @@ import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { EXPIRED_ARCHIVE_SQL } from '../source-delete.ts';
+import { EXPIRED_ARCHIVE_SQL, removedSourceScrubCtes } from '../source-delete.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
@@ -342,7 +342,8 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
           {fix:readFix('Lists OAuth clients with the source each is bound to.',{argv:['gbrain','auth','clients','--json']})});
         const [impact]=await tx.executeRaw<{count:string}>('SELECT count(*)::text AS count FROM pages WHERE source_id=$1',[input.sourceId]);
         pagesDeleted+=Number(impact.count);
-        await tx.executeRaw('DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid',[input.sourceId,incarnation]);
+        await tx.executeRaw(`WITH gone AS (DELETE FROM sources WHERE id=$1 AND incarnation=$2::uuid RETURNING id),${removedSourceScrubCtes('EXISTS (SELECT 1 FROM gone)')} SELECT 1`,[input.sourceId,incarnation]);
+        await tx.executeRaw(`WITH ${removedSourceScrubCtes('true')} SELECT 1`,[input.sourceId]);
         await tx.executeRaw('DELETE FROM persistence_source_bindings WHERE source_id=$1 AND source_incarnation=$2::uuid',[input.sourceId,incarnation]);
         await supersedeTopologyRetires(tx,input.sourceId,incarnation,principal,requestId);
         await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1",[input.sourceId]);

@@ -107,6 +107,7 @@ test/facts-entity-moved-7602.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
+test/federation-exposure-private-9068.test.ts
 test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
@@ -471,7 +472,9 @@ test/purge-expires-page-facts.test.ts
 test/purge-fact.test.ts
 test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
+test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
+test/purge-scrub-followups-9068.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
