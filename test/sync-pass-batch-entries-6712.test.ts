@@ -129,7 +129,8 @@ describe('GBRA-133 PR 2b: a first sync builds its batch in linear time', () => {
     // GBRA-133: the first freeze reads the file, its pinned blob and its pinned content one synchronous call after another
     // (Git children for the pinned reads). Each read here costs FREEZE_READ_CPU_MS more of this thread's CPU, so a freeze
     // that runs its reads as one stretch holds timers past the bound on any machine, and one that yields between them never
-    // does. The filter driver and HEAD reads are wrapped too; this fixture (holds on, a clean checkout) reaches neither.
+    // does. The filter driver and HEAD reads are wrapped too; with holds on the filter driver is read by the screen after the freeze's
+    // last own turn, and this fixture (a clean checkout) never reaches the HEAD read.
     const resolve = syncCore.resolveSlugForPath;
     let slugs = 0, reads = 0;
     const slugSpy = spyOn(syncCore, 'resolveSlugForPath').mockImplementation(((...args: Parameters<typeof resolve>) => {
