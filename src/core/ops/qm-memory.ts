@@ -318,6 +318,14 @@ const memory_write: Operation = {
         saved.push({ request_id: item.request_id, ...(out?.id !== undefined ? { fact_id: String(out.id) } : {}) });
       } catch (e) {
         if (e instanceof OperationError && e.writeError === 'write_pending') { saved.push({ request_id: item.request_id, pending: true }); continue; }
+        // memory_write takes no request_id: a retryable refusal names the idempotency_key that replays this write.
+        if (e instanceof OperationError && e.requestId === item.request_id) {
+          const theirs = `request_id ${item.request_id}`, own = `idempotency_key ${key}`;
+          e.message = e.message.replaceAll(theirs, () => own);
+          e.suggestion = e.suggestion?.replaceAll(theirs, () => own);
+          if (e.fix) e.fix = { ...e.fix, why: e.fix.why.replaceAll(theirs, () => own) };
+          e.requestId = undefined;
+        }
         if (e instanceof OperationError && index > 0) e.message = `facts[${index}]: ${e.message} The ${index} fact(s) before it were saved; the same idempotency_key replays them.`;
         throw e;
       }

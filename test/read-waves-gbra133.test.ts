@@ -74,6 +74,8 @@ for (const kind of testBackends()) {
     check('the capacity forecast issues its reads together: two waves with a principal counter, not one per read', async engine => {
       const requests = await requestFixture(engine);
       await requests.admit('gbra133-forecast');
+      // GBRA-108: a principal row exists for a cap the operator set.
+      await engine.setConfig('persistence.limits.principal_lifetime_ids', '2000000');
       const baseline = await readCapacityForecast(engine);
       const { result, waves } = await recordWaves(engine, () => readCapacityForecast(engine));
       expect(waves).toBeLessThanOrEqual(2);

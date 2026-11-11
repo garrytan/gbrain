@@ -458,7 +458,7 @@ export async function clearDeletionHold(tx: Exec, input: { sourceId: string; inc
   return clearGitHold(tx, { ...input, observedAt: hold.observed_at });
 }
 
-/** GBRA-133: a deleted-side `file_drift` hold whose file is gone from the level and the disk (sync-pass.ts `deletionCandidates`). */
+/** GBRA-133: a deleted-side `file_drift` or a `concurrent_write` hold whose file is gone from the level and the disk (sync-pass.ts `deletionCandidates`). */
 export interface DeletionCandidate { path: string; page_id: number | null; slug: string | null }
 
 /**
@@ -609,8 +609,11 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
  * #8072: a `file_too_large` hold is re-screened by every sync only while that costs its size (an lstat): one the streamed
  * preparation refused after reading the whole file (`meta.streamed`) waits for its bytes to change, a retry or another gbrain.
  */
-/** GBRA-133: the `file_drift` screen version; 1 is #7340's rule (a page with no import record compares its file at the baseline commit). */
-export const FILE_DRIFT_VERSION = 1;
+/**
+ * GBRA-133: the `file_drift` screen version; 1 is #7340's rule (a page with no import record compares its file at the baseline commit),
+ * 2 adds the path's earlier committed versions (`driftHistory`), which landed after version 1 without re-screening its holds.
+ */
+export const FILE_DRIFT_VERSION = 2;
 
 export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, retried: boolean): boolean {
   return retried || (record.code === 'file_too_large' && record.meta.streamed?.gbrain_version !== VERSION) || ['frontmatter_slug_conflict', 'rename_held', 'parser_regression', 'content_rejected', 'write_gate_rejected', 'purged_content', 'legacy_slug_conflict', 'origin_conflict', 'page_identity_changed', 'git_object_missing'].includes(record.code)

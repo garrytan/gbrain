@@ -156,7 +156,7 @@ function previewLines(p: RulePreview, rerun: string): string[] {
   ];
 }
 
-interface EditResult {
+export interface EditResult {
   source_id: string;
   store: AccessStore;
   operation_id: string;
@@ -204,6 +204,26 @@ function editLines(r: EditResult): string[] {
     ...(r.state === 'pending' ? [`Still pending: finish with gbrain access resume --source ${r.source_id}`] : []),
     ...(r.note ? [r.note] : []),
   ];
+}
+
+/**
+ * GST-363: adds folder rules through the same path as `gbrain access rule add`: one desired rulebook (the store's
+ * base plus `rules`), previewed, then written with the preview's revision as --expect when `apply` is set.
+ */
+export async function addFolderRules(engine: BrainEngine, sourceId: string, rules: FolderRule[], opts: { apply: boolean; json: boolean }): Promise<{ preview: RulePreview; result: EditResult | null }> {
+  const { store, persisted, root } = await resolveStore(engine, sourceId);
+  const base = await baseRules(engine, sourceId, store, root);
+  const desired = sortRules([...base.filter(b => !rules.some(r => r.id === b.id)), ...rules]);
+  const preview = await previewRules(engine, sourceId, store, persisted, desired);
+  if (!opts.apply) return { preview, result: null };
+  const message = `access: ${rules.map(r => `rule ${r.id} on ${r.prefix} readable by ${r.readable_by.map(reader).join(', ')}`).join('; ')}`;
+  return { preview, result: await writeRules(engine, sourceId, desired, { expect: preview.expect, message, json: opts.json }) };
+}
+
+/** The rulebook a new edit would start from (the store's base), for callers that plan rules before adding them. */
+export async function currentFolderRules(engine: BrainEngine, sourceId: string): Promise<FolderRule[]> {
+  const { store, root } = await resolveStore(engine, sourceId);
+  return baseRules(engine, sourceId, store, root);
 }
 
 async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {

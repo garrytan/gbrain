@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { spawnSync } from '../spawn.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
@@ -53,6 +53,8 @@ export interface DatabaseContentExportReceipt {
   pending_actions: string[];
   root_identity?: { device: number; inode: number };
   schema_policy?: { schema: ApprovedSchemaIdentity; source_config_sha256: string };
+  /** #8528: roots an earlier attempt of this checkpoint filled before it moved; gbrain no longer manages them. */
+  earlier_roots?: string[];
 }
 
 function exportPreviewFix(root: string, sourceId: string, why: string): Action {
@@ -138,6 +140,14 @@ async function exportInventory(engine: BrainEngine, sourceId: string) {
   return { files, conflicts, pages: pages.length, schemaPolicy };
 }
 
+/** #8528: a moving checkpoint's staging directory holds only bytes this export wrote, or the move is refused. */
+function assertOwnedStaging(staging: string, hashes: Record<string, string>): void {
+  try { verifyFiles(staging, Object.fromEntries(Object.entries(hashes).filter(([path]) => existsSync(join(staging, path)))), true); } catch {
+    throw opError('local_conflict', 'The earlier export staging directory holds files this export did not write, so the export was not moved.',
+      `${staging} holds a staged copy of every page (private ones included) next to a file the export did not write or an edited one. Ask the user to review that directory and remove it, then run the export again.`);
+  }
+}
+
 function verifyFiles(root: string, hashes: Record<string, string>, exact = false): void {
   checkedContentRoot(root);
   for (const [path, hash] of Object.entries(hashes)) {
@@ -198,6 +208,19 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
       `The saved export checkpoint for source ${options.sourceId} (config key ${key}) is not valid JSON, so nothing was exported. Show it to the user and ask how to proceed before changing it.`,
       { fix: readFix('Prints the saved export checkpoint.', { argv: ['gbrain', 'config', 'get', key] }) });
   }
+  // #8528: an export that stopped before its source was bound (a destination the Git worktree or privacy checks refused,
+  // or an interruption) moves to another absent root. Its staging directory is removed under the lock once it is proven
+  // to hold only the export's own bytes; a filled earlier root stays and is named in pending_actions. The checkpoint's
+  // file hashes and schema policy are still checked against the database below, and a started claim keeps it.
+  let moved: DatabaseContentExportReceipt | null = null;
+  if (prior?.version === 1 && prior.root !== root && prior.brain_id === brain.brain_id && prior.source_incarnation === source.incarnation
+    && (prior.stage === 'inventory' || prior.stage === 'exported') && !source.local_path
+    && !(await ctx.engine.executeRaw("SELECT 1 FROM persistence_topology_changes WHERE request_id=$1::uuid AND state<>'failed'", [prior.request_id])).length) {
+    if (existsSync(prior.staging_root)) assertOwnedStaging(prior.staging_root, prior.files);
+    moved = prior;
+    prior = { ...prior, root, staging_root: `${root}.gbrain-export-${randomUUID()}`, request_id: randomUUID(), stage: 'inventory', root_identity: undefined,
+      ...(existsSync(prior.root) ? { earlier_roots: [...(prior.earlier_roots ?? []), prior.root] } : {}) };
+  }
   if (prior && (prior.version !== 1 || prior.root !== root || prior.brain_id !== brain.brain_id || prior.source_incarnation !== source.incarnation)) {
     throw opError('local_conflict', 'The export checkpoint targets a different root or identity.',
       `An earlier export of source ${options.sourceId} is checkpointed for another root or source incarnation; resume it with its own --content-root, or ask the user to settle it before starting a new one.`,
@@ -212,7 +235,7 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
     throw opError('local_conflict', 'The source already has a canonical root; this export never moves it.',
       `Source ${options.sourceId} already has a canonical checkout, so it needs no database-only export; the export only creates a root for sources that have none.`);
   }
-  if (existsSync(root) && !prior) {
+  if (existsSync(root) && (!prior || moved)) {
     throw opError('local_conflict', 'Choose an absent export destination; existing directories are never overwritten.',
       `${root} already exists; pass --content-root a path that does not exist yet (the export creates it).`);
   }
@@ -232,8 +255,10 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
   if (!options.confirmQuiesced) receipt.pending_actions.push('Stop all memory/file writers and old skill servers, then pass --confirm-quiesced.');
   if (!options.backup) receipt.pending_actions.push('Verify an operational backup and pass --backup-confirmed, or explicitly choose --acknowledge-no-backup. Markdown is not a full database backup.');
   receipt.backup = options.backup ?? receipt.backup;
+  const earlier = receipt.earlier_roots?.length ? [`An earlier export of every page, private ones included, remains at ${receipt.earlier_roots.join(', ')}; gbrain no longer manages it. Ask the user whether to keep or delete it.`] : [];
   if (receipt.conflicts.length || options.dryRun || receipt.pending_actions.length) {
     receipt.status = receipt.conflicts.length ? 'conflict' : options.dryRun ? 'planned' : 'action_required';
+    receipt.pending_actions.push(...earlier);
     return receipt;
   }
   const lock = await acquireNativeLock(gbrainPath('persistence', 'locks', `export-${brain.brain_id}-${source.incarnation}.lock`), { timeoutMs: 1000 });
@@ -242,9 +267,26 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
       `Another export of source ${options.sourceId} holds its checkpoint lock. Wait for it to finish and preview the checkpoint before starting again; nothing was written by this run.`,
       { fix: exportPreviewFix(root, options.sourceId, `Shows the checkpointed export state of source ${options.sourceId} without writing.`) });
   }
+  if (!await ctx.engine.getConfig(key).then(value => value === saved, () => false)) {
+    await lock.release();
+    throw opError('local_conflict', 'The export checkpoint changed while this export waited for its lock.',
+      `Another run updated the export checkpoint of source ${options.sourceId}, so this run wrote nothing. Preview the checkpoint before starting again.`,
+      { fix: exportPreviewFix(root, options.sourceId, `Shows the checkpointed export state of source ${options.sourceId} without writing.`) });
+  }
+  if (moved && existsSync(moved.staging_root)) {
+    try { assertOwnedStaging(moved.staging_root, moved.files); rmSync(moved.staging_root, { recursive: true, force: true }); }
+    catch (error) { await lock.release(); throw error; }
+  }
   try {
     await ctx.engine.setConfig(key, JSON.stringify(receipt));
     if (!existsSync(root)) {
+      // The staging directory is a sibling of the root, so a destination inside a repository is refused before any page is written.
+      let parent = dirname(root);
+      while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent);
+      if (spawnSync('git', ['-C', parent, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 }).status === 0) {
+        throw opError('local_conflict', 'The export would claim an enclosing Git worktree. Choose a destination outside existing repositories.',
+          `${root} lies inside an existing Git worktree; pass --content-root a path outside any repository.`);
+      }
       if (!existsSync(receipt.staging_root)) mkdirSync(receipt.staging_root, { recursive: true, mode: 0o700 });
       checkedContentRoot(receipt.staging_root);
       for (const [path, content] of Object.entries(inventory.files)) {
@@ -258,11 +300,6 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
         privateWrite(target, content);
       }
       verifyFiles(receipt.staging_root, hashes, true);
-      const enclosing = spawnSync('git', ['-C', receipt.staging_root, 'rev-parse', '--show-toplevel'], { env: gitChildEnv(), encoding: 'utf8', timeout: 15_000 });
-      if (enclosing.status === 0) {
-        throw opError('local_conflict', 'The export would claim an enclosing Git worktree. Choose a destination outside existing repositories.',
-          `${root} lies inside an existing Git worktree; pass --content-root a path outside any repository.`);
-      }
       const current = await exportInventory(ctx.engine, options.sourceId);
       if (current.conflicts.length || stableJson(current.schemaPolicy) !== stableJson(receipt.schema_policy) || !sameInventory(hashes, Object.fromEntries(Object.entries(current.files).map(([path, content]) => [path, setupHash(content)])))) {
         throw opError('local_conflict', 'The database content, source schema or ingestion policy changed while exporting; writers were not quiesced.',
@@ -297,12 +334,12 @@ export async function exportDatabaseContent(ctx: OperationContext, options: Data
     if (!protocol.skill_bundles_enabled) await activateSharedSkillPersistence(ctx.engine, { confirmQuiesced: true });
     await installPackagedSharedSkills(ctx, options.sourceId, Object.keys(hashes));
     receipt.stage = 'complete'; receipt.status = 'complete';
-    receipt.pending_actions = ['Operational database state is retained and still needs backup. Publication consent, grants and client-native activation are unchanged.'];
+    receipt.pending_actions = ['Operational database state is retained and still needs backup. Publication consent, grants and client-native activation are unchanged.', ...earlier];
     await ctx.engine.setConfig(key, JSON.stringify(receipt));
     return receipt;
   } catch (error) {
     receipt.status = error instanceof OperationError && error.code === 'local_conflict' ? 'conflict' : 'action_required';
-    receipt.pending_actions = [error instanceof OperationError ? `${error.code}: ${error.message}` : 'Export was interrupted; preserve staged files and rerun with the same root and source.'];
+    receipt.pending_actions = [error instanceof OperationError ? `${error.code}: ${error.message}` : 'Export was interrupted; preserve staged files and rerun with the same root and source.', ...earlier];
     await ctx.engine.setConfig(key, JSON.stringify(receipt));
     throw error;
   } finally { await lock.release(); }

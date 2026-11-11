@@ -258,6 +258,18 @@ export async function adoptionCommitLanded(engine: BrainEngine, row: WriteReques
   return landedAdoptionCommit(root, join(root, intent.path), { path: intent.path, blob: adopted.blob, replaced_revision: adopted.replaced_revision, head: adopted.head });
 }
 
+/**
+ * #8869: `adoptionCommitLanded` with the HEAD it was read at, for `recoverPublication` to read under the worktree lock
+ * before its transaction, so Git history and the whole commit ledger are never read under the recovery's row locks. Null
+ * for any other request.
+ */
+export async function adoptionRecoveryEvidence(engine: BrainEngine, row: WriteRequest, binding: WorktreeBinding): Promise<{ root: string; head: string | null; landed: string | null } | null> {
+  if (!binding.local_path || !(row.intent as { adoptLocalEdit?: unknown } | null)?.adoptLocalEdit) return null;
+  const root = join(binding.local_path, binding.relative_path);
+  const head = await headCommit(root);
+  return { root, head, landed: await adoptionCommitLanded(engine, row, binding) };
+}
+
 /** Claims, prepares and publishes the admitted adoption, retrying while another owner task holds the worktree lock. */
 async function publishAdoption(engine: BrainEngine, caller: WriteRequest, admitted: WriteRequest, path: string): Promise<WriteRequest> {
   const { finishUnpublishedFailure, publishMutation } = await import('./coordinator.ts');

@@ -502,12 +502,22 @@ export async function getChunkPage(
  * embedding_signature drift (NULL grandfathered). `includeNullSignature`
  * (#3391) lifts the grandfather clause so pre-stamp pages count as stale
  * too (provider-migration paths). Shared by countStaleChunks +
- * sumStaleChunkChars so they can't drift.
+ * sumStaleChunkChars so they can't drift. #8811: `arm` narrows it to one of
+ * its two disjoint halves, an unembedded chunk or an embedded chunk of a page
+ * whose signature drifted.
  */
-function staleChunkWhere(column: string, opts?: StaleChunkOpts): SqlFragment {
+function staleChunkWhere(column: string, opts?: StaleChunkOpts, arm?: 'unembedded' | 'drifted'): SqlFragment {
   const staleColRef = trustedSql(`cc.${quoteIdentifier(column)}`);
   const conds: SqlFragment[] = [sqlFragment`p.deleted_at IS NULL`, sqlFragment`${trustedSql(chunkGenerationFilter('p', 'cc'))}`];
-  if (opts?.signature !== undefined) {
+  if (arm === 'unembedded') {
+    conds.push(sqlFragment`${staleColRef} IS NULL`);
+  } else if (arm === 'drifted') {
+    conds.push(
+      opts?.includeNullSignature
+        ? sqlFragment`${staleColRef} IS NOT NULL AND (p.embedding_signature IS NULL OR p.embedding_signature <> ${opts.signature})`
+        : sqlFragment`${staleColRef} IS NOT NULL AND p.embedding_signature <> ${opts?.signature}`,
+    );
+  } else if (opts?.signature !== undefined) {
     conds.push(
       opts.includeNullSignature
         ? sqlFragment`(${staleColRef} IS NULL OR p.embedding_signature IS NULL OR p.embedding_signature <> ${opts.signature})`
@@ -539,10 +549,16 @@ export async function countStaleChunks(exec: ScopedRead, column: string, opts?: 
 export async function sumStaleChunkChars(exec: LegacyUnscopedRead, column: string, opts?: StaleChunkOpts): Promise<number> {
     // Sibling of countStaleChunks: same stale predicate, summing chunk_text
     // length for the sync cost preview. ::bigint guards int4 overflow.
-    const { text, params } = renderFragment(sqlFragment`SELECT COALESCE(SUM(LENGTH(cc.chunk_text)), 0)::bigint AS chars
+    // #8811: with a signature the predicate ORs a chunk column with a page
+    // column, which no index serves, so every content_chunks row was read on
+    // each sync. Its two disjoint halves are summed apart instead: unembedded
+    // chunks through the partial stale index, drifted pages' chunks by page.
+    const stale = (arm?: 'unembedded' | 'drifted') => sqlFragment`SELECT LENGTH(cc.chunk_text) AS chars
          FROM content_chunks cc
          JOIN pages p ON p.id = cc.page_id
-        WHERE ${staleChunkWhere(column, opts)}`);
+        WHERE ${staleChunkWhere(column, opts, arm)}`;
+    const { text, params } = renderFragment(sqlFragment`SELECT COALESCE(SUM(chars), 0)::bigint AS chars FROM (${
+      opts?.signature === undefined ? stale() : sqlFragment`${stale('unembedded')} UNION ALL ${stale('drifted')}`}) stale`);
     const { rows } = await exec.unsafe<{ chars?: number | string }>(text, params);
     return Number(rows[0]?.chars ?? 0);
   }
