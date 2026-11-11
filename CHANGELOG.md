@@ -84,6 +84,62 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 - `src/core/mentions/pass.ts`: on a belief-covered source the mention pass locks the page keys and journals its link writes through `unmanagedBeliefPoint(..., 'mention_pass')`, so the drift check no longer reconciles a freshly published page as drift (#7031). Tests: `test/belief-stale-links-7031.test.ts`, `test/e2e/belief-stale-links-7031-postgres.test.ts`.
 - `src/commands/doctor/checks/atom-body-recheck.ts` (new), `src/commands/doctor/checks/extraction-sync.ts`: `atom_provenance_drift` finds the `page_versions` edition whose hash matches the atom's `source_hash` and compares its body with the live body, fences removed; equal bodies count under a new `body_unchanged` detail (at most 200 groups, 20 versions each). The doctor JSON goldens gain `"body_unchanged": 0`, and `scripts/page-body-readers-baseline.tsv` gains three INLINE rows for the re-check's body reads (#6825). Test: `test/doctor-atom-provenance-drift-6825.test.ts`.
 
+## [0.60.660.0] - 2026-11-11
+
+**Agent reads answer "nothing here" instead of refusing, and say why a list came back empty.** These fixes come from agent transcripts where models kept getting refused or got bare empty answers.
+
+### Itemized changes
+
+- `get_backlinks` with a `type` that other pages in the brain have, but no page linking to this one has, now returns the normal empty answer plus a note listing the types the linking pages do have. Before, it refused with `unknown type`, so an agent walking several accounts by type was refused once per account. A type no page has is still refused, and the refusal now also lists the brain's own page types. For a remote caller, both checks count only pages that caller can read. A type found only on private pages, pages whose readers leave the caller out, deleted pages or another source is treated as a type that does not exist and is never named.
+- `list_pages` with a `type` that no page has still returns the same empty list, but now adds a note naming the page types the brain does have, most common first (up to 12, with counts). Before, a guessed type such as `account` on a brain that files accounts as `crm` came back as a bare `[]`, which reads like "no such pages". A remote caller's note names only types of pages it can read.
+- `search` with `match: "keyword"` now labels every row that matches the query as written `keyword_exact`, including rows from your own `"A" OR "B"` query or a one-word query. Their match scores sit below the cutoff the label used to need, so they were labelled `weak_semantic`, which told agents the batched lookup the instructions recommend had found nothing solid. `create_safety` (the "don't write a duplicate" hint) is unchanged for these rows. Rows found only by gbrain's own fallback of loosening a query to any-word matching stay `weak_semantic`. A query that is an entity's name, which keyword search also runs under the entity's other names, keeps the labels it had before, and default (hybrid) search is unchanged.
+- `request_tools` accepts `tools` and `surface` in one call. It changes the tool surface exactly as a `surface`-only call does (same limits and refusals), then returns the requested tool schemas, with the surface answer under `surface_change`. Before, the pair was refused, and some models send it every night. Calls with only one of the two answer as before.
+
+## [0.60.659.0] - 2026-11-11
+
+### A page purge removes the page's name from the volunteer log and the mention gazetteer
+
+**Purging a page now also deletes the rows that kept its name next to its slug.** Before, `delete_page purge:true` and the retention purge left two stores behind, because neither has a foreign key to `pages`: `context_volunteer_events` kept the slug with a rationale that quotes the matched name (`alias match "<name>"`) for up to 90 days, and `mention_gazetteer_entries` kept the page's normalized title and aliases until that source's next mention pass. The purge receipt called the page gone while both were still readable. Reported and first fixed by @alanshurafa (#9072).
+
+| What you did | Before | Now |
+|---|---|---|
+| `delete_page purge:true`, the expired-tombstone purge, or a restore that replays a page purge | the slug and name stayed in the volunteer log and the mention gazetteer | removed in the purge transaction, and the page receipt checks both stores |
+| `purge_fact` on a claim that is also another page's name or quoted in a volunteer rationale | the gazetteer was not checked | both stores are probed and a match is listed as a residual |
+
+- `src/core/persistence/purge-name-stores.ts` (new): `scrubPurgedNameStores` deletes the source's rows for the purged slugs from both stores. `purgePageInTransaction`, `purgeDeletedPages`, `expireRecordedTombstones` and the restore-time purge replay call it beside the retrieval-feedback scrub. A soft delete keeps both, so `restore_page` still brings the page back whole.
+- `src/core/deletion-inventory.ts`: both tables are `swept` (`page_names`); the fact receipt still probes them, since a fact purge sweeps neither.
+- Tests: `test/purge-name-stores-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`).
+
+### Removing a source, a connector delete and a late eval capture no longer leave a deleted page's slug behind
+
+**Four more ways a deleted page's slug outlived the page are closed, and the federation warning stops counting private pages.** Before, only a page purge scrubbed the stores that name a page without a foreign key to it.
+
+| What you did | Before | Now |
+|---|---|---|
+| A query or search with eval capture on, whose capture runs after the response, racing a page purge | the capture could write the purged slug back into `eval_candidates.retrieved_slugs` | the insert keeps only slugs whose page still exists, checked under the same row lock the feedback writers take |
+| A volunteered-context answer whose background volunteer-log write lands after a page purge (or while it is open) | the write put the purged slug and its name-quoting rationale back into `context_volunteer_events` | the write keeps only rows whose page still exists, under the same row lock |
+| A connector, GitHub or Google sync deletes a page (`deletePages`), or a transcript re-ingest deletes a stale part | retrieval logs, ratings, weights, the volunteer log, the gazetteer and captured eval slugs kept naming it | scrubbed in the delete's transaction |
+| `gbrain sources remove`, `sources purge`, the expired-archive sweep, or a managed `remove`/`purge` | the source's retrieval logs, ratings, volunteer rows and captured eval slugs stayed | deleted in the statement that deletes the source, and swept again right after for a write that raced it, unless a source with the same id was created in between |
+| `gbrain sources federate` or `sources restore` on a source with a remote-written `visibility: private` page and no readers | the warning named that page, though no-grant connections still cannot read it | the warning applies the read paths' privacy rules, unless `search.remote_private_pages` or `GBRAIN_REMOTE_PRIVATE_PAGES` relaxes them |
+
+- `src/core/feedback/store.ts`: `insertEvalCandidate` is the one eval capture insert both engines run. A facts-arm result (`facts/<id>`) names a fact, not a page, so it stays while that fact exists.
+- `src/core/context/volunteer-events.ts`: `insertVolunteerEvents`, behind the fire-and-forget volunteer-log sink, inserts only rows whose page exists, probed the same way.
+- `src/core/engine-sql/pages.ts`: `deletePages` runs `scrubPurgedSlugs` and `scrubPurgedNameStores` after the delete, in one transaction. The transcript importer's stale-part delete now calls `deletePages`. `deletePage` is unchanged: the page purge, its main caller, scrubs and records the stores in its receipt.
+- `src/core/source-delete.ts`: `removedSourceScrubCtes` runs inside `deleteSourceRow` and the managed lifecycle's source delete, then once more after it. `deleteSourceRow` skips that second pass when a source with the same id exists again, so a re-created source keeps its rows. `retrieval_weights` and `mention_gazetteer_entries` already cascaded from `sources`.
+- `src/core/access/federation-exposure.ts`: the exposure read adds `privacyPartSql` unless `remotePrivacyRelaxed`.
+- Tests: `test/purge-scrub-followups-9068.test.ts` and `test/federation-exposure-private-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`). `test/eval-candidates.test.ts`, the volunteer round-trip in `test/migrate.test.ts` and the fact-purge case in `test/purge-name-stores-9068.test.ts` now create the pages they log, since a capture or volunteer write keeps only live pages.
+
+## [0.60.658.0] - 2026-11-11
+
+**Pull requests now run the tests that check gbrain's lists, in about 4 minutes, instead of finding those failures in the 30-minute full run.** Some tests fail whenever a change adds an operation, command, `--flag`, error code, doctor check or repair kind without updating the list that tracks it, or changes output a golden file pins. Before this release, pull requests skipped those tests and their first failure came in the full-ci run. A new check, `enumeration and census tests`, runs them on every pull request that changes more than docs. It is advisory: no merge rule reads it. `bash scripts/ci-census-tests.sh --run` runs the same tests on your own machine without Postgres.
+
+### Itemized changes
+
+- `scripts/ci-census-tests.sh` (new) prints the one file list: tests marked `test-reads-source-ok[structural]`, every test that imports `test/helpers/golden`, the tests whose names match its enumeration pattern, the consumer idle-pass bounds (`test/persistence-consumer-*` files that mention idle), and the tests that read every file under `src/` or `test/` (its `WALKERS` list, such as the source-read smell test). It leaves out `test/e2e/`, serial and slow files, and `test/setup.test.ts`. On master that is 141 files. `--run` runs them all and `--run <k> <n>` runs one weight-balanced shard (`scripts/sharding.ts`).
+- `.github/workflows/test.yml`: the `enumeration-census-tests` job runs the list in two shards on 2-vCPU runners, only on pull requests. Trunk Dynamic CI gates it like the other cheap-tier lanes. The `changes` job adds a `census` output that skips a doc-only diff (`scripts/select-e2e.ts --classify-only`), and an unreadable diff still runs the job. `cheap-tier`, `test-status`, `full-suite`, the remote pregate and master-push reuse don't read the job, and `contributor-gate` stays the only required check. On this change's own run the shards took 3 min 40 s and 2 min 47 s, about 6.5 runner-minutes per push.
+- `docs/ci-event-parity.md`: new section "Enumeration and census tests" and a classification row.
+- Tests: `test/scripts/ci-census-tests.test.ts` (new) pins the list's shape and coverage. `full-ci-workflow` and `native-only-workflow` cover the new job's events and its doc-only skip. The PGLite snapshot cache-key census counts the job's key (16 keys).
+
 ## [0.60.657.0] - 2026-11-11
 
 **A running `gbrain serve`, worker or autopilot no longer fails writes after another process changes a table's columns (GST-2260).** When `gbrain apply-migrations` or an upgrade in another process added, renamed or dropped a column, every pooled connection that had already prepared a `SELECT *` or `RETURNING *` on that table failed its next run with "cached plan must not change result type". Outside a transaction the driver quietly prepared the statement again, but inside one the error had already aborted the transaction, so the caller saw it. A `put_page` came back `internal_error`, or was accepted and then failed at publication, once for each statement on each pooled connection. Version 0.60.646.0 made the write paths re-run the transaction it aborted. Now the first such error also makes every connection in the process prepare its statements again before its next query, and an OAuth token grant whose client read meets it and a minion job's completion or failure record are re-run too. Pools that do not prepare statements (transaction-mode pooler URLs, `prepare: false`) and PGLite are unchanged.

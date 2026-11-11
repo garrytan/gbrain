@@ -34,7 +34,7 @@ import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
-import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
+import { listPagesPagination, listingTruncatedNotice, unusedTypeNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { WHERE_PARAM, whereOpParam } from './where-param.ts';
@@ -666,6 +666,10 @@ const list_pages: Operation = {
     ctx.emitResponseMeta?.('pagination', pagination);
     const truncatedNotice = isLocal ? null : listingTruncatedNotice(pagination, p);
     if (truncatedNotice) ctx.emitNotice?.(truncatedNotice);
+    if (pages.length === 0 && typeof p.type === 'string' && p.type) {
+      const notice = unusedTypeNotice(p.type, await (await import('./stats-by.ts')).visiblePageTypes(ctx, scope).catch(() => null));
+      if (notice) ctx.emitNotice?.(notice);
+    }
     return pages.map(pg => ({
       slug: pg.slug,
       source_id: pg.source_id,

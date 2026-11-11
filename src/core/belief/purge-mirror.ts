@@ -147,6 +147,11 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
           const { scrubPurgedSlugs } = await import('../feedback/store.ts');
           await scrubPurgedSlugs(tx, src, [restored.slug]);
         }
+        const [names] = await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('mention_gazetteer_entries') IS NOT NULL AS present");
+        if (names?.present) {
+          const { scrubPurgedNameStores } = await import('../persistence/purge-name-stores.ts');
+          await scrubPurgedNameStores(tx, src, [restored.slug]);
+        }
       };
     }
   } else {
