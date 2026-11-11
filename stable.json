@@ -1,15 +1,16 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "0.60.638.0",
-  "commit": "17b68cef4f4267ca0e5710b42f6ddc95acf9fe51",
-  "tree": "ac03478ea1b2175c1187a6d204bed41ef8a32979",
-  "soak_run": "https://github.com/garrytan/gbrain/actions/runs/42762011669",
-  "scoreboard": "https://github.com/garrytan/gbrain/actions/runs/42762011669",
+  "version": "0.60.654.0",
+  "commit": "eb74799ee8d3debeea34cdd7cd2f30a3406e11af",
+  "tree": "d090c73d71d9e1782c7204fa798693e5c9410b2a",
+  "soak_run": "https://github.com/garrytan/gbrain/actions/runs/42928268814",
+  "scoreboard": "https://github.com/garrytan/gbrain/actions/runs/42928268814",
   "promoted_by": "schedule (.github/workflows/stable-daily.yml)",
-  "promoted_at": "2026-11-10T13:22:20Z",
-  "previous": "0.60.620.0",
+  "promoted_at": "2026-11-11T05:24:11Z",
+  "previous": "0.60.638.0",
   "rollback": false,
-  "reason": "scheduled daily check; important: #9098 (v0.60.646.0), #9092 (v0.60.645.0), #9075 (v0.60.642.0), #9059 (v0.60.643.0), #9044 (v0.60.637.0), #9043 (v0.60.639.0), #9042 (v0.60.638.0), #9036 (v0.60.641.0), #9034 (v0.60.636.0), #9033 (v0.60.635.0), #9032 (v0.60.634.0), #9016 (v0.60.631.0), #9009 (v0.60.629.0), #8991 (v0.60.628.0), #8986 (v0.60.632.0), #8981 (v0.60.630.0), #8940 (v0.60.627.0)",
-  "known_bad": []
+  "reason": "scheduled daily check; important: #9138 (v0.60.661.0), #9116 (v0.60.652.0), #9114 (v0.60.659.0), #9110 (v0.60.654.0), #9099 (v0.60.648.0), #9098 (v0.60.646.0), #9092 (v0.60.645.0), #9075 (v0.60.642.0), #9059 (v0.60.643.0), #9057 (v0.60.657.0), #9045 (v0.60.653.0), #9043 (v0.60.639.0), #9038 (v0.60.649.0), #9036 (v0.60.641.0), #8797 (v0.60.656.0)",
+  "known_bad": [],
+  "not_promotable": []
 }
