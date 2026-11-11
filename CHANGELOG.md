@@ -88,7 +88,7 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 #### Webhook captures
 
 - `src/core/minions/handlers/ingest-capture.ts`: a webhook capture (`untrusted_payload`, `source_kind: webhook`) whose write source is archived, unregistered or removed mid-write refuses `source_changed` (`detail: webhook_source_unavailable`) instead of writing under `default`, on managed and unmanaged brains. Test: `test/ingest-capture-no-default-fallback.test.ts`.
-- `src/core/minions/handlers/ingest-capture.ts`: the job normalizes its slug once (`validateSlug`) before its snapshot, applied-record and writer lookups, so a mixed-case `X-Gbrain-Slug` naming an existing page on a managed brain replaces that page instead of dead-lettering with `revision_required`. Test: `test/ingest-capture-mixed-case-slug.test.ts`.
+- `src/core/minions/handlers/ingest-capture.ts`: the job normalizes its slug once (`validateSlug`) before its snapshot, applied-record and writer lookups, so a mixed-case `X-Gbrain-Slug` naming an existing page on a managed brain replaces that page instead of dead-lettering with `revision_required`. A trusted local tombstone for a mixed-case slug now deletes the lowercase page instead of skipping it. Test: `test/ingest-capture-mixed-case-slug.test.ts`.
 
 ## [0.60.660.0] - 2026-11-11
 

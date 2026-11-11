@@ -108,7 +108,7 @@ boundary, and it does not make every side effect prefix-clean:
   caller-supplied `X-Gbrain-Source-Id` header does not route anything, so a
   client cannot choose its own write partition. A client registered without a
   source writes to `default`. If its source is unregistered, archived, or
-  deleted before the capture lands, the job fails with `source_changed`
+  deleted before the job runs (or deleted while it writes), the job fails with `source_changed`
   (`detail: webhook_source_unavailable`) and nothing is written; restore the
   source and run `gbrain jobs retry` on the job. If you point a webhook integration at
   this route, give its client an explicit `--source` so its captures do not
