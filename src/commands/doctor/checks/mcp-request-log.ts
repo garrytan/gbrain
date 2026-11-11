@@ -54,7 +54,7 @@ export async function mcpRequestLogRetentionResult(
     const enable: Action = {
       argv: ['gbrain', 'config', 'set', MCP_LOG_RETENTION_KEY, String(SUGGESTED_DAYS)], consent: ['destructive'], actor: 'agent', ask_user: true,
       requires_exclusive: false, docs: DOCS, verify: doctorVerify('mcp_request_log_retention'),
-      why: `Turns on the request-log prune: the next cycle purge phase (or, on a PGLite brain, a live serve within the hour) deletes request rows older than ${SUGGESTED_DAYS} days. Per-client lifetime totals and the surface/memory-setting audit rows are kept.`,
+      why: `Turns on the request-log prune: the next cycle purge phase (or, on a PGLite brain, a live serve within the hour) deletes request rows older than ${SUGGESTED_DAYS} days. Per-client lifetime totals and the audit rows (surface, memory-setting and access changes) are kept.`,
       user_message: `Your MCP request log holds ${rowsText} and nothing prunes it. Turn on ${SUGGESTED_DAYS}-day retention? Request details older than ${SUGGESTED_DAYS} days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.`,
     };
     if (rows >= warnRows || bytes >= warnBytes) {
