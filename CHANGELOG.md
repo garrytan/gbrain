@@ -10,6 +10,28 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**QM can no longer write any page directly; every page write waits for the brain owner's approval.** QM is the AI helper that can use gbrain as one of its memories. Since v0.60.655.0 a call QM makes for a person (`x-qm-actor`) could not put, edit, link or add a timeline entry to a page; now no operation that writes a page is attestable, and a fact saved for a person can no longer be shared with everyone who reads the source. The person's own memory (`memory_write`, `remember` on their member page, `forget`, `forget_fact`) and owner-approved proposals (`memory_propose`) are unchanged. Unattested calls and member-bound credentials behave as before.
+
+### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Page writes from QM | `add_timeline_entry`, `add_link`, `put_page` and `edit_page` were refused; every other page write could be listed in `--attest-ops` | every operation that writes a page's content, frontmatter, tags, links, timeline, facts, raw data or uploads, or deletes or restores it, is refused (`actor_not_attested`, reason `op_not_attested`), at `--attest-ops`, on every call and when a queued write publishes |
+| A fact saved for a person | `share: true` put it on its subject's page for every reader of the source | refused (`invalid_params`, reason `attested_share_refused`), as is `visibility: "world"`; the reply points at `memory_propose` |
+| Writeback instructions for a service acting for a person | "share: true shares a fact about the team's work" | never pass `share: true`; propose team knowledge with `memory_propose` |
+| QM contract | v2 and v3 `deferred_ops` named 11 operations | they name every deferred operation; v1 is byte-identical |
+
+### Itemized changes
+
+- `src/core/access/actor-model.ts`: `ACTOR_DEFERRED_OPS` gains every remaining page write. `test/qm-attest-write-boundary.test.ts` checks that every attestable mutating operation in the registry is either deferred or reviewed as not a page write, so a new page write cannot become attestable unnoticed.
+- `src/core/verbs.ts`, `src/core/access/member-facts.ts`, `src/core/persistence/memory-prepare.ts`: an attested `remember` refuses `share: true` and `visibility: "world"` at the call (a batch included), and a stored shared save made for a person is refused when it is prepared.
+- `src/core/facts/writeback-instructions.ts`: the instruction line for a service acting for a person.
+- `docs/contracts/qm-memory-provider/v2.json`, `v3.json`: regenerated `deferred_ops` (a published-contract amendment).
+- Docs: `docs/guides/qm.md`, `docs/mcp/ADMIN.md`, `docs/guides/write-refusals.md`, `docs/tutorials/company-brain.md`.
+- Tests: `test/qm-attest-write-boundary.test.ts` (new, PGLite and Postgres); `test/access-qm-actor.test.ts` calls every deferred operation attested; `test/access-member-facts.test.ts` and `test/remember-share-gst2243.test.ts` move their attested-write cases to the new boundary.
+
 ## [0.60.655.0] - 2026-11-10
 
 **QM, the AI helper that uses gbrain as one of its memories, can now read a person's own brain safely, read shared rooms only as the room's audience, and suggest edits that wait for the brain owner's yes.** This lands the QM internal-provider chain (#8475, #8480, #8557, #8477, #8483, #8479, #8466) as one release. Nothing changes for a brain with no attested (`x-qm-actor`) client: unattested calls and member-bound credentials behave as before, and every new table is database state, so a repo-less brain works the same.

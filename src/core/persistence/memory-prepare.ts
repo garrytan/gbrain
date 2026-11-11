@@ -24,7 +24,7 @@ import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolder
 import { tightenToPage } from '../facts/visibility.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
 import { noteBelief } from '../belief/ledger.ts';
-import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
+import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 
 function conflict(row: WriteRequest): never {
@@ -73,6 +73,8 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       { fix: requestReceiptFix(row) });
   }
   const p = row.intent;
+  // GST-2249 W1: a stored save made for an attested person never publishes shared, whenever it was admitted.
+  if (p.share === true && row.authority?.actingFor != null) throw attestedShareRefused(opError);
   const claim = storedClaim(p);
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
     visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,

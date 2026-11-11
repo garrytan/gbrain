@@ -472,6 +472,7 @@ test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
+test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
 test/qm-personal-sources.test.ts

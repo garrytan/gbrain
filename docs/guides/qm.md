@@ -36,10 +36,13 @@ for example `--attest-ops forget_fact,get_page,get_write_request,memory_recall,m
 They read as the person, their own restricted pages included, so grant them only to
 the client that serves the person's own DM, never to a client that serves shared
 rooms.
-Direct page writes (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`) are not
-attestable: a person's words reach a shared page only through an owner-approved proposal
-(`memory_propose`, [below](#proposed-writes)). `--attest-ops` refuses them, and a list that
+No page write is attestable: `put_page`, `edit_page`, `append_page`, `add_timeline_entry`, `add_link`,
+tags, deletes, restores, uploads, raw data and every other operation that writes a page are listed in
+the contract's `deferred_ops`. A person's words reach a shared page only through an owner-approved
+proposal (`memory_propose`, [below](#proposed-writes)). `--attest-ops` refuses them, and a list that
 already names one is refused for it on every call (`actor_not_attested`, reason `op_not_attested`).
+An attested `remember` keeps the fact on the person's own page: `share: true` or `visibility: "world"`
+is refused (`invalid_params`, reason `attested_share_refused`) and nothing is saved.
 A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is refused
 (`permission_denied`) when it saves for that member.
 Links and the right are database state, so a repo-less brain works the same; where

@@ -256,8 +256,9 @@ access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
 `remember` saves to the person's own page `memory/members/<member>` (private,
-read back only by that member, written remotely by no one else) unless the call
-passes `share: true`, which saves on the subject's page for everyone who reads
+read back only by that member, written remotely by no one else); an attested call's
+`share: true` or `visibility: "world"` is refused (`attested_share_refused`), while a credential
+bound to a member may pass `share: true` to save on the subject's page for everyone who reads
 the source (refused with `share_target_restricted` on a page whose facts are kept private;
 only the brain host withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
@@ -269,8 +270,8 @@ list, so add each to `--attest-ops` only for the client serving the person's own
 only a fact on the person's own page (also for a credential bound to a member).
 A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
-`extract_facts`, `takes_add|update|resolve|supersede`, and the direct page writes
-`add_timeline_entry`, `add_link`, `put_page` and `edit_page`; an attested timeline entry or link goes
+`extract_facts`, `takes_add|update|resolve|supersede`, and every page write (`add_timeline_entry`,
+`add_link`, `put_page`, `edit_page`, tags, deletes, uploads and the rest: the contract's `deferred_ops`); an attested timeline entry or link goes
 through `memory_propose` and waits for your `gbrain memory-proposals approve` ([QM guide](../guides/qm.md#proposed-writes)). An `--attest-ops` list that already names one of these is refused for it
 (`actor_not_attested`, reason `op_not_attested`), and a queued attested write of one fails when it publishes.
 An attested read sees what that person sees, private facts included, and gbrain

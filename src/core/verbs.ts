@@ -187,8 +187,14 @@ const remember: Operation = {
     if (p.share === true && p.visibility === 'private') {
       throw verbError('invalid_params', 'share: true and visibility "private" contradict each other; nothing was saved.', 'Pass share: true to share the fact, or visibility "private" to keep it to yourself, not both.');
     }
+    // GST-2249 W1: a save made for a person (x-qm-actor) stays on that person's member page; sharing it is a write every
+    // reader of the source sees, made with no owner approval, so it is refused like the direct page writes.
+    const memberFacts = await import('./access/member-facts.ts');
+    const attested = ctx.attestedOp !== 'memory_write' && (await import('./search/private-visibility.ts')).currentCallerAccess().actor != null;
+    if (attested && p.share === true) throw memberFacts.attestedShareRefused(verbError);
     // GST-2243: a member shares only with share: true, so its explicit visibility "world" is refused, never quietly made private.
-    if (p.share !== true && p.visibility === 'world' && ctx.attestedOp !== 'memory_write' && (await import('./access/member-facts.ts')).memberFactPage(ctx)) {
+    if (p.share !== true && p.visibility === 'world' && ctx.attestedOp !== 'memory_write' && memberFacts.memberFactPage(ctx)) {
+      if (attested) throw memberFacts.attestedShareRefused(verbError);
       throw Object.assign(verbError('invalid_params', 'remember: a member credential shares a fact with share: true, not visibility "world"; nothing was saved.',
         'Retry the same call with share: true in place of visibility "world" to share a fact about the team\'s work with everyone who reads this source, or with no visibility to keep a fact about a person on your own member page. A member shares only this way: pass share: true, never visibility "world".'),
         { reason: 'member_share_required' });
