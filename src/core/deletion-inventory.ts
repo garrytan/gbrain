@@ -100,7 +100,7 @@ const ROWS: readonly Row[] = [
   ['ingest_log', 'out_of_scope', 'probed_reported', 'source_id source_type source_ref pages_updated summary writer_version', 'summary pages_updated'],
   ['link_edge_proposals', 'out_of_scope', 'probed_reported', 'source_id link_type evidence_hash status model generated_line detail', 'generated_line detail'],
   ['link_relationships', 'out_of_scope', 'no_memory_text', 'link_type scope source_id semantics status_now evidence_hash'],
-  ['link_transitions', 'out_of_scope', 'no_memory_text', 'source_id link_type kind date_precision producer line_hash'],
+  ['link_transitions', 'out_of_scope', 'no_memory_text', 'source_id link_type kind date_precision producer line_hash link_source'],
   ['links', 'out_of_scope', 'probed_reported', 'link_type context link_source link_kind origin_field resolution_type assertion_tense', 'context'],
   ['loop_suppressions', 'out_of_scope', 'no_memory_text', 'source_id kind value'],
   ['mcp_request_log', 'out_of_scope', 'probed_reported', 'token_name agent_name operation status params error_message', 'params error_message'],

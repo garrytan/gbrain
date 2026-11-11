@@ -4,7 +4,7 @@ QM, a trusted system that already knows who each person is, keeps per-person
 memory in a brain through two MCP tools: `memory_recall` reads what the person may
 read, and `memory_write` saves facts only they read back. Both run as the person QM
 names in the `x-qm-actor` header. The wire contract QM vendors is
-[`docs/contracts/qm-memory-provider/v1.json`](../contracts/qm-memory-provider/README.md); `v2.json` adds scope reads and writes, and `v3.json` the personal tools for the person's own DM.
+[`docs/contracts/qm-memory-provider/v1.json`](../contracts/qm-memory-provider/README.md); `v2.json` adds scope reads and writes, `v3.json` the personal tools for the person's own DM, and `v4.json` owner-approved proposals (`memory_propose`), which personal tools are scope reads, and each recalled fact's `own_page`.
 
 ## Set up on the brain host
 
@@ -36,10 +36,13 @@ for example `--attest-ops forget_fact,get_page,get_write_request,memory_recall,m
 They read as the person, their own restricted pages included, so grant them only to
 the client that serves the person's own DM, never to a client that serves shared
 rooms.
-Direct page writes (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`) are not
-attestable: a person's words reach a shared page only through an owner-approved proposal
-(`memory_propose`, [below](#proposed-writes)). `--attest-ops` refuses them, and a list that
+No page write is attestable: `put_page`, `edit_page`, `append_page`, `add_timeline_entry`, `add_link`,
+tags, deletes, restores, uploads, raw data and every other operation that writes a page, plus answer
+feedback, the ingest log and loop muting, are listed in the contract's `deferred_ops`. A person's words reach a shared page only through an owner-approved
+proposal (`memory_propose`, [below](#proposed-writes)). `--attest-ops` refuses them, and a list that
 already names one is refused for it on every call (`actor_not_attested`, reason `op_not_attested`).
+An attested `remember` keeps the fact on the person's own page: `share: true` or `visibility: "world"`
+is refused (`invalid_params`, reason `attested_share_refused`) and nothing is saved.
 A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is refused
 (`permission_denied`) when it saves for that member.
 Links and the right are database state, so a repo-less brain works the same; where
@@ -65,6 +68,7 @@ person reads the same way. List the ops a client needs with `--attest-ops`.
 `context_pack` is not a scope read yet: on a client that reads named sources as the
 scope it is refused (`invalid_params`) when it names `source_id`, `source_ids`,
 `all_sources` or `entity_refs`, so keep it off a client that serves shared turns.
+Contract v4 marks each personal tool `scope_read: true` or `false` to match.
 
 Set how each client reads named sources with `--attest-read`:
 
@@ -124,12 +128,13 @@ the person it serves. Nothing is written until the brain owner says yes. Grant i
   person it was made for reads it; anyone else gets `not_found`.
 - `cancel_write_request {request_id}` withdraws a proposal still awaiting the owner.
 
-The owner reviews on the brain host, never over MCP:
+The owner reviews on the brain host, or from another machine with `gbrain mcp admin
+memory-proposals list|show|approve|deny` (owner session only), never over MCP:
 
 ```bash
 gbrain memory-proposals list                       # awaiting your decision, oldest first
 gbrain memory-proposals show <request_id>          # the proposed text, fenced as untrusted transcript text
-gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it
+gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it; exits 1 if the write fails
 gbrain memory-proposals deny <request_id> --reason "<why>"
 ```
 
@@ -205,7 +210,10 @@ until a writer publishes them.
 On success the result is in `structuredContent`, and `content` holds only the text
 for the model. Each fact in `structuredContent.facts` carries `arm`: `own` (the
 person's own recent fact) or `ranked` (matched by `query`); a recall that names
-sources has only `ranked` rows. A query over 2,000 characters is ranked on its start;
+sources has only `ranked` rows. Each fact also carries `own_page`: `true` when it sits on
+the person's own member page, the same test `forget_fact` uses, so `forget_fact` accepts it on
+ownership; `false` means `forget_fact` for that person answers `fact_not_found`. An older own fact can be `ranked` with
+`own_page: true`. A query over 2,000 characters is ranked on its start;
 send `query_keep: "tail"` when QM puts its preamble ahead of the turn, and read
 `query_truncated` to tell a cut query from a short one. An attested call to a v3 personal tool also gets its
 result in `structuredContent` (a list as `structuredContent.results`), while

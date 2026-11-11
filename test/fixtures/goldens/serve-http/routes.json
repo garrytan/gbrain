@@ -505,6 +505,34 @@
     {
       "handlers": [
         "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/memory-proposals",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "<inline>"
+      ],
+      "method": "get",
+      "path": "/admin/api/memory-proposals/:request_id",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
+        "express.json()",
+        "<inline>"
+      ],
+      "method": "post",
+      "path": "/admin/api/memory-proposals/:request_id",
+      "when": []
+    },
+    {
+      "handlers": [
+        "requireAdmin",
         "express.json()",
         "<inline>"
       ],

@@ -503,6 +503,64 @@ export async function materializeTakeResolutions(engine: BrainEngine, pageId: nu
   return next;
 }
 
+/**
+ * Every stored take of page `pageId` as its fence row, in row order, resolution cells included. A rewrite that dropped
+ * the page's takes fence leaves exactly these rows stored (held `fence_absent` on a managed brain, kept by the takes
+ * reconcile on an unmanaged one); a take the user removed, or an empty fence retired, is no longer among them. A stored
+ * resolution with no quality, which the fence cannot carry, refuses (`invalid_input`) instead of being dropped.
+ */
+async function storedTakeRows(engine: BrainEngine, pageId: number): Promise<ParsedTake[]> {
+  const rows = await engine.executeRaw<{ row_num: number; claim: string; kind: TakeKind; holder: string; weight: number; since_date: string | null; until_date: string | null;
+    source: string | null; active: boolean; resolved_at: Date | string | null; resolved_quality: TakeQuality | null; resolved_outcome: boolean | null; resolved_source: string | null;
+    resolved_value: number | string | null; resolved_unit: string | null; resolved_by: string | null }>(`SELECT row_num, claim, kind, holder, weight, since_date, until_date, source, active,
+      resolved_at, resolved_quality, resolved_outcome, resolved_source, resolved_value, resolved_unit, resolved_by FROM takes WHERE page_id=$1 ORDER BY row_num`, [pageId]);
+  return rows.map(t => {
+    if (t.resolved_at !== null && !t.resolved_quality) {
+      throw new TakesWriteError('invalid_input', `Take row #${t.row_num} has a resolution without a quality, which the takes fence cannot carry; re-creating the takes section would clear it.`);
+    }
+    return { rowNum: Number(t.row_num), claim: t.claim, kind: t.kind, holder: t.holder, weight: Number(t.weight), active: t.active,
+      ...(t.since_date ? { sinceDate: t.since_date } : {}), ...(t.until_date ? { untilDate: t.until_date } : {}), ...(t.source ? { source: t.source } : {}),
+      ...(t.resolved_quality ? { resolvedQuality: t.resolved_quality, ...(t.resolved_at ? { resolvedAt: new Date(t.resolved_at).toISOString() } : {}),
+        ...(t.resolved_outcome !== null ? { resolvedOutcome: t.resolved_outcome } : {}), ...(t.resolved_source ? { resolvedEvidence: t.resolved_source } : {}),
+        ...(t.resolved_value !== null ? { resolvedValue: Number(t.resolved_value) } : {}), ...(t.resolved_unit ? { resolvedUnit: t.resolved_unit } : {}),
+        ...(t.resolved_by ? { resolvedBy: t.resolved_by } : {}) } : {}) };
+  });
+}
+
+/**
+ * `body` with the page's stored takes (`storedTakeRows`) rendered into a new takes section when it has no takes fence
+ * marker at all, else unchanged. The writers that create the fence (`addTakeToPage`, `appendTakesToPageMdFirst` and
+ * the managed `takes extract --from-pages` put) go through this, so their own rows number after the stored ones:
+ * otherwise they number from 1, overwrite stored takes in place, and the next projection deletes the rest. A body with
+ * a near-miss marker (`<!-- gbrain:takes:begin -->`) refuses `fence_unparsed`, as each writer refuses it without
+ * stored takes, and a render that would not read back row for row, every stored cell unchanged, refuses (`invalid_input`)
+ * instead of dropping or changing a take.
+ */
+export async function withStoredTakesFence(engine: BrainEngine, pageId: number, body: string): Promise<string> {
+  const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
+  if (beginIdx !== -1 || endIdx !== -1) return body;
+  const rows = await storedTakeRows(engine, pageId);
+  if (!rows.length) return body;
+  assertFenceRoundTrips(parseTakesFence(body));
+  for (const row of rows) {
+    for (const [field, value] of [['claim', row.claim], ['source', row.source], ['resolved_source', row.resolvedEvidence], ['resolved_unit', row.resolvedUnit], ['resolved_by', row.resolvedBy]] as const) {
+      assertSafeCellText(field, value);
+    }
+  }
+  const next = replaceFence(upsertTakeRow(body, rows[0]!).body, rows);
+  const reparsed = parseTakesFence(next);
+  assertFenceRoundTrips(reparsed);
+  if (reparsed.takes.length !== rows.length) throw new TakesWriteError('invalid_input', 'The takes fence lost rows while carrying the stored takes of the page.');
+  const cell = (value: unknown) => (value === '' || value === null ? undefined : value);
+  const fields = ['claim', 'kind', 'holder', 'sinceDate', 'untilDate', 'source', 'active', 'resolvedQuality', 'resolvedEvidence', 'resolvedValue', 'resolvedUnit', 'resolvedBy'] as const;
+  const changed = rows.find(row => {
+    const back = reparsed.takes.find(take => take.rowNum === row.rowNum);
+    return !back || fields.some(field => cell(back[field]) !== cell(row[field]));
+  });
+  if (changed) throw new TakesWriteError('invalid_input', `Take row #${changed.rowNum} would not read back unchanged from the takes fence, so re-creating the section would change it.`);
+  return next;
+}
+
 /** Compose the same append sequence used by the legacy md-first writer. */
 export function appendTakesToPageBody(body: string, rows: ReadonlyArray<AddTakeInput>): { body: string; rowNums: number[] } {
   for (const row of rows) {
@@ -557,7 +615,7 @@ export async function addTakeToPage(
     const { path, writeRoot } = await resolveTakesFilePath(
       target.engine, target.brainDir, target.slug, target.sourceId,
     );
-    const body = existsSync(path) ? readFileSync(path, 'utf-8') : '';
+    const body = await withStoredTakesFence(target.engine, pageId, existsSync(path) ? readFileSync(path, 'utf-8') : '');
     // F1: guard only fires when a fence ALREADY exists (an empty/fence-less body
     // parses to zero warnings) — a whole-fence re-render must not delete rows
     // this version couldn't parse.
@@ -630,7 +688,7 @@ export async function appendTakesToPageMdFirst(
     );
     // Unlike addTakeToPage, a missing file REFUSES (readPageBody's
     // mirror_unavailable) — see the contract note above.
-    const body = readPageBody(path);
+    const body = await withStoredTakesFence(target.engine, pageId, readPageBody(path));
     const { body: nextBody, rowNums } = appendTakesToPageBody(body, rows);
     writePageBody(path, nextBody, writeRoot, target.slug);
     // Mirror md→DB with the reconcile primitive, exactly as the fence now
