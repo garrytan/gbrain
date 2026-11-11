@@ -27,6 +27,7 @@ import { READERS_KEY, type LabelEdit } from '../persistence/label-edit.ts';
 import { digest } from '../persistence/digest.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
+import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { afterCursor, type RepairCursor, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 /** The operator's request: `--readers` as typed (`none` removes), the owner flag, and the `--slugs-file` path with its slugs. */
@@ -186,6 +187,7 @@ export async function applyReaders(engine: BrainEngine, item: ReadersItem,
   try {
     const snapshot = await engine.readPageSnapshot(item.slug, { sourceId: item.source_id });
     if (!snapshot || Number(snapshot.page.id) !== item.target.id || !same(normalizeReaders(snapshot.page.frontmatter), item.readers.from)) return false;
+    if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit its readable_by line by hand on the brain host.' };
     const { [READERS_KEY]: _readers, ...rest } = snapshot.page.frontmatter;
     const to = item.readers.to;
     const frontmatter = to ? { ...snapshot.page.frontmatter, [READERS_KEY]: to } : rest;

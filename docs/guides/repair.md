@@ -80,6 +80,9 @@ gbrain repair visibility --class facts        # one class: facts, events, aliase
 gbrain repair visibility --class facts --apply --expect <hash>   # exactly that window
 gbrain repair visibility --slug notes/a-example                  # make named pages private (repeatable)
 gbrain repair visibility --slug notes/a-example --apply --expect <hash>
+gbrain repair visibility --slug notes/a-example --readers alice-example,group:team-a   # set who reads it
+gbrain repair visibility --slugs-file pages.txt --readers alice-example --apply --expect <hash>
+gbrain repair visibility --slug notes/a-example --readers none   # remove readable_by
 ```
 
 Every visibility write is label-only: the page keeps its trust tier, files no
@@ -95,6 +98,31 @@ written (run `gbrain sync` first). A file the repair cannot write
 (`sync.write_through` is off, a clone gbrain pulls, a write error) is held
 `file_backed` with nothing written, because the next sync would put the old
 label back from the file; make that edit in the file by hand.
+
+`--readers <list>` sets the named pages' `readable_by` (members by id, groups as
+`group:<id>`, `none` removes it) through the same label-only write: the page
+keeps its trust tier and provenance, files no `lower_page` proposal, and its
+file changes only on the `readable_by` line (written `readable_by: [a, b]`).
+Name the pages with `--slug` (repeatable) or `--slugs-file <file>` (one slug per
+line; blank lines and `#` comments are skipped; up to 10,000 pages, all in one
+preview). An unknown or disabled member, or an unknown group, refuses
+`access_member_invalid` with nothing written. A list that leaves out the brain
+owner (`gbrain access owner`) refuses too, because `readable_by` binds the owner
+and its own keys would stop reading the page; a group the owner belongs to does
+not count. Pass `--allow-without-owner` when that is what you want. A page whose
+readers changed after the preview is skipped.
+
+Each page is its own write, so no lock or transaction spans the run and a long
+list does not hold up other writers. On a managed brain the Git effect commits
+the tracked files, grouping queued files up to 100 per commit; `--json` reports
+`details.git`, the run's files by effect state (`committed`, `pending`,
+`failed`, and `skipped` for a `storage.db_only` page, which has no file). A
+managed page with no file, outside any declared `storage.db_only` path, is held
+`canonical_file_missing` with nothing written, because the write would put the
+database ahead of Git: declare its folder under `storage.db_only` in `gbrain.yml`
+and preview again, or restore the file (`gbrain repair ghost-pages` lists pages
+whose file is gone). On a repo-less brain the database is the record, and every
+page is written there.
 
 A fenced fact row the apply could not make private is counted in the outcomes
 (`--json`: `outcomes`, each row in `outcome_items`), and the text output says
