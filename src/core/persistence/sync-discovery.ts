@@ -853,5 +853,12 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
         argv: ['gbrain', 'sync', '--no-pull', '--working-tree', '--source', discovery.sourceId] } });
     return bytes.toString('utf8');
   }
-  return syncGit(discovery.gitRoot, ['cat-file', '--filters', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
+  const gitPath = syncGitPath(discovery, entry.path);
+  // #9024: a path under a `filter` attribute (git-crypt, git-lfs) is read smudged; every other path keeps the plain pinned `git show`.
+  // Attributes come from the target revision (`--source`, git >= 2.40); older git falls back to the indexed ones.
+  const attr = (source: string) => syncGit(discovery.gitRoot, ['check-attr', source, 'filter', '--', gitPath]).trim().split(': ').pop();
+  let filter: string | undefined;
+  try { filter = attr(`--source=${discovery.target}`); } catch { filter = attr('--cached'); }
+  const filtered = filter !== undefined && filter !== 'unspecified' && filter !== 'unset';
+  return syncGit(discovery.gitRoot, filtered ? ['cat-file', '--filters', `${discovery.target}:${gitPath}`] : ['show', `${discovery.target}:${gitPath}`]);
 }
