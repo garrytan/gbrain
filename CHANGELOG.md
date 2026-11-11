@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.657.0] - 2026-11-11
+
+**A running `gbrain serve`, worker or autopilot no longer fails writes after another process changes a table's columns (GST-2260).** When `gbrain apply-migrations` or an upgrade in another process added, renamed or dropped a column, every pooled connection that had already prepared a `SELECT *` or `RETURNING *` on that table failed its next run with "cached plan must not change result type". Outside a transaction the driver quietly prepared the statement again, but inside one the error had already aborted the transaction, so the caller saw it. A `put_page` came back `internal_error`, or was accepted and then failed at publication, once for each statement on each pooled connection. Version 0.60.646.0 made the write paths re-run the transaction it aborted. Now the first such error also makes every connection in the process prepare its statements again before its next query, and an OAuth token grant whose client read meets it and a minion job's completion or failure record are re-run too. Pools that do not prepare statements (transaction-mode pooler URLs, `prepare: false`) and PGLite are unchanged.
+
+### Itemized changes
+
+- `vendor/postgres` (`patches/postgres@3.4.9.patch`): the first `RevalidateCachedQuery` error on a statement a connection had cached starts a process-wide plan generation; each connection drops its prepared statements before it builds its next query, and a statement described under an older generation is not cached in the new one.
+- `src/core/retry-matcher.ts`: `retryOnStalePlan`, one more run, on 0.60.646.0's `isStalePlanError`, for a transaction that does only database work.
+- `src/core/oauth-grants.ts`: the client-locked OAuth grant transaction runs once more when a stale plan fails its opening client read, before the callback writes anything.
+- `src/core/minions/queue.ts`: `completeJob` and `failJob`, whose transactions do only database work, run once more after a stale plan.
+- Tests: `test/stale-plan-heal.test.ts` (Postgres; listed in `test/postgres-unit-arms.txt`).
+
 ## [0.60.656.0] - 2026-11-11
 
 **`gbrain upgrade` finishes on hosts where autopilot runs outside launchd and systemd, instead of refusing every time.**
