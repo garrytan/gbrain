@@ -183,7 +183,7 @@ export async function claimPersistenceEffect(engine: BrainEngine, hostId: string
           WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))`;
     // Every other kind is claimed in persistence_effects_pending order, so a backlog costs one index walk, not a sort.
     const [next] = await tx.executeRaw<PersistenceEffect & { next_attempt_at: Date | string }>(`SELECT e.* FROM persistence_effects e LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
-        WHERE ${ready} AND e.next_attempt_at<=now() AND e.kind=ANY($3::text[])
+        WHERE ${ready} AND e.next_attempt_at<=now() AND e.kind=ANY($3::text[]) AND e.kind<>'${INDEX_SPLIT_PAGE_EFFECT}'
         ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`, [hostId, [...deadOwners], kinds]);
     // eng-r3-outside-4: an index effect keeps next_attempt_at at 'infinity' (the barrier trigger in git-first-schema.ts) and its due
     // time in data.due_at, so a released binary's claim never selects it. Only one due before `next` is claimed ahead of it.

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { claimPersistenceEffect } from '../../src/core/persistence/effect-journal.ts';
+import { claimPersistenceEffect, indexLeaseClaimSeam } from '../../src/core/persistence/effect-journal.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import { _resetGitFirstGateForTests, _resetIndexSplitPageConsumerForTests, registerIndexSplitPageConsumer } from '../../src/core/persistence/git-first-gate.ts';
 import { localHostId } from '../../src/core/persistence/identity.ts';
@@ -109,5 +109,29 @@ for (const backend of testBackends()) describe(`[${backend}] index effects are i
     expect(plans.length).toBeGreaterThan(0);
     expect(plans[0]).toContain('persistence_effects_pending');
     expect(plans[0]).not.toMatch(/\bSort\b/);
+  }, { databaseUrl, setup }), 240_000);
+  test('a finite-due index effect (barrier trigger bypassed) behind a live page lease never spins the claim', () => managedBrain(async ({ engine, ctx }) => {
+    await strict(engine);
+    registerIndexSplitPageConsumer(paused);
+    expect((await write(engine, ctx, 'notes/spin', pageBody(2 * MiB, 'MARKERSPIN'), 'put')).state).toBe('indexing');
+    await engine.executeRaw('ALTER TABLE persistence_effects DISABLE TRIGGER persistence_effects_index_barrier');
+    try {
+      const columns = (await engine.executeRaw<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema()
+        AND table_name='persistence_requests' AND column_name NOT IN ('id','request_id','sequence') ORDER BY ordinal_position`)).map(row => row.column_name).join(',');
+      await asMaster(engine, `WITH clone AS (INSERT INTO persistence_requests(id,request_id,${columns})
+          SELECT gen_random_uuid(),gen_random_uuid(),${columns} FROM persistence_requests WHERE id=(SELECT request_id FROM persistence_effects WHERE kind='index-split-page')
+          RETURNING id)
+        INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id,next_attempt_at,state,execution_token,claim_owner,claim_expires_at)
+        SELECT clone.id,e.kind,e.data,e.source_id,e.source_incarnation,e.worktree_id,'infinity'::timestamptz,'running',gen_random_uuid(),'{}'::jsonb,now()+interval '10 minutes'
+        FROM clone CROSS JOIN persistence_effects e WHERE e.kind='index-split-page'`);
+      await asMaster(engine, "UPDATE persistence_effects SET next_attempt_at=now()-interval '1 minute' WHERE kind='index-split-page' AND state='queued'");
+      let rechecks = 0;
+      indexLeaseClaimSeam.beforeRecheck = async () => { if (++rechecks > 20) throw new Error('the claim spun on a leased index effect'); };
+      const claimed = await claimPersistenceEffect(engine, localHostId(), []);
+      expect(claimed?.kind).not.toBe('index-split-page');
+    } finally {
+      indexLeaseClaimSeam.beforeRecheck = undefined;
+      await engine.executeRaw('ALTER TABLE persistence_effects ENABLE TRIGGER persistence_effects_index_barrier');
+    }
   }, { databaseUrl, setup }), 240_000);
 });
