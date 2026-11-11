@@ -334,7 +334,7 @@ async function runPin(args: string[]): Promise<void> {
       const problem = pinProblem({ name, ...(line !== undefined ? { line } : {}) });
       if (problem) usage(problem, 'Fix the value and retry.');
       const known = catalogSkillIds(home, catalog);
-      if (!known) runtimeFailure(new ResolverError('skill_index_missing', `The catalog "${catalog}" has not been built, so the pin cannot be checked; nothing was written.`, { suggestion: `Build it first (gbrain setup <harness> --skill-loading resolve, or gbrain skills index build --catalog ${catalog} ...).` }), json);
+      if (!known) runtimeFailure(new ResolverError('skill_index_missing', `The catalog "${catalog}" has not been built, so the pin cannot be checked; nothing was written.`, { suggestion: `Build it first with gbrain skills index build --catalog ${catalog} ...; or run gbrain setup <harness> --skill-loading resolve.` }), json);
       if (!known.has(name)) exitCliError(opError('skill_resolver_pin_unknown', `"${name}" is not a skill in ${catalog}; nothing was written.`, `Check the id with gbrain skills index status --catalog ${catalog}, then retry.`, { docs: 'docs/guides/skill-resolver.md#skill_resolver_pin_unknown' }), CMD, { json });
       const others = pins.filter((x) => x.name !== name);
       if (others.length >= PINS_MAX) usage(`${catalog} already has ${PINS_MAX} pins.`, 'Remove one first.');
