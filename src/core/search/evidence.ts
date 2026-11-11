@@ -20,7 +20,8 @@
  *   keyword_exact      — surfaced by a strict lexical arm (keyword/title FTS,
  *                        keyword_hit=true, not keyword_relaxed) with a solid
  *                        score (#3783 — a solid blended score alone no longer
- *                        earns this label)
+ *                        earns this label); in keyword mode (GBRA-449) any
+ *                        strict keyword row, whatever its score
  *   weak_semantic      — everything else (low-confidence tail)
  *
  * create_safety:
@@ -65,6 +66,15 @@ export const DEFAULT_HIGH_COSINE_FLOOR = 0.8;
 export interface EvidenceOpts {
   /** Cosine floor for high_vector_match (default DEFAULT_HIGH_COSINE_FLOOR). */
   cosineFloor?: number;
+  /**
+   * GBRA-449: the rows come from a keyword-mode search (search `match: "keyword"`;
+   * not the operator's `search.mcp_keyword_only` route), where every strict row satisfies the query as the
+   * caller wrote it, its own OR included. Such a row (unless it matched only an
+   * entity name the engine added, `matched_alias`) is keyword_exact whatever its
+   * score; normalized ts_rank for an OR or one-word query sits far under
+   * SOLID_MATCH_FLOOR. create_safety still follows the score floor.
+   */
+  keywordMode?: boolean;
 }
 
 export function classifyEvidence(r: SearchResult, opts: EvidenceOpts = {}): Evidence {
@@ -85,7 +95,10 @@ export function classifyEvidence(r: SearchResult, opts: EvidenceOpts = {}): Evid
   // zero-strict-recall fallback) matched some query terms, not the query, so
   // it is not lexically verified.
   const base = typeof r.base_score === 'number' ? r.base_score : r.score;
-  if (r.keyword_hit === true && r.keyword_relaxed !== true && Number.isFinite(base) && base >= SOLID_MATCH_FLOOR) {
+  // GBRA-449: keyword mode waives the floor for a row that matched the caller's own statement, not an engine-added
+  // name (matched_alias: the row matched only one of the entity's other names the engine ORed into the query).
+  const callersOwnMatch = opts.keywordMode === true && !r.matched_alias;
+  if (r.keyword_hit === true && r.keyword_relaxed !== true && (callersOwnMatch || (Number.isFinite(base) && base >= SOLID_MATCH_FLOOR))) {
     return 'keyword_exact';
   }
   return 'weak_semantic';
@@ -119,12 +132,14 @@ export function createSafetyFor(evidence: Evidence): CreateSafety {
 /**
  * Stamp `evidence` + `create_safety` on every result in place. Called once at
  * the end of the hybrid pipeline (after the alias hop, before slice) so the
- * agent-facing result carries the contract. Idempotent.
+ * agent-facing result carries the contract. Idempotent. GBRA-449: create_safety
+ * is derived from the label without `keywordMode`, so a keyword-mode row
+ * relabelled keyword_exact under the score floor keeps the `unknown` it had.
  */
 export function stampEvidence(results: SearchResult[], opts: EvidenceOpts = {}): void {
   for (const r of results) {
     const e = classifyEvidence(r, opts);
     r.evidence = e;
-    r.create_safety = createSafetyFor(e);
+    r.create_safety = createSafetyFor(opts.keywordMode ? classifyEvidence(r, { ...opts, keywordMode: false }) : e);
   }
 }

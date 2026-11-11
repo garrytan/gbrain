@@ -36,10 +36,13 @@ for example `--attest-ops forget_fact,get_page,get_write_request,memory_recall,m
 They read as the person, their own restricted pages included, so grant them only to
 the client that serves the person's own DM, never to a client that serves shared
 rooms.
-Direct page writes (`add_timeline_entry`, `add_link`, `put_page`, `edit_page`) are not
-attestable: a person's words reach a shared page only through an owner-approved proposal
-(`memory_propose`, [below](#proposed-writes)). `--attest-ops` refuses them, and a list that
+No page write is attestable: `put_page`, `edit_page`, `append_page`, `add_timeline_entry`, `add_link`,
+tags, deletes, restores, uploads, raw data and every other operation that writes a page, plus answer
+feedback, the ingest log and loop muting, are listed in the contract's `deferred_ops`. A person's words reach a shared page only through an owner-approved
+proposal (`memory_propose`, [below](#proposed-writes)). `--attest-ops` refuses them, and a list that
 already names one is refused for it on every call (`actor_not_attested`, reason `op_not_attested`).
+An attested `remember` keeps the fact on the person's own page: `share: true` or `visibility: "world"`
+is refused (`invalid_params`, reason `attested_share_refused`) and nothing is saved.
 A client whose `bound_slug_prefixes` do not cover `memory/members/<member>` is refused
 (`permission_denied`) when it saves for that member.
 Links and the right are database state, so a repo-less brain works the same; where
@@ -124,12 +127,13 @@ the person it serves. Nothing is written until the brain owner says yes. Grant i
   person it was made for reads it; anyone else gets `not_found`.
 - `cancel_write_request {request_id}` withdraws a proposal still awaiting the owner.
 
-The owner reviews on the brain host, never over MCP:
+The owner reviews on the brain host, or from another machine with `gbrain mcp admin
+memory-proposals list|show|approve|deny` (owner session only), never over MCP:
 
 ```bash
 gbrain memory-proposals list                       # awaiting your decision, oldest first
 gbrain memory-proposals show <request_id>          # the proposed text, fenced as untrusted transcript text
-gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it
+gbrain memory-proposals approve <request_id>       # re-checks the person, the grant and the page, then writes it; exits 1 if the write fails
 gbrain memory-proposals deny <request_id> --reason "<why>"
 ```
 
