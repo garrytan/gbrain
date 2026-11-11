@@ -6,6 +6,10 @@
     "scripts/serial-files.tsv": [
       "test/scripts/serial-files.test.ts"
     ],
+    "scripts/check-request-state-lists.mjs": [
+      "test/scripts/run-verify-parallel.test.ts"
+    ],
+    "scripts/request-state-lists-baseline.json": [],
     "docs/contracts/qm-memory-provider/v1.json": [
       "test/qm-memory-contract.test.ts"
     ],
