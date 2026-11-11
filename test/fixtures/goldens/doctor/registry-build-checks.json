@@ -399,6 +399,10 @@
       },
       {
         "category": "brain",
+        "name": "access_owner_reads_restricted"
+      },
+      {
+        "category": "brain",
         "name": "attest_read_shared_scope"
       },
       {

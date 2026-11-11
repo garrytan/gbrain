@@ -88,6 +88,7 @@
       "  [INFO] access_policy_store_mismatch: Not applicable: no source has a folder rule.",
       "  [INFO] unlabeled_people_folders: Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
       "  [INFO] access_may_act_for_wildcard: Not applicable: no page names readers and no member exists.",
+      "  [INFO] access_owner_reads_restricted: Not applicable: the owner opt-in (access.owner_reads_restricted) is off; the owner reads a page that names readers or sits under a rule only when listed.",
       "  [INFO] attest_read_shared_scope: Not applicable: no attest credential reads named sources as the person (--attest-read person).",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] function_search_path: Every gbrain function that pins a search_path ends it with pg_temp",

@@ -36,12 +36,14 @@ async function verdict(ctx: DoctorContext): Promise<Check> {
 }
 
 async function runOwnerReadsRestricted(ctx: DoctorContext): Promise<Check[]> {
+  const checks: Check[] = [];
   const { name: _name, ...check } = await verdict(ctx);
-  return [{ name, ...check }];
+  checks.push({ name: 'access_owner_reads_restricted', ...check });
+  return checks;
 }
 
 export const ownerReadsRestrictedEntry: DoctorEntry = {
-  name,
-  emits: [name],
+  name: 'access_owner_reads_restricted',
+  emits: ['access_owner_reads_restricted'],
   run: runOwnerReadsRestricted,
 };
