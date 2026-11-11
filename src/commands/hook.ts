@@ -1153,7 +1153,7 @@ async function hookUserPrompt(io: HookIo): Promise<number> {
     const j = await readStdinJson(io, 300);
     if (!j) return { outcome: 'degraded', reason: 'no_stdin' };
     // #8028: a task notification or agent-team message arrives as a prompt but is no human turn.
-    if (typeof j.prompt === 'string' && /^\s*<(task-notification|teammate-message)[\s>]/.test(j.prompt)) return { outcome: 'ok', reason: 'harness_prompt' };
+    if (typeof j.prompt === 'string' && /^\s*<(task-notification|teammate-message)[\s>]/.test(j.prompt)) { turnRule = null; return { outcome: 'ok', reason: 'harness_prompt' }; }
 
     // S3#8: transcript_path is untrusted input. A present-but-unconfined
     // path aborts the event (heartbeat + empty stdout), never "best effort".
