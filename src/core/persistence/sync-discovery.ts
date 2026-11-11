@@ -853,5 +853,5 @@ export function readSyncContent(discovery: SyncDiscovery, entry: SyncEntry): str
         argv: ['gbrain', 'sync', '--no-pull', '--working-tree', '--source', discovery.sourceId] } });
     return bytes.toString('utf8');
   }
-  return syncGit(discovery.gitRoot, ['show', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
+  return syncGit(discovery.gitRoot, ['cat-file', '--filters', `${discovery.target}:${syncGitPath(discovery, entry.path)}`]);
 }
