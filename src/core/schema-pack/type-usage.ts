@@ -62,6 +62,18 @@ export function storedTypeMissesPack(type: string | null | undefined, pack: Type
 }
 
 /**
+ * SQL predicate over `pages p`: the page was written by one of gbrain's own
+ * writers outside the content taxonomy, judged by how it was written rather
+ * than by its type name alone. A code importer page is a `code` page with
+ * page_kind 'code' (retyped to anything else, it is the owner's type); an
+ * extract receipt is an `extract_receipt` under extracts/ stamped
+ * dream_generated. gbrain-base-v2 declares both types since #6818; a custom
+ * pack copied before then lacks them, which is not the owner's schema drift
+ * (#8815). A user's Markdown page typed `code` matches neither.
+ */
+export const WRITER_OWNED_PAGE_SQL = `((p.type = 'code' AND p.page_kind = 'code') OR (p.type = 'extract_receipt' AND p.slug LIKE 'extracts/%' AND p.frontmatter->>'dream_generated' = 'true'))`;
+
+/**
  * Type strings come from user/agent frontmatter and get echoed into terminal
  * warnings — strip control/non-printable characters (ANSI-escape hygiene) and
  * cap the length so a hostile or garbled value can't mangle the terminal.

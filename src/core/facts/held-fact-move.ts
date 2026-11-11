@@ -10,17 +10,19 @@ import type { BrainEngine } from '../engine.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { maintenancePreflight, submitPlannedFactFenceAdoption } from '../persistence/prepared-maintenance.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
-import { pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
+import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
 
 export interface HeldFactMoveOutcome {
   moved: number;
   moved_slugs: string[];
   /** Held rows that stay on memory/unattributed this run, with the reason (the entity page's fence, a duplicate claim, a refusal). */
   unmovable: Array<{ code: 'held_fact_unmovable'; slug: string; fact_ids: number[]; reason: string }>;
+  /** #8568: entities whose move threw (I/O, database), as opposed to holds the next run settles. */
+  write_errors: number;
 }
 
 export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Promise<HeldFactMoveOutcome> {
-  const outcome: HeldFactMoveOutcome = { moved: 0, moved_slugs: [], unmovable: [] };
+  const outcome: HeldFactMoveOutcome = { moved: 0, moved_slugs: [], unmovable: [], write_errors: 0 };
   const rows = await engine.executeRaw<UnfencedFactRow>(
     `SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists
@@ -56,6 +58,7 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Prom
       outcome.moved_slugs.push(slug);
     } catch (error) {
       unmovable(slug, group.map(r => r.id), (error instanceof Error ? error.message : String(error)).slice(0, 300));
+      if (!isFenceHold(error)) outcome.write_errors += 1;
     }
   }
   return outcome;

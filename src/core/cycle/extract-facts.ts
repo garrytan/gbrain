@@ -81,7 +81,7 @@ import {
   type SupersessionChain,
 } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
-import { fenceUnfencedFacts, planUnfencedFacts } from '../facts/unfenced-facts.ts';
+import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unfenced-facts.ts';
 import { moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
@@ -731,7 +731,7 @@ export interface ExtractFactsResult {
   /** Active fence-owned rows expired because their page was soft-deleted. */
   factsExpiredForDeletedPages: number;
   guardTriggered: boolean;
-  /** Pages whose reconcile threw and rolled back; later pages still ran. */
+  /** Pages whose fence write or reconcile threw and rolled back; later pages still ran. */
   pagesFailed: number;
   warnings: string[];
   /** #5575 B3: new fence rows the write gate flagged, held or rejected; present only when it did any. */
@@ -833,6 +833,7 @@ export async function runExtractFacts(
   // fenced pages join this run's reconcile below.
   let fencedSlugs: string[] = [];
   let unboundRefused = new Set<string>();
+  let fenceStepFailed = false;
   if (!opts.dryRun) {
     try {
       const fence = await fenceUnfencedFacts(engine, await planUnfencedFacts(engine, { sourceId }), { pageLockRoot: opts.pageLockRoot });
@@ -840,15 +841,19 @@ export async function runExtractFacts(
       fencedSlugs = fence.fenced_slugs;
       unboundRefused = new Set(fence.unbound_refused.map(page => page.slug));
       for (const page of [...fence.failed_pages, ...fence.missing_files]) result.warnings.push(`FACTS_FENCE_FAILED: ${page}`);
+      result.pagesFailed += fence.write_errors;
     } catch (e) {
+      fenceStepFailed = !isFenceHold(e);
       result.warnings.push(`FACTS_FENCE_FAILED: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
     }
     // GBRA-449: facts a strict source held on memory/unattributed move into their entity page once it exists.
     try {
       const held = await moveHeldFacts(engine, sourceId);
       if (held.moved) result.heldFactsMoved = held.moved;
+      result.pagesFailed += held.write_errors;
       for (const row of held.unmovable) result.warnings.push(`HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`);
     } catch (e) {
+      fenceStepFailed ||= !isFenceHold(e);
       result.warnings.push(`HELD_FACT_UNMOVABLE: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
     }
   }
@@ -1160,7 +1165,7 @@ export async function runExtractFacts(
       kind: 'facts.fence',
       source_id: sourceId,
       cost_delta: 0,
-      ...classifyRunStop({ error: result.pagesFailed > 0 ? 'item_error' : false }),
+      ...classifyRunStop({ error: fenceStepFailed || result.pagesFailed > 0 ? 'item_error' : false }),
     });
   }
 

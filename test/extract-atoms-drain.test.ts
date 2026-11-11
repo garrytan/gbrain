@@ -285,4 +285,33 @@ describe('#2144: zero-yield tombstone progress semantics', () => {
     expect(result.remaining).toBe(5);
     expect(batches).toBe(1);
   });
+  it('#8445: stops no_progress when a batch only skips items the backlog keeps counting', async () => {
+    let batches = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async () => 1,
+        runBatch: async () => { batches++; return { extracted: 0, skipped: 1 }; },
+        now: () => 0,
+      },
+      { windowMs: 1_000_000, maxBatches: 20 },
+    );
+    expect(result).toMatchObject({ stopped: 'no_progress', batches: 1, skipped: 1, remaining: 1 });
+    expect(batches).toBe(1);
+  });
+
+  it('#8445: a skip-only batch that shrinks the backlog keeps draining', async () => {
+    let batches = 0;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: passThroughLock,
+        countRemaining: async () => Math.max(0, 3 - batches),
+        runBatch: async () => { batches++; return { extracted: 0, skipped: 2 }; },
+        now: () => 0,
+      },
+      { windowMs: 1_000_000, maxBatches: 20 },
+    );
+    expect(result).toMatchObject({ stopped: 'drained', batches: 3, skipped: 6, remaining: 0 });
+    expect(batches).toBe(3);
+  });
 });

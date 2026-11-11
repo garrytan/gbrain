@@ -66,6 +66,14 @@ describe('parseTtlShorthand (pure leaf)', () => {
     expect(parseTtlShorthand('2026-02-28T10:00:00Z').ok).toBe(true);
   });
 
+  test('#8913: a duration past the Date range is unparseable, never an Invalid Date', () => {
+    for (const raw of ['100000001d', `${'9'.repeat(400)}s`]) {
+      expect(parseTtlShorthand(raw)).toEqual({ ok: false, code: 'unparseable', input: raw });
+      expect(() => parseTtlParam(raw)).toThrow(`Cannot parse ttl "${raw}".`);
+    }
+    expect(parseTtlShorthand('36500d').ok).toBe(true);
+  });
+
   test('typed failures: not_string / iso_duration / unparseable', () => {
     expect(parseTtlShorthand(30)).toMatchObject({ ok: false, code: 'not_string' });
     expect(parseTtlShorthand('P30D')).toMatchObject({ ok: false, code: 'iso_duration' });

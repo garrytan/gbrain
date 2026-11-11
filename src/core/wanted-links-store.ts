@@ -54,9 +54,10 @@ function pageSlugShaped(target: string): boolean {
  * one that replaces its derived links), keeping only possibleWantedRows. Slug targets are locked first, so a
  * concurrent writer creating the target either committed before this check
  * (and the row is stamped `-infinity`, leaving the origin stale) or commits
- * after it with an `updated_at` past `checked_at`. Only an exact slug counts
- * here: a bare-name reference matching some page's basename may legitimately
- * stay unresolved (basename resolution is opt-in), and stamping it
+ * after it with an `updated_at` past `checked_at`. Only a slug reference to an
+ * exact page counts here: a bare-name reference matching some page's slug or
+ * basename may legitimately stay unresolved (basename resolution is opt-in,
+ * and a directory hint can skip a top-level slug), and stamping it
  * `-infinity` would re-list its origin forever.
  */
 export async function replaceWantedLinks(
@@ -83,8 +84,8 @@ export async function replaceWantedLinks(
   const written = await executeRawJsonb<{ id: number }>(tx, `INSERT INTO wanted_links
       (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at)
     SELECT $1, $2, v.producer, v.ref_kind, v.target_source_id, v.target_ref, v.link_type, v.context,
-      CASE WHEN EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id AND t.deleted_at IS NULL
-        AND t.slug = v.target_ref)
+      CASE WHEN v.ref_kind = 'slug' AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id
+        AND t.deleted_at IS NULL AND t.slug = v.target_ref)
       THEN '-infinity'::timestamptz ELSE now() END
     FROM jsonb_to_recordset(($3::jsonb)->'rows')
       AS v(producer text, ref_kind text, target_source_id text, target_ref text, link_type text, context text)
