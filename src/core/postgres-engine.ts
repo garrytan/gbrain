@@ -373,7 +373,7 @@ export class PostgresEngine implements BrainEngine {
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
-    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge);
+    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge, cancelSettleMs());
     if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
       return await callback(this.sql);
     }

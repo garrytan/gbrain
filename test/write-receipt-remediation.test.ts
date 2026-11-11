@@ -52,12 +52,12 @@ describe('replayed receipts (B4)', () => {
 
   test('a replaced page keeps code page_identity_changed', () => {
     const e = replay(oldStyleRow({ error_message: 'The accepted page identity changed.' }));
-    expect(envelope(e, 'cli')).toMatchObject({ error: 'page_identity_changed', code: 'page_identity_changed', fix: { argv: ['gbrain', 'get', '--source', 'notes', '--', 'people/alice-example'] } });
+    expect(envelope(e, 'cli')).toMatchObject({ error: 'page_identity_changed', code: 'page_identity_changed', fix: { argv: ['gbrain', 'get', '--include-content', '--source', 'notes', '--', 'people/alice-example'] } });
   });
 
   test('revision_conflict fills the same read from receipt fields', () => {
     const e = replay(oldStyleRow({ state: 'conflict', error_code: 'revision_conflict', error_message: 'The page changed during preparation.' }));
-    expect(envelope(e, 'cli').fix?.command).toBe('gbrain get --source notes -- people/alice-example');
+    expect(envelope(e, 'cli').fix?.command).toBe('gbrain get --include-content --source notes -- people/alice-example');
   });
 
   test('an unsafe slug drops the template; the fix falls back to the receipt read', () => {

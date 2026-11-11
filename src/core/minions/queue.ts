@@ -561,6 +561,7 @@ export class MinionQueue {
         }
         const parent = rowToMinionJob(parentRows[0]);
         if (parent.submission_authority && parent.submission_authority.kind !== 'application') throw new Error('Remote jobs cannot have descendants');
+        if (!NON_TERMINAL_STATUSES.includes(parent.status)) throw new Error(`parent job ${opts.parent_job_id} is ${parent.status}; a finished job cannot get new children`);
 
         depth = parent.depth + 1;
         if (depth > maxSpawnDepth) {
@@ -774,7 +775,7 @@ export class MinionQueue {
    * Returns the *root* (the job matching id), not an arbitrary descendant.
    */
   async cancelJob(id: number, opts?: { ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob | null> {
-    const cancelled = await this.cancelJobs([id], opts?.ownerClientId ? { ownerClientId: opts.ownerClientId, ownerActor: opts.ownerActor } : undefined);
+    const cancelled = await this.cancelJobs([id], { rootStatuses: NON_TERMINAL_STATUSES, ...(opts?.ownerClientId ? { ownerClientId: opts.ownerClientId, ownerActor: opts.ownerActor } : {}) });
     const root = cancelled.find(j => j.id === id);
     return root ?? null;
   }
@@ -1892,7 +1893,7 @@ export class MinionQueue {
 
         if (failed.on_child_fail === 'fail_parent') {
           await tx.executeRaw(
-            `UPDATE minion_jobs SET status = 'failed',
+            `UPDATE minion_jobs SET status = 'failed', lock_token = NULL, lock_until = NULL,
               error_text = $1, finished_at = now(), updated_at = now()
              WHERE id = $2 AND status = 'waiting-children'`,
             [`child job ${failed.id} failed: ${errorText}`, failed.parent_job_id]
@@ -2258,7 +2259,7 @@ export class MinionQueue {
   /** Fail the parent when a child fails with fail_parent policy. */
   async failParent(parentId: number, childId: number, errorText: string): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
-      `UPDATE minion_jobs SET status = 'failed',
+      `UPDATE minion_jobs SET status = 'failed', lock_token = NULL, lock_until = NULL,
         error_text = $1, finished_at = now(), updated_at = now()
        WHERE id = $2 AND status = 'waiting-children'
        RETURNING *`,
