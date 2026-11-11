@@ -28,6 +28,7 @@ checks ([below](#full-ci-on-pull-requests)), never per-cell matrix names.
 | `test.yml` | `native_only`, `race_hunt`, `stress_*` dispatch inputs; concurrency suffixes | Parity: manual modes and run grouping, never applied to PR, push or schedule events | — |
 | `persistence-validation.yml` | Bun matrix of read latency, deployment matrix, unit-lane PostgreSQL arms, soak, crash robot, reconciliation, convergence | Parity: every supported Bun version on every event that runs the lane | — |
 | `test.yml`, `persistence-validation.yml` | Cheap tier on pull requests: no unit shards, serial, slow, BrainBench, admin-browser, shared-skills, coverage or `test-status`; of the persistence lanes only the crash robot and convergence, and those and the native cells only when the diff selects them | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `full-suite`), every push to master, the merge queue and the nightly Test schedule |
+| `test.yml` | `enumeration-census-tests` on pull requests that aren't doc-only | Named exception ([below](#enumeration-and-census-tests)): pull requests only, an early copy of files the unit shards already run | The full-ci dispatch, every push to master, the merge queue and the nightly Test schedule run every one of these files in the unit shards |
 | `e2e.yml` | No `pull_request` trigger | Named exception ([below](#full-ci-on-pull-requests)) | The full-ci dispatch on the head before merge (merge-train requires `e2e-full-suite`), every push to master, the merge queue and the nightly E2E schedule |
 | `test.yml`, `e2e.yml` | A push to master skips its full lanes when it reuses a passed full-suite run of its exact tree | Named exception ([below](#master-push-reuse)) | The reused run (same tree, full profile); schedules never reuse |
 | `persistence-validation.yml` | `convergence` selected on pull requests by `scripts/ci-convergence-scope.sh` (test.yml `changes`; never by `package.json` alone) | Named exception | Every merge-queue run and every push to master; the nightly cell runs in `convergence-nightly.yml` |
@@ -79,6 +80,42 @@ skips both and names them `full-suite-not-run`, so a cheap green can never
 produce either one. Each uploads `full-suite-tree` / `e2e-full-suite-tree`,
 a `tree.json` recording the tested tree (`scripts/ci-full-suite-tree.sh`).
 Pushes to master, the merge queue and schedules always run the full profile.
+
+## Enumeration and census tests
+
+Some unit tests fail whenever a change adds something to a list without
+updating the list's reviewed copy: a new operation, command, `--flag`, error
+code, doctor check or repair kind, a new caller or route that a source census
+counts, or output that a golden file pins. The cheap tier used to skip them, so
+the first full-ci run on a pull request was often where they failed, and each
+miss cost another push and another full run.
+
+`enumeration-census-tests` runs them on every pull-request push whose diff
+isn't doc-only (the `changes` job classifies the diff with
+`scripts/select-e2e.ts --classify-only`; an unreadable diff runs them). It needs
+no Postgres. `scripts/ci-census-tests.sh` prints the file list, and the job and
+a person checking a branch by hand use the same command:
+
+```bash
+bash scripts/ci-census-tests.sh                 # print the files
+bash scripts/ci-census-tests.sh --run           # run them all (about 10 minutes on 2 cores)
+bash scripts/ci-census-tests.sh --run 1 2       # run shard 1 of 2, as CI does
+```
+
+The list holds the source censuses (files marked
+`test-reads-source-ok[structural]`), every file that imports
+`test/helpers/golden`, the files whose names match the enumeration pattern in
+the script, and the consumer idle-pass statement bounds
+(`test/persistence-consumer-*` files that mention idle). It leaves out
+`test/e2e/`, serial and slow files, and `test/setup.test.ts`. To add a file,
+change the script, not the workflow.
+
+The job is two shards on 2-vCPU runners. It is advisory: `cheap-tier`,
+`full-suite`, merge-train, the remote pregate and master-push reuse never read
+it, and `contributor-gate` stays the only required check. It is gated by Trunk
+Dynamic CI like the other cheap-tier jobs ([below](#trunk-dynamic-ci)). Every
+full run already runs these files in the unit shards, so nothing is lost when
+it doesn't run.
 
 ## Master-push reuse
 
