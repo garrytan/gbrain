@@ -10,6 +10,24 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.656.0] - 2026-11-11
+
+**`gbrain upgrade` finishes on hosts where autopilot runs outside launchd and systemd, instead of refusing every time.**
+
+The upgrade restarted autopilot only through an installed launchd or systemd service, and refused (`restart_refused`, exit 3) for any other autopilot. That included gbrain's own Linux cron install (`gbrain autopilot --install` on a host without a user systemd bus), so a scheduled stable upgrade on such a host failed on every run. An autopilot whose launcher starts it again is now handed to that launcher. The upgrade stops it (only while `ps` still shows the same process; SIGTERM drains it) and waits up to six minutes for the launcher to start the installed build.
+
+| Situation | Before | Now |
+|---|---|---|
+| Autopilot started by this brain's gbrain cron line | `restart_refused` | handed to the cron line and verified back on the new build |
+| Autopilot started by your own cron entry or wrapper | `restart_refused`, fix `kill <pid>` | still refuses, naming `gbrain autopilot --install` or `gbrain config set self_upgrade.autopilot_launcher external` (declare it only when the launcher starts autopilot again within 5 minutes); declared, it is handed over like the cron line |
+| doctor `self_upgrade_health` | silent until an upgrade failed | runs the same pre-swap plan read-only: warns while `gbrain upgrade` would refuse, naming each process and its step (autopilot outside gbrain's service, a process from another install), and names a hand-off or a second Bun global install the upgrade replaces itself; a harness MCP server does not warn (`--stop-mcp` stops it), and a held or failed auto-upgrade is reported first |
+
+On a host whose autopilot runs from gbrain's cron line, the old binary still refuses with `restart_refused` on the way to this release, because it checks the restart before it installs. Run `gbrain upgrade --no-restart`, then `gbrain upgrade --restart-only`, so the new build does the hand-off.
+
+**The daily stable check no longer sticks on a rolled-back release.** A release that was stable before (its `stable-v<version>` record tag exists) or that `stable.json` lists in `known_bad` is skipped and logged, so the newest release gets its soak instead of a refused promotion on every scheduled run (#8792).
+
+**A release can be marked not promotable when it soaked clean but is known bad from outside evidence.** Dispatch `promote-stable.yml` for the current stable with `not_promotable`, `not_promotable_reason` and `not_promotable_fixed_in`. The stable record gains a `not_promotable` list, and no tag moves. The daily check never soaks or promotes a release on it, on the important path and the weekly floor alike, and a manual promotion of one is refused. Clients ignore the list, so unlike `withdraw` it moves no install to another release. `not_promotable_remove` takes a release off the list. A reason over 500 characters is refused, and so is a record larger than clients accept; nothing is pushed in either case.
+
 ## [0.60.655.0] - 2026-11-10
 
 **QM, the AI helper that uses gbrain as one of its memories, can now read a person's own brain safely, read shared rooms only as the room's audience, and suggest edits that wait for the brain owner's yes.** This lands the QM internal-provider chain (#8475, #8480, #8557, #8477, #8483, #8479, #8466) as one release. Nothing changes for a brain with no attested (`x-qm-actor`) client: unattested calls and member-bound credentials behave as before, and every new table is database state, so a repo-less brain works the same.
