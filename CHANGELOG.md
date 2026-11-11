@@ -10,6 +10,48 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The skill resolver can now find skills from more places, stays fresh when your harness writes into its skills folder, and runs inside Hermes.** The skill resolver is the optional feature that offers your agent the right installed skill on each turn. It is still off by default and never blocks a turn.
+
+Before this release it only read skill folders. Now it also reads OpenClaw's skill list, the Claude Code plugins you have enabled and a repository's own `.agents/skills` for Codex. Before, a harness that wrote a hidden file into its skills folder, as Codex and Hermes both do, made the resolver think the folder had changed. It then rebuilt its index about once a minute. That no longer happens. Long-running hosts can also keep the index open between turns instead of reopening it every time.
+
+### How to use it
+
+- Claude Code plugins: `gbrain setup claude-code --skill-loading resolve` now also indexes your enabled plugin skills, named `<plugin>:<skill>`. `--skill-loading off` removes that catalog again.
+- OpenClaw: `openclaw skills list --json | gbrain skills index build --catalog openclaw-main --from-json - --dir <skills folder> --harness openclaw` builds a catalog from OpenClaw's own list, taking each skill's body from its folder.
+- Hermes: wire `/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes` as a `pre_llm_call` shell hook, build the `hermes-user` catalog, add `hermes` to `skills.resolver.harnesses` and set `skills.resolver.enabled` to true. Setup does not wire Hermes yet. The guide in `docs/guides/skill-resolver.md` gives the exact steps.
+- Codex: nothing to do. A repository's `.agents/skills` folders, from the repository root down to your working folder, are searched like Codex itself loads them.
+
+### What changes on a busy machine
+
+| Situation | Before | Now |
+|---|---|---|
+| Harness rewrites a hidden file in its skills folder before every turn | Index marked stale, rebuilt about once a minute | Stays fresh, 0 rebuilds in a 40-turn bench |
+| Turn time in that bench (median / 90th percentile) | Rebuilds on top | 36.8 / 42.3 ms, against 33.7 / 38.1 ms with no file churn |
+| A SKILL.md symlink pointed at a different skill | Old skill offered until the next rebuild | Seen as a change on the next turn |
+| No catalog built yet for a Claude Code turn | Logged as an error | Logged as `no_catalog`, turn continues |
+
+### Things to watch
+
+- Turn output gains `block_reason`, which says why a turn offered no skill (`ack`, `no_match`, `filtered`, `deduped`, `paced`, `budget_exhausted`, `shadow` or `error`). It is null when a skill was offered.
+- `gbrain doctor` warns when a harness has the resolver on its prompt hook but not on its session-start hook, and names the setup command that fixes it.
+- A `null` entry under `skills.resolver.per_harness` now reads as unset instead of failing.
+
+### Itemized changes
+
+- Catalogs: OpenClaw `skills list --json` input (hidden skills skipped), `--from-json` with `--dir` folder bodies, JSON catalogs up to 64 MB with bodies trimmed to 4 KB, `when_to_use` and `disable_model_invocation` in JSON entries so a JSON list and the same folder build the same hashes, and `--claude-plugins` for the `claude-code-plugins` catalog.
+- Freshness: dot-entries and `node_modules` are never read, and a moved directory mtime counts only when its list of subfolders and SKILL.md files changed. Symlink targets are part of the listing key.
+- Runtime (`src/core/skills/resolver/`): `openCatalog` keeps each catalog's receipt and open index and re-checks them once per turn, `buildSkillIndexOffThread` builds in a worker thread, and every session commit starts a bounded background session cleanup that never deletes a file a commit holds.
+- Hook lane: the Hermes reader takes `extra.user_message`, `session_id` and `cwd` with a bounded streaming read and answers `{"context": block}`. The `codex-project-<hash>` catalog covers each `.agents/skills` from the `.git` root down to the working folder.
+- `budget_exhausted` stays true on an acknowledgement or no-match turn once the budget is spent.
+
+### For contributors
+
+- Compiled builds pass `--define GBRAIN_BUILD_COMMIT`, so build receipts from a compiled binary record `gbrain_commit`.
+- Ubicloud gate VMs install CI's pinned Node 24.18.0 instead of the distribution's Node 18.
+- The tracked scratch file `dbg-tmp.ts` is removed.
+
 ## [0.60.657.0] - 2026-11-11
 
 **A running `gbrain serve`, worker or autopilot no longer fails writes after another process changes a table's columns (GST-2260).** When `gbrain apply-migrations` or an upgrade in another process added, renamed or dropped a column, every pooled connection that had already prepared a `SELECT *` or `RETURNING *` on that table failed its next run with "cached plan must not change result type". Outside a transaction the driver quietly prepared the statement again, but inside one the error had already aborted the transaction, so the caller saw it. A `put_page` came back `internal_error`, or was accepted and then failed at publication, once for each statement on each pooled connection. Version 0.60.646.0 made the write paths re-run the transaction it aborted. Now the first such error also makes every connection in the process prepare its statements again before its next query, and an OAuth token grant whose client read meets it and a minion job's completion or failure record are re-run too. Pools that do not prepare statements (transaction-mode pooler URLs, `prepare: false`) and PGLite are unchanged.

@@ -542,6 +542,16 @@ describe('skill-resolver lane: hermes', () => {
     return turns;
   };
 
+  test('without --harness the turn is never routed to hermes, even with a stray hermes argument', async () => {
+    const b = await hermesBox();
+    const cmd = `env GBRAIN_HOOK_LANE=skill-resolver GBRAIN_HOME='${b.home}' '${b.bin}' hook user-prompt hermes`;
+    const r = await hook(b, cmd, { session_id: 'h0', extra: { user_message: 'please deploy the widget to staging' } }, WIDE);
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout).toBe('');
+    expect(laneLog(b).filter((l) => l.harness === 'hermes')).toEqual([]);
+    expect(sessions(b)).toEqual([]);
+  });
+
   test('a pre_llm_call turn reads extra.user_message and answers {"context": block}; a repeat in the session is deduped', async () => {
     const b = await hermesBox();
     const turn = { session_id: 'h1', extra: { user_message: 'please deploy the widget to staging', conversation_history: [] } };
