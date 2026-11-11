@@ -128,9 +128,12 @@ class Brain extends HarnessBrain { constructor(name: string, modes: Mode[]) { su
  * read and before any admission. `sync:passed_over` and `sync:held_settled` need a file that changes after its freeze:
  * their round primes one with an uncommitted edit at `sync:after_freeze`, which the pass passes over once (the level
  * moved) and, when the next round reads the same uncommitted bytes, holds `worktree_dirty` (the hold); the harness
- * commits the edit after the round. Every point here must be one a pass crosses: the cursor engine's
- * `sync:retry_deferred` and `sync:prescreened` are company-source only since #6712 PR 4b, so a non-company kill loop
- * never reaches them.
+ * commits the edit after the round. A `sync:passed_over` round syncs with `--no-bulk`, which a delegated serve receives
+ * too (#8838): a bulk group or admit-ahead window can freeze the primed entry and drop it unadmitted (a group fallback
+ * or a kill), and its re-freeze reads the edited bytes, which hold at once instead of passing over. On the single path
+ * an entry is admitted right after its freeze, so the edit always reaches publication as a change after admission.
+ * Every point here must be one a pass crosses: the cursor engine's `sync:retry_deferred` and `sync:prescreened` are
+ * company-source only since #6712 PR 4b, so a non-company kill loop never reaches them.
  */
 const KILL_POINTS = [
   { point: 'publication:before_commit', per: 'page' }, { point: 'publication:after_commit', per: 'page' },
@@ -332,15 +335,16 @@ scenario(['a', 'b', 'c'], 'managed sync converges after a seeded kill loop of cl
         ...(edited !== null ? { prime: { point: 'sync:after_freeze', nth: 1, path: `${noteSlug(edited)}.md`,
           edit: { file: join(b.repo, `${noteSlug(edited)}.md`), content: noteText(edited, `Round ${p.round} edit`) } } } : {}) };
       b.writeNotes(indexes, `Round ${p.round}`, `round ${p.round}`, p.round % 3 === 1 ? [b.bigFile(120 + 20 * p.round, 400 + 40 * p.round, `v${p.round}`)] : []);
+      const single = p.point === 'sync:passed_over' ? ['--no-bulk'] : [];
       let line: string;
       if (p.kind === 'client') {
-        const r = await b.sync(['--no-pull', '--no-delegate', '--json'], fault).result;
+        const r = await b.sync(['--no-pull', '--no-delegate', '--json', ...single], fault).result;
         syncErrs[tag] = r.err; b.keepLog(`${tag}-client.log`, `${r.out}\n${r.err}`);
         line = `client exit ${r.code} in ${(r.ms / 1000).toFixed(1)}s`;
       } else {
         const serve = new StdioServe(b, fault);
         await serve.start();
-        const client = b.sync(['--no-pull', '--json']);
+        const client = b.sync(['--no-pull', '--json', ...single]);
         await Promise.race([serve.exited, client.result]);
         if (p.kind === 'serve+client' && !serve.alive) { client.proc.kill('SIGKILL'); b.killedPids.add(client.proc.pid); }
         const r = await client.result;
