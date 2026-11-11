@@ -25,6 +25,18 @@ identifiers and attribution are available in the pre-removal Git revision
 - Docs: `docs/guides/access-designations.md` (derived pages, member access, the owner opt-in), key-files entry.
 - Tests: `test/owner-reads-restricted.test.ts` (opt-in off and on, owner, other members and unbound keys, `--as`, writes, the remote refusal; PGLite and Postgres, rules in the database and in `access.yml`); doctor goldens.
 
+## [0.60.681.0] - 2026-11-11
+
+**The low-capacity warning now says it is not a refusal, and a quota refusal no longer reads a whole week of admissions while it holds the write counters.** v0.60.681.0 made the `write_capacity_low` notice open with "This write was saved", but the notice also rides sync status, dry runs and failed batches, where nothing was saved. It now opens with "This notice is not a refusal: writes still work, and this call's own result says what it did", and over MCP its fix is the read-only `get_brain_health` call instead of a CLI command the agent would relay to its user. A `write_quota_exhausted`, `write_quota_insufficient` or background-pause refusal runs under the counter locks, and v0.60.681.0 had it walk the scope's whole week (up to 200,000 admissions) to match doctor's value. It now takes the 7-day mean rates the last forecast recorded, lifecycle changes included, and without a forecast from the last minute it samples the latest 1,000 admissions as before. Both apply only under a cap the operator set: since v0.60.681.0 the caps are off by default.
+
+### Itemized changes
+
+- `src/core/persistence/capacity-snapshot.ts`: `write_capacity_low` opens with "This notice is not a refusal" and never claims the call saved anything; its fix carries `mcp` (`get_brain_health`), and its why says nothing needs to change for this call.
+- `src/core/persistence/capacity-forecast.ts`, `src/core/persistence/limits.ts`: `readCapacityForecast` records each scope's 7-day mean gross and net rates for a minute (`recordForecastRates`, `FORECAST_RATES_TTL_MS`), and `oneYearCapacity` uses them, so the refusal names doctor's value, lifecycle changes included; without a recorded forecast it samples the latest 1,000 admissions and never walks the week. The sample's compacted size uses the forecast's SQL (`receipt-bytes.ts`).
+- `src/core/behavior-change-notice.ts`: one row for the new wording and the refusal's rate source.
+- Docs: `docs/guides/write-refusals.md` (`write_capacity_low` row), `docs/guides/concurrent-writes.md`, `docs/architecture/key-files/core-persistence-capacity.md`.
+- Tests: `test/persistence-capacity-notices.test.ts` (the notice rendered over HTTP and stdio runs `get_brain_health`; a week of lifecycle changes moves the brain's value to doctor's; a refusal reads at most the latest 1,000 admissions, and none after a forecast; a refusal after a forecast names doctor's value, on PGLite and Postgres).
+
 ## [0.60.680.0] - 2026-11-11
 
 **gbrain now tells you when a privacy label it doesn't recognize leaves a page readable.** A page with no `visibility` counts as private only when `access` is private, restricted or confidential, or `confidentiality` is confidential, secret, private or restricted. Any other value, such as `access: personal` or a confidentiality value naming a health record, was ignored without a word, so the page read as world to every remote caller and could be committed to the brain's git remote. Writes and doctor now say so. Who can read a page does not change.
