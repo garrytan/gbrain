@@ -32,6 +32,7 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 - A live fact row an older build linked as superseded is cleared by a full reconcile (`gbrain dream --phase extract_facts --source <id>`); the nightly cycle clears it only when the page changes.
 - Duplicate open loops written before this change and person-to-company links already typed from a machine-written section stay as they are until their thread or page is processed again.
 - `gbrain takes list --status <x>` used to be ignored silently and now exits 1, pointing to `--expired` and `gbrain takes propose --json`.
+- A `POST /ingest` capture whose credential's write source is archived or removed before the capture lands now fails its job with `source_changed` (`detail: webhook_source_unavailable`) and writes nothing, where it used to be written under `default`, a source the credential may not be granted. Restore the source and run `gbrain jobs retry` on the job. Captures that do not come from a webhook keep the `default` fallback.
 
 ### Itemized changes
 
@@ -86,6 +87,7 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 
 #### Webhook captures
 
+- `src/core/minions/handlers/ingest-capture.ts`: a webhook capture (`untrusted_payload`, `source_kind: webhook`) whose write source is archived, unregistered or removed mid-write refuses `source_changed` (`detail: webhook_source_unavailable`) instead of writing under `default`, on managed and unmanaged brains. Test: `test/ingest-capture-no-default-fallback.test.ts`.
 - `src/core/minions/handlers/ingest-capture.ts`: the job normalizes its slug once (`validateSlug`) before its snapshot, applied-record and writer lookups, so a mixed-case `X-Gbrain-Slug` naming an existing page on a managed brain replaces that page instead of dead-lettering with `revision_required`. Test: `test/ingest-capture-mixed-case-slug.test.ts`.
 
 ## [0.60.660.0] - 2026-11-11

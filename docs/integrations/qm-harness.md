@@ -107,9 +107,10 @@ boundary, and it does not make every side effect prefix-clean:
   write source is resolved server-side from `oauth_clients.source_id`; the
   caller-supplied `X-Gbrain-Source-Id` header does not route anything, so a
   client cannot choose its own write partition. A client registered without a
-  source writes to `default`, and a write falls back to `default` if its
-  source is unregistered, archived, or deleted mid-write (the job result
-  reports this via `source_fallback`). If you point a webhook integration at
+  source writes to `default`. If its source is unregistered, archived, or
+  deleted before the capture lands, the job fails with `source_changed`
+  (`detail: webhook_source_unavailable`) and nothing is written; restore the
+  source and run `gbrain jobs retry` on the job. If you point a webhook integration at
   this route, give its client an explicit `--source` so its captures do not
   accumulate in the brain's `default` source. Bound clients are still refused
   the route outright, because the slug fence cannot run on this path.

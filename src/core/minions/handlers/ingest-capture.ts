@@ -293,6 +293,16 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
+    // GST-2113: a webhook capture writes only inside its credential's write source. When that source is archived or
+    // removed after the 202, default may be outside the grant, so the job refuses (kept for gbrain jobs retry) instead
+    // of writing there.
+    const refuseWebhookFallback = (fallback: NonNullable<IngestCaptureResult['source_fallback']>) => {
+      if (!webhookWrite) return;
+      throw opError('source_changed', `The webhook capture for ${slug} was not written: its write source ${fallback.requested} is ${fallback.reason === 'archived' ? 'archived' : 'no longer registered'}, and a capture never falls back to default, which its credential may not be granted.`,
+        `Restore source ${fallback.requested} and run gbrain jobs retry on this job, or send the capture again with a credential whose write source is live.`,
+        { detail: 'webhook_source_unavailable' });
+    };
+    if (sourceFallback) refuseWebhookFallback(sourceFallback);
     const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug, event.content) : Promise.resolve(undefined);
     let checkedRevision = await checkWriter(sourceId ?? 'default');
     const door = (operation: 'put_page' | 'delete_page', sid: string, params: Record<string, unknown>) => submitPageMutation(
@@ -376,6 +386,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
           ? await engine.executeRaw<{ archived: boolean | null }>('SELECT archived FROM sources WHERE id = $1', [sourceId]) : null;
         if (!vanished || (vanished.length > 0 && vanished[0]?.archived !== true)) throw err;
         sourceFallback = { requested: sourceId!, effective: 'default', reason: vanished.length ? 'archived' : 'fk_violation' };
+        refuseWebhookFallback(sourceFallback);
         await checkWriter('default');
         response = await put('default', requestId && `${requestId}:default`);
       }
@@ -411,6 +422,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // The sources row can vanish (ON DELETE CASCADE) between the pre-check and this write.
       if (sourceId !== undefined && isPagesSourceFkViolation(err)) {
         sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
+        refuseWebhookFallback(sourceFallback);
         checkedRevision = await checkWriter('default');
         result = await importAs(undefined);
       } else {
