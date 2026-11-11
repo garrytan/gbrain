@@ -29,7 +29,8 @@ describe('ci-census-tests.sh', () => {
       'test/remote-privacy-sweep.test.ts',
       'test/persistence-consumer-idle.test.ts',
     ]) expect(files, file).toContain(file);
-    const structural = spawnSync('git', ['grep', '-l', 'test-reads-source-ok\\[structural\\]', '--', 'test'], { cwd: root, encoding: 'utf8' }).stdout
+    const structuralTag = ['test-reads-source', 'ok\\[structural\\]'].join('-');
+    const structural = spawnSync('git', ['grep', '-l', structuralTag, '--', 'test'], { cwd: root, encoding: 'utf8' }).stdout
       .split('\n').filter(file => /\.test\.ts$/.test(file) && !/\.serial\.test\.ts$/.test(file));
     expect(structural.length).toBeGreaterThan(40);
     for (const file of structural) expect(files, file).toContain(file);
