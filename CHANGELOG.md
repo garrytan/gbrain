@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**You can now leave one source out of automatic publishing without turning off its sync.** Set `gbrain config set sources.auto_reconcile.source.<id> false`, and neither `gbrain sources git-reconcile` (which autopilot runs each tick) nor `gbrain sources refresh` pushes that checkout's local commits. The source still syncs and fast-forwards. Before this, the only per-source switch was `gbrain sources set-sync <id> off`, which also stopped its sync. Nothing changes until the key is set.
+
+- `src/core/persistence/worktree-refresh.ts`: `publishOptedOut` reads the key for a worktree's members. A diverged refresh with any member off refuses `refresh_diverged`, naming the key, with nothing pushed.
+- `src/commands/sources-git-reconcile.ts`: a checkout with a source off reports `unpublished` with the reason and lists the sources under `publish_off`, in `--dry-run` too. A checkout only behind still fast-forwards.
+- `src/commands/sources.ts`: `gbrain sources status` prints the opt-out and adds `auto_reconcile: false` to `--json`.
+- `src/core/bounded-child-exec.ts`: with `killTree`, a child stopped at its time limit has its descendants stopped with it. The commit-push children of git-reconcile and refresh use it, so a timed-out publish leaves no git or ssh process running into the next reconcile.
+- `src/core/config.ts`: the key is registered, so `gbrain config set` accepts it.
+- Docs: `docs/guides/live-sync.md`, `docs/guides/shared-checkout-git.md`.
+- Tests: `test/reconcile-publish-opt-out-gst2250.test.ts` (PGLite and Postgres): an opted-out source stays unpublished, syncs and fast-forwards while another source publishes; a managed member opted out blocks refresh's publish and sync still imports; the global key, `set-sync off` and a key set to `true` behave as before; a hung child's grandchild is gone after the timeout.
+
 ## [0.60.673.0] - 2026-11-11
 
 **Source checkouts now stay level with their remotes without help. A held page that changed only in Git imports on the next sync, and every way out of an interrupted refresh works.**

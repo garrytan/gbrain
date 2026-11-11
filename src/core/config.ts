@@ -1864,6 +1864,7 @@ export const KNOWN_CONFIG_KEY_PREFIXES: readonly string[] = [
   'pace.',              // pace.mode + PACE_MODE_CONFIG_KEYS (src/core/pace-mode.ts)
   'decide.',            // System One decide.* (validated by src/core/ai/decide/config.ts DECIDE_CONFIG_KEYS)
   'sync.max_deletes.source.', 'sync.max_delete_ratio.source.', 'sync.apply_held_deletions.source.', 'persistence.adopt_local_edits.source.', // #7130 per-source delete caps, GBRA-133 per-source held-deletion switch, GST-1601 per-source local-edit adoption
+  'sources.auto_reconcile.source.', // GST-2250: per-source opt-out of automatic publishing by git-reconcile and refresh (false keeps local commits unpublished; sync goes on)
   'connectors.',        // chat-connectors: source_id, sync_floor_min, embed_kickoff_min_pages, doctor_stale_hours, <provider>.{auto_sync,last_sync_at,auth_error_at,watermark_iso} (no secrets — creds are file-plane)
 ];
 
