@@ -48,7 +48,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairCursor } from './core.ts';
-import { filesInCheckout, writeLabelPage } from './label-write.ts';
+import { filesInCheckout, writeLabelFile, writeLabelPage } from './label-write.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -259,10 +259,13 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
  * revision-bound label write (labelWrite; the projection then stores it private); a
  * database-only row is updated in place (a database-only maintenance request
  * on a managed brain). A page stored in segments is left for the owner. A fenced row that stays world and live is
- * reported `fact_left_readable` (counted in the apply's outcomes), never as done: remote callers still read it.
+ * reported, never as done: `fact_left_readable` when remote callers can read it now, `fact_left_world` when only its
+ * page's privacy hides it (worldFactsFromPrivateSources `readable`).
  */
-const leftReadable = (factId: number, why: string): RepairItemOutcome => ({ applied: false, outcome: 'fact_left_readable', detail: { fact_id: factId },
-  reason: `${why}; the fact row is still world, so remote callers can still read it` });
+const leftWorld = (fact: { id: number; readable: boolean }, why: string): RepairItemOutcome => fact.readable
+  ? { applied: false, outcome: 'fact_left_readable', detail: { fact_id: fact.id }, reason: `${why}; the fact row is still world, so remote callers can still read it` }
+  : { applied: false, outcome: 'fact_left_world', detail: { fact_id: fact.id },
+    reason: `${why}; the fact row is still world, and only its page's privacy keeps remote callers from reading it` };
 async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, factId: number): Promise<boolean | RepairItemOutcome> {
   const [fact] = await worldFactsFromPrivateSources(ctx.engine, [item.source_id], [factId]);
   if (!fact) return false;
@@ -280,28 +283,32 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
   }
   const snapshot = fact.source_markdown_slug ? await ctx.engine.readPageSnapshot(fact.source_markdown_slug, { sourceId: item.source_id }) : null;
   if (!snapshot) return false;
-  if (isSegmentedPage(snapshot.page)) return leftReadable(factId, 'its page is stored in segments, which this repair does not rewrite');
+  if (isSegmentedPage(snapshot.page)) return leftWorld(fact, 'its page is stored in segments, which this repair does not rewrite');
   const body = strikeFenceRow(snapshot.page.compiled_truth ?? '', fact.row_num, row => ({ ...row, visibility: 'private' }));
-  if (body === null) return leftReadable(factId, 'its row was not found in the page\'s facts fence');
+  if (body === null) return leftWorld(fact, 'its row was not found in the page\'s facts fence');
   const held = await labelWrite(ctx, item, snapshot, serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), { set: {}, remove: [] });
   if (held) return held;
   const [stored] = await ctx.engine.executeRaw<{ visibility: string; live: boolean }>('SELECT visibility, expired_at IS NULL AS live FROM facts WHERE id=$1', [factId]);
   if (!stored || stored.visibility === 'private' || !stored.live) return true;
-  return leftReadable(factId, 'its fence row was written private, but the original row is more trusted than the repair and was kept beside it');
+  return leftWorld(fact, 'its fence row was written private, but the original row is more trusted than the repair and was kept beside it');
 }
 
 /**
  * GST-2468: one item's page write is a label-only maintenance write (repair/label-write.ts): it keeps the page's trust
  * tier, files no lower_page proposal and changes only the label lines of the page's file (a fact item: its fence row).
  * On a brain without managed persistence a page whose file sits in its source's checkout gets the same splice in that
- * file (label-write.ts writeLabelFile). Null once written; the held outcome for a page stored in segments.
+ * file (label-write.ts writeLabelFile). Null once written; the held outcome for a page stored in segments or a file the
+ * repair cannot write. A page that moved since it was read throws `revision_conflict`, which the apply counts as skipped.
  */
 async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, snapshot: PageSnapshot, content: string, edit: LabelEdit): Promise<RepairItemOutcome | null> {
   if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit it by hand on the brain host.' };
-  const file = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).has(Number(snapshot.page.id));
-  await writeLabelPage(ctx, item, { revision: snapshot.revision, content, edit, requestId: await repairRequestId(ctx, 'visibility', item, snapshot.revision),
-    embed: true, preview: 'gbrain repair visibility', file });
-  return null;
+  const path = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).get(Number(snapshot.page.id));
+  const write = { revision: snapshot.revision, content, edit, embed: true, preview: 'gbrain repair visibility' };
+  const written = path ? await writeLabelFile(ctx.engine, item, { ...write, path })
+    : await writeLabelPage(ctx, item, { ...write, requestId: await repairRequestId(ctx, 'visibility', item, snapshot.revision) });
+  if (written === null) throw opError('revision_conflict', `${item.source_id}:${item.slug} changed after it was read, so it was not written.`,
+    'Preview gbrain repair visibility again; the page is listed with its current state.');
+  return typeof written === 'string' ? null : written;
 }
 
 export type VisibilityClass = 'facts' | 'events' | 'aliases' | 'lineage' | 'pages';

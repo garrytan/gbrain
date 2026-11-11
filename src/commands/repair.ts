@@ -459,6 +459,9 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   if (result.mode === 'apply' && result.outcomes?.fact_left_readable) {
     lines.push(`  NOT CLOSED: ${result.outcomes.fact_left_readable} fact row(s) could not be made private and stay readable by remote callers (listed below).`);
   }
+  if (result.mode === 'apply' && result.outcomes?.fact_left_world) {
+    lines.push(`  NOT CLOSED: ${result.outcomes.fact_left_world} fact row(s) could not be made private and are still world; only their page's privacy hides them from remote callers (listed below).`);
+  }
   for (const outcome of result.mode === 'apply' ? result.outcome_items ?? [] : []) {
     if (!outcome.detail) continue;
     lines.push(`  ${outcome.outcome}: ${outcome.item} ${Object.entries(outcome.detail).filter(([key]) => key !== 'commit_step' && key !== 'fix').map(([k, v]) => `${k}=${v}`).join(', ')}${outcome.reason ? ` (${outcome.reason})` : ''}`);

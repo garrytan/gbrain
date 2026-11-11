@@ -90,12 +90,17 @@ block) is refused with nothing written; make that edit by hand. `--slug` is the 
 a `put_page` that adds the label is an agent edit and lowers the page. On a brain
 without managed persistence, a page whose file sits in its source's checkout gets
 the same edit in that file and in the database together, so the next sync reads
-the same page.
+the same page. A file holding an edit the database lacks refuses with nothing
+written (run `gbrain sync` first). A file the repair cannot write
+(`sync.write_through` is off, a clone gbrain pulls, a write error) is held
+`file_backed` with nothing written, because the next sync would put the old
+label back from the file; make that edit in the file by hand.
 
-A fenced fact row the apply could not make private is counted as
-`fact_left_readable` in the outcomes (`--json`: `outcomes.fact_left_readable`,
-each row in `outcome_items`), and the text output says `NOT CLOSED`: those rows
-are still world and remote callers can still read them. Today that happens when
+A fenced fact row the apply could not make private is counted in the outcomes
+(`--json`: `outcomes`, each row in `outcome_items`), and the text output says
+`NOT CLOSED`: `fact_left_readable` when remote callers can still read the row,
+`fact_left_world` when the row is still world and only its page's privacy hides
+it from them. Today that happens when
 the original row is more trusted than the repair (it is kept beside the new
 private row), when the page is stored in segments, or when the row is not found
 in the page's facts fence.

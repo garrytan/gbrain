@@ -15,7 +15,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -23,6 +23,7 @@ import { operations, type OperationContext } from '../src/core/operations.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { withCoordinatedWrite, withTrustBackfill } from '../src/core/persistence/context.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { _resetWriteThroughCacheForTest } from '../src/core/write-through.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { renderRepairResult, runRepairCommand } from '../src/commands/repair.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
@@ -130,9 +131,11 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
     await settleManagedGitEffects(engine);
     // The original world row is more trusted than the repair and stays live (GST-2487): the apply must say so, never "done".
     expect(applied.applied).toBe(0);
-    expect(applied.outcomes).toMatchObject({ fact_left_readable: 1 });
-    expect(applied.outcome_items).toEqual([expect.objectContaining({ item: 'default:' + slug, outcome: 'fact_left_readable' })]);
-    expect(renderRepairResult(applied)).toContain('NOT CLOSED: 1 fact row(s) could not be made private and stay readable by remote callers');
+    // The page is private, so only its privacy hides the row today: the apply says "still world", not "readable".
+    expect(applied.outcomes).toMatchObject({ fact_left_world: 1 });
+    expect(applied.outcomes.fact_left_readable).toBeUndefined();
+    expect(applied.outcome_items).toEqual([expect.objectContaining({ item: 'default:' + slug, outcome: 'fact_left_world' })]);
+    expect(renderRepairResult(applied)).toContain('NOT CLOSED: 1 fact row(s) could not be made private and are still world');
     expect(await engine.executeRaw("SELECT visibility FROM facts WHERE source_markdown_slug=$1 AND expired_at IS NULL AND visibility='world'", [slug])).toEqual([{ visibility: 'world' }]);
     expect((await page(engine, slug)).tier).toBe('operator_curated');
     expect(await engine.executeRaw("SELECT id FROM trust_proposals WHERE action='lower_page'")).toEqual([]);
@@ -209,31 +212,73 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
     } finally { rmSync(home, { recursive: true, force: true }); }
   }, 180_000);
 
-  test('without managed persistence, a page whose file is in a checkout gets the same label-line splice in its file', async () => {
+  /** A brain without managed persistence whose source `source-b` has a checkout holding the page's file. */
+  async function checkoutBrain(fn: (brain: { engine: BrainEngine; slug: string; path: string; before: string; row: () => Promise<{ tier: string; frontmatter: Record<string, unknown> }> }) => Promise<void>) {
     const home = mkdtempSync(join(tmpdir(), 'gbrain-label-checkout-'));
     try {
       await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
         const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
         try {
-          const slug = 'notes/filed-example', checkout = join(home, 'checkout');
+          const slug = 'notes/filed-example', checkout = join(home, 'checkout'), path = join(checkout, slug + '.md');
           mkdirSync(join(checkout, 'notes'), { recursive: true });
           const before = file(slug);
-          writeFileSync(join(checkout, slug + '.md'), before);
+          writeFileSync(path, before);
           await engine.executeRaw("INSERT INTO sources (id, name, local_path) VALUES ('source-b', 'source-b', $1) ON CONFLICT (id) DO NOTHING", [checkout]);
           expect((await importFromContent(engine, slug, before, { noEmbed: true, sourceId: 'source-b' })).status).toBe('imported');
           await engine.transaction(tx => withCoordinatedWrite(tx, ['source-b'], () => withTrustBackfill(tx, () =>
             tx.executeRaw("UPDATE pages SET trust_tier='operator_curated', source_path=$2 WHERE source_id='source-b' AND slug=$1", [slug, slug + '.md'])), TEST_WRITE_ATTRIBUTION));
-          const { applied } = await previewApply(engine, ['visibility', '--source', 'source-b', '--slug', slug]);
-          expect(applied.applied).toBe(1);
-          const [row] = await engine.executeRaw<{ tier: string; frontmatter: Record<string, unknown> }>(
-            "SELECT trust_tier::text AS tier, frontmatter FROM pages WHERE source_id='source-b' AND slug=$1", [slug]);
-          expect(row!.tier).toBe('operator_curated');
-          expect(row!.frontmatter.visibility).toBe('private');
-          expect(row!.frontmatter.source_kind).toBe('email-example');
-          expect(await proposals(engine)).toEqual([]);
-          expect(readFileSync(join(checkout, slug + '.md'), 'utf8')).toBe(withLine(before, 'visibility: private'));
-        } finally { await disposePersistenceConsumer(engine); await close(); }
+          const row = async () => (await engine.executeRaw<{ tier: string; frontmatter: Record<string, unknown> }>(
+            "SELECT trust_tier::text AS tier, frontmatter FROM pages WHERE source_id='source-b' AND slug=$1", [slug]))[0]!;
+          await fn({ engine, slug, path, before, row });
+        } finally { _resetWriteThroughCacheForTest(); await disposePersistenceConsumer(engine); await close(); }
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
-  }, 180_000);
+  }
+  const slugRepair = (slug: string) => ['visibility', '--source', 'source-b', '--slug', slug];
+
+  test('without managed persistence, a page whose file is in a checkout gets the same label-line splice in its file', () => checkoutBrain(async ({ engine, slug, path, before, row }) => {
+    const { applied } = await previewApply(engine, slugRepair(slug));
+    expect(applied.applied).toBe(1);
+    const stored = await row();
+    expect(stored.tier).toBe('operator_curated');
+    expect(stored.frontmatter.visibility).toBe('private');
+    expect(stored.frontmatter.source_kind).toBe('email-example');
+    expect(await proposals(engine)).toEqual([]);
+    expect(readFileSync(path, 'utf8')).toBe(withLine(before, 'visibility: private'));
+  }), 180_000);
+
+  test('a checkout file holding an edit the database lacks refuses, and neither the file nor the row changes', () => checkoutBrain(async ({ engine, slug, path, before, row }) => {
+    const preview = await repair(engine, slugRepair(slug));
+    const edited = before.replace('Second paragraph.', 'Second paragraph, edited by hand.');
+    writeFileSync(path, edited);
+    const applied = await repair(engine, [...slugRepair(slug), '--apply', '--expect', preview.preview_hash]);
+    expect(applied.applied).toBe(0);
+    expect(applied.failed).toEqual([expect.objectContaining({ item: 'source-b:' + slug, reason: 'source_changed' })]);
+    expect(readFileSync(path, 'utf8')).toBe(edited);
+    expect((await row()).frontmatter.visibility).toBeUndefined();
+  }), 180_000);
+
+  test('with sync.write_through off, the page is held file_backed instead of written to the database alone', () => checkoutBrain(async ({ engine, slug, path, before, row }) => {
+    await engine.setConfig('sync.write_through', 'false');
+    _resetWriteThroughCacheForTest();
+    const { applied } = await previewApply(engine, slugRepair(slug));
+    expect(applied.applied).toBe(0);
+    expect(applied.outcome_items).toEqual([expect.objectContaining({ item: 'source-b:' + slug, outcome: 'file_backed' })]);
+    expect(readFileSync(path, 'utf8')).toBe(before);
+    expect((await row()).frontmatter.visibility).toBeUndefined();
+  }), 180_000);
+
+  test.skipIf(process.getuid?.() === 0)('a file write that fails rolls the database back and holds the page', () => checkoutBrain(async ({ engine, slug, path, before, row }) => {
+    const dir = join(path, '..');
+    chmodSync(dir, 0o555);
+    try {
+      const { applied } = await previewApply(engine, slugRepair(slug));
+      expect(applied.applied).toBe(0);
+      expect(applied.outcome_items).toEqual([expect.objectContaining({ item: 'source-b:' + slug, outcome: 'file_backed' })]);
+    } finally { chmodSync(dir, 0o755); }
+    expect(readFileSync(path, 'utf8')).toBe(before);
+    const stored = await row();
+    expect(stored.frontmatter.visibility).toBeUndefined();
+    expect(stored.tier).toBe('operator_curated');
+  }), 180_000);
 });
