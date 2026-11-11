@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.669.0] - 2026-11-11
+
+### Five flaky tests fixed at their cause
+
+**Five tests that failed by chance on some machines now pass or fail for a real reason. No assertion, bound or timeout was loosened, and nothing in `src/` changed.** Each fix comes with a probe that forces the failure every time on master and passes with the fix.
+
+- `test/helpers/statement-counter.ts`: the PGLite statement counter named a Bind by the last Parse it had seen. The engine's statement cache (`src/core/pglite-statements.ts`) prepares a statement the second time it runs, so a statement prepared before counting started was recorded under the text of the statement before it. `test/fold-hook-noop-6712.test.ts` then failed whenever background config reads had prepared `SELECT value FROM config WHERE key = $1` before its window. The counter now reads a bound statement's text from the engine's cache, and records an unknown name as a placeholder. `test/statement-counter-warm-cache.test.ts` pins it.
+- `test/persistence-consumer-idle.test.ts`: the first tick's maintenance count read 8, 9 or 10. On a slow machine the next tick's idle probe landed inside the count, and the compacted-receipt sweep added a statement until an earlier test had finished its cursor. The test now walks that cursor to done first and holds later ticks until the first tick is counted. The count is still exactly 8.
+- `test/e2e/evidence-long-page.test.ts`: with provider keys in the environment, every search called the live reranker, whose scores for identical calls differ in the last digits, so the byte comparison failed. The file now runs keyless, as CI's Selected E2E runs it.
+- `test/e2e/source-retire-batched-postgres.test.ts` ran into its 180 s cap. It now retires 2,017 pages (four full batches and a partial one) instead of 60,000, and a statement trigger records every committed page delete. So each test asserts the batches themselves: their sizes, the per-batch bound and one transaction each. Removing the batch `LIMIT` fails the remove and purge tests. The file takes about 57 s.
+- `test/config-file-plane-keys.test.ts`, `test/consent.test.ts`: the memorable enable tests hung waiting for a `[y/N]` answer when stdin was a terminal. They now pin `process.stdin.isTTY` to false while the command runs, so they test the non-interactive refusal however the runner's stdin is set up.
+- `scripts/ci-census-tests.sh`: the pull-request census job now runs 15 more tests that read every file under `src/` (or a whole `src/` subtree), such as `test/cli-exit-verdict-pin.test.ts`. Before, a change that broke one of them passed its pull-request checks and failed only in the full run. `test/scripts/ci-census-tests.test.ts` pins `cli-exit-verdict-pin` in the list.
+
 ## [0.60.668.0] - 2026-11-11
 
 **The skill resolver can now find skills from more places, stays fresh when your harness writes into its skills folder, and runs inside Hermes.** The skill resolver is the optional feature that offers your agent the right installed skill on each turn. It is still off by default and never blocks a turn.
