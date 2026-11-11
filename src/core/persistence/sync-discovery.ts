@@ -35,7 +35,7 @@ import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { holdBasisMoved, holdRescreenDue, readGitHoldRetryPaths, readGitSourceHolds, readSyncImportProvenances } from './sync-holds.ts';
 import { readBlobContents, readTreeBlobs, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { gitChildEnv } from '../git-env.ts';
-import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
+import { HARDENED_GIT_ARGS, noLazyFetchEnv } from '../hardened-git.ts';
 import { readOriginEvidence } from './sync-origin-evidence.ts';
 import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { dbOnlyVerdict, storageConfigFromYaml, unresolvedDbOnlyIn } from '../storage-config.ts';
@@ -115,7 +115,7 @@ export async function syncExcludePatterns(engine: Pick<BrainEngine, 'getConfig'>
 /** GST-2331: one managed-sync Git read, under `HARDENED_GIT_ARGS` and `NO_LAZY_FETCH_ENV`: no repository program runs, and a partial clone fetches nothing (a missing object fails the read). */
 export function syncGit(root: string, args: string[]): string {
   return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args],
-    { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
+    { env: gitChildEnv(noLazyFetchEnv()), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 /** GST-2331: whether the repository at `gitRoot` is a partial clone (`extensions.partialClone`, or a remote marked `promisor`), whose missing objects sync never fetches. */
 export function syncPartialClone(gitRoot: string): boolean {
@@ -137,7 +137,7 @@ export function partialCloneTreeRefusal(gitRoot: string, sourceId: string, commi
 /** `syncGit` without blocking the event loop while Git runs (a level read: a synchronous spawn held timers for 200+ ms on a loaded host). */
 const execFileAsync = promisify(execFile);
 export async function syncGitAsync(root: string, args: string[]): Promise<string> {
-  return (await execFileAsync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args], { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2 })).stdout;
+  return (await execFileAsync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args], { env: gitChildEnv(noLazyFetchEnv()), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2 })).stdout;
 }
 /**
  * A sync file or root failed a confinement or identity check. These helpers

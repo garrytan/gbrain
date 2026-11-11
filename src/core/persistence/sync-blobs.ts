@@ -26,15 +26,44 @@ function git(gitRoot: string, args: string[], input?: string, maxBuffer = 32 * 1
     { env: gitChildEnv({ ...noLazyFetchEnv(), ...env }), timeout: 60_000, maxBuffer, stdio: ['pipe', 'pipe', 'pipe'], ...(input !== undefined ? { input } : {}) });
 }
 
+/** A git older than 2.45 fails a read that reaches an object a partial clone lacks, instead of reporting it missing (GST-2331). */
+const fromPromisor = (error: unknown) => String((error as { stderr?: unknown }).stderr ?? '').includes('from promisor remote');
+
+/** Sizes of the objects this repository holds, by id, in one `cat-file --batch-check`; a batch an older git fails on a missing object is halved until each missing one stands alone. */
+export function presentSizes(gitRoot: string, oids: string[], out = new Map<string, number>()): Map<string, number> {
+  if (oids.length === 0) return out;
+  try {
+    for (const line of git(gitRoot, ['cat-file', '--batch-check'], oids.join('\n') + '\n').toString('utf8').split('\n')) {
+      const [oid, kind, size] = line.split(' ');
+      if (kind && kind !== 'missing') out.set(oid!, Number(size));
+    }
+  } catch (error) {
+    if (!fromPromisor(error)) throw error;
+    if (oids.length > 1) { presentSizes(gitRoot, oids.slice(0, oids.length >> 1), out); presentSizes(gitRoot, oids.slice(oids.length >> 1), out); }
+  }
+  return out;
+}
+
 /** At this many paths `readTreeBlobs` lists the whole tree once instead of path chunks (#6712: the prescreen of a tree walk). */
 const WHOLE_TREE_AT = 1000;
-/** Blob id and size of Git paths at a commit, in chunked `ls-tree` calls (never one process per file), or one recursive listing for a large set. */
+/**
+ * Blob id and size of Git paths at a commit, in chunked `ls-tree` calls (never one process per file), or one recursive listing for a large set.
+ * A blob the repository lacks has size NaN, which Git 2.45 and newer print as BAD; an older git fails `ls-tree -l` on it, so that listing
+ * is read without sizes and the sizes of the blobs present are read alone.
+ */
 export function readTreeBlobs(gitRoot: string, target: string, gitPaths: string[]): Map<string, TreeBlob> {
   const out = new Map<string, TreeBlob>();
   const whole = gitPaths.length >= WHOLE_TREE_AT, wanted = whole ? new Set(gitPaths) : null;
+  const list = (args: string[], maxBuffer?: number): string[] => {
+    try { return git(gitRoot, ['ls-tree', '-l', ...args], undefined, maxBuffer).toString('utf8').split('\0'); } catch (error) {
+      if (!fromPromisor(error)) throw error;
+      const rows = git(gitRoot, ['ls-tree', ...args], undefined, maxBuffer).toString('utf8').split('\0');
+      const sizes = presentSizes(gitRoot, rows.map(row => /^\d+ blob ([0-9a-f]+)\t/.exec(row)?.[1]).filter((oid): oid is string => !!oid));
+      return rows.map(row => row.replace(/^(\d+ blob ([0-9a-f]+))\t/, (_, head: string, oid: string) => head + ' ' + (sizes.get(oid) ?? 'BAD') + '\t'));
+    }
+  };
   for (let i = 0; i < gitPaths.length; i += 500) {
-    const rows = (whole ? git(gitRoot, ['ls-tree', '-r', '-l', '-z', target], undefined, 512 * 1024 ** 2)
-      : git(gitRoot, ['ls-tree', '-l', '-z', target, '--', ...gitPaths.slice(i, i + 500)])).toString('utf8').split('\0');
+    const rows = whole ? list(['-r', '-z', target], 512 * 1024 ** 2) : list(['-z', target, '--', ...gitPaths.slice(i, i + 500)]);
     for (const row of rows) {
       const tab = row.indexOf('\t');
       if (tab < 0 || wanted && !wanted.has(row.slice(tab + 1))) continue;
@@ -51,7 +80,11 @@ export function readBlobContents(gitRoot: string, blobs: TreeBlob[]): Map<string
   return new Map([...readBlobBytes(gitRoot, blobs)].map(([oid, bytes]) => [oid, bytes.toString('utf8')]));
 }
 
-/** #6529: the raw bytes of blobs by id (an image import keeps its bytes), read through `git cat-file --batch` in bounded chunks. */
+/**
+ * #6529: the raw bytes of blobs by id (an image import keeps its bytes), read through `git cat-file --batch` in bounded chunks.
+ * GST-2331: a git older than 2.45 fails the batch on an object a partial clone lacks instead of reporting it missing, so the
+ * objects of that chunk the repository holds are found first (`presentSizes`) and only they are read.
+ */
 export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, Buffer> {
   const out = new Map<string, Buffer>();
   const pending = [...new Map(blobs.filter(blob => blob.size <= SYNC_READ_BOUND).map(blob => [blob.oid, blob])).values()];
@@ -59,9 +92,18 @@ export function readBlobBytes(gitRoot: string, blobs: TreeBlob[]): Map<string, B
     const chunk: TreeBlob[] = [];
     let bytes = 0;
     while (pending.length && (chunk.length === 0 || bytes + pending[0]!.size <= 24 * 1024 ** 2)) { bytes += pending[0]!.size; chunk.push(pending.shift()!); }
-    const output = git(gitRoot, ['cat-file', '--batch'], chunk.map(blob => blob.oid).join('\n') + '\n', bytes + chunk.length * 128 + 1024);
+    const batch = (list: TreeBlob[]) => git(gitRoot, ['cat-file', '--batch'], list.map(blob => blob.oid).join('\n') + '\n', bytes + list.length * 128 + 1024);
+    let readable = chunk, output: Buffer;
+    try {
+      output = batch(chunk);
+    } catch (error) {
+      if (!fromPromisor(error)) throw error;
+      const present = presentSizes(gitRoot, chunk.map(blob => blob.oid));
+      readable = chunk.filter(blob => present.has(blob.oid));
+      output = readable.length ? batch(readable) : Buffer.alloc(0);
+    }
     let offset = 0;
-    for (const blob of chunk) {
+    for (const blob of readable) {
       const newline = output.indexOf(10, offset);
       const [oid, kind, size] = output.subarray(offset, newline).toString('utf8').split(' ');
       if (kind === 'missing' || size === undefined) { offset = newline + 1; continue; }

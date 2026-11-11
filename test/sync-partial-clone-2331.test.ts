@@ -8,6 +8,8 @@ import { __setNoLazyFetchForTests, __setPinnedWindowForTests } from '../src/core
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
 import { __resetHistoryIndexesForTest, readOriginEvidence } from '../src/core/persistence/sync-origin-evidence.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { resolveSourcePaths } from '../src/core/persistence/resolve-paths.ts';
+import { readBlobs, readHeadTree } from '../src/core/persistence/git-gap.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { hardenedGitSync } from '../src/core/hardened-git.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
@@ -34,8 +36,8 @@ async function refusal(engine: BrainEngine): Promise<OperationError> {
   throw new Error('the sync did not stop');
 }
 const rules = async (engine: BrainEngine) => (await engine.executeRaw<{ rule_id: string }>("SELECT rule_id FROM access_rules WHERE source_id='default' ORDER BY rule_id")).map(row => row.rule_id);
-/** Present in the clone without a fetch: a read with lazy fetching off succeeds. */
-const present = (root: string, spec: string) => { execFileSync('git', ['-C', root, 'cat-file', '-e', spec], { env: { ...process.env, GIT_NO_LAZY_FETCH: '1' }, stdio: 'ignore' }); return true; };
+/** Present in the clone without a fetch: a read with lazy fetching off succeeds (a git older than 2.44 ignores GIT_NO_LAZY_FETCH, so transports are refused too). */
+const present = (root: string, spec: string) => { execFileSync('git', ['-c', 'protocol.allow=never', '-C', root, 'cat-file', '-e', spec], { env: { ...process.env, GIT_NO_LAZY_FETCH: '1' }, stdio: 'ignore' }); return true; };
 /** Runs the git command a folder-rule problem names, exactly as written there. */
 const runNamed = (message: string, shape: RegExp) => { const [command, ...args] = message.match(shape)![0].split(' '); execFileSync(command!, args, { stdio: 'ignore' }); };
 /** Upstream with notes under hr/ and a folder-rule file, served bare and cloned blobless with a checkout into `root`. */
@@ -155,16 +157,31 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
     }, root => { remote = bloblessClone(root, ['seed', 'a', 'b'], true); });
   }, 240_000);
 
-  test('a blobless clone without a checkout fetches nothing and holds every committed file git_object_missing', () => {
+  test('a blobless clone without a checkout fetches nothing and holds every committed file git_object_missing, also on a Git that ignores GIT_NO_LAZY_FETCH', async () => {
+    for (const lazyOff of [true, false]) {
     let remote: ReturnType<typeof server> | undefined;
-    return brain(async ({ engine, root }) => {
+    const restoreLazy = __setNoLazyFetchForTests(lazyOff);
+    try { await brain(async ({ engine, root }) => {
       await performManagedSync(engine, OPTS);
       expect(existsSync(remote!.marker)).toBe(false);
       const held = await holds(engine);
       expect(held.map(hold => [hold.path, hold.code]).sort()).toEqual([['notes/a.md', 'git_object_missing'], ['notes/seed.md', 'git_object_missing']]);
       expect(held[0]!.message).toContain('partial clone');
       expect(await live(engine)).toEqual([]);
-    }, root => { remote = bloblessClone(root, ['seed', 'a'], false); });
+    }, root => { remote = bloblessClone(root, ['seed', 'a'], false); }); } finally { restoreLazy(); }
+    }
+  }, 240_000);
+  test('resolve-path in a blobless clone without a checkout fetches nothing and names each file held git_object_missing, also on a Git that ignores GIT_NO_LAZY_FETCH', async () => {
+    for (const lazyOff of [true, false]) {
+    let remote: ReturnType<typeof server> | undefined;
+    const restoreLazy = __setNoLazyFetchForTests(lazyOff);
+    try { await brain(async ({ engine }) => {
+      await performManagedSync(engine, OPTS);
+      const resolved = await resolveSourcePaths(engine, 'default', ['notes/a.md', 'notes/seed.md']);
+      expect(existsSync(remote!.marker)).toBe(false);
+      expect(resolved.paths.map(path => [path.path, path.state, path.hold?.code])).toEqual([['notes/a.md', 'held', 'git_object_missing'], ['notes/seed.md', 'held', 'git_object_missing']]);
+    }, root => { remote = bloblessClone(root, ['seed', 'a'], false); }); } finally { restoreLazy(); }
+    }
   }, 240_000);
   test('a missing blob is fetched on neither read path, nor by a Git that ignores GIT_NO_LAZY_FETCH, even where the environment allows the file transport: the cat-file --batch window and the git show fallback each hold it', async () => {
     for (const arm of [{ window: null, lazyOff: true, allowFile: false }, { window: 0, lazyOff: true, allowFile: false }, { window: null, lazyOff: false, allowFile: false }, { window: 0, lazyOff: false, allowFile: false },
@@ -188,9 +205,11 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
     });
   }, 240_000);
 
-  test('a treeless clone without a checkout stops the run naming the partial clone, fetches nothing, and syncs once the user fetches the trees', () => {
+  test('a treeless clone without a checkout stops the run naming the partial clone, fetches nothing, and syncs once the user fetches the trees, also on a Git that ignores GIT_NO_LAZY_FETCH', async () => {
+    for (const lazyOff of [true, false]) {
     let remote: ReturnType<typeof server> | undefined;
-    return brain(async ({ engine, root }) => {
+    const restoreLazy = __setNoLazyFetchForTests(lazyOff);
+    try { await brain(async ({ engine, root }) => {
       const stopped = await refusal(engine);
       expect(existsSync(remote!.marker)).toBe(false);
       expect(stopped.code).toBe('git_object_missing');
@@ -206,7 +225,8 @@ for (const backend of testBackends()) describe('[' + backend + '] managed sync i
       await performManagedSync(engine, OPTS);
       expect(existsSync(remote!.marker)).toBe(false);
       expect((await holds(engine)).map(hold => [hold.path, hold.code]).sort()).toEqual([['notes/a.md', 'git_object_missing'], ['notes/seed.md', 'git_object_missing']]);
-    }, root => { remote = bloblessClone(root, ['seed', 'a'], false, 'tree:0'); });
+    }, root => { remote = bloblessClone(root, ['seed', 'a'], false, 'tree:0'); }); } finally { restoreLazy(); }
+    }
   }, 240_000);
 
   test('a treeless clone whose HEAD moved to a fetched commit without a checkout stops the run and deletes nothing; a pull syncs without fetching', () => {
@@ -347,5 +367,24 @@ test('a hardened read in a treeless clone fetches nothing on a Git that ignores 
     try { listed = hardenedGitSync(root, ['ls-tree', '-z', '--full-tree', 'origin/main', '--', 'notes/b.md'], { timeoutMs: 30_000, maxBytes: 1024 * 1024 }); } finally { restore(); }
     expect(existsSync(remote.marker)).toBe(false);
     expect(listed.ok).toBe(false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+}, 60_000);
+test('the git-gap HEAD listing of a blobless clone fetches nothing and reads a missing blob as missing, also on a Git that ignores GIT_NO_LAZY_FETCH', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'gst2331-head-tree-')), root = join(dir, 'clone');
+  try {
+    const remote = bloblessClone(root, ['seed', 'a'], false);
+    git(root, 'cat-file', 'blob', 'HEAD:notes/seed.md');
+    rmSync(remote.marker, { force: true });
+    for (const lazyOff of [true, false]) {
+      const restore = __setNoLazyFetchForTests(lazyOff);
+      try {
+        const head = await readHeadTree(root);
+        const [missing, kept] = [head!.blobs.get('notes/a.md')!, head!.blobs.get('notes/seed.md')!];
+        expect([...head!.blobs].map(([path, blob]) => [path, blob.size])).toEqual([['notes/a.md', NaN], ['notes/seed.md', Buffer.byteLength(note('seed'))]]);
+        expect(await readBlobs(root, [missing])).toBeNull();
+        expect((await readBlobs(root, [kept]))?.get(kept.oid)?.toString('utf8')).toBe(note('seed'));
+        expect(existsSync(remote.marker)).toBe(false);
+      } finally { restore(); }
+    }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 }, 60_000);

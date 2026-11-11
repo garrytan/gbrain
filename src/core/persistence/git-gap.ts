@@ -22,7 +22,7 @@ import { isDeclaredReason, isNeverFiledDerivedPage } from './git-declared.ts';
 import { classifyDrift } from './reconcile-additive.ts';
 import { reconcileCanonical } from './reconcile-merge.ts';
 import { reconcileFileReading } from './reconcile-state.ts';
-import { SYNC_READ_BOUND } from './sync-blobs.ts';
+import { presentSizes, SYNC_READ_BOUND } from './sync-blobs.ts';
 import { RestoreTargetError, restoreFilePath } from '../restore-target.ts';
 import type { SlugRootMode } from '../sync-anchor.ts';
 
@@ -199,6 +199,8 @@ export function isGitCheckout(root: string): boolean {
 /**
  * HEAD of the checkout at `root` (or the commit `rev` names), listed once with `ls-tree -r -l -z --full-tree` under the
  * source's directory. Null when Git cannot answer (not a checkout, an unknown commit, a failed or truncated read).
+ * GST-2331: a blob the repository lacks has size NaN (Git 2.45 and newer print BAD); an older Git fails the sized listing in
+ * a partial clone, so the tree is listed again without sizes and the sizes of the blobs present are read alone (`presentSizes`).
  */
 export async function readHeadTree(root: string, rev = 'HEAD'): Promise<HeadTree | null> {
   const top = gitLine(root, ['rev-parse', '--show-toplevel']);
@@ -210,16 +212,24 @@ export async function readHeadTree(root: string, rev = 'HEAD'): Promise<HeadTree
   const commit = head.stdout.toString('utf8').trim();
   const scope = real === gitRoot ? '' : real.slice(gitRoot.length + 1);
   const blobs = new Map<string, TreeBlob>();
-  const splitter = new NulRecordSplitter();
-  const result = await hardenedGitStream(root, ['ls-tree', '-r', '-l', '-z', '--full-tree', commit, '--', ...(scope ? [`:(literal)${scope}`] : [])], {
-    timeoutMs: 300_000, maxBytes: 1024 * 1024 * 1024,
-    onChunk: chunk => {
-      for (const record of splitter.push(chunk)) {
-        const text = record.toString('utf8'), tab = text.indexOf('\t');
-        const [mode = '', type = '', oid = '', size = ''] = text.slice(0, tab).split(/ +/);
-        if (type === 'blob') blobs.set(text.slice(tab + 1), { oid, size: Number(size), mode });
-      }
-    } });
+  const list = (sized: string[]) => {
+    const splitter = new NulRecordSplitter();
+    blobs.clear();
+    return hardenedGitStream(root, ['ls-tree', '-r', ...sized, '-z', '--full-tree', commit, '--', ...(scope ? [`:(literal)${scope}`] : [])], {
+      timeoutMs: 300_000, maxBytes: 1024 * 1024 * 1024,
+      onChunk: chunk => {
+        for (const record of splitter.push(chunk)) {
+          const text = record.toString('utf8'), tab = text.indexOf('\t');
+          const [mode = '', type = '', oid = '', size = ''] = text.slice(0, tab).split(/ +/);
+          if (type === 'blob') blobs.set(text.slice(tab + 1), { oid, size: Number(size), mode });
+        }
+      } });
+  };
+  let result = await list(['-l']);
+  if (!result.ok && result.reason === 'exit' && (result = await list([])).ok) {
+    const sizes = presentSizes(gitRoot, [...new Set([...blobs.values()].map(blob => blob.oid))]);
+    for (const blob of blobs.values()) blob.size = sizes.get(blob.oid) ?? NaN;
+  }
   if (!result.ok || !(result.bytes === 0 || result.endsWithNul)) return null;
   return { gitRoot, format, commit, blobs };
 }

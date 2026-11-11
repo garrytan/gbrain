@@ -35,7 +35,7 @@ import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { embeddingStateFix, type EmbeddingState } from '../embedding-state.ts';
 import { PAGE_SEARCHABLE, readPageSearchability } from '../page-searchability.ts';
 import { loadSyncEligibility, syncGit } from './sync-discovery.ts';
-import { readBlobContents } from './sync-blobs.ts';
+import { readBlobContents, readTreeBlobs, type TreeBlob } from './sync-blobs.ts';
 import { readGitHold } from './sync-holds.ts';
 import { persistenceEnabledForHealth } from './ownership.ts';
 
@@ -85,21 +85,6 @@ const DOCS = 'docs/guides/resolve-paths.md';
 const PAGE_STATE: Record<Exclude<EmbeddingState, 'deleted_page_chunks'>, ResolvePathState> = { embedded: 'searchable', pending: 'pending_embedding',
   keyword_only: 'keyword_only', quarantined: 'quarantined', empty: 'empty', chunkless_healable: 'chunkless' };
 
-interface TreeRow { path: string; oid: string; size: number }
-
-function lsTree(gitRoot: string, commit: string | null, paths: string[]): Map<string, TreeRow> {
-  const out = new Map<string, TreeRow>();
-  if (!commit || !paths.length) return out;
-  const raw = syncGit(gitRoot, ['--literal-pathspecs', 'ls-tree', '-l', '-z', commit, '--', ...paths]);
-  for (const row of raw.split('\0')) {
-    const tab = row.indexOf('\t');
-    if (tab < 0) continue;
-    const [, kind, oid, size] = row.slice(0, tab).split(/\s+/);
-    if (kind === 'blob') out.set(row.slice(tab + 1), { path: row.slice(tab + 1), oid: oid!, size: Number(size) });
-  }
-  return out;
-}
-
 function headCommit(gitRoot: string): string | null {
   try { return syncGit(gitRoot, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}']).trim() || null; } catch { return null; }
 }
@@ -137,8 +122,8 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
     return { input, gitPath, rootPath: scope ? gitPath.slice(scope.length + 1) : gitPath, origin: sourcePath(gitPath) };
   });
   const gitPaths = normalized.map(p => p.gitPath);
-  const synced = lsTree(gitRoot, source.last_commit, gitPaths);
-  const atHead = head ? lsTree(gitRoot, head, gitPaths) : null;
+  const synced = source.last_commit ? readTreeBlobs(gitRoot, source.last_commit, gitPaths) : new Map<string, TreeBlob>();
+  const atHead = head ? readTreeBlobs(gitRoot, head, gitPaths) : null;
   const heads = readBlobContents(gitRoot, [...synced.values()].filter(row => row.size <= 256 * 1024));
   const origins = normalized.map(p => p.origin);
   const pages = await engine.executeRaw<{ id: number; slug: string; source_path: string; deleted: boolean }>(
