@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.680.0] - 2026-11-11
 
 **gbrain now tells you when a privacy label it doesn't recognize leaves a page readable.** A page with no `visibility` counts as private only when `access` is private, restricted or confidential, or `confidentiality` is confidential, secret, private or restricted. Any other value, such as `access: personal` or a confidentiality value naming a health record, was ignored without a word: the page read as world to every remote caller and could be committed to the brain's git remote. Writes and doctor now say so. Who can read a page does not change.
 
