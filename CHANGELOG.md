@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.676.0] - 2026-11-11
 
 **Persistence, sync and job fixes, most from community bug reports and each reproduced on master: sync timeouts stop cleanly, held and deleted files release, Postgres pools and deadline reads stop leaking or hanging, derived effects stop reporting false recoveries, and fix commands print what a retry needs.** `gbrain sync --timeout N` now stops as a partial run with exit 0 instead of being killed by its own watchdog, a held deleted file whose page was soft-deleted no longer stays `needs_human`, and `gbrain git commit-push` publishes a staged deletion under a wildcard-ignored folder. A Postgres pool that finishes opening after a reconnect is closed instead of leaking, a managed-sync preparation read gives up at its deadline instead of waiting on a saturated pool, and the sync cost check no longer scans every chunk when nothing has drifted. A `links` or `facts-backstop` effect that meets another write's publication in flight waits as `writer_busy` and retries within a second, instead of reporting `recovery_required` and waiting 30 s. A refused edit's fix command now prints the revision the retry needs, keyless init suggests an import that runs, cancelling a finished job changes nothing, and particle-1 on OpenRouter stops truncating. gbrain's own receipt bookkeeping no longer caps writes by default (the cumulative id and receipt-byte caps become opt-in, and housekeeping keeps receipt storage in check), `gbrain repair file-drift` no longer offers to copy an untracked or gitignored file into an origin-twin page, and a `revision_backfill_pending` refusal names `gbrain apply-migrations --force-schema`, the command that resumes the backfill.
 
@@ -93,7 +93,6 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/behavior-change-notice.ts`: one row for the changed message and the recovery.
 - `scripts/run-e2e.sh`: `source-retire-batched-postgres.test.ts` joins the 4x per-file budget list. No assertion in that file changed.
 - Tests: `test/ingest-capture-keeps-readers.test.ts` checks that the 409 body and the job's refusal name `--force-schema` and the anchor.
-
 
 ## [0.60.675.0] - 2026-11-11
 
