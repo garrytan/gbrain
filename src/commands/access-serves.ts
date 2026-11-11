@@ -20,6 +20,7 @@ import { configDir } from '../core/config.ts';
 import { hashToken } from '../core/utils.ts';
 import { opError } from '../core/ops/contract.ts';
 import { usageError } from '../cli/cli-error.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
 import { addMember, getMember, parseIdList } from '../core/access/members.ts';
 import { ownerMemberId } from '../core/access/owner.ts';
@@ -216,5 +217,5 @@ export async function runAccessServes(engine: BrainEngine, mode: string | undefi
   if (!roster.length) throw rosterEmpty('gbrain access serves several');
   const r = await labelSeveral(engine, roster, flagValue(args, '--source') ?? 'default', args.includes('--yes'), json);
   console.log(json ? JSON.stringify(r, null, 2) : receiptLines(r).join('\n'));
-  if (!receiptOk(r)) process.exitCode = 1;
+  if (!receiptOk(r)) setCliExitVerdict(1);
 }
