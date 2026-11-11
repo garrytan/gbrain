@@ -40,7 +40,7 @@ export const READERS_MAX_PAGES = 10_000;
 interface ReadersChange { from: string[] | null; to: string[] | null }
 export interface ReadersItem extends RepairItem { target: RepairCursor; readers: ReadersChange; hash?: string; last?: boolean }
 interface Selection { source_ids: string[]; slugs: string[]; readers: string[] | null; allow_without_owner: boolean; owner: string | null }
-interface ApprovedReaders { target: RepairCursor; source_id: string; slug: string; chars: number; action: string; readers: ReadersChange; selection: Selection }
+interface ApprovedReaders { target: RepairCursor; source_id: string; slug: string; chars: number; action: string; readers: ReadersChange; selection_digest: string }
 
 const invalid = (message: string, suggestion: string, reason?: string) => opError('invalid_params', message, suggestion, reason ? { reason } : {});
 const unknownReader = (message: string, suggestion: string, reason: string) => opError('access_member_invalid', message, suggestion,
@@ -56,7 +56,9 @@ const same = (a: string[] | null, b: string[] | null) => JSON.stringify(a) === J
  * group, and a list without the owner unless the flag is passed; nothing is written before this passes.
  */
 async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Promise<{ readers: string[] | null; owner: string | null }> {
-  const { owner } = await ownerView(engine);
+  const view = await ownerView(engine);
+  const inactive = view.inactive ? normalizePrincipal(view.inactive.value) : null;
+  const owner = view.owner ?? (inactive?.startsWith('member:') ? shown(inactive) : null);
   if (request.readers.trim() === 'none') return { readers: null, owner };
   const entries = request.readers.split(',').map(entry => entry.trim()).filter(Boolean);
   if (!entries.length) throw invalid('--readers names no reader.', 'Pass member ids and group:<id>, comma-separated (e.g. --readers alice-example,group:team-a), or none to remove the readers.');
@@ -80,7 +82,7 @@ async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Pro
     }
   }
   if (owner && !principals.includes('member:' + owner) && !request.allowWithoutOwner) {
-    throw invalid('These readers leave out the brain owner "' + owner + '", so the owner\'s own keys could no longer read the page; nothing was written. Name the owner, or pass --allow-without-owner.',
+    throw invalid('These readers leave out the brain owner "' + owner + '"' + (view.owner ? '' : ' (configured, not enabled now)') + ', so the owner\'s own keys could no longer read the page; nothing was written. Name the owner, or pass --allow-without-owner.',
       'Add the owner to the list (--readers ' + [...principals.map(shown), owner].join(',') + '), or pass --allow-without-owner if the owner should not read it. A group that holds the owner does not count.',
       'readers_omit_owner');
   }
@@ -124,7 +126,7 @@ export async function readersGitCounts(engine: BrainEngine, scope: RepairScope, 
       count(*) FILTER (WHERE e.state IN ('queued', 'running')) AS pending, count(*) FILTER (WHERE e.state = 'failed') AS failed,
       count(*) FILTER (WHERE e.state = 'committed' AND e.outcome->>'git' = 'skipped') AS skipped
     FROM persistence_requests r JOIN persistence_effects e ON e.request_id = r.id AND e.kind = 'git'
-    WHERE r.intent->>'maintenance_batch' = ANY($1::text[])`, [scope.source_ids.map(sourceId => readersBatch(hash, sourceId))]);
+    WHERE r.intent->>'maintenance_batch' = ANY($1::text[])`, [scope.source_ids.map(sourceId => readersBatch(hash, sourceId))], { timeoutMs: 120_000 });
   return Object.fromEntries(Object.entries(row ?? {}).map(([key, value]) => [key, Number(value)]));
 }
 
@@ -138,8 +140,9 @@ const hashParts = (scope: RepairScope, selection: Selection, items: ReadersItem[
 async function approvedItems(engine: BrainEngine, scope: RepairScope, selection: Selection, expect: string, command: string, after: RepairCursor | null): Promise<ReadersItem[]> {
   const approved = await loadApprovedSet<ApprovedReaders>(engine, { command: 'visibility', hash: expect, previewCommand: command,
     emptyHash: async () => previewHash(hashParts(scope, selection, (await planPages(engine, selection)).items)) });
-  if (approved.items.some(entry => digest(entry.selection) !== digest(selection))) throw previewChangedError(expect, command);
-  const items: ReadersItem[] = approved.items.map(({ selection: _selection, ...entry }, index) => ({ ...entry, cursor: { phase: 0, id: index }, hash: expect, last: index === approved.items.length - 1 }))
+  const selectionDigest = digest(selection);
+  if (approved.items.some(entry => entry.selection_digest !== selectionDigest)) throw previewChangedError(expect, command);
+  const items: ReadersItem[] = approved.items.map(({ selection_digest: _selection, ...entry }, index) => ({ ...entry, cursor: { phase: 0, id: index }, hash: expect, last: index === approved.items.length - 1 }))
     .filter(item => afterCursor(item.cursor, after));
   const live = new Map((await planPages(engine, selection)).items.map(item => [item.target.id, item.readers.from]));
   const target = normalized(selection.readers);
@@ -170,8 +173,9 @@ export async function planReaders(engine: BrainEngine, scope: RepairScope, after
   if (opts.apply) return { items: await approvedItems(engine, scope, selection, opts.expect!, command, after), preview_hash: opts.expect, residuals: {} };
   const { items, residuals } = await planPages(engine, selection);
   const hash = previewHash(hashParts(scope, selection, items));
+  const selectionDigest = digest(selection);
   if (items.length) await saveApprovedSet<ApprovedReaders>(engine, { command: 'visibility', hash },
-    items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, readers: item.readers, selection })));
+    items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, readers: item.readers, selection_digest: selectionDigest })));
   return { items: items.map((item, index) => ({ ...item, cursor: { phase: 0, id: index } })), preview_hash: hash, residuals,
     ...(residuals.named_not_found ? { warnings: [residuals.named_not_found + ' named page(s) were not found in ' + scope.source_ids.join(', ') + ' and are not listed.'] } : {}),
     listing: items.map(item => ({ item: item.source_id + ':' + item.slug, class: 'readers', detail: item.action })) };

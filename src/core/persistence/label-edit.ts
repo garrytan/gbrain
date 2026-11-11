@@ -9,6 +9,7 @@
  */
 import { opError } from '../ops/contract.ts';
 import { ACCESS_ID_RE } from '../access/principals.ts';
+import { loadBoundedYaml } from '../data-frontmatter.ts';
 
 /** The frontmatter keys a label edit may touch: visibility and the privacy aliases (search/private-visibility.ts PRIVACY_ALIASES). */
 export const LABEL_KEYS: readonly string[] = ['visibility', 'access', 'confidentiality'];
@@ -49,7 +50,8 @@ const KEY_LINES: Record<string, RegExp> = {
   visibility: /^visibility[ \t]*:(?:[ \t]|\r?\n|$)/, access: /^access[ \t]*:(?:[ \t]|\r?\n|$)/, confidentiality: /^confidentiality[ \t]*:(?:[ \t]|\r?\n|$)/,
   readable_by: /^readable_by[ \t]*:(?:[ \t]|\r?\n|$)/,
 };
-const valueText = (value: string | string[]) => Array.isArray(value) ? `[${value.join(', ')}]` : value;
+const listEntry = (entry: string) => (loadBoundedYaml(`[${entry}]`) as unknown[])[0] === entry ? entry : `'${entry}'`;
+const valueText = (value: string | string[]) => Array.isArray(value) ? `[${value.map(listEntry).join(', ')}]` : value;
 const keyLine = (key: string) => KEY_LINES[key] ?? /(?!)/;
 
 /**

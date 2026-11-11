@@ -461,7 +461,7 @@ export const visibilityRepair: RepairHandler = {
   async apply(ctx, entry) {
     const item = entry as VisibilityItem;
     const target = item.target ?? item.cursor;
-    if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, item, snapshot, content, edit, batch));
+    if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, { ...item, cursor: target }, snapshot, content, edit, batch));
     try {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });

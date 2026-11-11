@@ -116,6 +116,10 @@ describe('the label editor writes readable_by as one flow-list line', () => {
     }
     expect(() => readLabelEdit({ set: { visibility: ['private'] }, remove: [] })).toThrow();
   });
+  test('a reader YAML would read as a number, a boolean or null is quoted, so the file reads back as the same ids', () => {
+    const spliced = spliceLabelLines(text, readLabelEdit({ set: { readable_by: ['1001', 'true', 'null', '1e3', 'alice-example'] }, remove: [] })!)!.text;
+    expect(spliced).toBe(withLine(text, "readable_by: ['1001', 'true', 'null', '1e3', alice-example]"));
+  });
 });
 
 for (const backend of testBackends()) describe('[' + backend + '] repair visibility --readers on a managed git source', () => {
@@ -349,6 +353,9 @@ for (const backend of testBackends()) describe('[' + backend + '] repair visibil
     expect(await refusal(engine, one('group:family-example'))).toMatchObject({ code: 'invalid_params', message: expect.stringContaining('--allow-without-owner') });
     await disableMember(engine, 'bob-example');
     expect(await refusal(engine, one(ownerAnd('bob-example')))).toMatchObject({ code: 'access_member_invalid', message: expect.stringContaining('bob-example') });
+    // A configured owner that is disabled now still counts: re-enabled, its keys would read the page again.
+    await disableMember(engine, OWNER);
+    expect(await refusal(engine, one('alice-example'))).toMatchObject({ code: 'invalid_params', message: expect.stringContaining('not enabled now') });
     expect((await row(engine, PAGES.shared.slug, SRC)).frontmatter).toEqual(frontmatter);
 
     const { applied } = await previewApply(engine, one('alice-example', '--allow-without-owner'));
