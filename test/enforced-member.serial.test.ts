@@ -465,6 +465,26 @@ for (const kind of testBackends()) {
       expect(hidden.exitCode).toBe(3);
     }, 300_000);
 
+    test("entity text_mentions lists a visible page that names the entity and leaves a hidden one out", async () => {
+      const page = (slug: string, type: string, title: string, fm: string, body: string) =>
+        '---\ntype: ' + type + '\ntitle: ' + JSON.stringify(title) + '\n' + fm + '---\n# ' + title + '\n\n' + body + '\n';
+      await withBrain(async engine => {
+        await importFromContent(engine, 'people/carol-example', page('people/carol-example', 'person', 'Carol Example', '', 'A person page.'), { sourceId: 'default', noEmbed: true });
+        await importFromContent(engine, 'notes/bob-carol-memo', page('notes/bob-carol-memo', 'note', 'Bob memo canaryemtmhidden', 'readable_by: [bob-example]\n', 'Met Carol Example about the canaryemtmhidden plan.'), { sourceId: 'default', noEmbed: true });
+        await importFromContent(engine, 'notes/open-carol-memo', page('notes/open-carol-memo', 'note', 'Open memo canaryemtmopen', '', 'Met Carol Example about the open plan.'), { sourceId: 'default', noEmbed: true });
+      });
+      const marks = ['notes/bob-carol-memo', 'Bob memo canaryemtmhidden', 'canaryemtmhidden'];
+      const trusted = JSON.parse((await cli(['entity', 'Carol Example', '--json'], { member: null })).stdout);
+      expect({ control: trusted.card?.text_mentions?.pages?.map((x: { slug: string }) => x.slug).sort() }).toEqual({ control: ['notes/bob-carol-memo', 'notes/open-carol-memo'] });
+      const r = await cli(['entity', 'Carol Example', '--json']);
+      const tm = JSON.parse(r.stdout).card?.text_mentions;
+      expect({ exit: r.exitCode, slugs: tm?.pages?.map((x: { slug: string }) => x.slug), total: tm?.total, leaks: marks.filter(m => (r.stdout + r.stderr).includes(m)) })
+        .toEqual({ exit: 0, slugs: ['notes/open-carol-memo'], total: 1, leaks: [] });
+      const human = await cli(['entity', 'Carol Example']);
+      expect({ exit: human.exitCode, open: human.stdout.includes('notes/open-carol-memo'), count: /text of 1 other page/.test(human.stdout), leaks: marks.filter(m => (human.stdout + human.stderr).includes(m)) })
+        .toEqual({ exit: 0, open: true, count: true, leaks: [] });
+    }, 300_000);
+
     test('variable unset: output is unchanged', async () => {
       for (const args of [['list', '--json'], ['get', PAGES.other.slug], ['stats', '--json']]) {
         const a = await cli(args, { member: null });
