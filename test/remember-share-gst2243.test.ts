@@ -47,7 +47,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const ACME = 'companies/acme-example';
 const TEAM_PAGE = 'companies/globex-example';
-const ATTEST_OPS = ['memory_write', 'cancel_write_request', 'context_pack', 'delete_page', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'recall', 'remember', 'search', 'whoami'];
+const ATTEST_OPS = ['memory_write', 'cancel_write_request', 'context_pack', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'recall', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('remember share for member credentials (' + kind + ', repo-less)', () => {
@@ -182,11 +182,13 @@ for (const kind of testBackends()) {
       expect(writebackCaller(await verify(tokens.alice!))).toEqual({ member: true });
       const world = await remember(who.alice(), 'Acme asked for audit logs canaryactorworld', { entity: ACME, visibility: 'world' });
       expect(world.isError).toBe(true);
-      expect(world.all).toContain('member_share_required');
-      expect(world.all).toContain('Retry the same call with share: true in place of visibility');
+      // GST-2249 W1: a save made for a person never shares, so both are refused and point at the owner's approval instead.
+      expect(world.all).toContain('attested_share_refused');
+      expect(world.all).toContain('memory_propose');
       expect(await factRow('canaryactorworld')).toBeUndefined();
       const retried = await remember(who.alice(), 'Acme asked for audit logs canaryactorworld', { entity: ACME, share: true });
-      expect([retried.isError, retried.json.page, retried.json.visibility]).toEqual([false, ACME, 'world']);
+      expect([retried.isError, retried.all.includes('attested_share_refused')]).toEqual([true, true]);
+      expect(await factRow('canaryactorworld')).toBeUndefined();
       const kept = await remember(who.alice(), 'Acme audit worried me canaryactorkept', { entity: ACME });
       expect([kept.isError, kept.json.page, kept.json.visibility]).toEqual([false, 'memory/members/alice-example', 'private']);
     }, 120_000);

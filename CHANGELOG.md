@@ -25,6 +25,82 @@ identifiers and attribution are available in the pre-removal Git revision
 - Docs: `docs/guides/shared-checkout-git.md` (`publish_secret_found` and `publish_scan_unreadable` rows), `docs/guides/live-sync.md`.
 - Tests: `test/effect-git-secret-gate.test.ts` (an ahead checkout, a diverged one, a remote rewound past a pushed secret, a `.gitattributes` change and a remote without the branch whose history holds a secret each refuse with nothing pushed; a clean ahead checkout pushes, a clean history creates a missing branch, and a scan past the in-process budget still scans in the child; through the effect worker the page write's effect holds, sync status names the fix, and an allowlisted false positive releases it, parked or not; a page write whose body holds a credential-shaped value still backs up; a script commit, amend or reword racing the effect commit, a page file changed after the effect checked it, and an unverified ledger record each hold with nothing pushed; a source-scan walk's page with a credential-shaped body still backs up; a repaired unreadable commit releases its hold); `test/persistence-git-removal-push-7089.test.ts` and `test/persistence-git-subdir-root-7091.test.ts` (doctor's push fixes scan); `test/guarded-publish.test.ts` (a remote rewound past a pushed secret is not published again); `test/git-literal-pathspec-hooks-7759.test.ts` publishes its probe `.gitattributes` commit first, since the effect's push now refuses one; `test/cli-flag-equals.test.ts` lists `range-secret-scan.ts` as a git child argv reader.
 
+## [0.60.663.0] - 2026-11-11
+
+### The doc size budgets have room again
+
+**llms-full.txt is 751,119 bytes, 48,881 under its 800,000-byte budget, and the two key-files pages that most merges touch are under 54,000 bytes again. No budget was raised and no text was removed.** Before, llms-full.txt sat 532 bytes under its budget and `engines-2.md` and `core-services-2.md` were within 8 bytes of the 60,000-byte page cap. So any change that added a sentence to those pages failed `check:doc-history` or the build-llms size test, and splitting a page cost bytes in `KEY_FILES.md`, which is 9,994 of its 10,000-byte cap.
+
+- `scripts/llms-config.ts`: the Grok Bot, Muse and in-agent setup guides are listed in llms.txt and no longer inlined in llms-full.txt. They only apply inside those hosted agents, and the inlined AGENTS.md routes those agents to them.
+- A key-files page at its cap continues on a new page linked from its last line, and the new page links back with `[Previous entries](<page>.md)`. A page the index doesn't link is reached from its predecessor's last line. `engines-2.md` continues on `engines-2-continued.md` and `core-services-2.md` on `core-services-2-more.md`; the moved entries are unchanged.
+- `test/docs-navigation.test.ts` checks that every key-files page is reachable from `KEY_FILES.md` by following key-files links. A page the index does not link must name one predecessor whose last line links it, its chain must reach an indexed page, and no page has two continuations. The `check:doc-history` failure message and `KEY_FILES.md` state the rule.
+
+## [0.60.662.0] - 2026-11-11
+
+**QM, the AI helper that can use gbrain as one of its memories, can no longer write any page directly, and the brain owner can now review its proposals from another machine.** Every page write QM makes for a person waits for the owner's approval, a fact it saves for a person stays private, and the owner's admin session reaches the proposal review over the running server. Unattested calls and member-bound credentials behave as before.
+
+### Every page write from QM waits for the owner
+
+**QM can no longer write any page directly; every page write waits for the brain owner's approval.** QM is the AI helper that can use gbrain as one of its memories. Since v0.60.655.0 a call QM makes for a person (`x-qm-actor`) could not put, edit, link or add a timeline entry to a page; now no operation that writes a page is attestable, and a fact saved for a person can no longer be shared with everyone who reads the source. The person's own memory (`memory_write`, `remember` on their member page, `forget`, `forget_fact`) and owner-approved proposals (`memory_propose`) are unchanged. Unattested calls and member-bound credentials behave as before.
+
+#### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Page writes from QM | `add_timeline_entry`, `add_link`, `put_page` and `edit_page` were refused; every other page write could be listed in `--attest-ops` | every operation that writes a page's content, frontmatter, tags, links, timeline, facts, raw data or uploads, or deletes or restores it, is refused, and so are the shared rows with no page (`rate_answer` feedback, `log_ingest`, `loops_mute` and `loops_unmute`) (`actor_not_attested`, reason `op_not_attested`), at `--attest-ops`, on every call and when a queued write publishes |
+| A fact saved for a person | `share: true` put it on its subject's page for every reader of the source | refused (`invalid_params`, reason `attested_share_refused`), as is `visibility: "world"`; the reply points at `memory_propose` |
+| Writeback instructions for a service acting for a person | "share: true shares a fact about the team's work" | never pass `share: true`; propose team knowledge with `memory_propose` |
+| QM contract | v2 and v3 `deferred_ops` named 11 operations | they name every deferred operation; v1 is byte-identical |
+
+#### Itemized changes
+
+- `src/core/access/actor-model.ts`: `ACTOR_DEFERRED_OPS` gains every remaining page write, plus `rate_answer` (its feedback is keyed to the client, not the person, so one person could see another's restricted page in a refusal and move its ranking), `log_ingest` (text every reader of the ingest log sees) and `loops_mute`/`loops_unmute` (they close or reopen other people's loops). `test/qm-attest-write-boundary.test.ts` checks that every attestable mutating operation in the registry is either deferred or reviewed as not a page write, so a new page write cannot become attestable unnoticed.
+- `src/core/verbs.ts`, `src/core/access/member-facts.ts`, `src/core/persistence/memory-prepare.ts`: an attested `remember` refuses `share: true` and `visibility: "world"` at the call (a batch included), and a stored shared save made for a person is refused when it is prepared; a shared agent acting for an audience (`on_behalf_of`) still shares.
+- `src/core/facts/writeback-instructions.ts`: the instruction line for a service acting for a person.
+- `docs/contracts/qm-memory-provider/v2.json`, `v3.json`: regenerated `deferred_ops` (a published-contract amendment).
+- Docs: `docs/guides/qm.md`, `docs/mcp/ADMIN.md`, `docs/guides/write-refusals.md`, `docs/tutorials/company-brain.md`.
+- Tests: `test/qm-attest-write-boundary.test.ts` (new, PGLite and Postgres); `test/access-qm-actor.test.ts` calls every deferred operation attested; `test/access-member-facts.test.ts` and `test/remember-share-gst2243.test.ts` move their attested-write cases to the new boundary.
+
+### The owner reviews memory proposals remotely
+
+**The brain owner can now review QM's memory proposals from another machine.** QM is the AI helper that can use gbrain as one of its memories; it proposes timeline entries and links with `memory_propose`, and nothing lands until the owner says yes. Until now that yes needed a shell on the brain host (`gbrain memory-proposals`). The owner's admin session now reaches the same review over the running server.
+
+#### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Reviewing proposals remotely | a shell on the brain host | owner-session routes `GET /admin/api/memory-proposals` (`?source=`, `?cursor=`, oldest first, 50 a page), `GET /admin/api/memory-proposals/<request_id>` and `POST /admin/api/memory-proposals/<request_id>` (`{action: "approve"\|"deny", reason?, dryRun?}`), mirrored by `gbrain mcp admin memory-proposals list\|show\|approve\|deny`; no OAuth token or MCP tool reaches them |
+| Audit | CLI decisions record `decided_by` | HTTP decisions record `decided_by: admin-api` and one `access_admin` request-log row per applied decision, never the proposed text; a change that fails partway answers `outcome: unknown` |
+| `gbrain memory-proposals approve` when the approved write fails | exit 0 | exit 1; the HTTP approve reports `outcome: failed` with the write's receipt |
+
+#### Itemized changes
+
+- `src/commands/serve-http-access.ts`, `src/commands/serve-http-admin-api.ts`: `mountAdminMemoryProposals` beside gap 4's access routes, on the same `requireAdmin`, dry-run, audit and `outcome: unknown` pattern; approve and deny call the CLI's library functions, so the one transaction, the re-checked actor and page revision and the writer-door publication are shared.
+- `src/commands/mcp-admin.ts`: the `memory-proposals` mirror; each decision takes exactly one request id, and deny needs a 1-500 character reason.
+- `src/core/persistence/memory-proposals.ts`: a keyset page cursor for the owner list and `approveFailed`, the one rule the CLI exit code and the HTTP outcome share.
+- Docs: `docs/mcp/ADMIN.md`, `docs/guides/qm.md`.
+- Tests: `test/serve-http-memory-proposals.test.ts` (new, PGLite and Postgres), `test/mcp-admin-cli.serial.test.ts`.
+
+## [0.60.661.0] - 2026-11-11
+
+**A take or a dated link no longer disappears when a page rewrite drops its section and a later write brings the section back.** Two writers rebuilt a dropped section from scratch: the takes writers numbered their new take from 1 over the stored takes, and `add_link` wrote a links section holding only the new link. Both now start from what the brain still stores.
+
+**A take no longer disappears when `think --take` or `gbrain takes extract --from-pages` re-creates a takes section that a page rewrite dropped.** When a page was rewritten without its takes section, its takes stayed stored, but the next `think --take --anchor <slug>` or `gbrain takes extract --from-pages` on that page built a fresh section numbered from 1: the new take replaced stored take #1 in place, with no record of the old one, and on a managed brain `takes extract --from-pages --include-covered` replaced the first stored takes and deleted the rest in the same write. These writers now render the stored takes, resolutions included, into the section they create and number their own takes after them, on repo-less, Git-backed and plain-directory brains. A take the user removed, or an explicit empty section retired, stays removed. A stored take whose resolution has no quality (recorded before takes had one), or whose text would not read back unchanged from the section (for example evidence holding the literal text `<br>`, which the section reads as a line break), cannot be written into the section, so the write is refused (`invalid_input`) instead of changing it. `takes_add` (`gbrain takes add` and the MCP tool) does not go through this yet. `takes extract --from-pages` skips a page whose takes markers are malformed (for example `<!-- gbrain:takes:begin -->` with two dashes) as `fence_unparsed` and goes on to the next page.
+
+**Each row of a page's `## Links` section now keeps its own dates, and a section that a rewrite dropped comes back with them.** A links row is keyed by target, type and source, but its `valid_from` and `valid_until` were stored per relationship (page, target, type) with no source. So two rows pointing at the same page with the same type shared one pool of dates, and after a page rewrite dropped the section, the next `add_link` wrote a section holding only the new link and deleted every other link of the old section, dates included. Dated statements now carry the row's source (`link_transitions.link_source`), and the identity index includes it. `add_link` on a page whose section is gone puts every kept row back with its own dates, `remove_link` deletes the removed row's own dates for any source (not only `manual`), and two rows that share a date both keep it. Dates stored before this change have no source. With one kept row they are that row's, and with several kept rows for one target and type the writer refuses `link_dates_unattributed` and asks for the section back through `edit_page`, instead of guessing. `append_page` now refuses text holding a links fence marker (`append_links_fence`); write links with `add_link`. A row of a dropped section whose target page never existed never became a link, so it is not brought back.
+
+### Itemized changes
+
+- Migration v302 (`src/core/schema-migrations/v302-link-transitions-source.ts`): adds the nullable `link_transitions.link_source` column (metadata only, under the schema lock timeout), builds the widened unique identity index online under a temporary name (`CREATE UNIQUE INDEX CONCURRENTLY` on Postgres), then swaps it in with one short drop-and-rename transaction. No row is rewritten. Requires Postgres 15, as gbrain already does since v011. The forward-reference bootstrap adds the column before the schema replay on an older brain.
+- `src/core/links-fence-projection.ts`: manual statements are written with their row's source and compared per row, so a row whose dates change replaces only its own.
+- `src/core/persistence/manual-links.ts`: `add_link` re-creates a dropped links section from the kept edges, each with its own dates; `remove_link` deletes the removed rows' own statements; both refuse `link_dates_unattributed` (`src/core/error-registry.ts`) when sourceless statements cannot be given to one row exactly.
+- `src/core/persistence/page-append.ts`: links fence markers in appended text refuse `append_links_fence`, whose fix names `add_link`.
+- `src/core/takes-write.ts`: `withStoredTakesFence` renders a page's stored takes (resolution cells included) into a new takes section when the body has no takes fence, refusing `fence_unparsed` when the body holds malformed takes markers, `invalid_input` when a stored resolution has no quality, and `invalid_input` when the render would not read back row for row with every stored cell unchanged. Used by `addTakeToPage` (`think --take`) and `appendTakesToPageMdFirst` (unmanaged `takes extract --from-pages`).
+- `src/core/extract-takes-from-pages.ts`: the managed `takes extract --from-pages` put composes from the same rendered section and dedupes new claims against those takes; a page the helper refuses is skipped with the refusal's code instead of ending the run.
+- `src/core/behavior-change-notice.ts`: one row for each changed behavior.
+- Docs: `docs/architecture/key-files/hindsight.md`, `docs/architecture/key-files/core-persistence-continued.md`, `docs/architecture/key-files/core-services-2-continued.md`, `docs/guides/error-codes.md`, `docs/guides/temporal-edges.md`.
+- Tests: `test/link-dates-per-row-gst2228.test.ts` (managed brain, repo-less and Git, PGLite and Postgres), `test/link-transitions-source-migration-gst2228.test.ts` (upgrade, interrupted runs, an invalid leftover index, writes between the column and the swap); `test/recreated-takes-section-keeps-stored-takes.test.ts` (`think --take` and `takes extract` on unmanaged brains, a plain directory and Git; managed extraction, repo-less and Git; removed takes, `takes remove` and empty sections stay removed; malformed markers skip one page; a resolution without a quality, or a cell that would not read back unchanged, refuses; PGLite and Postgres).
+
 ## [0.60.660.0] - 2026-11-11
 
 **Agent reads answer "nothing here" instead of refusing, and say why a list came back empty.** These fixes come from agent transcripts where models kept getting refused or got bare empty answers.

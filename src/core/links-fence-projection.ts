@@ -3,7 +3,13 @@
  * `link_transitions`, inside the caller's publication or maintenance
  * transaction. Only rows this page's fence owns are touched: edges with
  * origin_page_id = the page and origin_field = `links_fence`, and manual
- * transitions with origin_page_id = the page. Database-only manual edges
+ * transitions with origin_page_id = the page. Each manual transition carries the
+ * source of the row whose cell stated it (link_source), and transitions are
+ * compared per row, so a row whose dates changed replaces only its own
+ * statements; one with no source (written before the column existed) is
+ * replaced by the row that states the same date. While migration v302 has added the column but not yet swapped in the
+ * identity index that includes it, statements are written without a source, as before the migration, so a second
+ * row's same-date statement is not dropped in place of a stored one. Database-only manual edges
  * (origin_field NULL) and every derived producer are left alone. A row whose
  * target is not a live page in the source, or whose type the active schema
  * pack does not declare, yields no edge and stays in the file.
@@ -14,6 +20,7 @@ import { sanitizeForJsonb } from './batch-rows.ts';
 import { refreshRelationships, type RelationshipKey } from './link-relationships.ts';
 import { loadActivePackForLocalEngine } from './schema-pack/best-effort.ts';
 import { LINKS_FENCE_ORIGIN_FIELD, readPageLinksFence, type LinksFenceRow } from './links-fence.ts';
+import { identityIndexHasSource } from './schema-migrations/v302-link-transitions-source.ts';
 
 type Tx = Pick<BrainEngine, 'executeRaw'>;
 
@@ -43,8 +50,8 @@ export async function projectLinksFence(tx: Tx, page: { id: number | string; sou
     tx.executeRaw<{ id: number; to_page_id: number; link_type: string; link_source: string; context: string }>(
       'SELECT id, to_page_id, link_type, link_source, context FROM links WHERE origin_page_id=$1 AND from_page_id=$1 AND origin_field=$2',
       [pageId, LINKS_FENCE_ORIGIN_FIELD]),
-    tx.executeRaw<{ id: number; to_page_id: number; link_type: string; kind: string; occurred_on: string }>(
-      `SELECT id, to_page_id, link_type, kind, occurred_on::text AS occurred_on FROM link_transitions
+    tx.executeRaw<{ id: number; to_page_id: number; link_type: string; link_source: string | null; kind: string; occurred_on: string }>(
+      `SELECT id, to_page_id, link_type, link_source, kind, occurred_on::text AS occurred_on FROM link_transitions
         WHERE origin_page_id=$1 AND from_page_id=$1 AND producer='manual'`, [pageId]),
   ]);
   const edgeKey = (row: { to_page_id: number; link_type: string; link_source: string }) => `${Number(row.to_page_id)}\u0000${row.link_type}\u0000${row.link_source}`;
@@ -56,12 +63,16 @@ export async function projectLinksFence(tx: Tx, page: { id: number | string; sou
     const prior = have.get(edgeKey(row));
     return prior && prior.context !== row.context ? [{ id: Number(prior.id), context: row.context }] : [];
   });
-  const transitions = new Map(desired.flatMap(row => [
-    ...(row.validFrom ? [{ to_page_id: row.to_page_id, link_type: row.link_type, kind: 'start', occurred_on: row.validFrom }] : []),
-    ...(row.validUntil ? [{ to_page_id: row.to_page_id, link_type: row.link_type, kind: 'end', occurred_on: row.validUntil }] : []),
-  ]).map(row => [`${row.to_page_id}\u0000${row.link_type}\u0000${row.kind}\u0000${row.occurred_on}`, row]));
-  const transitionKey = (row: { to_page_id: number; link_type: string; kind: string; occurred_on: string }) =>
-    `${Number(row.to_page_id)}\u0000${row.link_type}\u0000${row.kind}\u0000${row.occurred_on}`;
+  const transitionKey = (row: { to_page_id: number; link_type: string; link_source: string | null; kind: string; occurred_on: string }) =>
+    `${Number(row.to_page_id)}\u0000${row.link_type}\u0000${row.link_source ?? '\u0001'}\u0000${row.kind}\u0000${row.occurred_on}`;
+  const tagged = (existingTransitions.length > 0 || desired.some(row => row.validFrom || row.validUntil)) && await identityIndexHasSource(tx);
+  const transitions = new Map(desired.flatMap(row => {
+    const link_source = tagged ? row.link_source : null;
+    return [
+      ...(row.validFrom ? [{ to_page_id: row.to_page_id, link_type: row.link_type, link_source, kind: 'start', occurred_on: row.validFrom }] : []),
+      ...(row.validUntil ? [{ to_page_id: row.to_page_id, link_type: row.link_type, link_source, kind: 'end', occurred_on: row.validUntil }] : []),
+    ];
+  }).map(row => [transitionKey(row), row]));
   const haveTransitions = new Set(existingTransitions.map(transitionKey));
   const staleTransitions = existingTransitions.filter(row => !transitions.has(transitionKey(row)));
   const newTransitions = [...transitions.entries()].filter(([key]) => !haveTransitions.has(key)).map(([, row]) => row);
@@ -74,9 +85,9 @@ export async function projectLinksFence(tx: Tx, page: { id: number | string; sou
       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO UPDATE SET context=EXCLUDED.context, origin_field=EXCLUDED.origin_field`,
     [pageId, LINKS_FENCE_ORIGIN_FIELD], [{ rows: additions.map(({ to_page_id, link_type, context, link_source }) => ({ to_page_id, link_type, context, link_source })) }]);
   if (staleTransitions.length) await tx.executeRaw('DELETE FROM link_transitions WHERE id=ANY($1::bigint[])', [staleTransitions.map(row => Number(row.id))]);
-  if (newTransitions.length) await executeRawJsonb(tx, `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer, origin_page_id)
-      SELECT $1, $2, v.to_page_id, v.link_type, v.kind, v.occurred_on::date, 'manual', $2
-        FROM jsonb_to_recordset(($3::jsonb)->'rows') AS v(to_page_id integer, link_type text, kind text, occurred_on text)
+  if (newTransitions.length) await executeRawJsonb(tx, `INSERT INTO link_transitions (source_id, from_page_id, to_page_id, link_type, link_source, kind, occurred_on, producer, origin_page_id)
+      SELECT $1, $2, v.to_page_id, v.link_type, v.link_source, v.kind, v.occurred_on::date, 'manual', $2
+        FROM jsonb_to_recordset(($3::jsonb)->'rows') AS v(to_page_id integer, link_type text, link_source text, kind text, occurred_on text)
       ON CONFLICT DO NOTHING`, [sourceId, pageId], [{ rows: newTransitions }]);
   const keys: RelationshipKey[] = [...obsolete, ...additions, ...staleTransitions, ...newTransitions]
     .map(row => ({ from_page_id: pageId, to_page_id: Number(row.to_page_id), link_type: row.link_type }));

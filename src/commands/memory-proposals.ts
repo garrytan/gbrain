@@ -1,6 +1,7 @@
 /**
  * `gbrain memory-proposals` (GST-1158, GBRA-284): the brain owner's review of QM's proposed timeline entries and
- * links (memory_propose). Trusted local CLI only; never an MCP operation.
+ * links (memory_propose). Trusted local CLI; the owner session reaches the same library calls over HTTP
+ * (serve-http-access.ts, gbrain mcp admin memory-proposals). Never an MCP operation.
  *
  *   gbrain memory-proposals list [--source <id>] [--all] [--limit N] [--json]
  *   gbrain memory-proposals show <request_id> [--json]
@@ -52,6 +53,12 @@ function line(view: Record<string, any>): string {
   return `${view.request_id} [${view.state}] ${view.kind} on ${view.source_id}:${view.target} for member:${view.member_id}\n  ${what}`;
 }
 
+/** The owner's trusted context for approve and deny, shared by this command and the owner HTTP routes (serve-http-access.ts). */
+export async function ownerContext(engine: BrainEngine, dryRun: boolean): Promise<OperationContext> {
+  const { loadConfig } = await import('../core/config.ts');
+  return { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false, dryRun, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+}
+
 async function decidedBy(engine: BrainEngine): Promise<string> {
   try { return `cli:${(await (await import('../core/persistence/identity.ts')).readLocalWriter(engine, 'cli')).id}`; } catch { return 'cli'; }
 }
@@ -86,13 +93,12 @@ export async function runMemoryProposals(engine: BrainEngine, args: string[]): P
       out(view, `${line(view)}\n${JSON.stringify(view.payload, null, 2)}`);
       return;
     }
-    const { loadConfig } = await import('../core/config.ts');
-    const ctx = { engine, config: loadConfig() ?? { engine: engine.kind }, remote: false, dryRun, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const ctx = await ownerContext(engine, dryRun);
     if (sub === 'approve') {
       const result = await lib.approveMemoryProposal(ctx, id, { decidedBy: await decidedBy(engine) });
       out(result, result.dry_run ? `${id}: would be ${result.would}${result.error_code ? ` (${result.error_code}: ${result.reason})` : ''}`
         : `${id}: ${result.status}${result.error_code ? ` (${result.error_code}: ${result.reason})` : ''}${(result.write_request as { state?: string } | undefined)?.state ? `; write ${(result.write_request as { state: string }).state}` : ''}`);
-      if (!result.dry_run && result.status !== 'approved') setCliExitVerdict(1);
+      if (lib.approveFailed(result)) setCliExitVerdict(1);
       return;
     }
     if (sub === 'deny') {
