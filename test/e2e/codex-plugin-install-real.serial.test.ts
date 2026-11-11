@@ -44,12 +44,30 @@ import {
 } from '../helpers/agent-harness.ts';
 import { operations } from '../../src/core/operations.ts';
 import { isCallable, publishGatesFromDisabled } from '../../src/core/ops/callable.ts';
+import { disabledOpsForPublishGates } from '../../src/mcp/publish-gates.ts';
+import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
+import { gbrainPath, loadConfig } from '../../src/core/config.ts';
 import { codexPluginProvidesName } from '../../src/core/bootstrap/harness.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..', '..');
 const CLI = join(REPO_ROOT, 'src', 'cli.ts');
 const CODEX_BIN = resolveCodexBinary();
 const PLUGIN_CAPABLE = !!CODEX_BIN && codexSupportsPlugins(CODEX_BIN);
+
+/** The ops whose publish gate resolves off on the seeded brain over stdio, read as `gbrain serve` reads them. */
+async function seededGateDisabled(home: string): Promise<ReadonlySet<string>> {
+  const savedHome = process.env.GBRAIN_HOME;
+  process.env.GBRAIN_HOME = home;
+  const engine = new PGLiteEngine();
+  try {
+    await engine.connect({ database_path: gbrainPath('brain.pglite'), engine: 'pglite' });
+    return await disabledOpsForPublishGates(engine, loadConfig(), { transport: 'stdio' });
+  } finally {
+    await engine.disconnect();
+    if (savedHome === undefined) delete process.env.GBRAIN_HOME;
+    else process.env.GBRAIN_HOME = savedHome;
+  }
+}
 
 /** Stage a CLEAN tree (tracked files only, modes preserved) from HEAD. */
 function stageCleanTree(): string {
@@ -218,7 +236,9 @@ describe.skipIf(!PLUGIN_CAPABLE)('codex plugin door — INSTALL (no auth needed)
         env: probeEnv,
         timeoutMs: 120_000,
       });
-      const publishGates = publishGatesFromDisabled(operations, new Set());
+      // Publish gates resolve the way serve resolves them for this brain over stdio: a gated op (Wakeshift's watches,
+      // the memory settings) is listed only when its gate is on, and the seeded brain turns on only publish_skills.
+      const publishGates = publishGatesFromDisabled(operations, await seededGateDisabled(seededHome));
       const expected = operations.filter((o) => isCallable(o, { transport: 'stdio', surface: PLUGIN_SURFACE, scopes: [], publishGates })).map((o) => o.name).sort();
       expect(tools.sort()).toEqual(expected);
 

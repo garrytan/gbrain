@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+### The nightly Heavy Tests run checks the Codex plugin and old-brain upgrades again
+
+**Two nightly checks had been failing on their own fixtures, not on gbrain. Both now test what users get.** The Codex plugin check expected gated tools to be listed even when their publish gate was off. The pre-v0.18 upgrade fixture couldn't build its legacy database because a newer trigger depends on the column it removes.
+
+- `test/e2e/codex-plugin-install-real.serial.test.ts`: the expected tool list now resolves publish gates the way `gbrain serve` does for the seeded brain over stdio. Wakeshift's `watch_job`, `list_watches` and `unwatch` (#8670) and `set_memory_writeback` (#8481) are listed only when their gate is on. Before this change the check failed every night from 2026-11-06 on; it now passes against codex 0.147.0, the version the workflow pins.
+- `tests/heavy/fixtures/down-mutate-pre-v0.18.sql`: before dropping `pages.source_id`, the fixture drops every trigger that depends on that column. The first such trigger was the per-folder access stamp from #8134. The walk forward re-creates those triggers. `tests/heavy/pg_upgrade_matrix.sh` failed on the pre-v0.18 shape before this change and passes on both shapes after it.
+
 ## [0.60.675.0] - 2026-11-11
 
 **Tool calls through native OpenAI models no longer fill every optional argument with a placeholder.** gbrain's tool loop (subagent jobs and SkillOpt rollouts) sends OpenAI models through the Responses API, and that API treats a tool definition with no `strict` field as strict: it marks every property required, so the model has to invent a value for each optional argument. A `get_page` call came back with a zero-line window and an empty byte range, which gbrain's own argument checks then refused. Native OpenAI tool definitions now say `strict: false`, so the schema's own `required` list holds and the model sends only the arguments it means. Anthropic, Google and the OpenAI-compatible providers (chat completions) send the same request as before. Reported and first fixed by @akinduroifedayo.
