@@ -119,7 +119,7 @@ test/destructive-guard.test.ts	purgeExpiredSources — clone cleanup containment
 test/detached-stderr.test.ts	jobs.ts detach branch (source pin, #4418)	2	source-surface-helper
 test/divergence-safe-pull-5429.serial.test.ts	--no-autostash (#5429, bug fix)	4	readFileSync
 test/docs-mcp-deploy.test.ts	DEPLOY.md documents the owner magic-link flow (#5007)	1	readFileSync,source-surface-helper
-test/docs-navigation.test.ts	primary documentation navigation	1	readFileSync
+test/docs-navigation.test.ts	primary documentation navigation	2	readFileSync
 test/doctor-atom-provenance-drift.test.ts	computeAtomProvenanceDriftCheck	19	doctor-source-helper
 test/doctor-embedding-env-override.test.ts	cross-surface parity (source-grep regression guard)	1	doctor-source-helper
 test/doctor-fix.test.ts	gbrain doctor --fix CLI integration	3	readFileSync
@@ -374,6 +374,8 @@ test/serve-http-github-webhook.test.ts	handler wiring (source pin)	1	source-surf
 test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844)	2	source-surface-helper
 test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two defects of the original PR)	2	source-surface-helper
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
+test/setup-serves-several.test.ts	gbrain setup --serves (spawned, PGLite)	11	readFileSync
+test/setup-serves-several.test.ts	labelling refuses or reports what it cannot make safe (pglite, repo-less)	8	readFileSync
 test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	7	readFileSync

@@ -125,7 +125,7 @@ for (const kind of testBackends()) describe(`#7089 removal commits are pushed on
     expect((await gitConvergenceCheck(engine))?.status).toBe('ok');
     localCommit(repo);
     const check = await gitConvergenceCheck(engine);
-    expect(check).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', repo.root],
+    expect(check).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', repo.root],
       actor: 'agent', verify: { argv: expect.arrayContaining(['doctor', 'git_convergence']) } } });
     expect(check!.message).toContain('no Git effect queued, running or parked');
     expect((check!.details as { roots: unknown[] }).roots).toEqual([expect.objectContaining({ root: repo.root, ahead: 1, stranded: true })]);

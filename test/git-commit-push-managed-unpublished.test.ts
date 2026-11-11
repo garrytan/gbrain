@@ -65,6 +65,7 @@ test('a commit that already exists is reported as not on the upstream, not as no
   const text = await commitPush(f, false, 'companies/acme-example.md');
   expect(text.exitCode).toBe(0);
   expect(text.stdout).toContain('nothing to commit; not pushed: 1 commit(s) on main are not on origin/main as last fetched');
+  expect(text.stdout).toContain(`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${f.brain} publishes them`);
   expect(pushLog(f)).toBe('');
   expect(remoteTip(f)).toBe(before);
   expect(git(f.brain, 'rev-parse', 'HEAD')).toBe(ours);

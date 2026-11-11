@@ -51,6 +51,18 @@ export function memberFactPage(ctx: Pick<OperationContext, 'remote'>): string | 
   return slug;
 }
 
+/**
+ * GST-2249 W1: a save made for an attested person (x-qm-actor) stays on that person's member page. Sharing it would be
+ * a write every reader of the source sees, made with no owner approval, so remember refuses share: true (and an explicit
+ * visibility "world") at the call, and a stored write that carries it is refused when it is prepared.
+ */
+export function attestedShareRefused(make: (code: 'invalid_params', message: string, suggestion: string) => OperationError): OperationError {
+  return Object.assign(make('invalid_params',
+    'remember: a fact saved for a person (x-qm-actor) stays on that person\'s own member page and is never shared with every reader of the source; nothing was saved.',
+    'Retry with no share and no visibility to keep the fact on the person\'s own member page. Knowledge for the whole team waits for the brain owner: propose it as a dated timeline entry or a link with memory_propose, which holds it until the owner approves.'),
+  { reason: 'attested_share_refused' });
+}
+
 /** Whether a member page is that member's own: its readers are exactly the member (a squatted or widened page is not). */
 export function memberPageIsOwn(slug: string, frontmatter: unknown): boolean {
   const readers = normalizeReaders(frontmatter);
@@ -117,6 +129,17 @@ export function memberFactAdmitSql(alias: string): string {
     SELECT 1 FROM pages member_page WHERE member_page.source_id = ${alias}.source_id AND member_page.slug = ${alias}.source_markdown_slug
       AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY['member:${member}']::text[]
       AND ${privatePagesFilterForCaller('member_page')}))`;
+}
+
+/**
+ * GST-2407: the facts among `ids` in `sourceId` that sit on the current caller's own member page, by memberFactAdmitSql.
+ * forget_fact withdraws a remote member's fact only when it is in this set, and memory_recall reports the same set as
+ * own_page, so the two never disagree. Empty outside a member caller record.
+ */
+export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, ids: readonly number[]): Promise<Set<number>> {
+  if (!ids.length || !callerMember()) return new Set();
+  const rows = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND source_id = $2 AND ${memberFactAdmitSql('facts')}`, [[...ids], sourceId]);
+  return new Set(rows.map(r => Number(r.id)));
 }
 
 /** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql. */
