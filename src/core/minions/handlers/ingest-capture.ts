@@ -165,6 +165,9 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     } else {
       slug = defaultSlugForEvent(event);
     }
+    // GST-2114: page lookups (the snapshot, the applied record, the writer check) are exact, and the door lowercases;
+    // normalizing once here keeps a mixed-case X-Gbrain-Slug bound to the page the door writes.
+    slug = validateSlug(slug);
 
     // Untrusted-payload posture. For v1, the flag is propagated for audit
     // but not enforced at this layer (see file header). Future v2 wiring

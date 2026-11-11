@@ -84,6 +84,10 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 - `src/core/mentions/pass.ts`: on a belief-covered source the mention pass locks the page keys and journals its link writes through `unmanagedBeliefPoint(..., 'mention_pass')`, so the drift check no longer reconciles a freshly published page as drift (#7031). Tests: `test/belief-stale-links-7031.test.ts`, `test/e2e/belief-stale-links-7031-postgres.test.ts`.
 - `src/commands/doctor/checks/atom-body-recheck.ts` (new), `src/commands/doctor/checks/extraction-sync.ts`: `atom_provenance_drift` finds the `page_versions` edition whose hash matches the atom's `source_hash` and compares its body with the live body, fences removed; equal bodies count under a new `body_unchanged` detail (at most 200 groups, 20 versions each). The doctor JSON goldens gain `"body_unchanged": 0`, and `scripts/page-body-readers-baseline.tsv` gains three INLINE rows for the re-check's body reads (#6825). Test: `test/doctor-atom-provenance-drift-6825.test.ts`.
 
+#### Webhook captures
+
+- `src/core/minions/handlers/ingest-capture.ts`: the job normalizes its slug once (`validateSlug`) before its snapshot, applied-record and writer lookups, so a mixed-case `X-Gbrain-Slug` naming an existing page on a managed brain replaces that page instead of dead-lettering with `revision_required`. Test: `test/ingest-capture-mixed-case-slug.test.ts`.
+
 ## [0.60.660.0] - 2026-11-11
 
 **Agent reads answer "nothing here" instead of refusing, and say why a list came back empty.** These fixes come from agent transcripts where models kept getting refused or got bare empty answers.
