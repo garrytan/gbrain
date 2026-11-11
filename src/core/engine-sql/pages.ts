@@ -42,6 +42,7 @@ import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/emb
 import { pickCanonicalOrigin } from '../persistence/origin-guard.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
+import { scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 
 /**
@@ -230,6 +231,7 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       const deleted = rows.map(r => r.slug);
       await scrubPurgedSlugs(tx, opts.sourceId, deleted);
       await scrubPurgedNameStores(tx, opts.sourceId, deleted);
+      await scrubPurgedSlugStores(tx, opts.sourceId, deleted);
       return deleted;
     });
   }
@@ -377,6 +379,7 @@ export async function purgeDeletedPages(
       for (const [sourceId, purged] of bySource) {
         await scrubPurgedSlugs(tx, sourceId, purged);
         await scrubPurgedNameStores(tx, sourceId, purged);
+        await scrubPurgedSlugStores(tx, sourceId, purged);
       }
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length };

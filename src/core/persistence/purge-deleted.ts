@@ -20,6 +20,7 @@ import { ItemRun, type ItemFailure } from '../item-failure.ts';
 import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tombstones.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
+import { scrubPurgedSlugStores } from './purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 import { maintenanceTransaction } from './attribution.ts';
 
@@ -141,6 +142,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
             if (gone.length > 0) {
               await scrubPurgedSlugs(tx, row.source_id, [row.slug]);
               await scrubPurgedNameStores(tx, row.source_id, [row.slug]);
+              await scrubPurgedSlugStores(tx, row.source_id, [row.slug]);
             }
             return gone.length > 0;
           });

@@ -152,6 +152,8 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
           const { scrubPurgedNameStores } = await import('../persistence/purge-name-stores.ts');
           await scrubPurgedNameStores(tx, src, [restored.slug]);
         }
+        const { scrubPurgedSlugStores } = await import('../persistence/purge-slug-stores.ts');
+        await scrubPurgedSlugStores(tx, src, [restored.slug], { ifPresent: true });
       };
     }
   } else {
