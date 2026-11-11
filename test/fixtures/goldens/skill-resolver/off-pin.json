@@ -1,0 +1,29 @@
+{
+  "setup:claude-code:exit": 0,
+  "setup:codex:exit": 0,
+  "files": {
+    ".agents/skills/deploy-widget/SKILL.md": "sha256:c4396aa5aeb3d35353ddd456241f1df05addcc7f5902ca7970b859599490e485",
+    ".claude/CLAUDE.md": "sha256:fa254b30e33c9c5baed507b4d6a65e8f699b536f4b87e07f8491192b0ce75518",
+    ".claude/settings.json": "sha256:db51e7114b74f6d6c3867758c85170bf02978ebedcf843415cf647b43c680281",
+    ".claude/skills/deploy-widget/SKILL.md": "sha256:c4396aa5aeb3d35353ddd456241f1df05addcc7f5902ca7970b859599490e485",
+    ".codex/AGENTS.md": "sha256:fbd2eee597daf65939a4558b6b62585fc3e136cc5ae0713d13c0b0bf31d8ed4e",
+    ".codex/config.toml": "sha256:c7ba1932425aeea910224a2b6876a43845f1e925c8abfbe52e83cb35a28771be",
+    ".codex/hooks.json": "sha256:85519b7b2cf4f84208fe47e59bf87224a793bcf303fda59f45d98e541f526eb1",
+    ".gbrain/agent-instructions.json": "sha256:4f541f2d3531804b89ca5e2fac1af49b4a77668938580dd0d07e245770866efd",
+    ".gbrain/agent-instructions.lock": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    ".gbrain/hook-launcher/gbrain-hook": "sha256:a194491363199f9b91090e473c6931790b72daaf2ed28d3e23e9c85ef89eec10",
+    ".gbrain/integrations/hooks/heartbeat.jsonl": "sha256:83625960782a0c6d354105f787839fad3f4883efb3a752fa90c2f7be1805e545"
+  },
+  "userPromptHooks": [
+    {
+      "command": "env GBRAIN_HOME=<ROOT>/home GBRAIN_HOOK_LANE=turn-rule <ROOT>/home/.gbrain/hook-launcher/gbrain-hook <ROOT>/bin/gbrain hook user-prompt",
+      "exitCode": 0,
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"GBrain: before answering this turn, check GBrain first (`search` or `query` on the `gbrain` MCP server) for the people, companies, projects, meetings and decisions it touches. Results span every source it holds: use only what the current requester may see. Then answer and finish the task.\"}}\n"
+    },
+    {
+      "command": "env GBRAIN_HOOK_LANE=turn-rule GBRAIN_HOME=<ROOT>/home <ROOT>/home/.gbrain/hook-launcher/gbrain-hook <ROOT>/bin/gbrain hook user-prompt --harness codex",
+      "exitCode": 0,
+      "stdout": "{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"GBrain: before answering this turn, check GBrain first (`search` or `query` on the `gbrain` MCP server) for the people, companies, projects, meetings and decisions it touches. Results span every source it holds: use only what the current requester may see. Then answer and finish the task.\"}}\n"
+    }
+  ]
+}

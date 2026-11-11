@@ -25,7 +25,7 @@ import { shellQuote } from '../core/agent-output.ts';
 import { OLDER_THAN_RE } from '../cli/strict-args.ts';
 import { parseSince } from '../core/since.ts';
 import { generationsSelectionArgv, generationsSelectionRefusal, type GenerationMode, type GenerationsSelection } from '../core/generations/repair.ts';
-import { REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult, type RepairScope } from '../core/repair/core.ts';
+import { REPAIR_DECLINE_CODES, REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult, type RepairScope } from '../core/repair/core.ts';
 import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
 import { AUTO_REPAIR_REGISTRY, EXPLICIT_REPAIR_REGISTRY, LLM_REPAIR_REGISTRY, PREVIEW_BOUND_REPAIR_REGISTRY, REPAIR_REGISTRY, explicitRepairNotices, repairMayEmbed, repairMaySpend,
   repairPreviewCommand, repairRunner, repairSpec, type RepairKindSpec } from '../core/repair/registry.ts';
@@ -438,6 +438,7 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   if (result.mode === 'apply' && result.failed.length) {
     lines.push(`  ${result.failed.length} item(s) left unchanged; a resumed run skips past them, the next full scan retries them: ${result.apply_command}`);
   }
+  if (result.mode === 'apply' && result.declined) lines.push(`  declined (the page refused the write; left unchanged): ${Object.entries(result.declined).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   if (result.mode === 'apply' && result.repaired !== undefined) {
     const left = Object.entries(result.remaining ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
     lines.push(`  repaired ${result.repaired}; ${left ? `still waiting: ${left}` : 'nothing left in this selection'}`);
@@ -556,7 +557,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     }
     if (explicitKindsNotRun.length) console.log(`Explicit-only kinds (not run without their name; preview each): ${explicitKindsNotRun.map(n => n.preview_command).join('; ')}`);
   }
-  if (repairExitVerdict(results) !== 0) setCliExitVerdict(1);
+  if (repairExitVerdict(results, { previewBound: apply && expect !== undefined }) !== 0) setCliExitVerdict(1);
 }
 
 /**
@@ -586,7 +587,14 @@ export async function runRepairKinds(kinds: readonly RepairKind[], scope: Repair
   return results;
 }
 
-/** Exit 1 when any kind stopped early or refused an item; 0 only when every pending item was attempted and applied or skipped. */
-export function repairExitVerdict(results: ReadonlyArray<Pick<RepairResult, 'stopped' | 'failed'>>): 0 | 1 {
-  return results.some(r => r.stopped || r.failed.length > 0) ? 1 : 0;
+/**
+ * Exit 1 when any kind stopped early or refused an item; 0 when every pending item was attempted and applied or skipped.
+ * GBRA-443: a preview-bound apply (`--expect`) that attempted every item, stopped for nothing, and whose every failure is the
+ * page declining the write (REPAIR_DECLINE_CODES) exits 0: those pages were left unchanged, `declined` counts them by reason
+ * and the next preview lists them again, so the caller working through windows moves on. An apply bound to no preview
+ * keeps exit 1 for them: nobody approved its set, and the exit is often its caller's only sign that pages were left.
+ */
+export function repairExitVerdict(results: ReadonlyArray<Pick<RepairResult, 'stopped' | 'failed' | 'complete'>>, opts: { previewBound?: boolean } = {}): 0 | 1 {
+  const declinedOnly = (r: Pick<RepairResult, 'failed' | 'complete'>) => opts.previewBound === true && r.complete && r.failed.every(failed => REPAIR_DECLINE_CODES.has(failed.reason));
+  return results.some(r => r.stopped || (r.failed.length > 0 && !declinedOnly(r))) ? 1 : 0;
 }

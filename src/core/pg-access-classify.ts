@@ -45,6 +45,7 @@ import {
   isSupabasePoolerUrl,
 } from './supabase-pooler-url.ts';
 import { extractProjectRef } from './supabase-admin.ts';
+import { CODES } from './error-registry.ts';
 
 /**
  * APPEND-ONLY. Consumers switch exhaustively with a `never` sentinel
@@ -68,6 +69,7 @@ export type PgAccessReason =
   | 'schema_missing'      // 42P01 / 42703 missing relation or column
   | 'pgvector_missing'    // vector extension absent
   | 'storage_corrupt'     // XX000/XX001/XX002: torn TOAST value, catalog/tuple damage (#5216, #4738)
+  | 'tls_required_default' // postgres_tls_required: gbrain's TLS default met a non-local server without TLS
   | 'unknown';
 
 export type PgAccessFix =
@@ -163,7 +165,8 @@ interface ReasonRow {
   /** Code-prefix matches (e.g. every 08xxx connection SQLSTATE). */
   codePrefixes?: string[];
   patterns?: RegExp[];
-  remediation: string;
+  /** Left out only on a row for a gbrain-coded error: its advice is that code's error-registry suggestion. */
+  remediation?: string;
   /** E10: the same advice without Supabase specifics, used when the configured URL is not a Supabase host. */
   plainRemediation?: string;
   fix?: PgAccessFix;
@@ -179,6 +182,11 @@ interface ReasonRow {
  * second person, never preachy.
  */
 const REASON_ROWS: ReadonlyArray<ReasonRow> = [
+  {
+    reason: 'tls_required_default',
+    transient: false,
+    codes: ['postgres_tls_required'],
+  },
   {
     reason: 'storage_corrupt',
     transient: false,
@@ -406,7 +414,8 @@ export function classifyPgAccessError(err: unknown, ctx?: PgAccessContext): PgAc
       transient: row.transient,
       sqlstate: looksLikeSqlstate(code),
       message,
-      remediation: ctx?.url && !looksLikeSupabase(ctx.url) && row.plainRemediation ? row.plainRemediation : row.remediation,
+      remediation: ctx?.url && !looksLikeSupabase(ctx.url) && row.plainRemediation ? row.plainRemediation
+        : row.remediation ?? (CODES as Record<string, { suggestion?: string }>)[code ?? '']?.suggestion ?? UNKNOWN_REMEDIATION,
       fix: contextualFix(row.reason, ctx?.url) ?? row.fix,
       supabase: supabaseHints(ctx?.url, row.reason),
       brainId: ctx?.brainId,

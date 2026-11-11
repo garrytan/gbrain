@@ -9,7 +9,7 @@ import { opError } from './contract.ts';
 import { opTransport, readFix } from './op-fix.ts';
 import { assertExplicitSourceLive, federatedSearchScope, pageNotFoundError, parseSourceIdParam } from './context.ts';
 import { inlineBodyBytes } from './get-page-body.ts';
-import { pageTrustForRead } from './get-page-projection.ts';
+import { historyQuarantine, pageTrustForRead, type QuarantinedView } from './get-page-projection.ts';
 import { parseKnownAsOf, readPageAtTime, remoteMayRead, type PageAtTime, type PageInterval } from '../belief/page-at-time.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
@@ -66,21 +66,36 @@ async function readAsCaller(ctx: OperationContext, q: Parameters<typeof readPage
   }
 }
 
-/** Readable intervals: a remote caller sees an interval only under the ledger's visibility rule and the page's current trust floor. */
-async function readable(ctx: OperationContext, read: PageAtTime, intervals: PageInterval[], minTrust: unknown): Promise<PageInterval[]> {
+type GatedInterval = PageInterval & { quarantined?: QuarantinedView };
+
+/**
+ * Readable intervals: a remote caller sees an interval only under the ledger's visibility rule and the page's current
+ * trust floor. #6259: when the page is quarantined now, or was in the interval, the interval keeps no body, as the
+ * current read keeps none (the same view and notice as get_page).
+ */
+async function readable(ctx: OperationContext, read: PageAtTime, intervals: PageInterval[], minTrust: unknown): Promise<GatedInterval[]> {
   if (ctx.remote === false) return intervals;
   if (read.page_id == null || !(await pageTrustForRead(ctx, { id: read.page_id }, minTrust))) return [];
-  const out: PageInterval[] = [];
-  for (const i of intervals) if (await remoteMayRead(ctx.engine, read.page_id, i)) out.push(i);
+  const [live] = await ctx.engine.executeRaw<{ slug: string; source_id: string; frontmatter: Record<string, unknown> }>(
+    'SELECT slug, source_id, frontmatter FROM pages WHERE id = $1', [read.page_id]);
+  const quarantine = historyQuarantine(ctx, live ?? { slug: read.slug, source_id: read.source_id, frontmatter: {} });
+  const out: GatedInterval[] = [];
+  for (const i of intervals) {
+    if (!(await remoteMayRead(ctx.engine, read.page_id, i))) continue;
+    const view = quarantine(i.page?.frontmatter);
+    out.push(view?.body_omitted && i.page
+      ? { ...i, body: 'unavailable', page: { ...i.page, compiled_truth: null, timeline: null, body_bytes: 0 }, quarantined: view }
+      : i);
+  }
   return out;
 }
 
-function intervalView(ctx: OperationContext, i: PageInterval, opts: { body: boolean; inlineMax: number }) {
+function intervalView(ctx: OperationContext, i: GatedInterval, opts: { body: boolean; inlineMax: number }) {
   const meta = { slug: i.slug, revision: i.revision, deleted: i.deleted, recorded_at: i.event.recorded_at, visible_at: i.event.visible_at, until: i.until,
     source_time: i.event.source_time, event: i.event.type, event_id: i.event.id, origin: i.event.origin, body: i.body,
     ...(i.body_reason ? { body_reason: i.body_reason } : {}), ...(i.version_id != null ? { version_id: i.version_id } : {}),
-    ...(i.page ? { title: i.page.title, type: i.page.type, tags: i.page.tags, frontmatter: i.page.frontmatter } : {}) };
-  if (!opts.body || !i.page) return meta;
+    ...(i.page ? { title: i.page.title, type: i.page.type, tags: i.page.tags, frontmatter: i.page.frontmatter } : {}), ...(i.quarantined ? { quarantined: i.quarantined } : {}) };
+  if (!opts.body || !i.page || i.quarantined?.body_omitted) return meta;
   const bytes = i.page.body_bytes ?? 0;
   if (i.body === 'segmented' || bytes > opts.inlineMax) {
     return { ...meta, body_ref: { total_bytes: bytes } };
@@ -136,7 +151,7 @@ export async function getVersionsKnownAsOf(ctx: OperationContext, p: Record<stri
     const view: Record<string, unknown> = intervalView(ctx, i, { body: wantBody, inlineMax });
     if (p.diff !== true) return view;
     const prev = intervals.slice(0, n).reverse().find(x => x.lifetime === i.lifetime);
-    const text = (x: PageInterval | undefined) => x?.page && x.body !== 'segmented' ? `${x.page.compiled_truth ?? ''}${x.page.timeline ? `\n${x.page.timeline}` : ''}` : null;
+    const text = (x: GatedInterval | undefined) => x?.page && x.body !== 'segmented' && !x.quarantined?.body_omitted ? `${x.page.compiled_truth ?? ''}${x.page.timeline ? `\n${x.page.timeline}` : ''}` : null;
     const [a, b] = [prev ? text(prev) : '', text(i)];
     const diff = a == null || b == null ? null : unifiedDiff(ctx.remote === false ? a : sanitizeRemoteBody(a), ctx.remote === false ? b : sanitizeRemoteBody(b),
       { oldPath: prev ? `${slug}@${prev.event.recorded_at}` : '/dev/null', newPath: `${slug}@${i.event.recorded_at}` });

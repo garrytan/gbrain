@@ -117,6 +117,9 @@
       "mcp": [
         "./commands/mcp.ts"
       ],
+      "memory-proposals": [
+        "./commands/memory-proposals.ts"
+      ],
       "migrate": [
         "./commands/migrate-embeddings.ts",
         "./commands/migrate-graduation.ts",

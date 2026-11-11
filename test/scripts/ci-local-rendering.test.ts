@@ -136,9 +136,9 @@ for line in {1..35}; do printf 'fixture progress %s\\n' "$line"; done
 `);
     put('scripts/run-e2e.sh', `
 set -eu
-case "$DATABASE_URL" in postgresql://postgres:postgres@postgres-*:5432/gbrain_test) ;; *) exit 42 ;; esac
-[ "$GBRAIN_PGBOUNCER_URL" = postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test ] || exit 43
-[ "$GBRAIN_PGBOUNCER_DIRECT_URL" = postgresql://postgres:postgres@postgres-1:5432/gbrain_ci_admin_test ] || exit 44
+case "$DATABASE_URL" in postgresql://postgres:postgres@postgres-*:5432/gbrain_test?sslmode=disable) ;; *) exit 42 ;; esac
+[ "$GBRAIN_PGBOUNCER_URL" = 'postgresql://postgres:postgres@pgbouncer:5432/gbrain_pgbouncer_test?sslmode=disable' ] || exit 43
+[ "$GBRAIN_PGBOUNCER_DIRECT_URL" = 'postgresql://postgres:postgres@postgres-1:5432/gbrain_ci_admin_test?sslmode=disable' ] || exit 44
 [ "$GBRAIN_CI_REQUIRE_PGBOUNCER" = 1 ] || exit 45
 [ "$GBRAIN_TEST_DB" = 1 ] || exit 46
 printf 'target:%s\\n' "db=$DATABASE_URL" "pgbouncer=$GBRAIN_PGBOUNCER_URL" "direct=$GBRAIN_PGBOUNCER_DIRECT_URL" >> "$TRACE"
@@ -208,7 +208,7 @@ describe('ci-local execution coverage', () => {
       const admins = new Set(role('direct').map(url => `${url.host}${url.pathname}`));
       expect([...admins]).toEqual(['postgres-1:5432/gbrain_ci_admin_test']);
       for (const shard of shards) expect(shard.pathname).not.toBe('/gbrain_ci_admin_test');
-      const created = result.trace.indexOf('admin_db:postgresql://postgres:postgres@postgres-1:5432/gbrain_test:gbrain_ci_admin_test');
+      const created = result.trace.indexOf('admin_db:postgresql://postgres:postgres@postgres-1:5432/gbrain_test?sslmode=disable:gbrain_ci_admin_test');
       expect(created).toBeGreaterThanOrEqual(0);
       expect(created).toBeLessThan(result.trace.findIndex(line => line.startsWith('e2e:')));
     });

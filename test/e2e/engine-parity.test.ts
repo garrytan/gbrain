@@ -1437,8 +1437,10 @@ async function seedFederated(eng: BrainEngine) {
   await eng.addLink('fed/doc', 'fed/outside', 'leak', 'cites', 'markdown', undefined, undefined, { fromSourceId: 'beta', toSourceId: 'default' });
   await eng.addLink('fed/target', 'fed/doc', 'inback', 'cites', 'markdown', undefined, undefined, { fromSourceId: 'beta', toSourceId: 'beta' });
   await eng.addLink('fed/outside', 'fed/doc', 'leakback', 'cites', 'markdown', undefined, undefined, { fromSourceId: 'default', toSourceId: 'beta' });
-  // F1: in-grant edge authored by an out-of-grant origin — origin_slug must null out.
+  // F1: in-grant edge authored by an out-of-grant origin is withheld under the grant;
+  // the same edge authored by an in-grant origin is the control that stays visible.
   await eng.addLink('fed/doc', 'fed/target', 'originleak', 'mentions', 'frontmatter', 'fed/outside', 'related', { fromSourceId: 'beta', toSourceId: 'beta', originSourceId: 'default' });
+  await eng.addLink('fed/doc', 'fed/target', 'origingranted', 'mentions', 'frontmatter', 'fed/target', 'related', { fromSourceId: 'beta', toSourceId: 'beta', originSourceId: 'beta' });
   await eng.addTimelineEntry('fed/doc', { date: '2026-02-02', source: 't', summary: 'fed event', detail: 'd' }, { sourceId: 'beta' });
   // Second-dated entry so the after/before fragment paths (D5A Postgres refactor) are exercised.
   await eng.addTimelineEntry('fed/doc', { date: '2026-08-08', source: 't', summary: 'late event', detail: 'd' }, { sourceId: 'beta' });
@@ -1488,10 +1490,14 @@ describeBoth('Engine parity — federated sourceIds[] secondary reads (#2200)', 
     expect(exactLinkShape(pgLinks)).toEqual(exactLinkShape(pgliteLinks));
     expect([...new Set(pgLinks.map(l => `${l.to_source_id}:${l.to_slug}`))])
       .toEqual(['beta:fed/target']); // far-endpoint 'fed/outside' excluded
-    // F1: origin identity nulls identically when origin is out-of-grant.
+    // F1: an edge whose origin is out-of-grant is absent on both engines; the in-grant-origin control stays.
     const pgOrigins = pgLinks.map(l => [l.origin_source_id ?? null, l.origin_slug ?? null]);
     const pgliteOrigins = pgliteLinks.map(l => [l.origin_source_id ?? null, l.origin_slug ?? null]);
     expect(pgOrigins.sort()).toEqual(pgliteOrigins.sort());
+    for (const links of [pgLinks, pgliteLinks]) {
+      expect(links.filter(l => l.link_type === 'mentions').map(l => [l.origin_source_id, l.origin_slug, l.context])).toEqual([['beta', 'fed/target', 'origingranted']]);
+      expect(links.map(l => l.context)).not.toContain('originleak');
+    }
     expect(pgOrigins).not.toContainEqual(['default', 'fed/outside']);
   });
 

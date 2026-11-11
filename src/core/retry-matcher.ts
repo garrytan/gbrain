@@ -103,6 +103,18 @@ export function getMessage(err: unknown): string {
 }
 
 /**
+ * GST-2314: a prepared statement whose cached plan went stale because a migration changed a table it reads (SQLSTATE
+ * 0A000 "cached plan must not change result type"). Outside a transaction the driver re-prepares it; inside one the
+ * transaction is already aborted, so the caller sees the error and a re-run on a fresh transaction succeeds. Every other
+ * 0A000 (feature_not_supported) stays a refusal. The C routine (RevalidateCachedQuery) is matched first because the
+ * server translates the message under a non-English lc_messages.
+ */
+export function isStalePlanError(err: unknown): boolean {
+  if (getCode(err) !== '0A000') return false;
+  return (err as { routine?: unknown }).routine === 'RevalidateCachedQuery' || /cached plan must not change result type/i.test(getMessage(err));
+}
+
+/**
  * SQLSTATE 57014: query_canceled / statement_timeout.
  * Postgres signals this when a statement exceeds `statement_timeout`.
  */
@@ -110,6 +122,20 @@ export function isStatementTimeoutError(err: unknown): boolean {
   if (getCode(err) === '57014') return true;
   const msg = getMessage(err);
   return /statement_timeout|canceling statement due to statement timeout/i.test(msg);
+}
+
+/**
+ * GST-2260: runs `transaction` once more when a stale plan aborted it. The abort rolled back every statement it ran, so
+ * the second run is safe only for a callback that does nothing but database work and in-memory computation: never wrap
+ * one that writes a file, calls the network or changes state that outlives the transaction.
+ */
+export async function retryOnStalePlan<T>(transaction: () => Promise<T>): Promise<T> {
+  try {
+    return await transaction();
+  } catch (error) {
+    if (!isStalePlanError(error)) throw error;
+    return transaction();
+  }
 }
 
 /**

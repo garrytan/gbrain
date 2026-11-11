@@ -113,7 +113,14 @@ Every source row stores `config.federated: boolean` in its JSONB config.
 The seeded `default` source is `federated=true` so single-source brains
 behave as you'd expect — every page appears in search.
 
-Flip later with `gbrain sources federate <id>` / `unfederate <id>`.
+Flip later with `gbrain sources federate <id>` / `unfederate <id>`. Federating
+a source (or restoring it, which re-federates) lets every connection with no
+source grant read it, including pages a member-bound credential wrote there
+without `readable_by`. The command still federates, and it lists the pages a
+remote token or OAuth client wrote there without readers (count, a few slugs
+with the member each credential is bound to now, `pages_exposed` under `--json`)
+with `gbrain access who-can-read` to check one and `gbrain access rule add` to
+keep a folder to its member.
 
 ### An unscoped connection whose sources hold no pages
 
@@ -221,6 +228,13 @@ current member's sources, but a prompt-injected or buggy bot can omit it, so
 it does not separate members who must not see each other's pages. Use
 per-member tokens for that, and `source_ids` to narrow further.
 
+A trusted system that names the person on each call (QM's `x-qm-actor`) can
+share one client instead: grant it every member's source and bind each source
+to its member (`gbrain access member source add alice-example dm-alice-example`).
+An attested call then reads the grant minus sources bound to other members,
+and binding never adds a source to a grant
+([QM guide](qm.md#each-persons-own-sources)).
+
 ### Lay out sources by who may read them
 
 Source grants are the coarse boundary: without page readers, two pages in one
@@ -244,12 +258,14 @@ who may read it, before any member's bot connects:
   ```
 
   The first id is the token's write source, so a member's saved memories land
-  in their own private source.
+  in their own private source. Keep that source unfederated: federating it
+  later makes the pages already written there readable by every credential
+  without a source grant, since they carry no `readable_by`.
 
   A credential bound to a member (`--member`) whose write source is `default`
   (a token with no `--sources` or with `--sources default`, or an OAuth client
-  left at its registration default) writes where every credential without a
-  source grant reads. A page such a credential creates is therefore written
+  left at its registration default) or a federated source writes where every
+  credential without a source grant reads. A page such a credential creates is therefore written
   with `readable_by: [member:<id>]`, readable only by that member (and the
   local CLI); rewriting it without `readable_by` keeps those readers, and the
   member shares it by naming readers (`readable_by: [alice-example,

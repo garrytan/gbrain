@@ -25,6 +25,7 @@ import { parseFactsFence } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { logPhantomEvent } from '../facts/phantom-audit.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
+import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
@@ -50,7 +51,8 @@ export async function redirectManagedPhantom(engine: BrainEngine, page: Page, ca
   const phantomFence = parseFactsFence(page.compiled_truth ?? '');
   if (phantomFence.warnings.length > 0) return drift('phantom facts fence does not parse cleanly');
   if (parseFactsFence(target.page.compiled_truth).warnings.length > 0) return drift('canonical facts fence does not parse cleanly');
-  const merged = mergePhantomFenceRows(target.page.compiled_truth, phantomFence.facts, Number(dbMax?.n ?? 0));
+  const canonicalBody = (await withHeldFactsFence(engine, sourceId, canonical, { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline })).compiled_truth;
+  const merged = mergePhantomFenceRows(canonicalBody, phantomFence.facts, Number(dbMax?.n ?? 0));
   if (merged.body !== null && parseFactsFence(merged.body).warnings.length > 0) return drift('rendered fence failed re-parse');
   const outcome = await submitMaintenanceIntent(engine, authority, canonical, {
     kind: 'managed_maintenance_phantom_merge', expected_revision: target.revision,

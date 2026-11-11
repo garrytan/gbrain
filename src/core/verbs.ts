@@ -104,10 +104,14 @@ const remember: Operation = {
       type: 'string', description: 'Default fact.',
       enum: [...FACT_KINDS],
     },
+    share: {
+      type: 'boolean',
+      description: 'Members save privately; true: all source readers recall it. Share team work, not facts about a person.',
+    },
     visibility: {
       type: 'string',
       enum: ['world', 'private'],
-      description: 'world (default) or private (local CLI).',
+      description: 'world (default) or private (local CLI). Members: use share.',
       fullSurfaceOnly: true,
     },
     replaces: { type: 'string', description: 'fact_id this fact replaces (same entity, or none).', fullSurfaceOnly: true },
@@ -176,6 +180,18 @@ const remember: Operation = {
         `visibility "${visibility}" is not valid.`,
         'Use "world" (default — agents can recall it) or "private" (local CLI reads only).',
       );
+    }
+    if (p.share !== undefined && typeof p.share !== 'boolean') {
+      throw verbError('invalid_params', 'share must be true or false.', 'Pass share: true to save the fact for everyone who reads this source, or omit it.');
+    }
+    if (p.share === true && p.visibility === 'private') {
+      throw verbError('invalid_params', 'share: true and visibility "private" contradict each other; nothing was saved.', 'Pass share: true to share the fact, or visibility "private" to keep it to yourself, not both.');
+    }
+    // GST-2243: a member shares only with share: true, so its explicit visibility "world" is refused, never quietly made private.
+    if (p.share !== true && p.visibility === 'world' && ctx.attestedOp !== 'memory_write' && (await import('./access/member-facts.ts')).memberFactPage(ctx)) {
+      throw Object.assign(verbError('invalid_params', 'remember: a member credential shares a fact with share: true, not visibility "world"; nothing was saved.',
+        'Retry the same call with share: true in place of visibility "world" to share a fact about the team\'s work with everyone who reads this source, or with no visibility to keep a fact about a person on your own member page. A member shares only this way: pass share: true, never visibility "world".'),
+        { reason: 'member_share_required' });
     }
     if (p.valid_from !== undefined && !isStrictIsoDateTime(p.valid_from)) {
       throw verbError(

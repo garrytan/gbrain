@@ -36,9 +36,9 @@ import { materializedSnapshot } from './segmented-apply.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
 import { listTrustAllowRules } from '../trust/allow-rules.ts';
 import { readSyncContent, readSyncFile, syncGitPath, UNREADABLE_SYNC_FILE, type SyncDiscovery, type SyncEntry } from './sync-discovery.ts';
-import { pinnedWindowBlock, readBlobBytes, readBlobContents, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
+import { pinnedWindowBlock, readBlobBytes, readBlobContents, readFilterDrivers, readPinnedBlob, readPinnedBytes, readPinnedContent, readTreeBlobs, SYNC_READ_BOUND, type MissingAttributes, type TreeBlob } from './sync-blobs.ts';
 import { screenSyncImport, type SyncImportScreenInput } from './sync-prepare.ts';
-import { committedContentOrMissing, nullBytesRefusal } from './sync-entry-fault.ts';
+import { committedContentOrMissing, filterOwnedRefusal, missingAttributesRefusal, nullBytesRefusal } from './sync-entry-fault.ts';
 import type { SyncProcessingOptions } from './sync-authority.ts';
 import { gitHoldItem, readSyncHoldPolicy, readSyncImportProvenance, type GitHoldCode, type GitHoldItem, type GitHoldRecord, type PreparationStallMeta, type SyncHoldPolicy } from './sync-holds.ts';
 import type { WriteRequest } from './model.ts';
@@ -80,6 +80,35 @@ function upcomingGitPaths(cursor: PinnedCursor): () => string[] {
 /** The pinned blob of one entry, or null when the commit lacks it; read with the entries after it (`readPinnedBlob`). */
 export function pinnedBlob(cursor: PinnedCursor, path: string): TreeBlob | null {
   return readPinnedBlob(cursor.gitRoot, cursor.target, syncGitPath(cursor, path), upcomingGitPaths(cursor));
+}
+
+let filterDrivers: { key: string; drivers: Map<string, string | null | MissingAttributes> } | null = null;
+/**
+ * GST-2312 (#9024): the Git filter driver of one entry's path at the pinned commit (`readFilterDrivers`), or null; a
+ * company plan's at its approved revision. A miss reads it with up to 2,000 of the committed imports after it in one
+ * `check-attr`; answers are kept per Git root and commit. A path under a `.gitattributes` the repository lacks throws
+ * `git_object_missing` (`missingAttributesRefusal`), and that answer is dropped once used, so the next run reads again.
+ */
+export function pinnedFilterDriver(cursor: Pick<SyncDiscovery, 'root' | 'gitRoot' | 'target' | 'entries' | 'companyPlan' | 'sourceId'> & { index?: number }, path: string): string | null {
+  const revision = cursor.companyPlan?.revision, gitRoot = revision?.git_root ?? cursor.gitRoot, target = revision?.commit ?? cursor.target;
+  const real = revision ? null : { gitRoot: realpathSync.native(cursor.gitRoot), root: realpathSync.native(cursor.root) };
+  const gitPathOf = (next: string) => real ? relative(real.gitRoot, resolve(real.root, next)).split(sep).join('/') : revision!.scope ? `${revision!.scope}/${next}` : next;
+  const gitPath = gitPathOf(path), key = `${gitRoot}\0${target}`;
+  if (filterDrivers?.key !== key) filterDrivers = { key, drivers: new Map() };
+  const known = filterDrivers.drivers;
+  if (!known.has(gitPath)) {
+    const upcoming: string[] = [];
+    for (let at = cursor.index ?? 0; at < cursor.entries.length && upcoming.length < 2000; at++) {
+      const entry = cursor.entries[at]!, next = entry.action === 'import' && !entry.working ? gitPathOf(entry.path) : gitPath;
+      if (next !== gitPath && !known.has(next)) upcoming.push(next);
+    }
+    for (const [next, driver] of readFilterDrivers(gitRoot, target, [gitPath, ...upcoming])) known.set(next, driver);
+    if (!known.has(gitPath)) known.set(gitPath, null);
+  }
+  const driver = known.get(gitPath) ?? null;
+  if (typeof driver !== 'object' || driver === null) return driver;
+  known.delete(gitPath);
+  throw missingAttributesRefusal({ gitRoot, sourceId: cursor.sourceId }, path, driver);
 }
 
 /**
@@ -294,7 +323,8 @@ function runWriteGateSource(engine: BrainEngine, run: SyncScreenRun, sourceId: s
 }
 
 export interface FrozenImportScreen {
-  cursor: Pick<SyncDiscovery, 'sourceId' | 'incarnation' | 'root'>;
+  /** Without its Git fields (a content repair's screen of checkout bytes), no filter driver is read. */
+  cursor: Pick<SyncDiscovery, 'sourceId' | 'incarnation' | 'root'> & Partial<Pick<SyncDiscovery, 'gitRoot' | 'target' | 'entries' | 'companyPlan'>> & { index?: number };
   entry: SyncEntry; slug: string; pageId: number | null; snapshot: Snapshot;
   /** null only for an over-size file, whose content is never read. */
   content: string | null; rawHash: string | null; lineEndingOnly: boolean;
@@ -367,6 +397,11 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
     return { ...held, meta: { ...held.meta, legacy_slugs: entry.legacySlugs } };
   }
   if (content === null) return null;
+  // GST-2312 (#9024): a committed blob a Git filter owns is held alone; sync never runs the filter that would turn it into text.
+  const { gitRoot, target, entries } = input.cursor;
+  const filtered = filterOwnedRefusal(entry.path, content, entry.working || !gitRoot || !target || !entries ? null
+    : pinnedFilterDriver({ ...input.cursor, gitRoot, target, entries }, entry.path), input.cursor.sourceId, true);
+  if (filtered) return heldEntry(entry, slug, pageId, filtered, content, blob);
   // GBRA-133 S-39: text holding NUL cannot be stored or carried in the write intent; only this file is held. A slug conflict
   // still names the hold (#6749): its message carries the path alone, and the slug-conflicts lane reports NULL_BYTES as still_invalid.
   const nul = nullBytesRefusal(entry.path, content);
