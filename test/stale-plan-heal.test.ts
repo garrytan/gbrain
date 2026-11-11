@@ -17,6 +17,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import postgres from '#postgres';
@@ -52,6 +53,16 @@ describe('write admission and a stale plan that keeps coming back (GST-2260)', (
     expect(await caught(retryWriteAdmission(randomUUID(), async () => { attempts++; throw unsupported; }, 5000))).toBe(unsupported);
     expect(attempts).toBe(1);
   });
+});
+
+describe('every vendored driver copy carries the plan-generation heal (GST-2260)', () => {
+  for (const path of ['vendor/postgres/src/connection.js', 'vendor/postgres/cjs/src/connection.js', 'vendor/postgres/cf/src/connection.js']) {
+    test(`${path} starts a new plan generation on a stale cached plan`, () => {
+      const source = readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+      expect(source).toContain('let planGeneration = 0');
+      expect(source).toContain("errorResponse.routine === 'RevalidateCachedQuery' && planGeneration++");
+    });
+  }
 });
 
 describe.skipIf(!url)('a prepared SELECT * after another connection changes its table (GST-2260)', () => {

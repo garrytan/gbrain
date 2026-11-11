@@ -1,0 +1,20 @@
+{
+  "description": "A generic busy-agent workload for the busy-agent soak cell (test/busy-agent-soak.serial.test.ts): counts and cadences only, no content. A profile derived from a real deployment stays private and is passed with GBRAIN_TEST_BUSY_AGENT_PROFILE.",
+  "notes": 120,
+  "refresh_ticks": 4,
+  "upstream_commits_per_tick": 3,
+  "fence_writes_per_tick": 4,
+  "fence_conflicts_per_tick": 2,
+  "background_write_interval_ms": 1500,
+  "plain_git_committers": 2,
+  "plain_git_commits_each": 3,
+  "uncommitted_files": 2,
+  "legacy_rows_per_direction": 2,
+  "conversion_groups": 3,
+  "conversion_door_writes": 4,
+  "segmented_page_kib": 1536,
+  "segmented_writes": 2,
+  "lost_update_rounds": 12,
+  "cron_interval_ms": 900,
+  "agent_interval_ms": 700
+}

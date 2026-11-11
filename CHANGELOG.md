@@ -37,6 +37,281 @@ The regressions: v0.60.58.0 sent one Postgres round trip per member of a bulk sy
 - `test/managed-sync-bulk-round-trips-5984.test.ts` (Postgres unit arm, registered in `test/postgres-unit-arms.txt`): a managed bulk sync of a multi-member group stays within 27 publication and 74 run statements per page (measured 24.2 and about 67); a probe adding 4 statements per member fails it.
 - `scripts/native/compiled-admin-smoke.ts`: starts the compiled `gbrain` binary's HTTP server, fetches `/admin/` and every same-origin script and stylesheet the page loads, and fails unless each returns 200 with a JavaScript or CSS content type (the SPA fallback answered the missing bundle with `text/html`). It runs in `.github/workflows/native-locks.yml` and `.github/workflows/release.yml`, pinned by `test/release-workflow.test.ts`.
 
+## [0.60.670.0] - 2026-11-11
+
+### A nightly soak test for a busy personal agent, and a fixed convergence-nightly flake
+
+**The convergence nightly now also runs the managed-sync harness under a busy personal agent's workload, and its kill loop no longer fails by chance on the `sync:passed_over` round.** This change touches only tests, the nightly workflow and docs. Nothing in `src/` changed.
+
+- **Busy-agent soak cell.** `test/busy-agent-soak.serial.test.ts` runs six modes, (h) to (m), against a real Postgres behind transaction-mode PgBouncer: refresh ticks with writes inside the refresh barrier, doctor `foreign_writers` beside plain-git committers, `sources git-gap` on legacy rows, a strict conversion stalled between adopt groups, segmented staging that expires before publication, and the cron `commit-push --base` against MCP `edit_page` race. Every mode ends with the convergence oracle. The counts and cadences come from the committed generic profile `test/fixtures/busy-agent-profile.json`, which holds no content. Run it with `GBRAIN_TEST_BUSY_AGENT=1 bun run test:busy-agent`.
+- **Informational nightly job.** `busy-agent` in `.github/workflows/convergence-nightly.yml` runs the cell every night at 50 ms latency, with the run id as the seed. It is `continue-on-error`, so it never changes the convergence job's result. On failure it writes a summary that carries the seed, and it uploads the logs. A `.github/nightly-known-red.tsv` row parks its known red (#8975, tracked in TODOS.md), so a red in the convergence job itself still shows as unparked.
+- **Shared harness.** `test/helpers/convergence-brain.ts` now holds the real-process brain that both suites use. The convergence gate's oracle also counts `deferred` requests as open. When a recovery sync reports `synced` but HEAD has moved past the commit it synced, the harness runs its second allowed plain sync instead of stopping.
+- **Kill-loop flake (#8838).** The two kill-loop rounds whose fault point is `sync:passed_over` now sync with `--no-bulk`. Before, a bulk group could freeze the round's primed file and then drop it without admitting it. When sync froze the file again, it read the edited bytes and held it at once, so the pass-over never fired and the run failed "every planned fault fired". A forced probe (an edit at the freeze, then a kill at the next freeze) fails with bulk on and passes with `--no-bulk`.
+
+## [0.60.669.0] - 2026-11-11
+
+### Five flaky tests fixed at their cause
+
+**Five tests that failed by chance on some machines now pass or fail for a real reason. No assertion, bound or timeout was loosened, and nothing in `src/` changed.** Each fix comes with a probe that forces the failure every time on master and passes with the fix.
+
+- `test/helpers/statement-counter.ts`: the PGLite statement counter named a Bind by the last Parse it had seen. The engine's statement cache (`src/core/pglite-statements.ts`) prepares a statement the second time it runs, so a statement prepared before counting started was recorded under the text of the statement before it. `test/fold-hook-noop-6712.test.ts` then failed whenever background config reads had prepared `SELECT value FROM config WHERE key = $1` before its window. The counter now reads a bound statement's text from the engine's cache, and records an unknown name as a placeholder. `test/statement-counter-warm-cache.test.ts` pins it.
+- `test/persistence-consumer-idle.test.ts`: the first tick's maintenance count read 8, 9 or 10. On a slow machine the next tick's idle probe landed inside the count, and the compacted-receipt sweep added a statement until an earlier test had finished its cursor. The test now walks that cursor to done first and holds later ticks until the first tick is counted. The count is still exactly 8.
+- `test/e2e/evidence-long-page.test.ts`: with provider keys in the environment, every search called the live reranker, whose scores for identical calls differ in the last digits, so the byte comparison failed. The file now runs keyless, as CI's Selected E2E runs it.
+- `test/e2e/source-retire-batched-postgres.test.ts` ran into its 180 s cap. It now retires 2,017 pages (four full batches and a partial one) instead of 60,000, and a statement trigger records every committed page delete. So each test asserts the batches themselves: their sizes, the per-batch bound and one transaction each. Removing the batch `LIMIT` fails the remove and purge tests. The file takes about 57 s.
+- `test/config-file-plane-keys.test.ts`, `test/consent.test.ts`: the memorable enable tests hung waiting for a `[y/N]` answer when stdin was a terminal. They now pin `process.stdin.isTTY` to false while the command runs, so they test the non-interactive refusal however the runner's stdin is set up.
+- `scripts/ci-census-tests.sh`: the pull-request census job now runs 15 more tests that read every file under `src/` (or a whole `src/` subtree), such as `test/cli-exit-verdict-pin.test.ts`. Before, a change that broke one of them passed its pull-request checks and failed only in the full run. `test/scripts/ci-census-tests.test.ts` pins `cli-exit-verdict-pin` in the list.
+
+## [0.60.668.0] - 2026-11-11
+
+**The skill resolver can now find skills from more places, stays fresh when your harness writes into its skills folder, and runs inside Hermes.** The skill resolver is the optional feature that offers your agent the right installed skill on each turn. It is still off by default and never blocks a turn.
+
+Before this release it only read skill folders. Now it also reads OpenClaw's skill list, the Claude Code plugins you have enabled and a repository's own `.agents/skills` for Codex. Before, a harness that wrote a hidden file into its skills folder, as Codex and Hermes both do, made the resolver think the folder had changed. It then rebuilt its index about once a minute. That no longer happens. Long-running hosts can also keep the index open between turns instead of reopening it every time.
+
+### How to use it
+
+- Claude Code plugins: `gbrain setup claude-code --skill-loading resolve` now also indexes your enabled plugin skills, named `<plugin>:<skill>`. `--skill-loading off` removes that catalog again.
+- OpenClaw: `openclaw skills list --json | gbrain skills index build --catalog openclaw-main --from-json - --dir <skills folder> --harness openclaw` builds a catalog from OpenClaw's own list, taking each skill's body from its folder.
+- Hermes: wire `/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes` as a `pre_llm_call` shell hook, build the `hermes-user` catalog, add `hermes` to `skills.resolver.harnesses` and set `skills.resolver.enabled` to true. Setup does not wire Hermes yet. The guide in `docs/guides/skill-resolver.md` gives the exact steps.
+- Codex: nothing to do. A repository's `.agents/skills` folders, from the repository root down to your working folder, are searched like Codex itself loads them.
+
+### What changes on a busy machine
+
+| Situation | Before | Now |
+|---|---|---|
+| Harness rewrites a hidden file in its skills folder before every turn | Index marked stale, rebuilt about once a minute | Stays fresh, 0 rebuilds in a 40-turn bench |
+| Turn time in that bench (median / 90th percentile) | Rebuilds on top | 36.8 / 42.3 ms, against 33.7 / 38.1 ms with no file churn |
+| A SKILL.md symlink pointed at a different skill | Old skill offered until the next rebuild | Seen as a change on the next turn |
+| No catalog built yet for a Claude Code turn | Logged as an error | Logged as `no_catalog`, turn continues |
+
+### Things to watch
+
+- Turn output gains `block_reason`, which says why a turn offered no skill (`ack`, `no_match`, `filtered`, `deduped`, `paced`, `budget_exhausted`, `shadow` or `error`). It is null when a skill was offered.
+- `gbrain doctor` warns when a harness has the resolver on its prompt hook but not on its session-start hook, and names the setup command that fixes it.
+- A `null` entry under `skills.resolver.per_harness` now reads as unset instead of failing.
+
+### Itemized changes
+
+- Catalogs: OpenClaw `skills list --json` input (hidden skills skipped), `--from-json` with `--dir` folder bodies, JSON catalogs up to 64 MB with bodies trimmed to 4 KB, `when_to_use` and `disable_model_invocation` in JSON entries so a JSON list and the same folder build the same hashes, and `--claude-plugins` for the `claude-code-plugins` catalog.
+- Freshness: dot-entries and `node_modules` are never read, and a moved directory mtime counts only when its list of subfolders and SKILL.md files changed. Symlink targets are part of the listing key.
+- Runtime (`src/core/skills/resolver/`): `openCatalog` keeps each catalog's receipt and open index and re-checks them once per turn, `buildSkillIndexOffThread` builds in a worker thread, and every session commit starts a bounded background session cleanup that never deletes a file a commit holds.
+- Hook lane: the Hermes reader takes `extra.user_message`, `session_id` and `cwd` with a bounded streaming read and answers `{"context": block}`. The `codex-project-<hash>` catalog covers each `.agents/skills` from the `.git` root down to the working folder.
+- `budget_exhausted` stays true on an acknowledgement or no-match turn once the budget is spent.
+
+### For contributors
+
+- Compiled builds pass `--define GBRAIN_BUILD_COMMIT`, so build receipts from a compiled binary record `gbrain_commit`.
+- Ubicloud gate VMs install CI's pinned Node 24.18.0 instead of the distribution's Node 18.
+- The tracked scratch file `dbg-tmp.ts` is removed.
+
+## [0.60.667.0] - 2026-11-11
+
+**A brain that serves several people can now be set up the safe way in one command: each person gets a member, a folder only they read and a key bound to them, and doctor fails when a person's folder has no owner.** When one bot answers several people from one brain with one unbound key, it pulls one person's notes into another person's answers (garrytan/harness-evals#363 measured 15 to 47.5% of trials; bots reading through member-bound keys stayed at 0 to 0.5%). `gbrain setup claude-code --serves several --members alice-example,bob-example` writes `access.serves = several`, adds the members, adds a folder rule `people/<member>/` per member through the folder-rule path (committed to `.gbrain/access.yml` on a repo brain, the database rule log on a repo-less one), mints one read-write key per member through the `auth create` mint (granted the labelled source) into a 0600 file under `~/.gbrain/member-keys/`, and proves by reading every other member's folder as each member that none is visible. Re-runs keep everything and never replace a key; a partial failure finishes on the next run, and anything the preview marks BLOCKED stops the run before it writes. A one-person brain sees no change: `--serves one` stays the default and its output is unchanged.
+
+### Itemized changes
+
+- `gbrain setup claude-code|codex --serves one|several`, `--members <id,...>`, `--members-file <file>` (`src/commands/setup.ts`, `src/commands/setup-serves.ts`). Setup stays engine-free: the labelling, the serves read and the bound reads run as children of the launcher. An empty roster refuses `access_serves_roster_empty`.
+- On a brain that already serves several people (2+ enabled members, or `access.serves = several`; explicit wins), a plain setup refuses `setup_serves_several` and writes nothing unless an existing `mcp.stdio_member` naming an enabled member binds the connection; naming an owner no longer exempts it. Setup never writes `mcp.stdio_member`, because that key is brain-wide and would bind every stdio MCP session on the host, including the shared sessions of OpenClaw or Hermes. The per-harness `--stdio-member` binding described below takes its place. A brain setup cannot read refuses `setup_serves_unreadable`.
+- `gbrain access serves` (read-only view) and `gbrain access serves several --members ... [--yes]` (`src/commands/access-serves.ts`): the labelling on its own, preview first. Keys are idempotent on the member id (token `member-<id>`); a key whose file is gone is reported with the revoke step, never re-minted on its own. Key files never go inside a git work tree, symlinks resolved (`access_serves_key_dir_in_git`); a kept key file must hold the live key, and a minted key whose file cannot be written is revoked. An existing rule on `people/<member>/` that anyone else reads is BLOCKED, and the receipt lists people folders no rule covers.
+- `src/core/access/serves.ts` (new): `brainServes(engine)`, the one read of whether a brain serves several people.
+- `src/commands/auth-mint.ts` (new): the token mint `gbrain auth create` used inline, shared with the labelling; `auth create` output is unchanged.
+- `src/commands/access-rules.ts`: `addFolderRules` adds rules through the same preview-then-write path as `gbrain access rule add`.
+- Brain-first block and per-turn rule (`src/core/setup/brain-first.ts`): on a several-person install whose stdio server is bound to a member, the `source_ids` / "apply your own access rules" line becomes "This connection reads only what the person asking may read." (`--instructions-only --serves several` checks the brain first). One-person text is unchanged; doctor's `harness_wiring` repair names `--serves several` for such a block.
+- New doctor check `unlabeled_people_folders` (`src/commands/doctor/checks/unlabeled-people-folders.ts`): on a several-person brain, fails for each top-level `people/<name>/` folder with pages that no folder rule (on that folder or on `people/`) covers; the fix previews the rule and asks the user who reads it. Not applicable on a one-person brain.
+- Docs: `docs/guides/setup.md` ("A brain that serves several people"), `INSTALL_FOR_AGENTS.md`, `skills/setup/SKILL.md`, `skills/conventions/brain-routing.md`.
+- Tests: `test/setup-serves-several.test.ts` (PGLite repo-less and Postgres in process with the minted keys verified by the serve --http verifier; spawned setup on PGLite; a repo brain with a real git repository).
+
+**A stdio connection can now be bound to one person for one harness only: `gbrain setup claude-code --stdio-member <member>` (or `codex`) writes the binding into that harness's own MCP entry, and setup no longer writes the brain-wide `mcp.stdio_member`.** Before, binding stdio meant one config key in the brain, so every stdio session that opened it, from any harness on any machine, read as that member, private pages included. That is why setup refused the flag on Postgres. Now the member rides in the one harness entry that starts `gbrain serve --stdio-member <member>`, so another harness on the same machine, or another machine on the same Postgres brain, stays as it was.
+
+### Itemized changes
+
+- `gbrain serve --stdio-member <id>` (stdio only; refused with `--http`): that server reads as the live member, ahead of config `mcp.stdio_member`. A disabled or unknown member reads as nobody, with no fallback to the config key. Only the server's own argv sets it; nothing a caller sends (tool arguments, `_meta`, headers) does. whoami reports `bound_by: stdio_registration`.
+- Stored writes from such a server stamp the member on the write authority (a jsonb field, so no migration), and preparation and publication re-resolve it live. A stdio wake subscription uses principal id `registration`, so the drain re-checks that member.
+- `gbrain setup claude-code|codex --stdio-member <id>` no longer needs `--serves several` or a PGLite brain. The member must be enabled, or one of `--members` in the same run. It is still refused off claude-code and codex, with `--instructions-only` or `--remove`, and wherever OpenClaw or Hermes is installed; that refusal now names a per-person HTTP key as the route. `--no-stdio-member` removes it.
+- Re-runs, `gbrain post-upgrade`'s launcher refresh and doctor's setup re-run keep an entry's existing `--stdio-member` and never add one; `setupRerunArgv` never names it.
+- Tests: `test/access-binding.test.ts` (PGLite and Postgres), `test/setup-serves-several.test.ts`.
+
+## [0.60.666.0] - 2026-11-11
+
+**QM, the AI helper that can use gbrain as one of its memories, gets a fourth contract version, and each fact it recalls now says whether the person can forget it.** `docs/contracts/qm-memory-provider/v4.json` describes owner-approved proposals (`memory_propose`), marks which personal tools read named sources as a shared scope, and adds `own_page` to every recalled fact. v1, v2 and v3 are byte-identical, so QM keeps whatever version it vendors until it moves.
+
+### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| `memory_recall` fact rows | `id`, `text`, `date`, `kind`, `arm` | also `own_page`: `true` when the fact is on the person's own member page in the connection's source, the same check `forget_fact` makes, so `forget_fact` accepts it on ownership; `false` when `forget_fact` for that attested person answers `fact_not_found`. `arm` is unchanged |
+| `get_write_request` / `cancel_write_request` on a proposal | `request_id`, `state`, `retry_after_ms`, `operation`, `source_id`, `slug`, `proposal`, and `decision` / `write_error` when closed | also `created_at` and `updated_at`, as a write's receipt carries them |
+| QM contract | v3: no proposal, no scope marking, no `own_page` | v4 adds `memory_propose` (arguments, caps, the held answer, the proposal receipt and its states, `cancel_write_request` as the proposer's cancel, how long a closed proposal is kept, and "a state not listed means unknown, not published"), `scope_read: true`/`false` on each personal tool, and `own_page`; v1-v3 unchanged |
+
+### Itemized changes
+
+- `src/core/access/member-facts.ts`: `ownMemberFactIds` returns the facts on the caller's own member page. `forget` and `forget_fact` decide ownership with it, and `memory_recall` sets `own_page` from it, so the two cannot disagree.
+- `src/core/ops/qm-memory.ts`: each recalled row carries `own_page`.
+- `src/core/persistence/memory-proposals.ts`: the proposal receipt carries `created_at` and `updated_at`.
+- `scripts/build-qm-memory-contract.ts`, `docs/contracts/qm-memory-provider/v4.json` (new): contract v4, generated from the live registry; the `actor_required` fix row names `memory_propose` from v4 on.
+- Docs: `docs/contracts/qm-memory-provider/README.md`, `docs/guides/qm.md`, `docs/architecture/key-files/access.md`.
+- Tests: `test/qm-memory-tools.test.ts` checks on PGLite and Postgres that every `own_page: true` row is one `forget_fact` withdraws and every `false` row is refused `fact_not_found`, whichever arm found it; `test/qm-memory-contract.test.ts` pins the v1-v3 bytes and checks v4 against the registry; `test/qm-memory-propose.test.ts` checks the held answer, the receipt and the cancel against v4.
+
+## [0.60.665.0] - 2026-11-11
+
+**One file in a group of Git effects can no longer park the whole group, and a failed step no longer leaves files staged.** A page write's Git effect commits in a group of up to 100 files that share one `git add`. When one of them was already tracked and a later ignore rule covered its folder (a rule ending in `/`), `git add` staged every file it was given and still exited 1. gbrain read that as the whole group failing and parked every effect as `git_unavailable`, including files whose bytes were already committed. Retrying parked them again, and their files stayed staged in the checkout. Every later `gbrain git commit-push` naming those folders then refused with `commit_prestaged_paths`. Now a tracked file is committed even when an ignore rule covers its folder, as plain git does. A new file an ignore rule covers is still never added and parks alone as `git_target_ignored`, naming the rule. A file git refuses fails by itself while the rest of its group commits. Whenever a group's add or commit fails, the index entries it staged are put back. A commit that already landed is never undone.
+
+### Itemized changes
+
+- `src/core/persistence/effect-git.ts`: in a group, tracked files stage with `git add -u` (which never adds an untracked file) and new files with `git add -A` (which refuses an ignored one). When the group add fails, each file is staged alone, and a refused file fails by itself, as `git_target_ignored` naming the rule when that is the cause, and what was staged of it is put back. When every file fails for another reason, the group fails as before. Every failed step, an abort included, restores the group's index entries and their assume-unchanged and skip-worktree flags. Entries already equal to HEAD are left alone, so a commit that landed before its step failed is never reversed.
+- `src/core/git/commit-push.ts`: a file another writer adds or edits under a named folder after the commit lands is no longer reported as skipped (`commit_paths_skipped`). The `commit_prestaged_paths` fix text also says that files a parked gbrain Git effect left staged are gbrain's own, and that `gbrain sources writer retry-effects` commits them.
+- Tests:
+  - `test/effect-git-failed-commit-unstages-gst2128.test.ts` (failed commit, refused add, throwing step, landed commit, tracked file under an ignored folder, untracked ignored file whether status saw it as ignored or not);
+  - `test/effect-retry-already-committed-gst2128.test.ts` (retried effects already in HEAD next to a tracked file under an ignored folder; a push the secret scan holds);
+  - `test/git-commit-push-skipped-paths-gst2116.test.ts` (a post-commit add or edit under a named folder).
+
+## [0.60.664.0] - 2026-11-11
+
+**The Git effects of page writes no longer publish a script's secret.** A script that commits into a managed checkout with plain `git commit` never passes the write path's secret scan. The refresh publish refused such a commit with `publish_secret_found`, but the next page write's Git effect pushed it anyway. Its plain push published every unpublished commit unscanned, and when the remote had moved its keep-checkout publish ran without the scan. Both paths now scan the exact commits they push, except the ones gbrain made itself for page writes (a Git effect's commit, recorded only after checking it holds exactly the bytes the effect wrote, or a hosted repository's door commit, as its commit ledger records them): page bodies are stored raw by design and their Git backups keep going, and the refresh publish now skips them the same way. A value that looks like a secret, added text too large to scan, a commit that changes `.gbrain-scan-allow` or a `.gitattributes` holds the effects with `publish_secret_found`; commits the scan cannot read in full hold them with `publish_scan_unreadable`. A first push to a remote that has no such branch yet scans the branch's whole history and creates the branch only when that scan passes. A commit that changes `.gbrain-scan-allow` or a `.gitattributes` is never published automatically, so the user reviews it and pushes it. Nothing is pushed, and the page writes stay safe in the database and in local commits. `gbrain sync status` and doctor name the user's choice, which is to remove the value from those commits or to allowlist a false positive by fingerprint. Then `gbrain sources writer retry-effects <source> --parked-pushes` runs the effects that parked. Every scanned push is also leased on the remote tip it scanned against. Before, a remote rewound past a pushed secret (an admin removing it with a force-push) left a stale tracking ref that hid the commit from the scan, and the next fast-forward put it back; now the scan runs against the remote's real tip. The in-process scan on the owner's event loop is capped at 10 seconds, inside the writer heartbeat's live window; a longer range goes to the keep-checkout publish, whose child process scans with the full budget.
+
+### Itemized changes
+
+- `src/core/persistence/effect-git.ts`: `pushGitRoot` reads the remote branch tip with `git ls-remote`, scans `<tip>..<HEAD sha>` and pushes that sha only as a fast-forward of the tip, leased on it; a tip that is not an ancestor, or a remote that moves before the push lands (`stale info`), goes to the keep-checkout publish, which now runs with `--scan-secrets`. The in-process scan gets 10 s; a range it cannot finish goes to the keep-checkout publish. A remote without the branch gets HEAD's whole history scanned and the branch created with a lease that it does not exist; one too large to scan in process holds with `publish_scan_unreadable` naming `git ls-remote --heads`. A refusal from either path holds the effects as `publish_secret_found` with the user's fix.
+- `src/core/git/commit-push.ts`: a `scanSecrets` publish scans `<base>..<candidate>` before every push and leases the push on that base, so each merge with a newly fetched remote tip is scanned again. It also scans `<remote tip>..<candidate>` before merging with a newly fetched tip, so a remote rewound past a pushed secret that also changed a file this machine changed refuses `publish_secret_found` rather than `integrate_conflict`, and a conflict's resolve command keeps `--scan-secrets`.
+- `src/core/git/range-secret-scan.ts`: `rangeSecretRefusal`, the one refusal both callers throw (`publish_scan_unreadable` for a scan that could not read the range, `publish_secret_found` otherwise; a gate-file change says the user pushes it). `scanRange` marks a scan that ran past its budget (`timed_out`) and scans a whole history when the base is empty. It skips commits the commit ledger records as page writes (`effect`, `door`, `hosted_repo`); `gbrain git commit-push` commits, adopted outside edits and commits the ledger no longer holds are still scanned, and an unreadable ledger means everything is scanned. A Git effect now makes its commit by plumbing (`commit-tree` over its staged paths, then `update-ref HEAD <new> <old>`, which refuses when HEAD moved, then `git maintenance run --auto --detach` as `git commit` does, without `--detach` on git before 2.47), so the ledger records a sha gbrain created before any ref names it. The scan skips an effect commit only by that sha, recorded `verified` when every staged file holds the bytes whose sha256 the effect recorded (the page walk passes the hash it checked too). An amend, reset or reword of it is a different commit and is scanned, a page file changed before it was staged leaves it unverified, and records written before this check existed are scanned. Its time budget is also checked while the diff is parsed.
+- `src/commands/doctor/checks/git-convergence.ts`, `src/core/persistence/worktree-refresh.ts`, `src/core/persistence/git-push-holds.ts`: every publish fix they name for a managed checkout (stranded, after committing its modified pages, diverged, `refresh_diverged`, and a held Git effect's conflict resolve) runs `gbrain git commit-push --push-only --keep-checkout --scan-secrets`, so a script's commit is scanned there too. This changes what the user sees. A commit that changes `.gbrain-scan-allow` or a `.gitattributes` now refuses `publish_secret_found` when the user runs the diverged fix or the `refresh_diverged` publish, where before their agreement published it.
+- `src/core/git/commit-push.ts`, `src/core/persistence/git-conversion.ts`, `src/commands/git.ts`: the publish commands the other messages hand back keep the scan too: a scanned publish's rerun hints (a push the remote keeps rejecting, a busy publish lock, commits outside the source root), the refresh's publish-by-hand line when it cannot find its CLI, the conversion's pending-push notice and a managed `commit-push -m` that leaves commits unpublished all name `--keep-checkout --scan-secrets`.
+- `src/core/persistence/git-push-holds.ts`: `publish_secret_found` and `publish_scan_unreadable` are held push codes, so doctor, `gbrain sync status` and `retry-effects --parked-pushes` cover them, with an ask-the-user fix (the refused commits, or `git fsck`).
+- Docs: `docs/guides/shared-checkout-git.md` (`publish_secret_found` and `publish_scan_unreadable` rows), `docs/guides/live-sync.md`.
+- Tests: `test/effect-git-secret-gate.test.ts` (an ahead checkout, a diverged one, a remote rewound past a pushed secret, a `.gitattributes` change and a remote without the branch whose history holds a secret each refuse with nothing pushed; a clean ahead checkout pushes, a clean history creates a missing branch, and a scan past the in-process budget still scans in the child; through the effect worker the page write's effect holds, sync status names the fix, and an allowlisted false positive releases it, parked or not; a page write whose body holds a credential-shaped value still backs up; a script commit, amend or reword racing the effect commit, a page file changed after the effect checked it, and an unverified ledger record each hold with nothing pushed; a source-scan walk's page with a credential-shaped body still backs up; a repaired unreadable commit releases its hold); `test/persistence-git-removal-push-7089.test.ts` and `test/persistence-git-subdir-root-7091.test.ts` (doctor's push fixes scan); `test/guarded-publish.test.ts` (a remote rewound past a pushed secret is not published again); `test/git-literal-pathspec-hooks-7759.test.ts` publishes its probe `.gitattributes` commit first, since the effect's push now refuses one; `test/cli-flag-equals.test.ts` lists `range-secret-scan.ts` as a git child argv reader.
+
+
+## [0.60.663.0] - 2026-11-11
+
+### The doc size budgets have room again
+
+**llms-full.txt is 751,119 bytes, 48,881 under its 800,000-byte budget, and the two key-files pages that most merges touch are under 54,000 bytes again. No budget was raised and no text was removed.** Before, llms-full.txt sat 532 bytes under its budget and `engines-2.md` and `core-services-2.md` were within 8 bytes of the 60,000-byte page cap. So any change that added a sentence to those pages failed `check:doc-history` or the build-llms size test, and splitting a page cost bytes in `KEY_FILES.md`, which is 9,994 of its 10,000-byte cap.
+
+- `scripts/llms-config.ts`: the Grok Bot, Muse and in-agent setup guides are listed in llms.txt and no longer inlined in llms-full.txt. They only apply inside those hosted agents, and the inlined AGENTS.md routes those agents to them.
+- A key-files page at its cap continues on a new page linked from its last line, and the new page links back with `[Previous entries](<page>.md)`. A page the index doesn't link is reached from its predecessor's last line. `engines-2.md` continues on `engines-2-continued.md` and `core-services-2.md` on `core-services-2-more.md`; the moved entries are unchanged.
+- `test/docs-navigation.test.ts` checks that every key-files page is reachable from `KEY_FILES.md` by following key-files links. A page the index does not link must name one predecessor whose last line links it, its chain must reach an indexed page, and no page has two continuations. The `check:doc-history` failure message and `KEY_FILES.md` state the rule.
+
+## [0.60.662.0] - 2026-11-11
+
+**QM, the AI helper that can use gbrain as one of its memories, can no longer write any page directly, and the brain owner can now review its proposals from another machine.** Every page write QM makes for a person waits for the owner's approval, a fact it saves for a person stays private, and the owner's admin session reaches the proposal review over the running server. Unattested calls and member-bound credentials behave as before.
+
+### Every page write from QM waits for the owner
+
+**QM can no longer write any page directly; every page write waits for the brain owner's approval.** QM is the AI helper that can use gbrain as one of its memories. Since v0.60.655.0 a call QM makes for a person (`x-qm-actor`) could not put, edit, link or add a timeline entry to a page; now no operation that writes a page is attestable, and a fact saved for a person can no longer be shared with everyone who reads the source. The person's own memory (`memory_write`, `remember` on their member page, `forget`, `forget_fact`) and owner-approved proposals (`memory_propose`) are unchanged. Unattested calls and member-bound credentials behave as before.
+
+#### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Page writes from QM | `add_timeline_entry`, `add_link`, `put_page` and `edit_page` were refused; every other page write could be listed in `--attest-ops` | every operation that writes a page's content, frontmatter, tags, links, timeline, facts, raw data or uploads, or deletes or restores it, is refused, and so are the shared rows with no page (`rate_answer` feedback, `log_ingest`, `loops_mute` and `loops_unmute`) (`actor_not_attested`, reason `op_not_attested`), at `--attest-ops`, on every call and when a queued write publishes |
+| A fact saved for a person | `share: true` put it on its subject's page for every reader of the source | refused (`invalid_params`, reason `attested_share_refused`), as is `visibility: "world"`; the reply points at `memory_propose` |
+| Writeback instructions for a service acting for a person | "share: true shares a fact about the team's work" | never pass `share: true`; propose team knowledge with `memory_propose` |
+| QM contract | v2 and v3 `deferred_ops` named 11 operations | they name every deferred operation; v1 is byte-identical |
+
+#### Itemized changes
+
+- `src/core/access/actor-model.ts`: `ACTOR_DEFERRED_OPS` gains every remaining page write, plus `rate_answer` (its feedback is keyed to the client, not the person, so one person could see another's restricted page in a refusal and move its ranking), `log_ingest` (text every reader of the ingest log sees) and `loops_mute`/`loops_unmute` (they close or reopen other people's loops). `test/qm-attest-write-boundary.test.ts` checks that every attestable mutating operation in the registry is either deferred or reviewed as not a page write, so a new page write cannot become attestable unnoticed.
+- `src/core/verbs.ts`, `src/core/access/member-facts.ts`, `src/core/persistence/memory-prepare.ts`: an attested `remember` refuses `share: true` and `visibility: "world"` at the call (a batch included), and a stored shared save made for a person is refused when it is prepared; a shared agent acting for an audience (`on_behalf_of`) still shares.
+- `src/core/facts/writeback-instructions.ts`: the instruction line for a service acting for a person.
+- `docs/contracts/qm-memory-provider/v2.json`, `v3.json`: regenerated `deferred_ops` (a published-contract amendment).
+- Docs: `docs/guides/qm.md`, `docs/mcp/ADMIN.md`, `docs/guides/write-refusals.md`, `docs/tutorials/company-brain.md`.
+- Tests: `test/qm-attest-write-boundary.test.ts` (new, PGLite and Postgres); `test/access-qm-actor.test.ts` calls every deferred operation attested; `test/access-member-facts.test.ts` and `test/remember-share-gst2243.test.ts` move their attested-write cases to the new boundary.
+
+### The owner reviews memory proposals remotely
+
+**The brain owner can now review QM's memory proposals from another machine.** QM is the AI helper that can use gbrain as one of its memories; it proposes timeline entries and links with `memory_propose`, and nothing lands until the owner says yes. Until now that yes needed a shell on the brain host (`gbrain memory-proposals`). The owner's admin session now reaches the same review over the running server.
+
+#### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Reviewing proposals remotely | a shell on the brain host | owner-session routes `GET /admin/api/memory-proposals` (`?source=`, `?cursor=`, oldest first, 50 a page), `GET /admin/api/memory-proposals/<request_id>` and `POST /admin/api/memory-proposals/<request_id>` (`{action: "approve"\|"deny", reason?, dryRun?}`), mirrored by `gbrain mcp admin memory-proposals list\|show\|approve\|deny`; no OAuth token or MCP tool reaches them |
+| Audit | CLI decisions record `decided_by` | HTTP decisions record `decided_by: admin-api` and one `access_admin` request-log row per applied decision, never the proposed text; a change that fails partway answers `outcome: unknown` |
+| `gbrain memory-proposals approve` when the approved write fails | exit 0 | exit 1; the HTTP approve reports `outcome: failed` with the write's receipt |
+
+#### Itemized changes
+
+- `src/commands/serve-http-access.ts`, `src/commands/serve-http-admin-api.ts`: `mountAdminMemoryProposals` beside gap 4's access routes, on the same `requireAdmin`, dry-run, audit and `outcome: unknown` pattern; approve and deny call the CLI's library functions, so the one transaction, the re-checked actor and page revision and the writer-door publication are shared.
+- `src/commands/mcp-admin.ts`: the `memory-proposals` mirror; each decision takes exactly one request id, and deny needs a 1-500 character reason.
+- `src/core/persistence/memory-proposals.ts`: a keyset page cursor for the owner list and `approveFailed`, the one rule the CLI exit code and the HTTP outcome share.
+- Docs: `docs/mcp/ADMIN.md`, `docs/guides/qm.md`.
+- Tests: `test/serve-http-memory-proposals.test.ts` (new, PGLite and Postgres), `test/mcp-admin-cli.serial.test.ts`.
+
+## [0.60.661.0] - 2026-11-11
+
+**A take or a dated link no longer disappears when a page rewrite drops its section and a later write brings the section back.** Two writers rebuilt a dropped section from scratch: the takes writers numbered their new take from 1 over the stored takes, and `add_link` wrote a links section holding only the new link. Both now start from what the brain still stores.
+
+**A take no longer disappears when `think --take` or `gbrain takes extract --from-pages` re-creates a takes section that a page rewrite dropped.** When a page was rewritten without its takes section, its takes stayed stored, but the next `think --take --anchor <slug>` or `gbrain takes extract --from-pages` on that page built a fresh section numbered from 1: the new take replaced stored take #1 in place, with no record of the old one, and on a managed brain `takes extract --from-pages --include-covered` replaced the first stored takes and deleted the rest in the same write. These writers now render the stored takes, resolutions included, into the section they create and number their own takes after them, on repo-less, Git-backed and plain-directory brains. A take the user removed, or an explicit empty section retired, stays removed. A stored take whose resolution has no quality (recorded before takes had one), or whose text would not read back unchanged from the section (for example evidence holding the literal text `<br>`, which the section reads as a line break), cannot be written into the section, so the write is refused (`invalid_input`) instead of changing it. `takes_add` (`gbrain takes add` and the MCP tool) does not go through this yet. `takes extract --from-pages` skips a page whose takes markers are malformed (for example `<!-- gbrain:takes:begin -->` with two dashes) as `fence_unparsed` and goes on to the next page.
+
+**Each row of a page's `## Links` section now keeps its own dates, and a section that a rewrite dropped comes back with them.** A links row is keyed by target, type and source, but its `valid_from` and `valid_until` were stored per relationship (page, target, type) with no source. So two rows pointing at the same page with the same type shared one pool of dates, and after a page rewrite dropped the section, the next `add_link` wrote a section holding only the new link and deleted every other link of the old section, dates included. Dated statements now carry the row's source (`link_transitions.link_source`), and the identity index includes it. `add_link` on a page whose section is gone puts every kept row back with its own dates, `remove_link` deletes the removed row's own dates for any source (not only `manual`), and two rows that share a date both keep it. Dates stored before this change have no source. With one kept row they are that row's, and with several kept rows for one target and type the writer refuses `link_dates_unattributed` and asks for the section back through `edit_page`, instead of guessing. `append_page` now refuses text holding a links fence marker (`append_links_fence`); write links with `add_link`. A row of a dropped section whose target page never existed never became a link, so it is not brought back.
+
+### Itemized changes
+
+- Migration v302 (`src/core/schema-migrations/v302-link-transitions-source.ts`): adds the nullable `link_transitions.link_source` column (metadata only, under the schema lock timeout), builds the widened unique identity index online under a temporary name (`CREATE UNIQUE INDEX CONCURRENTLY` on Postgres), then swaps it in with one short drop-and-rename transaction. No row is rewritten. Requires Postgres 15, as gbrain already does since v011. The forward-reference bootstrap adds the column before the schema replay on an older brain.
+- `src/core/links-fence-projection.ts`: manual statements are written with their row's source and compared per row, so a row whose dates change replaces only its own.
+- `src/core/persistence/manual-links.ts`: `add_link` re-creates a dropped links section from the kept edges, each with its own dates; `remove_link` deletes the removed rows' own statements; both refuse `link_dates_unattributed` (`src/core/error-registry.ts`) when sourceless statements cannot be given to one row exactly.
+- `src/core/persistence/page-append.ts`: links fence markers in appended text refuse `append_links_fence`, whose fix names `add_link`.
+- `src/core/takes-write.ts`: `withStoredTakesFence` renders a page's stored takes (resolution cells included) into a new takes section when the body has no takes fence, refusing `fence_unparsed` when the body holds malformed takes markers, `invalid_input` when a stored resolution has no quality, and `invalid_input` when the render would not read back row for row with every stored cell unchanged. Used by `addTakeToPage` (`think --take`) and `appendTakesToPageMdFirst` (unmanaged `takes extract --from-pages`).
+- `src/core/extract-takes-from-pages.ts`: the managed `takes extract --from-pages` put composes from the same rendered section and dedupes new claims against those takes; a page the helper refuses is skipped with the refusal's code instead of ending the run.
+- `src/core/behavior-change-notice.ts`: one row for each changed behavior.
+- Docs: `docs/architecture/key-files/hindsight.md`, `docs/architecture/key-files/core-persistence-continued.md`, `docs/architecture/key-files/core-services-2-continued.md`, `docs/guides/error-codes.md`, `docs/guides/temporal-edges.md`.
+- Tests: `test/link-dates-per-row-gst2228.test.ts` (managed brain, repo-less and Git, PGLite and Postgres), `test/link-transitions-source-migration-gst2228.test.ts` (upgrade, interrupted runs, an invalid leftover index, writes between the column and the swap); `test/recreated-takes-section-keeps-stored-takes.test.ts` (`think --take` and `takes extract` on unmanaged brains, a plain directory and Git; managed extraction, repo-less and Git; removed takes, `takes remove` and empty sections stay removed; malformed markers skip one page; a resolution without a quality, or a cell that would not read back unchanged, refuses; PGLite and Postgres).
+
+## [0.60.660.0] - 2026-11-11
+
+**Agent reads answer "nothing here" instead of refusing, and say why a list came back empty.** These fixes come from agent transcripts where models kept getting refused or got bare empty answers.
+
+### Itemized changes
+
+- `get_backlinks` with a `type` that other pages in the brain have, but no page linking to this one has, now returns the normal empty answer plus a note listing the types the linking pages do have. Before, it refused with `unknown type`, so an agent walking several accounts by type was refused once per account. A type no page has is still refused, and the refusal now also lists the brain's own page types. For a remote caller, both checks count only pages that caller can read. A type found only on private pages, pages whose readers leave the caller out, deleted pages or another source is treated as a type that does not exist and is never named.
+- `list_pages` with a `type` that no page has still returns the same empty list, but now adds a note naming the page types the brain does have, most common first (up to 12, with counts). Before, a guessed type such as `account` on a brain that files accounts as `crm` came back as a bare `[]`, which reads like "no such pages". A remote caller's note names only types of pages it can read.
+- `search` with `match: "keyword"` now labels every row that matches the query as written `keyword_exact`, including rows from your own `"A" OR "B"` query or a one-word query. Their match scores sit below the cutoff the label used to need, so they were labelled `weak_semantic`, which told agents the batched lookup the instructions recommend had found nothing solid. `create_safety` (the "don't write a duplicate" hint) is unchanged for these rows. Rows found only by gbrain's own fallback of loosening a query to any-word matching stay `weak_semantic`. A query that is an entity's name, which keyword search also runs under the entity's other names, keeps the labels it had before, and default (hybrid) search is unchanged.
+- `request_tools` accepts `tools` and `surface` in one call. It changes the tool surface exactly as a `surface`-only call does (same limits and refusals), then returns the requested tool schemas, with the surface answer under `surface_change`. Before, the pair was refused, and some models send it every night. Calls with only one of the two answer as before.
+
+## [0.60.659.0] - 2026-11-11
+
+### A page purge removes the page's name from the volunteer log and the mention gazetteer
+
+**Purging a page now also deletes the rows that kept its name next to its slug.** Before, `delete_page purge:true` and the retention purge left two stores behind, because neither has a foreign key to `pages`: `context_volunteer_events` kept the slug with a rationale that quotes the matched name (`alias match "<name>"`) for up to 90 days, and `mention_gazetteer_entries` kept the page's normalized title and aliases until that source's next mention pass. The purge receipt called the page gone while both were still readable. Reported and first fixed by @alanshurafa (#9072).
+
+| What you did | Before | Now |
+|---|---|---|
+| `delete_page purge:true`, the expired-tombstone purge, or a restore that replays a page purge | the slug and name stayed in the volunteer log and the mention gazetteer | removed in the purge transaction, and the page receipt checks both stores |
+| `purge_fact` on a claim that is also another page's name or quoted in a volunteer rationale | the gazetteer was not checked | both stores are probed and a match is listed as a residual |
+
+- `src/core/persistence/purge-name-stores.ts` (new): `scrubPurgedNameStores` deletes the source's rows for the purged slugs from both stores. `purgePageInTransaction`, `purgeDeletedPages`, `expireRecordedTombstones` and the restore-time purge replay call it beside the retrieval-feedback scrub. A soft delete keeps both, so `restore_page` still brings the page back whole.
+- `src/core/deletion-inventory.ts`: both tables are `swept` (`page_names`); the fact receipt still probes them, since a fact purge sweeps neither.
+- Tests: `test/purge-name-stores-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`).
+
+### Removing a source, a connector delete and a late eval capture no longer leave a deleted page's slug behind
+
+**Four more ways a deleted page's slug outlived the page are closed, and the federation warning stops counting private pages.** Before, only a page purge scrubbed the stores that name a page without a foreign key to it.
+
+| What you did | Before | Now |
+|---|---|---|
+| A query or search with eval capture on, whose capture runs after the response, racing a page purge | the capture could write the purged slug back into `eval_candidates.retrieved_slugs` | the insert keeps only slugs whose page still exists, checked under the same row lock the feedback writers take |
+| A volunteered-context answer whose background volunteer-log write lands after a page purge (or while it is open) | the write put the purged slug and its name-quoting rationale back into `context_volunteer_events` | the write keeps only rows whose page still exists, under the same row lock |
+| A connector, GitHub or Google sync deletes a page (`deletePages`), or a transcript re-ingest deletes a stale part | retrieval logs, ratings, weights, the volunteer log, the gazetteer and captured eval slugs kept naming it | scrubbed in the delete's transaction |
+| `gbrain sources remove`, `sources purge`, the expired-archive sweep, or a managed `remove`/`purge` | the source's retrieval logs, ratings, volunteer rows and captured eval slugs stayed | deleted in the statement that deletes the source, and swept again right after for a write that raced it, unless a source with the same id was created in between |
+| `gbrain sources federate` or `sources restore` on a source with a remote-written `visibility: private` page and no readers | the warning named that page, though no-grant connections still cannot read it | the warning applies the read paths' privacy rules, unless `search.remote_private_pages` or `GBRAIN_REMOTE_PRIVATE_PAGES` relaxes them |
+
+- `src/core/feedback/store.ts`: `insertEvalCandidate` is the one eval capture insert both engines run. A facts-arm result (`facts/<id>`) names a fact, not a page, so it stays while that fact exists.
+- `src/core/context/volunteer-events.ts`: `insertVolunteerEvents`, behind the fire-and-forget volunteer-log sink, inserts only rows whose page exists, probed the same way.
+- `src/core/engine-sql/pages.ts`: `deletePages` runs `scrubPurgedSlugs` and `scrubPurgedNameStores` after the delete, in one transaction. The transcript importer's stale-part delete now calls `deletePages`. `deletePage` is unchanged: the page purge, its main caller, scrubs and records the stores in its receipt.
+- `src/core/source-delete.ts`: `removedSourceScrubCtes` runs inside `deleteSourceRow` and the managed lifecycle's source delete, then once more after it. `deleteSourceRow` skips that second pass when a source with the same id exists again, so a re-created source keeps its rows. `retrieval_weights` and `mention_gazetteer_entries` already cascaded from `sources`.
+- `src/core/access/federation-exposure.ts`: the exposure read adds `privacyPartSql` unless `remotePrivacyRelaxed`.
+- Tests: `test/purge-scrub-followups-9068.test.ts` and `test/federation-exposure-private-9068.test.ts` (PGLite, and Postgres through `test/postgres-unit-arms.txt`). `test/eval-candidates.test.ts`, the volunteer round-trip in `test/migrate.test.ts` and the fact-purge case in `test/purge-name-stores-9068.test.ts` now create the pages they log, since a capture or volunteer write keeps only live pages.
+
+## [0.60.658.0] - 2026-11-11
+
+**Pull requests now run the tests that check gbrain's lists, in about 4 minutes, instead of finding those failures in the 30-minute full run.** Some tests fail whenever a change adds an operation, command, `--flag`, error code, doctor check or repair kind without updating the list that tracks it, or changes output a golden file pins. Before this release, pull requests skipped those tests and their first failure came in the full-ci run. A new check, `enumeration and census tests`, runs them on every pull request that changes more than docs. It is advisory: no merge rule reads it. `bash scripts/ci-census-tests.sh --run` runs the same tests on your own machine without Postgres.
+
+### Itemized changes
+
+- `scripts/ci-census-tests.sh` (new) prints the one file list: tests marked `test-reads-source-ok[structural]`, every test that imports `test/helpers/golden`, the tests whose names match its enumeration pattern, the consumer idle-pass bounds (`test/persistence-consumer-*` files that mention idle), and the tests that read every file under `src/` or `test/` (its `WALKERS` list, such as the source-read smell test). It leaves out `test/e2e/`, serial and slow files, and `test/setup.test.ts`. On master that is 141 files. `--run` runs them all and `--run <k> <n>` runs one weight-balanced shard (`scripts/sharding.ts`).
+- `.github/workflows/test.yml`: the `enumeration-census-tests` job runs the list in two shards on 2-vCPU runners, only on pull requests. Trunk Dynamic CI gates it like the other cheap-tier lanes. The `changes` job adds a `census` output that skips a doc-only diff (`scripts/select-e2e.ts --classify-only`), and an unreadable diff still runs the job. `cheap-tier`, `test-status`, `full-suite`, the remote pregate and master-push reuse don't read the job, and `contributor-gate` stays the only required check. On this change's own run the shards took 3 min 40 s and 2 min 47 s, about 6.5 runner-minutes per push.
+- `docs/ci-event-parity.md`: new section "Enumeration and census tests" and a classification row.
+- Tests: `test/scripts/ci-census-tests.test.ts` (new) pins the list's shape and coverage. `full-ci-workflow` and `native-only-workflow` cover the new job's events and its doc-only skip. The PGLite snapshot cache-key census counts the job's key (16 keys).
+
 ## [0.60.657.0] - 2026-11-11
 
 **A running `gbrain serve`, worker or autopilot no longer fails writes after another process changes a table's columns (GST-2260).** When `gbrain apply-migrations` or an upgrade in another process added, renamed or dropped a column, every pooled connection that had already prepared a `SELECT *` or `RETURNING *` on that table failed its next run with "cached plan must not change result type". Outside a transaction the driver quietly prepared the statement again, but inside one the error had already aborted the transaction, so the caller saw it. A `put_page` came back `internal_error`, or was accepted and then failed at publication, once for each statement on each pooled connection. Version 0.60.646.0 made the write paths re-run the transaction it aborted. Now the first such error also makes every connection in the process prepare its statements again before its next query, and an OAuth token grant whose client read meets it and a minion job's completion or failure record are re-run too. Pools that do not prepare statements (transaction-mode pooler URLs, `prepare: false`) and PGLite are unchanged.

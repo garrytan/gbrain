@@ -16,6 +16,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { runAccessRules } from './access-rules.ts';
+import { runAccessServes } from './access-serves.ts';
 import { opError } from '../core/ops/contract.ts';
 import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { grantFromClient, type PrincipalGrant } from '../core/grants/model.ts';
@@ -68,6 +69,13 @@ Owner (one member who owns this brain; credentials bound to it read every page, 
   gbrain access owner set <member>           The member must be enabled; bind credentials with --member <id>
   gbrain access owner clear                  No owner: every caller reads under the ordinary policy
 
+Serves several people (GST-363):
+  gbrain access serves                       One or several, and why (config access.serves, else 2+ enabled members)
+  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--yes]
+                                             Preview first; --yes writes access.serves = several, adds each member,
+                                             a folder rule people/<member>/ read only by that member, and one key
+                                             bound to each member in a 0600 file under <config>/member-keys/
+
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
   gbrain access rule add --prefix <folder/> --readers a,group:b [--id <rule>] [--source <id>] [--yes]
                                              Preview first; narrowing applies at once
@@ -101,7 +109,7 @@ function flagValue(args: string[], name: string): string | undefined {
   return v;
 }
 
-const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--source', '--token', '--client', '--as', '--qm', '--member', '--email']);
+const VALUE_FLAGS = new Set(['--name', '--groups', '--bind-token', '--members', '--members-file', '--source', '--token', '--client', '--as', '--qm', '--member', '--email']);
 
 function positionals(args: string[]): string[] {
   const out: string[] = [];
@@ -411,6 +419,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
     switch (cmd) {
       case 'member': return await memberCmd(engine, rest[0], rest.slice(1), json);
       case 'owner': return await ownerCmd(engine, rest[0], rest.slice(1), json);
+      case 'serves': return await runAccessServes(engine, positionals(rest)[0], rest, json, flagValue);
       case 'group': return await groupCmd(engine, rest[0], rest.slice(1), json);
       case 'who-can-read': {
         const slug = positionals(rest)[0];
@@ -436,7 +445,7 @@ export async function runAccess(engine: BrainEngine, args: string[]): Promise<vo
           `  ${r.explanation}`]);
       }
       default:
-        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, owner, group, rule, apply, resume, who-can-read or check (gbrain access --help).', { code: 'unknown_command' });
+        throw usageError(`Unknown access subcommand: ${cmd}.`, 'Use member, owner, serves, group, rule, apply, resume, who-can-read or check (gbrain access --help).', { code: 'unknown_command' });
     }
   } catch (e) {
     exitCliError(e, 'access');

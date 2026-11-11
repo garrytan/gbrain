@@ -1189,6 +1189,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+            "name": "unlabeled_people_folders",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no page names readers and no member exists.",
             "name": "access_may_act_for_wildcard",
             "readiness_state": "not_applicable",
@@ -1235,7 +1244,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1392 column(s) verified against live schema",
+            "message": "1393 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
@@ -6330,6 +6339,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+            "name": "unlabeled_people_folders",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no page names readers and no member exists.",
             "name": "access_may_act_for_wildcard",
             "readiness_state": "not_applicable",
@@ -6376,7 +6394,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1392 column(s) verified against live schema",
+            "message": "1393 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },

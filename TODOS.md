@@ -1,5 +1,9 @@
 # TODOS
 
+## Busy-agent soak cell follow-ups (filed 2026-11-11, GBRA-332, #8829)
+
+- [ ] **P2 — Refresh diverged-publish child waits 0 s for the push lock (#8975).** **What:** a refresh whose checkout diverged publishes through a child that runs `commit-push` with `GBRAIN_PUBLISH_LOCK_WAIT_SECONDS=0` (`publishInChild` in `worktree-refresh.ts`), so a refresh tick racing another committer refuses `push_unconfirmed` instead of waiting its turn. The busy-agent soak cell's mode (h) shows it as an informational red, parked by its `.github/nightly-known-red.tsv` row. **Fix:** give the child the normal push-lock wait, then delete the known-red row. **Effort:** S. **Priority:** P2.
+
 ## Local edit adoption follow-ups (filed 2026-11-07, GBRA-341, #8755)
 
 - [ ] **P2 — Harden `adopt_local_edits` before any source turns it on (#8755).** **What:** the adoption can import merge-conflict markers, adopt an editor's stale save over gbrain's committed write, read a huge file whole, hold the worktree queue through its quiet window, leave its Git commit behind when the publication transaction rolls back, and treat a nested checkout's unreadable `HEAD` as repo-less. **Fix:** per item in #8755. **Effort:** M. **Priority:** P2.
