@@ -9,7 +9,9 @@
     "scripts/check-request-state-lists.mjs": [
       "test/scripts/run-verify-parallel.test.ts"
     ],
-    "scripts/request-state-lists-baseline.json": [],
+    "scripts/request-state-lists-baseline.json": [
+      "test/scripts/run-verify-parallel.test.ts"
+    ],
     "docs/contracts/qm-memory-provider/v1.json": [
       "test/qm-memory-contract.test.ts"
     ],
