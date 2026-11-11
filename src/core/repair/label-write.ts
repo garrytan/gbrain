@@ -18,7 +18,7 @@ import { withTrustKeep } from '../persistence/context.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { labelEditFile } from '../persistence/page-prepare.ts';
-import { maintenancePreflight, publishMaintenancePage, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import type { RepairItemOutcome } from './core.ts';
 
 const bounded = { timeoutMs: 120_000 };
@@ -101,12 +101,18 @@ export async function writeLabelFile(engine: BrainEngine, page: { source_id: str
 /**
  * One label-only page write at `revision`: the maintenance door on a managed brain (`authority`, from maintenancePreflight),
  * the import under the page lock otherwise. The revision it wrote; null when the page moved before an unmanaged import.
+ * `batch` (GST-2476): the run's maintenance batch id, carried on the request so a run's writes can be counted with their Git
+ * effects (repair/readers.ts readersGitCounts); the Git effect runner commits queued files together.
  */
 export async function writeLabelPage(ctx: OperationContext, page: { source_id: string; slug: string }, write: { revision: string; content: string; edit: LabelEdit;
-  requestId: string; embed: boolean; preview: string },
+  requestId: string; embed: boolean; preview: string; batch?: string },
   authority?: MaintenanceAuthority | null): Promise<string | null> {
   const door = authority === undefined ? await maintenancePreflight(ctx.engine, page.source_id) : authority;
   if (!door) return importAtRevision(ctx.engine, page, write.revision, write.content, write.embed, write.preview);
-  await publishMaintenancePage(ctx.engine, door, page.slug, write.content, { expectedRevision: write.revision, requestId: write.requestId, keepTrust: true, labelEdit: write.edit });
+  const options = { expectedRevision: write.revision, requestId: write.requestId, keepTrust: true as const, labelEdit: write.edit };
+  if (write.batch) {
+    const [settled] = await publishMaintenancePages(ctx.engine, door, [{ slug: page.slug, content: write.content, ...options }], { batch: write.batch });
+    if ('error' in settled!) throw settled.error;
+  } else await publishMaintenancePage(ctx.engine, door, page.slug, write.content, options);
   return (await ctx.engine.readPageSnapshot(page.slug, { sourceId: page.source_id }))?.revision ?? null;
 }
