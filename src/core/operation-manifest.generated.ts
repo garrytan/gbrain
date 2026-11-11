@@ -6656,7 +6656,8 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "annotations": {
       "title": "memory_propose (QM proposed write)",
       "idempotentHint": true
-    }
+    },
+    "area": "memory"
   },
   {
     "name": "get_memory_settings",
