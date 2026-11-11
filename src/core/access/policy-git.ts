@@ -212,12 +212,14 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
       const next = edit(current);
       writeFileSync(file, next);
       try {
-        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message });
+        // The push carries every earlier local commit too, including files a later
+        // commit removed. Use the publish-lock range gate, not a scan of this YAML.
+        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message, scanSecrets: true });
         return { outcome: r.outcome, commit: r.committed ?? r.sha, path: relPath,
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {
         if (e instanceof OperationError && (e.code === 'push_unconfirmed' || (e as { canonical?: string }).canonical === 'push_unconfirmed') && e.detail) {
-          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only to publish it.' };
+          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only --scan-secrets to publish it.' };
         }
         if (gitShow(root, 'HEAD', relPath) !== next) {
           if (current === null) rmSync(file, { force: true }); else writeFileSync(file, current);

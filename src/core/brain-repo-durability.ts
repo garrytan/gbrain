@@ -1295,7 +1295,9 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
   const resolver = findResolverFile(repoPath);
   if (resolver) paths.push(relative(repoPath, resolver));
   try {
-    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(gbrain): install brain durability scaffolding', allowOutsideSourceRoot: true });
+    // Installing clean scaffolding also publishes pre-existing local history.
+    // Keep the same range gate on the initial push and every integration retry.
+    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(gbrain): install brain durability scaffolding', allowOutsideSourceRoot: true, scanSecrets: true });
     if (r.branch !== branch) return { status: 'needs_attention', detail: `checkout is on ${r.branch}, not ${branch}` };
     if (r.outcome === 'nothing_to_commit') return { status: 'ok', detail: 'scaffolding already committed' };
     return { status: 'fixed', detail: `committed + pushed durability scaffolding${r.checkout === 'lagging' ? ` (checkout lagging: ${r.lagging_reason})` : ''}` };
