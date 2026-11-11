@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.674.0] - 2026-11-11
+
+### A managed sync's file freeze no longer holds timers through its Git reads
+
+**While a managed sync freezes a file, it now lets timers and other work run between its Git reads once it has run about 30 ms, so searches, lease renewals and heartbeats are no longer held behind them.** Before, the freeze ran its reads of the file, its pinned blob, its content, its filter driver and HEAD one after another with no break. On a slow machine the first freeze of a large sync held timers past the 100 ms bound that `test/sync-pass-batch-entries-6712.test.ts` sets.
+
+- What a freeze records is unchanged. The reads of a committed file are of the pinned commit, or of HEAD checked by hash against the file's first read, so a write that lands during a break keeps the pinned content instead of importing the new bytes. A working-tree file is still read twice with no break between. The run is checked again after each break, so a cancelled run stops there.
+- `test/sync-freeze-turn-write-gbra133.test.ts` commits new bytes for the file during a break, between the file's first read and its HEAD read, on PGLite and Postgres. The frozen request keeps the pinned content and is not published, and a later freeze imports the new bytes under their own hash.
+- A fourth test in `test/sync-pass-batch-entries-6712.test.ts` adds 40 ms of CPU to each of the first freeze's reads. Before this change the longest stretch was 205 to 211 ms; it now stays under 100 ms.
+
 ## [0.60.673.0] - 2026-11-11
 
 **Source checkouts now stay level with their remotes without help. A held page that changed only in Git imports on the next sync, and every way out of an interrupted refresh works.**
