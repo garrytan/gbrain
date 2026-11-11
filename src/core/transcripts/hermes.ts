@@ -18,7 +18,7 @@
  * the runtime backstop.
  */
 
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Database } from 'bun:sqlite';
@@ -170,19 +170,35 @@ export const hermesAdapter: TranscriptAdapter = {
       );
     }
 
-    // VACUUM INTO runs inside one read transaction, so the snapshot holds
-    // exactly one committed state (WAL frames included) even while a live
-    // writer commits and checkpoints; the source connection is read-only.
+    // A store with both WAL sidecars may have a live writer: VACUUM INTO runs
+    // inside one read transaction, so the snapshot holds exactly one committed
+    // state (WAL frames included) even while it commits and checkpoints. A
+    // store at rest, or one the read-only open cannot use (an unwritable
+    // directory), is copied instead, so nothing is ever created beside it.
     const tmp = mkdtempSync(join(tmpdir(), 'gbrain-hermes-'));
     const copyPath = join(tmp, basename(path));
     let sessions = 0;
     try {
-      const source = new Database(path, { readonly: true });
-      try {
-        source.exec('PRAGMA busy_timeout = 5000');
-        source.query('VACUUM INTO ?').run(copyPath);
-      } finally {
-        source.close();
+      let vacuumed = false;
+      if (existsSync(path + '-wal') && existsSync(path + '-shm')) {
+        try {
+          const source = new Database(path, { readonly: true });
+          try {
+            source.exec('PRAGMA busy_timeout = 5000');
+            source.query('VACUUM INTO ?').run(copyPath);
+            vacuumed = true;
+          } finally {
+            source.close();
+          }
+        } catch {
+          rmSync(copyPath, { force: true });
+        }
+      }
+      if (!vacuumed) {
+        copyFileSync(path, copyPath);
+        for (const suffix of ['-wal', '-shm']) {
+          if (existsSync(path + suffix)) copyFileSync(path + suffix, copyPath + suffix);
+        }
       }
 
       const db = new Database(copyPath, { readonly: true });
