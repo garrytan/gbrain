@@ -10,6 +10,88 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.669.0] - 2026-11-11
+
+### Five flaky tests fixed at their cause
+
+**Five tests that failed by chance on some machines now pass or fail for a real reason. No assertion, bound or timeout was loosened, and nothing in `src/` changed.** Each fix comes with a probe that forces the failure every time on master and passes with the fix.
+
+- `test/helpers/statement-counter.ts`: the PGLite statement counter named a Bind by the last Parse it had seen. The engine's statement cache (`src/core/pglite-statements.ts`) prepares a statement the second time it runs, so a statement prepared before counting started was recorded under the text of the statement before it. `test/fold-hook-noop-6712.test.ts` then failed whenever background config reads had prepared `SELECT value FROM config WHERE key = $1` before its window. The counter now reads a bound statement's text from the engine's cache, and records an unknown name as a placeholder. `test/statement-counter-warm-cache.test.ts` pins it.
+- `test/persistence-consumer-idle.test.ts`: the first tick's maintenance count read 8, 9 or 10. On a slow machine the next tick's idle probe landed inside the count, and the compacted-receipt sweep added a statement until an earlier test had finished its cursor. The test now walks that cursor to done first and holds later ticks until the first tick is counted. The count is still exactly 8.
+- `test/e2e/evidence-long-page.test.ts`: with provider keys in the environment, every search called the live reranker, whose scores for identical calls differ in the last digits, so the byte comparison failed. The file now runs keyless, as CI's Selected E2E runs it.
+- `test/e2e/source-retire-batched-postgres.test.ts` ran into its 180 s cap. It now retires 2,017 pages (four full batches and a partial one) instead of 60,000, and a statement trigger records every committed page delete. So each test asserts the batches themselves: their sizes, the per-batch bound and one transaction each. Removing the batch `LIMIT` fails the remove and purge tests. The file takes about 57 s.
+- `test/config-file-plane-keys.test.ts`, `test/consent.test.ts`: the memorable enable tests hung waiting for a `[y/N]` answer when stdin was a terminal. They now pin `process.stdin.isTTY` to false while the command runs, so they test the non-interactive refusal however the runner's stdin is set up.
+- `scripts/ci-census-tests.sh`: the pull-request census job now runs 15 more tests that read every file under `src/` (or a whole `src/` subtree), such as `test/cli-exit-verdict-pin.test.ts`. Before, a change that broke one of them passed its pull-request checks and failed only in the full run. `test/scripts/ci-census-tests.test.ts` pins `cli-exit-verdict-pin` in the list.
+
+## [0.60.668.0] - 2026-11-11
+
+**The skill resolver can now find skills from more places, stays fresh when your harness writes into its skills folder, and runs inside Hermes.** The skill resolver is the optional feature that offers your agent the right installed skill on each turn. It is still off by default and never blocks a turn.
+
+Before this release it only read skill folders. Now it also reads OpenClaw's skill list, the Claude Code plugins you have enabled and a repository's own `.agents/skills` for Codex. Before, a harness that wrote a hidden file into its skills folder, as Codex and Hermes both do, made the resolver think the folder had changed. It then rebuilt its index about once a minute. That no longer happens. Long-running hosts can also keep the index open between turns instead of reopening it every time.
+
+### How to use it
+
+- Claude Code plugins: `gbrain setup claude-code --skill-loading resolve` now also indexes your enabled plugin skills, named `<plugin>:<skill>`. `--skill-loading off` removes that catalog again.
+- OpenClaw: `openclaw skills list --json | gbrain skills index build --catalog openclaw-main --from-json - --dir <skills folder> --harness openclaw` builds a catalog from OpenClaw's own list, taking each skill's body from its folder.
+- Hermes: wire `/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes` as a `pre_llm_call` shell hook, build the `hermes-user` catalog, add `hermes` to `skills.resolver.harnesses` and set `skills.resolver.enabled` to true. Setup does not wire Hermes yet. The guide in `docs/guides/skill-resolver.md` gives the exact steps.
+- Codex: nothing to do. A repository's `.agents/skills` folders, from the repository root down to your working folder, are searched like Codex itself loads them.
+
+### What changes on a busy machine
+
+| Situation | Before | Now |
+|---|---|---|
+| Harness rewrites a hidden file in its skills folder before every turn | Index marked stale, rebuilt about once a minute | Stays fresh, 0 rebuilds in a 40-turn bench |
+| Turn time in that bench (median / 90th percentile) | Rebuilds on top | 36.8 / 42.3 ms, against 33.7 / 38.1 ms with no file churn |
+| A SKILL.md symlink pointed at a different skill | Old skill offered until the next rebuild | Seen as a change on the next turn |
+| No catalog built yet for a Claude Code turn | Logged as an error | Logged as `no_catalog`, turn continues |
+
+### Things to watch
+
+- Turn output gains `block_reason`, which says why a turn offered no skill (`ack`, `no_match`, `filtered`, `deduped`, `paced`, `budget_exhausted`, `shadow` or `error`). It is null when a skill was offered.
+- `gbrain doctor` warns when a harness has the resolver on its prompt hook but not on its session-start hook, and names the setup command that fixes it.
+- A `null` entry under `skills.resolver.per_harness` now reads as unset instead of failing.
+
+### Itemized changes
+
+- Catalogs: OpenClaw `skills list --json` input (hidden skills skipped), `--from-json` with `--dir` folder bodies, JSON catalogs up to 64 MB with bodies trimmed to 4 KB, `when_to_use` and `disable_model_invocation` in JSON entries so a JSON list and the same folder build the same hashes, and `--claude-plugins` for the `claude-code-plugins` catalog.
+- Freshness: dot-entries and `node_modules` are never read, and a moved directory mtime counts only when its list of subfolders and SKILL.md files changed. Symlink targets are part of the listing key.
+- Runtime (`src/core/skills/resolver/`): `openCatalog` keeps each catalog's receipt and open index and re-checks them once per turn, `buildSkillIndexOffThread` builds in a worker thread, and every session commit starts a bounded background session cleanup that never deletes a file a commit holds.
+- Hook lane: the Hermes reader takes `extra.user_message`, `session_id` and `cwd` with a bounded streaming read and answers `{"context": block}`. The `codex-project-<hash>` catalog covers each `.agents/skills` from the `.git` root down to the working folder.
+- `budget_exhausted` stays true on an acknowledgement or no-match turn once the budget is spent.
+
+### For contributors
+
+- Compiled builds pass `--define GBRAIN_BUILD_COMMIT`, so build receipts from a compiled binary record `gbrain_commit`.
+- Ubicloud gate VMs install CI's pinned Node 24.18.0 instead of the distribution's Node 18.
+- The tracked scratch file `dbg-tmp.ts` is removed.
+
+## [0.60.667.0] - 2026-11-11
+
+**A brain that serves several people can now be set up the safe way in one command: each person gets a member, a folder only they read and a key bound to them, and doctor fails when a person's folder has no owner.** When one bot answers several people from one brain with one unbound key, it pulls one person's notes into another person's answers (garrytan/harness-evals#363 measured 15 to 47.5% of trials; bots reading through member-bound keys stayed at 0 to 0.5%). `gbrain setup claude-code --serves several --members alice-example,bob-example` writes `access.serves = several`, adds the members, adds a folder rule `people/<member>/` per member through the folder-rule path (committed to `.gbrain/access.yml` on a repo brain, the database rule log on a repo-less one), mints one read-write key per member through the `auth create` mint (granted the labelled source) into a 0600 file under `~/.gbrain/member-keys/`, and proves by reading every other member's folder as each member that none is visible. Re-runs keep everything and never replace a key; a partial failure finishes on the next run, and anything the preview marks BLOCKED stops the run before it writes. A one-person brain sees no change: `--serves one` stays the default and its output is unchanged.
+
+### Itemized changes
+
+- `gbrain setup claude-code|codex --serves one|several`, `--members <id,...>`, `--members-file <file>` (`src/commands/setup.ts`, `src/commands/setup-serves.ts`). Setup stays engine-free: the labelling, the serves read and the bound reads run as children of the launcher. An empty roster refuses `access_serves_roster_empty`.
+- On a brain that already serves several people (2+ enabled members, or `access.serves = several`; explicit wins), a plain setup refuses `setup_serves_several` and writes nothing unless an existing `mcp.stdio_member` naming an enabled member binds the connection; naming an owner no longer exempts it. Setup never writes `mcp.stdio_member`, because that key is brain-wide and would bind every stdio MCP session on the host, including the shared sessions of OpenClaw or Hermes. The per-harness `--stdio-member` binding described below takes its place. A brain setup cannot read refuses `setup_serves_unreadable`.
+- `gbrain access serves` (read-only view) and `gbrain access serves several --members ... [--yes]` (`src/commands/access-serves.ts`): the labelling on its own, preview first. Keys are idempotent on the member id (token `member-<id>`); a key whose file is gone is reported with the revoke step, never re-minted on its own. Key files never go inside a git work tree, symlinks resolved (`access_serves_key_dir_in_git`); a kept key file must hold the live key, and a minted key whose file cannot be written is revoked. An existing rule on `people/<member>/` that anyone else reads is BLOCKED, and the receipt lists people folders no rule covers.
+- `src/core/access/serves.ts` (new): `brainServes(engine)`, the one read of whether a brain serves several people.
+- `src/commands/auth-mint.ts` (new): the token mint `gbrain auth create` used inline, shared with the labelling; `auth create` output is unchanged.
+- `src/commands/access-rules.ts`: `addFolderRules` adds rules through the same preview-then-write path as `gbrain access rule add`.
+- Brain-first block and per-turn rule (`src/core/setup/brain-first.ts`): on a several-person install whose stdio server is bound to a member, the `source_ids` / "apply your own access rules" line becomes "This connection reads only what the person asking may read." (`--instructions-only --serves several` checks the brain first). One-person text is unchanged; doctor's `harness_wiring` repair names `--serves several` for such a block.
+- New doctor check `unlabeled_people_folders` (`src/commands/doctor/checks/unlabeled-people-folders.ts`): on a several-person brain, fails for each top-level `people/<name>/` folder with pages that no folder rule (on that folder or on `people/`) covers; the fix previews the rule and asks the user who reads it. Not applicable on a one-person brain.
+- Docs: `docs/guides/setup.md` ("A brain that serves several people"), `INSTALL_FOR_AGENTS.md`, `skills/setup/SKILL.md`, `skills/conventions/brain-routing.md`.
+- Tests: `test/setup-serves-several.test.ts` (PGLite repo-less and Postgres in process with the minted keys verified by the serve --http verifier; spawned setup on PGLite; a repo brain with a real git repository).
+
+**A stdio connection can now be bound to one person for one harness only: `gbrain setup claude-code --stdio-member <member>` (or `codex`) writes the binding into that harness's own MCP entry, and setup no longer writes the brain-wide `mcp.stdio_member`.** Before, binding stdio meant one config key in the brain, so every stdio session that opened it, from any harness on any machine, read as that member, private pages included. That is why setup refused the flag on Postgres. Now the member rides in the one harness entry that starts `gbrain serve --stdio-member <member>`, so another harness on the same machine, or another machine on the same Postgres brain, stays as it was.
+
+### Itemized changes
+
+- `gbrain serve --stdio-member <id>` (stdio only; refused with `--http`): that server reads as the live member, ahead of config `mcp.stdio_member`. A disabled or unknown member reads as nobody, with no fallback to the config key. Only the server's own argv sets it; nothing a caller sends (tool arguments, `_meta`, headers) does. whoami reports `bound_by: stdio_registration`.
+- Stored writes from such a server stamp the member on the write authority (a jsonb field, so no migration), and preparation and publication re-resolve it live. A stdio wake subscription uses principal id `registration`, so the drain re-checks that member.
+- `gbrain setup claude-code|codex --stdio-member <id>` no longer needs `--serves several` or a PGLite brain. The member must be enabled, or one of `--members` in the same run. It is still refused off claude-code and codex, with `--instructions-only` or `--remove`, and wherever OpenClaw or Hermes is installed; that refusal now names a per-person HTTP key as the route. `--no-stdio-member` removes it.
+- Re-runs, `gbrain post-upgrade`'s launcher refresh and doctor's setup re-run keep an entry's existing `--stdio-member` and never add one; `setupRerunArgv` never names it.
+- Tests: `test/access-binding.test.ts` (PGLite and Postgres), `test/setup-serves-several.test.ts`.
+
 ## [0.60.666.0] - 2026-11-11
 
 **QM, the AI helper that can use gbrain as one of its memories, gets a fourth contract version, and each fact it recalls now says whether the person can forget it.** `docs/contracts/qm-memory-provider/v4.json` describes owner-approved proposals (`memory_propose`), marks which personal tools read named sources as a shared scope, and adds `own_page` to every recalled fact. v1, v2 and v3 are byte-identical, so QM keeps whatever version it vendors until it moves.

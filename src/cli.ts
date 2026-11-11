@@ -53,7 +53,8 @@ async function runSkillResolverLaneFastPath(): Promise<void> {
   if (process.env.GBRAIN_HOOKS === '0') return;
   (await import('./core/session-cwd.ts')).captureHookSessionCwd();
   const h = rest.indexOf('--harness');
-  await (await import('./core/skills/resolver/hook-lane.ts')).runSkillResolverLane(event, h >= 0 && rest[h + 1] === 'codex' ? 'codex' : 'claude-code');
+  const harness = h >= 0 ? rest[h + 1] : undefined;
+  await (await import('./core/skills/resolver/hook-lane.ts')).runSkillResolverLane(event, harness === 'codex' || harness === 'hermes' ? harness : 'claude-code');
 }
 
 async function runFastPath(path: 'help' | 'version' | 'skill-resolver-lane'): Promise<void> {

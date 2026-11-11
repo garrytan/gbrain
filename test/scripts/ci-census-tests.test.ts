@@ -29,6 +29,7 @@ describe('ci-census-tests.sh', () => {
       'test/remote-privacy-sweep.test.ts',
       'test/persistence-consumer-idle.test.ts',
       'test/test-reads-source-smell.test.ts',
+      'test/cli-exit-verdict-pin.test.ts',
     ]) expect(files, file).toContain(file);
     const structuralTag = ['test-reads-source', 'ok\\[structural\\]'].join('-');
     const structural = spawnSync('git', ['grep', '-l', structuralTag, '--', 'test'], { cwd: root, encoding: 'utf8' }).stdout

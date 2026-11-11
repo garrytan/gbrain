@@ -16,8 +16,11 @@ Five kinds of caller read a brain:
 - **Local CLI** on the brain host (`remote = false`). Reads everything.
 - **The owner**: a remote credential (token or OAuth client) or stdio server bound to the member named by
   `gbrain access owner set <member>` (config `access.owner_member`). Bind each of the owner's agents, delegates and
-  sub-agents included, with `gbrain auth rescope --token <name> --member <owner>` (stdio: `gbrain config set
-  mcp.stdio_member <owner>`). On a single-user brain this is how the owner's own agent reads the whole brain.
+  sub-agents included, with `gbrain auth rescope --token <name> --member <owner>`. A Claude Code or Codex install
+  only the owner uses: `gbrain setup <claude-code|codex> --stdio-member <owner>`, which binds that harness's stdio
+  entry on that machine and nothing else (PGLite or Postgres); for a harness several people talk to, one key per
+  person over `gbrain serve --http` (`gbrain auth create <name> --member <id>`). On a single-user brain this is how the owner's own
+  agent reads the whole brain.
 - **Other members**: credentials bound to any other enabled member.
 - **Public or unbound callers**: credentials bound to no member, and audiences that include a guest.
 - **Shared rooms**: a shared agent speaking for an audience of several people (`X-Gbrain-On-Behalf-Of` /

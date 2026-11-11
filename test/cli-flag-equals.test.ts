@@ -424,6 +424,7 @@ describe('#7619 split rules', () => {
       'src/core/sync-upstream.ts': 'git child argv',
       'src/core/tailscale.ts': 'tailscale child argv',
       'src/mcp/surface.ts': 'serve --access/--surface parsers read both forms (#7603); the entry splits the = form first',
+      'src/core/stdio-member-flag.ts': 'serve --stdio-member parser reads both forms; the entry splits the = form first, and setup and doctor read it back from a harness entry\'s args as written (GST-363)',
       'src/core/direct-pool-profile.ts': 'pool profile reads serve --access in both forms from the raw argv before the gate',
       'src/commands/access.ts': 'access has no EQUALS_READERS key, so the entry refuses every = form; flagValue and the --as guard also read it for a direct caller',
       'src/commands/auth-binding.ts': 'the entry refuses --member=/--may-act-for= on auth (no EQUALS_READERS key); takeBindingFlags also reads the = form so a direct caller never drops a binding',

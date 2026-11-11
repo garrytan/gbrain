@@ -38,21 +38,28 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Harness | Build | Notes |
 |---|---|---|
 | Claude Code | `gbrain skills index build --catalog claude-user --dir ~/.claude/skills --harness claude-code` | Plugin skills get their `<plugin>:` prefix from `.claude-plugin/plugin.json`. |
+| Claude Code plugins | `gbrain skills index build --catalog claude-code-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
 | Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. |
-| OpenClaw and other adapters | `gbrain skills index build --catalog openclaw-main --from-json - --harness openclaw` | The adapter pipes its skill list (schema below) and owns rebuilds. |
+| OpenClaw | `openclaw skills list --json \| gbrain skills index build --catalog openclaw-main --from-json - --dir <skills dir> --harness openclaw` | The list builds as is: the name is the id, and a skill OpenClaw hides from the model is skipped as ineligible. Each listed skill takes its body, path and triggers from the `--dir` skill of the same name; folder-only skills stay out. |
+| Other adapters | `gbrain skills index build --catalog <name> --from-json - --harness <h>` | The adapter pipes its skill list (schema below) and owns rebuilds. |
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
 
 - `--dir` is repeatable; earlier directories win duplicate ids (the loser is
   listed in the receipt as `duplicate_id`). Symlinks that leave the root,
   skills with `disable-model-invocation: true` and JSON entries with
-  `eligible: false` are never indexed.
+  `eligible: false` are never indexed. Dot-entries (harness-owned state such
+  as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
+  never read, so a harness writing them does not make the index stale.
 - `--routing <file>` adds the rows of one RESOLVER-style routing table to
   the skills they name.
 - `--scope project` marks a cloned repository's skills: their blocks show ids
   and names only, never their summaries, because the text came from someone else.
-- Bounds: 10,000 skills per catalog, 64 KB per SKILL.md, 8 MB of JSON.
+- Bounds: 10,000 skills per catalog, 64 KB per SKILL.md, 64 MB of JSON. JSON
+  bodies are trimmed to the 4 KB the ranker reads, and a snapshot over 8 MB is
+  kept trimmed. An invalid JSON entry fails with `skill_source_invalid`, naming
+  the entry and the field.
 - Several catalogs merge on one turn: `--catalog user --catalog project`.
   Each ranks with its own variant; the session's no-repeat set and budget are
   shared.
@@ -69,10 +76,11 @@ recorded in the receipt.
 `gbrain setup claude-code --skill-loading resolve` (or `codex`) turns on a
 per-turn hook that puts the block in front of the model on every prompt:
 
-1. It builds the user catalog `claude-code-user` from `~/.claude/skills`
-   (Codex: `codex-user` from `~/.agents/skills` and `$CODEX_HOME/skills`).
-   With no skill found it stops with `skill_resolver_setup_incomplete` and
-   writes nothing else.
+1. It builds the user catalog `claude-code-user` from `~/.claude/skills` and
+   `claude-code-plugins` from the enabled Claude Code plugins (Codex:
+   `codex-user` from `~/.agents/skills` and `$CODEX_HOME/skills`). With no
+   skill found it stops with `skill_resolver_setup_incomplete` and writes
+   nothing else.
 2. It sets `skills.resolver.enabled` and `skills.resolver.harnesses` in
    `~/.gbrain/config.json`. A brainless install stays brainless: the file
    holds no engine, so nothing reads it as a brain.
@@ -86,6 +94,22 @@ per-turn hook that puts the block in front of the model on every prompt:
 `--dry-run` lists every write, and re-running changes nothing. A bare
 `gbrain setup <harness>` refreshes a lane that is on.
 
+**Hermes** runs the same lane as a `pre_llm_call` shell hook. Hermes splits
+the command without a shell and needs its first word to be a path that
+exists, so pass the environment through `/usr/bin/env` and name gbrain by its
+absolute path:
+`/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes`.
+Setup does not wire it yet, so build `hermes-user` yourself
+(`gbrain skills index build --catalog hermes-user --dir ~/.hermes/skills
+--harness hermes`), add `hermes` to `skills.resolver.harnesses` in
+`~/.gbrain/config.json` by hand (`gbrain config set` refuses that key, which
+setup owns) and set `skills.resolver.enabled` to `true` there; the lane is
+off without it. Doctor's `skill_resolver` check does not cover Hermes yet. The lane
+reads `extra.user_message`, `session_id` and `cwd` from the hook's stdin and
+answers `{"context": "<block>"}`. Hermes sends the whole conversation history
+on every turn, so the lane streams stdin and keeps only those three strings
+(each capped at 8 KB): a history of any size is read, never refused.
+
 The lane runs the resolver in the hook process (never through `gbrain serve`),
 so it works with serve down and with no brain. Each block names the skill ids
 and gives the harness's own load line; Codex lines also carry the SKILL.md path.
@@ -98,32 +122,46 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   default every match) and `skills.resolver.pinned` (skill ids the harness
   always loads itself, never suggested). `skills.resolver.per_harness.<harness>.top_k`
   and `.min_match` override one harness; what it leaves out falls back to the
-  global key. Set them with `gbrain config set`; a bad value makes the lane
+  global key, and an entry that is not an object counts as unset. Set them with `gbrain config set`; a bad value makes the lane
   log `skill_resolver_config_invalid` and deliver nothing.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
   output (default 4000, 500 to 10,000); a larger block is dropped whole and
   counted as `payload_dropped`.
 - **One owner:** when several settings files wire the lane, only the first
   entry whose home has the lane on delivers.
-- **Project skills (Claude Code):** a project's `.claude/skills` gets its own
-  catalog, `claude-code-project-<hash of the root>`, built in the background
-  the first time the project is seen and merged by name only. Stale catalogs
-  rebuild the same way, at most once a minute;
-  `skills.resolver.auto_rebuild false` or `GBRAIN_SKILLS_NO_AUTOREBUILD=1`
-  stops both.
+- **Catalogs:** a turn searches the user catalog, Claude Code's
+  `claude-code-plugins` (setup builds it from enabled plugins) and the project
+  catalog, each only once it is built. With none built the turn prints nothing
+  and logs `no_catalog`.
+- **Project skills:** Claude Code's `.claude/skills` in the project gets its
+  own catalog, `claude-code-project-<hash of the root>`. Codex's gets
+  `codex-project-<hash of the dirs>`, over every `.agents/skills` from the
+  project root (the nearest folder above the working directory that holds a
+  `.git`, else the working directory) down to the working directory, root
+  first, the way Codex 0.165 loads them; your own `~/.agents/skills` stays in
+  `codex-user`. Each is built in the background the first time the project is
+  seen and merged by name only. Stale catalogs rebuild the same way, at most
+  once a minute; `skills.resolver.auto_rebuild false` or
+  `GBRAIN_SKILLS_NO_AUTOREBUILD=1` stops both.
 - **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
   0.165 and later) resets the session, so skills can be offered again. A Codex
   install from before gets the SessionStart group on its next setup run.
+  Hermes has no compaction event yet.
 
 Each turn appends one line (outcome, error code, duration, catalogs; never
 turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
-the recent error codes; it says nothing while the resolver is off.
+the recent error codes; it says nothing while the resolver is off. A hook from
+before the compaction reset (UserPromptSubmit without SessionStart) shows as
+`outdated` and warns with its fix, `gbrain setup codex --skill-loading
+resolve` (or `claude-code`).
 
 Compiled binaries carry the lane's worker as a second entrypoint
 (`bun build --compile src/cli.ts src/core/skills/resolver/hook-worker.ts`); a
 binary built without it delivers nothing and logs `skill_resolver_internal`.
+The release and `bun run build` also pass `--define GBRAIN_BUILD_COMMIT=<sha>`,
+so a compiled binary's build receipts record `gbrain_commit`.
 
 ## The contract (schema_version 1)
 
@@ -136,7 +174,10 @@ The JSON Schemas are checked in under `docs/schemas/`:
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
   `meta` is byte-identical for the same index, input and session state.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
-  `[{id, name, description?, triggers?, routing?, body?, path?, eligible?}]`.
+  `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
+  eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
+  folder has (`when_to_use`, `disable-model-invocation`), a JSON build gives
+  the same `catalog_hash` and `index_hash` as the folder build.
 - `skill-resolver.v1.build-receipt.json`: the build receipt, also saved as
   `receipt.json` beside the index.
 
@@ -153,6 +194,13 @@ body-only matches and the stronger ones still fill the block. A skill named in
 the turn (`$name`, `@name`, a leading `/name`, "the name skill", or its full
 id) ranks first. When the message matches no catalog word (a follow-up such
 as "do it again"), `previous_user_message` (`--previous`) is ranked instead.
+
+An empty block carries `block_reason`: `ack`, `no_match`, `filtered` (every
+match was excluded or below `min_match_strength`), `deduped` (every match was
+already suggested in the session), `paced` (past half the budget and the top
+match is not on a name, trigger or routing row), `budget_exhausted`, `shadow`
+(the live output of a `--shadow` turn) or `error`. It is null when the block
+has a suggestion.
 
 ### Exit codes and fail-open
 
@@ -179,7 +227,8 @@ With `--session <id>` the resolver remembers which skills it suggested:
   in `config.json` (default 2,000 tokens; 0 silences the resolver, otherwise
   100-50,000). k drops to 3 once half is spent and to 1 at 80%; after half,
   only a turn whose top result matched on name, triggers or routing spends
-  any. When it is spent, `budget_exhausted` is true and the block is empty,
+  any. When it is spent, `budget_exhausted` is true on every turn (an
+  acknowledgement included) and the block is empty,
   except for a skill the turn names, which still gets its line (and its
   tokens still count);
 - state is committed only after the block was delivered: the CLI commits
@@ -192,7 +241,9 @@ With `--session <id>` the resolver remembers which skills it suggested:
 
 The key is `sha256(on|shadow, harness, session id)`: the same id under two
 harnesses is two sessions, and merged catalogs share one. Session files idle
-for 7 days are deleted.
+for 7 days are deleted: after a commit (at most once every 10 minutes per
+home, at most 1,000 files a pass, with async I/O after the commit settles),
+and on each build and status.
 
 Measured block size at k=5 over the Step 1 test turns on gbrain's own skills:
 median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
@@ -201,10 +252,13 @@ median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
 ## Freshness and rebuilds
 
 `resolve` never rebuilds. When the source changed it still answers from the
-existing index with `meta.index_stale: true` and touches `stale.stamp`; the
-rebuild runs from `gbrain skills index build` (which prints the exact command
-in `skills index status`). For a `--dir` catalog the turn checks file sizes and
-mtimes, at most 1,024 per turn and a full sweep at most once a minute;
+existing index with `meta.index_stale: true` and writes `stale.stamp` once (a
+later stale turn leaves it alone; a `--from-json -` catalog, which only its
+adapter rebuilds, never gets one); the rebuild runs from
+`gbrain skills index build` (which prints the exact command in
+`skills index status`). For a `--dir` or `--claude-plugins` catalog the turn
+checks file sizes and mtimes, at most 1,024 per turn and a full sweep at most
+once a minute;
 `skills index status` re-reads the source and re-hashes the index. A bundled
 catalog is stale after a gbrain upgrade; a `--from-json` catalog is never
 rebuilt by gbrain: the adapter passes `expected_catalog_hash` and rebuilds
@@ -227,6 +281,7 @@ Nothing leaves the machine. Everything lives under `$GBRAIN_HOME/.gbrain/skill-i
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
 | `sessions/<key>.json` | skill ids and turn counters; never turn text |
 | `logs/lane-<date>.jsonl`, `logs/resolver-<date>.log` | one line per lane turn, and scrubbed stack traces of unexpected failures; never turn text; one file per day, kept 14 days |
+| `logs/session-gc.stamp` | empty; its mtime is the last session GC |
 
 The block never echoes the user's text. Summaries (each skill's description
 cut at 120 characters, the `summary` field) are catalog text, so they are
@@ -246,8 +301,8 @@ deletes a catalog; deleting `skill-index/` removes everything.
 
 Preregistered bars: a cold turn (index opened again, ranked, one freshness
 slice) at p95 10 ms with 1,000 skills and 40 ms with 7,500 skills on 2 vCPUs.
-`bun scripts/bench-skill-resolver.ts` measures it in three rounds of 300 turns
-and judges the median round's p95, so one burst of host stalls on a shared
+`bun scripts/bench-skill-resolver.ts` runs one discarded warm-up round, then
+nine rounds of 100 turns, and judges the median round's p95, so one burst of host stalls on a shared
 runner does not decide it; the `Skill resolver bench` workflow enforces it on
 pull requests that touch the resolver.
 
@@ -282,6 +337,36 @@ it sends a field an older gbrain would refuse.
 On an event loop that must not block, commit with async I/O instead:
 `if (r.pending) await commitSessionAsync(home, r.pending.key, r.pending.delta)`
 (same file, lease and rules as `commit()`).
+
+A host that stays up across turns (`open_catalog` in `RESOLVER_FEATURES`)
+opens a warm handle once instead of reopening the index every turn:
+
+```ts
+const h = openCatalog(['codex-user'], { failOpen: true });
+const r = await h.resolve({ message, session_id, harness: 'codex' });
+inject(r.output.block);
+await r.commit();
+h.close(); // on shutdown
+```
+
+The handle keeps each catalog's receipt, term dictionary and settings in
+memory and checks once per turn (a stat of `receipt.json`, `index.bin` and
+`config.json`) whether a rebuild or a config edit replaced them, reloading
+only that catalog. Its results are the same as `resolveSkills` for the same
+input, apart from `meta.timing_ms`; a removed catalog refuses the same way.
+`h.resolve(input, { explainTarget, now, ... })` takes per-turn options.
+At 1,000 skills it took a turn's p50 from 0.39 ms to 0.14 ms when the
+freshness sweep had nothing to do.
+
+`await buildSkillIndexOffThread(input, { home })` (`build_off_thread`) runs
+`buildSkillIndex` on a worker thread so a build of 100 ms or more doesn't
+block the host's event loop. It returns the same receipt and rethrows a
+`ResolverError` with its code and fix. It works from Bun and from the Node
+bundle, whose own file is the worker's entry, so nothing else ships.
+
+Commits already collect idle session files every 10 minutes; a host that
+wants its own schedule calls `await gcSkillSessions({ home })` (`gc_sessions`),
+one bounded pass that returns how many files it deleted.
 
 ## Error codes
 
