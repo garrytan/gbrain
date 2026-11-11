@@ -150,14 +150,21 @@ function pendingLimit(scope: 'actor' | 'credential', pending: number, cap: numbe
 
 const expiryReason = (limits: ProposalLimits) => `No owner decision within ${limits.ttlHours} hours.`;
 
+type CloseFields = { reason: string | null; code?: string | null; decidedBy: string };
+
 /** Closes an awaiting_owner proposal; returns the row as it is afterwards (unchanged when another decision got there first). */
-async function closeProposal(engine: SqlEngine, row: MemoryProposal, state: Exclude<ProposalState, 'awaiting_owner' | 'approved'>,
-  fields: { reason: string | null; code?: string | null; decidedBy: string }): Promise<MemoryProposal> {
+async function closeProposal(engine: SqlEngine, row: MemoryProposal, state: Exclude<ProposalState, 'awaiting_owner' | 'approved'>, fields: CloseFields): Promise<MemoryProposal> {
+  return (await decideClose(engine, row, state, fields)).row;
+}
+
+/** closeProposal, also saying whether this call's own conditional UPDATE made the change (decided) or another decision got there first. */
+async function decideClose(engine: SqlEngine, row: MemoryProposal, state: Exclude<ProposalState, 'awaiting_owner' | 'approved'>,
+  fields: CloseFields): Promise<{ row: MemoryProposal; decided: boolean }> {
   const [updated] = await engine.executeRaw<Record<string, unknown>>(`UPDATE memory_proposals SET state=$4, reason=$5, error_code=$6, decided_by=$7,
       decided_at=now(), updated_at=now() WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid AND state='awaiting_owner' RETURNING *`,
     [row.principal_kind, row.principal_id, row.request_id, state, fields.reason, fields.code ?? null, fields.decidedBy]);
-  if (updated) return normalize(updated);
-  return (await getProposal(engine, { kind: row.principal_kind, id: row.principal_id } as Principal, row.request_id)) ?? row;
+  if (updated) return { row: normalize(updated), decided: true };
+  return { row: (await getProposal(engine, { kind: row.principal_kind, id: row.principal_id } as Principal, row.request_id)) ?? row, decided: false };
 }
 
 async function overdue(engine: SqlEngine, row: MemoryProposal): Promise<boolean> {
@@ -284,7 +291,8 @@ function publicJournal(row: WriteRequest): Record<string, unknown> {
  * The owner's yes: re-runs the approval checks, then in one transaction locks the proposal, admits the write into the
  * journal under the same request id and marks the proposal approved, so neither commits without the other; then waits
  * for publication like any write. A refused check closes the proposal failed or conflict with that code. A second
- * approve after a lost reply returns the same journal receipt.
+ * approve after a lost reply returns the same journal receipt. `decided` is true only when this call's own conditional
+ * update made the decision; once the approval commits nothing throws, so a failed wait returns the admitted receipt.
  */
 export async function approveMemoryProposal(ctx: OperationContext, requestId: string, opts: { decidedBy: string; waitMs?: number }): Promise<Record<string, unknown>> {
   const engine = ctx.engine;
@@ -293,7 +301,7 @@ export async function approveMemoryProposal(ctx: OperationContext, requestId: st
   const { getWriteRequest } = await import('./journal.ts');
   if (row.state === 'approved') {
     const written = await getWriteRequest(engine, principal, row.request_id);
-    return { status: 'approved', request_id: row.request_id, decided_at: row.decided_at, ...(written ? { write_request: publicJournal(written) } : {}) };
+    return { status: 'approved', decided: false, request_id: row.request_id, decided_at: row.decided_at, ...(written ? { write_request: publicJournal(written) } : {}) };
   }
   if (row.state !== 'awaiting_owner') throw proposalClosedError(row);
   if (await overdue(engine, row)) {
@@ -303,8 +311,9 @@ export async function approveMemoryProposal(ctx: OperationContext, requestId: st
   const prepared = await prepareApproval(ctx, row);
   if ('state' in prepared) {
     if (ctx.dryRun) return { dry_run: true, action: 'approve', request_id: row.request_id, would: prepared.state, error_code: prepared.code, reason: prepared.reason };
-    const closed = await closeProposal(engine, row, prepared.state, { reason: prepared.reason, code: prepared.code, decidedBy: opts.decidedBy });
-    return { status: closed.state, request_id: row.request_id, error_code: closed.error_code, reason: closed.reason };
+    const closed = await decideClose(engine, row, prepared.state, { reason: prepared.reason, code: prepared.code, decidedBy: opts.decidedBy });
+    if (!closed.decided) throw proposalClosedError(closed.row);
+    return { status: closed.row.state, decided: true, request_id: row.request_id, error_code: closed.row.error_code, reason: closed.row.reason };
   }
   if (ctx.dryRun) return { dry_run: true, action: 'approve', request_id: row.request_id, would: 'approved' };
   const { admitWriteInTransaction } = await import('./journal.ts');
@@ -326,9 +335,13 @@ export async function approveMemoryProposal(ctx: OperationContext, requestId: st
     await closeProposal(engine, row, 'expired', { reason: expiryReason(await readProposalLimits(engine)), decidedBy: 'gbrain:expiry' });
     throw proposalExpiredError(row);
   }
-  const { waitForWrite } = await import('./service.ts');
-  const settled = await waitForWrite(engine, outcome.written, ctx.config, opts.waitMs ?? 5000);
-  return { status: 'approved', request_id: row.request_id, write_request: publicJournal(settled) };
+  try {
+    const { waitForWrite } = await import('./service.ts');
+    const settled = await waitForWrite(engine, outcome.written, ctx.config, opts.waitMs ?? 5000);
+    return { status: 'approved', decided: true, request_id: row.request_id, write_request: publicJournal(settled) };
+  } catch {
+    return { status: 'approved', decided: true, request_id: row.request_id, write_request: publicJournal(outcome.written) };
+  }
 }
 
 /** The owner's no, with a reason (1 to proposals.max_reason_chars characters). */
@@ -345,17 +358,42 @@ export async function denyMemoryProposal(ctx: OperationContext, requestId: strin
     throw proposalExpiredError(row);
   }
   if (ctx.dryRun) return { dry_run: true, action: 'deny', request_id: row.request_id, would: 'denied' };
-  const after = await closeProposal(ctx.engine, row, 'denied', { reason, decidedBy: opts.decidedBy });
-  if (after.state !== 'denied') throw proposalClosedError(after);
-  return { status: 'denied', request_id: row.request_id, reason, decided_at: after.decided_at };
+  const after = await decideClose(ctx.engine, row, 'denied', { reason, decidedBy: opts.decidedBy });
+  if (after.row.state !== 'denied') throw proposalClosedError(after.row);
+  return { status: 'denied', decided: after.decided, request_id: row.request_id, reason: after.row.reason, decided_at: after.row.decided_at };
 }
 
-/** The owner's list: oldest first, 50 a page, after the upkeep pass. */
-export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?: string; all?: boolean; limit?: number } = {}): Promise<MemoryProposal[]> {
+/** An approve that did not publish: the checks closed the proposal, or the approved write ended without committing. */
+export function approveFailed(result: Record<string, unknown>): boolean {
+  if (result.dry_run) return false;
+  if (result.status !== 'approved') return true;
+  const state = (result.write_request as { state?: string } | undefined)?.state;
+  return state === 'conflict' || state === 'failed' || state === 'cancelled';
+}
+
+/** The opaque page cursor after a listed proposal: its creation time (to the millisecond the list orders by) and request id. */
+export function proposalCursor(row: Pick<MemoryProposal, 'created_at' | 'request_id'>): string {
+  return Buffer.from(JSON.stringify([row.created_at, row.request_id])).toString('base64url');
+}
+
+function parseProposalCursor(cursor: string): [string, string] {
+  let at: unknown, id: unknown;
+  try { [at, id] = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8')); } catch { /* refused below */ }
+  if (typeof at !== 'string' || !Number.isFinite(Date.parse(at)) || typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+    throw opError('invalid_params', 'The cursor is not one this list returned.', 'Pass next_cursor from the previous page, or omit it for the first page.');
+  }
+  return [at, id];
+}
+
+/** The owner's list: oldest first, 50 a page, after the upkeep pass; `after` is the previous page's proposalCursor. */
+export async function listMemoryProposals(engine: BrainEngine, opts: { sourceId?: string; all?: boolean; limit?: number; after?: string } = {}): Promise<MemoryProposal[]> {
+  const [afterAt, afterId] = opts.after === undefined ? [null, null] : parseProposalCursor(opts.after);
   await runMemoryProposalUpkeep(engine);
   const rows = await engine.executeRaw<Record<string, unknown>>(`SELECT * FROM memory_proposals WHERE ($1::text IS NULL OR source_id=$1)
-    AND ($2::boolean OR state='awaiting_owner') ORDER BY created_at, request_id LIMIT $3`,
-    [opts.sourceId ?? null, opts.all === true, Math.max(1, Math.min(500, opts.limit ?? 50))]);
+    AND ($2::boolean OR state='awaiting_owner')
+    AND ($4::timestamptz IS NULL OR (date_trunc('milliseconds', created_at), request_id) > ($4::timestamptz, $5::uuid))
+    ORDER BY date_trunc('milliseconds', created_at), request_id LIMIT $3`,
+    [opts.sourceId ?? null, opts.all === true, Math.max(1, Math.min(500, opts.limit ?? 50)), afterAt, afterId]);
   return rows.map(normalize);
 }
 

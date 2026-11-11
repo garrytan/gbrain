@@ -58,7 +58,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const ACME = 'companies/acme-example';
 const CANARY = { alice: 'canaryfactalice', bob: 'canaryfactbob' } as const;
-const ATTEST_OPS = ['add_tag', 'cancel_write_request', 'context_pack', 'delete_page', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'recall', 'remember', 'search', 'whoami'];
+const ATTEST_OPS = ['cancel_write_request', 'context_pack', 'delta', 'get_page', 'get_write_request', 'list_write_requests', 'recall', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('member facts and member-scoped reads (' + kind + ', repo-less)', () => {
@@ -325,19 +325,16 @@ for (const kind of testBackends()) {
       const replay = await remember(who.bob(), 'Alice signs the harbor charter ' + CANARY.alice + 'r', { request_id: requestId });
       expect(replay.isError).toBe(true);
       expect(replay.all).not.toContain('"id":"' + factId + '"');
-      // A write on a page both can read: the receipt still belongs to the person it was written for.
+      // GST-2249 W1: a write on a page both can read is no longer made for a person at all, so it leaves no receipt.
       const shared = 'c2-shared-' + randomUUID().slice(0, 6);
       await importFromContent(engine, 'notes/' + shared, '---\ntype: note\ntitle: Shared harbor plan\n---\n# Shared harbor plan\n\nShared plan ' + shared + '.', { sourceId: SRC });
-      expect((await call(who.alice(), 'add_tag', { slug: 'notes/' + shared, tag: 'harbor', request_id: shared })).isError).toBe(false);
-      expect((await call(who.alice(), 'get_write_request', { request_id: shared })).isError).toBe(false);
-      for (const as of [who.bob(), who.bare()]) {
+      const tag = await call(who.alice(), 'add_tag', { slug: 'notes/' + shared, tag: 'harbor', request_id: shared });
+      expect({ isError: tag.isError, code: tag.json.code ?? tag.json.error }).toEqual({ isError: true, code: 'actor_not_attested' });
+      for (const as of [who.alice(), who.bob(), who.bare()]) {
         const got = await call(as, 'get_write_request', { request_id: shared });
         expect({ isError: got.isError, code: got.json.code ?? got.json.error }).toEqual({ isError: true, code: 'not_found' });
-        expect((await call(as, 'list_write_requests', {})).all).not.toContain(shared);
       }
-      const bobReplay = await call(who.bob(), 'add_tag', { slug: 'notes/' + shared, tag: 'harbor', request_id: shared });
-      expect(bobReplay.isError).toBe(true);
-      expect(bobReplay.json.code ?? bobReplay.json.error).toBe('idempotency_conflict');
+      expect(await engine.executeRaw('SELECT 1 FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.source_id = $1 AND p.slug = $2', [SRC, 'notes/' + shared])).toHaveLength(0);
     }, 60_000);
 
     test('agent jobs: Alice\'s job is hers alone, and two people\'s identical submissions never share a job', async () => {
@@ -398,14 +395,14 @@ for (const kind of testBackends()) {
       const dave = { token: 'qm', actor: DAVE_ID };
       const squat = '---\ntype: note\ntitle: Memory of carol-example\nreadable_by:\n  - member:bob-example\n  - member:carol-example\n---\n# Memory of carol-example\n';
       for (const as of [who.bob(), who.bobToken(), who.bare()]) {
-        // GST-1158 F9: an attested caller may not put or edit pages at all, so its refusal comes first.
+        // GST-1158 F9 and GST-2249 W1: an attested caller may not put, edit or delete pages at all, so its refusal comes first.
         const pageWriteRefusal = as.actor ? 'actor_not_attested' : 'permission_denied';
         const put = await call(as, 'put_page', { slug: 'memory/members/carol-example', content: '---\ntype: note\ntitle: Squat\n---\n# Squat\n' });
         expect({ isError: put.isError, code: put.json.code ?? put.json.error }).toEqual({ isError: true, code: pageWriteRefusal });
         const edit = await call(as, 'edit_page', { slug: 'memory/members/alice-example', expected_revision: '00000000-0000-0000-0000-000000000000', edits: [{ old_text: 'Memory', new_text: 'Mine' }] });
         expect({ isError: edit.isError, code: edit.json.code ?? edit.json.error }).toEqual({ isError: true, code: pageWriteRefusal });
         const del = await call(as, 'delete_page', { slug: 'memory/members/alice-example' });
-        expect({ isError: del.isError, code: del.json.code ?? del.json.error }).toEqual({ isError: true, code: 'permission_denied' });
+        expect({ isError: del.isError, code: del.json.code ?? del.json.error }).toEqual({ isError: true, code: pageWriteRefusal });
       }
       const [alicePage] = await engine.executeRaw<{ deleted_at: unknown; page_readers: string[] }>('SELECT deleted_at, page_readers FROM pages WHERE source_id = $1 AND slug = $2', [SRC, 'memory/members/alice-example']);
       expect(alicePage).toMatchObject({ deleted_at: null, page_readers: ['member:alice-example'] });
