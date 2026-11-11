@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Tool calls through native OpenAI models no longer fill every optional argument with a placeholder.** gbrain's tool loop (subagent jobs and SkillOpt rollouts) sends OpenAI models through the Responses API, and that API treats a tool definition with no `strict` field as strict: it marks every property required, so the model has to invent a value for each optional argument. A `get_page` call came back with a zero-line window and an empty byte range, which gbrain's own argument checks then refused. Native OpenAI tool definitions now say `strict: false`, so the schema's own `required` list holds and the model sends only the arguments it means. Anthropic, Google and the OpenAI-compatible providers (chat completions) send the same request as before. Reported and first fixed by @akinduroifedayo.
+
+### Itemized changes
+
+- `src/core/ai/gateway.ts`: `toAISDKTools` takes an optional `strict` value, and `chat()` passes `false` on the `native-openai` route only; every other route leaves the field out.
+- Tests: `test/ai/native-openai-tool-strict-wire.test.ts` drives `chat()` and `toolLoop()` against a local stub and checks the request body per route: native OpenAI carries `strict: false` on every tool and every turn with the schema's `required` list unchanged; native Anthropic, native Google and an OpenAI-compatible recipe send no `strict` field.
+
 ## [0.60.671.0] - 2026-11-11
 
 **A team member's `forget` now says who can withdraw a fact, instead of answering that the fact does not exist.** A remote credential bound to a member, the brain owner's included, withdraws only the facts on its own member page. When it tried to forget a fact it can read but that lives elsewhere (one it saved with `share: true`, or a teammate's shared fact), it got `not_found`, so its agent believed the fact was gone while every reader still recalled it. It is now refused with a reply saying the brain host withdraws it with `gbrain forget <id>`, and the fact stays. A fact the caller cannot read still answers `not_found`, so the reply never confirms a hidden fact exists. An attested QM call (`x-qm-actor`) is unchanged and still answers `not_found` for any fact off the person's page, as QM's published contract says. The docs that said `remember` defaults to `world` now say that a member-bound credential saves privately on its member page unless it passes `share: true`. Reported by @andreineacsu (#9101).

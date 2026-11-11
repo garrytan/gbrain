@@ -2470,7 +2470,7 @@
         "kind": "function",
         "name": "toAISDKTools",
         "signature": [
-          "(tools: ChatToolDef[] | undefined) => Record<string, any> | undefined"
+          "(tools: ChatToolDef[] | undefined, strict?: boolean) => Record<string, any> | undefined"
         ]
       },
       {
