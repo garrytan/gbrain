@@ -620,6 +620,7 @@ test/sync-waiver-run-imports.test.ts
 test/take-resolution-survives-publish.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
+test/think-remote-model.test.ts
 test/timeline-chunk-reuse.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
