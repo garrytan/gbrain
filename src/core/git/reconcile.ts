@@ -37,9 +37,10 @@ export function gitReader(root: string, timeoutMs = 120_000): GitRead {
 }
 
 /** The upstream fetch: the checkout's own remote, with transport hardening (no redirects, no external helpers, no submodules) and credentials allowed but never a prompt. */
-export function upstreamFetch(root: string, remote: string, ref: string): { argv: string[]; env: NodeJS.ProcessEnv } {
+export function upstreamFetch(root: string, remote: string, ref: string, timeout = 120_000): { argv: string[]; env: NodeJS.ProcessEnv; options: { timeout: number; env: NodeJS.ProcessEnv } } {
+  const options = { timeout, env: gitChildEnv({ ...GIT_ENV_AUTH }) };
   return { argv: ['-C', root, ...ownRemoteTransportFlags(), '-c', 'core.logAllRefUpdates=true', 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--no-tags', '--quiet', remote, ref],
-    env: gitChildEnv({ ...GIT_ENV_AUTH }) };
+    env: options.env, options };
 }
 
 /** Fetch the branch's upstream (logging the tracking ref's move, so a later rewrite check has a record) and count both sides; null without an upstream. */
@@ -51,11 +52,11 @@ export async function fetchLevel(root: string, read: GitRead, fetchTimeoutMs = 1
   const remote = (await read(['config', '--get', `branch.${branch}.remote`], 1)).stdout.trim();
   const merge = (await read(['config', '--get', `branch.${branch}.merge`], 1)).stdout.trim();
   if (remote && remote !== '.') {
-    const fetch = upstreamFetch(root, remote, merge || branch);
-    let fetched = await execFileBounded('git', fetch.argv, { timeout: fetchTimeoutMs, env: fetch.env });
+    const { argv, options } = upstreamFetch(root, remote, merge || branch, fetchTimeoutMs);
+    let fetched = await execFileBounded('git', argv, options);
     for (let attempt = 1; fetched.error && attempt < 4 && /cannot lock ref|unable to update local ref/.test(String(fetched.stderr)); attempt++) {
       await new Promise(resolve => setTimeout(resolve, 250 * attempt));
-      fetched = await execFileBounded('git', fetch.argv, { timeout: fetchTimeoutMs, env: fetch.env });
+      fetched = await execFileBounded('git', argv, options);
     }
     if (fetched.error) throw opError('fetch_failed', `git fetch ${remote} failed in ${root} (${String(fetched.stderr).trim().split('\n')[0] || fetched.error.message}); nothing changed.`,
       'Check the remote and its credentials, then retry.', { retryable: true });
