@@ -164,6 +164,7 @@ function loopRecoveryState(state: GoogleSourceState): Record<string, unknown> {
 // ── Gmail sweep ──────────────────────────────────────────────────────────────
 
 const BACKFILL_BATCH_THREADS = 25;
+const GMAIL_WALK_MAX_PAGES = 20;
 
 async function processThread(
   deps: GoogleSyncDeps,
@@ -319,7 +320,7 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     // than the client's 500-page safety cap; the floor cursor makes partial
     // listings safe — each iteration takes the newest ~2,000 messages in the
     // window, processes them, drops the floor, and re-queries.
-    const ids = await gmail.listMessageIds(q, { maxPages: 20, partialOk: true, ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
+    const ids = await gmail.listMessageIds(q, { maxPages: GMAIL_WALK_MAX_PAGES, partialOk: true, ...(deps.opts.signal ? { signal: deps.opts.signal } : {}) });
     if (ids.length === 0) break;
     // Newest-first listing → unique threads in newest-first order; a thread's
     // newest listed message id is its upstream version for the holds.
@@ -329,6 +330,10 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     let processedAny = false;
     let batchFailed = false;
     let batchOldest = floorMs;
+    // A page-capped listing is not guaranteed to be in internalDate order
+    // (migrated threads keep old dates but list with new ids), so the oldest
+    // date seen is not a safe floor: follow the listing's own tail instead.
+    const truncated = ids.length >= GMAIL_WALK_MAX_PAGES * 100;
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (deps.opts.signal?.aborted) break;
       for (const tid of threadIds.slice(i, i + BACKFILL_BATCH_THREADS)) {
@@ -336,7 +341,9 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
         const outcome = await attemptThread(g, tid, versions.get(tid) ?? null);
         if (outcome.kind === 'landed') {
           processedAny = true;
-          if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
+          if (truncated) {
+            if (outcome.newestMs > 0 && outcome.newestMs < floorMs) batchOldest = outcome.newestMs;
+          } else if (outcome.newestMs > 0 && outcome.newestMs < batchOldest) batchOldest = outcome.newestMs;
         } else if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
           // A failed thread NEWER than a committed floor would fall outside
           // the resume window (`before:floor`) forever, so the batch holds the
