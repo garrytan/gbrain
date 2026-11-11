@@ -110,6 +110,17 @@ describe('gbrain git commit-push', () => {
     expect(git(root, 'show', 'HEAD:pending.md')).toBe('written through');
   }, T);
 
+  test('--push-only, the unattended cron form with --keep-checkout included, scans without --scan-secrets', () => {
+    removedSecret();
+    for (const args of [['--push-only'], ['--push-only', '--keep-checkout']]) {
+      const r = cli(['git', 'commit-push', ...args, '--json']);
+      expect(r.status).not.toBe(0);
+      expect(envelope(r.stdout).code ?? envelope(r.stdout).error).toBe('publish_secret_found');
+      expect(r.stdout + r.stderr).not.toContain(TOKEN);
+    }
+    expect(remoteTip()).toBe(base);
+  }, T);
+
   test('push.followTags never publishes an annotated tag, whose message nothing scans', () => {
     git(root, 'config', 'push.followTags', 'true');
     plainCommit('notes.md', 'clean\n');

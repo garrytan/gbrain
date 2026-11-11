@@ -215,7 +215,7 @@ if [ ! -x "$_cli" ]; then
   exit 0
 fi
 # Detach so the commit returns instantly; the CLI logs its own outcome.
-( "$_cli" git commit-push --push-only --require-clean ) </dev/null >/dev/null 2>&1 &
+( "$_cli" git commit-push --push-only --require-clean --scan-secrets ) </dev/null >/dev/null 2>&1 &
 disown 2>/dev/null || true
 exit 0
 `;
@@ -230,7 +230,7 @@ ${PROTOCOL_LINE}
 #   scripts/brain-commit-push.sh "message" <path> [path ...]
 #   scripts/brain-commit-push.sh --push-only
 #   scripts/brain-commit-push.sh --pull
-# Delegates to \`gbrain git commit-push\` (lock, path-scoped commit, in-memory
+# Delegates to a gbrain whose \`git commit-push\` scans every push (lock, path-scoped commit, in-memory
 # merge, fast-forward-only checkout). Without a capable gbrain it only commits
 # the paths under the lock and pushes nothing (only gbrain scans the unpublished
 # commits for secrets first), exiting 4. It never runs pull --rebase, stash or reset. Guide: docs/guides/shared-checkout-git.md
@@ -252,7 +252,7 @@ fi
 _gbrain_cli() {
   local c
   for c in "$(command -v gbrain 2>/dev/null || true)" "$(git config --local --get gbrain.cliPath 2>/dev/null || true)"; do
-    [ -n "$c" ] && [ -x "$c" ] && "$c" git commit-push --help >/dev/null 2>&1 && { printf '%s' "$c"; return 0; }
+    [ -n "$c" ] && [ -x "$c" ] && "$c" git commit-push --help 2>&1 | grep -q -e '--scan-timeout' && { printf '%s' "$c"; return 0; }
   done
   return 1
 }
@@ -268,7 +268,7 @@ _run() {
 }
 if _cli="$(_gbrain_cli)"; then
   case "\${1:-}" in
-    --push-only) if [ -n "\${2:-}" ]; then _run --push-only --branch "$2"; else _run --push-only; fi ;;
+    --push-only) if [ -n "\${2:-}" ]; then _run --push-only --scan-secrets --branch "$2"; else _run --push-only --scan-secrets; fi ;;
     --pull) _run --pull ;;
   esac
   _msg="\${1:?usage: brain-commit-push.sh <message> <path> [paths...]}"; shift

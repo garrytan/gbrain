@@ -620,7 +620,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--path') { path = args[++i]; continue; }
-    if (a === '--scan-timeout') { scanTimeout = args[++i]; continue; }
+    if (a === '--scan-timeout') { scanTimeout = args[++i] ?? ''; continue; }
     if (a === '--branch') { branch = args[++i]; continue; }
     if (a === '--message') { message = args[++i]; continue; }
     if (a === '--allow-unverified-remote') { allowUnverified = true; continue; }

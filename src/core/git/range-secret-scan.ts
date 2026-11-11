@@ -196,7 +196,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
           const header = peek.subarray(0, readSync(fd, peek, 0, peek.length, position));
           const nl = header.indexOf(10);
           const m = nl < 0 ? null : /^([0-9a-f]+) commit (\d+)$/.exec(header.subarray(0, nl).toString('latin1'));
-          if (!m || m[1] !== commit) throw new Unreadable(`git cat-file --batch could not read commit ${commit.slice(0, 12)}: ${JSON.stringify(header.subarray(0, nl < 0 ? 80 : nl).toString('latin1'))}`);
+          if (!m || m[1] !== commit) throw new Unreadable(`git cat-file --batch could not read commit ${commit.slice(0, 12)} (it printed no header for it)`);
           const size = Number(m[2]);
           position += nl + 1;
           if (size > SCAN_MAX_FILE_BYTES + 1024 * 1024) { scan.unscanned.push({ path: MESSAGE_PATH, commit }); position += size + 1; continue; }
@@ -229,7 +229,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
           }
           added = []; at = []; bytes = 0; oversized = false;
         };
-        const unexpected = (line: string) => new Unreadable(`git diff-tree printed a line the scan does not recognise in ${commit.slice(0, 12) || 'the range'}: ${JSON.stringify(line.slice(0, 80))}`);
+        const unexpected = (line: string) => new Unreadable(`git diff-tree printed a line the scan does not recognise in ${commit.slice(0, 12) || 'the range'}, starting ${JSON.stringify(line.split(' ')[0]!.slice(0, 16))}`);
         let read = 0;
         for (const { text: line, long } of fileLines(fd, SCAN_MAX_FILE_BYTES + 1)) {
           if (++read % 4096 === 0) {

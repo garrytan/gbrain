@@ -144,7 +144,7 @@ describe('createPrivateRepo', () => {
     expect(calls).toContainEqual(['gh', 'api', 'repos/alice/test-agent-workspace-2', '--jq', '.private']);
     // …and the first push ran only AFTER the verify passed (create → verify → push).
     const verifyIdx = calls.findIndex((c) => c.join(' ') === `gh api repos/alice/test-agent-workspace-2 --jq .private`);
-    const pushIdx = calls.findIndex((c) => c.join(' ') === `git -C ${ws} push -u origin main --no-follow-tags`);
+    const pushIdx = calls.findIndex((c) => c.join(' ') === `git -C ${ws} push -u origin main --no-follow-tags --recurse-submodules=no`);
     expect(pushIdx).toBeGreaterThan(verifyIdx);
 
     // GITHUB.md placeholder replaced with the real URL.
@@ -174,12 +174,12 @@ describe('createPrivateRepo', () => {
     // The commit was created before the push (no empty-remote push).
     expect(calls).toContainEqual(['git', '-C', ws, 'add', '-A']);
     expect(calls).toContainEqual(['git', '-C', ws, 'commit', '-m', 'gbrain: bootstrap workspace']);
-    expect(calls).toContainEqual(['git', '-C', ws, 'push', '-u', 'origin', 'main', '--no-follow-tags']);
+    expect(calls).toContainEqual(['git', '-C', ws, 'push', '-u', 'origin', 'main', '--no-follow-tags', '--recurse-submodules=no']);
 
     const joined = calls.map((c) => c.join(' '));
     const verifyIdx = joined.indexOf('gh api repos/alice/test-agent-workspace-2 --jq .private');
     const commitIdx = joined.indexOf(`git -C ${ws} commit -m gbrain: bootstrap workspace`);
-    const pushIdx = joined.indexOf(`git -C ${ws} push -u origin main --no-follow-tags`);
+    const pushIdx = joined.indexOf(`git -C ${ws} push -u origin main --no-follow-tags --recurse-submodules=no`);
     expect(commitIdx).toBeGreaterThan(verifyIdx); // create → verify → commit → push
     expect(pushIdx).toBeGreaterThan(commitIdx);
   });
@@ -339,7 +339,7 @@ describe('createPrivateRepo', () => {
     expect(result.reused).toBe(true);
     expect(calls.some((c) => c.join(' ').includes('repo create'))).toBe(false);
     // The deferred push was completed rather than false-succeeding on empty.
-    expect(calls).toContainEqual(['git', '-C', ws, 'push', '-u', 'origin', 'main', '--no-follow-tags']);
+    expect(calls).toContainEqual(['git', '-C', ws, 'push', '-u', 'origin', 'main', '--no-follow-tags', '--recurse-submodules=no']);
   });
 
   test('crash recovery: receipt for this workspace without repo_url adopts the origin and records it', async () => {
@@ -503,7 +503,7 @@ describe('createPrivateRepo', () => {
     expect(calls).toContainEqual(['git', '-C', ws, 'config', 'user.name', 'alice']);
     expect(calls).toContainEqual(['git', '-C', ws, 'config', 'user.email', '123+alice@users.noreply.github.com']);
     // Workspace pushed, and repo_url recorded AFTER the push.
-    expect(calls).toContainEqual(['git', '-C', ws, 'push', '-u', 'origin', 'main', '--no-follow-tags']);
+    expect(calls).toContainEqual(['git', '-C', ws, 'push', '-u', 'origin', 'main', '--no-follow-tags', '--recurse-submodules=no']);
     expect((readReceipt(home) as RepoReceipt).repo_url).toBe(url);
   });
 

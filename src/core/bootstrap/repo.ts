@@ -574,7 +574,7 @@ async function ensureRemoteHasWorkspace(
   const pushBranch = await currentBranch(runner, workspaceDir);
   await assertOriginMatches(runner, workspaceDir, owner, name);
   await assertHistoryPublishable(runner, workspaceDir, pushBranch, scan);
-  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', pushBranch, '--no-follow-tags']);
+  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', pushBranch, '--no-follow-tags', '--recurse-submodules=no']);
   if (push.code !== 0) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
@@ -851,7 +851,7 @@ export async function createPrivateRepo(
   // [FIX4] Bind the verified privacy result to the actual push target.
   await assertOriginMatches(runner, workspaceDir, login, name);
   await assertHistoryPublishable(runner, workspaceDir, branch, scan);
-  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', branch, '--no-follow-tags']);
+  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', branch, '--no-follow-tags', '--recurse-submodules=no']);
   if (push.code !== 0) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',

@@ -1049,11 +1049,7 @@ function remoteContains(ctx: Ctx, sha: string): boolean {
   return true;
 }
 
-/**
- * GST-2456: the commit a scanned push is scanned from and leased on. Normally the remote's tip as fetched (`fetched`); when
- * the remote pushes to URLs of its own (pushurl, #5138), what those URLs hold, read live, which must be one commit (or the
- * branch absent everywhere), since one push carries one lease. Anything else refuses push_unconfirmed, with nothing pushed.
- */
+/** GST-2456: the base a scanned push is scanned from and leased on: the fetched tip, or with pushurls (#5138) the one commit every push URL holds live (or none has the branch); else push_unconfirmed. */
 function pushBase(ctx: Ctx, fetched: string, candidate: string): string {
   const urls = git(ctx.root, ['remote', 'get-url', '--push', '--all', '--', ctx.remote]).stdout.split('\n').map(u => u.trim()).filter(Boolean);
   if (urls.length === 1 && urls[0] === git(ctx.root, ['remote', 'get-url', '--', ctx.remote]).stdout.trim()) return fetched;
@@ -1141,7 +1137,7 @@ function publish(ctx: Ctx, start: string, resolutions: Map<string, Resolution> |
       const lease = bound ?? (scanSecrets ? scannedBase : undefined);
       if (scanSecrets) assertNoSecretsInRange({ ...ctx, trackingRef: lease! }, candidate);
       const push = lease && !isAncestor(ctx.root, lease, candidate) ? null
-        : remoteGit(ctx.root, 'push', ['--no-follow-tags', ...(ctx.keepCheckout ? ['--no-verify'] : []), ...(lease !== undefined ? [`--force-with-lease=${ctx.mergeRef}:${lease}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
+        : remoteGit(ctx.root, 'push', ['--no-follow-tags', '--recurse-submodules=no', ...(ctx.keepCheckout ? ['--no-verify'] : []), ...(lease !== undefined ? [`--force-with-lease=${ctx.mergeRef}:${lease}`] : []), '--', ctx.remote, `${candidate}:${ctx.mergeRef}`]);
       if (push?.code === 0) return { sha: candidate, integrated, confirmed: 'push', ...notes() };
       if (push) lastError = push.stderr.trim();
       if (remoteContains(ctx, candidate)) return onRemote();
@@ -1227,7 +1223,7 @@ function assertLocalCommitsInsideRoots(ctx: Ctx, target: string, roots: string[]
 /** The automatic-publish secret gate: scan what the commits in trackingRef..target add (publish passes the base it leases its push on, under its lock). */
 function assertNoSecretsInRange(ctx: Ctx, target: string): void {
   const refusal = rangeSecretRefusal(ctx.root, ctx.trackingRef, target, scanRange(ctx.root, ctx.trackingRef, target, ctx.scanTimeoutMs, ctx.scanProgress), {
-    timeoutMs: ctx.scanTimeoutMs, retryArgv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--path', ctx.root] });
+    timeoutMs: ctx.scanTimeoutMs, retryArgv: ['gbrain', 'git', 'commit-push', '--push-only', ...(ctx.keepCheckout ? ['--keep-checkout'] : []), '--branch', ctx.mergeRef.replace(/^refs\/heads\//, ''), '--path', ctx.root] });
   if (refusal) throw refusal;
 }
 

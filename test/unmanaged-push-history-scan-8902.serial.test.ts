@@ -256,7 +256,7 @@ describe('gbrain bootstrap repo, first push after the remote branch is gone', ()
   test('a clean history still completes the first push', async () => {
     plainCommit('notes.md', 'clean earlier work\n');
     expect((await bootstrap()).reused).toBe(true);
-    expect(pushes).toEqual([['git', '-C', root, 'push', '-u', 'origin', 'main', '--no-follow-tags']]);
+    expect(pushes).toEqual([['git', '-C', root, 'push', '-u', 'origin', 'main', '--no-follow-tags', '--recurse-submodules=no']]);
     expect(readFileSync(join(root, 'GITHUB.md'), 'utf8')).toContain(url);
   }, T);
 });

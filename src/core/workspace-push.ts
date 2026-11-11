@@ -918,7 +918,7 @@ function pushScannedHead(root: string, branch: string, log: (line: string) => vo
       ...(refusal.detail !== undefined ? { detail: String(refusal.detail) } : {}) };
   }
   try {
-    git(root, [...pushSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--no-follow-tags', `--force-with-lease=refs/heads/${branch}:${base}`, 'origin', `${target}:refs/heads/${branch}`], {
+    git(root, [...pushSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--no-follow-tags', '--recurse-submodules=no', `--force-with-lease=refs/heads/${branch}:${base}`, 'origin', `${target}:refs/heads/${branch}`], {
       timeoutMs: 120_000, auth: true,
     });
     return null;
