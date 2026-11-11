@@ -312,6 +312,8 @@ export interface DispatchOpts {
   stdioSurface?: OperationContext['stdioSurface'];
   /** GST-363: OperationContext.stdioMember, from the stdio server's own argv (serve --stdio-member); no other transport sets it. */
   stdioMember?: string;
+  /** GST-2476 G2: an enforced member CLI read (cli/enforced-member.ts): privacy stays hidden whatever the hatches say, and no owner relaxation. */
+  enforcedMember?: true;
   /** Threaded into OperationContext.revealTools (stdio session tool reveal). */
   revealTools?: (names: string[]) => void;
   /**
@@ -1029,6 +1031,7 @@ export async function dispatchToolCall(
       access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined);
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
+      if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
       // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
