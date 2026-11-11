@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.670.0] - 2026-11-11
+
+### A nightly soak test for a busy personal agent, and a fixed convergence-nightly flake
+
+**The convergence nightly now also runs the managed-sync harness under a busy personal agent's workload, and its kill loop no longer fails by chance on the `sync:passed_over` round.** This change touches only tests, the nightly workflow and docs. Nothing in `src/` changed.
+
+- **Busy-agent soak cell.** `test/busy-agent-soak.serial.test.ts` runs six modes, (h) to (m), against a real Postgres behind transaction-mode PgBouncer: refresh ticks with writes inside the refresh barrier, doctor `foreign_writers` beside plain-git committers, `sources git-gap` on legacy rows, a strict conversion stalled between adopt groups, segmented staging that expires before publication, and the cron `commit-push --base` against MCP `edit_page` race. Every mode ends with the convergence oracle. The counts and cadences come from the committed generic profile `test/fixtures/busy-agent-profile.json`, which holds no content. Run it with `GBRAIN_TEST_BUSY_AGENT=1 bun run test:busy-agent`.
+- **Informational nightly job.** `busy-agent` in `.github/workflows/convergence-nightly.yml` runs the cell every night at 50 ms latency, with the run id as the seed. It is `continue-on-error`, so it never changes the convergence job's result. On failure it writes a summary that carries the seed, and it uploads the logs. A `.github/nightly-known-red.tsv` row parks its known red (#8975, tracked in TODOS.md), so a red in the convergence job itself still shows as unparked.
+- **Shared harness.** `test/helpers/convergence-brain.ts` now holds the real-process brain that both suites use. The convergence gate's oracle also counts `deferred` requests as open. When a recovery sync reports `synced` but HEAD has moved past the commit it synced, the harness runs its second allowed plain sync instead of stopping.
+- **Kill-loop flake (#8838).** The two kill-loop rounds whose fault point is `sync:passed_over` now sync with `--no-bulk`. Before, a bulk group could freeze the round's primed file and then drop it without admitting it. When sync froze the file again, it read the edited bytes and held it at once, so the pass-over never fired and the run failed "every planned fault fired". A forced probe (an edit at the freeze, then a kill at the next freeze) fails with bulk on and passes with `--no-bulk`.
+
 ## [0.60.669.0] - 2026-11-11
 
 ### Five flaky tests fixed at their cause

@@ -225,7 +225,7 @@ esac
     for (const path of ['src/core/persistence/sync-run.ts', 'src/core/persistence/fault-points.ts', 'src/commands/sync/run.ts', 'src/commands/sync.ts',
       'src/core/sync-holds.ts', 'src/core/page-state/projections.ts', 'src/core/engine-sql/links.ts', 'src/core/storage/local.ts', 'src/core/storage-config.ts',
       'src/core/import-file.ts', 'src/core/markdown.ts', 'src/core/write-through.ts', 'src/core/postgres-engine.ts',
-      'test/sync-convergence.serial.test.ts', 'test/fixtures/convergence-fault-kill.ts', 'scripts/ci-convergence-scope.sh', '.github/workflows/persistence-validation.yml',
+      'test/sync-convergence.serial.test.ts', 'test/fixtures/convergence-fault-kill.ts', 'test/helpers/convergence-brain.ts', 'scripts/ci-convergence-scope.sh', '.github/workflows/persistence-validation.yml',
       '.github/workflows/convergence-nightly.yml', 'bun.lock', 'vendor/postgres/src/connection.js']) {
       expect(convergenceScope(`README.md\n${path}\n`), path).toBe('run');
     }
