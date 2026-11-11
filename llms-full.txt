@@ -6906,7 +6906,12 @@ vars — incident-time escape hatches, not everyday knobs.
    the local commits merged with the upstream in memory, the same publish as
    `gbrain git commit-push --push-only --keep-checkout` run as a child process
    with `--scan-secrets` (it skips the checkout's pre-push hook), and fast-forwards
-   to the merge. It never moves the checkout to merge, a conflicting file refuses
+   to the merge. If another publisher holds the lock, only the child waits, up to
+   `--wait-drain` (the same flag/env/config precedence as the later drain, default
+   60 s); the owner event loop stays responsive. `--wait-drain 0` keeps an immediate
+   refusal. If that wait expires, `push_unconfirmed` stops the refresh before it
+   fences anything; the complete publish child still has its 10-minute bound.
+   It never moves the checkout to merge, a conflicting file refuses
    `integrate_conflict` naming it with nothing pushed (with `gbrain.quarantine`
    on, the remote's version is published, this machine's is kept under
    `refs/gbrain/quarantine/`, and the refresh says so), an uncommitted edit to a

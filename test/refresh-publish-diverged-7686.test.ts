@@ -24,7 +24,7 @@
  * a real bare remote, a pushing clone and the managed checkout.
  */
 import { afterAll, beforeAll, expect, test } from 'bun:test';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -33,6 +33,7 @@ import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { runSourcesRefresh } from '../src/commands/sources-refresh.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { REFRESH_PUBLISH_DIVERGED_KEY, refreshWorktree } from '../src/core/persistence/worktree-refresh.ts';
+import { acquireNativeLock } from '../src/core/persistence/native-lock.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -106,6 +107,64 @@ test('setting on: a diverged refresh publishes the local commits merged with the
   expect(await f.lastCommit(f.alpha)).toBe(done.published!.sha);
   expect(await f.lastCommit(f.beta)).toBe(done.published!.sha);
 }), 120_000);
+
+/** #8975: existing publish tests have no competing publisher. Real lock + child,
+ * no production seam: zero-wait children lose the tick; a bounded child must
+ * leave the owner event loop alive and finish both source checkpoints afterward. */
+test('busy publisher: refresh waits off the owner event loop, then publishes and syncs in the same tick', () => each(async f => {
+  const local = diverge(f);
+  await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+  await f.engine.setConfig('sources.refresh_drain_wait_ms', '5000');
+  const entered = join(f.dir, 'publish-entered');
+  const wrapper = join(f.dir, 'publish-child');
+  writeFileSync(wrapper, `#!/bin/sh\nprintf ready > '${entered}'\nexec '${childCli}' "$@"\n`, { mode: 0o755 });
+  const holder = await acquireNativeLock(join(f.root, '.git', 'brain-publish.lock'), { timeoutMs: 0 });
+  expect(holder).not.toBeNull();
+  try {
+    await withEnv({ GBRAIN_JOB_CHILD_CLI: wrapper }, async () => {
+      const run = refreshWorktree(f.engine, f.alpha);
+      const outcome = run.then(value => ({ value }), error => ({ error }));
+      try {
+        const deadline = Date.now() + 10_000;
+        while (!existsSync(entered) && Date.now() < deadline) await Bun.sleep(10);
+        expect(existsSync(entered)).toBe(true);
+        const beforeRelease = await Promise.race([outcome, Bun.sleep(2000).then(() => 'waiting')]);
+        await holder!.release();
+        expect(beforeRelease).toBe('waiting');
+        const done = await run;
+        expect(done).toMatchObject({ status: 'completed', old_head: local, published: { local_commits: 1, integrated: 1 } });
+        expect(f.head()).toBe(remoteHead(f));
+        git(f.root, 'merge-base', '--is-ancestor', local, 'HEAD');
+        expect(await f.lastCommit(f.alpha)).toBe(f.head());
+        expect(await f.lastCommit(f.beta)).toBe(f.head());
+        expect(readFileSync(join(f.root, 'beta/local.md'), 'utf8')).toContain('A local commit nobody pushed.');
+      } finally { await holder!.release(); await outcome; }
+    });
+  } finally {
+    await holder!.release();
+    await f.engine.unsetConfig('sources.refresh_drain_wait_ms');
+  }
+}), 120_000);
+
+for (const waitDrainMs of [0, 1000]) {
+  test(`busy publisher: explicit ${waitDrainMs}ms bound overrides config and refuses before fencing, then recovers`, () => each(async f => {
+    const local = diverge(f), remote = remoteHead(f), checkpoint = await f.lastCommit(f.alpha);
+    await f.engine.setConfig(REFRESH_PUBLISH_DIVERGED_KEY, 'true');
+    await f.engine.setConfig('sources.refresh_drain_wait_ms', '5000');
+    const holder = await acquireNativeLock(join(f.root, '.git', 'brain-publish.lock'), { timeoutMs: 0 });
+    expect(holder).not.toBeNull();
+    try {
+      const error = await refusedWith(refreshWorktree(f.engine, f.alpha, { waitDrainMs }), 'push_unconfirmed');
+      expect(error.message).toContain(`push lock for ${waitDrainMs / 1000}s`);
+      expect(f.head()).toBe(local);
+      expect(remoteHead(f)).toBe(remote);
+      expect(await f.lastCommit(f.alpha)).toBe(checkpoint);
+      expect(await f.refreshRows()).toEqual([]);
+    } finally { await holder!.release(); await f.engine.unsetConfig('sources.refresh_drain_wait_ms'); }
+    expect(await refreshWorktree(f.engine, f.alpha, { waitDrainMs: 1000 })).toMatchObject({ status: 'completed' });
+    expect(await f.lastCommit(f.beta)).toBe(remoteHead(f));
+  }), 120_000);
+}
 
 test('setting on: the text result names the publish', () => each(async f => {
   diverge(f);

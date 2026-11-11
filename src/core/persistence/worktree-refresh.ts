@@ -422,7 +422,7 @@ interface Plan {
 export const REFRESH_PUBLISH_DIVERGED_KEY = 'sources.refresh_publish_diverged';
 
 /** Steps 1.3/1: refusals before any database state; fetch moves only remote-tracking refs. */
-async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged: false | 'default' | 'explicit' = false): Promise<Plan> {
+async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged: false | 'default' | 'explicit' = false, waitPublishMs = 0): Promise<Plan> {
   if (!await managedPersistenceEnabled(engine)) throw refusal('refresh_not_managed',
     'This brain is not managed, so gbrain sync pulls the checkout itself; there is no worktree fence to coordinate.', `gbrain sync --source ${sourceId}`);
   const binding = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
@@ -517,7 +517,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
       'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
       ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
-    const pushed = await publishInChild(root, sourceId, targetHead);
+    const pushed = await publishInChild(root, sourceId, targetHead, waitPublishMs);
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs).catch(error => { throw notePublished(error, published); });
@@ -534,16 +534,17 @@ const PUBLISH_TIMEOUT_MS = 600_000;
  * #7686 (#7010's rule): run the keep-checkout publish in a bounded child `gbrain git commit-push --push-only --keep-checkout`,
  * bound with `--expect-remote` to the upstream this refresh checked for a rewrite, so a force-push after the check refuses.
  * The shared publish is synchronous (fetches, pushes and lock waits block for minutes), and a refresh delegated to a
- * PGLite owner runs inside the owner, where blocking would stall lease renewals; a busy publish lock fails at once.
+ * PGLite owner runs inside the owner, where blocking would stall lease renewals. Only the child waits for a busy
+ * publish lock, up to the refresh's configured drain wait; the complete child retains its outer timeout.
  */
-async function publishInChild(root: string, sourceId: string, checkedUpstream: string): Promise<{ sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] }> {
+async function publishInChild(root: string, sourceId: string, checkedUpstream: string, waitPublishMs: number): Promise<{ sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] }> {
   const { CHILD_ENV, resolveChildCliInvocation } = await import('../minions/job-isolation.ts');
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to publish the diverged checkout ${root}; nothing was pushed.`,
     `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry gbrain sources refresh ${sourceId}; or publish by hand with gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${q(root)}.`);
   const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--expect-remote', checkedUpstream, '--json'], {
     timeout: PUBLISH_TIMEOUT_MS, termGraceMs: 10_000, maxBuffer: 1024 * 1024,
-    env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
+    env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: String(waitPublishMs / 1000), GBRAIN_PUSH_LOCK_WAIT_SECONDS: String(waitPublishMs / 1000) },
   });
   let doc: Record<string, unknown> | null = null;
   try { doc = JSON.parse(child.stdout.trim()); } catch { /* reported below */ }
@@ -913,7 +914,7 @@ async function refreshOnce(engine: BrainEngine, sourceId: string, opts: RefreshO
   return withGit<WorktreeRefreshResult>(async git => {
     const configured = opts.dryRun ? 'false' : await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY);
     const publishDiverged = configured === null || configured === undefined || configured.trim() === '' ? 'default' : isTruthy(configured) ? 'explicit' : false;
-    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, publishDiverged);
+    const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, publishDiverged, waitDrainMs);
     published = plan.published;
     const base = { refresh_id: null, worktree_id: plan.binding.worktree_id, source_ids: plan.members, old_head: plan.oldHead,
       target_head: plan.targetHead, upstream_ref: plan.upstreamRef, preserved_uncommitted: plan.preserved, incoming_files: plan.incoming,
