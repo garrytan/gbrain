@@ -431,8 +431,8 @@ put_pages with one request_id per batch and wait_ms 25000."*
   immediately and by meaning once its embedding effect finishes.
 - **Request size.** HTTP carries less than the 24 MiB page ceiling:
   `gbrain serve --http` reads at most 4 MiB per request (the MCP SDK
-  default), and the simpler HTTP transport caps a request at
-  `GBRAIN_HTTP_MAX_BODY_BYTES`. A batch goes in smaller `put_pages` calls; a
+  default) and the simpler HTTP transport 1 MiB; `GBRAIN_HTTP_MAX_BODY_BYTES`
+  sets either cap. A batch goes in smaller `put_pages` calls; a
   page over the transport limit goes by file on the brain host (sync,
   `gbrain import` or `gbrain put`), never split by hand. Every limit is in
   [limits per entry point](memory-boundaries.md#large-page-limits).
@@ -1848,6 +1848,7 @@ instead of the CLI (one connection, no per-call startup).
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -3084,6 +3085,7 @@ instead of the CLI (one connection, no per-call startup).
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -4940,6 +4942,7 @@ instead of the CLI (one connection, no per-call startup).
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)
@@ -5053,7 +5056,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
-| Doctor `timeline_history` / `derived_visibility` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair`, apply one kind with `gbrain repair <kind> --apply` on the brain host after the user agrees. See `docs/guides/repair.md` |
+| Doctor `timeline_history` / `derived_visibility` / `atom_fence_rows` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair` (or `gbrain repair <kind>` for an explicit-only kind), apply one kind with the `--apply` command its preview prints, on the brain host after the user agrees. See `docs/guides/repair.md` |
 | A page write refused `owner_unavailable` with `detail: unbound_source` (classic Postgres) | Write the file, commit, `gbrain sync --source <id>` (remote: relay to the user); never claim or activate to get one write through. See `skills/conventions/agent-operator-protocol.md` |
 | A write or sync refused with `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity`, or doctor `parked_effects` | Relay the error's `suggestion` command; see `docs/guides/write-refusals.md` before running it |
 | A gbrain command or MCP tool returned an error, exited 3 (`confirmation_required`), 10 or 11, or printed `[AGENT]` / a notice block; "what does this error code mean" | Follow the agent operator protocol, `docs/protocol/AGENT_OPERATOR_v1.md` (read `code`, follow `fix.next`); look a code up offline with `gbrain errors <code>` |
@@ -5707,6 +5710,54 @@ so hybrid search falls back to keyword-only results until autovacuum
 analyzes the tables. If a refresh is skipped (a lock, or a role that does not
 own the tables), run `ANALYZE content_chunks(model, modality, page_id, body_generation)` and
 `ANALYZE pages` as the table owner.
+
+### TLS for Postgres connections
+
+Every Postgres connection gbrain opens to a host that is **not on this
+machine** requires TLS unless the database URL says otherwise. On this
+machine means `localhost`, `127.0.0.0/8`, `::1` or a Unix socket path;
+everything else needs TLS, including private addresses (`10.x`,
+`192.168.x`) and Docker service names such as `postgres-1`, because gbrain
+cannot tell a trusted network from an untrusted one by its name.
+(`src/core/pg-tls.ts` is the one resolver every connection pool uses.)
+
+| URL says | What gbrain does |
+|---|---|
+| no `sslmode`, host on this machine | plaintext, as before |
+| no `sslmode`, any other host | `sslmode=require` |
+| `?sslmode=require` | encrypts the connection; does **not** verify the server certificate |
+| `?sslmode=verify-full` | encrypts and verifies the certificate and host name against the CA store |
+| `?sslmode=disable` | plaintext; the one opt-out, for a network you trust |
+
+An sslmode (or `ssl=`, or `sslrootcert=system`) in the URL is always
+honored and never weakened, and so is the driver's own `PGSSL` variable.
+
+`require` stops anyone on the network from reading the traffic, but it would
+not notice an attacker who sits in the middle and presents their own
+certificate. For that, use `verify-full`. It checks the server certificate
+against Node's CA store, so a provider with its own CA needs that CA added:
+Supabase publishes it under **Project Settings → Database → SSL
+Configuration → Download certificate**. Put the file on the brain host and set
+`NODE_EXTRA_CA_CERTS=/path/to/prod-ca-2021.crt` in the environment gbrain
+runs in (for the installed service, `~/.gbrain/env`), then use
+`?sslmode=verify-full`. A `sslrootcert=<file>` parameter is not read by the
+driver; use `NODE_EXTRA_CA_CERTS` instead.
+
+A server that does not accept TLS fails the connection with
+[`postgres_tls_required`](guides/error-codes.md#postgres_tls_required),
+which names both choices: turn TLS on at the server, or add
+`sslmode=disable` to the URL. Nothing falls back to plaintext on its own.
+`gbrain doctor --only postgres_tls` reports whether this machine's own
+connection to a non-local server uses TLS. It judges that from the client side:
+`sslmode=require`, `verify-ca` and `verify-full` make the driver refuse a
+server without TLS. It warns on `sslmode=disable`, and on `sslmode=prefer` when
+the server does not offer TLS or reports the session unencrypted (prefer falls
+back to plaintext without saying so, so doctor never certifies a prefer
+connection as encrypted). Behind a
+pooler, the server's `pg_stat_ssl` row describes the pooler's own hop to the
+database, which can't be checked from your machine, so doctor shows it as detail
+and never warns about it. PGLite opens no network connection, so none of this
+applies to it.
 
 ### Vector index sizing
 
@@ -6488,6 +6539,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
 | `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
+| `tls_required_default` | `postgres_tls_required`: gbrain's TLS default met a non-local server without TLS — db-repair stops at manual; turn TLS on at the server or add `sslmode=disable` ([TLS](#tls-for-postgres-connections)) |
 | `unknown` | unclassified — redacted error + `gbrain doctor` |
 
 The classifier lives in `src/core/pg-access-classify.ts`; remediation copy has
@@ -8429,7 +8481,8 @@ pins `full`, callable and advertised: in the held-out agent benchmark, listing
 only `starter` or `verbs` lowered task success and saved no tokens. A harness
 that caps its tool count can register `--surface starter` or `--surface verbs`.
 Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
-On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
+On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface` (a
+`.env` file in the working directory cannot set it); a
 session widens itself with `request_tools {"surface":"full"}` (see
 `docs/operations/mcp-surface-runbook.md`).
 

@@ -9,6 +9,7 @@
 import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, invalidParam } from './op-fix.ts';
+import { sourceScopeOpts } from './context.ts';
 import {
   LIST_SKILLS_DESCRIPTION,
   GET_SKILL_DESCRIPTION,
@@ -383,6 +384,10 @@ const get_status_snapshot: Operation = {
         config: r.config ?? {},
       }));
     }
+    // Remote callers see only the sources their grant reads (the sources_list / get_health ladder); the trusted local CLI keeps every source.
+    const scope = ctx.remote === false ? {} : sourceScopeOpts(ctx);
+    const allowed = scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : undefined);
+    if (allowed) sources = sources.filter((s) => allowed.includes(s.id));
     const sync = await buildSyncStatusReport(ctx.engine, sources);
     const cycle = await buildCycleSnapshot(ctx.engine);
     // v2 sections, each fail-soft (amendment 26): a broken/pre-migration

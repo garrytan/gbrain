@@ -298,6 +298,7 @@ test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural
 test/scripts/build-lookup-table.test.ts	build-lookup-table	2	readFileSync
 test/scripts/build-schema-migrations.test.ts	generator diagnostics (FAIL/Why/Fix/See)	9	exec-scan
 test/scripts/build-schema-migrations.test.ts	out-of-order landing check	2	exec-scan
+test/scripts/check-agent-contract-baselines.test.ts	agent-contract baselines	2	readFileSync
 test/scripts/check-core-world-reads.test.ts	check-core-world-reads.ts: the ratchet	5	readFileSync
 test/scripts/check-dynamic-ci.test.ts	check-dynamic-ci.ts	1	exec-scan,readFileSync
 test/scripts/check-function-size.test.ts	check-function-size.ts rules	11	readFileSync
@@ -384,6 +385,11 @@ test/shared-skills-setup.test.ts	packaged default skills	2	readFileSync
 test/shared-skills-setup.test.ts	shared-skills migration recovery (#5569, #5476, A-NEW-4)	4	readFileSync
 test/shared-skills-setup.test.ts	staged skill migration	7	readFileSync
 test/shared-skills-writer-boundary.test.ts	(file-level)	7	readFileSync
+test/skill-resolver-hook-lane.test.ts	skill-resolver lane: compiled binaries	1	readFileSync
+test/skill-resolver-hook-lane.test.ts	skill-resolver lane: delivery per harness	4	readFileSync
+test/skill-resolver-hook-lane.test.ts	skill-resolver lane: fail open	6	readFileSync
+test/skill-resolver-off-pin.test.ts	(file-level)	1	readFileSync
+test/skill-resolver-packaging.test.ts	skill resolver packaging	3	bun-file,readFileSync
 test/skillify-scaffold.test.ts	11-item scaffold contract (T9 + Phase 3 cross-modal eval)	1	readFileSync
 test/skillify-scaffold.test.ts	applyScaffold	3	readFileSync
 test/skillify-scaffold.test.ts	planScaffold	13	readFileSync
@@ -433,7 +439,7 @@ test/title-fuzzy-index.test.ts	findByTitleFuzzy indexed threshold	2	source-surfa
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
 test/trust-write-gate-drift.test.ts	(file-level)	1	readFileSync
 test/upgrade-post-swap-imports.test.ts	#6604 upgrade post-swap tail	3	readFileSync
-test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	4	readFileSync
+test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	5	readFileSync
 test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	8	readFileSync
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane A — defaults sweep	8	source-surface-helper
 test/v0_37_fix_wave.serial.test.ts	v0.37 Lane B — init paths	3	source-surface-helper

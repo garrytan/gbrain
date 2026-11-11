@@ -88,7 +88,7 @@ export async function privacyClass(engine: BrainEngine, sourceId: string, page: 
   if (isPrivacyPrivatePage(page)) return 'private';
   if (isPrivacyDerivationPrivate(page)) return 'alias_private';
   const frontmatter = typeof page.frontmatter === 'object' && page.frontmatter !== null ? page.frontmatter as Record<string, unknown> : {};
-  if (frontmatter.derived_from == null && !['atom', 'concept', 'event'].includes(page.type ?? '')) return null;
+  if (frontmatter.derived_from == null && !['atom', 'concept', 'event', 'question'].includes(page.type ?? '')) return null;
   const [row] = await engine.executeRaw<{ lineage: boolean }>(`SELECT NOT ${privacyPartSql('p')} AS lineage
     FROM (SELECT $1::text AS source_id, $2::text AS slug, $3::text AS type, $4::text::jsonb AS frontmatter, $5::bigint AS id) p`,
   [sourceId, page.slug, page.type ?? null, JSON.stringify(frontmatter), page.id ?? null]);

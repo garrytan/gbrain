@@ -639,12 +639,12 @@ usage and flags are in its [README](../scripts/pglite-checkpoint-harness/README.
 
 ### macOS 26 validation (`macos-validation`)
 
-`.github/workflows/macos-validation.yml` runs on a GitHub-hosted `macos-26`
-runner nightly, on manual dispatch, and on pull requests that carry the
+`.github/workflows/macos-validation.yml` runs on GitHub-hosted `macos-26` (typecheck:
+`macos-26-intel`) nightly, on manual dispatch, and on pull requests that carry the
 `macos-validation` label. It uses no secrets and has a 90-minute cap. It checks
 the device-identity re-stamp (#5604) on real APFS (the step first asserts an
 APFS volume with a non-zero birth time and inode; the device-number change
-itself stays simulated because a runner never reboots), runs the PGLite checkpoint
+stays simulated: runners never reboot), runs the PGLite checkpoint
 harness on a store of at least 2 GiB with the WAL-bound assertion
 (#5449), and verifies the latest published signed `darwin-arm64` release
 binary with `codesign --verify --strict` and `--version` against its release
@@ -656,7 +656,7 @@ or release code asks for it in the pull request. Scheduled and dispatched runs
 use the default branch's workflow file, so the label is the way to get this
 evidence for a change before it merges. `test.yml`'s security matrix,
 `release.yml`'s darwin build and `native-locks.yml`'s darwin cells pin
-`macos-26` / `macos-26-intel` rather than `macos-latest`.
+`macos-26` / `macos-26-intel`, not `macos-latest`.
 
 ### Keeping CI partitions balanced
 
@@ -1728,9 +1728,9 @@ skipping with "DATABASE_URL unset" is a silent regression, not caution.
    docker run -d --name gbrain-test-pg \
      -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres \
      -e POSTGRES_DB=gbrain_test \
-     -p PORT:5432 pgvector/pgvector:pg16
+     -p 127.0.0.1:PORT:5432 pgvector/pgvector:pg16
    ```
-   Wait for ready: `docker exec gbrain-test-pg pg_isready -U postgres`
+   Ready check: `docker exec gbrain-test-pg pg_isready -U postgres`
 4. **Bootstrap the schema** (required — fresh containers have no `oauth_clients`,
    `mcp_request_log`, `pages` etc.; tests like `serve-http-oauth.test.ts` will fail
    with `relation "oauth_clients" does not exist` if you skip this):

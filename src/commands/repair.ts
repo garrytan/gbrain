@@ -25,7 +25,7 @@ import { shellQuote } from '../core/agent-output.ts';
 import { OLDER_THAN_RE } from '../cli/strict-args.ts';
 import { parseSince } from '../core/since.ts';
 import { generationsSelectionArgv, generationsSelectionRefusal, type GenerationMode, type GenerationsSelection } from '../core/generations/repair.ts';
-import { REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult, type RepairScope } from '../core/repair/core.ts';
+import { REPAIR_DECLINE_CODES, REPAIR_KINDS, resolveRepairScope, type RepairKind, type RepairResult, type RepairScope } from '../core/repair/core.ts';
 import { consentGate, engineConsentEnv } from '../core/consent-cli.ts';
 import { AUTO_REPAIR_REGISTRY, EXPLICIT_REPAIR_REGISTRY, LLM_REPAIR_REGISTRY, PREVIEW_BOUND_REPAIR_REGISTRY, REPAIR_REGISTRY, explicitRepairNotices, repairMayEmbed, repairMaySpend,
   repairPreviewCommand, repairRunner, repairSpec, type RepairKindSpec } from '../core/repair/registry.ts';
@@ -38,6 +38,7 @@ import { cliOptsToProgressOptions, getCliOptions } from '../core/cli-options.ts'
 import { resolveSecretRules } from '../core/secret-spans.ts';
 import { normalizeSeatLabel } from '../core/context/seat.ts';
 import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
+import { privateLabelsLedger } from './repair-private-labels.ts';
 import { isAbsolute } from 'node:path';
 
 /** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
@@ -210,7 +211,7 @@ const VALUE_FLAGS = new Set(['--rules', '--source', '--limit', '--expect', '--on
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
   '--include-cross-entity': ['duplicate-facts'],
-  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility'], '--since': ['file-drift', 'generations'],
+  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility', 'private-labels'], '--since': ['file-drift', 'generations'],
   '--held': ['file-drift', 'generations'], '--side': ['file-drift'], '--state': ['file-drift'], '--cursor': ['file-drift'], '--provenance': ['file-drift'],
   '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
   '--older-than': ['receipt-compaction'], '--include-failures': ['receipt-compaction'], '--force': ['receipt-compaction'],
@@ -437,6 +438,7 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   if (result.mode === 'apply' && result.failed.length) {
     lines.push(`  ${result.failed.length} item(s) left unchanged; a resumed run skips past them, the next full scan retries them: ${result.apply_command}`);
   }
+  if (result.mode === 'apply' && result.declined) lines.push(`  declined (the page refused the write; left unchanged): ${Object.entries(result.declined).map(([k, v]) => `${k}=${v}`).join(', ')}`);
   if (result.mode === 'apply' && result.repaired !== undefined) {
     const left = Object.entries(result.remaining ?? {}).map(([k, v]) => `${k}=${v}`).join(', ');
     lines.push(`  repaired ${result.repaired}; ${left ? `still waiting: ${left}` : 'nothing left in this selection'}`);
@@ -525,7 +527,8 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   const results = await runRepairKinds(kinds, scope, { apply, source, noEmbed, named: kind !== undefined }, k => runner.run(k, scope, { limit, sourceFlag: source, explicit: k === kind, expect, includeAmbiguous, ...(k === kind && includeCrossEntity ? { includeCrossEntity } : {}),
     ...(k === kind && KIND_FLAGS['--only']!.includes(k) ? { only, skip } : {}), ...(k === kind && slugs.length ? { slugs } : {}),
     ...(k === kind && noLlm ? { noLlm } : {}), ...(k === kind && maxUsd !== undefined ? { maxLlmUsd: maxUsd } : {}),
-    ...(k === kind && k === 'visibility' && driftClass ? { driftClass } : {}),
+    ...(k === kind && (k === 'visibility' || k === 'private-labels') && driftClass ? { driftClass } : {}),
+    ...(k === kind && k === 'private-labels' ? { privateLabelsLedger: privateLabelsLedger(scope.brain_id) } : {}),
     ...(k === kind && k === 'file-drift' ? { prefer, requests, allDrifted, driftClass, since, ...(held ? { held } : {}), ...(side ? { side } : {}), ...(state ? { state } : {}), ...(provenance ? { provenance } : {}), ...(cursor ? { cursor } : {}),
       progress: createProgress(cliOptsToProgressOptions(getCliOptions())) } : {}),
     ...(k === kind && keep ? { keep } : {}), ...(k === kind && requestId ? { requestId } : {}),
@@ -554,7 +557,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     }
     if (explicitKindsNotRun.length) console.log(`Explicit-only kinds (not run without their name; preview each): ${explicitKindsNotRun.map(n => n.preview_command).join('; ')}`);
   }
-  if (repairExitVerdict(results) !== 0) setCliExitVerdict(1);
+  if (repairExitVerdict(results, { previewBound: apply && expect !== undefined }) !== 0) setCliExitVerdict(1);
 }
 
 /**
@@ -584,7 +587,14 @@ export async function runRepairKinds(kinds: readonly RepairKind[], scope: Repair
   return results;
 }
 
-/** Exit 1 when any kind stopped early or refused an item; 0 only when every pending item was attempted and applied or skipped. */
-export function repairExitVerdict(results: ReadonlyArray<Pick<RepairResult, 'stopped' | 'failed'>>): 0 | 1 {
-  return results.some(r => r.stopped || r.failed.length > 0) ? 1 : 0;
+/**
+ * Exit 1 when any kind stopped early or refused an item; 0 when every pending item was attempted and applied or skipped.
+ * GBRA-443: a preview-bound apply (`--expect`) that attempted every item, stopped for nothing, and whose every failure is the
+ * page declining the write (REPAIR_DECLINE_CODES) exits 0: those pages were left unchanged, `declined` counts them by reason
+ * and the next preview lists them again, so the caller working through windows moves on. An apply bound to no preview
+ * keeps exit 1 for them: nobody approved its set, and the exit is often its caller's only sign that pages were left.
+ */
+export function repairExitVerdict(results: ReadonlyArray<Pick<RepairResult, 'stopped' | 'failed' | 'complete'>>, opts: { previewBound?: boolean } = {}): 0 | 1 {
+  const declinedOnly = (r: Pick<RepairResult, 'failed' | 'complete'>) => opts.previewBound === true && r.complete && r.failed.every(failed => REPAIR_DECLINE_CODES.has(failed.reason));
+  return results.some(r => r.stopped || (r.failed.length > 0 && !declinedOnly(r))) ? 1 : 0;
 }

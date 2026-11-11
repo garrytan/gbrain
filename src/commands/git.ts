@@ -273,11 +273,20 @@ export async function runGit(args: string[]): Promise<number> {
     return 0;
   } catch (e) {
     const code = (e as { code?: string }).code;
-    if (code === 'push_unconfirmed' || code === 'integrate_conflict' || code === 'commit_outside_source_root') {
+    let failed = e as { code?: string | null; detail?: string | null };
+    if (code === 'commit_paths_skipped' || code === 'writer_coordinator_required') {
+      // GST-2116: the other named paths may have been pushed before the run failed, or their push failed (`publish`); the push log records either.
+      try {
+        const d = JSON.parse(String((e as { detail?: string }).detail ?? '{}')) as { pushed?: string; branch?: string; publish?: { code: string | null; detail: string | null } };
+        if (d.pushed && d.branch) appendPushLog('ok', d.branch, d.pushed);
+        if (d.publish) failed = d.publish;
+      } catch { /* best-effort */ }
+    }
+    if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root') {
       try {
         const bi = args.indexOf('--branch');
         const branch = bi !== -1 && args[bi + 1] ? args[bi + 1].replace(/^refs\/heads\//, '') : currentBranchOf(args);
-        appendPushLog(code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, (e as { detail?: string }).detail ?? '');
+        appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
       } catch { /* best-effort */ }
     }
     return writeCliError(e, 'git commit-push', { json });

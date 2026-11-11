@@ -206,5 +206,20 @@ for (const kind of testBackends()) {
         for (const [key, value] of Object.entries(after)) expect([reason, key, value]).toEqual([reason, key, prior[key] ?? [0, 0]]);
       }
     }, 900_000);
+
+    test('GST-2051: a member-bound client creating a page over the ceiling in default keeps it to its member', async () => {
+      await setConfig('write_gate.agent_mode', 'off');
+      await engine.executeRaw("INSERT INTO access_members (id) VALUES ('alice-example') ON CONFLICT (id) DO NOTHING");
+      await engine.executeRaw("UPDATE oauth_clients SET member_id = 'alice-example' WHERE client_id = 'upload-big'");
+      try {
+        const slug = 'notes/huge-member-upload';
+        const receipt = await commit({ upload_id: await staged(conversation(25 * MiB, 'member'), slug) });
+        expect(receipt.state).toBe('committed');
+        const { frontmatter } = await stored(slug);
+        expect((typeof frontmatter === 'string' ? JSON.parse(frontmatter) : frontmatter).readable_by).toEqual(['member:alice-example']);
+      } finally {
+        await engine.executeRaw("UPDATE oauth_clients SET member_id = NULL WHERE client_id = 'upload-big'");
+      }
+    }, 900_000);
   });
 }

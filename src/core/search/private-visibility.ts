@@ -25,10 +25,18 @@ import type { BrainEngine } from '../engine.ts';
 import { embeddedKey, embeddedKeyInScope, unscopedWithOpenEmbeddedEngines } from '../engine-scope-store.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
+import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
+
+/**
+ * GST-2059: the member who owns this brain (`gbrain access owner set <member>`). A remote credential or stdio server
+ * bound to that live member reads as the owner: its privacy is relaxed in every source its grant reads (CallerAccess.owner).
+ * Written only by the trusted local CLI, like mcp.stdio_member; unset, ill-formed or unreadable names no owner.
+ */
+export const OWNER_MEMBER_KEY = 'access.owner_member';
 
 /**
  * #5525 — extracted atoms and synthesized concept pages are derived from
@@ -165,15 +173,16 @@ function originAllowedSql(p: string): string {
 /**
  * `privatePagesFilterFragment` with a cheap first test: a page with no
  * `visibility` or `derived_from` key (nor, unless the operator turned
- * `visibility.honor_aliases` off, a privacy-alias key) whose type is not atom, concept or event is visible by every rule
+ * `visibility.honor_aliases` off, a privacy-alias key, nor `readable_by` or `pinned_question`) whose type is not atom, concept,
+ * event or question is visible by every rule
  * above, so only the remaining pages run the full check. For scans over thousands of
  * candidate pages (an entity's referrers).
  */
 export function privatePagesFilterFragmentFast(pageAlias: string): string {
   return `(${folderRulesAllowedSql(pageAlias, [])} AND ((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.frontmatter->'readable_by' IS NULL
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'readable_by' IS NULL AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privatePagesFilterFragment(pageAlias)}))`;
 }
 
@@ -188,7 +197,14 @@ export function privatePagesFilterFragmentFast(pageAlias: string): string {
  *    no-grant floor, federation, an OAuth client's bound source or a request's
  *    `source_ids`); empty for writes;
  *  - hidePrivate: false only when an operator relaxed privacy for remote reads
- *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible);
+ *    (GBRAIN_REMOTE_PRIVATE_PAGES=1 or search.remote_private_pages=visible),
+ *    or the caller is the brain owner (owner);
+ *  - owner: GST-2059, the caller's credential (or stdio server) is bound to the
+ *    live member config access.owner_member names, and it asserts no audience
+ *    other than that member; never an attested actor. The owner sees
+ *    visibility: private pages, privacy aliases, derived and pinned-question
+ *    pages and private facts in every source its grant reads; member access
+ *    (readable_by, folder rules) stays mandatory;
  *  - restricted: false only inside a remote request on a brain whose config
  *    access.restrictions_present was unset when the request began. Then no
  *    page named readers at that moment and none predates the migration (v282
@@ -225,6 +241,7 @@ export interface CallerAccess {
   folderCoverage: readonly FolderCoverage[];
   privateReadableSources: readonly string[];
   hidePrivate: boolean;
+  owner: boolean;
   applyRemoteReadPolicy: boolean;
   restricted: boolean;
   /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
@@ -235,7 +252,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -259,7 +276,8 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     satisfiedRuleIds: satisfied.length && satisfied.every(validQualifiedRuleId) ? Object.freeze([...new Set(satisfied)].sort()) : Object.freeze([]),
     folderCoverage: Object.freeze([...(access.folderCoverage ?? base.folderCoverage)].map(c => Object.freeze({ source_id: c.source_id, prefix: c.prefix }))),
     privateReadableSources: sources.length && sources.every(isValidSourceId) ? Object.freeze([...new Set(sources)]) : Object.freeze([]),
-    hidePrivate: access.hidePrivate ?? base.hidePrivate,
+    hidePrivate: access.hidePrivate ?? (fresh ? true : base.hidePrivate),
+    owner: access.owner ?? (fresh ? false : base.owner),
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
@@ -279,6 +297,20 @@ export function withPrivateReadableSources<T>(sourceIds: readonly string[] | und
 /** The private-readable set of the current read; empty outside a granted remote read. */
 export function privateReadableSources(): readonly string[] {
   return currentCallerAccess().privateReadableSources;
+}
+
+/** GST-2059: is the current caller the brain owner (CallerAccess.owner)? False outside a remote record or a local --as of the owner. */
+export function callerIsOwner(): boolean {
+  return currentCallerAccess().owner;
+}
+
+/**
+ * GST-2089: whether a fact read stays world-only (visibility = 'world'). Only the trusted local CLI (remote strictly
+ * false) and the brain owner (CallerAccess.owner, the page rule) read private facts; provenance, source grants and
+ * member access still apply to both. Fact arms decide their visibility list here and nowhere else.
+ */
+export function worldOnlyFacts(remote: boolean | undefined): boolean {
+  return remote !== false && !callerIsOwner();
 }
 
 /** The current caller's member identity; empty outside a bound remote read or a local --as, and for an audience of several entries (see callerIdentities). */
@@ -371,7 +403,8 @@ export function privatePagesFilterFastForCaller(pageAlias: string): string {
 function privacyPartFastSql(pageAlias: string): string {
   return `((${pageAlias}.frontmatter->'visibility' IS NULL AND ${pageAlias}.frontmatter->'derived_from' IS NULL${honorAliases()
       ? `\n      AND ${pageAlias}.frontmatter->'access' IS NULL AND ${pageAlias}.frontmatter->'confidentiality' IS NULL` : ''}
-      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event'))
+      AND ${pageAlias}.frontmatter->'pinned_question' IS NULL
+      AND ${pageAlias}.type NOT IN ('atom', 'concept', 'event', 'question'))
     OR ${privacyPartSql(pageAlias)})`;
 }
 
@@ -463,7 +496,8 @@ export type Visibility = 'private' | 'world';
 /**
  * Privacy aliases: keys a page may carry instead of `visibility` (the
  * bulk-ingestion template's `access`, a `confidentiality` field), with the
- * values that mean private. Matching is case-insensitive on the trimmed value.
+ * values that mean private. Matching is ASCII case-insensitive on the value trimmed of
+ * edge whitespace, the same on the TypeScript and SQL sides.
  * Everything derived from an aliased page (facts, chronicle events, timeline
  * rows, remember saves into it) is private. Remote page reads honor the aliases
  * too unless the operator sets `visibility.honor_aliases false`.
@@ -477,14 +511,14 @@ export const HONOR_ALIASES_KEY = 'visibility.honor_aliases';
 function hasPrivacyAlias(frontmatter: Record<string, unknown>): boolean {
   return Object.entries(PRIVACY_ALIASES).some(([key, values]) => {
     const value = frontmatter[key];
-    return typeof value === 'string' && values.includes(value.trim().toLowerCase());
+    return typeof value === 'string' && values.includes(asciiLower(value.trim()));
   });
 }
 
 /** SQL twin of hasPrivacyAlias on a page alias (a code-provided literal). */
 export function privacyAliasSql(alias: string): string {
   return `(${Object.entries(PRIVACY_ALIASES).map(([key, values]) =>
-    `COALESCE(lower(btrim(${alias}.frontmatter->>'${key}')) IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
+    `COALESCE(${asciiLowerSql(edgeTrimSql(`${alias}.frontmatter->>'${key}'`))} IN (${values.map(v => `'${v}'`).join(',')}), false)`).join(' OR ')})`;
 }
 
 /**
@@ -655,7 +689,26 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds)} ELSE ${readPolicyFragment('pp', [], hide)} END`
     : readPolicyFragment('pp', [], hide);
-  return `NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy}))`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)})`;
+}
+
+/**
+ * A fact is never wider than the page it is about: hide a fact whose entity page (`entity_slug`, looked up in the fact's
+ * own source) the current caller cannot read under the read policy its page reads use, so a member the page's readers
+ * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
+ * only ever narrows.
+ */
+export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')}${perCandidate ? ' OFFSET 0' : ''})`;
+}
+
+/**
+ * privateProvenanceFilterFragment for a remote fact read: the provenance page gate plus the caller's entity-page gate.
+ * perCandidate keeps the entity gate a lookup per candidate row (OFFSET 0 stops the planner turning it into a join), so
+ * a scan an index serves, such as the saved-fact keyword match, keeps that index.
+ */
+export function privateFactFilterForCaller(factAlias: string, perCandidate = false): string {
+  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */
@@ -793,7 +846,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
-export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null }
 
 /**
  * The remote read policy read fresh, for publication: whether an operator
@@ -804,10 +857,10 @@ export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean }
  */
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY]]);
+    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY]]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null };
   }
 }
 
@@ -823,7 +876,9 @@ export async function requestRemotePolicy(engine: BrainEngine): Promise<RemotePo
 
 function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
   const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
-  return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1' };
+  const owner = config[OWNER_MEMBER_KEY]?.trim();
+  return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',
+    ownerMember: owner && ACCESS_ID_RE.test(owner) ? owner : null };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

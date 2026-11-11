@@ -24,12 +24,13 @@ import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadlin
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources, type SkillResources } from './skill-resources.ts';
 import { readLocalWriter, verifyLocalWriter } from '../core/persistence/identity.ts';
-import { ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom, type WritebackConfig } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
 import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
 import { hookSessionCwd } from '../core/session-cwd.ts';
+import { stdioMemberIdentity } from '../core/access/caller.ts';
 
 /**
  * Largest JSON-RPC message the stdio server reads (the SDK default is 10 MiB,
@@ -329,6 +330,18 @@ function stdioSurfaceSession(
  */
 const READ_ONLY_SERVE_NOTE = '[gbrain-serve] read-only: no persistence consumer, on-commit sync or sweep runs here; a read-write serve, jobs work or autopilot owns them.\n';
 
+/**
+ * The ambient writeback section's options for a stdio serve: what the session can call, and whether mcp.stdio_member binds
+ * it to a member, whose writes stay private unless shared (GST-2243), so its rule never says "pass visibility: world".
+ */
+export async function stdioAmbientOpts(engine: BrainEngine, writeback: WritebackConfig, allowedOps: ReadonlySet<string> | undefined) {
+  return ambientOptsFrom(writeback, {
+    remember: allowedOps ? allowedOps.has('remember') : true,
+    extractFacts: allowedOps ? allowedOps.has('extract_facts') : true,
+    member: (await stdioMemberIdentity(engine)).some(p => p.startsWith('member:')),
+  });
+}
+
 export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess; advertise?: McpSurface } = {}) {
   const config = loadConfig();
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
@@ -365,10 +378,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // reconnect belongs to tool calls).
   const statusMode = statusModeOf(engine);
   const writeback = statusMode ? null : (await resolveAgentWriteback(engine, config)).bundle;
-  const writebackOpts = writeback ? ambientOptsFrom(writeback, {
-    remember: session.allowedOps ? session.allowedOps.has('remember') : true,
-    extractFacts: session.allowedOps ? session.allowedOps.has('extract_facts') : true,
-  }) : null;
+  const writebackOpts = writeback ? await stdioAmbientOpts(engine, writeback, session.allowedOps) : null;
   server = new Server(
     { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
     // listChanged: a client that handshakes during DEGRADED mode receives the

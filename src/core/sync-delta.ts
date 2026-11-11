@@ -35,6 +35,7 @@ import { execFileSync } from './spawn.ts';
 import { execFileBounded } from './bounded-child-exec.ts';
 import { buildSyncManifest, type SyncManifest } from './sync.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
 import { classifyGitPathBytes, displayBytePath, type UnsupportedPathReason } from './sync-byte-paths.ts';
 
 /** Runs a git subcommand in `repoPath` and returns trimmed stdout (throws on failure). */
@@ -43,10 +44,12 @@ export type GitRunner = (repoPath: string, args: string[]) => string;
 // Mirrors `git()` + `buildGitInvocation()` in commands/sync.ts: `core.quotepath=false`
 // so non-ASCII (CJK) paths arrive as UTF-8; 30s timeout; 100 MiB maxBuffer (a
 // 100K-file `--name-status` diff tops out ~10-20 MiB — Node's 1 MiB default
-// would ENOBUFS-crash the sync with no log line).
+// would ENOBUFS-crash the sync with no log line). GST-2331: managed discovery reads through it, so it runs under
+// HARDENED_GIT_ARGS and NO_LAZY_FETCH_ENV; rename detection that needs a blob a partial clone lacks fails the diff
+// (`diff_failed`, the full tree walk) instead of fetching it.
 const DEFAULT_GIT_RUNNER: GitRunner = (repoPath, args) =>
-  execFileSync('git', ['-c', 'core.quotepath=false', '-C', repoPath, ...args], {
-    env: gitChildEnv(GIT_READ_ENV),
+  execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', repoPath, ...args], {
+    env: gitChildEnv({ ...GIT_READ_ENV, ...NO_LAZY_FETCH_ENV }),
     encoding: 'utf-8',
     timeout: 30_000,
     maxBuffer: 100 * 1024 * 1024,

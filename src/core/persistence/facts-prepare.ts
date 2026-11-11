@@ -5,6 +5,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
+import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { factsFenceEditor, factsFenceSection, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { wholeBodySnapshot } from './segmented-apply.ts';
@@ -174,7 +175,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   // #6188 (D20): the entity's stored fence is normalized in this same write; a residual refuses typed `target_fence_malformed`.
   const target = snapshot ? await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'facts', page: snapshot.page }) : null;
   // #6686: the fence is edited in the section it lives in (a lone timeline fence stays below the sentinel); the other section is kept byte for byte.
-  const fenced = { compiled_truth: target?.page.compiled_truth ?? '', timeline: target?.page.timeline ?? '' };
+  const fenced = await withHeldFactsFence(engine, row.source_id, row.slug, { compiled_truth: target?.page.compiled_truth ?? '', timeline: target?.page.timeline ?? '' });
   const section = factsFenceSection(fenced);
   // #6898 follow-up: the fence is parsed once and rendered once for the whole group, not once per fact.
   const fence = factsFenceEditor(fenced, section);
@@ -187,8 +188,8 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   const taint = await managedFactsTrust(engine, p);
   const gateCfg = taint ? await derivedGateConfig(engine) : null;
   const blocked: GatedRowDecision[] = [];
-  // #6506: automatic extraction skips a forgotten claim and keeps the rest of the group; a purge tombstone still
-  // refuses the group, as it does for every writer; explicit writers (no flag) refuse the forgotten claim.
+  // #6506: automatic extraction skips a claim forgotten at any visibility and keeps the rest of the group; a purge
+  // tombstone still refuses the group, as it does for every writer; explicit writers (no flag) refuse the forgotten claim.
   let withdrawnSkipped = 0;
   // #6333 shadow (managed mirror of the backstop's counter): a same-page rewording is counted on the entity outcome
   // and named on stderr; nothing is dropped. The count is frozen in the receipt, so a replay reports it, not recounts it.
@@ -196,7 +197,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   for (const fact of facts) {
     if (p.withdrawn === 'skip') {
       await assertFactNotPurged(engine, row.source_id, fact);
-      if (await isFactWithdrawn(engine, row.source_id, fact.visibility, fact.fact, fact.entity_slug)) { withdrawnSkipped++; continue; }
+      if (await isFactWithdrawn(engine, row.source_id, null, fact.fact, fact.entity_slug)) { withdrawnSkipped++; continue; }
     } else await assertFactNotWithdrawn(engine, row.source_id, fact);
     const key = JSON.stringify([fact.fact, fact.visibility, fact.entity_slug]);
     const earlier = (seen.get(key) ?? []).find(i => attributionCompatible(entries[i].fact.attributed_to, fact.attributed_to));
@@ -262,10 +263,11 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
         if (p.withdrawn !== 'skip') await assertFactNotWithdrawn(tx, row.source_id, entry.fact);
         else {
           await assertFactNotPurged(tx, row.source_id, entry.fact);
-          if (await isFactWithdrawn(tx, row.source_id, entry.fact.visibility, entry.fact.fact, entry.fact.entity_slug)) {
+          if (await isFactWithdrawn(tx, row.source_id, null, entry.fact.fact, entry.fact.entity_slug)) {
             const refusal = factsRefusal('revision_conflict', 'A claim was forgotten after these facts were prepared.', row,
               `A claim in this group was forgotten in source ${row.source_id} after the facts were prepared, so none of these facts were published; the forgotten claim stays withdrawn.`);
-            refusal.withdrawn = (await factWithdrawnRefusal(tx, row.source_id, entry.fact)).withdrawn;
+            refusal.withdrawn = (await factWithdrawnRefusal(tx, row.source_id, entry.fact)).withdrawn
+              ?? (await factWithdrawnRefusal(tx, row.source_id, { ...entry.fact, visibility: entry.fact.visibility === 'world' ? 'private' : 'world' })).withdrawn;
             throw refusal;
           }
         }

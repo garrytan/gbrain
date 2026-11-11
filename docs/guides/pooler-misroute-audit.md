@@ -38,7 +38,7 @@ from the gbrain repository at this version or later, then:
 
 ```bash
 bun audit-pooler-misroute.ts \
-  --url 'postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres' \
+  --url 'postgresql://postgres:<password>@db.<project>.supabase.co:5432/postgres?sslmode=require' \
   --since 2026-10-01T00:00:00Z --until 2026-10-12T18:00:00Z --json > audit.json
 ```
 

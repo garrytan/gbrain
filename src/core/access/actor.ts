@@ -19,7 +19,7 @@ import { catalogueError, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import type { CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
 import { isMissingSchemaObject } from '../utils.ts';
-import { memberIdentity } from './members.ts';
+import { memberByEmail, memberIdentity } from './members.ts';
 import { folderAccessFor, memberIdentityFor } from './caller.ts';
 import { markedScopeSources, sourceNotAttested } from './attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_DEFERRED_OPS, ACTOR_HEADER, attestRightFrom, DEFAULT_ATTEST_OPS, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER, type AttestedActor, type AttestRight } from './actor-model.ts';
@@ -47,12 +47,12 @@ export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, cal
   try {
     if (principal?.kind === 'legacy_token') {
       const [row] = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT attest_actor, attest_ops, to_jsonb(access_tokens)->'attest_sources' AS attest_sources, member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL`, [principal.id]);
+        `SELECT attest_actor, attest_ops, to_jsonb(access_tokens)->'attest_sources' AS attest_sources, to_jsonb(access_tokens)->>'attest_read' AS attest_read, member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL`, [principal.id]);
       return attestRightFrom(row, 'legacy', row?.member_id);
     }
     if (principal?.kind === 'oauth_client') {
       const [row] = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients
+        `SELECT attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, to_jsonb(oauth_clients)->>'attest_read' AS attest_read, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients
          WHERE client_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`, [principal.id]);
       const cc = Array.isArray(row?.grant_types) && (row!.grant_types as unknown[]).includes('client_credentials') && row!.confidential === true;
       return attestRightFrom(row, cc ? 'client_credentials' : null, row?.member_id);
@@ -138,6 +138,10 @@ export function actorNotAttested(reason: ActorReason, caller: ActorCaller, ctx: 
         `Remove ${ACTOR_ARGUMENT} from the arguments. A trusted system names the person in the ${ACTOR_HEADER} header from a credential holding the attest right (gbrain auth rescope ... --attest-actor qm on the brain host).`, { reason, docs, detail: `missing=${missing.join(',')}` });
     }
     case 'actor_required':
+      if (ctx.right?.read === 'scope') {
+        return opError('actor_not_attested', `This credential reads and writes only for an attested person (--attest-read scope), and this call names none (no ${ACTOR_HEADER} header), so nothing was read or written.`,
+          `Send ${ACTOR_HEADER} with the person's canonical id on every call from this credential. A call that serves nobody in particular uses a credential without the attest right.`, { reason, docs });
+      }
       return opError('actor_not_attested', `${ctx.op} writes only as an attested person, and this call names none (no ${ACTOR_HEADER} header on a credential holding the attest right), so nothing was written.`,
         `Send ${ACTOR_HEADER} with the person's canonical id from a credential the brain operator granted the attest right (${rescope(['--attest-actor', 'qm']).join(' ')}). To save a fact as yourself, call remember.`, { reason, docs });
     case 'audience_not_supported':
@@ -230,19 +234,23 @@ export interface ActorChannels { header?: string | null; audience?: string | nul
 
 /**
  * The attested-actor decision for one remote call, made before any work. Null when the call names no actor (no header,
- * no argument): the caller's own identity or B's audience applies. Otherwise the access record and the arguments with
+ * no argument): the caller's own identity or B's audience applies; GST-1158 F4: a credential whose attest right says
+ * `attest_read = 'scope'` is refused there instead (actor_required), so it never reads as itself. Otherwise the access record and the arguments with
  * `acting_user` stripped, or a refusal: actor_not_attested with its reason, actor_unlinked, or B's
  * on_behalf_of_invalid_audience when an on_behalf_of audience is asserted too.
  */
 export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw'>, input: {
   channels?: ActorChannels; params: Record<string, unknown> | undefined; op: string; opShape: AttestableOpShape | undefined;
   auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean;
-}): Promise<{ actor?: AttestedActor; access?: Partial<CallerAccess>; params: Record<string, unknown> } | null> {
+}): Promise<{ actor?: AttestedActor; access?: Partial<CallerAccess>; params: Record<string, unknown>; read?: AttestRight['read'] } | null> {
   const header = input.channels?.header ?? undefined;
   const hasArgument = !!input.params && Object.prototype.hasOwnProperty.call(input.params, ACTOR_ARGUMENT);
   const caller: ActorCaller = { auth: input.auth };
   if (input.channels?.audience != null) throw actorNotAttested('audience_not_supported', caller, { op: input.op, transport: input.transport });
-  if (header === undefined && !hasArgument) return null;
+  if (header === undefined && !hasArgument) {
+    if (input.transport !== 'stdio' && input.auth?.attest?.read === 'scope') throw actorNotAttested('actor_required', caller, { op: input.op, transport: input.transport, right: input.auth.attest });
+    return null;
+  }
   const ctx = { op: input.op, transport: input.transport };
   const argument = hasArgument ? input.params![ACTOR_ARGUMENT] : undefined;
   if ((header !== undefined && !EXTERNAL_ID_RE.test(header)) || (hasArgument && (typeof argument !== 'string' || !EXTERNAL_ID_RE.test(argument)))) {
@@ -264,7 +272,7 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
   const covered = await actorCoverage(engine, caller, { system: right.system, external_id: header }, input.transport);
   const actor: AttestedActor = { system: right.system, external_id: header, member: covered.member };
   const { [ACTOR_ARGUMENT]: _stripped, ...params } = input.params ?? {};
-  return { actor, access: await attestedCallerAccess(engine, actor, covered.identity), params };
+  return { actor, access: await attestedCallerAccess(engine, actor, covered.identity), params, ...(right.read ? { read: right.read } : {}) };
 }
 
 /**
@@ -318,6 +326,11 @@ export async function linkMember(engine: BrainEngine, rawMember: unknown, system
   if (opts.dryRun) return { link: { system, external_id: externalId, member_id: member, created_at: null }, applied: false };
   await engine.executeRaw('INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)', [system, externalId, member]);
   return { link: (await linkRow(engine, system, externalId))!, applied: true };
+}
+
+/** GST-1158: the operator names the member by its declared email (memberByEmail); the link is then exactly linkMember's. */
+export async function linkMemberByEmail(engine: BrainEngine, rawEmail: unknown, system: string, rawId: unknown, opts: { dryRun?: boolean } = {}): Promise<{ link: MemberLink; applied: boolean }> {
+  return linkMember(engine, (await memberByEmail(engine, rawEmail)).id, system, rawId, opts);
 }
 
 /** Removes one link; the next attested call naming the id is refused (actor_unlinked). */
