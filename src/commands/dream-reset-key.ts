@@ -10,6 +10,7 @@ import {
 import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
 import { usageError, writeCliRefusal } from '../cli/cli-error.ts';
+import { printHelpText } from '../cli/help/render.ts';
 
 const HELP = `Usage: gbrain dream reset-key <base-key>
        gbrain dream reset-key --list [--json]
@@ -28,7 +29,7 @@ run read; a completed run resets it, so only consecutive deaths trip it.
 `;
 
 export async function runDreamResetKey(engine: BrainEngine | null, args: string[]): Promise<void> {
-  if (args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
+  if (args.includes('--help') || args.includes('-h')) { await printHelpText('dream reset-key', HELP, args); return; }
   const list = args.includes('--list');
   const json = args.includes('--json');
   const positional = args.filter(arg => !arg.startsWith('--'));
