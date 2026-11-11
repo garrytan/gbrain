@@ -175,8 +175,9 @@ export interface SlidingPoolResult {
  *
  * A must-abort error from an item (BudgetExhausted etc.) stops claiming,
  * aborts the local signal so sibling workers finish their current item and
- * stop, waits for every worker, then rethrows the error. No worker is left
- * running detached after the pool has reported failure.
+ * stop, waits for every worker, then rethrows the error. An error thrown by
+ * the onError or failureLabel callback does the same (#8913). No worker is
+ * left running detached after the pool has reported failure.
  */
 export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<SlidingPoolResult> {
   const items = opts.items;
@@ -213,50 +214,59 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
   // that put an `await` between the `nextIdx` read and write OR import
   // `worker_threads` alongside this module.
   let nextIdx = 0;
-  // First must-abort error. Recorded by the worker that saw it, rethrown
-  // after every worker has finished its current item. (A holder object: TS
-  // does not see assignments made inside the worker closure.)
-  const mustAbort: { failure: { error: unknown } | null } = { failure: null };
+  // First fatal error: a must-abort item error, or what a throwing onError /
+  // failureLabel callback raised (#8913). Recorded by the worker that saw it,
+  // rethrown after every worker has finished its current item. (A holder
+  // object: TS does not see assignments made inside the worker closure.)
+  const fatal: { failure: { error: unknown } | null } = { failure: null };
 
   async function worker(workerIdx: number): Promise<void> {
-    while (true) {
-      if (localAbort.signal.aborted) {
-        result.aborted = true;
-        return;
-      }
-      if (nextIdx >= total) return;
-      // ATOMICITY INVARIANT: this line is the load-bearing claim.
-      // Read + increment must remain a single synchronous statement.
-      // Do NOT insert `await` between them. See module header.
-      const idx = nextIdx++;
-      const item = items[idx];
-      try {
-        await opts.onItem(item, idx, workerIdx);
-        result.processed++;
-        opts.onProgress?.(result.processed, total);
-      } catch (err) {
-        // D13: must-abort error classes (BudgetExhausted, etc.) bypass
-        // onError and hard-abort the pool: the local abort signals the
-        // other workers, every worker finishes its current item, and the
-        // error is rethrown after the join (see the function doc).
-        if (isMustAbortError(err)) {
+    try {
+      while (true) {
+        if (localAbort.signal.aborted) {
           result.aborted = true;
+          return;
+        }
+        if (nextIdx >= total) return;
+        // ATOMICITY INVARIANT: this line is the load-bearing claim.
+        // Read + increment must remain a single synchronous statement.
+        // Do NOT insert `await` between them. See module header.
+        const idx = nextIdx++;
+        const item = items[idx];
+        try {
+          await opts.onItem(item, idx, workerIdx);
+          result.processed++;
+          opts.onProgress?.(result.processed, total);
+        } catch (err) {
+          // D13: must-abort error classes (BudgetExhausted, etc.) bypass
+          // onError and hard-abort the pool: the local abort signals the
+          // other workers, every worker finishes its current item, and the
+          // error is rethrown after the join (see the function doc).
+          if (isMustAbortError(err)) {
+            result.aborted = true;
+            if (!fatal.failure) fatal.failure = { error: err };
+            localAbort.abort();
+            result.errored++;
+            result.failures.push({ idx, label: labelFn(item), error: err });
+            return;
+          }
           result.errored++;
           result.failures.push({ idx, label: labelFn(item), error: err });
-          if (!mustAbort.failure) mustAbort.failure = { error: err };
-          localAbort.abort();
-          return;
+          const decision = decideOnError(err, item, idx);
+          if (decision === 'abort') {
+            result.aborted = true;
+            localAbort.abort();
+            return;
+          }
+          // 'continue' — claim the next item.
         }
-        result.errored++;
-        result.failures.push({ idx, label: labelFn(item), error: err });
-        const decision = decideOnError(err, item, idx);
-        if (decision === 'abort') {
-          result.aborted = true;
-          localAbort.abort();
-          return;
-        }
-        // 'continue' — claim the next item.
       }
+    } catch (err) {
+      // #8913: a throwing onError / failureLabel callback. Recorded and
+      // aborted before this worker returns, so no sibling claims again.
+      result.aborted = true;
+      if (!fatal.failure) fatal.failure = { error: err };
+      localAbort.abort();
     }
   }
 
@@ -267,7 +277,7 @@ export async function runSlidingPool<T>(opts: SlidingPoolOpts<T>): Promise<Slidi
   } finally {
     if (opts.signal) opts.signal.removeEventListener('abort', onCallerAbort);
   }
-  if (mustAbort.failure) throw mustAbort.failure.error;
+  if (fatal.failure) throw fatal.failure.error;
   return result;
 }
 

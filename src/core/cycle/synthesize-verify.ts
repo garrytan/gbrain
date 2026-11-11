@@ -202,8 +202,8 @@ export function emptyQuoteVerifyStats(): QuoteVerifyStats {
  * source char desynced every later offset and could slice garbage — or
  * nothing — back into a page as a "verbatim" repair).
  */
-export function normalizeForGrounding(s: string, opts: { tolerant?: boolean } = {}): { norm: string; map: number[] } {
-  return foldForGrounding(s, true, opts.tolerant === true) as { norm: string; map: number[] };
+export function normalizeForGrounding(s: string, opts: { tolerant?: boolean; markup?: boolean } = {}): { norm: string; map: number[] } {
+  return foldForGrounding(s, true, opts.tolerant === true, opts.markup === true) as { norm: string; map: number[] };
 }
 
 /**
@@ -216,10 +216,10 @@ export function normalizeForGrounding(s: string, opts: { tolerant?: boolean } = 
  * Parity matters: the rescue gate and the repair ladder must mean the same
  * thing by "normalized substring of the transcript".
  */
-function foldForGrounding(s: string, withMap: boolean, tolerant = false): { norm: string; map: number[] } | string {
+function foldForGrounding(s: string, withMap: boolean, tolerant = false, markup = false): { norm: string; map: number[] } | string {
   const out: string[] = [];
   const map: number[] = [];
-  const skip = foldSkipSet(s, tolerant);
+  const skip = foldSkipSet(s, tolerant, markup);
   let pendingSpace = false;
   // Iterate by CODE POINT (for..of), not code unit: a surrogate pair
   // lowercases as a pair (Deseret 𐐀 → 𐐨) but never half by half, so a
@@ -277,16 +277,53 @@ function bracketMask(s: string): Set<number> | null {
   return skip;
 }
 
+const DOUBLE_QUOTE_MARKS = new Set(['"', '“', '”', '„', '«', '»']);
+const SINGLE_QUOTE_MARKS = new Set(["'", '‘', '’']);
+const SPACED_DASHES = new Set(['-', '–', '—']);
+export const isGroundingQuoteMark = (ch: string | undefined): boolean => ch !== undefined && (DOUBLE_QUOTE_MARKS.has(ch) || SINGLE_QUOTE_MARKS.has(ch));
+const isWordChar = (ch: string | undefined): boolean => ch !== undefined && /[\p{L}\p{N}]/u.test(ch);
+const isSpaceOrEdge = (ch: string | undefined): boolean => ch === undefined || /\s/.test(ch);
+const isDigit = (ch: string | undefined): boolean => ch !== undefined && /\p{N}/u.test(ch);
+const nonSpace = (s: string, from: number, step: 1 | -1): string | undefined => { let k = from; while (k >= 0 && k < s.length && /\s/.test(s[k]!)) k += step; return s[k]; };
+
+/**
+ * #8371: code-unit offsets the markup fold also skips, for a quote a model
+ * copied without the source's Markdown and punctuation: line-leading '#' runs
+ * and '>' markers, quotation marks (an apostrophe inside a word stays), and a
+ * dash with whitespace on both sides and no number beside it (a spaced minus or
+ * range is meaning). Words are never skipped.
+ */
+function markupMask(s: string): Set<number> | null {
+  const skip = new Set<number>();
+  let lineStart = true;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i]!;
+    if (ch === '\n') { lineStart = true; continue; }
+    if (lineStart) {
+      if (/\s/.test(ch)) continue;
+      if (ch === '>' && (isSpaceOrEdge(s[i + 1]) || s[i + 1] === '>')) { skip.add(i); continue; }
+      let j = i;
+      while (s[j] === '#') j++;
+      if (j > i && isSpaceOrEdge(s[j])) { for (let k = i; k < j; k++) skip.add(k); i = j - 1; continue; }
+      lineStart = false;
+    }
+    if (DOUBLE_QUOTE_MARKS.has(ch) || (SINGLE_QUOTE_MARKS.has(ch) && !(isWordChar(s[i - 1]) && isWordChar(s[i + 1])))) skip.add(i);
+    else if (SPACED_DASHES.has(ch) && isSpaceOrEdge(s[i - 1]) && isSpaceOrEdge(s[i + 1]) && !isDigit(nonSpace(s, i - 1, -1)) && !isDigit(nonSpace(s, i + 1, 1))) skip.add(i);
+  }
+  return skip.size ? skip : null;
+}
+
 /**
  * Code-unit offsets the fold skips: markdown inline markup (every `*`, every
  * backtick, and `~` in a `~~` run) in both modes, so `**sync**`, `` `sync` ``
  * and `sync` read alike; plus `bracketMask` in tolerant mode. `_` is kept:
  * it is too common in identifiers and paths.
  */
-function foldSkipSet(s: string, tolerant: boolean): Set<number> | null {
+function foldSkipSet(s: string, tolerant: boolean, markup = false): Set<number> | null {
   const brackets = tolerant ? bracketMask(s) : null;
-  if (!/[*`]|~~/.test(s)) return brackets;
-  const skip = brackets ?? new Set<number>();
+  const masked = markup ? [...(markupMask(s) ?? [])].reduce((set, i) => set.add(i), brackets ?? new Set<number>()) : brackets;
+  if (!/[*`]|~~/.test(s)) return masked;
+  const skip = masked ?? new Set<number>();
   for (let i = 0; i < s.length; i++) {
     const ch = s[i];
     if (ch === '*' || ch === '`' || (ch === '~' && (s[i - 1] === '~' || s[i + 1] === '~'))) skip.add(i);

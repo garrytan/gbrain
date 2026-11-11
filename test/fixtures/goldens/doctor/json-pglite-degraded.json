@@ -982,6 +982,15 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "Not applicable: the owner opt-in (access.owner_reads_restricted) is off; the owner reads a page that names readers or sits under a rule only when listed.",
+          "name": "access_owner_reads_restricted",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
           "name": "attest_read_shared_scope",
           "readiness_state": "not_applicable",
@@ -1251,6 +1260,22 @@
           "elapsed_ms": "<volatile>",
           "message": "Every timeline row has a bullet in its page (0 page(s) inspected).",
           "name": "timeline_history",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "count": "exact",
+            "pages": 0,
+            "scan_cap": 100000,
+            "truncated": false,
+            "value_count": 0,
+            "values": [],
+            "values_truncated": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+          "name": "privacy_label_ignored",
           "status": "ok"
         },
         {

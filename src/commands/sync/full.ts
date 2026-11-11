@@ -137,6 +137,7 @@ export async function performFullSync(
       // issue #1939: performFullSync owns the failure ledger + bookmark via the
       // shared gate below; don't let runImport double-record or write its own.
       managedBookmark: true,
+      noticeRun: 'sync',
       // #5988: a held rename destination whose old page changed is held, never imported as a new page.
       heldPaths: new Set(holds?.heldPaths),
       // #5988: content refusals are held, not failed (never gating the bookmark).
@@ -268,6 +269,7 @@ export async function performFullSync(
     ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
     ...(result.type_warnings ? { type_warnings: result.type_warnings } : {}),
     ...(result.resealed ? { resealed: result.resealed } : {}),
+    ...(result.privacy_label_notice ? { privacy_label_notice: result.privacy_label_notice } : {}),
     ...(reexportFailures.length ? { reexport_failures: reexportFailures } : {}),
   }, reasons, opts.sourceId);
 }

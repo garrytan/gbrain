@@ -36,6 +36,7 @@ import { jsonGuardActive, jsonRequested, setCliExitVerdict, writeJsonDocument } 
 import { BUDGET_STOP_EXIT_CODE } from '../core/exit-codes.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { usageError, writeCliError, writeCliRefusal } from '../cli/cli-error.ts';
+import { printHelpText } from '../cli/help/render.ts';
 import { cliRenderContext, renderAction, shellQuote, type Action } from '../core/agent-output.ts';
 import { codeEntry } from '../core/error-catalogue.ts';
 import { fetchSource } from '../core/sources-load.ts';
@@ -375,8 +376,8 @@ async function resolveBrainDir(
   return null;
 }
 
-function printHelp() {
-  console.log(`Usage: gbrain dream [options]
+function printHelp(args: string[]): Promise<void> {
+  return printHelpText('dream', `Usage: gbrain dream [options]
        gbrain dream retriage [flags]   (see: gbrain dream retriage --help)
        gbrain dream reset-key <key> | --list   (see: gbrain dream reset-key --help)
 
@@ -491,7 +492,7 @@ Configure synthesize:
 Related:
   gbrain autopilot --install            # continuous maintenance as a daemon
   gbrain autopilot                      # same maintenance cycle, scheduled
-`);
+`, args);
 }
 
 // ─── Human-friendly report printing ────────────────────────────────
@@ -756,7 +757,7 @@ export async function runDream(engine: BrainEngine | null, args: string[]): Prom
   // ALWAYS prints help and exits 0, never reaching the engine-null gate
   // below. If you reorder this, test/dream.test.ts ("--help --source whatever") fails.
   if (opts.help) {
-    printHelp();
+    await printHelp(args);
     return;
   }
 
