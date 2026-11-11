@@ -155,6 +155,7 @@ export async function ignoredPrivacyLabelRunNotice(engine: Pick<BrainEngine, 'ex
     const rows = await engine.executeRaw<{ type: string | null; frontmatter: Record<string, unknown> | null }>(
       `SELECT p.type, p.frontmatter FROM pages p
         WHERE p.source_id = $1 AND ${'slugs' in scope ? 'p.slug = ANY($2::text[])' : 'p.updated_at >= $2::timestamptz'} AND p.deleted_at IS NULL
+          AND NOT (p.frontmatter ? 'readable_by') AND p.folder_rule_ids IS NULL
           AND ${privacyLabelKeySql('p')} AND ${ignoredPrivacyLabelSql('p')}
         LIMIT ${SCAN_CAP}`, [sourceId, 'slugs' in scope ? [...new Set(scope.slugs)] : scope.since]);
     const tally = tallyIgnoredLabels(rows.map(row => ignoredPrivacyLabels(row)));

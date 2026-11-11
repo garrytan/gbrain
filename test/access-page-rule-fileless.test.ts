@@ -80,6 +80,12 @@ describe('page rules (slug:) in the folder-rule grammar', () => {
     expect(folderRulesAllow('projects/plan', rules, ['member:alice-example'])).toBe(true);
   });
 
+  test('numeric and keyword-like slugs, prefixes and readers survive a write and read of access.yml', () => {
+    const rules = ['2024', 'true', 'null', '1.5', '2024/'].map(p => { const r = normalizeRule(p.endsWith('/') ? { prefix: p, readable_by: ['2024'] } : { slug: p, readable_by: ['2024'] }); if (!('rule' in r)) throw new Error(r.problem); return r.rule; });
+    const back = parsePolicyYaml(serializePolicyYaml(rules));
+    expect(back.ok && back.rules.map(r => [r.id, r.prefix, r.readable_by])).toEqual([...rules].sort((a, b) => (a.id < b.id ? -1 : 1)).map(r => [r.id, r.prefix, r.readable_by]));
+  });
+
   test('a prefix without a trailing slash is still refused, and names the slug form; slug and prefix together are refused', () => {
     const r = normalizeRule({ prefix: 'projects', readable_by: ['owner-example'] });
     expect('problem' in r && r.problem).toContain('slug: projects');
@@ -156,6 +162,9 @@ for (const backend of testBackends()) {
       const read = await readers(engine);
       const added = await cli(engine, ['rule', 'add', '--slug', 'projects', '--readers', 'owner-example', '--yes']);
       expect({ state: added.state, store: added.store }).toEqual({ state: 'applied', store: 'database' });
+      const clash = await cli(engine, ['rule', 'add', '--prefix', 'projects.page/', '--readers', 'owner-example', '--yes']).catch(e => e);
+      expect({ code: clash.code, message: clash.message }).toEqual({ code: 'access_rule_invalid', message: 'Rule id "projects.page" already names projects, and projects.page/ derives the same id.' });
+      expect((await cli(engine, ['rule', 'list'])).rules.map((r: { id: string; prefix: string }) => [r.id, r.prefix])).toEqual([['projects.page', 'projects']]);
       expect({ unbound: await read('unbound', 'projects'), owner: await read('owner', 'projects'), folder: await read('unbound', 'projects/plan') })
         .toEqual({ unbound: false, owner: true, folder: true });
     }, 120_000);

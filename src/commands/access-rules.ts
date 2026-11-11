@@ -247,6 +247,8 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
         if ('problem' in r) {
           throw opError('access_rule_invalid', `The rule is invalid: ${r.problem}.`, 'Nothing was written. Example: gbrain access rule add --prefix partners/alice-example/ --readers alice-example,group:team-a');
         }
+        const taken = flag(args, '--id') === undefined ? base.find(b => b.id === r.rule.id && b.prefix !== r.rule.prefix) : undefined;
+        if (taken) throw opError('access_rule_invalid', `Rule id "${taken.id}" already names ${taken.prefix}, and ${r.rule.prefix} derives the same id.`, `Nothing was written. Name the new rule yourself: gbrain access rule add --id <rule> ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
         const clash = base.find(b => b.prefix === r.rule.prefix && b.id !== r.rule.id);
         if (clash) throw opError('access_rule_invalid', `Rule "${clash.id}" already covers ${r.rule.prefix}.`, `Nothing was written. Change that rule's readers instead: gbrain access rule add --id ${clash.id} ${r.rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${r.rule.prefix} --readers <list>.`);
         desired = sortRules([...base.filter(b => b.id !== r.rule.id), r.rule]);

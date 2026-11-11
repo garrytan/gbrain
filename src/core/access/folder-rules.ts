@@ -213,13 +213,14 @@ export function sortRules(rules: readonly FolderRule[]): FolderRule[] {
 
 /** The file text for a rulebook: the same grammar parsePolicyYaml reads, members written bare. */
 export function serializePolicyYaml(rules: readonly FolderRule[], comment?: string): string {
-  const reader = (p: string) => p.startsWith('member:') ? p.slice(7) : p;
+  const plain = (v: string) => (/^[a-z][a-z0-9._/:-]*$/.test(v) && !['true', 'false', 'null'].includes(v) ? v : JSON.stringify(v));
+  const reader = (p: string) => plain(p.startsWith('member:') ? p.slice(7) : p);
   const lines = [...(comment ? comment.split('\n').map(l => `# ${l}`) : []), `version: ${POLICY_VERSION}`];
   const sorted = sortRules(rules);
   if (!sorted.length) return [...lines, 'rules: []', ''].join('\n');
   lines.push('rules:');
   for (const r of sorted) {
-    lines.push(`  - id: ${r.id}`, r.prefix.endsWith('/') ? `    prefix: ${r.prefix}` : `    slug: ${r.prefix}`, `    readable_by: [${r.readable_by.map(reader).join(', ')}]`);
+    lines.push(`  - id: ${plain(r.id)}`, r.prefix.endsWith('/') ? `    prefix: ${plain(r.prefix)}` : `    slug: ${plain(r.prefix)}`, `    readable_by: [${r.readable_by.map(reader).join(', ')}]`);
   }
   return [...lines, ''].join('\n');
 }
