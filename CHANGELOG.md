@@ -10,6 +10,52 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.662.0] - 2026-11-11
+
+**QM, the AI helper that can use gbrain as one of its memories, can no longer write any page directly, and the brain owner can now review its proposals from another machine.** Every page write QM makes for a person waits for the owner's approval, a fact it saves for a person stays private, and the owner's admin session reaches the proposal review over the running server. Unattested calls and member-bound credentials behave as before.
+
+### Every page write from QM waits for the owner
+
+**QM can no longer write any page directly; every page write waits for the brain owner's approval.** QM is the AI helper that can use gbrain as one of its memories. Since v0.60.655.0 a call QM makes for a person (`x-qm-actor`) could not put, edit, link or add a timeline entry to a page; now no operation that writes a page is attestable, and a fact saved for a person can no longer be shared with everyone who reads the source. The person's own memory (`memory_write`, `remember` on their member page, `forget`, `forget_fact`) and owner-approved proposals (`memory_propose`) are unchanged. Unattested calls and member-bound credentials behave as before.
+
+#### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Page writes from QM | `add_timeline_entry`, `add_link`, `put_page` and `edit_page` were refused; every other page write could be listed in `--attest-ops` | every operation that writes a page's content, frontmatter, tags, links, timeline, facts, raw data or uploads, or deletes or restores it, is refused, and so are the shared rows with no page (`rate_answer` feedback, `log_ingest`, `loops_mute` and `loops_unmute`) (`actor_not_attested`, reason `op_not_attested`), at `--attest-ops`, on every call and when a queued write publishes |
+| A fact saved for a person | `share: true` put it on its subject's page for every reader of the source | refused (`invalid_params`, reason `attested_share_refused`), as is `visibility: "world"`; the reply points at `memory_propose` |
+| Writeback instructions for a service acting for a person | "share: true shares a fact about the team's work" | never pass `share: true`; propose team knowledge with `memory_propose` |
+| QM contract | v2 and v3 `deferred_ops` named 11 operations | they name every deferred operation; v1 is byte-identical |
+
+#### Itemized changes
+
+- `src/core/access/actor-model.ts`: `ACTOR_DEFERRED_OPS` gains every remaining page write, plus `rate_answer` (its feedback is keyed to the client, not the person, so one person could see another's restricted page in a refusal and move its ranking), `log_ingest` (text every reader of the ingest log sees) and `loops_mute`/`loops_unmute` (they close or reopen other people's loops). `test/qm-attest-write-boundary.test.ts` checks that every attestable mutating operation in the registry is either deferred or reviewed as not a page write, so a new page write cannot become attestable unnoticed.
+- `src/core/verbs.ts`, `src/core/access/member-facts.ts`, `src/core/persistence/memory-prepare.ts`: an attested `remember` refuses `share: true` and `visibility: "world"` at the call (a batch included), and a stored shared save made for a person is refused when it is prepared; a shared agent acting for an audience (`on_behalf_of`) still shares.
+- `src/core/facts/writeback-instructions.ts`: the instruction line for a service acting for a person.
+- `docs/contracts/qm-memory-provider/v2.json`, `v3.json`: regenerated `deferred_ops` (a published-contract amendment).
+- Docs: `docs/guides/qm.md`, `docs/mcp/ADMIN.md`, `docs/guides/write-refusals.md`, `docs/tutorials/company-brain.md`.
+- Tests: `test/qm-attest-write-boundary.test.ts` (new, PGLite and Postgres); `test/access-qm-actor.test.ts` calls every deferred operation attested; `test/access-member-facts.test.ts` and `test/remember-share-gst2243.test.ts` move their attested-write cases to the new boundary.
+
+### The owner reviews memory proposals remotely
+
+**The brain owner can now review QM's memory proposals from another machine.** QM is the AI helper that can use gbrain as one of its memories; it proposes timeline entries and links with `memory_propose`, and nothing lands until the owner says yes. Until now that yes needed a shell on the brain host (`gbrain memory-proposals`). The owner's admin session now reaches the same review over the running server.
+
+#### What changed
+
+| Area | Before | Now |
+|---|---|---|
+| Reviewing proposals remotely | a shell on the brain host | owner-session routes `GET /admin/api/memory-proposals` (`?source=`, `?cursor=`, oldest first, 50 a page), `GET /admin/api/memory-proposals/<request_id>` and `POST /admin/api/memory-proposals/<request_id>` (`{action: "approve"\|"deny", reason?, dryRun?}`), mirrored by `gbrain mcp admin memory-proposals list\|show\|approve\|deny`; no OAuth token or MCP tool reaches them |
+| Audit | CLI decisions record `decided_by` | HTTP decisions record `decided_by: admin-api` and one `access_admin` request-log row per applied decision, never the proposed text; a change that fails partway answers `outcome: unknown` |
+| `gbrain memory-proposals approve` when the approved write fails | exit 0 | exit 1; the HTTP approve reports `outcome: failed` with the write's receipt |
+
+#### Itemized changes
+
+- `src/commands/serve-http-access.ts`, `src/commands/serve-http-admin-api.ts`: `mountAdminMemoryProposals` beside gap 4's access routes, on the same `requireAdmin`, dry-run, audit and `outcome: unknown` pattern; approve and deny call the CLI's library functions, so the one transaction, the re-checked actor and page revision and the writer-door publication are shared.
+- `src/commands/mcp-admin.ts`: the `memory-proposals` mirror; each decision takes exactly one request id, and deny needs a 1-500 character reason.
+- `src/core/persistence/memory-proposals.ts`: a keyset page cursor for the owner list and `approveFailed`, the one rule the CLI exit code and the HTTP outcome share.
+- Docs: `docs/mcp/ADMIN.md`, `docs/guides/qm.md`.
+- Tests: `test/serve-http-memory-proposals.test.ts` (new, PGLite and Postgres), `test/mcp-admin-cli.serial.test.ts`.
+
 ## [0.60.661.0] - 2026-11-11
 
 **A take or a dated link no longer disappears when a page rewrite drops its section and a later write brings the section back.** Two writers rebuilt a dropped section from scratch: the takes writers numbered their new take from 1 over the stored takes, and `add_link` wrote a links section holding only the new link. Both now start from what the brain still stores.

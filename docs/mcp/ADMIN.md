@@ -256,8 +256,9 @@ access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
 `remember` saves to the person's own page `memory/members/<member>` (private,
-read back only by that member, written remotely by no one else) unless the call
-passes `share: true`, which saves on the subject's page for everyone who reads
+read back only by that member, written remotely by no one else); an attested call's
+`share: true` or `visibility: "world"` is refused (`attested_share_refused`), while a credential
+bound to a member may pass `share: true` to save on the subject's page for everyone who reads
 the source (refused with `share_target_restricted` on a page whose facts are kept private;
 only the brain host withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
@@ -269,8 +270,8 @@ list, so add each to `--attest-ops` only for the client serving the person's own
 only a fact on the person's own page (also for a credential bound to a member).
 A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
-`extract_facts`, `takes_add|update|resolve|supersede`, and the direct page writes
-`add_timeline_entry`, `add_link`, `put_page` and `edit_page`; an attested timeline entry or link goes
+`extract_facts`, `takes_add|update|resolve|supersede`, and every page write (`add_timeline_entry`,
+`add_link`, `put_page`, `edit_page`, tags, deletes, uploads and the rest: the contract's `deferred_ops`); an attested timeline entry or link goes
 through `memory_propose` and waits for your `gbrain memory-proposals approve` ([QM guide](../guides/qm.md#proposed-writes)). An `--attest-ops` list that already names one of these is refused for it
 (`actor_not_attested`, reason `op_not_attested`), and a queued attested write of one fails when it publishes.
 An attested read sees what that person sees, private facts included, and gbrain
@@ -288,8 +289,8 @@ audience reads none, and a hidden source is refused like one outside the grant. 
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
 
-From another machine, the owner manages the attest right, members and links
-over the running server:
+From another machine, the owner manages the attest right, members, links and
+QM's memory proposals over the running server:
 
 ```bash
 gbrain mcp admin attest CLIENT_ID --attest-actor qm [--attest-ops <op,...>] --dry-run \
@@ -297,6 +298,7 @@ gbrain mcp admin attest CLIENT_ID --attest-actor qm [--attest-ops <op,...>] --dr
 gbrain mcp admin member-add alice-example --email alice@example.com --url … --admin-token-file …
 gbrain mcp admin link alice-example --qm U0ALICE --dry-run --url … --admin-token-file …
 gbrain mcp admin link --email alice@example.com --qm U0ALICE --dry-run --url … --admin-token-file …
+gbrain mcp admin memory-proposals approve <request_id> --dry-run --url … --admin-token-file …
 ```
 
 The other commands are `--attest-actor none` (clear the right),
@@ -304,8 +306,12 @@ The other commands are `--attest-actor none` (clear the right),
 `unlink --qm ID` and `links [--member ID]`. A member's email is optional,
 stored lower-case and unique per brain; `link --email` finds the one member that
 declares it and makes the same link `link ID` makes, and an unknown email is
-`not_found` and creates nothing. They call `/admin/api/access/attest`, `/admin/api/access/members` and
-`/admin/api/access/member-links`. These routes accept only the owner session:
+`not_found` and creates nothing. `memory-proposals list [--source ID] [--cursor C]`, `show ID`,
+`approve ID` and `deny ID --reason TEXT` review proposals as `gbrain memory-proposals` does
+(text fenced, one request id per decision, `decided_by: admin-api`; an approve whose write did
+not commit reports `outcome: failed` and exits 1). They call `/admin/api/access/attest`,
+`/admin/api/access/members`, `/admin/api/access/member-links` and
+`/admin/api/memory-proposals`. These routes accept only the owner session:
 no OAuth token and no MCP tool reaches them. They refuse exactly what the
 local commands refuse, and each applied change is logged as `access_admin` in
 the request log. Removing a member stays a brain-host command

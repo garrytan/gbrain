@@ -479,6 +479,7 @@ test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-scrub-followups-9068.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
+test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
 test/qm-personal-sources.test.ts
@@ -547,6 +548,7 @@ test/search/rerank-gate-telemetry.test.ts
 test/segmented-untiled-hold-gst1209.test.ts
 test/serve-head-watcher-managed.serial.test.ts
 test/serve-http-access.test.ts
+test/serve-http-memory-proposals.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-catalog.test.ts
 test/shared-skills-retention-capacity.test.ts
