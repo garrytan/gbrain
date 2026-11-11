@@ -85,7 +85,7 @@ import { slugifySegment } from '../sync.ts';
 import { resolveAlias, resolveTierDefault } from '../model-config.ts';
 import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
-import { atomSourceDate } from './atom-source-date.ts';
+import { atomSourceDate, transcriptAtomSourceDate } from './atom-source-date.ts';
 import { normalizeForGrounding, isGroundingQuoteMark } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
@@ -1113,7 +1113,7 @@ export async function runPhaseExtractAtoms(
     try {
       origin = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
-      const contentDate = await atomSourceDate(engine, sourcePage); // #6720: captured with the input, before inference
+      const contentDate = await (item.kind === 'page' ? atomSourceDate(engine, sourcePage) : transcriptAtomSourceDate(engine, item.content, sourceDate(item.filePath, ''))); // #6720, #7268: captured with the input, before inference
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: sourcePage && { ...sourcePage, folder_restricted: await folderRestricted(engine, sourceId, item.slug) } });
       throwIfAborted(opts.signal, 'extract_atoms');
