@@ -18,7 +18,11 @@
  * the page's cap rises once however often the job or this slice is retried or
  * reclaimed, and continuations carry none. Every slice and continuation queues
  * under the spend authorization of the command that started it, so the
- * command's `--max-usd` ceiling meters all of them as one group.
+ * command's `--max-usd` ceiling meters all of them as one group. A page the
+ * embed-backfill job hands off carries that job's `embed.backfill_max_usd`
+ * ceiling (`spendCeiling`, embedding-ledger.ts JobSpendCeiling), and so does
+ * each continuation: the job and every page it handed off spend under one
+ * ceiling, and a batch past it stops the slice as `capped`.
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
@@ -30,6 +34,7 @@ import { keylessEmbedBackfill } from '../../embed-backfill-submit.ts';
 import { currentEmbeddingSignature } from '../../embedding.ts';
 import { resolveProvenanceStamp, stampIfPageProvenanceComplete } from '../../embed-stale.ts';
 import { pageEmbeddingLeaseUnavailable } from '../../page-embedding-lease.ts';
+import type { JobSpendCeiling } from '../../embedding-ledger.ts';
 import {
   EMBED_PAGE_SLICE_BATCHES, EMBED_PAGE_SLICE_MS, embedSegmentedPage, readSegmentedEmbedPage, segmentedProviderEmbed, type SegmentedEmbedFn,
 } from '../../page-body/segmented-embedding.ts';
@@ -50,7 +55,7 @@ export interface EmbedPageResult {
  * continuation per predecessor, an approval per approval identity (a re-run of its embed job queues no second slice).
  */
 export async function submitEmbedPageJob(engine: BrainEngine, page: { id: number; source_id: string },
-  opts: { reason: string; approvedCapUsd?: number; approvalId?: string; continuationOf?: number; spendAuthorization?: SpendAuthorization }): Promise<number | null> {
+  opts: { reason: string; approvedCapUsd?: number; approvalId?: string; continuationOf?: number; spendAuthorization?: SpendAuthorization; ceiling?: JobSpendCeiling }): Promise<number | null> {
   if (embedBackfillWorkerSurface(engine).status !== 'worker_backed') return null;
   const { MinionQueue } = await import('../queue.ts');
   const approvalId = opts.approvedCapUsd !== undefined ? opts.approvalId ?? randomUUID() : undefined;
@@ -61,8 +66,16 @@ export async function submitEmbedPageJob(engine: BrainEngine, page: { id: number
     pageId: page.id, sourceId: page.source_id, reason: opts.reason,
     ...(approvalId !== undefined ? { approvedCapUsd: opts.approvedCapUsd, approvalId } : {}),
     ...(opts.continuationOf !== undefined ? { continuation_of: opts.continuationOf } : {}),
+    ...(opts.ceiling ? { spendCeiling: opts.ceiling } : {}),
   }, { idempotency_key: key, priority: 5 }, opts.spendAuthorization ? { spendAuthorization: opts.spendAuthorization } : undefined);
   return job.id;
+}
+
+function parseSpendCeiling(raw: unknown): JobSpendCeiling | undefined {
+  if (raw === undefined) return undefined;
+  const { jobId, capUsd } = (raw ?? {}) as Record<string, unknown>;
+  if (Number.isSafeInteger(jobId) && Number(jobId) > 0 && typeof capUsd === 'number' && capUsd >= 0) return { jobId: Number(jobId), capUsd };
+  throw new UnrecoverableError('embed-page: data.spendCeiling must be { jobId: positive integer, capUsd: number >= 0 }');
 }
 
 export function makeEmbedPageHandler(engine: BrainEngine, deps: { embedFn?: SegmentedEmbedFn } = {}) {
@@ -76,8 +89,9 @@ export function makeEmbedPageHandler(engine: BrainEngine, deps: { embedFn?: Segm
     if (marker?.skip) return { status: 'skipped', reason: 'embed_skip', pageId, embedded: 0 };
     const approvedCapUsd = typeof job.data.approvedCapUsd === 'number' && job.data.approvedCapUsd >= 0 ? job.data.approvedCapUsd : undefined;
     const approvalId = approvedCapUsd === undefined ? undefined : typeof job.data.approvalId === 'string' ? job.data.approvalId : `embed-page-job:${job.id}`;
+    const ceiling = parseSpendCeiling(job.data.spendCeiling);
     const signature = currentEmbeddingSignature() ?? undefined;
-    const result = await embedSegmentedPage(engine, page, { embedFn: deps.embedFn ?? segmentedProviderEmbed, signal: job.signal, signature, approvedCapUsd, approvalId,
+    const result = await embedSegmentedPage(engine, page, { embedFn: deps.embedFn ?? segmentedProviderEmbed, signal: job.signal, signature, approvedCapUsd, approvalId, ceiling,
       maxBatches: EMBED_PAGE_SLICE_BATCHES, deadline: Math.min(Date.now() + EMBED_PAGE_SLICE_MS, job.deadlineAtMs ?? Infinity) });
     await job.updateProgress({ embedded: result.embedded, stopped: result.stopped ?? null }).catch(() => undefined);
     if (result.complete) {
@@ -87,7 +101,7 @@ export function makeEmbedPageHandler(engine: BrainEngine, deps: { embedFn?: Segm
     }
     if (result.stopped === 'busy') throw pageEmbeddingLeaseUnavailable(pageId, false);
     if (result.stopped === 'slice') {
-      const next = await submitEmbedPageJob(engine, page, { reason: 'continuation', continuationOf: job.id, spendAuthorization: job.spend?.record });
+      const next = await submitEmbedPageJob(engine, page, { reason: 'continuation', continuationOf: job.id, spendAuthorization: job.spend?.record, ceiling });
       return { status: 'continued', pageId, embedded: result.embedded, next_job_id: next };
     }
     return { status: result.stopped === 'budget' ? 'capped' : result.stopped!, pageId, embedded: result.embedded };

@@ -40,6 +40,7 @@ import { acquirePageEmbeddingLease, stillPendingChunks } from './page-embedding-
 import { chunkGenerationFilter, chunkVisibleFilter } from './search/safe-chunks.ts';
 import { pageBudgetLimitedFilter } from './page-size-policy.ts';
 import { embedSegmentedPage, embedSegmentedRows, readSegmentedEmbedPage, type SegmentedEmbedOpts } from './page-body/segmented-embedding.ts';
+import type { JobSpendCeiling } from './embedding-ledger.ts';
 
 /**
  * W0 fix-wave (Tier-1 #3, CONFIRMED): the ONE carry-through field list for
@@ -127,6 +128,8 @@ export interface EmbedStaleOpts {
    * instead of embedding it here; set by the embed-backfill job. Without a resident worker the page embeds inline.
    */
   delegateSegmented?: boolean;
+  /** With `delegateSegmented`: the calling job's ceiling, carried by each embed-page job it queues. */
+  ceiling?: JobSpendCeiling;
 }
 
 export interface EmbedStaleResult {
@@ -315,7 +318,7 @@ async function listSegmentedStalePages(engine: BrainEngine, sourceId: string): P
  */
 async function embedSegmentedStalePages(engine: BrainEngine, sourceId: string, result: EmbedStaleResult,
   opts: Omit<SegmentedEmbedOpts, 'beforeInstall'> & { deadline?: number; stamp?: ProvenanceStamp; delegate?: boolean; assertOwned?: (tx?: BrainEngine) => Promise<void>; stopped: () => boolean }): Promise<boolean> {
-  const { stamp, delegate, assertOwned, stopped, ...embedOpts } = opts;
+  const { stamp, delegate, assertOwned, stopped, ceiling, ...embedOpts } = opts;
   for (const pageId of await listSegmentedStalePages(engine, sourceId)) {
     if (stopped()) return true;
     await assertOwned?.();
@@ -323,7 +326,7 @@ async function embedSegmentedStalePages(engine: BrainEngine, sourceId: string, r
     if (!page) continue;
     if (delegate) {
       const { submitEmbedPageJob } = await import('./minions/handlers/embed-page.ts');
-      if (await submitEmbedPageJob(engine, page, { reason: 'embed-backfill' }) !== null) {
+      if (await submitEmbedPageJob(engine, page, { reason: 'embed-backfill', ceiling }) !== null) {
         result.delegatedPages = (result.delegatedPages ?? 0) + 1;
         continue;
       }
@@ -561,7 +564,7 @@ export async function embedStaleForSource(
   if (sweep.state === 'failed') process.stderr.write(`\n  [embed-stale] ${contentDriftSweepLine(sweep, true)}\n`);
   if (stopped()) return { ...result, aborted: true };
 
-  if (await embedSegmentedStalePages(engine, sourceId, result, { embedFn: opts.embedFn, signal, signature, stamp, deadline: opts.deadline, delegate: opts.delegateSegmented, assertOwned: opts.assertOwned, stopped })) return { ...result, aborted: true };
+  if (await embedSegmentedStalePages(engine, sourceId, result, { embedFn: opts.embedFn, signal, signature, stamp, deadline: opts.deadline, delegate: opts.delegateSegmented, ceiling: opts.ceiling, assertOwned: opts.assertOwned, stopped })) return { ...result, aborted: true };
   for (;;) {
     if (stopped()) {
       result.aborted = true;

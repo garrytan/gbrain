@@ -42,6 +42,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 
 const ROW = (i: number) => `Row ${i}: herons wade in the marsh at dawn while the reeds bend, `.padEnd(300, 'and the tide turns slowly. ');
 const ROW_USD = estimateCostFromChars(ROW(0).length, UNPRICED_RATE_PER_MTOK);
+const BACKFILL_MAX_USD_KEY = 'embed.backfill_max_usd';
 const rowOf = (text: string) => Number(/Row (\d+):/.exec(text)?.[1] ?? -1);
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 const hang = () => new Promise<never>(() => {});
@@ -78,7 +79,7 @@ for (const kind of testBackends()) {
         await engine.executeRaw(`DELETE FROM ${table}`);
       }
       await engine.executeRaw("DELETE FROM gbrain_cycle_locks WHERE id LIKE 'embed-page:%'");
-      await engine.executeRaw('DELETE FROM config WHERE key = ANY($1::text[])', [[PAGE_EMBED_CAP_KEY, PAGE_TAIL_USD_KEY, SOURCE_SPEND_CAP_KEY]]);
+      await engine.executeRaw('DELETE FROM config WHERE key = ANY($1::text[])', [[PAGE_EMBED_CAP_KEY, PAGE_TAIL_USD_KEY, SOURCE_SPEND_CAP_KEY, BACKFILL_MAX_USD_KEY]]);
       sent = [];
     });
     afterEach(() => { embeddingBatchProbe.beforeCall = undefined; embeddingBatchProbe.afterReturned = undefined; });
@@ -372,6 +373,46 @@ for (const kind of testBackends()) {
     });
 
     if (kind === 'postgres') {
+      test('a backfill job\'s delegated embed-page jobs and their continuations share its embed.backfill_max_usd with its own calls', async () => {
+        const a = await seed('chats/ceiling-a', 10);
+        const b = await seed('chats/ceiling-b', 30);
+        await engine.setConfig(BACKFILL_MAX_USD_KEY, '1');
+        const delegating = (e: BrainEngine, s: string, o: Parameters<typeof embedStaleForSource>[2]) => embedStaleForSource(e, s, { ...o, embedFn });
+        expect(await makeEmbedBackfillHandler(engine, { runStale: delegating })(jobCtx(601, { sourceId: 'default' }))).toMatchObject({ status: 'success' });
+        const children = new Map((await engine.executeRaw<{ id: number; data: Record<string, unknown> }>("SELECT id, data FROM minion_jobs WHERE name = 'embed-page' ORDER BY id"))
+          .map(job => [Number(job.data.pageId), job]));
+        expect([...children.keys()].sort()).toEqual([a.page.id, b.page.id].sort());
+        expect(sent).toEqual([]);
+
+        // Page A embeds through a continuation of its slice, so the continuation carries the parent's ceiling too.
+        const sliceA = children.get(a.page.id)!;
+        expect(await makeEmbedPageHandler(engine, { embedFn })(jobCtx(Number(sliceA.id), sliceA.data, { deadlineAtMs: Date.now() - 1 }))).toMatchObject({ status: 'continued' });
+        const [continuation] = await engine.executeRaw<{ id: number; data: Record<string, unknown> }>(
+          "SELECT id, data FROM minion_jobs WHERE name = 'embed-page' AND (data->>'continuation_of')::int = $1", [Number(sliceA.id)]);
+        expect(await makeEmbedPageHandler(engine, { embedFn })(jobCtx(Number(continuation!.id), continuation!.data))).toMatchObject({ status: 'complete', embedded: 10 });
+        const [spentA] = await engine.executeRaw<{ usd: number }>("SELECT sum(usd) AS usd FROM embedding_spend WHERE page_id = $1 AND state <> 'released'", [a.page.id]);
+        const usdA = Number(spentA!.usd);
+        expect(usdA).toBeGreaterThan(0);
+
+        // The parent's own calls leave 3.5x page A's spend; page A already took 1x of it, so page B (3x page A) no longer fits.
+        await engine.executeRaw("INSERT INTO embedding_spend (batch_id, source_id, page_id, kind, usd, state) VALUES ('job:601:inline', 'default', NULL, 'job', $1, 'settled')", [1 - 3.5 * usdA]);
+        const sliceB = children.get(b.page.id)!;
+        expect(await makeEmbedPageHandler(engine, { embedFn })(jobCtx(Number(sliceB.id), sliceB.data))).toMatchObject({ status: 'capped', embedded: 0 });
+        expect(sent.length).toBe(10);
+        expect(await vectored(b.page.id)).toBe(0);
+
+        // The parent's own next call counts what its delegated pages spent: refused before it is sent.
+        let provider = 0;
+        const drain = async (_engine: BrainEngine, _source: string, opts: { signal?: AbortSignal }) => {
+          try { await invokeAI(EMBED_CALL, async () => { provider++; return { usage: { tokens: 1000 } }; }, sdkInvocationUsage); } catch { /* the drain logs a failed key and moves on */ }
+          return { embedded: 0, chunksProcessed: 0, pagesProcessed: 0, invalidated: 0, done: true, aborted: opts.signal?.aborted === true, remaining: 0 } as never;
+        };
+        expect(await makeEmbedBackfillHandler(engine, { runStale: drain as never })(jobCtx(601, { sourceId: 'default' }))).toMatchObject({ status: 'budget_exhausted', budgetCapUsd: 1 });
+        expect(provider).toBe(0);
+        const [group] = await engine.executeRaw<{ usd: number }>("SELECT sum(usd) AS usd FROM embedding_spend WHERE state <> 'released'");
+        expect(Number(group!.usd)).toBeLessThanOrEqual(1 + 1e-9);
+      });
+
       test('embed <slug> --background --max-usd N carries the slug and the approval; the job hands the page to embed-page with it and its spend authorization', async () => {
         const { page } = await seed('chats/background-approval', 10, { large: true });
         await engine.executeRaw("INSERT INTO page_embedding_budget (page_id, state, reason, spent_usd, cap_usd) VALUES ($1, 'capped', 'cap_reached', 2, 2)", [page.id]);

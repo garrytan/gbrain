@@ -24,7 +24,9 @@
  *     fail-closed. Goes through `withBudgetTracker` so `gateway.embed()`
  *     auto-composes via AsyncLocalStorage. On `BudgetExhausted` throw, partial
  *     progress is preserved (chunks already embedded stay embedded; remaining
- *     stays NULL).
+ *     stays NULL). The cap also covers the segmented pages the job hands to
+ *     embed-page jobs: each carries it (embedding-ledger.ts JobSpendCeiling),
+ *     and the source ledger counts their spend with the job's own calls.
  *
  *   - D15.1: parent-job linkage is INTENTIONALLY OMITTED. The submit-side
  *     helper does not pass `parent_job_id` — the queue's parent-child
@@ -57,7 +59,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext } from '../types.ts';
 import { parseUsdLimit, usdLimitToCap, resolveSpendPosture } from '../../spend-posture.ts';
 import { recordMinionJobSpend } from '../../minion-spend.ts';
-import { withSourceSpendLedger, type SourceSpendCapped } from '../../embedding-ledger.ts';
+import { SourceSpendCapped, withSourceSpendLedger, type JobSpendCapped } from '../../embedding-ledger.ts';
 
 import { embedBackfillLockId, EMBED_BACKFILL_LOCK_TTL_MIN } from '../../embed-backfill-lock.ts';
 import { keylessEmbedBackfill, reportKeylessNotice } from '../../embed-backfill-submit.ts';
@@ -302,13 +304,15 @@ export function makeEmbedBackfillHandler(
       drainAbort.abort();
     });
 
-    // Wave C 1F: each embedding call is reserved in the source's 24-hour ledger before it is sent; a refusal stops the drain.
-    let sourceCapped: SourceSpendCapped | null = null;
+    // Wave C 1F: each embedding call is reserved in the source's 24-hour ledger before it is sent, and counted with the
+    // delegated pages' spend against this job's cap; a refusal stops the drain.
+    let refused: SourceSpendCapped | JobSpendCapped | null = null;
     try {
-      const result = await withSourceSpendLedger(engine, { sourceId, jobId: job.id, onRefused: refusal => { sourceCapped = refusal; drainAbort.abort(); } }, () => withBudgetTracker(tracker, async () =>
+      const result = await withSourceSpendLedger(engine, { sourceId, jobId: job.id, capUsd, onRefused: refusal => { refused = refusal; drainAbort.abort(); } }, () => withBudgetTracker(tracker, async () =>
         runStale(engine, sourceId, {
-          // Wave C 1F: each segmented page goes to its own embed-page job (bounded slices, the page's own order).
+          // Wave C 1F: each segmented page goes to its own embed-page job (bounded slices, the page's own order), under this job's cap.
           delegateSegmented: true,
+          ...(capUsd !== undefined && { ceiling: { jobId: job.id, capUsd } }),
           batchSize,
           signal: drainAbort.signal,
           deadline: job.deadlineAtMs ?? undefined,
@@ -346,10 +350,10 @@ export function makeEmbedBackfillHandler(
           },
         }),
       ));
-      if (sourceCapped) {
-        const capped: SourceSpendCapped = sourceCapped;
+      const capped = refused as SourceSpendCapped | JobSpendCapped | null;
+      if (capped) {
         return { status: 'budget_exhausted', sourceId, embedded: result.embedded, chunksProcessed: result.chunksProcessed, pagesProcessed: result.pagesProcessed,
-          invalidated: result.invalidated, spentUsd: tracker.totalSpent, budgetCapUsd: capped.capUsd, reason: 'source_spend_capped' };
+          invalidated: result.invalidated, spentUsd: tracker.totalSpent, budgetCapUsd: capped.capUsd, ...(capped instanceof SourceSpendCapped && { reason: 'source_spend_capped' as const }) };
       }
 
       if (stalled) {

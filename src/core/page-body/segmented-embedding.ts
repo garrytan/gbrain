@@ -18,15 +18,14 @@ import { embeddingInputHash, plainEmbeddingTier } from '../embedding-input-hash.
 import { estimatePageEmbedUsd, meterPageBatch } from '../page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, vectorlessChunkIndexes } from '../page-embedding-lease.ts';
 import {
-  discardAnsweredBatch, embeddingBatchContext, embeddingBatchProbe, markBatchUncertain, readEmbedProgress, recoverPageBatches, releaseEmbeddingBatch,
+  discardAnsweredBatch, embeddingBatchContext, embeddingBatchId, embeddingBatchProbe, markBatchUncertain, readEmbedProgress, recoverPageBatches, releaseEmbeddingBatch,
   releaseUncertainBatches, reserveEmbeddingBatch, resolvePageTailUsdPerDay, saveEmbedProgress, storeBatchVectors, textMd5, withBatchReserved,
-  type EmbedOrder, type EmbedProgress, type EmbeddingBatchRow,
+  type EmbedOrder, type EmbedProgress, type EmbeddingBatchRow, type JobSpendCeiling,
 } from '../embedding-ledger.ts';
 import { withAIInvocationGuard, withAIInvocationMeter } from '../ai/invocation-guard.ts';
 import { embedBatch } from '../embedding.ts';
 import { abortableSleep, detect429FromCause, MAX_RATE_LIMIT_RETRIES, rateLimitDelayMs } from '../embed-retry.ts';
 import { pageApprovalApplied } from '../page-embedding-budget.ts';
-import { randomUUID } from 'node:crypto';
 import { embeddingInputContext, embeddingWriteTarget } from '../page-state/projections.ts';
 import { quoteIdentifier, vectorCastSuffix } from '../search/embedding-column.ts';
 import { chunkGenerationFilter, currentTextProjectionFilter } from '../search/safe-chunks.ts';
@@ -80,6 +79,8 @@ export interface SegmentedEmbedOpts {
   whileWaiting?: () => Promise<void>;
   /** An append's own rows on a capped page: granted from the tail allowance (embed.page_tail_usd_per_day) once the cap leaves them out. */
   tail?: boolean;
+  /** The embed-backfill job whose ceiling this page's batches spend under; a batch past it stops the run like the page's cap. */
+  ceiling?: JobSpendCeiling;
 }
 
 /** A segmented page that is live, sealed and in a live source, by id or by source and slug; null otherwise (inline pages included). */
@@ -206,7 +207,8 @@ export interface SegmentedBatchResult {
  * installs each vector with its recorded input on the row with the same
  * chunk_index and text while that row is in the live generation and the
  * page's title, mode and write target are unchanged. Null when the budget
- * holds the page or the cap left nothing to embed.
+ * holds the page, the cap left nothing to embed, or the batch would pass the
+ * ceiling of the job it spends under (`ceiling`).
  */
 export async function embedSegmentedRows(engine: BrainEngine, page: SegmentedEmbedPage, listed: readonly SegmentedStaleRow[],
   opts: SegmentedEmbedOpts & { includeEmbedded?: boolean }): Promise<SegmentedBatchResult | null> {
@@ -240,13 +242,13 @@ export async function embedSegmentedRows(engine: BrainEngine, page: SegmentedEmb
   const grant = metered.grant;
   const tailUsd = grant?.tailUsd ?? 0;
   const pageUsd = grant ? grant.reservedUsd : estimatePageEmbedUsd(chunks.reduce((n, chunk) => n + chunk.chunk_text.length, 0), opts.signature);
-  const batchId = randomUUID();
+  const batchId = embeddingBatchId(opts.ceiling);
   const reserved = await reserveEmbeddingBatch(engine, { batchId, pageId: page.id, sourceId: page.source_id, generation: page.body_generation,
     column: target.column.name, signature: opts.signature ?? null, context: embeddingBatchContext(page, target), rows: batchRows,
-    pageUsd, tailUsd, enforce: opts.approvedCapUsd === undefined });
+    pageUsd, tailUsd, enforce: opts.approvedCapUsd === undefined, ceiling: opts.ceiling });
   if (!reserved.ok) {
     await grant?.settle({ ok: false });
-    return { pending: rows.length, installed: replayed, sourceCapped: true };
+    return reserved.jobCapped ? null : { pending: rows.length, installed: replayed, sourceCapped: true };
   }
   await embeddingBatchProbe.beforeCall?.(batchId);
   const call = await callBatchProvider(opts.embedFn ?? segmentedProviderEmbed, wrapChunkTextsForStoredMode(page, chunks), opts.signal);
