@@ -18,10 +18,10 @@ identifiers and attribution are available in the pre-removal Git revision
 
 - `src/commands/git.ts`: every mode passes `scanSecrets` (`--scan-secrets` is still accepted), `--scan-timeout <s>` (whole seconds, not with `--pull`), progress lines on stderr, and a scan refusal logged as `LOCAL-ONLY, NEEDS ATTENTION ... the push was refused (<code>)`.
 - `src/core/git/range-secret-scan.ts`: commit messages read with one `cat-file --batch` and patches with one `diff-tree` per 256 commits (the patch file holds one batch, not the whole history), progress lines, `PublishScanOptions` (budget, progress, retry command), and a timed-out scan refused with an agent fix that reruns with four times the budget (at least 1200 s).
-- `src/core/git/commit-push.ts`, `src/core/workspace-push.ts`, `src/core/bootstrap/repo.ts`: `--no-follow-tags` on every push; `gbrain sources push` fetches origin's branch before it scans and returns the scan refusal as `blocked_history`.
+- `src/core/git/commit-push.ts`, `src/core/workspace-push.ts`, `src/core/bootstrap/repo.ts`: `--no-follow-tags --recurse-submodules=no` on every push, so no tag or submodule commit goes out unscanned; `gbrain sources push` fetches origin's branch before it scans and returns the scan refusal as `blocked_history`.
 - `src/commands/sources.ts`, `src/commands/bootstrap.ts`: `--scan-timeout`; `sources push` prints a `blocked_history` refusal and exits 5.
 - `src/core/access/policy-git.ts`: a scan refusal returns `committed_not_pushed` with the refusal in its note.
-- `src/core/brain-repo-durability.ts`: the helper's no-gbrain fallback commits, logs the commit as local-only and exits 4 (0 when the branch is already on the remote).
+- `src/core/brain-repo-durability.ts`: the post-commit hook and the helper pass `--scan-secrets` (so an older gbrain still scans), the helper uses only a gbrain whose `git commit-push --help` names `--scan-timeout`, and its fallback commits, logs the commit as local-only and exits 4 (0 when the branch is already on the remote).
 - Tests: `test/unmanaged-push-every-site-gst2456.serial.test.ts` (each push site against a local bare remote, tags, another upstream remote, the `--json` refusal, the budget and progress); the #8902, fallback and bootstrap argv tests follow the new contracts.
 
 ## [0.60.678.0] - 2026-11-11

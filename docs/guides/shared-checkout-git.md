@@ -120,8 +120,9 @@ carries a trailer), `--json` prints one JSON result (or the error envelope),
 secret scan every push runs a longer budget than its 300 s default. The command is local only: it pushes
 with this machine's git credentials and is never exposed over MCP.
 
-When gbrain is not installed on the machine, the helper falls back to a locked
-path-scoped commit and pushes nothing, because only gbrain scans the commits it
+When gbrain is not installed on the machine, or the installed one predates the
+scan on every push (its `git commit-push --help` has no `--scan-timeout`), the
+helper falls back to a locked path-scoped commit and pushes nothing, because only gbrain scans the commits it
 publishes for secrets. It exits 4 (0 when the branch is already on the remote),
 logs the commit as local-only and tells you to install gbrain and run
 `gbrain git commit-push --push-only`. A named path git left out of the commit
