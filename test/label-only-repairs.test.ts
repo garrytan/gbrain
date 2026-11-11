@@ -38,8 +38,8 @@ import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 const NL = String.fromCharCode(10);
 const putPage = operations.find(op => op.name === 'put_page')!;
 const OPTS = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true };
-/** Keys out of canonical order, a slug key, a source_kind the provenance column does not hold. */
-const file = (slug: string, labels = '') => ['---', 'title: Example Page', 'slug: ' + slug, 'source_kind: email-example', 'type: note', ...(labels ? [labels] : []),
+/** Keys out of canonical order, a slug key, provenance stamps (source_kind, ingested_via) the provenance columns do not hold. */
+const file = (slug: string, labels = '') => ['---', 'title: Example Page', 'slug: ' + slug, 'source_kind: email-example', 'ingested_via: connector-example', 'type: note', ...(labels ? [labels] : []),
   'owner_note: kept', 'tags:', '  - alpha', '---', '', 'Body line one of ' + slug + '.', '', 'Second paragraph.', ''].join(NL);
 const withLine = (text: string, line: string) => text.replace(NL + 'tags:', NL + 'tags:').replace(NL + '---' + NL + NL, NL + line + NL + '---' + NL + NL);
 
@@ -93,6 +93,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
     expect(after.tier).toBe('operator_curated');
     expect(after.frontmatter.visibility).toBe('private');
     expect(after.frontmatter.source_kind).toBe('email-example');
+    expect(after.frontmatter.ingested_via).toBe('connector-example');
     expect(await proposals(engine)).toEqual([]);
     expect(onDisk(root, slug)).toBe(withLine(before, 'visibility: private'));
     expect(git(root, 'status', '--porcelain', '--', slug + '.md').trim()).toBe('');
@@ -141,6 +142,31 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
     expect(await engine.executeRaw("SELECT id FROM trust_proposals WHERE action='lower_page'")).toEqual([]);
     expect(onDisk(root, slug)).toBe(withFacts('private'));
   }, { databaseUrl, setup }), 180_000);
+
+  test('repair visibility --slug on a database-only page (a db_only path) writes only the label: tier and provenance kept, no file', () => managedBrain(async ({ engine, root, ctx }) => {
+    const slug = 'email/mail-example';
+    await putPage.handler(ctx, { slug, content: file(slug), request_id: randomUUID(), wait_ms: 30_000 });
+    await settleManagedGitEffects(engine);
+    await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(
+      "UPDATE pages SET source_kind='mail-example', ingested_via='connector-example', ingested_at='2026-01-02T00:00:00Z' WHERE source_id='default' AND slug=$1", [slug]), TEST_WRITE_ATTRIBUTION));
+    const stamps = "SELECT trust_tier::text AS tier, source_kind, ingested_via, ingested_at FROM pages WHERE source_id='default' AND slug=$1";
+    const before = (await engine.executeRaw(stamps, [slug]))[0];
+    const proposalsBefore = await proposals(engine);
+    const frontmatter = (await page(engine, slug)).frontmatter;
+    const { applied } = await previewApply(engine, ['visibility', '--slug', slug]);
+    await settleManagedGitEffects(engine);
+    expect(applied.applied).toBe(1);
+    expect((await engine.executeRaw(stamps, [slug]))[0]).toEqual(before);
+    expect((await page(engine, slug)).frontmatter).toEqual({ ...frontmatter, visibility: 'private' });
+    expect(await proposals(engine)).toEqual(proposalsBefore);
+    expect(git(root, 'ls-files', 'email').trim()).toBe('email/.keep');
+  }, { databaseUrl, setup: ({ root }) => {
+    writeFileSync(join(root, '.gitignore'), 'archive/' + NL);
+    writeFileSync(join(root, 'gbrain.yml'), 'storage:' + NL + '  db_only:' + NL + '    - email' + NL);
+    mkdirSync(join(root, 'email'), { recursive: true });
+    writeFileSync(join(root, 'email', '.keep'), '');
+    durableGitRepo(root, ['.gitignore', 'gbrain.yml', 'email/.keep']);
+  } }), 180_000);
 
   test('repair private-labels clear and restore change only the label lines, and keep the tier', () => managedBrain(async ({ engine, root }) => {
     const slug = 'notes/labelled-example';
@@ -197,14 +223,17 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
           const seed = async (sourceId: string, slug: string) => {
             expect((await importFromContent(engine, slug, file(slug), { noEmbed: true, sourceId })).status).toBe('imported');
             await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => withTrustBackfill(tx, () =>
-              tx.executeRaw("UPDATE pages SET trust_tier='operator_curated' WHERE source_id=$1 AND slug=$2", [sourceId, slug])), TEST_WRITE_ATTRIBUTION));
+              tx.executeRaw("UPDATE pages SET trust_tier='operator_curated', source_kind='mail-example', ingested_via='connector-example', ingested_at='2026-01-02T00:00:00Z' WHERE source_id=$1 AND slug=$2", [sourceId, slug])), TEST_WRITE_ATTRIBUTION));
           };
           await seed('default', 'notes/plain-example');
+          const stamps = "SELECT source_kind, ingested_via, ingested_at FROM pages WHERE source_id='default' AND slug='notes/plain-example'";
+          const stamped = await engine.executeRaw(stamps);
           const { applied } = await previewApply(engine, ['visibility', '--source', 'default', '--slug', 'notes/plain-example']);
           expect(applied.applied).toBe(1);
           const [row] = await engine.executeRaw<{ tier: string; visibility: string }>(
             "SELECT trust_tier::text AS tier, frontmatter->>'visibility' AS visibility FROM pages WHERE source_id='default' AND slug='notes/plain-example'");
           expect(row).toEqual({ tier: 'operator_curated', visibility: 'private' });
+          expect(await engine.executeRaw(stamps)).toEqual(stamped);
           expect(await proposals(engine)).toEqual([]);
           expect((await listLabelLowerings(engine)).counts.lower_page).toBe(0);
         } finally { await disposePersistenceConsumer(engine); await close(); }
@@ -243,6 +272,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
     expect(stored.tier).toBe('operator_curated');
     expect(stored.frontmatter.visibility).toBe('private');
     expect(stored.frontmatter.source_kind).toBe('email-example');
+    expect(stored.frontmatter.ingested_via).toBe('connector-example');
     expect(await proposals(engine)).toEqual([]);
     expect(readFileSync(path, 'utf8')).toBe(withLine(before, 'visibility: private'));
   }), 180_000);
