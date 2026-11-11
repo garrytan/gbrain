@@ -34,7 +34,10 @@ export function labelEditedFrontmatter(frontmatter: Record<string, unknown>, edi
   return Object.assign(Object.fromEntries(Object.entries(frontmatter).filter(([key]) => !edit.remove.includes(key))), edit.set);
 }
 
-const keyLine = (key: string) => new RegExp(`^${key}[ \t]*:(?:[ \t]|\r?\n|$)`);
+const KEY_LINES: Record<string, RegExp> = {
+  visibility: /^visibility[ \t]*:(?:[ \t]|\r?\n|$)/, access: /^access[ \t]*:(?:[ \t]|\r?\n|$)/, confidentiality: /^confidentiality[ \t]*:(?:[ \t]|\r?\n|$)/,
+};
+const keyLine = (key: string) => KEY_LINES[key] ?? /(?!)/;
 
 /**
  * text with the edit applied to its frontmatter lines, and the file's head through the closing --- line, or null when

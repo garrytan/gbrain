@@ -168,7 +168,7 @@ async function planAliases(engine: BrainEngine, sourceIds: string[], only?: numb
  * operator's own single-page label change, which a put_page would rate as an agent edit (trust/channel.ts).
  */
 async function planNamed(engine: BrainEngine, sourceIds: string[], slugs: string[]) {
-  const rows = await engine.executeRaw<DerivedRow>(`SELECT p.id,p.source_id,p.slug,p.type,p.frontmatter->>'visibility' AS visibility,length(p.compiled_truth) AS chars
+  const rows = await engine.executeRaw<DerivedRow>(`SELECT p.id,p.source_id,p.slug,p.type,p.frontmatter->>'visibility' AS visibility,COALESCE(p.body_bytes, 0) AS chars
     FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND p.slug=ANY($2::text[]) ORDER BY p.id`, [sourceIds, slugs], bounded);
   const changes = rows.flatMap(page => {
     const next = tightened(page.visibility, 'private');
