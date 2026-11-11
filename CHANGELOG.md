@@ -21,6 +21,24 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/config.ts`: the key is registered, so `gbrain config set` accepts it.
 - Docs: `docs/guides/live-sync.md`, `docs/guides/shared-checkout-git.md`.
 - Tests: `test/reconcile-publish-opt-out-gst2250.test.ts` (PGLite and Postgres): an opted-out source stays unpublished, syncs and fast-forwards while another source publishes; a managed member opted out blocks refresh's publish and sync still imports; the global key, `set-sync off` and a key set to `true` behave as before; a hung child's grandchild is gone after the timeout.
+## [0.60.675.0] - 2026-11-11
+
+**Tool calls through native OpenAI models no longer fill every optional argument with a placeholder.** gbrain's tool loop (subagent jobs and SkillOpt rollouts) sends OpenAI models through the Responses API, and that API treats a tool definition with no `strict` field as strict: it marks every property required, so the model has to invent a value for each optional argument. A `get_page` call came back with a zero-line window and an empty byte range, which gbrain's own argument checks then refused. Native OpenAI tool definitions now say `strict: false`, so the schema's own `required` list holds and the model sends only the arguments it means. Anthropic, Google and the OpenAI-compatible providers (chat completions) send the same request as before. Reported and first fixed by @akinduroifedayo.
+
+### Itemized changes
+
+- `src/core/ai/gateway.ts`: `toAISDKTools` takes an optional `strict` value, and `chatAdmitted()`, which every `chat()` call goes through, passes `false` on the `native-openai` route only; every other route leaves the field out.
+- Tests: `test/ai/native-openai-tool-strict-wire.test.ts` drives `chat()` and `toolLoop()` against a local stub and checks the request body per route: native OpenAI carries `strict: false` on every tool and every turn with the schema's `required` list unchanged; native Anthropic, native Google and an OpenAI-compatible recipe send no `strict` field.
+
+## [0.60.674.0] - 2026-11-11
+
+### A managed sync's file freeze no longer holds timers through its Git reads
+
+**While a managed sync freezes a file, it now lets timers and other work run between its Git reads once it has run about 30 ms, so searches, lease renewals and heartbeats are no longer held behind them.** Before, the freeze ran its reads of the file, its pinned blob, its content, its filter driver and HEAD one after another with no break. On a slow machine the first freeze of a large sync held timers past the 100 ms bound that `test/sync-pass-batch-entries-6712.test.ts` sets.
+
+- What a freeze records is unchanged. The reads of a committed file are of the pinned commit, or of HEAD checked by hash against the file's first read, so a write that lands during a break keeps the pinned content instead of importing the new bytes. A working-tree file is still read twice with no break between. The run is checked again after each break, so a cancelled run stops there.
+- `test/sync-freeze-turn-write-gbra133.test.ts` commits new bytes for the file during a break, between the file's first read and its HEAD read, on PGLite and Postgres. The frozen request keeps the pinned content and is not published, and a later freeze imports the new bytes under their own hash.
+- A fourth test in `test/sync-pass-batch-entries-6712.test.ts` adds 40 ms of CPU to each of the first freeze's reads. Before this change the longest stretch was 205 to 211 ms; it now stays under 100 ms.
 
 ## [0.60.673.0] - 2026-11-11
 

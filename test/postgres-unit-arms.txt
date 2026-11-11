@@ -586,6 +586,7 @@ test/sync-fenced-slices-gbra133.test.ts
 test/sync-file-drift-agrees-7931.test.ts
 test/sync-filter-owned-9024.test.ts
 test/sync-filter-owned-company-9024.test.ts
+test/sync-freeze-turn-write-gbra133.test.ts
 test/sync-freshness-6858.test.ts
 test/sync-frontmatter-recovery.test.ts
 test/sync-frontmatter-slug-conflict.test.ts
