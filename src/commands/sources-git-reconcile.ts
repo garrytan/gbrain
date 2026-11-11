@@ -101,7 +101,7 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
       const result = group.managed
         ? await withReconcileLock(group.root, opts.waitMs ?? 300_000, () => reconcileManaged(engine, group.sources[0], group.root, publish, opts))
         : await reconcileCheckout(group.root, { dryRun: opts.dryRun, publish, ...(opts.waitMs !== undefined ? { waitMs: opts.waitMs } : {}), ...(opts.childTimeoutMs ? { childTimeoutMs: opts.childTimeoutMs } : {}),
-          ...(publishSetting === null && !cloned ? { unpublishedReason: `gbrain did not clone this checkout for the source (it was not added with gbrain sources add --url, or the source folder is not the repository root); publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
+          ...(publishSetting === null && !cloned ? { unpublishedReason: `gbrain sources add --url did not clone this checkout for the source, or the source folder is not the repository root; publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
       out.push({ ...entry, ...result });
     } catch (error) {
       const failure = classifyItemFailure(error);
