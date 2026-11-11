@@ -7,7 +7,7 @@ import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { replaceWantedLinks } from '../../src/core/wanted-links.ts';
 import { bareNameReferenceSettles, disabledClearsRows, forwardReferenceHeals, impossibleTargetsNeverAbortTheSweep,
   impossibleTargetsStayOutOfWrites, onlyUnresolvedAuthoredReferences, privateOriginsStayPrivate,
-  restoredTargetHeals, topLevelSlugNameReferenceSettles } from '../helpers/wanted-links-scenarios.ts';
+  restoredTargetHeals, topLevelSlugNamePageEditWakesOnce, topLevelSlugNameReferenceSettles } from '../helpers/wanted-links-scenarios.ts';
 
 const url = process.env.DATABASE_URL;
 describe.skipIf(!url)('Postgres wanted pages', () => {
@@ -15,6 +15,7 @@ describe.skipIf(!url)('Postgres wanted pages', () => {
   test('only unresolved authored references are wanted', () => onlyUnresolvedAuthoredReferences(url), 180_000);
   test('a bare-name reference settles', () => bareNameReferenceSettles(url), 180_000);
   test('#9140: a bare-name reference equal to a top-level slug settles', () => topLevelSlugNameReferenceSettles(url), 180_000);
+  test('#9140: editing the top-level page wakes that origin once', () => topLevelSlugNamePageEditWakesOnce(url), 180_000);
   test('private origins stay private', () => privateOriginsStayPrivate(url), 180_000);
   test('restoring a deleted target heals', () => restoredTargetHeals(url), 180_000);
   test('disabling clears rows', () => disabledClearsRows(url), 180_000);

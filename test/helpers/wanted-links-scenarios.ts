@@ -107,6 +107,24 @@ export async function topLevelSlugNameReferenceSettles(databaseUrl?: string) {
   }, { databaseUrl });
 }
 
+const staleSlugs = async (engine: BrainEngine) =>
+  (await engine.listStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS, batchSize: 100 })).map(page => page.slug).sort();
+
+/** #9140: a later write of a bare name's exact-slug page still wakes its origin, and one extraction settles it again. */
+export async function topLevelSlugNamePageEditWakesOnce(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    const first = await put(ctx, 'acme-toolkit', 'Acme toolkit.');
+    await put(ctx, 'people/alice-example', 'Alice.', 'person', 'founded: ["acme-toolkit"]\n');
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    await put(ctx, 'acme-toolkit', 'Acme toolkit, edited.', 'note', '', (first.outcome ?? first).revision);
+    expect(await staleSlugs(engine)).toEqual(['acme-toolkit', 'people/alice-example']);
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    expect(await wantedRows(engine)).toEqual([{ target_ref: 'acme-toolkit', ref_kind: 'name', producer: 'frontmatter' }]);
+  }, { databaseUrl });
+}
+
 /** A remote caller never sees targets referenced only from private pages, nor counts that include them. */
 export async function privateOriginsStayPrivate(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx }) => {
