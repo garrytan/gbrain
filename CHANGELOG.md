@@ -10,9 +10,24 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.682.0] - 2026-11-11
+
+**The brain owner reads the derived pages and facts of pages it can already read, and the operator can let the owner read pages kept to other members.** An atom, a synthesized concept, a Life Chronicle event, a page with `derived_from` or a fact made from a page under a folder rule, or from a page that names readers, was hidden from every remote caller, the owner included, even when the rule or the readers named the owner. Credentials bound to the owner now read them whenever they read every origin, with no setting. A new opt-in, `gbrain access owner reads-restricted on`, off by default and settable only by the operator on the brain host, lets the owner also read pages that readers lists, folder rules and page rules keep to other members, with their derived pages and facts, but never another member's own member page. Nothing changes for any other caller or for writes, and nothing changes on upgrade.
+
+### Itemized changes
+
+#### Owner reads and the owner opt-in (GST-2490)
+
+- Migration v304 (`src/core/schema-migrations/v304-access-owner-origin.ts`): `gbrain_access_origin_closed_for()` and `gbrain_access_origin_hidden_for()`, the lineage arms of `gbrain_access_origin_restricted()` asked per origin for one caller. Only owner reads call them; `gbrain_access_origin_restricted()` is unchanged. Nothing is rewritten.
+- `src/core/search/private-visibility.ts`: `ownerAccessSql` for owner reads (read-only operations only: `remoteCallerAccess` in `src/core/access/caller.ts`, `src/mcp/dispatch.ts`, `src/core/minions/tools/brain-allowlist.ts`, and `--as <owner>` in `src/cli/as-preview.ts`), fact provenance and the readers checks for single rows; the search cache key and the hot-memory key carry the owner mode.
+- `src/core/access/owner.ts`, `src/commands/access.ts`: `gbrain access owner reads-restricted on|off` (refused for remote callers), shown by `gbrain access owner`, `access check` (`owner_reads_restricted`) and `who-can-read`; `whoami` adds `owner_reads_restricted` for every remote caller while it is on; doctor `access_owner_reads_restricted` (`src/commands/doctor/checks/owner-reads-restricted.ts`).
+- Unchanged on purpose: what every other caller reads, every write and publication check, member private facts, personal sources, shared-room audiences and attested calls.
+- Docs: `docs/guides/access-designations.md` (derived pages, member access, the owner opt-in), key-files entry.
+- Tests: `test/owner-reads-restricted.test.ts` (opt-in off and on, owner, other members and unbound keys, `--as`, writes, the remote refusal; PGLite and Postgres, rules in the database and in `access.yml`); doctor goldens.
+
 ## [0.60.681.0] - 2026-11-11
 
-**The low-capacity warning now says it is not a refusal, and a quota refusal no longer reads a whole week of admissions while it holds the write counters.** v0.60.681.0 made the `write_capacity_low` notice open with "This write was saved", but the notice also rides sync status, dry runs and failed batches, where nothing was saved. It now opens with "This notice is not a refusal: writes still work, and this call's own result says what it did", and over MCP its fix is the read-only `get_brain_health` call instead of a CLI command the agent would relay to its user. A `write_quota_exhausted`, `write_quota_insufficient` or background-pause refusal runs under the counter locks, and v0.60.681.0 had it walk the scope's whole week (up to 200,000 admissions) to match doctor's value. It now takes the 7-day mean rates the last forecast recorded, lifecycle changes included, and without a forecast from the last minute it samples the latest 1,000 admissions as before. Both apply only under a cap the operator set: since v0.60.681.0 the caps are off by default.
+**The low-capacity warning now says it is not a refusal, and a quota refusal no longer reads a whole week of admissions while it holds the write counters.** v0.60.682.0 made the `write_capacity_low` notice open with "This write was saved", but the notice also rides sync status, dry runs and failed batches, where nothing was saved. It now opens with "This notice is not a refusal: writes still work, and this call's own result says what it did", and over MCP its fix is the read-only `get_brain_health` call instead of a CLI command the agent would relay to its user. A `write_quota_exhausted`, `write_quota_insufficient` or background-pause refusal runs under the counter locks, and v0.60.682.0 had it walk the scope's whole week (up to 200,000 admissions) to match doctor's value. It now takes the 7-day mean rates the last forecast recorded, lifecycle changes included, and without a forecast from the last minute it samples the latest 1,000 admissions as before. Both apply only under a cap the operator set: since v0.60.682.0 the caps are off by default.
 
 ### Itemized changes
 
