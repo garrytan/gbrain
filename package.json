@@ -48,8 +48,8 @@
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain src/cli.ts src/core/skills/resolver/hook-worker.ts",
-    "build:all": "bun build --compile --no-compile-autoload-bunfig --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts src/core/skills/resolver/hook-worker.ts && bun build --compile --no-compile-autoload-bunfig --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts src/core/skills/resolver/hook-worker.ts",
+    "build": "bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --outfile bin/gbrain src/cli.ts src/core/skills/resolver/hook-worker.ts",
+    "build:all": "bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts src/core/skills/resolver/hook-worker.ts && bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts src/core/skills/resolver/hook-worker.ts",
     "build:admin": "cd admin && bun run build && cd .. && bun run scripts/build-admin-embedded.ts",
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bun run scripts/build-schema.ts",
@@ -103,6 +103,7 @@
     "test:profile": "bash scripts/profile-tests.sh",
     "test:serial": "bash scripts/run-serial-tests.sh",
     "test:convergence": "GBRAIN_TEST_CONVERGENCE=1 bun --no-env-file test --timeout=3600000 test/sync-convergence.serial.test.ts",
+    "test:busy-agent": "GBRAIN_TEST_BUSY_AGENT=1 bun --no-env-file test --timeout=3600000 test/busy-agent-soak.serial.test.ts",
     "test:tla": "bash scripts/spec/tlc.sh && bun scripts/spec/mutants.ts drain-lease && bun scripts/spec/mutants.ts refresh-barrier",
     "ci:local": "bash scripts/ci-local.sh",
     "ci:local:diff": "bash scripts/ci-local.sh --diff",
@@ -254,7 +255,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.666.0",
+  "version": "0.60.678.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

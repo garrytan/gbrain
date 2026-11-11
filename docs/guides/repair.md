@@ -2862,8 +2862,10 @@ gbrain older than v0.60.38.0 refuses writes it should allow. And a write ends
 copy differed at publication, as every write did on a brain whose v0.13.1
 grandfather `validate: false` stamp lived only in the database (#6429, fixed
 in v0.60.157.0: that stamp is no longer read as a file edit). Each refused
-write keeps a receipt with its full intent until receipt compaction
-(`persistence.receipt_retention_days`, 30 days by default). `gbrain repair
+write keeps a receipt with its full intent until a later request writes,
+removes or repeats it: receipt compaction skips such a refused caller write
+however old it is, and `gbrain repair receipt-compaction --include-failures`
+is the explicit way to drop one. `gbrain repair
 failed-writes` submits those writes again. It is explicit-only and
 preview-bound, and needs v0.60.38.0 or later (`gbrain doctor --json` reports
 schema version 197 or later). Doctor's `lost_caller_writes` counts the
@@ -2885,7 +2887,6 @@ me the list, then apply after I agree."* The agent runs `gbrain repair
 failed-writes` and, after you agree, the printed apply command.
 
 ```bash
-gbrain config set persistence.receipt_retention_days 90   # keep the receipts while you recover
 gbrain repair failed-writes --source <id>                 # preview: every refused write with its class
 gbrain repair failed-writes --source <id> --apply --expect <hash>
 gbrain repair failed-writes --source <id>                 # replayed writes now read already_written
@@ -2990,6 +2991,8 @@ releases keep those writes database-only: a fact about a clone page is stored
 and recalled from the database with no fence row (`row_num` empty), and page
 write-through reports `skipped: "url_clone"`. A managed brain does the same
 with `gbrain sources mirror-readonly <id>`.
+
+Local commits made in an owned clone are different: `gbrain sources git-reconcile` (autopilot, each tick) publishes them after a secret scan. `gbrain config set sources.refresh_publish_diverged false` (every source) or `gbrain sources set-sync <id> off` (one source) keeps them local.
 
 A clone an older release already dirtied still blocks its pulls. `gbrain sync
 --source <id>` then prints `pull_blocked_local_changes` with the changed files

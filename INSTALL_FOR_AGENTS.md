@@ -147,6 +147,13 @@ whenever the user gives one. Capture
 (`--capture`) and providers (`--providers`) stay off unless the user accepts
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
+When the brain will answer several people (a team bot, a shared channel), ask the
+user who they are and add `--serves several --members <id,...>`: each gets a member,
+a folder `people/<member>/` only they read and a bound key
+(`~/.gbrain/member-keys/<member>.key`; relay paths, never keys). On
+`setup_serves_several`, rerun with its fix. Add `--stdio-member <member>`
+(claude-code, codex) only for a harness one person uses. Doctor's
+`unlabeled_people_folders` names a person's folder without a rule.
 `--remove` undoes only what setup wrote. Guide:
 [docs/guides/setup.md](docs/guides/setup.md). Otherwise:
 

@@ -52,8 +52,11 @@ export class SharedParameterTypes extends Map<string, number[]> {
   }
 
   override set(key: string, types: number[]): this {
+    const hashed = digest(key);
+    const known = super.get(hashed);
+    if (known && known.length === types.length && known.every((type, i) => type === types[i])) return this;
     if (super.size >= MAX_ENTRIES) return this;
-    super.set(digest(key), types);
+    super.set(hashed, types);
     this.changed();
     return this;
   }

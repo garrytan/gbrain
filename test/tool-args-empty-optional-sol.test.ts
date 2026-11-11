@@ -23,6 +23,7 @@ import { handleToolCall } from '../src/mcp/server.ts';
 import { runRollout } from '../src/core/skillopt/rollout.ts';
 import { buildWriteCaptureRegistry } from '../src/core/skillopt/write-capture.ts';
 import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
+import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
 import { operations, operationsByName, type Operation, type ParamDef } from '../src/core/operations.ts';
 import type { BenchmarkTask } from '../src/core/skillopt/types.ts';
 import type { ToolHandler } from '../src/core/ai/gateway.ts';
@@ -97,6 +98,8 @@ function emptied(op: Operation, value: '' | null): Record<string, unknown> {
 }
 
 const summary = (o: Outcome) => (o.ok ? 'ok' : o.code);
+/** The result object of an answered call; MCP paths append notice blocks after it. */
+const resultJson = (o: Outcome) => JSON.parse(o.text.split('\n[gbrain ')[0]!) as Record<string, unknown>;
 /** The subagent registry reports a schema failure as a plain Error naming the param; every other path as invalid_params. */
 const refusal = (o: Outcome) => (!o.ok && (o.code === 'invalid_params' || /^brain_\w+: (Missing required parameter|Parameter ")/.test(o.text)) ? 'invalid_params' : summary(o));
 
@@ -234,13 +237,20 @@ describe('GST-927: schema-ruled-out empty values (0, [], {}, false) read as omit
         refusal(await call('get_page', { slug: SLUG, max_bytes: -5 })),
         refusal(await call('list_write_conflicts', { limit: 101 })),
         refusal(await call('get_page', { slug: SLUG, lines: { from: 0, count: 2 } })),
-        refusal(await call('traverse_graph', { slug: SLUG, depth: 1, hops: [{ link_type: 'founded', toward: 'object' }] })),
         refusal(await call('get_versions', { slug: SLUG, diff: true })),
       ];
     }
     const refused = Object.fromEntries(Object.entries(outcomes).map(([k, v]) => [k, v.filter(o => o !== 'not_registered')]));
     expect(refused).toEqual(Object.fromEntries(Object.entries(outcomes).map(([k, v]) => [k, Array(v.filter(o => o !== 'not_registered').length).fill('invalid_params')])));
-    expect(refused['mcp remote (http)']).toHaveLength(6);
+    expect(refused['mcp remote (http)']).toHaveLength(5);
+    const kept: Record<string, string> = {};
+    for (const [name, call] of Object.entries(paths)) {
+      const out = await call('traverse_graph', { slug: SLUG, depth: 1, hops: [{ link_type: 'founded', toward: 'object' }] });
+      kept[name] = out.ok ? JSON.stringify((resultJson(out) as { set_aside?: { ignored: string[] } }).set_aside?.ignored) : summary(out);
+    }
+    const registered = Object.entries(kept).filter(([, v]) => v !== 'not_registered');
+    expect(Object.fromEntries(registered)).toEqual(Object.fromEntries(registered.map(([k]) => [k, '["depth"]'])));
+    expect(kept['mcp remote (http)']).toBe('["depth"]');
   }, 120_000);
 });
 
@@ -323,22 +333,51 @@ describe("GST-927: GBEV-3's replayed Sol shapes", () => {
     expect(op.params.context!.description).toContain('Applies only with grep');
   });
 
-  test('known_as_of beside read-view arguments refuses, naming each argument to drop, with a fix that keeps only recorded-time arguments', async () => {
-    const args = { slug: SLUG, ...SOL_GET_PAGE, known_as_of: '2026-10-01T12:00:00Z', max_bytes: 40000, view: 'read' };
+  test("GST-2214: Sol's recorded-time reads with every read-view argument filled read the page as recorded on every entry point, naming what was set aside", async () => {
+    await enableBeliefLedger(engine, 'default');
+    const at = new Date(Date.now() + 1000).toISOString();
+    await Bun.sleep(1100);
+    const args = { slug: SLUG, ...SOL_GET_PAGE, known_as_of: at, lines: { from: 1, count: 1 }, bytes: { offset: 0, length: 1 }, include_timeline_entries: true, max_bytes: 40000, view: 'read' };
+    const results: Record<string, string> = {};
     for (const [name, call] of Object.entries(paths)) {
       const out = await call('get_page', args);
-      expect([name, refusal(out)]).toEqual([name, 'invalid_params']);
-      expect(out.text).toContain('get_page: known_as_of does not combine with include_content');
+      results[name] = out.ok && out.text.includes(BODY_MARKER) && out.text.includes('"set_aside"') ? 'read' : `${summary(out)}: ${out.text.slice(0, 200)}`;
     }
-    expect((await paths['mcp remote (http)']!('get_page', args)).text).toContain('known_as_of does not combine with include_content, context_lines, max_bytes, view, outline_from.');
-    const remote = JSON.parse((await dispatchToolCall(engine, 'get_page', args, { remote: true, transport: 'http', sourceId: 'default' })).content[0]!.text) as { suggestion?: string };
-    expect(remote.suggestion).toContain('Drop `include_content`, `context_lines`, `max_bytes`, `view`, `outline_from` to read the page as recorded');
-    const local = await handleToolCall(engine, 'get_page', args).then(() => null, (e: { suggestion?: string; fix?: { mcp?: { tool: string; arguments: Record<string, unknown> } } }) => e);
-    expect(local?.suggestion).toContain('Drop --include-content, --context-lines, --max-bytes, --view, --outline-from to read the page as recorded');
-    expect((local as { fix?: { argv?: string[] } } | null)?.fix?.argv).toEqual(['gbrain', 'get', '--known-as-of', '2026-10-01T12:00:00Z', '--source-id', 'default', '--body', 'full', '--', SLUG]);
-    expect(local?.fix?.mcp).toEqual({ tool: 'get_page', arguments: { slug: SLUG, known_as_of: '2026-10-01T12:00:00Z', source_id: 'default', include_deleted: false, body: 'full' } });
-    const retried = await dispatchToolCall(engine, 'get_page', local!.fix!.mcp!.arguments, { remote: true, transport: 'http', sourceId: 'default' });
-    expect(retried.content[0]!.text).not.toContain('does not combine with');
+    expect(results).toEqual(Object.fromEntries(Object.keys(paths).map(k => [k, 'read'])));
+    const r = JSON.parse((await paths['mcp remote (http)']!('get_page', args)).text) as { known_as_of: string; window?: unknown; set_aside: Record<string, unknown> };
+    expect(r.known_as_of).toBe(at);
+    expect(r.window).toBeUndefined();
+    expect(r.set_aside).toEqual({ ignored: ['include_content', 'include_timeline_entries', 'lines', 'bytes', 'context_lines', 'max_bytes', 'view', 'outline_from'],
+      note: 'Read the whole page as recorded at known_as_of; ignored include_content, include_timeline_entries, lines, bytes, context_lines, max_bytes, view and outline_from, which read the current page. Drop known_as_of to read a window or view of the current page.' });
+    const plain = JSON.parse((await paths['mcp remote (http)']!('get_page', { slug: SLUG, known_as_of: at })).text) as Record<string, unknown>;
+    expect(plain.set_aside).toBeUndefined();
+    const { set_aside: _, ...served } = r;
+    expect(served as Record<string, unknown>).toEqual(plain);
+  });
+
+  test('GST-2214: a recorded-time read still refuses include_quarantined: true, which it would not honour', async () => {
+    await enableBeliefLedger(engine, 'default');
+    const at = new Date(Date.now() + 1000).toISOString();
+    await Bun.sleep(1100);
+    const out = await paths['mcp remote (http)']!('get_page', { slug: SLUG, known_as_of: at, include_quarantined: true, include_content: true });
+    expect([out.ok, summary(out), out.text.includes('get_page: known_as_of does not combine with include_quarantined.')]).toEqual([false, 'invalid_params', true]);
+    expect(out.text).not.toContain(BODY_MARKER);
+  });
+
+  test('GST-2214: traverse_graph with hops beside depth, link_type and direction walks the chain on every entry point, naming what was set aside', async () => {
+    const hops = [{ link_type: 'founded', toward: 'object' }];
+    const results: Record<string, string> = {};
+    for (const [name, call] of Object.entries(paths)) {
+      const sol = await call('traverse_graph', { slug: SLUG, depth: 1, link_type: 'founded', direction: 'both', hops, source_id: 'default', all_sources: false });
+      const chain = await call('traverse_graph', { slug: SLUG, hops, source_id: 'default', all_sources: false });
+      if (summary(sol) === 'not_registered') continue;
+      const { set_aside, ...rest } = sol.ok ? resultJson(sol) : {};
+      results[name] = sol.ok && chain.ok && JSON.stringify(rest) === JSON.stringify(resultJson(chain)) ? JSON.stringify(set_aside) : `${summary(sol)}: ${sol.text.slice(0, 200)}`;
+    }
+    const want = JSON.stringify({ ignored: ['depth', 'link_type', 'direction'],
+      note: 'Walked the hops chain; ignored depth, link_type and direction: each hop names its link type and direction (toward), and the chain length is the number of hops.' });
+    expect(results['mcp remote (http)']).toBe(want);
+    expect(results).toEqual(Object.fromEntries(Object.keys(results).map(k => [k, want])));
   });
 });
 

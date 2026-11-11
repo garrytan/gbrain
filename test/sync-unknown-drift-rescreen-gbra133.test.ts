@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { RECOVERY_VERSION } from '../src/core/markdown.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
-import { writeGitHold } from '../src/core/persistence/sync-holds.ts';
+import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -62,11 +62,11 @@ for (const backend of testBackends()) {
     await performManagedSync(engine, OPTS);
     expect(await body(engine, 'notes/a')).toContain('A Git edit of notes/a.');
     expect(await body(engine, 'notes/b')).toContain('Edited in the database.');
-    expect(await holds(engine)).toEqual(['notes/b.md file_drift unknown v1']);
+    expect(await holds(engine)).toEqual([`notes/b.md file_drift unknown v${FILE_DRIFT_VERSION}`]);
 
     writeFileSync(join(root, 'notes/other.md'), note('notes/other', 'An unrelated edit.')); git(root, 'commit', '-qam', 'edit other');
     await performManagedSync(engine, OPTS);
-    expect(await holds(engine)).toEqual(['notes/b.md file_drift unknown v1']);
+    expect(await holds(engine)).toEqual([`notes/b.md file_drift unknown v${FILE_DRIFT_VERSION}`]);
     expect(await body(engine, 'notes/b')).toContain('Edited in the database.');
   }, { databaseUrl, setup }), 180_000);
 }

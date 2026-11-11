@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 287202,
-    "stdoutSha256": "3338e684664800c7e540db7987158009b713f1ca2a4f07edd7b2d4a617360a37",
+    "stdoutBytes": 287194,
+    "stdoutSha256": "77ce6903a27a21e1913a9b4cd49be328cffda29f27d55ef25465c189461d3af5",
     "toolNames": [
       "remember",
       "entity",
@@ -203,7 +203,7 @@
     ],
     "tools": [
       {
-        "description": "Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
+        "description": "Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,

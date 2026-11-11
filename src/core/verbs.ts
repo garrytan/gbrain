@@ -67,7 +67,7 @@ const remember: Operation = {
   name: 'remember',
   idempotent: true,
   outputRedaction: 'no_stored_text',
-  description: 'Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.',
+  description: 'Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.',
   callShape: REMEMBER_CALL_SHAPE,
   params: {
     ...AGENT_CONTENT_PARAMS,

@@ -71,18 +71,26 @@ export function skillResolverCommands(harness: ResolverHarness, bin: string, hom
   return CLAUDE_EVENTS.map((e) => buildClaudeHookCommand(bin, e, laneEnv(home), launcher));
 }
 
-/** Whether this lane's hook is present: absent, wired (and, on Codex, trusted) or untrusted. */
-export function inspectSkillResolverHook(harness: ResolverHarness, paths: ResolverHookPaths = {}): { state: 'absent' | 'wired' | 'untrusted'; path: string; commands: string[] } {
+/**
+ * Whether this lane's hook is present: absent, wired (and, on Codex,
+ * trusted), untrusted, or outdated (the UserPromptSubmit hook without the
+ * SessionStart compaction reset, an install from before it; setup adds it).
+ */
+export type ResolverHookState = 'absent' | 'wired' | 'untrusted' | 'outdated';
+export function inspectSkillResolverHook(harness: ResolverHarness, paths: ResolverHookPaths = {}): { state: ResolverHookState; path: string; commands: string[] } {
   try {
     if (harness === 'codex') {
       const p = codexPaths(paths);
       const ours = codexOurs(p);
+      const commands = ours.flatMap((g) => g.commands);
       if (!ours.some((g) => g.event === 'UserPromptSubmit')) return { state: 'absent', path: p.hooks, commands: [] };
-      return { state: ours.every((g) => codexTrusted(p, g)) ? 'wired' : 'untrusted', path: p.hooks, commands: ours.flatMap((g) => g.commands) };
+      if (!ours.some((g) => g.event === 'SessionStart')) return { state: 'outdated', path: p.hooks, commands };
+      return { state: ours.every((g) => codexTrusted(p, g)) ? 'wired' : 'untrusted', path: p.hooks, commands };
     }
     const path = claudePath(paths);
     const ours = claudeOurs(path);
-    return { state: ours.some((o) => o.event === 'UserPromptSubmit') ? 'wired' : 'absent', path, commands: ours.map((o) => String(o.entry.command)) };
+    const has = (event: string) => ours.some((o) => o.event === event);
+    return { state: !has('UserPromptSubmit') ? 'absent' : has('SessionStart') ? 'wired' : 'outdated', path, commands: ours.map((o) => String(o.entry.command)) };
   } catch {
     return { state: 'absent', path: harness === 'codex' ? codexPaths(paths).hooks : claudePath(paths), commands: [] };
   }

@@ -335,6 +335,8 @@ export interface FrozenImportScreen {
   retryCommand: string;
   /** #6188 dry run: told the fixes when Tier 1 admits the file by rewriting a fence. */
   onNormalized?: (fixes: FenceFix[]) => void;
+  /** GBRA-133: the freeze's timer turn, taken after the filter driver's Git read so the screen that follows starts a stretch of its own. */
+  turn?: () => Promise<void>;
 }
 
 /**
@@ -402,6 +404,7 @@ export async function screenFrozenImport(engine: BrainEngine, input: FrozenImpor
   const filtered = filterOwnedRefusal(entry.path, content, entry.working || !gitRoot || !target || !entries ? null
     : pinnedFilterDriver({ ...input.cursor, gitRoot, target, entries }, entry.path), input.cursor.sourceId, true);
   if (filtered) return heldEntry(entry, slug, pageId, filtered, content, blob);
+  await input.turn?.();
   // GBRA-133 S-39: text holding NUL cannot be stored or carried in the write intent; only this file is held. A slug conflict
   // still names the hold (#6749): its message carries the path alone, and the slug-conflicts lane reports NULL_BYTES as still_invalid.
   const nul = nullBytesRefusal(entry.path, content);

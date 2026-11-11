@@ -13,9 +13,9 @@
  *    (pattern: test/cold-read-module-graph.test.ts).
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 
@@ -46,6 +46,20 @@ describe('the skill resolver module graph', () => {
       rmSync(home, { recursive: true, force: true });
     }
   }, 60_000);
+
+  test('the hook lane worker reaches neither the build thread nor the warm handle', () => {
+    const transpiler = new Bun.Transpiler({ loader: 'ts' });
+    const reached = new Set<string>();
+    const walk = (file: string) => {
+      if (reached.has(file)) return;
+      reached.add(file);
+      for (const imp of transpiler.scanImports(readFileSync(file, 'utf8'))) if (imp.path.startsWith('.') && imp.path.endsWith('.ts')) walk(resolve(dirname(file), imp.path));
+    };
+    for (const entry of ['hook-worker.ts', 'lane-worker.ts', 'hook-lane.ts']) walk(join(REPO_ROOT, 'src/core/skills/resolver', entry));
+    const local = [...reached].map(f => f.slice(REPO_ROOT.length + 1));
+    expect(local).toContain('src/core/skills/resolver/resolve.ts');
+    expect(local.filter(f => /resolver\/(build-thread|handle|build|index)\.ts$/.test(f))).toEqual([]);
+  });
 
   test('the CLI module loads no engine, driver, operations table or provider', () => {
     const loaded = loadedBy(`await import(${JSON.stringify(join(REPO_ROOT, 'src/commands/skill-resolver.ts'))})`);

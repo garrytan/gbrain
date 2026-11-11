@@ -152,7 +152,7 @@ jobs:
       # release runner is a flakier duplicate gate — it blocked the first
       # release on ambient-env tests (run 30698650484). The build job's gate
       # is the artifact itself: compile, then smoke-test the binary.
-      - run: bun build --compile --no-compile-autoload-bunfig --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts src/core/skills/resolver/hook-worker.ts
+      - run: bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT='"${{ github.sha }}"' --target=${{ matrix.target }} --outfile bin/${{ matrix.artifact }} src/cli.ts src/core/skills/resolver/hook-worker.ts
       - name: Verify Darwin executable signature before execution
         if: runner.os == 'macOS'
         run: codesign --verify --strict --verbose=2 "bin/${{ matrix.artifact }}"
@@ -161,6 +161,10 @@ jobs:
       - name: Verify persistent writes with the actual release executable
         timeout-minutes: 8
         run: bun scripts/native/cli-persistence-smoke.ts --binary bin/${{ matrix.artifact }}
+      # v0.60.554.0: /admin was blank on installed builds; the release file must serve the page and every asset it loads.
+      - name: Verify the admin UI with the actual release executable
+        timeout-minutes: 5
+        run: bun scripts/native/compiled-admin-smoke.ts --binary bin/${{ matrix.artifact }}
       - name: Smoke-test the compiled binary
         run: |
           chmod +x bin/${{ matrix.artifact }}
