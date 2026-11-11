@@ -54,7 +54,7 @@
       "  [INFO] harness_wiring: No agent harness was detected. Wire one when the user picks an agent app.",
       "  [OK] agent_contract: No agent dead ends in the last 7 days (0 non-success event(s) logged).",
       "  [OK] connection: Connected, 5 pages",
-      "  [OK] persistence_capacity: Managed write capacity is below 80% of every cumulative limit and none runs out within 30 days at its 7-day rate.",
+      "  [OK] persistence_capacity: No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 115490 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
       "  [OK] persistence_terminal_failures: No terminal write failures in the last 7 d.",
       "  [OK] managed_sync_not_moving: No managed sync is pending.",
       "  [OK] managed_sync_blocked: No managed sync run is blocked.",

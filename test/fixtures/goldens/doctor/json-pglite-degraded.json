@@ -469,82 +469,7 @@
             "exact": true,
             "forecast": {
               "retention_days": 30,
-              "rows": [
-                {
-                  "basis": "aggregate_1d_short_history",
-                  "config_key": "persistence.limits.brain_lifetime_ids",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "limit": 8000000,
-                  "max_day_7d": 1,
-                  "pct": 0,
-                  "per_day_7d": 1,
-                  "recommended_limit": 16000000,
-                  "resource": "lifetime_ids",
-                  "scope": "brain",
-                  "spike_day": null,
-                  "status": "ok",
-                  "used": 1,
-                  "window_days": 1
-                },
-                {
-                  "basis": "aggregate_1d_short_history:gross_then_net",
-                  "config_key": "persistence.limits.brain_terminal_bytes",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "limit": 68719476736,
-                  "max_day_7d": 19163,
-                  "net_per_day_7d": 2845,
-                  "pct": 0,
-                  "per_day_7d": 19163,
-                  "reclaimable_bytes": 16318,
-                  "recommended_limit": 137438953472,
-                  "resource": "terminal_bytes",
-                  "scope": "brain",
-                  "spike_day": null,
-                  "status": "ok",
-                  "under_reserved_receipts": 0,
-                  "used": 19163,
-                  "window_days": 1
-                },
-                {
-                  "basis": "aggregate_1d_short_history",
-                  "config_key": "persistence.limits.principal_lifetime_ids",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "limit": 2000000,
-                  "max_day_7d": 1,
-                  "pct": 0,
-                  "per_day_7d": 1,
-                  "recommended_limit": 4000000,
-                  "resource": "lifetime_ids",
-                  "scope": "principal:local_cli:<uuid>",
-                  "spike_day": null,
-                  "status": "ok",
-                  "used": 1,
-                  "window_days": 1
-                },
-                {
-                  "basis": "aggregate_1d_short_history:gross_then_net",
-                  "config_key": "persistence.limits.principal_terminal_bytes",
-                  "days_to_exhaustion": null,
-                  "exhaustion_date": null,
-                  "limit": 17179869184,
-                  "max_day_7d": 19163,
-                  "net_per_day_7d": 2845,
-                  "pct": 0,
-                  "per_day_7d": 19163,
-                  "reclaimable_bytes": 16318,
-                  "recommended_limit": 34359738368,
-                  "resource": "terminal_bytes",
-                  "scope": "principal:local_cli:<uuid>",
-                  "spike_day": null,
-                  "status": "ok",
-                  "under_reserved_receipts": 0,
-                  "used": 19163,
-                  "window_days": 1
-                }
-              ],
+              "rows": [],
               "table_bytes": "<volatile>",
               "thresholds": {
                 "fail_days": 7,
@@ -554,6 +479,13 @@
               },
               "window_days": 1
             },
+            "housekeeping": {
+              "compactable_bytes": null,
+              "explicit_retention_days": null,
+              "over_target": false,
+              "target_bytes": 8589934592,
+              "used_bytes": 19163
+            },
             "inspected": 2,
             "outstanding": [],
             "paused_producers": [],
@@ -562,7 +494,7 @@
             "verify": "gbrain doctor --only persistence_capacity --json"
           },
           "elapsed_ms": "<volatile>",
-          "message": "Managed write capacity is below 80% of every cumulative limit and none runs out within 30 days at its 7-day rate.",
+          "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 19163 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
           "name": "persistence_capacity",
           "status": "ok"
         },
@@ -673,6 +605,7 @@
             "last_compaction": {
               "at": "<ts>",
               "compacted": 0,
+              "early": 0,
               "freed_bytes": 0,
               "host_id": "<uuid>",
               "skipped_by_reason": {}
@@ -1412,30 +1345,7 @@
             "docs": "docs/guides/repair.md#request-growth",
             "rows": 1,
             "rows_exact": true,
-            "scopes": [
-              {
-                "admissions_in_window": 1,
-                "config_key": "persistence.limits.brain_lifetime_ids",
-                "days_to_exhaustion": null,
-                "exhaustion_date": null,
-                "lifetime_ids": 1,
-                "limit": 8000000,
-                "per_day": 0,
-                "scope": "brain",
-                "window_days": 7
-              },
-              {
-                "admissions_in_window": 1,
-                "config_key": "persistence.limits.principal_lifetime_ids",
-                "days_to_exhaustion": null,
-                "exhaustion_date": null,
-                "lifetime_ids": 1,
-                "limit": 2000000,
-                "per_day": 0,
-                "scope": "principal:local_cli:<uuid>",
-                "window_days": 7
-              }
-            ],
+            "scopes": [],
             "verify": "gbrain doctor --json (check persistence_request_growth)",
             "window_days": 7
           },
