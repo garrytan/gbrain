@@ -285,7 +285,7 @@ test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify free
 test/register-client-source-normalize.test.ts	register-client route wiring (structural)	1	readFileSync
 test/reindex-code-recovery.test.ts	CLI help line (#3970 surface 1)	1	source-surface-helper
 test/release-workflow.test.ts	release.yml publish-template skip is visible (D-10)	1	readFileSync
-test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	11	readFileSync
+test/release-workflow.test.ts	release.yml ↔ binary-self-update asset contract	12	readFileSync
 test/remediation-command-resolution.test.ts	#3697 — remediation text resolves against the live CLI surface	3	readFileSync
 test/reranker-default-seam.test.ts	DEFAULT_RERANKER_MODEL seam (#3657, flipped v0.48.2)	3	readFileSync
 test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
