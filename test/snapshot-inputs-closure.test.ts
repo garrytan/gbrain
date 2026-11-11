@@ -142,10 +142,10 @@ describe('snapshot schema hash inputs (EO7)', () => {
 describe('pglite-snapshot CI cache keys (DX O7)', () => {
   const keys = discoverCacheKeys();
 
-  test('discovers every key: 15 across e2e.yml, test.yml and stress.yml, two profiles', () => {
-    expect(keys.length).toBe(15);
+  test('discovers every key: 16 across e2e.yml, test.yml and stress.yml, two profiles', () => {
+    expect(keys.length).toBe(16);
     expect(keys.filter((k) => k.file.endsWith('e2e.yml')).length).toBe(7);
-    expect(keys.filter((k) => k.file.endsWith('test.yml')).length).toBe(7);
+    expect(keys.filter((k) => k.file.endsWith('test.yml')).length).toBe(8);
     expect(keys.filter((k) => k.file.endsWith('stress.yml')).length).toBe(1);
     expect([...new Set(keys.map((k) => k.namespace))].sort()).toEqual(['pglite-snapshot', 'pglite-snapshot-default']);
   });
