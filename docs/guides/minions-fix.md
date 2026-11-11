@@ -453,8 +453,12 @@ is pending again, and doctor warns that it has not run yet with the plain
 a host migration that a newer one already ran past, so it never ran:
 
 ```
-[WARN] minions_migration: 1 host migration(s) not run yet: 0.53.0. Run: gbrain apply-migrations --yes
+[WARN] minions_migration: 1 host migration(s) not run yet: 0.46.3. Run: gbrain apply-migrations --yes
 ```
+
+`gbrain doctor --fast` has no database connection, so it cannot read the
+brain config that declines an opt-out migration (v0.53.0) and leaves such a
+version out of that list; the full `gbrain doctor` reports it.
 
 (Missing `~/.gbrain/preferences.json` on a fresh install is a valid
 pre-`apply-migrations` state — doctor deliberately does NOT fail on that

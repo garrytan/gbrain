@@ -36,8 +36,11 @@ beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); a
 afterAll(async () => { await engine.disconnect(); });
 
 test('#6763 a stored cursor: a fresh row write never hides an old discovery, and a done cursor is not a backlog', async () => {
-  const put = (fingerprint: string, header: Record<string, unknown>) => engine.executeRaw(
-    "INSERT INTO op_checkpoints(op, fingerprint, completed_keys, updated_at) VALUES('managed-sync', $1, jsonb_build_array($2::jsonb), now())", [fingerprint, JSON.stringify(header)]);
+  const put = async (fingerprint: string, header: Record<string, unknown>) => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [header.sourceId]);
+    await engine.executeRaw(
+      "INSERT INTO op_checkpoints(op, fingerprint, completed_keys, updated_at) VALUES('managed-sync', $1, jsonb_build_array($2::jsonb), now())", [fingerprint, JSON.stringify(header)]);
+  };
   await put('fresh', { sourceId: 'fresh-example', index: 0, total: 0, done: false, discoveredAt: minutesAgo(0) });
   expect(await checkManagedSyncBacklog(engine, ['fresh-example'])).toMatchObject({ status: 'ok' });
   await put('old', { sourceId: 'old-example', index: 0, total: 4, done: false, discoveredAt: minutesAgo(120) });
