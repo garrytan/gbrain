@@ -7,7 +7,9 @@
  * the sessions that pass and skips the ones that fail; idempotent re-runs
  * complete the rest):
  *
- *   detect → adapter.parse (AsyncGenerator, per-session) → since/limit
+ *   detect → adapter.parse (AsyncGenerator, per-session; #8901: a host
+ *   session-kind filter runs INSIDE parse, before messages are read, so an
+ *   excluded session never reaches this pipeline) → since/limit
  *   filters → redactSession (fail-closed) → renderSessionParts →
  *   importFromContent per part (embed OFF unless opted in) →
  *   putRawData(baseSlug) → stale-part reconciliation (delete parts past the
@@ -99,6 +101,13 @@ export interface TranscriptsIngestOpts {
    * for legitimate oversized stores, not to replace the defaults.
    */
   maxBytes?: number;
+  /**
+   * #8901: host session-kind labels the adapter drops before reading messages
+   * (Hermes `sessions.source`; `subagent` also drops delegate children). The
+   * CLI resolves flag > config > default and passes the result; undefined
+   * means no filter (adapters that know no session kind ignore it anyway).
+   */
+  excludeSessionSources?: readonly string[];
   activePack?: IngestActivePack;
   /**
    * The CLI's trusted-local operation context. On a writer-claimed brain each
@@ -147,6 +156,10 @@ export interface IngestFileOutcome {
   userTurnsMissing?: boolean;
   /** #6741: a Codex sub-agent rollout with no user turn by design (counted in subagentRollouts, not drift). */
   subagentRollout?: boolean;
+  /** #8901: sessions the adapter excluded by source before reading them (not errors, not in `sessions`). */
+  sessionsExcluded?: number;
+  /** The adapter's end-of-file diagnostics were folded in. Absent when the scan stopped early (`--limit`) or the parse threw, so per-file counts are incomplete. */
+  diagnosticsApplied?: true;
   /** Adapter degraded to a bounded read (e.g. codex head+tail) — part of the file was never scanned. */
   truncated: boolean;
   error?: string;
@@ -182,6 +195,21 @@ export interface TranscriptsIngestResult {
   driftFiles: number;
   /** #6741: Codex sub-agent rollouts with no user turns by design; understood, so they keep the scan clean. */
   subagentRollouts: number;
+  /**
+   * #8901: sessions an adapter excluded by host session kind before reading
+   * them (Hermes cron/subagent/kanban/tool …). Never pages, never in
+   * `slugsTouched` (so never `--facts`), never errors, never `sessionsSeen`;
+   * they do not hold the watermark.
+   */
+  sessionsExcluded: number;
+  /** #8901: `sessionsExcluded` by the label each row was counted under (its listed `source` or `created_source` first, else `subagent` for a marker-bearing delegate child). */
+  excludedBySource: Record<string, number>;
+  /** #8901: delegate children excluded by the host's marker rather than by their own `source`. */
+  delegatesExcluded: number;
+  /** #8901: every exclude label that matched at least one row in any file (sorted, deduplicated); the command names the explicit labels missing from it. */
+  excludeLabelsMatched: string[];
+  /** #8901: sessions this run SCANNED (past the since filter and the no-timestamp skip: rendered, planned, hash-skipped or errored) whose host metadata for the delegate check did not parse (a marker there could not be read); excluded, text-less, watermark-filtered and timestamp-less sessions are not counted. */
+  sessionMetadataUnparsed: number;
   /** Files whose adapter reported a truncated (partially-unscanned) read. */
   truncatedFiles: number;
   erroredFiles: number;
@@ -231,6 +259,13 @@ export async function runTranscriptsIngest(
     partsDeleted: 0,
     driftFiles: 0,
     subagentRollouts: 0,
+    sessionsExcluded: 0,
+    // Null prototype: labels are operator-chosen words (`constructor` on a
+    // plain object would read Object's constructor).
+    excludedBySource: Object.create(null) as Record<string, number>,
+    delegatesExcluded: 0,
+    excludeLabelsMatched: [],
+    sessionMetadataUnparsed: 0,
     truncatedFiles: 0,
     erroredFiles: 0,
     slugsTouched: [],
@@ -280,9 +315,14 @@ export async function runTranscriptsIngest(
     fileOutcome.format = detected.adapter.format;
 
     // gbrain#4149: thread the explicit cap override; omit the opts object
-    // entirely when unset so adapters keep their native defaults.
-    const gen = opts.maxBytes != null
-      ? detected.adapter.parse(path, { maxBytes: opts.maxBytes })
+    // entirely when nothing is set so adapters keep their native defaults.
+    // #8901: the session-kind exclude list rides the same object.
+    const parseOpts = {
+      ...(opts.maxBytes != null ? { maxBytes: opts.maxBytes } : {}),
+      ...(opts.excludeSessionSources?.length ? { excludeSessionSources: opts.excludeSessionSources } : {}),
+    };
+    const gen = Object.keys(parseOpts).length > 0
+      ? detected.adapter.parse(path, parseOpts)
       : detected.adapter.parse(path);
     try {
       let step = await gen.next();
@@ -334,6 +374,11 @@ export async function runTranscriptsIngest(
           step = await gen.next();
           continue;
         }
+        // #8901: counted per scanned session (past the since filter and the
+        // no-timestamp skip), so the summary's "scanned session(s) had host
+        // metadata that did not parse" never names a session the watermark
+        // filtered or the adapter never yielded.
+        if (session.meta.hostMetadataUnparsed) result.sessionMetadataUnparsed++;
 
         try {
           const redacted = redactSession(session, {
@@ -732,6 +777,7 @@ async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, met
 /** Fold one file's adapter diagnostics into its outcome and the run result (drift, skipped lines, truncation). */
 function applyFileDiagnostics(diag: FileDiagnostics, fileOutcome: IngestFileOutcome, result: TranscriptsIngestResult): void {
   fileOutcome.skippedLines = diag.skippedLines;
+  fileOutcome.diagnosticsApplied = true;
   if (diag.bytesRead > 0 && diag.sessions === 0 && !diag.expectedEmpty) {
     fileOutcome.drift = true;
     result.driftFiles++;
@@ -754,6 +800,20 @@ function applyFileDiagnostics(diag: FileDiagnostics, fileOutcome: IngestFileOutc
   if (diag.subagentRollout) {
     fileOutcome.subagentRollout = true;
     result.subagentRollouts++;
+  }
+  // #8901: excluded sessions are accounting, never errors; the watermark is
+  // untouched (they were never yielded, so maxSessionTs never saw them).
+  if (diag.sessionsExcluded) {
+    fileOutcome.sessionsExcluded = diag.sessionsExcluded;
+    result.sessionsExcluded += diag.sessionsExcluded;
+    for (const [label, n] of Object.entries(diag.excludedBySource ?? {})) {
+      result.excludedBySource[label] = (result.excludedBySource[label] ?? 0) + n;
+    }
+    result.delegatesExcluded += diag.delegatesExcluded ?? 0;
+    for (const label of diag.excludeLabelsMatched ?? []) {
+      if (!result.excludeLabelsMatched.includes(label)) result.excludeLabelsMatched.push(label);
+    }
+    result.excludeLabelsMatched.sort();
   }
   if (diag.skippedLines > 0) {
     // Malformed lines can be DROPPED RECORDS (an actively-appended

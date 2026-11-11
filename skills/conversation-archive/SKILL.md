@@ -302,7 +302,11 @@ The same pipeline archives the agent's own session logs: one page per session
 (or per day) under `conversations/sessions/`, same frontmatter, same message
 format, same three invariants. Filter before writing:
 
-- Sub-agent sessions and cron-triggered runs
+- Sub-agent sessions and cron-triggered runs (for Hermes stores
+  `gbrain transcripts ingest` does this itself from the session metadata:
+  sub-agent, kanban and tool sessions are skipped by default, cron and a
+  hook's custom source when named with `--exclude-source` or the config key
+  `transcripts.hermes.exclude_sources`)
 - System messages, heartbeats, bootstrap prompts
 - Empty sessions
 

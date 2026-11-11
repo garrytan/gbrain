@@ -24,6 +24,14 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import type { TranscriptFormat } from '../core/transcripts/types.ts';
 import { runTranscriptsIngest, type TranscriptsIngestResult } from '../core/transcripts/ingest.ts';
 import { isOpenclawCheckpointFile } from '../core/transcripts/openclaw.ts';
+import {
+  DEFAULT_HERMES_EXCLUDE_SOURCES,
+  HERMES_EXCLUDE_NONE,
+  normalizeExcludeSources,
+  resolveHermesExcludePolicy,
+  HERMES_SUBAGENT_SOURCE,
+} from '../core/transcripts/hermes.ts';
+import { splitSourceList } from '../core/config-list.ts';
 import { isGrokSessionSidecarStrict } from '../core/transcripts/grok.ts';
 import {
   isClaudeCodeSubagentFile,
@@ -80,6 +88,11 @@ interface IngestCliOpts {
   maxCostUsd?: number;
   /** gbrain#4149: explicit per-format byte-cap override; undefined = adapter-native defaults. */
   maxBytes?: number;
+  /**
+   * #8901: `--exclude-source` as given (normalized; `none` → []). undefined =
+   * the flag was not passed, so the config key or the default decides.
+   */
+  excludeSources?: string[];
   embed?: boolean;
   all?: boolean;
   json?: boolean;
@@ -99,6 +112,18 @@ export function ingestCheckpointFingerprintInput(args: {
   format: string;
   version: string | number;
   maxBytes?: number;
+  /**
+   * #8901: the EXPLICIT exclude set (flag or config key), sorted; undefined
+   * when the default applies. Excluding FEWER sources (re-admitting some)
+   * under an old watermark would skip the re-admitted sessions forever, so a
+   * changed explicit set is a new scope. The default is not keyed: excluding
+   * more never needs a rescan, and keying the default would re-scope every
+   * existing watermark at upgrade. Keyed
+   * only for `format` hermes or auto (a path that may be a Hermes store): an
+   * explicit codex/claude-code/grok/openclaw run ignores the set, so setting
+   * the config key must not re-scope those watermarks.
+   */
+  excludeSources?: readonly string[];
 }): Record<string, string | number | string[]> {
   return {
     sourceId: args.sourceId,
@@ -111,6 +136,7 @@ export function ingestCheckpointFingerprintInput(args: {
     // rescan. Omitting the key keeps the default path on the legacy
     // fingerprint; every explicit cap still gets its own scope.
     ...(args.maxBytes != null ? { maxBytes: args.maxBytes } : {}),
+    ...(args.excludeSources != null && (args.format === 'hermes' || args.format === 'auto') ? { excludeSources: [...args.excludeSources].sort() } : {}),
   };
 }
 
@@ -170,6 +196,27 @@ export function parseIngestArgs(args: string[]): IngestCliOpts | { help: true } 
       opts.maxCostUsd = n;
       continue;
     }
+    if (a === '--exclude-source') {
+      // #8901: a comma list of Hermes session sources, or `none` to turn every
+      // exclusion off for this run. A missing value or a flag-shaped one is an
+      // error, never swallowed as the list.
+      const raw = args[++i];
+      if (raw === undefined || raw === '' || raw.startsWith('-')) {
+        return { error: `exclude-source needs a comma list of session sources (e.g. cron,subagent) or the word ${HERMES_EXCLUDE_NONE}` };
+      }
+      const items = splitSourceList(raw);
+      if (items.length === 0) {
+        // `,` or spaces: not the off switch (that is the word `none`), so a
+        // value that lists nothing is refused rather than read as "exclude
+        // nothing" (fail closed).
+        return { error: `exclude-source lists no session sources (got '${raw}'); use a comma list or the word ${HERMES_EXCLUDE_NONE}` };
+      }
+      if (items.includes(HERMES_EXCLUDE_NONE) && items.length > 1) {
+        return { error: `exclude-source: ${HERMES_EXCLUDE_NONE} cannot be combined with other sources (got '${raw}')` };
+      }
+      opts.excludeSources = normalizeExcludeSources(items);
+      continue;
+    }
     if (a === '--max-bytes') {
       // gbrain#4149: optional VALIDATED override for the per-format byte
       // caps (e.g. the Hermes store guard). Omission preserves each
@@ -227,6 +274,30 @@ skip). Embedding is OFF by default; run the embed backfill later or opt in.
                     codex degrades to a bounded head+tail read, while
                     claude-code, openclaw, hermes and grok reject the file
                     outright — so LOWERING this can drop those formats
+  --exclude-source L
+                    Hermes stores: skip sessions whose source is in the comma
+                    list L before anything is read (they never become pages
+                    and never reach --facts); "subagent" also skips delegate
+                    children spawned under another source (Hermes marks them
+                    in model_config). Default: ${DEFAULT_HERMES_EXCLUDE_SOURCES.join(',')}
+                    (what Hermes hides from its own session history; cron,
+                    oneshot and a hook's custom source are kept until named).
+                    A session matches by its source or by its creation label
+                    (Hermes stores the owner's own chats as source "local"; a
+                    session created by cron and continued by hand keeps its
+                    cron creation label). "none" imports everything; an
+                    explicit list REPLACES the default, so name
+                    subagent,kanban,tool again to keep them out. Config
+                    key transcripts.hermes.exclude_sources
+                    (JSON array or comma list) sets a default for scheduled
+                    runs; the flag wins. Excluded sessions are counted on an
+                    "excluded:" line, are not errors, and do not hold the
+                    --since last watermark; an explicitly set list is part
+                    of the checkpoint scope for Hermes stores and
+                    auto-detected paths (changing it starts a fresh
+                    --since last scope, like --max-bytes). A config value
+                    that is not a list refuses the run. Other formats
+                    ignore this flag.
   --json            Machine-readable result
   --quiet           Suppress the human summary
 
@@ -338,6 +409,10 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   if (r.redactions > 0) lines.push(`redactions: ${r.redactions} secrets/patterns redacted before write`);
   if (r.imperatives > 0) lines.push(`flagged: ${r.imperatives} agent-directed imperative(s) noted in frontmatter`);
   if (r.subagentRollouts > 0) lines.push(`${r.subagentRollouts} sub-agent rollouts (no user turns by design)`);
+  if (r.sessionsExcluded > 0) lines.push(fmtExcludedLine(r));
+  if (r.sessionMetadataUnparsed > 0) {
+    lines.push(`note: ${r.sessionMetadataUnparsed} scanned session(s) had host metadata that did not parse; a delegate marker there could not be read`);
+  }
   if (r.driftFiles > 0) {
     const userless = r.files.filter((f) => f.userTurnsMissing).length;
     const zero = r.driftFiles - userless;
@@ -364,6 +439,19 @@ export function fmtSummary(r: TranscriptsIngestResult): string {
   }
   return lines.join('\n');
 }
+
+/** #8901: `excluded: 4 automated session(s) by source (cron 1, subagent 3 incl. 2 delegate child(ren) under another source) — not imported, not errors` (labels sorted). */
+export function fmtExcludedLine(r: Pick<TranscriptsIngestResult, 'sessionsExcluded' | 'excludedBySource' | 'delegatesExcluded'>): string {
+  const parts = Object.entries(r.excludedBySource)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([label, n]) => label === HERMES_SUBAGENT_SOURCE && r.delegatesExcluded > 0
+      ? `${label} ${n} incl. ${r.delegatesExcluded} delegate child(ren) under another source`
+      : `${label} ${n}`);
+  return `excluded: ${r.sessionsExcluded} automated session(s) by source (${parts.join(', ')}) — not imported, not errors`;
+}
+
+/** #8901: the config key scheduled runs set instead of the flag. */
+export const HERMES_EXCLUDE_SOURCES_CONFIG_KEY = 'transcripts.hermes.exclude_sources';
 
 async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'>): Promise<void> {
   const parsed = parseIngestArgs(args);
@@ -455,6 +543,37 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     return;
   }
 
+  // #8901: the Hermes session-kind exclude set — flag > config key > default.
+  // Resolved BEFORE the fingerprint, which keys on an explicit set. The key
+  // is read only when a Hermes store can be scanned (format hermes or auto):
+  // an explicit codex/claude-code/grok/openclaw run ignores the set, so a
+  // malformed key must not refuse it.
+  const hermesPossible = parsed.format === undefined || parsed.format === 'hermes';
+  if (parsed.excludeSources !== undefined && !hermesPossible) {
+    console.error(`note: --exclude-source applies to Hermes stores only; ignored for --format ${parsed.format}`);
+  }
+  let excludeConfigRaw: string | null = null;
+  if (parsed.excludeSources === undefined && hermesPossible) {
+    try {
+      excludeConfigRaw = await engine.getConfig(HERMES_EXCLUDE_SOURCES_CONFIG_KEY);
+    } catch (e) {
+      console.error(`gbrain transcripts ingest: could not read config ${HERMES_EXCLUDE_SOURCES_CONFIG_KEY}: ${e instanceof Error ? e.message : String(e)}`);
+      setCliExitVerdict(1);
+      return;
+    }
+  }
+  const excludePolicy = resolveHermesExcludePolicy({ flag: parsed.excludeSources ?? null, configRaw: excludeConfigRaw });
+  if (excludePolicy.error) {
+    // Fail closed: a malformed value must not read as "exclude nothing".
+    console.error(
+      `gbrain transcripts ingest: config ${HERMES_EXCLUDE_SOURCES_CONFIG_KEY} ${excludePolicy.error}; ` +
+        `set a JSON array or comma list (e.g. gbrain config set ${HERMES_EXCLUDE_SOURCES_CONFIG_KEY} '["cron","subagent"]'), ` +
+        `unset it, or pass --exclude-source for this run`,
+    );
+    setCliExitVerdict(2);
+    return;
+  }
+
   // --since last → op-checkpoint watermark (speed convenience only; the
   // status gap table is the correctness surface). Fingerprint binds
   // source + pathspec + format + adapter version so a second source or a
@@ -474,6 +593,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       format: parsed.format ?? 'auto',
       version: TRANSCRIPT_IMPORT_VERSION,
       maxBytes: parsed.maxBytes,
+      ...(excludePolicy.explicit ? { excludeSources: excludePolicy.sources } : {}),
     })),
   };
   let sinceIso = parsed.since;
@@ -507,6 +627,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       sinceIso,
       sourceId,
       maxBytes: parsed.maxBytes,
+      excludeSessionSources: excludePolicy.sources,
       embed: parsed.embed,
       activePack,
       context,
@@ -548,10 +669,40 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     });
   }
 
+  // #8901: an explicit label that matched nothing is most likely a typo or a
+  // case mismatch (labels are exact); report it when a Hermes store was
+  // scanned, in --json too, so a scheduled run can see it.
+  // Only on a complete scan: every requested path visited (a `--limit` stop
+  // leaves later files unvisited), every Hermes file's end-of-scan
+  // diagnostics applied (absent after a limit stop inside it or a thrown
+  // parse), and no Hermes file errored or read as drift (a caught schema
+  // error returns diagnostics without enumerating sessions). A label must
+  // never be called a typo on partial evidence.
+  const hermesFiles = result.files.filter((f) => f.format === 'hermes');
+  const scanComplete = result.files.length === paths.length
+    && hermesFiles.length > 0
+    && hermesFiles.every((f) => f.diagnosticsApplied && !f.error && !f.drift);
+  const unmatchedExcludeSources = excludePolicy.explicit && scanComplete
+    ? excludePolicy.sources.filter((label) => !result.excludeLabelsMatched.includes(label))
+    : [];
+  const excludeOrigin = parsed.excludeSources !== undefined ? '--exclude-source' : HERMES_EXCLUDE_SOURCES_CONFIG_KEY;
+  // An explicit list REPLACES the default; name the default members it
+  // re-admits (in --json always, so a scheduled run can see it; in the human
+  // summary unless the list is the deliberate off switch).
+  const readmittedDefaultSources = excludePolicy.explicit && hermesFiles.length > 0
+    ? DEFAULT_HERMES_EXCLUDE_SOURCES.filter((label) => !excludePolicy.sources.includes(label))
+    : [];
+  const defaultsDropped = excludePolicy.sources.length > 0 ? readmittedDefaultSources : [];
   if (parsed.json) {
-    console.log(JSON.stringify({ ...result, facts: factsSummary ?? null, source_id: sourceId }, null, 2));
+    console.log(JSON.stringify({ ...result, facts: factsSummary ?? null, source_id: sourceId, unmatched_exclude_sources: unmatchedExcludeSources, readmitted_default_sources: readmittedDefaultSources }, null, 2));
   } else if (!parsed.quiet) {
     console.log(fmtSummary(result));
+    if (unmatchedExcludeSources.length > 0) {
+      console.log(`note: no session matched ${excludeOrigin} label(s) ${unmatchedExcludeSources.join(', ')} (labels are exact and case-sensitive)`);
+    }
+    if (defaultsDropped.length > 0) {
+      console.log(`note: ${excludeOrigin} replaces the default list; ${defaultsDropped.join(', ')} session(s) import on this run (name them to keep them out)`);
+    }
     if (factsSummary) {
       console.log(
         `facts: attempted ${factsSummary.pages} page(s), ${factsSummary.pagesFailed} failed` +

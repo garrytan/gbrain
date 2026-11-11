@@ -64,6 +64,7 @@ import { ALLOWED_TYPES, type AllowedType } from '../facts/conversation-types.ts'
 import { conversationFactsCostCap } from '../facts/conversation-budget.ts';
 import { noPricingMessage } from '../budget/no-pricing.ts';
 import { OperationError } from '../ops/contract.ts';
+import { parseSourceList } from '../config-list.ts';
 
 /** Per-phase wrapper opts. */
 export interface ConversationFactsBackfillPhaseOpts {
@@ -452,17 +453,6 @@ export async function runPhaseConversationFactsBackfill(
       per_source: perSourceResults,
     },
   };
-}
-
-/** `exclude_sources`: a JSON array of source ids or a comma-separated list; anything else excludes nothing. */
-function parseSourceList(raw: string | null): string[] {
-  if (!raw?.trim()) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) return parsed.filter((id): id is string => typeof id === 'string' && id.trim() !== '').map(id => id.trim());
-    if (typeof parsed !== 'string') return [];
-  } catch { /* a comma-separated list */ }
-  return raw.split(',').map(id => id.trim()).filter(Boolean);
 }
 
 function notOwnedNote(ids: string[]): string {
