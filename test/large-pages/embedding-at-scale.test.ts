@@ -318,6 +318,21 @@ for (const kind of testBackends()) {
       expect((await sourceSpend24h(engine, 'default')).total_usd).toBeLessThanOrEqual(1 + 1e-9);
     });
 
+    test('an unpriced embedding model reserves a conservative estimate in the source ledger, so the 24-hour cap still binds it', async () => {
+      await engine.setConfig(SOURCE_SPEND_CAP_KEY, '0.02');
+      const unpriced: AIInvocation = { ...EMBED_CALL, model: 'acme-example:unpriced-embedder' };
+      let provider = 0;
+      const answered = () => invokeAI(unpriced, async () => { provider++; return { usage: { tokens: 1000 } }; }, sdkInvocationUsage);
+      await withSourceSpendLedger(engine, { sourceId: 'default', jobId: 21 }, answered);
+      const rows = await engine.executeRaw<{ usd: number; state: string }>("SELECT usd, state FROM embedding_spend WHERE batch_id LIKE 'job:21:%'");
+      expect(rows.length).toBe(1);
+      expect(rows[0]!.state).toBe('settled');
+      expect(Number(rows[0]!.usd)).toBeCloseTo(100_000 * UNPRICED_RATE_PER_MTOK / 1e6, 9);
+      const before = provider;
+      await expect(withSourceSpendLedger(engine, { sourceId: 'default', jobId: 22 }, answered)).rejects.toBeInstanceOf(SourceSpendCapped);
+      expect(provider).toBe(before);
+    });
+
     test('the embed-backfill job runs its drain under the source ledger and stops source_spend_capped when the cap refuses a call', async () => {
       await engine.setConfig(SOURCE_SPEND_CAP_KEY, '1');
       const drain = async (_engine: BrainEngine, _source: string, opts: { signal?: AbortSignal }) => {

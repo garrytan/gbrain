@@ -41,6 +41,7 @@ import { withAIInvocationGuard } from './ai/invocation-guard.ts';
 import { loadPricingOverrides } from './budget/budget-tracker.ts';
 import type { PricingOverrides } from './budget/reservation-cost.ts';
 import { actualCents, maximumInvocationCents } from './minions/delegated-spend.ts';
+import { UNPRICED_RATE_PER_MTOK } from './held-embedding-action.ts';
 
 export const PAGE_TAIL_USD_KEY = 'embed.page_tail_usd_per_day';
 export const DEFAULT_PAGE_TAIL_USD = 0.25;
@@ -238,7 +239,7 @@ export class SourceSpendCapped extends Error {
 
 /**
  * Run `run` (an embed-backfill drain) with each embedding provider attempt outside a segmented batch reserved in the
- * source's 24-hour ledger before it is sent: its maximum liability, one row per attempt, under the source's spend lock,
+ * source's 24-hour ledger before it is sent: its maximum liability (an unpriced model's input ceiling at UNPRICED_RATE_PER_MTOK), one row per attempt, under the source's spend lock,
  * refused past the cap (`onRefused` runs first, then the attempt throws). An answered attempt settles to its measured
  * cost; one with no reported usage keeps its maximum, and a worker killed mid-call leaves the reservation counted.
  */
@@ -248,7 +249,8 @@ export function withSourceSpendLedger<T>(engine: BrainEngine, opts: { sourceId: 
   return withAIInvocationGuard(async call => {
     if (call.kind !== 'embedding' || batchReserved.getStore()) return { settle: async () => {} };
     const overrides = await (pricing ??= loadPricingOverrides(engine));
-    const usd = (maximumInvocationCents(call, overrides) ?? 0) / 100;
+    const maxCents = maximumInvocationCents(call, overrides);
+    const usd = maxCents !== null ? maxCents / 100 : (call.maxInputTokens ?? call.estimatedInputTokens ?? 0) * UNPRICED_RATE_PER_MTOK / 1_000_000;
     const capUsd = await resolveSourceSpendCapUsd(engine);
     const id = `job:${opts.jobId}:${randomUUID()}`;
     const refused = await engine.transaction(async tx => {
