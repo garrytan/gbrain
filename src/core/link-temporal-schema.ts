@@ -5,8 +5,10 @@
  *
  * - link_transitions: dated start/end evidence for a relationship
  *   (from_page_id, to_page_id, link_type). Owned by the page that states it
- *   (origin_page_id; NULL for manual edges) and replaced with that page's
- *   derived links.
+ *   (origin_page_id; NULL for database-only manual edges) and replaced with that
+ *   page's derived links. link_source names the links-section row a manual
+ *   statement came from (the row's source), so each row keeps its own dates; it
+ *   is NULL for every other producer and for statements written before the column existed.
  * - link_relationships: the derived temporal state of each relationship, one
  *   row per read scope ('all' = every live origin, 'world' = evidence from
  *   private origins excluded). valid_ranges holds the stints; readers probe it
@@ -36,10 +38,11 @@ CREATE TABLE IF NOT EXISTS link_transitions (
   producer        TEXT NOT NULL CHECK (producer IN ('timeline','explicit','frontmatter','manual','inline','dream')),
   origin_page_id  INTEGER REFERENCES pages(id) ON DELETE CASCADE,
   line_hash       TEXT NOT NULL DEFAULT '',
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  link_source     TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS link_transitions_identity_idx
-  ON link_transitions (origin_page_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer) NULLS NOT DISTINCT;
+  ON link_transitions (origin_page_id, from_page_id, to_page_id, link_type, link_source, kind, occurred_on, producer) NULLS NOT DISTINCT;
 CREATE INDEX IF NOT EXISTS link_transitions_relationship_idx ON link_transitions (from_page_id, to_page_id, link_type);
 CREATE INDEX IF NOT EXISTS link_transitions_origin_idx ON link_transitions (origin_page_id);
 ${rls('link_transitions')}

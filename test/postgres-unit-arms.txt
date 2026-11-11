@@ -265,8 +265,10 @@ test/large-pages/upload-provenance-7873.test.ts
 test/large-pages/upload-review.test.ts
 test/large-pages/v252-master-reader-compat.test.ts
 test/link-cross-source.test.ts
+test/link-dates-per-row-gst2228.test.ts
 test/link-origin-scope.test.ts
 test/link-preparation-shared-index.test.ts
+test/link-transitions-source-migration-gst2228.test.ts
 test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
