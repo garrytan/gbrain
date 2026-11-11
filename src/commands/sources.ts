@@ -1289,9 +1289,11 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   const movementView = await import('../core/persistence/sync-movement.ts');
   const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
   const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)])); const watermarkView = await import('../core/persistence/applied-watermark.ts'), watermarks = new Map(await Promise.all(sources.map(async source => [source.id, await watermarkView.readAppliedWatermark(engine, source.id).catch(() => null)] as const)));
+  const publishOff = new Set(await (await import('../core/persistence/worktree-refresh.ts')).publishOptedOut(engine, sources.map(source => source.id)));
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
+      ...(publishOff.has(m.source_id) ? { auto_reconcile: false } : {}),
       sync_running: syncRunning.has(m.source_id),
       sync_holder: syncRunning.get(m.source_id) ?? null,
       ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
@@ -1344,6 +1346,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
   for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); } for (const w of watermarks.values()) if (w) console.log(`  ${watermarkView.formatAppliedWatermark(w)}`);
   for (const [sourceId, notices] of uncommitted) for (const line of uncommittedView.uncommittedFenceRepairLines(sourceId, notices)) console.log(line);
+  for (const id of publishOff) console.log(`  ${id}: automatic publishing is off (sources.auto_reconcile.source.${id} false): git-reconcile and refresh never push its local commits; sync goes on`);
   for (const view of sharedSkills.values()) if (view && (only || view.configured === false || view.parked)) for (const line of sharedSkillsView.sharedSkillsStatusLines(view)) console.log(`  ${line}`);
   for (const m of metrics) {
     const warns: string[] = [];

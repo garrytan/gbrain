@@ -480,6 +480,16 @@ interface Plan {
 /** #7686: publish a diverged checkout's local commits before the fast-forward. Unset means on when the worktree's Git durability is on; false turns it off; true publishes even with durability off. */
 export const REFRESH_PUBLISH_DIVERGED_KEY = 'sources.refresh_publish_diverged';
 
+/** GST-2250: the sources whose `sources.auto_reconcile.source.<id>` is false. Refresh and git-reconcile never publish their local commits; their sync and fast-forwards go on. */
+export async function publishOptedOut(engine: Pick<BrainEngine, 'getConfig'>, sourceIds: readonly string[]): Promise<string[]> {
+  const off: string[] = [];
+  for (const id of sourceIds) {
+    const value = (await engine.getConfig(`sources.auto_reconcile.source.${id}`))?.trim();
+    if (value && !isTruthy(value)) off.push(id);
+  }
+  return off;
+}
+
 /** Steps 1.3/1: refusals before any database state; fetch moves only remote-tracking refs. */
 async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTimeoutMs: number, publishDiverged: false | 'default' | 'explicit' = false): Promise<Plan> {
   if (!await managedPersistenceEnabled(engine)) throw refusal('refresh_not_managed',
@@ -540,6 +550,9 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     `git -C ${q(root)} fetch ${remote || 'origin'}, then gbrain sources refresh ${sourceId}`);
   if (oldHead !== targetHead && !await isAncestor(git, root, oldHead, targetHead)) {
     if (!publishDiverged) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead);
+    const optedOut = await publishOptedOut(engine, members);
+    if (optedOut.length) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead,
+      `Automatic publishing is off for ${optedOut.join(', ')} (sources.auto_reconcile.source.<id> false), so`);
     const rewrite = await upstreamRewriteReason(read, before!, upstreamRef, targetHead, oldHead);
     if (rewrite) throw await divergedRefusal(git, root, sourceId, upstreamRef, oldHead, targetHead, rewrite);
     const base = (await read(['merge-base', oldHead, targetHead], 1)).stdout.trim() || oldHead;
@@ -574,7 +587,7 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
   if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to publish the diverged checkout ${root}; nothing was pushed.`,
     `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry gbrain sources refresh ${sourceId}; or publish by hand with gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${q(root)}.`);
   const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--expect-remote', checkedUpstream, '--json'], {
-    timeout: PUBLISH_TIMEOUT_MS, termGraceMs: 10_000, maxBuffer: 1024 * 1024,
+    timeout: PUBLISH_TIMEOUT_MS, termGraceMs: 10_000, maxBuffer: 1024 * 1024, killTree: true,
     env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
   });
   let doc: Record<string, unknown> | null = null;

@@ -252,20 +252,21 @@ describe('gbrain doctor — half-migrated Minions detection', () => {
   });
 
   test('C-NEW-2: after --force-retry the version is pending, not still wedged', async () => {
-    seedLedger(['partial', 'partial', 'partial', 'retry'].map(status => ({ version: '0.53.0', status })));
+    // #8720: an opt-out version (0.53.0) is unknown without an engine, so these use a plain host migration.
+    seedLedger(['partial', 'partial', 'partial', 'retry'].map(status => ({ version: '0.46.3', status })));
     const result = await runFastChecks();
     const minions = result.checks.find(c => c.name === 'minions_migration');
     expect(minions!.status).toBe('warn');
-    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.53.0. Run: gbrain apply-migrations --yes');
+    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.46.3. Run: gbrain apply-migrations --yes');
     expect(result.exitCode).toBe(0);
   });
 
   test('C-NEW-3: a host migration a newer one skipped past is reported as never run', async () => {
-    seedLedger(MIGRATION_VERSIONS.filter(v => v !== '0.53.0').map(version => ({ version, status: 'complete' })));
+    seedLedger(MIGRATION_VERSIONS.filter(v => v !== '0.46.3').map(version => ({ version, status: 'complete' })));
     const minions = (await runFastChecks()).checks.find(c => c.name === 'minions_migration');
     expect(minions!.status).toBe('warn');
-    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.53.0. Run: gbrain apply-migrations --yes');
-    expect((minions!.details as { pending: string[] }).pending).toEqual(['0.53.0']);
+    expect(minions!.message).toBe('1 host migration(s) not run yet: 0.46.3. Run: gbrain apply-migrations --yes');
+    expect((minions!.details as { pending: string[] }).pending).toEqual(['0.46.3']);
   });
 
   test('human output: prints MINIONS HALF-INSTALLED loud banner', async () => {
