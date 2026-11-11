@@ -26,7 +26,8 @@ function git(cwd: string, ...args: string[]): string {
 
 function clone(bare: string, name: string): string {
   const dir = join(root, name);
-  execFileSync('git', ['-c', 'protocol.file.allow=always', 'clone', '-q', bare, dir], { stdio: 'ignore', env: process.env });
+  // core.autocrlf=false: a Windows git default of true checks pulled files out as CRLF and the byte comparisons below fail.
+  execFileSync('git', ['-c', 'protocol.file.allow=always', '-c', 'core.autocrlf=false', 'clone', '-q', '--config', 'core.autocrlf=false', bare, dir], { stdio: 'ignore', env: process.env });
   git(dir, 'config', 'user.email', `${name}@example.com`);
   git(dir, 'config', 'user.name', name);
   return dir;
