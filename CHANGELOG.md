@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.668.0] - 2026-11-11
 
 **The skill resolver can now find skills from more places, stays fresh when your harness writes into its skills folder, and runs inside Hermes.** The skill resolver is the optional feature that offers your agent the right installed skill on each turn. It is still off by default and never blocks a turn.
 
@@ -51,6 +51,7 @@ Before this release it only read skill folders. Now it also reads OpenClaw's ski
 - Compiled builds pass `--define GBRAIN_BUILD_COMMIT`, so build receipts from a compiled binary record `gbrain_commit`.
 - Ubicloud gate VMs install CI's pinned Node 24.18.0 instead of the distribution's Node 18.
 - The tracked scratch file `dbg-tmp.ts` is removed.
+
 ## [0.60.667.0] - 2026-11-11
 
 **A brain that serves several people can now be set up the safe way in one command: each person gets a member, a folder only they read and a key bound to them, and doctor fails when a person's folder has no owner.** When one bot answers several people from one brain with one unbound key, it pulls one person's notes into another person's answers (garrytan/harness-evals#363 measured 15 to 47.5% of trials; bots reading through member-bound keys stayed at 0 to 0.5%). `gbrain setup claude-code --serves several --members alice-example,bob-example` writes `access.serves = several`, adds the members, adds a folder rule `people/<member>/` per member through the folder-rule path (committed to `.gbrain/access.yml` on a repo brain, the database rule log on a repo-less one), mints one read-write key per member through the `auth create` mint (granted the labelled source) into a 0600 file under `~/.gbrain/member-keys/`, and proves by reading every other member's folder as each member that none is visible. Re-runs keep everything and never replace a key; a partial failure finishes on the next run, and anything the preview marks BLOCKED stops the run before it writes. A one-person brain sees no change: `--serves one` stays the default and its output is unchanged.
