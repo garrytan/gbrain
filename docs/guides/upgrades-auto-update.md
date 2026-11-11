@@ -293,8 +293,16 @@ process this brain runs on the host, or refuses before it installs anything:
    and one that starts from another kind of install refuses with its commands;
    the supervisor with `gbrain jobs supervisor stop` then `start --detach` with
    the queue, concurrency and PID file it was launched with (its worker, under
-   tini or not, restarts with it). A serve or worker started by hand, an
-   autopilot without its service, a running `gbrain sync`, or an MCP server an agent
+   tini or not, restarts with it). An autopilot that no installed service runs
+   is handed to its launcher when one is known to start it again: this brain's
+   own gbrain cron line (what `gbrain autopilot --install` writes on Linux
+   without a user systemd bus), or a cron entry or wrapper of your own once you
+   declare it with `gbrain config set self_upgrade.autopilot_launcher external`
+   (only when it starts autopilot again within 5 minutes of it exiting). The
+   restart stops that autopilot (only the daemon this brain's autopilot lock
+   names, and only while `ps` still shows the same process; SIGTERM drains it)
+   and waits for the launcher. A serve or worker started by
+   hand, an autopilot started any other way, a running `gbrain sync`, or an MCP server an agent
    harness started refuses the upgrade with `restart_refused` (exit 3), naming
    the exact step for each process; nothing is installed. For MCP servers the
    fix asks the user, then reruns with `--stop-mcp`: the upgrade stops them
@@ -303,8 +311,9 @@ process this brain runs on the host, or refuses before it installs anything:
    `/mcp`, then reconnect; other harnesses: a new session).
 2. **After the swap and migrations** the new build runs
    `gbrain upgrade --restart-only`: serve first, then autopilot, then the
-   supervisor, then the MCP servers `--stop-mcp` named. It then polls for up to
-   three minutes until no old pid is alive, every process reports the installed
+   supervisor, then an autopilot handed to its launcher, then the MCP servers
+   `--stop-mcp` named. It then polls for up to three minutes (six when an
+   autopilot was handed to its launcher) until no old pid is alive, every process reports the installed
    build (a process that records no build must have started after the restart
    from an install that holds it; a compiled binary's build is inferred from
    its start time and listed as such), each restarted role and the supervisor's
@@ -317,6 +326,15 @@ gbrain upgrade --restart-only --dry-run --json   # read-only: every gbrain proce
 gbrain upgrade --restart-only                    # restart onto the installed build and verify (doctor's runtime_build_skew fix)
 gbrain upgrade --no-restart                      # install only; doctor fails runtime_build_skew until the restart runs
 ```
+
+`gbrain doctor` runs the same pre-swap plan read-only: `self_upgrade_health`
+warns while the next `gbrain upgrade` would refuse, naming each process and its
+step (for an autopilot started outside gbrain's service, `gbrain autopilot
+--install`, after retiring the launcher that starts it now, or the declared
+hand-off above), and names a hand-off or a second Bun global install the
+upgrade replaces itself. An MCP server a harness started does not make it
+warn (`gbrain upgrade --stop-mcp` stops it), and a held or failed auto-upgrade
+is reported first.
 
 On an always-on host, start with `gbrain autopilot pause --reason "upgrade"`
 and wait until `gbrain jobs list --status active --json` returns no jobs, so no

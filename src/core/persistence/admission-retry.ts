@@ -93,10 +93,19 @@ export function outstandingCapacityOf(error: OperationError): { outstanding: num
  * remote timeout); past it the refusal is returned with `fix.next: wait` and its `retry_after_ms`, never a success.
  */
 export const REFRESH_FENCE_WAIT_MS = 10_000;
+/**
+ * GBRA-443: how long one step of a preview-bound repair apply (`--expect`) waits out a refresh fence. Its items are the
+ * operator's approved set, so a refusal costs a fresh run rather than one retried call; a refresh of a large checkout
+ * can run several minutes, so the step follows it to its end up to this ceiling. Nothing is held across a pause.
+ */
+export const REPAIR_REFRESH_WAIT_MS = 10 * 60_000;
 const REFRESH_FENCE_BACKOFF_MS = [250, 500, 1000, 2000] as const;
 let refreshFenceWaitMs = REFRESH_FENCE_WAIT_MS;
+let repairRefreshWaitMs = REPAIR_REFRESH_WAIT_MS;
 /** Test seam: the wait cap, or null for the default. */
 export function _setRefreshFenceWaitForTests(ms: number | null): void { refreshFenceWaitMs = ms ?? REFRESH_FENCE_WAIT_MS; }
+/** Test seam: the preview-bound repair wait (withRepairRefreshWait), or null for the default. */
+export function _setRepairRefreshWaitForTests(ms: number | null): void { repairRefreshWaitMs = ms ?? REPAIR_REFRESH_WAIT_MS; }
 
 /**
  * One wait budget shared by every admission inside it (a remember batch waits once, not once per item). Its clock starts
@@ -106,6 +115,14 @@ export function _setRefreshFenceWaitForTests(ms: number | null): void { refreshF
 const refreshFenceDeadline = new AsyncLocalStorage<{ capMs: number; until?: number }>();
 export function withRefreshFenceBudget<T>(fn: () => Promise<T>, capMs?: number): Promise<T> {
   return refreshFenceDeadline.getStore() ? fn() : refreshFenceDeadline.run({ capMs: Math.min(refreshFenceWaitMs, capMs ?? Infinity) }, fn);
+}
+
+/**
+ * GBRA-443: a wait budget of its own (REPAIR_REFRESH_WAIT_MS) for one preview-bound repair step; an outer budget does
+ * not shorten it. Only an interactive admission inside it waits.
+ */
+export function withRepairRefreshWait<T>(fn: () => Promise<T>): Promise<T> {
+  return refreshFenceDeadline.run({ capMs: repairRefreshWaitMs }, fn);
 }
 
 export function isRefreshFenceRefusal(error: unknown): error is OperationError {

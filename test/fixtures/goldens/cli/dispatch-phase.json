@@ -1198,6 +1198,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "memory-proposals": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "migrate": {
         "hasSwitchCase": true,
         "phase": "post-connect",

@@ -14,7 +14,7 @@
 import { execFile, spawn } from '../spawn.ts';
 import { promisify } from 'node:util';
 import { gitChildEnv } from '../git-env.ts';
-import { NulRecordSplitter } from '../hardened-git.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV, NulRecordSplitter } from '../hardened-git.ts';
 import { ignoreCandidates } from './ignore-rules.ts';
 
 const execFileAsync = promisify(execFile);
@@ -31,11 +31,11 @@ const WALK_TIMEOUT_MS = 600_000;
 const INDEXES_PER_ROOT = 2;
 const GIT_MAX_BUFFER = 64 * 1024 ** 2;
 
-/** `literal`: the paths are pathspecs read literally (`log`); `check-ignore` takes plain pathnames and refuses the magic. */
+/** `literal`: the paths are pathspecs read literally (`log`); `check-ignore` takes plain pathnames and refuses the magic. GST-2331: every read here fetches nothing in a partial clone. */
 async function git(gitRoot: string, args: string[], literal = false): Promise<{ code: number; stdout: string }> {
   try {
-    const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', ...(literal ? ['--literal-pathspecs'] : []), '-C', gitRoot, ...args],
-      { env: gitChildEnv(), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER });
+    const { stdout } = await execFileAsync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, ...(literal ? ['--literal-pathspecs'] : []), '-C', gitRoot, ...args],
+      { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER });
     return { code: 0, stdout };
   } catch (error) {
     const e = error as { code?: unknown; stdout?: unknown; killed?: boolean };
@@ -46,7 +46,7 @@ async function git(gitRoot: string, args: string[], literal = false): Promise<{ 
 /** `git check-ignore --no-index -z --stdin` over `paths` (NUL-separated both ways, so any byte in a name survives). */
 function checkIgnore(gitRoot: string, paths: readonly string[]): Promise<{ code: number; stdout: string }> {
   return new Promise(resolve => {
-    const child = spawn('git', ['-c', 'core.quotepath=false', '-C', gitRoot, 'check-ignore', '--no-index', '-z', '--stdin'], { env: gitChildEnv(), stdio: ['pipe', 'pipe', 'ignore'] });
+    const child = spawn('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', gitRoot, 'check-ignore', '--no-index', '-z', '--stdin'], { env: gitChildEnv(NO_LAZY_FETCH_ENV), stdio: ['pipe', 'pipe', 'ignore'] });
     const chunks: Buffer[] = [];
     let size = 0, settled = false;
     const done = (code: number) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ code, stdout: Buffer.concat(chunks).toString('utf8') }); } };
@@ -85,8 +85,8 @@ export function __resetHistoryIndexesForTest(): void { historyIndexes.clear(); }
  */
 function walkHistory(gitRoot: string, revs: string[], onCommit?: (commits: number) => void): Promise<Map<string, PathHistory> | null> {
   return new Promise(resolve => {
-    const child = spawn('git', ['-c', 'core.quotepath=false', '-C', gitRoot, 'log', '--full-history', '--no-renames', '--diff-merges=first-parent', '-z',
-      '--format=%x1e%H%x1f%P%x1f%an%x1f%aI%x1f%s', '--name-status', ...revs, '--'], { env: gitChildEnv(), stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', gitRoot, 'log', '--full-history', '--no-renames', '--diff-merges=first-parent', '-z',
+      '--format=%x1e%H%x1f%P%x1f%an%x1f%aI%x1f%s', '--name-status', ...revs, '--'], { env: gitChildEnv(NO_LAZY_FETCH_ENV), stdio: ['ignore', 'pipe', 'ignore'] });
     const paths = new Map<string, PathHistory>();
     const splitter = new NulRecordSplitter();
     let commit: { deletion: Deletion; merge: boolean } | null = null, status: string | null = null, commits = 0, settled = false;

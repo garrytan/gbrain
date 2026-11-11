@@ -798,8 +798,8 @@ async function assembleDelta(
     if (!pastDeadline()) {
       try {
         const after = opts.factsAfter ?? (since ? { at: since, id: null } : null);
-        const visibility = remote ? (['world'] as ('private' | 'world')[]) : undefined;
-        const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
+        const { resolveExcludePrivatePages, worldOnlyFacts } = await import('../search/private-visibility.ts');
+        const visibility = worldOnlyFacts(remote) ? (['world'] as ('private' | 'world')[]) : undefined;
         const excludePrivate = await resolveExcludePrivatePages(engine, remote ? undefined : false);
         const rows = await engine.listFactsKeyset(
           opts.sourceId,

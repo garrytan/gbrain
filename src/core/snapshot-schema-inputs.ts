@@ -48,6 +48,7 @@ export const SNAPSHOT_DYNAMIC_IMPORTS_NOT_HASHED: Readonly<Record<string, string
   'persistence/memory-mutations.ts': 'verbs.ts request-time verb handlers',
   'persistence/verb-errors.ts': 'verbs.ts request-time verb handlers',
   'search/transcript-quote.ts': 'verbs.ts request-time verb handlers (remember unquotes a copied fact, #8377)',
+  'access/member-facts.ts': 'verbs.ts request-time verb handlers (remember refuses a member world write without share, GST-2243)',
   'feedback/record.ts': 'verbs.ts request-time answer recording',
   'verbs/entity-card.ts': 'verbs.ts request-time verb handlers',
   'verbs/entity-card-identity.ts': 'verbs.ts request-time verb handlers (identity siblings notice)',

@@ -40,6 +40,7 @@ import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fra
 import { frontmatterWhereFragment } from '../search/frontmatter-where.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { pickCanonicalOrigin } from '../persistence/origin-guard.ts';
+import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 
 /**
@@ -362,6 +363,9 @@ export async function purgeDeletedPages(
         WHERE t.source_id = d.source_id AND t.sha256 = decode(d.sha, 'hex')
           AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id = t.source_id AND m.sha256 = t.sha256)
           AND NOT ${trustedSql(stagingNeedsTextSql('t'))}`);
+      const bySource = new Map<string, string[]>();
+      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], r.slug]);
+      for (const [sourceId, purged] of bySource) await scrubPurgedSlugs(tx, sourceId, purged);
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length };
     });

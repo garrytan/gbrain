@@ -14,6 +14,7 @@ import { MINIMUM_BUN_VERSION, SECURE_BUN_VERSION, bunVersionMeets, unsupportedBu
 import { isNewerVersion, isValidVersionString } from '../../../core/semver.ts';
 import type { SelfUpgradeAction } from '../../../core/self-upgrade.ts';
 import type { SelfUpgradeAuditEvent } from '../../../core/audit/self-upgrade-audit.ts';
+import { launcherName, type RestartPlan } from '../../../core/upgrade-restart.ts';
 import { VERSION as GBRAIN_BINARY_VERSION } from '../../../version.ts';
 import type { Check } from '../../doctor.ts';
 import { agentFix, doctorVerify } from '../check-fix.ts';
@@ -73,8 +74,16 @@ function heldAutoUpgrade(recent: SelfUpgradeAuditEvent[], runningVersion: string
  * and any recent failed auto-upgrade attempts. File-plane only (no DB) so it
  * runs on thin clients. Warn on a held auto-upgrade or recent failures,
  * otherwise ok.
+ *
+ * #8776: `restart` is the plan the next `gbrain upgrade` makes before it installs
+ * (commands/upgrade-restart.ts upgradeRestartReadiness), passed by the local
+ * doctor only, so a remote report never carries host processes. A manual step in
+ * it means that upgrade refuses: warn, naming each blocker (an autopilot started
+ * outside gbrain's service, a process from another install). A hand-off to an
+ * autopilot launcher and a second Bun global install the upgrade replaces are
+ * named in the message.
  */
-export function checkSelfUpgradeHealth(): Check {
+export function checkSelfUpgradeHealth(restart?: RestartPlan | null): Check {
   try {
     const { loadConfig } = require('../../../core/config.ts');
     const {
@@ -106,6 +115,10 @@ export function checkSelfUpgradeHealth(): Check {
     }
     const parts: string[] = [`mode=${mode}`];
     if (resolution.source !== 'default') parts.push(`channel=${resolution.channel} (${resolution.source})`);
+    for (const step of restart?.steps ?? []) {
+      if (step.kind === 'handoff') parts.push(`upgrades restart autopilot pid ${step.pid} through ${launcherName(step.launcher)}`);
+      if (step.kind === 'replace_copy') parts.push(`pid ${step.pids.join(', ')} run${step.pids.length === 1 ? 's' : ''} from a second install at ${step.root} (${step.from ? `v${step.from}` : 'version unknown'}), which upgrades replace too`);
+    }
     // Shared stale/foreign-cache guard: only report an upgrade strictly newer
     // than the RUNNING binary (pendingUpgradeVersion owns the rule).
     const pendingLatest = pendingUpgradeVersion(GBRAIN_BINARY_VERSION, Date.now(), resolution.channel);
@@ -174,6 +187,21 @@ export function checkSelfUpgradeHealth(): Check {
       };
     }
 
+    const blockers = (restart?.manual ?? []).filter((m) => !(m.role === 'mcp' && m.argv[0] === 'kill'));
+    if (blockers.length) {
+      const autopilot = blockers.find((m) => m.role === 'autopilot' && m.argv[0] === 'gbrain');
+      return {
+        name: 'self_upgrade_health',
+        status: 'warn',
+        message: `gbrain upgrade refuses on this host: ${blockers.map((m) => m.instruction).join(' ')} (${parts.join('; ')}).`,
+        fix: autopilot
+          ? agentFix(['gbrain', 'autopilot', '--install'], 'Runs autopilot under launchd, systemd or a gbrain cron line, which every upgrade restarts; the launcher that starts it now has to be retired first.', 'self_upgrade_health', {
+            ask_user: true, docs: 'docs/guides/upgrades-auto-update.md#restart',
+            user_message: `autopilot pid ${autopilot.pid} was started outside gbrain's autopilot service, so gbrain upgrade refuses on this host. May I run gbrain autopilot --install, which runs autopilot under launchd, systemd or a gbrain cron line so upgrades restart it, after you retire whatever starts it now? If that launcher starts autopilot again within 5 minutes of it exiting, gbrain config set self_upgrade.autopilot_launcher external keeps it and lets upgrades hand autopilot to it instead.`,
+          })
+          : agentFix(['gbrain', 'upgrade', '--restart-only', '--dry-run', '--json'], 'Read-only: lists every gbrain process on this host with the restart each one needs and the steps the upgrade cannot take.', 'self_upgrade_health', { docs: 'docs/guides/upgrades-auto-update.md#restart' }),
+      };
+    }
     return { name: 'self_upgrade_health', status: 'ok', message: parts.join('; ') };
   } catch (e) {
     return {

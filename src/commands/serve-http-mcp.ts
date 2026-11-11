@@ -21,7 +21,7 @@ import { httpInstructionTools } from '../mcp/initialize-context.ts';
 import { installCapabilitiesResource, mcpAdministrationGuidance } from '../mcp/capabilities.ts';
 import { createSkillResources } from '../mcp/skill-resources.ts';
 import { resolveAuthCapabilities } from '../core/harness/capabilities.ts';
-import { ambientOptsFrom, type WritebackConfig } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom, writebackCaller, type WritebackConfig } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { hasScope, operationScopesAllowed } from '../core/scope.ts';
 import { summarizeMcpParams, dispatchToolCall, requestLogStatusForResult, requestMetaSessionId, hotMemoryOffIn, acceptedPendingReceipt, unknownToolEnvelope, errorResult, dispatchRenderContext, grantBlockedNotices, admitNotices, audienceRefusal, type ToolResult } from '../mcp/dispatch.ts';
@@ -226,6 +226,7 @@ function createMcpRequestServer(
     writebackOpts = ambientOptsFrom(writeback, {
       remember: rememberOp !== undefined && opAllowedForBoundClient(authInfo, rememberOp),
       extractFacts: extractFactsOp !== undefined && opAllowedForBoundClient(authInfo, extractFactsOp),
+      ...writebackCaller(authInfo),
     });
   }
   const server = new Server(
@@ -350,7 +351,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   if (statusMode && hasScope(authInfo.scopes, 'read')) return statusToolResult(statusMode, 'http');
   const op = mcpOperations.find(o => o.name === name);
   if (!op) {
-    return qmMemoryToolResult(name, await rejectUnknownMcpOperation(ctx, state, name, requestMetaSessionId(request.params)));
+    return qmMemoryToolResult(name, await rejectUnknownMcpOperation(ctx, state, name, requestMetaSessionId(request.params)), state.actorHeader != null);
   }
 
   // Scope enforcement (v0.28: hasScope replaces exact-string-match so
@@ -366,7 +367,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
   // denial first would tell the operator to widen the grant for nothing.
   const scopeSatisfied = op.cliOnly !== undefined || operationScopesAllowed(authInfo.scopes, op);
   if (!scopeSatisfied) {
-    return qmMemoryToolResult(name, await rejectInsufficientMcpScope(ctx, state, name, requiredScope, requestMetaSessionId(request.params)));
+    return qmMemoryToolResult(name, await rejectInsufficientMcpScope(ctx, state, name, requiredScope, requestMetaSessionId(request.params)), state.actorHeader != null);
   }
 
   // F8: redact request payload by default (declared keys only via the
