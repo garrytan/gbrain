@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,10 +10,17 @@ import { sha256 } from '../src/core/agent-install/state.ts';
 import { installHarnessConnection } from '../src/core/harness/install.ts';
 import type { HarnessCredentials } from '../src/core/harness/credentials.ts';
 import { operations } from '../src/core/operations.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { guardInheritedInstructionLedger } from './helpers/inherited-ledger-guard.ts';
+
+guardInheritedInstructionLedger();
 
 const roots: string[] = [];
 const temp = () => { const root = mkdtempSync(join(tmpdir(), 'gbrain-shared-adapter-')); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+let ledgerHome = '';
+beforeEach(() => { ledgerHome = temp(); });
+const install: typeof installHarnessConnection = (c, opts) => withEnv({ GBRAIN_HOME: ledgerHome }, () => installHarnessConnection(c, opts));
 
 function fixture() {
   const brain = randomUUID(), incarnation = randomUUID(), installation = randomUUID();
@@ -216,7 +223,7 @@ test('connect install performs approved enrollment while preserving unrelated ha
   const configPath = join(root, 'config.json');
   writeFileSync(configPath, JSON.stringify({ identity: 'keep', mcpServers: { unrelated: { command: 'local-fixture' } } }));
   const c: HarnessCredentials = { version: 1, mcp_url: 'https://brain.example.com/mcp', issuer_url: 'https://brain.example.com', client_id: 'fixture', access_token: 'synthetic-fixture-token', shared_skills: { follow: true } };
-  const result = await installHarnessConnection(c, { harness: 'claude-code', configPath, toolCaller: f.call, nativeSkillsDir: join(root, 'native-skills') });
+  const result = await install(c, { harness: 'claude-code', configPath, toolCaller: f.call, nativeSkillsDir: join(root, 'native-skills') });
   expect(result.shared_skills?.status).toBe('restart_required');
   expect(f.calls).toContain('join_brain'); expect(f.calls).toContain('get_skill_asset');
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
@@ -226,7 +233,7 @@ test('connect install performs approved enrollment while preserving unrelated ha
 test('memory-only install neither enrolls nor expands authority', async () => {
   const root = temp(); const f = fixture();
   const c: HarnessCredentials = { version: 1, mcp_url: 'https://brain.example.com/mcp', issuer_url: 'https://brain.example.com', client_id: 'fixture', access_token: 'synthetic-fixture-token', shared_skills: { follow: false } };
-  const result = await installHarnessConnection(c, { harness: 'claude-code', configPath: join(root, 'config.json'), toolCaller: f.call });
+  const result = await install(c, { harness: 'claude-code', configPath: join(root, 'config.json'), toolCaller: f.call });
   expect(result.shared_skills?.status).toBe('pending'); expect(f.calls).toEqual([]);
 });
 
