@@ -540,7 +540,7 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
   const { CHILD_ENV, resolveChildCliInvocation } = await import('../minions/job-isolation.ts');
   const cli = resolveChildCliInvocation(process.env, process.execPath, process.argv[1], () => null);
   if (!cli) throw opError('git_push_unavailable', `This process could not locate its own CLI executable to publish the diverged checkout ${root}; nothing was pushed.`,
-    `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry gbrain sources refresh ${sourceId}, or publish by hand: gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${q(root)}.`);
+    `Set ${CHILD_ENV.childCliOverride} to the path of the CLI executable and retry gbrain sources refresh ${sourceId}; or publish by hand with gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${q(root)}.`);
   const child = await execFileBounded(cli.cmd, [...cli.argsPrefix, 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', root, '--expect-remote', checkedUpstream, '--json'], {
     timeout: PUBLISH_TIMEOUT_MS, termGraceMs: 10_000, maxBuffer: 1024 * 1024,
     env: { ...process.env, GBRAIN_PUBLISH_LOCK_WAIT_SECONDS: '0', GBRAIN_PUSH_LOCK_WAIT_SECONDS: '0' },
