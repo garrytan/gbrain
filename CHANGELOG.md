@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The brain owner reads the derived pages and facts of pages it can already read, and the operator can let the owner read pages kept to other members.** An atom, a synthesized concept, a Life Chronicle event, a page with `derived_from` or a fact made from a page under a folder rule, or from a page that names readers, was hidden from every remote caller, the owner included, even when the rule or the readers named the owner. Credentials bound to the owner now read them whenever they read every origin, with no setting. A new opt-in, `gbrain access owner reads-restricted on`, off by default and settable only by the operator on the brain host, lets the owner also read pages that readers lists, folder rules and page rules keep to other members, with their derived pages and facts, but never another member's own member page. Nothing changes for any other caller or for writes, and nothing changes on upgrade.
+
+### Itemized changes
+
+#### Owner reads and the owner opt-in (GST-2490)
+
+- Migration v304 (`src/core/schema-migrations/v304-access-owner-origin.ts`): `gbrain_access_origin_closed_for()` and `gbrain_access_origin_hidden_for()`, the lineage arms of `gbrain_access_origin_restricted()` asked per origin for one caller. Only owner reads call them; `gbrain_access_origin_restricted()` is unchanged. Nothing is rewritten.
+- `src/core/search/private-visibility.ts`: `ownerAccessSql` for owner reads (read-only operations only: `remoteCallerAccess` in `src/core/access/caller.ts`, `src/mcp/dispatch.ts`, `src/core/minions/tools/brain-allowlist.ts`, and `--as <owner>` in `src/cli/as-preview.ts`), fact provenance and the readers checks for single rows; the search cache key and the hot-memory key carry the owner mode.
+- `src/core/access/owner.ts`, `src/commands/access.ts`: `gbrain access owner reads-restricted on|off` (refused for remote callers), shown by `gbrain access owner`, `access check` (`owner_reads_restricted`) and `who-can-read`; `whoami` adds `owner_reads_restricted` for every remote caller while it is on; doctor `access_owner_reads_restricted` (`src/commands/doctor/checks/owner-reads-restricted.ts`).
+- Unchanged on purpose: what every other caller reads, every write and publication check, member private facts, personal sources, shared-room audiences and attested calls.
+- Docs: `docs/guides/access-designations.md` (derived pages, member access, the owner opt-in), key-files entry.
+- Tests: `test/owner-reads-restricted.test.ts` (opt-in off and on, owner, other members and unbound keys, `--as`, writes, the remote refusal; PGLite and Postgres, rules in the database and in `access.yml`); doctor goldens.
+
 ## [0.60.680.0] - 2026-11-11
 
 **gbrain now tells you when a privacy label it doesn't recognize leaves a page readable.** A page with no `visibility` counts as private only when `access` is private, restricted or confidential, or `confidentiality` is confidential, secret, private or restricted. Any other value, such as `access: personal` or a confidentiality value naming a health record, was ignored without a word, so the page read as world to every remote caller and could be committed to the brain's git remote. Writes and doctor now say so. Who can read a page does not change.

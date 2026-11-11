@@ -115,7 +115,9 @@ These rules follow the origin, so nobody writes them by hand:
   origin may be a private transcript);
 - an atom whose origin page is private, a concept with a private input, a chronicle event from a private meeting,
   and any page whose `derived_from` names a private page are private whatever their own field says;
-- anything derived from a page that names `readable_by` is hidden from every remote caller.
+- anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
+  remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
+  origin of it (a folder rule kept to the owner, or readers that list the owner).
 
 `gbrain repair visibility` stamps the explicit value on derived pages (tighten-only). The owner reads them all.
 
@@ -129,8 +131,8 @@ Pinned-question pages are the owner's own and read as private. The owner reads t
 add --prefix <folder>/ --readers <list>` does the same for a folder, and `--slug <page>` for exactly one page (a page
 at the source root, or one whose file left git, which a `visibility` edit cannot reach; upgrade every host that shares
 the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
-shared brain, and it binds the owner too: the owner reads such a page only when listed. No grant, hatch or owner
-binding relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
+shared brain, and it binds the owner too: the owner reads such a page only when listed, unless the brain operator
+turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
@@ -152,6 +154,17 @@ and are never wider than their page. Remote fact reads return private facts to t
 database, so a repo-less brain works the same. The owner relaxation applies to a credential bound to that member
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
+
+**The owner opt-in.** `gbrain access owner reads-restricted on` (config `access.owner_reads_restricted`, off by
+default and unchanged on upgrade) lets the owner's credentials read the pages that `readable_by` lists, folder rules
+and page rules keep to other members, and their derived pages and facts, on every read path: HTTP tokens, OAuth
+clients, a stdio server bound to the owner, and `--as <owner>`. It never opens another member's own member page
+(`memory/members/<id>`), its derived pages or its facts, never widens a write (the owner still writes only the pages
+its readers and rules name), and changes nothing any other caller reads. Only the brain operator on the brain host
+sets it; a remote caller is refused. While it is on, `gbrain access check` and `gbrain access who-can-read` show the
+owner among the readers, every remote caller's `whoami` says so, and doctor reports `access_owner_reads_restricted`.
+`gbrain access owner reads-restricted off` is the undo. Turn it on only when the members agree that the owner reads
+what is kept to them, for example a brain where the members are the owner's own groups and assistants.
 
 One owner credential both reads every private page and writes new `default` pages that other members read, so an
 owner agent can copy private content into a shared page. A prompt planted in a page that agent reads can ask it to.
