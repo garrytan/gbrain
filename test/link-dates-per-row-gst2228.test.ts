@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { pageNotVisibleError } from '../src/core/persistence/page-visibility.ts';
 import { parseLinksFence, readPageLinksFence, renderLinksFence, type LinksFenceRow } from '../src/core/links-fence.ts';
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
@@ -157,7 +158,7 @@ for (const backend of testBackends()) {
         const before = await revision(engine);
         const missing = await op(remote, 'add_link', { from: ALICE, to: hidden.to, link_type: BETA.type }).then(() => null, (error: { code?: string; message?: string }) => ({ code: error.code, message: error.message }));
         expect(missing?.code).toBe('page_not_found');
-        await expect(op(remote, 'add_link', { from: ALICE, to: BETA.to, link_type: BETA.type, context: BETA.context })).rejects.toMatchObject(missing!);
+        await expect(op(remote, 'add_link', { from: ALICE, to: BETA.to, link_type: BETA.type, context: BETA.context })).rejects.toMatchObject({ code: missing!.code, message: pageNotVisibleError().message });
         expect(await revision(engine)).toBe(before);
         expect(await pageRows(engine)).toEqual([]);
         await addBeta(ctx);
