@@ -59,6 +59,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'atom_provenance_drift',
   // #7013: atoms an empty managed re-extraction retired that atoms-restore can bring back (doctor/checks/atom-retirements.ts).
   'atom_retirements_restorable',
+  // World atoms that carry an owner-only fence row of their source page (doctor/checks/atom-fence-rows.ts).
+  'atom_fence_rows',
   'captured_facts_active',
   // #8064: owner-attributed capture facts from agent-launched sessions (doctor/checks/agent-session-facts.ts).
   'agent_session_facts',
@@ -101,6 +103,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'unlabeled_people_folders',
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
+  // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
+  'attest_read_shared_scope',
   'extractor_facts_expired',
   'unwithdrawn_facts',
   'loop_facts_drift',
@@ -239,6 +243,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).
   'unlinked_facts',
+  // GST-1158: QM's proposed writes awaiting the owner (doctor/checks/memory-proposals.ts).
+  'memory_proposals_pending',
   // #7160: title-prefixed person pages that likely duplicate an unprefixed page (preview only).
   'person_title_duplicates',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).
@@ -439,8 +445,12 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'grant_new_ops_available',
   'reranker_health',
   'rls',
+  // The session's TLS state on a non-loopback Postgres host (doctor/checks/postgres-tls.ts).
+  'postgres_tls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
   'function_search_path',
+  // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
+  'database_encoding',
   'rls_event_trigger',
   'search_mode',
   'decide_health',

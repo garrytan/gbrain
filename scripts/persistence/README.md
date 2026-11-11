@@ -147,7 +147,10 @@ key lists every run (schedule, seed, seam and occurrence or process fault),
 and no `faults_not_reached` (a worker that finished without reaching its
 requested seam, outside the per-scenario `UNREACHED_FAULT_ALLOWLIST` in
 `robot-driver.ts`); either kind of run also fails validation with a nonzero
-exit and is listed in `failing_runs` for `--replay`.
+exit and is listed in `failing_runs` for `--replay`. A run with no violations that
+misses its fault by exactly one slot of its count run, which a concurrent
+group's other legal outcome makes, runs once more at its last slot and is
+listed in `faults_retargeted`.
 
 A failing run prints two commands. `--replay=<manifest>` re-runs exactly the
 manifest's failing runs. `--shrink=<manifest>` removes ops from the first
@@ -161,10 +164,10 @@ For a local Postgres and PgBouncer replay:
 
 ```sh
 docker network create gbrain-robot
-docker run -d --name robot-pg --network gbrain-robot -p 5432:5432 \
+docker run -d --name robot-pg --network gbrain-robot -p 127.0.0.1:5432:5432 \
   -e POSTGRES_USER=gbrain_test -e POSTGRES_PASSWORD=gbrain_test -e POSTGRES_DB=gbrain_test \
   pgvector/pgvector:pg16
-docker run -d --name robot-pgbouncer --network gbrain-robot -p 55433:5432 \
+docker run -d --name robot-pgbouncer --network gbrain-robot -p 127.0.0.1:55433:5432 \
   -e DB_HOST=robot-pg -e DB_PORT=5432 -e DB_USER=gbrain_test -e DB_PASSWORD=gbrain_test \
   -e POOL_MODE=transaction -e AUTH_TYPE=plain -e MAX_CLIENT_CONN=200 -e DEFAULT_POOL_SIZE=10 \
   -e IGNORE_STARTUP_PARAMETERS=extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path \
@@ -621,11 +624,11 @@ plus a PgBouncer in front of it:
 ```bash
 docker network create gbtest
 docker run -d --name gbrain-test-pg --network gbtest -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gbrain_test -p 5434:5432 pgvector/pgvector:pg16
+  -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gbrain_test -p 127.0.0.1:5434:5432 pgvector/pgvector:pg16
 docker run -d --name gbrain-test-pgbouncer --network gbtest -e DB_HOST=gbrain-test-pg \
   -e DB_USER=postgres -e DB_PASSWORD=postgres -e POOL_MODE=transaction -e AUTH_TYPE=plain \
   -e IGNORE_STARTUP_PARAMETERS=extra_float_digits,statement_timeout,idle_in_transaction_session_timeout,search_path \
-  -p 6543:5432 edoburu/pgbouncer:latest
+  -p 127.0.0.1:6543:5432 edoburu/pgbouncer:latest
 export GBRAIN_PGBOUNCER_URL=postgresql://postgres:postgres@localhost:6543/gbrain_test
 export GBRAIN_PGBOUNCER_DIRECT_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test
 GBRAIN_TEST_CONVERGENCE_LATENCY_MS=10 bun run test:convergence     # the PR cell

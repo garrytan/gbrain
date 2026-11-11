@@ -296,6 +296,8 @@ export interface GBrainConfig {
     /** Epoch ms of the last auto-channel check (24h throttle). */
     last_check_ts?: number;
     last_applied_version?: string;
+    /** #8776: a launcher outside gbrain's service starts autopilot again when it exits (`gbrain upgrade` hands it over). */
+    autopilot_launcher?: 'external';
   };
 
   /**
@@ -1681,6 +1683,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'self_upgrade.attempting_version',
   'self_upgrade.last_check_ts',
   'self_upgrade.last_applied_version',
+  'self_upgrade.autopilot_launcher',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',

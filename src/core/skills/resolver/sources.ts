@@ -19,6 +19,7 @@ import { ResolverError } from './errors.ts';
 import { readBounded, readHead } from './fsutil.ts';
 import { boundBody, cleanText, parseSkillDoc, SKILL_FILE_CAP_BYTES } from './frontmatter.ts';
 import { parseRoutingTable } from './routing.ts';
+export { fingerprintChanged } from './catalog-files.ts';
 
 export const MAX_SKILLS = 10_000;
 export const MAX_DIRS_VISITED = 100_000;
@@ -234,16 +235,4 @@ export function applyRouting(skills: SkillRecord[], path: string): { rows: numbe
     s.routing.push(t);
   }
   return { rows: rows.length, unmatched, stat: [real, st.size, st.mtimeMs] };
-}
-
-/** Recheck a directory fingerprint by stat only (the turn-path freshness tier). */
-export function fingerprintChanged(fp: DirFingerprint, routing?: [string, number, number]): boolean {
-  try {
-    for (const [d, m] of fp.dirs) if (statSync(d).mtimeMs !== m) return true;
-    for (const [f, size, m] of fp.files) { const st = statSync(f); if (st.size !== size || st.mtimeMs !== m) return true; }
-    if (routing) { const st = statSync(routing[0]); if (st.size !== routing[1] || st.mtimeMs !== routing[2]) return true; }
-    return false;
-  } catch {
-    return true;
-  }
 }

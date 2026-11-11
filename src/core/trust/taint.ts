@@ -25,7 +25,8 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { propagateTierLowering } from './propagation.ts';
 
 /** A row placed in a model's context: by id, or a page by its (source, slug) coordinate. */
-export type TaintRef = { table: TaintTable; id: number } | { table: 'pages'; sourceId: string; slug: string };
+/** `hidden`: the page exists but the caller may not read it, so it reads exactly as a missing page (GBRA-431). */
+export type TaintRef = { table: TaintTable; id: number } | { table: 'pages'; sourceId: string; slug: string; hidden?: boolean };
 
 type Sql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -36,9 +37,9 @@ type Sql = Pick<BrainEngine, 'executeRaw'>;
  */
 export async function readTaintInputs(engine: Sql, refs: readonly TaintRef[]): Promise<TaintInput[]> {
   const ids = new Map<TaintTable, Set<number>>();
-  const slugs = new Map<string, { source_id: string; slug: string }>();
+  const slugs = new Map<string, { source_id: string; slug: string; hidden?: boolean }>();
   for (const ref of refs) {
-    if ('slug' in ref) slugs.set(`${ref.sourceId}:${ref.slug}`, { source_id: ref.sourceId, slug: ref.slug });
+    if ('slug' in ref) slugs.set(`${ref.sourceId}:${ref.slug}`, { source_id: ref.sourceId, slug: ref.slug, ...(ref.hidden ? { hidden: true } : {}) });
     else if (Number.isSafeInteger(Number(ref.id))) (ids.get(ref.table) ?? ids.set(ref.table, new Set()).get(ref.table)!).add(Number(ref.id));
   }
   const found = new Map<string, TaintInput>();
@@ -52,7 +53,7 @@ export async function readTaintInputs(engine: Sql, refs: readonly TaintRef[]): P
     const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; trust_tier: string | null }>(
       `SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
         JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`,
-      [JSON.stringify([...slugs.values()])]);
+      [JSON.stringify([...slugs.values()].filter(s => !s.hidden).map(({ source_id, slug }) => ({ source_id, slug })))]);
     const bySlug = new Map(rows.map(row => [`${row.source_id}:${row.slug}`, row]));
     for (const [key] of slugs) {
       const row = bySlug.get(key);

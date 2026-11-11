@@ -17,20 +17,23 @@ export const SCOPE_ATTEST_OPS: ReadonlySet<string> = new Set(['forget', 'forget_
  * Operations no attested call may run yet: what they read or write is not keyed to the person, so one person could
  * change or see another's (a conflict list across writers) or write facts and takes every reader sees. GST-359 C2
  * keyed remember (the member page), delta cursors, write receipts and agent jobs to the person and removed them; D keyed
- * forget and forget_fact (the person's own member-page facts, withdrawn there alone). Refused at `--attest-ops`, at
- * every call and when a stored write or job tool call is re-resolved.
+ * forget and forget_fact (the person's own member-page facts, withdrawn there alone). GST-1158 F9 deferred the direct
+ * page writes (timeline entries, links, page puts and edits land on pages every reader of them sees) until an owner can
+ * approve them. Refused at `--attest-ops`, at every call and when a stored write or job tool call is re-resolved.
  */
 export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
   'list_write_conflicts',
   'capture', 'extract_facts',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
+  'add_timeline_entry', 'add_link', 'put_page', 'edit_page',
 ]);
 
 /** Canonical person ids: 1-256 visible ASCII characters (QM's credential broker rule), no case folding. */
 export const EXTERNAL_ID_RE = /^[\x21-\x7e]{1,256}$/;
 
+/** GST-1158 F3: `read` is how an attested call that names sources reads them; absent (the column unset) reads as the scope. */
 /** GST-1113: `sources` are the scope sources an attested memory_write may name per call (attest_sources); null = none. */
-export interface AttestRight { system: string; ops: string[]; sources: string[] | null }
+export interface AttestRight { system: string; ops: string[]; sources: string[] | null; read?: 'person' | 'scope' }
 export interface AttestedActor { system: string; external_id: string; member: string }
 
 /**
@@ -45,8 +48,10 @@ export function attestRightFrom(row: Record<string, unknown> | undefined, grant:
   if (grant !== 'legacy' && grant !== 'client_credentials') return null;
   const ops = Array.isArray(row!.attest_ops) ? (row!.attest_ops as unknown[]).filter((v): v is string => typeof v === 'string') : [...DEFAULT_ATTEST_OPS];
   const sources = Array.isArray(row!.attest_sources) ? (row!.attest_sources as unknown[]).filter((v): v is string => typeof v === 'string') : null;
-  if (!sources?.length) return { system, ops, sources: null };
-  return { system, ops: ops.filter(op => SCOPE_ATTEST_OPS.has(op)), sources };
+  const read: 'person' | 'scope' | null = row!.attest_read === 'scope' ? 'scope' : row!.attest_read === 'person' && !sources?.length ? 'person' : null;
+  const readField = read ? { read } : {};
+  if (!sources?.length) return { system, ops, sources: null, ...readField };
+  return { system, ops: ops.filter(op => SCOPE_ATTEST_OPS.has(op)), sources, ...readField };
 }
 
 /** The verify join plus the live attest right, for AuthInfo (a verifier spreads the result). */

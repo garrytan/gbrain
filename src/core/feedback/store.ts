@@ -61,6 +61,10 @@ export interface AppliedRating {
   newly_applied: boolean;
 }
 
+const pageRowExists = (source: string, slug: string) => `EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = ${source} AND pg.slug = ${slug} FOR KEY SHARE)`;
+const edgeEndsExist = (source: string, key: string) =>
+  `${pageRowExists(source, `split_part(${key}, '|', 1)`)} AND ${pageRowExists(source, `reverse(split_part(reverse(${key}), '|', 1))`)}`;
+
 export async function insertRetrievalEvents(engine: BrainEngine, events: RetrievalEventInput[]): Promise<void> {
   if (events.length === 0) return;
   await engine.executeRaw(
@@ -74,6 +78,8 @@ export async function insertRetrievalEvents(engine: BrainEngine, events: Retriev
     await engine.executeRaw(
       `INSERT INTO retrieval_event_pages (event_id, source_id, slug, content_hash, rank, cited)
        SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::int[], $6::text[]::boolean[])
+         AS t(event_id, source_id, slug, content_hash, rank, cited)
+        WHERE ${pageRowExists('t.source_id', 't.slug')}
        ON CONFLICT DO NOTHING`,
       [
         pages.map(p => p.id), pages.map(p => p.source_id), pages.map(p => p.slug),
@@ -85,7 +91,8 @@ export async function insertRetrievalEvents(engine: BrainEngine, events: Retriev
   if (links.length > 0) {
     await engine.executeRaw(
       `INSERT INTO retrieval_event_links (event_id, source_id, edge_key, to_slug)
-       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[])
+       SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[]) AS t(event_id, source_id, edge_key, to_slug)
+        WHERE ${pageRowExists('t.source_id', 't.to_slug')} AND ${edgeEndsExist('t.source_id', 't.edge_key')}
        ON CONFLICT DO NOTHING`,
       [links.map(l => l.id), links.map(l => l.source_id), links.map(l => l.edge_key), links.map(l => l.to_slug)],
     );
@@ -163,6 +170,8 @@ export async function applyRatings(
     `WITH input AS (
        SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::int[], $5::text[])
          AS t(element_kind, source_id, element_key, rating, content_hash)
+        WHERE CASE t.element_kind WHEN 'page' THEN ${pageRowExists('t.source_id', 't.element_key')}
+                                  ELSE ${edgeEndsExist('t.source_id', 't.element_key')} END
      ),
      cur AS (
        SELECT i.*, COALESCE(w.weight, ${NEUTRAL_WEIGHT})::real AS w0,
@@ -288,6 +297,36 @@ export async function pruneRetrievalFeedback(engine: BrainEngine, retentionDays:
      SELECT count(*)::int AS n FROM d`,
   );
   return { events: Number(events[0]?.n ?? 0), weights: Number(weights[0]?.n ?? 0) };
+}
+
+/**
+ * #8821: a hard-deleted page's slug leaves its source's retrieval logs, ratings and weights (as a page key or either
+ * end of a `from|type|to` edge key) and the captured eval candidates whose results came from that source. Runs inside
+ * the purge's transaction; returns rows touched per store, keyed as the purge receipt names them.
+ */
+/** A captured slug is the purged page's unless another source the candidate covers still has a page by that name. */
+const purgedCandidateSlug = (slug: string) =>
+  `${slug} = ANY($2::text[]) AND NOT EXISTS (SELECT 1 FROM pages po WHERE po.slug = ${slug} AND po.source_id = ANY(eval_candidates.source_ids) AND po.source_id <> $1)`;
+
+export async function scrubPurgedSlugs(
+  engine: Pick<BrainEngine, 'executeRaw'>,
+  sourceId: string,
+  slugs: readonly string[],
+): Promise<Record<string, number>> {
+  if (!slugs.length) return {};
+  const edgeNames = (key: string) => `EXISTS (SELECT 1 FROM unnest($2::text[]) AS s(slug) WHERE starts_with(${key}, s.slug || '|') OR right(${key}, length(s.slug) + 1) = '|' || s.slug)`;
+  const count = async (sql: string) => (await engine.executeRaw(sql, [sourceId, [...slugs]])).length;
+  return {
+    retrieval_event_pages: await count('DELETE FROM retrieval_event_pages WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
+    retrieval_event_links: await count(`DELETE FROM retrieval_event_links WHERE source_id = $1 AND (to_slug = ANY($2::text[]) OR ${edgeNames('edge_key')}) RETURNING 1`),
+    retrieval_feedback: await count(`DELETE FROM retrieval_feedback WHERE source_id = $1
+      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
+    retrieval_weights: await count(`DELETE FROM retrieval_weights WHERE source_id = $1
+      AND ((element_kind = 'page' AND element_key = ANY($2::text[])) OR (element_kind = 'link' AND ${edgeNames('element_key')})) RETURNING 1`),
+    'eval_candidates.retrieved_slugs': await count(`UPDATE eval_candidates
+      SET retrieved_slugs = ARRAY(SELECT s FROM unnest(retrieved_slugs) WITH ORDINALITY AS u(s, n) WHERE NOT (${purgedCandidateSlug('u.s')}) ORDER BY n)
+      WHERE $1 = ANY(source_ids) AND EXISTS (SELECT 1 FROM unnest(retrieved_slugs) AS r(s) WHERE ${purgedCandidateSlug('r.s')}) RETURNING 1`),
+  };
 }
 
 export async function resetRetrievalWeights(

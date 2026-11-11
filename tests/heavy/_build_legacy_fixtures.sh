@@ -35,7 +35,7 @@ fi
 
 if [ -z "${DATABASE_URL:-}" ]; then
   echo "[build_legacy_fixtures] DATABASE_URL not set." >&2
-  echo "  Local: docker run -d --name gbrain-test-pg -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gbrain_test -p 5434:5432 pgvector/pgvector:pg16" >&2
+  echo "  Local: docker run -d --name gbrain-test-pg -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=gbrain_test -p 127.0.0.1:5434:5432 pgvector/pgvector:pg16" >&2
   echo "  Then: export DATABASE_URL=postgresql://postgres:postgres@localhost:5434/gbrain_test" >&2
   exit 2
 fi

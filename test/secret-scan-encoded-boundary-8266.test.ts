@@ -1,6 +1,6 @@
 /**
  * #8266: the escape boundary missed a key right after a terminal color code (`ESC[32m`, raw or written as
- * `\u001b[`, `\x1b[`, `\033[`), a `\xNN` or `\UXXXXXXXX` escape, or a quoted-printable `=3D`, because each ends on a
+ * `\u001b[`, `\x1b[`, `\033[`, `\e[`), a `\xNN` or `\UXXXXXXXX` escape, or a quoted-printable `=3D`, because each ends on a
  * word character; and a bearer token holding a JSON-escaped slash (`\/`) was redacted only up to the slash, leaving
  * its tail in the stored text.
  *
@@ -16,7 +16,7 @@ const KEYS: ReadonlyArray<{ pattern: string; make(): string }> = [
   { pattern: 'openai', make: () => j('-', 'sk', 'proj', alnum(32)) },
   { pattern: 'npm_token', make: () => j('_', 'npm', alnum(36)) },
 ];
-const BEFORE = ['\x1b[32m', '\x1b[0m', '\x1b[1;31m', '\\u001b[32m', '\\x1b[0m', '\\033[0m', '\\x22', '\\U0001F600', '=3D', '=3d'];
+const BEFORE = ['\x1b[32m', '\x1b[0m', '\x1b[1;31m', '\\u001b[32m', '\\x1b[0m', '\\033[0m', '\\e[32m', '\\x22', '\\U0001F600', '=3D', '=3d'];
 
 describe('#8266 a key after an ANSI color code, a \\x / \\U escape or =3D is claimed', () => {
   for (const { pattern, make } of KEYS) {

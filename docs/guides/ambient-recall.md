@@ -60,9 +60,13 @@ A pack is injected into an agent context window that may be logged or synced to 
 cloud model, so **every arm is world-visibility by default.** To pull private
 facts in, pass `include_private` — and it is honored ONLY for trusted-local
 callers (`remote === false`, i.e. the CLI/hook path). A remote MCP caller never
-widens, even if it asks (fail-closed). When it does widen, all arms widen
-together, so a pack is never a mix of private facts beside world-stripped
-synopses.
+widens, even if it asks (fail-closed). The one exception is the brain owner's
+remote credentials (`gbrain access owner set <member>`): their hot facts in
+`context_pack` and `delta` include private facts, except a fact taken from a
+page the owner cannot read, while entity cards, pages and threads stay
+world-only (see [access designations](access-designations.md)). When a pack
+does widen through `include_private`, all arms widen together, so a pack is
+never a mix of private facts beside world-stripped synopses.
 
 ## Budgets
 

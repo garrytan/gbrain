@@ -258,11 +258,17 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
     keys(params,['action','source_id','request_id','expected_incarnation','path','name','config','refederate','confirm_destructive','dry_run','remote_url','create_directory','expired_only']);
     if (params.action === 'claim') throw new OperationError('writer_admin_intent_required', 'Claims require the dedicated state-bound writer administration surface.', WRITER_INSPECTION_HINT);
     const { runManagedSourceLifecycle }=await import('./source-lifecycle.ts');
-    return runManagedSourceLifecycle(engine,{operation:params.action as import('./source-lifecycle.ts').SourceLifecycleInput['operation'],sourceId:source(params.source_id),
+    const result=await runManagedSourceLifecycle(engine,{operation:params.action as import('./source-lifecycle.ts').SourceLifecycleInput['operation'],sourceId:source(params.source_id),
       requestId:params.request_id as string|undefined,expectedIncarnation:params.expected_incarnation as string|undefined,
       path:params.path===undefined?undefined:path(params.path),name:params.name as string|undefined,config:params.config as Record<string,unknown>|undefined,
       refederate:params.refederate as boolean|undefined,confirmDestructive:params.confirm_destructive as boolean|undefined,dryRun:params.dry_run===true,
       remoteUrl:params.remote_url as string|undefined,createDirectory:params.create_directory as boolean|undefined,expiredOnly:params.expired_only as boolean|undefined});
+    // #8982: a restore that re-federates names the remote-written pages without readers it makes no-grant readable.
+    if (params.action !== 'restore' || params.dry_run === true || result.noop === true || params.source_id === 'default') return result;
+    const [restored] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [source(params.source_id)]);
+    const exposed = await (await import('../access/federation-exposure.ts')).remotePagesFederationExposesOrWarn(engine, source(params.source_id),
+      (await import('../sources-load.ts')).isSourceFederated(restored?.config));
+    return exposed ? { ...result, pages_exposed: exposed } : result;
   }
   if (operation === 'writer_failures') {
     keys(params, ['source_id', 'state', 'group_by', 'since', 'limit', 'before', 'code', 'origin', 'category', 'operation']);
@@ -317,6 +323,10 @@ export async function runPersistenceAdministration(engine: BrainEngine, operatio
       // #6317 (B3): every process holding a consumer on this host, from the heartbeat rows (kind, pid, nonce, mode, age, wedge report).
       host: { host_id: existingHostIdFor(engine), ...await (await import('./consumer-diagnostics.ts')).hostConsumersReport(engine, existingHostIdFor(engine)) },
       worktree_refreshes: await (await import('./worktree-refresh.ts')).activeWorktreeRefreshes(engine, params.source_id as string | undefined),
+      // #8984: stopped remove/purge requests (retire admissions) and the ones a later lifecycle change superseded.
+      topology_requests: await engine.executeRaw(`SELECT request_id::text AS request_id,operation,source_id,source_incarnation::text AS source_incarnation,state,outcome->>'error' AS error,created_at::text AS created_at
+        FROM persistence_topology_changes WHERE ($1::text IS NULL OR source_id=$1) AND operation IN ('remove','purge') AND recovery IS NULL
+        AND (state='recovering' OR state='failed' AND outcome->>'error'='source_retire_superseded') ORDER BY created_at DESC LIMIT 20`, [params.source_id === undefined ? null : source(params.source_id)]),
       // Q1: each canonical checkout on this host against its last fetched upstream: commits it holds that the upstream lacks, and its porcelain.
       checkouts: await writerStatusCheckouts(bindings as Array<{ source_id: string; local_path: string | null }>),
       // #6317 (B4): per managed source, whether sync data moves (shares the reader of sources status, doctor and writer movement).

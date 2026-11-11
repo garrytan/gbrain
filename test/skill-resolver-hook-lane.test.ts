@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { LANE_DEADLINE_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
+import { dailyLogFile, LANE_LOG } from '../src/core/skills/resolver/daily-log.ts';
 
 setDefaultTimeout(60_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -82,10 +83,10 @@ async function hook(b: Box, command: string, payload: Record<string, unknown>, e
   return { stdout, stderr, exitCode, wallMs: performance.now() - t0 };
 }
 const WIDE = { GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '10000' };
-const laneLog = (b: Box): any[] => {
-  const p = join(b.home, '.gbrain', 'skill-index', 'logs', 'lane.jsonl');
+const laneLog = (b: Box): any[] => [Date.now() - 86_400_000, Date.now()].flatMap((ms) => {
+  const p = join(b.home, '.gbrain', 'skill-index', 'logs', dailyLogFile(LANE_LOG, ms));
   return existsSync(p) ? readFileSync(p, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
-};
+});
 const sessions = (b: Box) => { const d = join(b.home, '.gbrain', 'skill-index', 'sessions'); return existsSync(d) ? readdirSync(d) : []; };
 const contextOf = (r: Run) => JSON.parse(r.stdout).hookSpecificOutput.additionalContext as string;
 
@@ -141,6 +142,27 @@ describe('skill-resolver lane: delivery per harness', () => {
     expect(reset.stdout).toBe('');
     expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
   });
+
+  test('codex SessionStart after a compaction (Codex 0.165 sends source "compact") resets the session, so the skill is offered again', async () => {
+    const b = box();
+    seedSkills(codexSkills(b));
+    await setup(b, 'codex');
+    const cmd = wired(b, 'codex');
+    const start = wired(b, 'codex', 'SessionStart');
+    expect(start).toContain('hook session-start --harness codex');
+    const toml = readFileSync(join(b.home, '.codex', 'config.toml'), 'utf8');
+    expect(toml).toContain(':session_start:');
+    expect(toml).toContain(':user_prompt_submit:');
+    const turn = { prompt: 'triage this bug report', session_id: 'sess-cx', hook_event_name: 'UserPromptSubmit' };
+    expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+    expect((await hook(b, cmd, turn, WIDE)).stdout).toBe('');
+    expect((await hook(b, start, { source: 'resume', session_id: 'sess-cx', hook_event_name: 'SessionStart' }, WIDE)).stdout).toBe('');
+    expect((await hook(b, cmd, turn, WIDE)).stdout).toBe('');
+    const reset = await hook(b, start, { source: 'compact', session_id: 'sess-cx', hook_event_name: 'SessionStart' }, WIDE);
+    expect(reset.exitCode).toBe(0);
+    expect(reset.stdout).toBe('');
+    expect(contextOf(await hook(b, cmd, turn, WIDE))).toContain('triage-bug');
+  });
 });
 
 describe('skill-resolver lane: deadline, measured outside the process', () => {
@@ -164,6 +186,109 @@ describe('skill-resolver lane: deadline, measured outside the process', () => {
       expect(sessions(b).some((s) => readFileSync(join(b.home, '.gbrain', 'skill-index', 'sessions', s), 'utf8').includes('deploy-widget'))).toBe(false);
     });
   }
+
+  for (const stall of ['load-error', 'exit'] as const) {
+    test(`${stall}: a worker that fails before answering is logged as skill_resolver_internal, not as a timeout`, async () => {
+      const b = box();
+      seedSkills(claudeSkills(b));
+      await setup(b, 'claude-code');
+      const cmd = wired(b, 'claude-code');
+      const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-l' }, { ...WIDE, GBRAIN_TEST_SKILL_LANE_STALL: stall });
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout).toBe('');
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_internal' });
+    });
+  }
+});
+
+describe('skill-resolver lane: turn settings from config', () => {
+  const config = async (b: Box, ...args: string[]) => {
+    const r = await runCli(['config', ...args], { env: b.env, cwd: b.project });
+    return r;
+  };
+  test('top_k, min_match and pinned apply; per_harness overrides one harness; Claude Code and Codex default to 5 with no floor', async () => {
+    const b = box();
+    for (const dir of [claudeSkills(b), codexSkills(b)]) {
+      seedSkills(dir);
+      skill(dir, 'deploy-docs', 'Deploy the docs site.');
+      skill(dir, 'deploy-api', 'Deploy the api service.');
+    }
+    await setup(b, 'claude-code');
+    await setup(b, 'codex');
+    const claude = wired(b, 'claude-code'), codex = wired(b, 'codex');
+    const ids = (r: Run) => [...contextOf(r).matchAll(/id: "([^"]+)"/g)].map((m) => m[1]);
+    const ask = (cmd: string, s: string) => hook(b, cmd, { prompt: 'deploy the widget service', session_id: s, hook_event_name: 'UserPromptSubmit' }, WIDE);
+    expect(ids(await ask(claude, 'd1')).length).toBeGreaterThanOrEqual(3);
+    for (const [k, v] of [['skills.resolver.top_k', '1'], ['skills.resolver.per_harness.codex.top_k', '2'], ['skills.resolver.pinned', 'deploy-widget']]) {
+      const r = await config(b, 'set', k, v);
+      expect(r.exitCode, r.stderr).toBe(0);
+    }
+    const c = ids(await ask(claude, 'd2'));
+    expect(c).toHaveLength(1);
+    expect(c).not.toContain('deploy-widget');
+    const x = ids(await ask(codex, 'd3'));
+    expect(x).toHaveLength(2);
+    expect(x).not.toContain('deploy-widget');
+    expect((await config(b, 'set', 'skills.resolver.min_match', 'named')).exitCode).toBe(0);
+    expect((await ask(claude, 'd4')).stdout).toBe('');
+    const bad = await config(b, 'set', 'skills.resolver.per_harness.vim.top_k', '2');
+    expect(bad.exitCode).not.toBe(0);
+    expect(bad.stderr).toContain('names no harness');
+    const inherited = await config(b, 'set', 'skills.resolver.per_harness.constructor.top_k', '2');
+    expect(inherited.exitCode).not.toBe(0);
+    expect(inherited.stderr).toContain('names no harness');
+    expect((await config(b, 'set', 'skills.resolver.top_k', '9')).exitCode).not.toBe(0);
+    const cfg = JSON.parse(readFileSync(join(b.home, '.gbrain', 'config.json'), 'utf8')).skills.resolver;
+    expect([cfg.top_k, cfg.min_match, cfg.pinned, cfg.per_harness]).toEqual([1, 'named', ['deploy-widget'], { codex: { top_k: 2 } }]);
+    cfg.top_k = 99;
+    writeFileSync(join(b.home, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: cfg } }));
+    const invalid = await ask(claude, 'd5');
+    expect([invalid.exitCode, invalid.stdout]).toEqual([0, '']);
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_config_invalid' });
+  });
+});
+
+describe('skill-resolver lane: a deadline during the dedupe commit', () => {
+  for (const stall of ['commit-held', 'commit-written'] as const) {
+    test(`${stall}: the exit releases the session lease and removes the temp file, so the next turn commits`, async () => {
+      const b = box();
+      seedSkills(claudeSkills(b));
+      await setup(b, 'claude-code');
+      const cmd = wired(b, 'claude-code');
+      const turn = { prompt: 'please deploy the widget to staging', session_id: 'sess-l' };
+      const r = await hook(b, cmd, turn, { GBRAIN_TEST_SKILL_LANE_STALL: stall, GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '3000' });
+      expect(r.exitCode).toBe(0);
+      expect(contextOf(r)).toContain('id: "deploy-widget"');
+      expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'timeout', code: 'skill_resolve_timeout' });
+      expect(sessions(b)).toEqual([]);
+      const again = await hook(b, cmd, turn, WIDE);
+      expect(contextOf(again)).toContain('id: "deploy-widget"');
+      expect(sessions(b).filter((s) => !s.startsWith('.')).map((s) => s.endsWith('.json'))).toEqual([true]);
+      expect((await hook(b, cmd, turn, WIDE)).stdout).toBe('');
+    });
+  }
+});
+
+describe('skill-resolver lane: the CLI fast path keeps the hook contract', () => {
+  test('GBRAIN_HOOKS=0 silences the lane, whether exported or set in the env file the CLI preflight loads', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const turn = { prompt: 'please deploy the widget to staging', session_id: 'sess-off' };
+    const exported = await hook(b, cmd, turn, { ...WIDE, GBRAIN_HOOKS: '0' });
+    expect(exported.exitCode).toBe(0);
+    expect(exported.stdout).toBe('');
+    writeFileSync(join(b.home, '.gbrain', '.env'), 'GBRAIN_HOOKS=0\n');
+    const fromFile = await hook(b, cmd, turn, WIDE);
+    expect(fromFile.exitCode).toBe(0);
+    expect(fromFile.stdout).toBe('');
+    expect(laneLog(b)).toEqual([]);
+    expect(sessions(b)).toEqual([]);
+    rmSync(join(b.home, '.gbrain', '.env'));
+    const on = await hook(b, cmd, turn, WIDE);
+    expect(contextOf(on)).toContain('id: "deploy-widget"');
+  });
 });
 
 describe('skill-resolver lane: fail open', () => {
