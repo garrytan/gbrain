@@ -17,6 +17,7 @@ import { OPERATION_MANIFEST } from '../src/cli/op-manifest.ts';
 import { ROUTERS } from '../src/cli/subcommands.ts';
 import { CLI_COMMAND_CLASSES, OPERATION_CLASSES, OPERATION_SUBCOMMANDS, enforcedClassOf } from '../src/cli/enforced-member-classes.ts';
 
+// test-reads-source-ok[structural]: a name listed twice in the READ/WRITE/REFUSED_OPS arrays collapses in the runtime maps, so only the source text shows the duplicate.
 const CLASSES_SRC = readFileSync(join(import.meta.dir, '..', 'src', 'cli', 'enforced-member-classes.ts'), 'utf8');
 
 describe('enforced member allow-list', () => {
