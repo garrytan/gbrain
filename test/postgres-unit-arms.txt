@@ -132,7 +132,9 @@ test/git-door-strict-gbra133.test.ts
 test/git-door-write-cost.test.ts
 test/git-gap-census.test.ts
 test/git-gap-direction-evidence-d4.test.ts
+test/google-classic-purged-item-8644.test.ts
 test/google-connector-facts-fence-7292.test.ts
+test/google-withdrawn-fence-carry-8645.test.ts
 test/grade-takes-window.test.ts
 test/graduation-copy.test.ts
 test/graduation-digest.test.ts

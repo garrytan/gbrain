@@ -179,15 +179,18 @@ export function htmlToText(html: string): string {
 /**
  * Trim quoted-reply tails: trailing '>'-quoted runs and the "On ... wrote:"
  * marker line and everything after it. Conservative — only the TAIL is cut,
- * inline quotes mid-message survive.
+ * inline quotes mid-message survive. A forward separator (Gmail, Apple Mail)
+ * before any reply marker keeps the whole body (#8719): forwarded content is
+ * new to the brain, while a reply's quoted tail repeats a message of the thread.
  */
 export function trimQuotedReply(text: string): string {
   const lines = text.split('\n');
-  // Find the "On <date>, <name> wrote:" marker (also matches forwarded-message separators).
+  // Find the "On <date>, <name> wrote:" or Original Message marker.
   let cut = lines.length;
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i].trim();
-    if (/^On .{4,80} wrote:$/.test(l) || /^-{2,}\s*Original Message\s*-{2,}$/i.test(l) || /^-{2,}\s*Forwarded message\s*-{2,}$/i.test(l)) {
+    if (/^-{2,}\s*Forwarded message\s*-{2,}$/i.test(l) || /^Begin forwarded message:$/i.test(l)) return text.trim();
+    if (/^On .{4,80} wrote:$/.test(l) || /^-{2,}\s*Original Message\s*-{2,}$/i.test(l)) {
       cut = i;
       break;
     }
