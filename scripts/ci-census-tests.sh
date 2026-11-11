@@ -16,6 +16,7 @@
 #   - goldens: files that import test/helpers/golden
 #   - enumeration lists: file names matching ENUMERATION below
 #   - idle-pass statement bounds: test/persistence-consumer-*.test.ts files that mention idle
+#   - tree walkers: tests that read every file under src/ or test/, named in WALKERS below
 # minus test/e2e/ (Postgres), *.serial.test.ts and *.slow.test.ts (their own
 # full-ci jobs) and test/setup.test.ts (about 7 minutes on its own).
 set -euo pipefail
@@ -23,11 +24,14 @@ cd "$(dirname "$0")/.."
 
 ENUMERATION='registry|inventory|catalog|coverage-ledger|operations-|behavior-change-notice|error-|exit-codes|fix-wave-5-integration|repair-explicit-only|cli-flag-validation|allowlist-drift|mcp-tool-defs|cli-flag-equals|remote-privacy-sweep|tool-catalog'
 
+WALKERS='test-reads-source-smell|canonical-migration-command|db-guard-coverage|env-trust-protected-keys|no-valid-until-write|page-row-deleters-guard|persistence-mode-reader-guard|query-embed-call-sites|readiness-advice-lint|refresh-barrier-state-audit|scripts/serial-files|write-refusals-coverage|scripts/ci-census-tests'
+
 list() {
   {
     git grep -l 'test-reads-source-ok\[structural\]' -- test || true
     git grep -l helpers/golden -- test || true
     git ls-files test | grep -E "$ENUMERATION" || true
+    git ls-files test | grep -E "$WALKERS" || true
     git grep -l -i idle -- 'test/persistence-consumer-*.test.ts' || true
   } | grep '\.test\.ts$' | grep -v -E '^test/e2e/|\.(serial|slow)\.test\.ts$|^test/setup\.test\.ts$' | LC_ALL=C sort -u
 }

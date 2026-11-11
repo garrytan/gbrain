@@ -105,8 +105,10 @@ bash scripts/ci-census-tests.sh --run 1 2       # run shard 1 of 2, as CI does
 The list holds the source censuses (files marked
 `test-reads-source-ok[structural]`), every file that imports
 `test/helpers/golden`, the files whose names match the enumeration pattern in
-the script, and the consumer idle-pass statement bounds
-(`test/persistence-consumer-*` files that mention idle). It leaves out
+the script, the consumer idle-pass statement bounds
+(`test/persistence-consumer-*` files that mention idle), and the tests that read
+every file under `src/` or `test/`, named in the script's `WALKERS` list (such
+as `test/test-reads-source-smell.test.ts`). It leaves out
 `test/e2e/`, serial and slow files, and `test/setup.test.ts`. To add a file,
 change the script, not the workflow.
 
