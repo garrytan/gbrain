@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.679.0] - 2026-11-11
 
 **Doctor, dream, enrich and `maintain --safe` fixes, landed together.** `gbrain maintain --safe` no longer deletes pages or calls a paid provider, several doctor checks now report what they find accurately, dream phases stop and report correctly, and enrich, model-call errors, atom provenance, transcript dates and the stale link sweep get community-reported fixes. Each fix has a test that fails without it.
 
