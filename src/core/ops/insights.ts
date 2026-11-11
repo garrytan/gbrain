@@ -18,6 +18,8 @@ import type { Operation } from './contract.ts';
 import { opError } from './contract.ts';
 import { invalidParam, paramUse } from './op-fix.ts';
 import { federatedSearchScope, sourceScopeOpts, readPolicyOpts } from './context.ts';
+import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
+import { currentReadMode } from '../access/scope-read.ts';
 import {
   FIND_EXPERTS_DESCRIPTION,
   FIND_CONTRADICTIONS_DESCRIPTION,
@@ -69,10 +71,17 @@ const volunteer_context: Operation = {
         'APPROXIMATE: "used" = pages.last_retrieved_at > volunteered_at.',
     },
     days: { type: 'number', description: 'Stats window in days (default 30; stats mode only).' },
+    source_ids: SOURCE_IDS_PARAM,
   },
   handler: async (ctx, p) => {
     const { parseWindow, volunteerContext, volunteerUsageStats } = await import('../context/volunteer.ts');
-    const scope = sourceScopeOpts(ctx);
+    // GST-1158 E1: under the scope record the stats summary (volunteering across whole sources) is refused.
+    const asScope = currentReadMode() === 'scope';
+    if (p.stats === true && asScope) {
+      throw invalidParam(ctx, 'volunteer_context', 'stats', '`stats` summarizes volunteering across whole sources, so a call that names sources as their audience cannot ask for it.', { example: false });
+    }
+    const named = parseSourceIdsParam(ctx, 'volunteer_context', p.source_ids);
+    const scope = named === undefined ? sourceScopeOpts(ctx) : await requestSourceScope(ctx, undefined, named);
     const sourceIds = scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : ['default']);
 
     if (p.stats === true) {
@@ -100,7 +109,7 @@ const volunteer_context: Operation = {
       // surname) — file-plane gate, threaded per ResolvePointersOpts.
       lexicalArms: lexicalArmsEnabled(loadCfgForArms()),
       // N8-1: the same private-page gate remote search applies.
-      excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
+      excludePrivate: asScope || await resolveExcludePrivatePages(ctx.engine, ctx.remote),
       // #5575: token floor + min_trust + activation control (CEO-20, DX-10).
       eligibility: await proactiveEligibility(ctx, 'volunteer', { minTrust: p.min_trust }),
       onWithheld: keys => { for (const k of keys) withheldKeys.add(k); },
@@ -158,6 +167,7 @@ const find_experts: Operation = {
       type: 'boolean',
       description: 'Include factor breakdown per result (expertise, recency, salience).',
     },
+    source_ids: SOURCE_IDS_PARAM,
   },
   handler: async (ctx, p) => {
     const { findExperts } = await import('../../commands/whoknows.ts');
@@ -177,7 +187,8 @@ const find_experts: Operation = {
     const { loadActivePackBestEffort, expertTypesFromPack } = await import('../schema-pack/index.ts');
     const pack = await loadActivePackBestEffort(ctx);
     const types = pack ? expertTypesFromPack(pack.manifest) : [];
-    const scope = await readPolicyOpts(ctx);
+    const sourceIds = parseSourceIdsParam(ctx, 'find_experts', p.source_ids);
+    const scope = await readPolicyOpts(ctx, sourceIds === undefined ? undefined : await requestSourceScope(ctx, undefined, sourceIds));
     let degraded: unknown[] = [];
     const experts = await findExperts(ctx.engine, {
       topic,

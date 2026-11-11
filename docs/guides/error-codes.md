@@ -100,9 +100,9 @@ More: [docs/guides/write-refusals.md#access_member_id_retired](../../docs/guides
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
+| A member or group id given to an access command, a credential binding or --as is ill-formed or names no usable member, or a declared member email is invalid, taken or ambiguous, so nothing was read or changed. | Ids are matched exactly against page readers; an unknown or disabled member is refused rather than read as unbound, so a typo never previews or binds the wrong view. | Check the id with gbrain access member list --all, or add the member first. Run: gbrain access member list --all --json | agent | `gbrain access member list --all --json` | 1 | no |
 
-Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`.
+Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_group`, `invalid_external_id`, `link_exists`, `unknown_link`, `invalid_email`, `email_taken`, `email_ambiguous`.
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
@@ -2118,7 +2118,7 @@ More: [docs/guides/write-refusals.md#git_lfs_not_enabled](../../docs/guides/writ
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A committed file's Git object is missing from the checkout and its working-tree copy differs or is gone, so managed sync holds that file alone. | An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names. Sync imports the working-tree bytes when they hash to the committed blob id; otherwise it imports nothing from a guess, and the rest of the source keeps syncing. | Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then sync again; every sync re-tests the hold. | agent | `repeat the read that failed` | 1 | no |
+| A committed file's Git object is missing from the checkout and its working-tree copy differs or is gone, so managed sync holds that file alone; a partial clone that lacks a tree of the synced commit stops the run. | An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names. Sync imports the working-tree bytes when they hash to the committed blob id; otherwise it imports nothing from a guess, and the rest of the source keeps syncing. | In a partial clone (git clone --filter), which sync never fetches from, fetch the blob with git cat-file -p <blob> in the checkout or check the file out, or, when the run stopped on a missing tree, run the git ls-tree -r -d <commit> it names; otherwise run git fsck in the checkout to see what is missing and restore it with git fetch (a shallow clone) or from a backup. Then sync again; every sync re-tests the hold. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#git_object_missing](../../docs/guides/write-refusals.md#git_object_missing)
 
@@ -3612,6 +3612,14 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### postgres_tls_required
+
+<a id="postgres_tls_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| TLS was required by default for a non-local Postgres host, and the server does not accept TLS connections, so gbrain did not connect. | gbrain connects with sslmode=require to any Postgres host that is not on this machine (localhost, 127.0.0.0/8, ::1 or a Unix socket) unless the database URL names an sslmode, so the password and page contents never cross a network in plaintext without an explicit choice. Brains whose URL had no sslmode connected in plaintext before this default. | Turn TLS on at the database server and keep the default (sslmode=require encrypts; sslmode=verify-full with the server CA also verifies the certificate). To keep connecting without TLS on a network you trust, add sslmode=disable to the database URL. Run: gbrain engine status --probe --json | user | `gbrain doctor --only postgres_tls --json` | 1 | no |
+
 ### preparation_stalled
 
 <a id="preparation_stalled"></a>
@@ -3657,6 +3665,38 @@ More: [docs/guides/repair.md#projection-owner-resident](../../docs/guides/repair
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The current text projection is not ready. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+
+### proposal_closed
+
+<a id="proposal_closed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The memory proposal is no longer awaiting the owner (approved, denied, expired, cancelled, failed or in conflict), so it was not approved or denied again. | A proposal is decided once; the decision and the receipt it left stay as they are. | Read how it ended with gbrain memory-proposals show <request_id>; the proposer sends a new proposal if the change is still wanted. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
+### proposal_expired
+
+<a id="proposal_expired"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The memory proposal passed its TTL (proposals.ttl_hours) before the owner decided, so nothing was written. | A held proposal is only as current as the page QM showed the person; an old one is closed rather than applied. | The proposer sends a new proposal if the change is still wanted; the operator raises proposals.ttl_hours to give owners longer. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
+### proposals_pending_limit
+
+<a id="proposals_pending_limit"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Too many memory proposals already await the owner for this person (proposals.max_pending_per_actor) or this credential (proposals.max_pending_per_credential), so this one was not saved. | The caps keep one system credential from flooding the owner with held text. | Wait for the owner to decide or for a proposal to expire, or cancel one with cancel_write_request; the operator sets the caps. | agent | `repeat the read that failed` | 1 | yes |
+
+Reasons: `actor`, `credential`.
+
+More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
 
 ### provenance_required
 
@@ -4224,7 +4264,7 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `gbrain upgrade` (or `--restart-only`) found a gbrain process on this host it cannot restart onto the new build (a serve or worker started by hand, an autopilot without its service, a running sync, or an MCP server an agent harness started), so it restarted nothing and, before a swap, installed nothing. | A process keeps the build it started with, so restarting only some of them leaves serve, workers and MCP servers on different builds; the upgrade refuses instead of leaving that skew. Each process is named with the exact step that restarts it. | Handle each listed process as the message says (MCP servers only: rerun with --stop-mcp after the user agrees), then run the same command again; `gbrain upgrade --no-restart` installs without restarting. Run: gbrain upgrade --restart-only --dry-run --json | user | `repeat the read that failed` | 3 | no |
+| `gbrain upgrade` (or `--restart-only`) found a gbrain process on this host it cannot restart onto the new build (a serve or worker started by hand, an autopilot started outside its service by a launcher gbrain does not know, a running sync, or an MCP server an agent harness started), so it restarted nothing and, before a swap, installed nothing. | A process keeps the build it started with, so restarting only some of them leaves serve, workers and MCP servers on different builds; the upgrade refuses instead of leaving that skew. Each process is named with the exact step that restarts it. | Handle each listed process as the message says (MCP servers only: rerun with --stop-mcp after the user agrees), then run the same command again; `gbrain upgrade --no-restart` installs without restarting. Run: gbrain upgrade --restart-only --dry-run --json | user | `repeat the read that failed` | 3 | no |
 
 More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
 

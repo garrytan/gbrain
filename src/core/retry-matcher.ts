@@ -125,6 +125,20 @@ export function isStatementTimeoutError(err: unknown): boolean {
 }
 
 /**
+ * GST-2260: runs `transaction` once more when a stale plan aborted it. The abort rolled back every statement it ran, so
+ * the second run is safe only for a callback that does nothing but database work and in-memory computation: never wrap
+ * one that writes a file, calls the network or changes state that outlives the transaction.
+ */
+export async function retryOnStalePlan<T>(transaction: () => Promise<T>): Promise<T> {
+  try {
+    return await transaction();
+  } catch (error) {
+    if (!isStalePlanError(error)) throw error;
+    return transaction();
+  }
+}
+
+/**
  * SQLSTATE 55P03: lock_not_available.
  * Postgres signals this when `lock_timeout` or `NOWAIT` would block.
  */

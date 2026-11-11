@@ -289,7 +289,11 @@ if [ -z "$PGBOUNCER_E2E_URL" ] && [ -n "$PGBOUNCER_E2E_DB" ]; then
     echo "ERROR: GBRAIN_PGBOUNCER_E2E_DB needs GBRAIN_PGBOUNCER_URL (the pooler to reach it through)." >&2
     exit 2
   fi
-  PGBOUNCER_E2E_URL="${GBRAIN_PGBOUNCER_URL%/*}/${PGBOUNCER_E2E_DB}?prepare=false"
+  # Keep the pooler URL's own query (ci-local's explicit sslmode=disable) on the derived URL.
+  _pgb_base="${GBRAIN_PGBOUNCER_URL%%\?*}"
+  _pgb_query=""
+  case "$GBRAIN_PGBOUNCER_URL" in *\?*) _pgb_query="${GBRAIN_PGBOUNCER_URL#*\?}&" ;; esac
+  PGBOUNCER_E2E_URL="${_pgb_base%/*}/${PGBOUNCER_E2E_DB}?${_pgb_query}prepare=false"
 fi
 pooled_db_ready=0
 if [ -n "$PGBOUNCER_E2E_URL" ]; then

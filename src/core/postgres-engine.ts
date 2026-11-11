@@ -21,6 +21,7 @@ import postgres from '#postgres'
 import { reservedTransactions, type ReservedTransactions } from './postgres-engine/reserved-transactions.ts';
 import { holdSearchConnection } from './search/connection-budget.ts';
 import { traceSqlOptions } from './sql-trace.ts';
+import { tlsRequiredDefaultError, withPgTls } from './pg-tls.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
 import { runBoundedStatement, runDeadlineRead } from './postgres-engine/bounded-statement.ts';
 import { needsJitOff, runJitOffStatement } from './postgres-engine/jit-off-statement.ts';
@@ -470,8 +471,9 @@ export class PostgresEngine implements BrainEngine {
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }
-      this._sql = postgres(url, traceSqlOptions(embedded ? { ...opts, ...settingsConnectionOptions(url) } : opts, 'instance'));
-      await db.checkPoolAndLoadSharedTypes(this._sql, url, { persisted: !embedded });
+      const instanceOpts = embedded ? { ...opts, ...settingsConnectionOptions(url) } : opts;
+      this._sql = postgres(url, traceSqlOptions(withPgTls(url, instanceOpts), 'instance'));
+      await db.checkPoolAndLoadSharedTypes(this._sql, url, { persisted: !embedded }).catch(async (e: unknown) => { throw (await tlsRequiredDefaultError(url, e, instanceOpts)) ?? e; });
       await db.setSessionDefaults(this._sql);
       this._connectionStyle = 'instance';
 

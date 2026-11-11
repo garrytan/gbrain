@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 292,
+    "count": 296,
     "gaps": [
       17,
       18,
@@ -97,7 +97,7 @@
       "verifyProjectionStatistics": "0d231b04ecfbc5a4109d6fca9567bf4e8c9e9db6c3fbbb35212e026579ed6f67",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 297,
+    "latest": 301,
     "records": [
       {
         "handler": {
@@ -4839,6 +4839,58 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 297
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "attest_read",
+        "sql": {
+          "length": 139,
+          "sha256": "17083c8352b9c8b501aa46e7ba59eb4e3fcfb37566616820bb48a735f3adeb8b"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 298
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "access_member_sources",
+        "sql": {
+          "length": 573,
+          "sha256": "63da00dc6df6d19b1da78d752ab0e5566c1511a1cff16a2838e54b5fbf701ff9"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 299
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "memory_proposals",
+        "sql": {
+          "length": 1783,
+          "sha256": "4c55717114ac37759287596768d2dbe2b36b20a57b3ce9605b8ccaa8aef741ef"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 300
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "member_email",
+        "sql": {
+          "length": 247,
+          "sha256": "1b29d7c6c2eb5da8c9a81d5580526d5e408a6dd1405b24e0aa24a153d30944c9"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 301
       }
     ],
     "versions": [
@@ -5133,7 +5185,11 @@
       294,
       295,
       296,
-      297
+      297,
+      298,
+      299,
+      300,
+      301
     ]
   },
   "normalizer": "migrations-record-v1"

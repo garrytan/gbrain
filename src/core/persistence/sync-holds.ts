@@ -917,7 +917,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'git_object_missing':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
-        user_message: `The Git object of ${record.path}${record.meta.blob_oid ? ` (blob ${record.meta.blob_oid})` : ''} is missing from the checkout of source ${source}, and its working-tree copy differs or is gone, so sync holds it and the rest of the source keeps syncing. Run git fsck in the checkout to see what is missing, restore it with git fetch (a partial or shallow clone) or from a backup, then run gbrain sync --source ${source} --no-pull.`,
+        user_message: `The Git object of ${record.path}${record.meta.blob_oid ? ` (blob ${record.meta.blob_oid})` : ''} is missing from the checkout of source ${source}, and its working-tree copy differs or is gone, so sync holds it and the rest of the source keeps syncing. Sync fetches nothing, so in a partial clone (git clone --filter) fetch the blob with git cat-file -p ${record.meta.blob_oid ?? '<blob>'} in the checkout or check the file out; otherwise run git fsck in the checkout to see what is missing and restore it with git fetch (a shallow clone) or from a backup. Then run gbrain sync --source ${source} --no-pull.`,
         why: 'An interrupted gc, a partial clone without its promisor remote or disk corruption can drop an object a commit still names; nothing is imported from a guess, and every sync re-tests the hold.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'path_not_utf8':

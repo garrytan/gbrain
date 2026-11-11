@@ -157,13 +157,15 @@ In the Supabase dashboard, click **Connect** in the top navigation bar, then **C
 You want the **Transaction pooler** string. Format looks like:
 
 ```
-postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres
+postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require
 ```
+
+Keep the `?sslmode=require` on the end. It makes the connection encrypted, which gbrain requires for any database that isn't on your own machine (it adds it for you if you leave it off). It does not check the server's certificate, though. To check it too, download Supabase's CA certificate (**Project Settings → Database → SSL Configuration**), set `NODE_EXTRA_CA_CERTS` to its path in `~/.gbrain/env`, and use `?sslmode=verify-full` instead ([details](../ENGINES.md#tls-for-postgres-connections)).
 
 Configure it via:
 
 ```bash
-gbrain config set database_url "postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres"
+gbrain config set database_url "postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:6543/postgres?sslmode=require"
 ```
 
 This writes `~/.gbrain/config.json` (file-plane routed) and infers
@@ -179,7 +181,7 @@ Two ways to fix it. The free one first:
 **Free: point GBrain's direct connection at the Session pooler.** The session pooler is the same Supavisor host on port 5432, and it's IPv4. Copy the **Session pooler** string from the same **Connect → Connection String** panel and set it as the direct-connection override:
 
 ```bash
-export GBRAIN_DIRECT_DATABASE_URL="postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:5432/postgres"
+export GBRAIN_DIRECT_DATABASE_URL="postgresql://postgres.YOUR-PROJECT:YOUR-PASSWORD@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=require"
 ```
 
 Now both pools — reads on the transaction pooler (6543), DDL and locks on the session pooler (5432) — run over IPv4 at zero extra cost.

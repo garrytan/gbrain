@@ -162,6 +162,28 @@ async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: W
   };
 }
 
+/**
+ * GST-1158: a memory proposal under this request id, when no journal row has it yet: visible to the same principal and the
+ * same attested person only (OV8: not to the live attest ops, so a proposer keeps reading and cancelling its held rows after
+ * memory_propose is revoked); every other caller gets the same not_found as a missing id.
+ */
+async function ownProposal(ctx: OperationContext, principal: Principal, requestId: string) {
+  const { getProposal } = await import('../persistence/memory-proposals.ts');
+  const proposal = await getProposal(ctx.engine, principal, requestId).catch(async error => {
+    if ((await import('../utils.ts')).isMissingSchemaObject(error, 'table', 'memory_proposals')) return null;
+    throw error;
+  });
+  const { sameAttestedActor } = await import('../access/member-facts.ts');
+  return proposal && sameAttestedActor(proposal.authority.actingFor) ? proposal : null;
+}
+
+/** The proposal an approved write came from, on its journal receipt. */
+async function approvedProposal(ctx: OperationContext, principal: Principal, row: WriteRequest): Promise<Record<string, unknown>> {
+  if (row.authority?.attestedOp !== 'memory_propose') return {};
+  const proposal = await ownProposal(ctx, principal, row.request_id);
+  return proposal ? { proposal: { kind: proposal.kind, target: proposal.slug, ...(proposal.to_slug ? { to: proposal.to_slug } : {}), decided_at: proposal.decided_at } } : {};
+}
+
 /** A receipt the terminal classifier reads: ended without committing, or holding a publication recovery record outside an in-flight claim (committed or parked `recovering`). */
 function isTerminalOrRecovering(row: WriteRequest): boolean {
   return ['failed', 'conflict', 'cancelled'].includes(row.state) || ((row.state === 'committed' || row.state === 'recovering') && row.recovery != null);
@@ -190,8 +212,13 @@ export const persistenceOperations: Operation[] = [
       const { principal } = await receiptAccess(ctx, 'get_write_request');
       const { getWriteRequest, writeHealthFacts } = await import('../persistence/journal.ts');
       const row = await getWriteRequest(ctx.engine, principal, id);
-      if (!row || !await visible(ctx, row)) throw missing(callerSource(ctx));
-      const receipt = await publicReceipt(ctx, row, (await writeHealthFacts(ctx.engine, [row])).get(row.id));
+      if (!row) {
+        const proposal = await ownProposal(ctx, principal, id);
+        if (!proposal) throw missing(callerSource(ctx));
+        return (await import('../persistence/memory-proposals.ts')).proposalReceipt(proposal);
+      }
+      if (!await visible(ctx, row)) throw missing(callerSource(ctx));
+      const receipt = { ...await publicReceipt(ctx, row, (await writeHealthFacts(ctx.engine, [row])).get(row.id)), ...await approvedProposal(ctx, principal, row) };
       if (params.applied !== true) return receipt;
       const applied = await (await import('../persistence/write-applied.ts')).readWriteApplied(ctx.engine, row).catch(() => null);
       return applied ? { ...receipt, applied } : receipt;
@@ -277,7 +304,14 @@ export const persistenceOperations: Operation[] = [
       const { principal } = await receiptAccess(ctx, 'cancel_write_request');
       const { getWriteRequest, writeHealthFacts } = await import('../persistence/journal.ts');
       const row = await getWriteRequest(ctx.engine, principal, id);
-      if (!row || !await visible(ctx, row)) throw missing(callerSource(ctx));
+      if (!row) {
+        const proposal = await ownProposal(ctx, principal, id);
+        if (!proposal) throw missing(callerSource(ctx));
+        if (ctx.dryRun) return { dry_run: true, action: 'cancel_write_request', request_id: id, state: proposal.state };
+        const { cancelOwnProposal, proposalReceipt } = await import('../persistence/memory-proposals.ts');
+        return proposalReceipt(await cancelOwnProposal(ctx.engine, proposal));
+      }
+      if (!await visible(ctx, row)) throw missing(callerSource(ctx));
       if (ctx.dryRun) return { dry_run: true, action: 'cancel_write_request', request_id: id, state: row.state };
       const { cancelWriteRequest } = await import('../persistence/control.ts');
       const cancelled = await cancelWriteRequest(ctx.engine, principal, id, {
