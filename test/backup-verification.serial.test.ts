@@ -421,3 +421,26 @@ test('a local git probe that times out keeps an established bad verdict and neve
     expect(await assessBackupRepository(root, 'source_repo', 'source-id', now)).toMatchObject({ state: 'unknown', detail: 'probe_failed' });
   } finally { slow.mockRestore(); }
 });
+
+test('a detached-HEAD worktree reads detached_head, not probe_failed, and is never recoverable (#9112)', async () => {
+  const { root } = await repository();
+  const worktree = join(tmp, 'detached-worktree');
+  git(root, 'worktree', 'add', '-q', '--detach', worktree, 'HEAD');
+  expect(git(worktree, 'rev-parse', 'HEAD')).toBe(git(root, 'rev-parse', 'origin/main'));
+  const asset = await assessBackupRepository(worktree, 'source_repo', 'detached-id', now);
+  expect(asset).toMatchObject({ state: 'unknown', detail: 'detached_head', fix_argv: null, configured_remote: true });
+  const result = await computeBackupCoverage(engine([worktree]), verified);
+  expect(result.assets[0]).toMatchObject({ state: 'unknown', detail: 'detached_head' });
+  expect(result.totals.recoverable_repos).toBe(0);
+  expect(result.overall).toBe('warn');
+});
+
+test('a recorded failed push still wins over a detached HEAD (#9112)', async () => {
+  const { root } = await repository();
+  const worktree = join(tmp, 'detached-failed-push');
+  git(root, 'worktree', 'add', '-q', '--detach', worktree, 'HEAD');
+  const statusPath = pushStatusPathForRoot(worktree);
+  mkdirSync(join(statusPath, '..'), { recursive: true });
+  writeFileSync(statusPath, JSON.stringify({ schema_version: 'gbrain-push-status-v1', root: worktree, ok: false, reason: 'offline', timestamp: now.toISOString() }));
+  expect(await assessBackupRepository(worktree, 'source_repo', 'detached-id', now)).toMatchObject({ state: 'failing', detail: 'last_push_failed' });
+});

@@ -114,7 +114,12 @@ than eight seconds. A probe that runs out of its slot is counted in
 `totals.remote_timeouts` and shown as "remote check timed out": the backup is
 unconfirmed, not missing (#6907). The local dirtiness read stops at the first
 changed path, so a tree with a very large `git status` listing reads `dirty`
-instead of `unknown / probe_failed`. Pending
+instead of `unknown / probe_failed`. A source whose checkout is a
+detached-HEAD worktree (for example a linked worktree of a repository whose
+branch is checked out elsewhere) reads `unknown / detached_head`: there is no
+branch to compare with the remote, so it is never counted as recoverable and
+has no fix command; check out a branch or back up the repository that owns the
+branch. Pending
 and oldest evidence is rotated first rather than probing the same roots each
 time. Evidence expires after one hour even if the configured coverage interval
 is longer. Reuse retains its original timestamp and requires unchanged source

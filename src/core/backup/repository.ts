@@ -149,7 +149,16 @@ export async function assessBackupRepository(
       try { if (readManifest(root).state === 'initialized') asset.fix_argv = ['gbrain', 'bootstrap', 'repo']; } catch {}
       return asset;
     }
-    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    let branch: string;
+    try {
+      branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    } catch (error) {
+      // A detached HEAD (a linked worktree on a commit) makes symbolic-ref exit 1 with no output. That is a known
+      // state with no branch to compare, not a probe failure; a timeout or spawn error still falls through below.
+      if ((error as { status?: number }).status !== 1) throw error;
+      if (failedPush) return { ...asset, state: 'failing', detail: 'last_push_failed' };
+      return { ...asset, state: 'unknown', detail: 'detached_head', verification: { state: 'not_checked' } };
+    }
     const head = git(root, ['rev-parse', '--verify', 'HEAD']);
     const dirty = await worktreeDirty(root);
     let ahead: number | undefined;

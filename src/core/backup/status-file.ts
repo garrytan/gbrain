@@ -167,7 +167,7 @@ export function assetBlocksRecovery(a: BackupAssetVerdict): boolean {
  * aggregate surface echoes only these, so a future free-text detail cannot
  * carry a path or a branch name to a remote reader.
  */
-const UNKNOWN_DETAIL_CODES = new Set(['not_a_git_repo', 'probes_skipped', 'probe_cap', 'probe_failed', 'local_path not found on this machine']);
+const UNKNOWN_DETAIL_CODES = new Set(['not_a_git_repo', 'probes_skipped', 'probe_cap', 'probe_failed', 'detached_head', 'local_path not found on this machine']);
 
 /**
  * #5505: one entry per asset that keeps the verdict in warn, with the reason

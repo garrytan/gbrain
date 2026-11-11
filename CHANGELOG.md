@@ -10,6 +10,22 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.661.0] - 2026-11-10
+
+**`gbrain backup check` names a detached-HEAD checkout instead of reporting a failed probe (#9112).** A source whose registered path is a linked git worktree on a detached HEAD (the layout a tool uses when the branch is checked out in another worktree) showed `unknown; remote evidence: unavailable: probe_failed` with no fix, though the remote was reachable and the commit pushed. The check asked git for the branch name, which exits 1 on a detached HEAD, and the generic error path turned that into `probe_failed`. It now reports `unknown` with the detail `detached_head`. Nothing about recoverability changes: a detached checkout is still not counted as a verified backup, and a recorded failed push still reads `failing`. Other git errors and timeouts still read `probe_failed`. Contributed by @harjothkhara.
+
+**Say to your agent:** *"Why does my backup check say unknown for the source that lives in a worktree?"*
+
+### What you see
+
+| Where | What changed |
+|---|---|
+| `gbrain backup check`, doctor `backup_coverage`, a source on a detached HEAD | Detail reads `detached_head` instead of `probe_failed`. |
+
+## To take advantage of v0.60.661.0
+
+Nothing to migrate. To clear the warning, check out a branch in that worktree or back up the repository that owns the branch.
+
 ## [0.60.660.0] - 2026-11-11
 
 **Agent reads answer "nothing here" instead of refusing, and say why a list came back empty.** These fixes come from agent transcripts where models kept getting refused or got bare empty answers.
