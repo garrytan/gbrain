@@ -29,6 +29,8 @@ import { pageIdentityError } from './page-identity.ts';
 import { MEMBER_PAGE_PREFIX } from '../access/member-facts.ts';
 import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 
 interface ForgetTarget { id: number; entity_slug: string | null; trust_tier?: string | null }
 
@@ -75,7 +77,7 @@ export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId:
  * the page names the member among its readers; the coordinator checks the page's visibility to the stored writer.
  */
 export async function readForgetTarget(engine: BrainEngine, id: number, sourceId: string, remote: boolean, excludePrivate: boolean, lock = false, ownPage: string | null = null) {
-  const [fact] = await engine.executeRaw<ForgetTarget & { source_markdown_slug: string | null; expired_at: Date | null }>(`SELECT id,entity_slug,source_markdown_slug,expired_at,trust_tier FROM facts
+  const [fact] = await engine.executeRaw<ForgetTarget & { source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null }>(`SELECT id,entity_slug,source_markdown_slug,row_num,expired_at,trust_tier FROM facts
     WHERE id=$1 AND source_id=$2 AND ${ownPage ? `visibility='private' AND source_markdown_slug=$3 AND EXISTS (SELECT 1 FROM pages member_page
       WHERE member_page.source_id=facts.source_id AND member_page.slug=$3 AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY[$4::text])`
     : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`}${lock ? ' FOR UPDATE' : ''}`,
@@ -127,7 +129,13 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   };
   const own = await engine.readPageSnapshot(row.slug, { sourceId, includeDeleted: true });
   if ((own?.page.id ?? null) !== row.page_id) throw pageIdentityError(own != null || row.page_id === null, 'The page of the forgotten fact was deleted or recreated.');
-  const file = await strike(row.slug, own);
+  // GBRA-449: a fact held on memory/unattributed for an entity with no page is struck at its own row, in the file and the
+  // page, so a rebuild from Git does not bring it back; the claim-wide strike would also reach other entities' rows there.
+  const held = row.slug === UNATTRIBUTED_MEMORY_SLUG && fact.source_markdown_slug === row.slug && fact.entity_slug !== null && fact.row_num !== null
+    && plan.subject !== '*' && own && !own.page.deleted_at && !isSegmentedPage(own.page) && row.worktree_id
+    ? await prepareFenceRowRetirement(engine, row, _config, row.slug, { rowNum: Number(fact.row_num), note: 'memory withdrawn', validUntil: new Date(withdrawnAt), forgotten: true }, signal)
+    : null;
+  const file = held ? held.file : await strike(row.slug, own);
   const companions: CompanionPage[] = [];
   for (const slug of plan.slugs) {
     if (slug === row.slug) continue;
@@ -138,7 +146,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       ...(companionFile ? { file: companionFile } : {}), apply: async () => undefined });
   }
   let pages: string[] = [];
-  return { observedRevision: own?.revision ?? null, ...(file ? { file } : {}), ...(companions.length ? { companions } : {}),
+  return { observedRevision: held ? held.observedRevision : own?.revision ?? null, ...(file ? { file } : {}), ...(companions.length ? { companions } : {}),
     // #8636: forget_fact on an already-expired fact still publishes its withdrawal, then answers fact_already_expired.
     ...(row.operation === 'forget_fact' && fact.expired_at !== null ? { failure: { code: 'fact_already_expired', message: `Fact id ${id} already expired.` } } : {}),
     validate: async tx => {
@@ -147,8 +155,10 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
       if (!current) throw missing();
       if (remote && supersessionGuarded('agent_written', current.trust_tier)) throw remoteForgetRaced(id);
       if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, current, remote, excludePrivate);
+      await held?.validate?.(tx);
     },
-    apply: async tx => {
+    apply: async (tx, preimage) => {
+      if (held) await held.apply(tx, preimage ?? null);
       // Even an expired legacy fact acquires a ledger row (forget_fact then finishes failed), so a stale import cannot reactivate it.
       const publication = { withdrawnAt, expectedSlugs: plan.slugs };
       pages = (await recordFactWithdrawal(tx, id, sourceId, remote, ownPage

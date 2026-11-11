@@ -117,15 +117,25 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   const writeThrough = configuredWriteThrough && !sandbox;
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
+  // GBRA-449: on a strict source (Git is the record) a named entity with no page holds its fact in Git, as a row of
+  // memory/unattributed that names the entity, until the entity's page exists. The fences and the authority above ran on
+  // the entity (decision D1); the holding row is gbrain's own companion write, authorized as a write to that entity.
+  const holding = !inferred && memberPage === null && entitySlug !== null && !snapshot && writeThrough
+    && (await getWorktreeBinding(ctx.engine, sourceId))?.canonical_git === true
+    ? await ctx.engine.readPageSnapshot(UNATTRIBUTED_MEMORY_SLUG, { sourceId, includeDeleted: true }) ?? 'absent' : null;
+  const held = holding !== null && (holding === 'absent' || !holding.page.deleted_at);
+  const page = held && holding !== 'absent' ? holding : snapshot;
+  if (held) fence = true;
   // An inferred link never designates an owner or reports a missing one.
   const target = fence ? await resolveFactWriteTarget(ctx.engine, sourceId, source,
-    { sandbox, fileBacked: snapshot ? Boolean(snapshot.page.source_path) : unattributed, remote: ctx.remote !== false }).catch((error: unknown) => {
+    { sandbox, fileBacked: page ? Boolean(page.page.source_path) : unattributed || held, remote: ctx.remote !== false }).catch((error: unknown) => {
     if (inferred && error instanceof OperationError) throw new InferredTargetRejected('ENTITY_LINK_FAILED');
-    // A source that refuses a new canonical file keeps the subjectless fact database-only, as before memory/unattributed had a page.
-    if (unattributed && !snapshot && error instanceof OperationError) return null;
+    // A source that refuses a new canonical file keeps the subjectless (or held) fact database-only, as before memory/unattributed had a page.
+    if ((unattributed || held) && !page && error instanceof OperationError) return null;
     throw error;
   }) : null;
-  if (unattributed && !snapshot && !target) fence = false;
+  if ((unattributed || held) && !page && !target) fence = false;
+  if (held && fence) authority.heldFor = entitySlug!;
   // GST-2446: a named entity with no page keeps its fact out of every file. Where the source has a checkout the reason
   // is the missing page, never a missing repository.
   if (!fence && entitySlug !== null && writeThrough) {
@@ -151,7 +161,8 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
       throw new InferredTargetRejected('ENTITY_LINK_FAILED');
     }
   }
-  return { slug, authority, snapshot, fence, binding, writeThrough };
+  return held && fence ? { slug: UNATTRIBUTED_MEMORY_SLUG, authority, snapshot: page, fence, binding, writeThrough, heldFor: entitySlug }
+    : { slug, authority, snapshot, fence, binding, writeThrough, heldFor: null };
 }
 
 /** The caller's remember parameters and whether it named a visibility (the verb fills the v1 default otherwise). */
@@ -260,9 +271,12 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
  * GST-2243: every remember reply names the page the fact went to and who can recall it. GST-2446: a fact saved for an
  * entity with no page is on no page, so the reply names none; where the source's pages are in Git, one notice gives
  * the call that creates the page (a brain with no repository keeps the database as its record and is told nothing).
+ * GBRA-449: on a strict git-canonical source the fact is held on memory/unattributed instead (`authority.heldFor`), so
+ * the reply names that page and the notice says it is committed and when it moves.
  */
 async function rememberLanded<T extends Record<string, unknown>>(ctx: OperationContext, row: WriteRequest, response: T): Promise<T> {
   const intent = row.intent as { visibility?: unknown; fence?: unknown; entity_slug?: unknown } | null;
+  if (row.authority.heldFor) ctx.emitNotice?.(entityPageMissingNotice(row.source_id, row.authority.heldFor, true));
   if ((response.write_through as { skipped?: unknown } | undefined)?.skipped === 'entity_page_missing' && typeof intent?.entity_slug === 'string') {
     const binding = await getWorktreeBinding(ctx.engine, row.source_id);
     const root = binding?.local_path || (await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [row.source_id]))[0]?.local_path
@@ -378,7 +392,9 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // root has no owner refuses when a canonical file carries the claim (Git is the parent: a database-only withdrawal
   // would come back on a rebuild from Git); a claim only database-only pages carry is withdrawn database-only.
   const plan = await planFactWithdrawal(ctx.engine, id, sourceId, remote, ownPage ? undefined : excludePrivate, ownPage);
-  const struck = plan ? plan.slugs.filter(page => plan.subject === '*' || plan.subject === page) : [];
+  // GBRA-449: a fact held on memory/unattributed for an entity with no page is struck there too (its row names the entity).
+  const heldOn = fact.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG && fact.entity_slug !== null ? UNATTRIBUTED_MEMORY_SLUG : null;
+  const struck = plan ? plan.slugs.filter(page => plan.subject === '*' || plan.subject === page || page === heldOn) : [];
   const fileBacked = struck.length > 0 && (await ctx.engine.executeRaw(
     'SELECT 1 FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL LIMIT 1', [sourceId, struck])).length > 0;
   const target = await resolveFactWriteTarget(ctx.engine, sourceId, source, { sandbox, fileBacked, remote })

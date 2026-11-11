@@ -1,5 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { assertRecoveryVersion } from './recovery-version.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
 /** `deferred` (PR B, docs/designs/REFRESH_WRITE_BARRIER.md): admitted during a worktree refresh, unclaimable until it is released. */
@@ -31,6 +32,12 @@ export interface WriteAuthority {
   attestedOp?: string;
   /** GST-1113: the scope source an attested memory_write named instead of the principal's own; publication re-checks attest_sources. */
   attestedSource?: string;
+  /**
+   * GBRA-449: the entity a remember held on memory/unattributed is for (a strict source, the entity has no page). The
+   * write is authorized as a write to that entity (its slug fences, grant prefixes and visibility), never to the
+   * holding page, which is gbrain's own companion to it.
+   */
+  heldFor?: string;
   databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached' | 'entity_page_missing';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;
@@ -47,6 +54,11 @@ export interface WriteAuthority {
   /** Actual holders touched by a published take mutation; retained after intent compaction. */
   takeHoldersUsed?: string[];
 }
+/** GBRA-449: the slug a write is authorized as: a held remember's entity in place of the holding page, else the page itself. */
+export function authorizedSlug(authority: Pick<WriteAuthority, 'heldFor'>, slug: string): string {
+  return authority.heldFor && slug === UNATTRIBUTED_MEMORY_SLUG ? authority.heldFor : slug;
+}
+
 /**
  * One file's publication recovery. The prior bytes are embedded (`before`, base64), except for a prior file over the
  * single-string ceiling (large-file.ts): `before` is null and the bytes are the staged copy `staging.before` (path,

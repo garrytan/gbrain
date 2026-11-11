@@ -424,6 +424,10 @@ Optional response fields; clients must ignore any they do not know.
   has no page to take the fact. `no_repo_configured`: the source has no
   checkout, so the database is its record. `disabled_by_config` and
   `subagent_sandbox`: write-through is off for the brain or for this caller.
+  `held_for: string`: on a source whose pages are canonical in Git, the
+  entity a fact was saved for while it has no page; the fact is a row of
+  `memory/unattributed` (`page`) whose `entity` column names it, until
+  maintenance moves it into the entity's page.
 
 A fact saved for an entity with no page is stored and recalled like any
 other. Where the source's pages are in Git, the reply also carries one

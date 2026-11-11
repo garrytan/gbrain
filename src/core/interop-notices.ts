@@ -330,12 +330,15 @@ export function privateFactNotice(factId?: string | number): Notice {
  * GST-2446: remember saved a fact for an entity that has no page, on a source whose pages are in Git. The fact is in
  * the database alone until the page exists; the fix is the call that creates it. Once per entity per session.
  */
-export function entityPageMissingNotice(sourceId: string, entitySlug: string): Notice {
+export function entityPageMissingNotice(sourceId: string, entitySlug: string, held = false): Notice {
   return {
     code: 'entity_page_missing',
     kind: 'info',
     dedupe_key: `${sourceId}\0${entitySlug}`,
-    why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save. To give it a file, create the page; the next maintenance cycle (gbrain dream) can then move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,
+    // GBRA-449: on a strict source the fact is held in Git, as a row of memory/unattributed that names the entity.
+    why: held
+      ? `Saved and committed to Git; held on memory/unattributed until ${entitySlug} has a page. Say that when you report the save. Once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table, in its file.`
+      : `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save. To give it a file, create the page; the next maintenance cycle (gbrain dream) can then move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,
     fix: {
       argv: ['gbrain', 'put', entitySlug],
       mcp: { tool: 'put_page', arguments: { slug: entitySlug, content: '<content>' } },

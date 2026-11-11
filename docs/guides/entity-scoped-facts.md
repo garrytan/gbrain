@@ -110,7 +110,17 @@ each item of an `items` batch says the same for itself. If the brain's pages
 are in a Git repository, the reply also carries an `entity_page_missing`
 notice with the `put_page` call that creates the page. Once the page exists,
 the next maintenance cycle (`gbrain dream`) can move the facts saved for that
-entity into the page's Facts table and its file. A brain with no Git
+entity into the page's Facts table and its file. On a source whose pages are
+canonical in Git (`canonical: git`), the fact is not left in the database
+alone: it is committed to Git as a row of `memory/unattributed` whose `entity`
+column names the entity, before the reply returns. The reply then names
+`page: memory/unattributed`, `persistence: {"mode": "filesystem"}` and
+`write_through: {"written": true, "held_for": "<entity>"}`. Once the entity
+has a page, the next maintenance cycle moves the row into it in one commit
+and strikes the held row (`moved to <entity>`, or just `moved` when the page
+is restricted); a page kept out of Git does not take it, and the run warns
+`HELD_FACT_UNMOVABLE`. Forgetting or replacing a held fact strikes its row
+too. A brain with no Git
 repository gets no notice: there the database is the record, and the fact is
 as safe as everything else in it.
 

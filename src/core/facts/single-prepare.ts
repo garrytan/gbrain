@@ -224,7 +224,8 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
       'Pass the same entity as the fact being replaced, or forget the old fact and remember the new one separately.');
   }
   // GBRA-190 G4: a fact saved without an entity is a row of memory/unattributed; linking it strikes that row in the same write.
-  const linking = target.entity_slug == null && input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
+  // GBRA-449: so does replacing a fact a strict source held there for the same entity (checked above).
+  const linking = input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
   if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug && !linking) {
     const derived = String(candidate.source ?? '').startsWith('cli:extract-conversation-facts');
     throw verbError('invalid_params', `replaces_cross_page: fact #${targetId} lives on page ${candidate.source_markdown_slug}${derived ? ', extracted from that conversation page' : ''}.`,
