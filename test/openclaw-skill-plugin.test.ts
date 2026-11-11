@@ -173,6 +173,26 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     expect(r.resolver.error.code).toBe('skill_resolver_plugin_not_installed');
   });
 
+  test('lane settings come from core: a min_match only the plugin accepted refuses setup, and skills.resolver.pinned is never suggested', async () => {
+    const bad = box();
+    mkdirSync(gbrainHome(bad), { recursive: true });
+    writeFileSync(join(gbrainHome(bad), 'config.json'), JSON.stringify({ skills: { resolver: { per_harness: { openclaw: { min_match: 'none' } } } } }));
+    const refused = await setup(bad, ['--skill-loading', 'resolve']);
+    expect(refused.resolver.error.code).toBe('skill_resolver_config_invalid');
+    expect(refused.exitCode).not.toBe(0);
+    expect(existsSync(statePath(bad))).toBe(false);
+    expect(calls(bad)).toEqual([]);
+
+    const b = box();
+    mkdirSync(gbrainHome(b), { recursive: true });
+    writeFileSync(join(gbrainHome(b), 'config.json'), JSON.stringify({ skills: { resolver: { pinned: ['email-triage'], per_harness: { openclaw: { top_k: 2 } } } } }));
+    expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(readState(b).agents.main).toMatchObject({ top_k: 2, min_match: 'description', exclude_ids: ['email-triage'] });
+    const out = drive(b, [['turn', { text: 'deploy the service to production and triage the email inbox', id: 'm1' }]]);
+    expect(out[0].appendContext).toContain('deploy-service');
+    expect(out[0].appendContext).not.toContain('email-triage');
+  });
+
   test('--dry-run writes nothing', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve', '--dry-run']);
@@ -262,7 +282,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     expect(sessions.length).toBeGreaterThan(0);
   });
 
-  test('the description floor holds on a library without native floor support: body-only matches are never suggested', async () => {
+  test('the description floor holds: body-only matches are never suggested', async () => {
     const b = box();
     const skills = join(b.state, 'workspace', 'skills');
     mkdirSync(join(skills, 'zeta-notes'), { recursive: true });
@@ -276,7 +296,7 @@ describe.skipIf(!NODE)('the gbrain-skill-resolver plugin under Node', () => {
     expect(out[1].appendContext).toContain('email-triage');
     expect(out[1].appendContext).not.toContain('zeta-notes');
     const lines = logLines(b).filter((l) => l.agent === 'main');
-    expect(lines[0]).toMatchObject({ outcome: 'below_floor', suggested: [] });
+    expect(lines[0]).toMatchObject({ outcome: 'no_match', suggested: [] });
     expect(lines[1].strengths.every((s: string) => ['named', 'name', 'triggers', 'routing', 'description'].includes(s))).toBe(true);
   });
 

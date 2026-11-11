@@ -173,7 +173,11 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
 
 `skills.resolver.per_harness.openclaw.{top_k,min_match}` overrides the
 defaults (3 and `description`); the global `skills.resolver.top_k` and
-`min_match` apply when it is unset.
+`min_match` apply when it is unset, and `skills.resolver.pinned` lists skills
+OpenClaw already loads, which are never suggested. The plugin reads these the
+way every lane does, so a bad value makes setup refuse with
+`skill_resolver_config_invalid` and write nothing; a change takes effect at
+the next `gbrain setup openclaw`.
 
 Each turn appends one line (agent, outcome, duration, error code, arm,
 suggested ids; never turn text) to
@@ -188,7 +192,9 @@ is under that on the real host.
 ## Pinned skills
 
 Pins are the operator's always-on skills for one catalog. gbrain ships none,
-and a catalog with no pins gets no pinned block.
+and a catalog with no pins gets no pinned block. They differ from
+`skills.resolver.pinned`: a pin is shown by gbrain on every turn, while a
+`pinned` skill is one the harness already shows, so gbrain only leaves it out.
 
 ```bash
 gbrain skills pin add deploy-example --catalog openclaw-main --line "Before any production deploy"

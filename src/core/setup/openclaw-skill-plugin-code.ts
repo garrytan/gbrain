@@ -52,8 +52,6 @@ function rebuild(lib, catalog, dirs) {
     .finally(() => { building = null; });
 }
 
-const STRENGTHS = ['named', 'name', 'triggers', 'routing', 'description', 'body'];
-
 parentPort.on('message', async (m) => {
   const loaded = await ready;
   if (m.type === 'warm') { parentPort.postMessage({ type: 'warm', version: loaded.lib ? loaded.lib.GBRAIN_VERSION : null, code: loaded.code || null }); return; }
@@ -70,25 +68,11 @@ parentPort.on('message', async (m) => {
   const lib = loaded.lib;
   const now = Date.now();
   for (const [id, p] of pending) if (now - p.at > 30_000) pending.delete(id);
-  const input = { ...m.input };
-  const features = Array.isArray(lib.RESOLVER_FEATURES) ? lib.RESOLVER_FEATURES : [];
-  const nativeFloor = !!m.floor && features.includes('min_match_strength');
-  if (nativeFloor) input.min_match_strength = m.floor;
-  const floorRank = STRENGTHS.indexOf(m.floor);
-  const weak = (o) => nativeFloor || floorRank < 0 ? [] : o.suggestions.filter((s) => !(STRENGTHS.indexOf(s.match_strength) >= 0 && STRENGTHS.indexOf(s.match_strength) <= floorRank));
+  const input = m.floor ? { ...m.input, min_match_strength: m.floor } : m.input;
   try {
     const opts = { home, catalogs: [m.catalog], failOpen: true, deadlineMs: m.deadlineMs, env: {} };
-    let r = await lib.resolveSkills(input, opts);
-    let out = input.shadow ? (r.shadowOutput || r.output) : r.output;
-    const below = weak(out);
-    if (below.length) {
-      const left = m.deadlineMs - (Date.now() - now);
-      const retry = below.length < out.suggestions.length && left > 5
-        ? await lib.resolveSkills({ ...input, exclude: [...(input.exclude || []), ...below.map((s) => s.id)].slice(0, 64) }, { ...opts, deadlineMs: left }) : null;
-      const retryOut = retry ? (input.shadow ? (retry.shadowOutput || retry.output) : retry.output) : null;
-      if (retryOut && retryOut.suggestions.length && !weak(retryOut).length) { r = retry; out = retryOut; }
-      else { parentPort.postMessage({ id: m.id, block: '', names: [], strengths: [], no_skill_reason: 'below_floor', deduped: 0, code: null, version: out.gbrain_version }); return; }
-    }
+    const r = await lib.resolveSkills(input, opts);
+    const out = input.shadow ? (r.shadowOutput || r.output) : r.output;
     if (r.pending) pending.set(m.id, { key: r.pending.key, delta: r.pending.delta, at: now });
     const code = out.error ? out.error.code : null;
     parentPort.postMessage({ id: m.id, block: out.block, names: out.suggestions.map((s) => s.name), strengths: out.suggestions.map((s) => s.match_strength),
@@ -322,7 +306,7 @@ async function resolveTurn(event, ctx, opts) {
   const w = ensureWorker(s);
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);
-  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: Array.isArray(a.pinned_ids) ? a.pinned_ids.slice(0, 64) : [], shadow: arm !== 'live', ...(reset ? { reset_session: true } : {}) };
+  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: [...(Array.isArray(a.pinned_ids) ? a.pinned_ids : []), ...(Array.isArray(a.exclude_ids) ? a.exclude_ids : [])].slice(0, 1024), shadow: arm !== 'live', ...(reset ? { reset_session: true } : {}) };
   const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [] });
   if (reply.late) {
     if (reset) resetNext.add(sessionKey);

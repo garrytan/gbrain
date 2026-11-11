@@ -38,6 +38,7 @@ import { openclawConfigPath, openclawStateDir, parseJson5ish, resolveOpenclawWor
 import { openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
 import { pinnedBlockFor } from './skill-pins.ts';
 import { readResolverConfig } from './skill-resolver-config.ts';
+import { laneTurnSettings } from '../skills/resolver/config.ts';
 
 export const OPENCLAW_SKILL_PLUGIN_ID = 'gbrain-skill-resolver';
 export const OPENCLAW_SKILL_STATE_FILE = 'openclaw-skill-resolver.json';
@@ -50,7 +51,9 @@ export interface OpenclawSkillAgentState {
   catalog: string;
   skill_dirs: string[];
   top_k: number;
-  min_match: string | null;
+  min_match: string;
+  /** skills.resolver.pinned: skills OpenClaw loads itself, so they are never suggested. */
+  exclude_ids: string[];
   live_fraction: number;
   pins_route: 'system' | 'first_turn';
   pinned_block: string;
@@ -60,7 +63,7 @@ export interface OpenclawSkillAgentState {
 export interface OpenclawSkillState { v: 1; gbrain_version: string; library_sha256: string; agents: Record<string, OpenclawSkillAgentState> }
 
 export interface OpenclawSkillStep { step: 'library' | 'catalog' | 'state' | 'plugin' | 'install' | 'verify' | 'self-test'; action: 'write' | 'keep' | 'remove' | 'skip' | 'run'; detail: string }
-export interface OpenclawSkillError { code: 'skill_resolver_plugin_not_installed' | 'skill_resolver_setup_incomplete' | 'skill_resolver_host_not_local' | 'skill_resolver_selftest_failed' | 'skill_source_unreadable'; message: string; commands?: string[]; argv?: string[]; recovery?: string }
+export interface OpenclawSkillError { code: 'skill_resolver_plugin_not_installed' | 'skill_resolver_setup_incomplete' | 'skill_resolver_host_not_local' | 'skill_resolver_selftest_failed' | 'skill_source_unreadable' | 'skill_resolver_config_invalid'; message: string; commands?: string[]; argv?: string[]; recovery?: string }
 export interface OpenclawSkillResult {
   mode: OpenclawSkillMode;
   steps: OpenclawSkillStep[];
@@ -214,17 +217,12 @@ export interface OpenclawSkillSyncOptions {
   deps?: OpenclawSkillDeps;
 }
 
-/** skills.resolver.per_harness.openclaw.{top_k,min_match} from config.json, else the global keys, else the OpenClaw defaults. */
-function openclawLaneConfig(home: string): { top_k: number; min_match: string | null } {
+/** The lane's own turn settings for openclaw (per_harness, then the global keys), else the OpenClaw defaults. Throws skill_resolver_config_invalid on a bad value, as every lane does. */
+function openclawLaneConfig(home: string): { top_k: number; min_match: string; exclude_ids: string[] } {
   const read = readResolverConfig(home);
-  const r = read.state === 'ok' ? (read.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {} : {};
-  const per = ((r.per_harness as Record<string, unknown> | undefined)?.openclaw ?? {}) as Record<string, unknown>;
-  const k = per.top_k ?? r.top_k;
-  const m = per.min_match ?? r.min_match;
-  return {
-    top_k: Number.isInteger(k) && (k as number) >= 1 && (k as number) <= 8 ? k as number : OPENCLAW_TOP_K_DEFAULT,
-    min_match: m === 'none' ? null : typeof m === 'string' && ['named', 'name', 'triggers', 'routing', 'description', 'body'].includes(m) ? m : OPENCLAW_FLOOR_DEFAULT,
-  };
+  const section = read.state === 'ok' ? (read.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {} : {};
+  const s = laneTurnSettings(section, 'openclaw');
+  return { top_k: s.top_k ?? OPENCLAW_TOP_K_DEFAULT, min_match: s.min_match_strength ?? OPENCLAW_FLOOR_DEFAULT, exclude_ids: s.exclude ?? [] };
 }
 
 /** Turn the plugin on (live or shadow) for some agents, or refresh what is on. Never throws for an expected failure. */
@@ -248,7 +246,11 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   if (ids.length === 0) return { ...out, notes: ['No agent has the skill resolver on; nothing to refresh.'] };
 
   const agents: Record<string, OpenclawSkillAgentState> = { ...(prior?.agents ?? {}) };
-  const lane = openclawLaneConfig(home);
+  let lane: ReturnType<typeof openclawLaneConfig>;
+  try { lane = openclawLaneConfig(home); } catch (e) {
+    if (e instanceof ResolverError && e.code === 'skill_resolver_config_invalid') return fail({ code: 'skill_resolver_config_invalid', message: `${e.message} Nothing was written.` });
+    throw e;
+  }
   const tune = opts.tuning ?? {};
   for (const id of ids) {
     const before = prior?.agents[id];
@@ -271,7 +273,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const pins = dryRun ? { block: '', ids: [], unknown: [] as string[] } : pinnedBlockFor(home, catalog, 'openclaw');
     agents[id] = {
       mode: opts.mode ?? before?.mode ?? 'live', catalog, skill_dirs: dirs,
-      top_k: lane.top_k, min_match: lane.min_match,
+      top_k: lane.top_k, min_match: lane.min_match, exclude_ids: lane.exclude_ids,
       live_fraction: tune.live_fraction ?? before?.live_fraction ?? 1, pins_route: tune.pins_route ?? before?.pins_route ?? 'system',
       pinned_block: pins.block, pinned_ids: pins.ids, owner_sender_ids: tune.owner_sender_ids ?? before?.owner_sender_ids ?? [],
     };
