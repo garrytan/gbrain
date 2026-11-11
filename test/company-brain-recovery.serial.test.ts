@@ -10,6 +10,7 @@ import { inspectCompanyBrain } from '../src/core/company-brain/inspection.ts';
 import { admitCompanyBrain, previewCompanyBrain } from '../src/core/company-brain/admission.ts';
 import { connectCompanyBrain, resumeCompanyBrain } from '../src/core/company-brain/runtime.ts';
 import { performSync } from '../src/commands/sync.ts';
+import { removeSource } from '../src/core/sources-ops.ts';
 import { createPersistenceIpcProvider } from '../src/core/persistence/provider.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { startPersistenceIpcServer, persistenceSocketPathForConfig, requestPersistenceAdministration } from '../src/core/persistence/ipc.ts';
@@ -161,10 +162,28 @@ for (const managed of [false, true]) test(`hostile Git scripts cannot execute th
       const input = { brainId: 'company-example', sourceId: 'wiki', remote: false, path: root,
         plan: await inspectCompanyBrain({ path: root, profile: 'company-brain' }) };
       expect(input.plan.ready).toBe(true);
+      let next = nextCommit;
+      if (managed) {
+        // GST-2312 (#9024): a managed company connect stops at a committed file under a filter attribute, whatever its bytes.
+        expect(await connectCompanyBrain(engine, { ...input, sourceId: 'wiki-filtered' })).toMatchObject({ ok: false, code: 'content_filter_owned' });
+        expect(existsSync(marker)).toBe(false);
+        expect(await engine.getPage('people/operator', { sourceId: 'wiki-filtered' })).toBeNull();
+        await removeSource(engine, { id: 'wiki-filtered', confirmDestructive: true, yes: true, keepStorage: true, requestId: randomUUID() });
+        writeFileSync(join(root, '.gitattributes'), '*.md diff=hostile\n');
+        git(root, '-c', 'core.fsmonitor=false', 'add', '.gitattributes'); git(root, '-c', 'core.fsmonitor=false', 'commit', '-qm', 'Synthetic attributes without the filter');
+        const first = git(root, 'rev-parse', 'HEAD');
+        writeFileSync(join(root, 'people/operator.md'), changed);
+        git(root, '-c', 'core.fsmonitor=false', 'add', 'people/operator.md'); git(root, '-c', 'core.fsmonitor=false', 'commit', '-qm', 'Synthetic next revision');
+        next = git(root, 'rev-parse', 'HEAD');
+        git(root, '-c', 'core.fsmonitor=false', 'checkout', '--detach', '-q', first);
+        expect(existsSync(marker)).toBe(false);
+        input.plan = await inspectCompanyBrain({ path: root, profile: 'company-brain' });
+        expect(input.plan.ready).toBe(true);
+      }
       expect((await connectCompanyBrain(engine, input)).ok).toBe(true);
       expect(existsSync(marker)).toBe(false);
-      git(root, '-c', 'core.fsmonitor=false', 'read-tree', nextCommit);
-      git(root, '-c', 'core.fsmonitor=false', 'update-ref', 'HEAD', nextCommit);
+      git(root, '-c', 'core.fsmonitor=false', 'read-tree', next);
+      git(root, '-c', 'core.fsmonitor=false', 'update-ref', 'HEAD', next);
       writeFileSync(join(root, 'people/operator.md'), changed);
       expect(existsSync(marker)).toBe(false);
       expect((await performSync(engine, { sourceId: 'wiki' })).status).toBe('synced');

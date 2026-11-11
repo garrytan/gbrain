@@ -242,7 +242,7 @@ export function parseArgs(argv: string[]): Options {
   if (o.postgres && !isTestShapedDatabaseUrl(o.postgres)) {
     throw opError('invalid_params', '--postgres must name a test-shaped database', 'Point --postgres at a throwaway database whose name has "test" as a segment (e.g. gbrain_test).', {
       why: 'The audited tests are untrusted and run destructive SQL against whatever database they are given.',
-      fix: action(['docker', 'run', '-d', '--name', 'gbrain-audit-pg', '-p', '5435:5432', '-e', 'POSTGRES_PASSWORD=postgres', '-e', 'POSTGRES_DB=gbrain_test', 'pgvector/pgvector:pg16'], 'Starts a disposable test-shaped database at postgres://postgres:postgres@localhost:5435/gbrain_test.', { consent: ['persistent_install'] }),
+      fix: action(['docker', 'run', '-d', '--name', 'gbrain-audit-pg', '-p', '127.0.0.1:5435:5432', '-e', 'POSTGRES_PASSWORD=postgres', '-e', 'POSTGRES_DB=gbrain_test', 'pgvector/pgvector:pg16'], 'Starts a disposable test-shaped database at postgres://postgres:postgres@localhost:5435/gbrain_test.', { consent: ['persistent_install'] }),
     });
   }
   return o;

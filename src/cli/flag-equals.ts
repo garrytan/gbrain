@@ -96,6 +96,9 @@ export const EQUALS_READERS: Readonly<Record<string, readonly string[]>> = {
   doctor: ['--scope', '--tier', '--budget-ms', '--only', '--skills-dir', '--expect'],
   // edge-proposals.ts:81 flag() used only by list (:91,:93); other subs take the first numeric token as the id (:86).
   'edge-proposals list': ['--status', '--limit'],
+  // memory-proposals.ts flag() reads list's --source/--limit and deny's --reason in both forms.
+  'memory-proposals list': ['--source', '--limit'],
+  'memory-proposals deny': ['--reason'],
   // embed.ts:841 parsePaceArgs (--pace bare or =mode); core/consent.ts:126 via embed-consent.ts:129 and held-embedding.ts:234.
   embed: ['--pace', '--pace-max-concurrency', '--max-usd', '--max-cost'],
   // eval-conversation-parser.ts:48-53 (main.ts handleCliOnly's eval conversation-parser branch and eval.ts:106 both reach it).

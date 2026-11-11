@@ -32,6 +32,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/extract/receipt-writer.ts': 'gbrain-generated extraction receipt page (counts, cost, model id); no external text',
   'src/core/facts/derivation-inputs.ts': 'derivation edge ledger; ids only',
   'src/core/facts/file-body-guard.ts': 'row-locked compare-and-swap body mirror: fence-write callers gate newly appended rows; forget, proposal-supersede, unfenced-facts and phantom-redirect only strike, adopt or relocate facts already stored; this helper adds no independently sourced text',
+  'src/core/facts/gone-page-facts.ts': 'retention purge expires the purged page\'s existing facts inside the purge\'s maintenance transaction (lifecycle); no new text',
   'src/core/facts/forget.ts': 'withdrawal strike (lifecycle)',
   'src/core/facts/ontology-rekey.ts': 'drops duplicate copies of existing ontology rows before a re-key (placement)',
   'src/core/facts/proposal-supersede.ts': 'checked supersede of existing rows (lifecycle)',

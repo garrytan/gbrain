@@ -13,7 +13,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { readIntegrateConflict, type IntegrateConflictState } from '../git/commit-push.ts';
 
 /** The error codes of a Git effect whose commit is local but whose push did not land. */
-export const GIT_PUSH_CODES = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict'] as const;
+export const GIT_PUSH_CODES = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable'] as const;
 
 export interface GitPushHold {
   source_id: string;
@@ -62,11 +62,25 @@ function gitPushFix(hold: Omit<GitPushHold, 'fix'>): Action {
   const held = hold.retrying + hold.parked;
   if (hold.conflict && hold.root) return {
     ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-    argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', hold.root, '--expect-remote', hold.conflict.remote,
+    argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', hold.root, '--expect-remote', hold.conflict.remote,
       ...hold.conflict.paths.flatMap(path => ['--resolve', `${path}=<ours|theirs>`])],
     why: 'Choosing which version of a file wins discards the other side; ask the user before resolving.',
     user_message: `This machine and the remote both changed ${hold.conflict.paths.join(', ')} in ${hold.root}, so ${held} Git backup(s) of page writes in source ${hold.source_id} are held (nothing is lost; the database has every write). Which version should win: this machine's (ours) or the remote's (theirs)? Afterwards run gbrain sources writer retry-effects ${hold.source_id} --parked-pushes, then gbrain sources refresh ${hold.source_id}.`,
     verify: statusVerify(hold.source_id), docs: 'docs/guides/shared-checkout-git.md#conflicts',
+  };
+  if (hold.codes.includes('publish_secret_found') && hold.root) return {
+    ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+    argv: ['git', '-C', hold.root, 'log', '--stat', '@{upstream}..HEAD'],
+    why: 'Lists the unpublished commits the secret scan refused; read-only. A secret pushed to the remote stays in its history.',
+    user_message: `Unpublished commits in ${hold.root} hold values that look like secrets (or text too large to scan), so ${held} Git backup(s) of page writes in source ${hold.source_id} are held and nothing was pushed (nothing is lost; the database has every write). Remove the values from those commits, or confirm a false positive so its fingerprint can go in .gbrain-scan-allow? Afterwards run gbrain sources writer retry-effects ${hold.source_id} --parked-pushes.`,
+    verify: statusVerify(hold.source_id), docs: 'docs/guides/shared-checkout-git.md#publish_secret_found',
+  };
+  if (hold.codes.includes('publish_scan_unreadable') && hold.root) return {
+    ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
+    argv: ['git', '-C', hold.root, 'fsck'],
+    why: 'Read-only: names missing or corrupt objects in the unpublished commits, the usual reason the secret scan cannot read them.',
+    user_message: `The secret scan could not read the unpublished commits in ${hold.root} (or the remote no longer has the checkout's upstream branch, which git -C ${hold.root} ls-remote --heads shows), so ${held} Git backup(s) of page writes in source ${hold.source_id} are held and nothing was pushed (nothing is lost; the database has every write). Check the checkout with git fsck and fix what it reports? Afterwards run gbrain sources writer retry-effects ${hold.source_id} --parked-pushes.`,
+    verify: statusVerify(hold.source_id), docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable',
   };
   if (hold.parked && hold.former_worktree) return {
     argv: ['gbrain', 'sources', 'writer', 'settle-effects', hold.source_id, '--parked-code', hold.codes[0]!, '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false,

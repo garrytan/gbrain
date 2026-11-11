@@ -30,6 +30,7 @@
  * thrown with its own code (a refused choice, a conflict, a crash).
  */
 import { withAdmissionOrigin } from '../persistence/admission-origin.ts';
+import { withRepairRefreshWait } from '../persistence/admission-retry.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
@@ -50,8 +51,9 @@ import { readFix } from '../ops/op-fix.ts';
 import { classifyItemFailure, ItemRun, type ItemFailure } from '../item-failure.ts';
 import type { ProgressReporter } from '../progress.ts';
 import type { GenerationsSelection } from '../generations/repair.ts';
+import type { PrivateLabelsLedger } from './private-labels.ts';
 
-export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'extractor-facts', 'unwithdrawn-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'timeline-order', 'contact-rows', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'segmented-tiling', 'uncommitted-deletions', 'generations', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind', 'access'] as const;
+export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'atom-fence-rows', 'extractor-facts', 'unwithdrawn-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'timeline-order', 'contact-rows', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'segmented-tiling', 'uncommitted-deletions', 'generations', 'lost-fence-rows', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind', 'access', 'private-labels'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
 
 export interface RepairScope { brain_id: string; source_ids: string[] }
@@ -69,6 +71,12 @@ export interface RepairItem {
    * the run's allowance instead of starting a call the allowance cannot cover.
    */
   llm_usd?: number;
+  /**
+   * GBRA-443: an earlier run tried this item and its page declined the write. A decline of it again (REPAIR_DECLINE_CODES)
+   * is recorded in `failed` and `declined` as any other, but not counted by the run's systemic-failure breaker, so pages
+   * carried from window to window cannot stop a window of pages not tried yet; any other failure of it counts as usual.
+   */
+  retried?: boolean;
 }
 
 export interface RepairPlan {
@@ -90,6 +98,11 @@ export interface RepairPlan {
   llm?: { usd: number | null; cap_remaining_usd: number | null };
   /** Discovery kinds: when the scan the plan read last finished (`fresh_at`) and whether it is still partial. */
   scan?: { fresh_at: string | null; partial: boolean };
+  /**
+   * The items whose write re-embeds, when the kind knows which do (GBRA-443: private-labels re-embeds only a page stored
+   * under per-chunk synopsis); the cost counts the pending ones among them. Default: every pending item, none under embeds: false.
+   */
+  embedding_items?: RepairItem[];
 }
 
 export interface RepairListing { item: string; class: string; detail?: string; fix?: Action }
@@ -132,7 +145,9 @@ export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmb
   /** `secret-spans` (GST-327): the secret scanner rules to redact (`--rules`); default every named rule. */
   rules?: string[];
   /** `agent-session-facts` (#8064): operator evidence, sessions whose cwd is under a prefix (`--cwd`) or named (`--session`), and the note's agent (`--principal`). */
-  cwdPrefixes?: string[]; sessions?: string[]; principal?: string }
+  cwdPrefixes?: string[]; sessions?: string[]; principal?: string;
+  /** `private-labels`: the undo ledger the CLI keeps (its path, lines for --class restore, and the append). */
+  privateLabelsLedger?: PrivateLabelsLedger }
 
 export interface RepairHandler {
   kind: RepairKind;
@@ -151,6 +166,15 @@ export interface RepairHandler {
    * kind bounds its own provider calls by it. `noLlm` and `expect` repeat the run's options.
    */
   apply(ctx: OperationContext, item: RepairItem, opts?: { embed: boolean; runId?: string; llmAllowanceUsd?: number; deadline?: number; noLlm?: boolean; expect?: string }): Promise<boolean | RepairItemOutcome>;
+  /**
+   * GBRA-443: apply a run of consecutive items at once (at most the run's admission window, each page once), so their writes
+   * are admitted together and published in groups instead of one admission and wait per item. One settlement per item, in
+   * order: what `apply` would return, or what it would throw; one item's refusal never fails another. Not used by
+   * `spends: 'llm'` kinds.
+   */
+  applyBatch?(ctx: OperationContext, items: RepairItem[], opts: { embed: boolean; runId?: string; expect?: string }): Promise<RepairSettlement[]>;
+  /** GBRA-443: an item whose write was still pending when its apply returned committed later in this run. */
+  onCommitted?(ctx: OperationContext, item: RepairItem, requestId: string): Promise<void>;
   /** How many per-item outcomes the result lists (default 20). */
   outcomeItemsLimit?: number;
   /** Human lines for the plan's `details`; `diff` asks for every per-item diff, not one sample per class. */
@@ -159,7 +183,7 @@ export interface RepairHandler {
    * Kind-specific result fields, computed once the dry run or apply finished (for example a verification re-check
    * of the selected scope). Runs only when the run ended without an exception.
    */
-  report?(ctx: OperationContext, scope: RepairScope, result: RepairResult, opts: RepairPlanOptions): Promise<Partial<Pick<RepairResult, 'repaired' | 'remaining' | 'verification' | 'stopped'>>>;
+  report?(ctx: OperationContext, scope: RepairScope, result: RepairResult, opts: RepairPlanOptions): Promise<Partial<Pick<RepairResult, 'repaired' | 'remaining' | 'verification' | 'stopped' | 'details'>>>;
   /**
    * The items whose apply threw an item-scoped failure this run, with the classified failure. Called once before the
    * result is reported, never for a run the breaker stopped (`item_failures_systemic`) or one a run-scoped error ended.
@@ -186,6 +210,17 @@ export interface RepairItemOutcome { applied: boolean; outcome: string; reason?:
 export const REPAIR_ITEM_FAILURE_CODES: ReadonlySet<string> = new Set(['invalid_params', 'source_changed', 'page_body_segmented']);
 
 /**
+ * GBRA-443: the item failures that are the page's own state declining the write (its file differs from the database or is
+ * gone, or its body is stored in segments), never a fault of the run: nothing was written, and the next preview lists the
+ * item again with its state. A preview-bound apply whose only failures are these is complete (`gbrain repair` exits 0)
+ * and counts them in `declined`.
+ */
+export const REPAIR_DECLINE_CODES: ReadonlySet<string> = new Set(['source_changed', 'page_body_segmented']);
+
+/** GBRA-443: one item's result inside an `applyBatch`: what `apply` returned, or what it threw. */
+export type RepairSettlement = { value: boolean | RepairItemOutcome } | { error: unknown };
+
+/**
  * An item whose apply failed item-scoped; its page, file and rows are exactly as before. The next full scan retries it.
  * `fix` previews the kind for the item's source (read-only), which lists the item again with its current state.
  */
@@ -210,6 +245,8 @@ export interface RepairResult {
   skipped: number;
   /** Items that failed item-scoped and were left unchanged; `complete` still means every pending item was attempted. */
   failed: RepairFailedItem[];
+  /** GBRA-443, apply: the failed items whose page declined the write (REPAIR_DECLINE_CODES), counted by reason; absent when none did. */
+  declined?: Record<string, number>;
   complete: boolean;
   /** `code`: with reason `error` (a kind that threw inside a multi-kind loop), the classified error code. */
   stopped?: { reason: string; message: string; fix?: Action; code?: string };
@@ -335,7 +372,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-    cwdPrefixes?: string[]; sessions?: string[]; principal?: string;
+    cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger;
     spec?: Pick<RepairKindSpec, 'explicit_only' | 'consent' | 'spends'>; maxLlmUsd?: number; deadline?: number; now?: () => number;
     /** GBRA-133: the CLI's termination signal; the apply stops before the next item with a result instead of dying mid-run. */
     stop?: AbortSignal;
@@ -368,11 +405,13 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     ...(opts.from ? { from: opts.from } : {}), ...(opts.close ? { close: true } : {}), ...(opts.afterPage !== undefined ? { afterPage: opts.afterPage } : {}),
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}), ...(opts.generations ? { generations: opts.generations } : {}),
     ...(opts.day ? { day: opts.day } : {}), ...(opts.rules?.length ? { rules: opts.rules } : {}),
-    ...(opts.cwdPrefixes?.length ? { cwdPrefixes: opts.cwdPrefixes } : {}), ...(opts.sessions?.length ? { sessions: opts.sessions } : {}), ...(opts.principal ? { principal: opts.principal } : {}) };
+    ...(opts.cwdPrefixes?.length ? { cwdPrefixes: opts.cwdPrefixes } : {}), ...(opts.sessions?.length ? { sessions: opts.sessions } : {}), ...(opts.principal ? { principal: opts.principal } : {}),
+    ...(opts.privateLabelsLedger ? { privateLabelsLedger: opts.privateLabelsLedger } : {}) };
   const plan = await handler.plan(ctx.engine, scope, resumed, planOpts);
   const pending = opts.limit !== undefined ? plan.items.slice(0, opts.limit) : plan.items;
   const counters = await capacity(ctx);
   const admits = (handler.publication ?? 'coordinated') === 'coordinated' ? pending.length : 0;
+  const embedded = plan.embedding_items ? pending.filter(item => plan.embedding_items!.includes(item)) : handler.embeds === false ? [] : pending;
   const llm = spec?.spends === 'llm';
   const llmLeft = (spent: number): number | null => {
     const caps = [plan.llm?.cap_remaining_usd, opts.maxLlmUsd].filter((cap): cap is number => typeof cap === 'number');
@@ -381,8 +420,8 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   const result: RepairResult = {
     kind: handler.kind, mode: opts.apply ? 'apply' : 'dry_run', scope, affected: plan.items.length,
     sample: plan.items.slice(0, SAMPLE).map(item => `${item.source_id}:${item.slug}`), residuals: plan.residuals,
-    cost: { lifetime_ids: admits, receipt_bytes: admits * RECEIPT_RESERVATION_FLOOR, embedding_pages: handler.embeds === false ? 0 : pending.length,
-      embedding_usd: embeddingUsd(pending.reduce((sum, item) => sum + item.chars, 0), opts.embeddingModel),
+    cost: { lifetime_ids: admits, receipt_bytes: admits * RECEIPT_RESERVATION_FLOOR, embedding_pages: embedded.length,
+      embedding_usd: embeddingUsd((plan.embedding_items ? embedded : pending).reduce((sum, item) => sum + item.chars, 0), opts.embeddingModel),
       ...(llm ? { llm_usd: opts.apply || !plan.llm ? 0 : plan.llm.usd === null ? null
         : pending.some(item => item.llm_usd !== undefined) ? pending.reduce((sum, item) => sum + (item.llm_usd ?? 0), 0) : plan.llm.usd,
       llm_cap_remaining_usd: llmLeft(0) } : {}) },
@@ -403,7 +442,12 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   };
   const items = new ItemRun('repair.apply_items');
   const failedItems: Array<{ item: RepairItem; failure: ItemFailure }> = [];
+  // GBRA-443: settlements an applyBatch returned for items the loop has not reached yet; a stop takes them into the result first.
+  let absorbBatched = () => {};
   const finish = async (): Promise<RepairResult> => {
+    absorbBatched();
+    const declined = result.failed.filter(failed => REPAIR_DECLINE_CODES.has(failed.reason));
+    if (opts.apply && declined.length) result.declined = declined.reduce<Record<string, number>>((counts, failed) => ({ ...counts, [failed.reason]: (counts[failed.reason] ?? 0) + 1 }), {});
     if (failedItems.length && handler.onItemFailures && result.stopped?.reason !== 'item_failures_systemic') await handler.onItemFailures(ctx, failedItems);
     if (handler.report) Object.assign(result, await handler.report(ctx, scope, result, planOpts));
     if (opts.apply) opts.progress?.finish();
@@ -432,6 +476,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
       unresolved.splice(unresolved.findIndex(open => open.request_id === done.request_id), 1);
       if (done.state === 'committed') {
         result.applied++;
+        await handler.onCommitted?.(ctx, done.item, done.request_id);
         if (result.outcomes) result.outcomes = { ...result.outcomes, committed_after_wait: (result.outcomes.committed_after_wait ?? 0) + 1 };
       } else if (done.error_code === 'revision_conflict') result.skipped++;
       else result.failed.push({ item: `${done.item.source_id}:${done.item.slug}`, source_id: done.item.source_id, slug: done.item.slug, reason: done.error_code ?? done.state,
@@ -440,7 +485,37 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     if (latest) await writeCursor(ctx.engine, handler.kind, scope, cursorNow(), runId, opts.expect);
     return unresolved.length <= target;
   };
+  const batched = new Map<number, RepairSettlement>();
+  let batchCap = Infinity;
+  absorbBatched = () => {
+    for (const [index, settled] of [...batched].sort(([a], [b]) => a - b)) {
+      batched.delete(index);
+      if ('error' in settled) {
+        const receipt = acceptedPendingReceipt(settled.error);
+        if (receipt) { unresolved.push({ index, item: pending[index]!, request_id: receipt.request_id }); continue; }
+        if (settled.error instanceof OperationError && settled.error.code === 'revision_conflict') { result.skipped++; continue; }
+        // A page the batch already tried and the run stopped before reaching: reported as failed, never counted by the breaker.
+        const item = pending[index]!, failure = { ...classifyItemFailure(settled.error), key: `${item.source_id}:${item.slug}` };
+        result.failed.push(failedEntry(handler.kind, item, failure));
+        failedItems.push({ item, failure });
+        result.outcomes = { ...result.outcomes, failed: (result.outcomes?.failed ?? 0) + 1 };
+        continue;
+      }
+      const value = settled.value;
+      if (typeof value === 'object') {
+        result.outcomes = { ...result.outcomes, [value.outcome]: (result.outcomes?.[value.outcome] ?? 0) + 1 };
+        if ((result.outcome_items ??= []).length < (handler.outcomeItemsLimit ?? SAMPLE * 2)) {
+          result.outcome_items.push({ item: `${pending[index]!.source_id}:${pending[index]!.slug}`, outcome: value.outcome, ...(value.reason ? { reason: value.reason } : {}), ...(value.detail ? { detail: value.detail } : {}) });
+        }
+      }
+      if (typeof value === 'object' ? value.applied : value) result.applied++;
+      else result.skipped++;
+    }
+  };
+  // GBRA-443: a preview-bound apply waits out a refresh fence as long as managed sync's drain does; every other write keeps its own wait.
+  const step = <T>(fn: () => Promise<T>): Promise<T> => opts.expect ? withRepairRefreshWait(fn) : fn();
   const pendingStop = (why: string) => {
+    absorbBatched();
     result.pending = unresolved.map(({ item, request_id }) => ({ item: `${item.source_id}:${item.slug}`, request_id }));
     const [first] = unresolved;
     return { reason: 'write_pending', message: (unresolved.length === 1 ? `The repair of ${first.item.source_id}:${first.item.slug} was accepted and is still pending publication`
@@ -448,6 +523,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
       + `${why}. Rerun \`${result.apply_command}\` to resume; the same ${unresolved.length === 1 ? 'request is' : 'requests are'} replayed.` };
   };
   const stopAfterSettle = async (stopped: NonNullable<RepairResult['stopped']>): Promise<RepairResult> => {
+    absorbBatched();
     if (!await settle(0)) stopped = { ...stopped, message: `${stopped.message} ${pendingStop('').message}` };
     result.stopped = stopped;
     return finish();
@@ -456,39 +532,58 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   for (const [index, item] of pending.entries()) {
     const remaining = pending.length - index;
     opts.progress?.tick(1, `${item.source_id}:${item.slug}`);
-    // A preview-bound kind may retire its approved set with its last item, so every earlier receipt settles before that item runs.
-    const lastApproved = !!opts.expect && index === plan.items.length - 1;
-    // An item on a page this run's pending write is still changing waits for it, so it writes the page's new revision.
-    const samePage = unresolved.some(open => open.item.source_id === item.source_id && open.item.slug === item.slug);
-    if (unresolved.length && (unresolved.length >= window || lastApproved || samePage) && !await settle(lastApproved || samePage ? 0 : window - 1)) {
-      result.stopped = pendingStop(settleMs ? `; nothing published for ${Math.round(settleMs / 1000)}s` : '');
-      return finish();
+    // Items an applyBatch already settled were checked before it ran (GBRA-443); they are only recorded below.
+    if (!batched.has(index)) {
+      // A preview-bound kind may retire its approved set with its last item, so every earlier receipt settles before that item runs.
+      const lastApproved = !!opts.expect && index === plan.items.length - 1;
+      // An item on a page this run's pending write is still changing waits for it, so it writes the page's new revision.
+      const samePage = unresolved.some(open => open.item.source_id === item.source_id && open.item.slug === item.slug);
+      if (unresolved.length && (unresolved.length >= window || lastApproved || samePage) && !await settle(lastApproved || samePage ? 0 : window - 1)) {
+        result.stopped = pendingStop(settleMs ? `; nothing published for ${Math.round(settleMs / 1000)}s` : '');
+        return finish();
+      }
+      if (opts.stop?.aborted) {
+        return stopAfterSettle({ reason: 'interrupted', message: `Stopped before ${item.source_id}:${item.slug}: this process received ${String(opts.stop.reason ?? 'a termination signal')} `
+          + `(${remaining} item(s) still pending; the items before it stay applied). Rerun \`${result.apply_command}\` to resume.` });
+      }
+      if (opts.deadline !== undefined && now() >= opts.deadline) {
+        return stopAfterSettle({ reason: 'time_budget', message: `Stopped before ${item.source_id}:${item.slug}: this run reached its time budget (${remaining} item(s) still pending). `
+          + `The next run resumes; rerun \`${result.apply_command}\` to continue now.` });
+      }
+      const allowanceLeft = opts.maxLlmUsd !== undefined ? opts.maxLlmUsd - llmSpent : undefined;
+      if (llm && allowanceLeft !== undefined && (llmSpent >= opts.maxLlmUsd! || (item.llm_usd !== undefined && item.llm_usd > allowanceLeft + 1e-9))) {
+        return stopAfterSettle({ reason: 'budget_exhausted', message: `Stopped before ${item.source_id}:${item.slug}: this run's paid-model allowance `
+          + `${llmSpent >= opts.maxLlmUsd! ? 'is used up' : `cannot cover its estimate ($${item.llm_usd!.toFixed(4)})`} `
+          + `($${llmSpent.toFixed(4)} spent of $${opts.maxLlmUsd!.toFixed(4)}; ${remaining} item(s) still pending). Rerun \`${result.apply_command}\` to resume.` });
+      }
+      const counters = admits ? await capacity(ctx) : [];
+      const full = counters.find(c => c.used + (c.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR) > c.stop_at);
+      if (full) {
+        const perItem = full.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR;
+        const needed = Math.ceil((full.used + remaining * perItem) / STOP_RATIO) + 1;
+        return stopAfterSettle({ reason: 'capacity', message: `Stopped before crossing 90% of ${full.scope} ${full.resource} (${full.used} of ${full.limit} used; `
+          + `${remaining} item(s) still need ${remaining * perItem} more). Run: gbrain config set ${full.config_key} ${needed} — then rerun \`${result.apply_command}\` to resume.` });
+      }
+      // GBRA-443: the items from here that fit the admission window, the capacity stop line and one write per page, applied as one run.
+      if (handler.applyBatch && !llm && batchCap > 1) {
+        const room = Math.min(batchCap, Math.max(1, window - unresolved.length), ...counters.map(c => Math.floor((c.stop_at - c.used) / (c.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR))));
+        const run = batchRun(pending, index, room, unresolved.map(open => open.item), opts.expect && unresolved.length ? plan.items.length - 1 : null);
+        // A thrown batch is the first item's failure, classified below like a single apply's; the rest run again from the next item.
+        // A batch the writer's capacity refused whole (admission is atomic) halves the batches after it, and this item applies alone.
+        const settled = await step(() => handler.applyBatch!({ ...ctx, sourceId: item.source_id }, run, { embed: opts.embed === true, runId, ...(opts.expect ? { expect: opts.expect } : {}) }))
+          .catch((error: unknown): RepairSettlement[] => [{ error }]);
+        const refusedWhole = run.length > 1 && settled.length > 0 && settled.every(entry => 'error' in entry && entry.error instanceof OperationError && entry.error.code === 'queue_capacity');
+        if (refusedWhole) batchCap = Math.max(1, Math.floor(run.length / 2));
+        else settled.slice(0, run.length).forEach((entry, offset) => batched.set(index + offset, entry));
+      }
     }
-    if (opts.stop?.aborted) {
-      return stopAfterSettle({ reason: 'interrupted', message: `Stopped before ${item.source_id}:${item.slug}: this process received ${String(opts.stop.reason ?? 'a termination signal')} `
-        + `(${remaining} item(s) still pending; the items before it stay applied). Rerun \`${result.apply_command}\` to resume.` });
-    }
-    if (opts.deadline !== undefined && now() >= opts.deadline) {
-      return stopAfterSettle({ reason: 'time_budget', message: `Stopped before ${item.source_id}:${item.slug}: this run reached its time budget (${remaining} item(s) still pending). `
-        + `The next run resumes; rerun \`${result.apply_command}\` to continue now.` });
-    }
-    const allowanceLeft = opts.maxLlmUsd !== undefined ? opts.maxLlmUsd - llmSpent : undefined;
-    if (llm && allowanceLeft !== undefined && (llmSpent >= opts.maxLlmUsd! || (item.llm_usd !== undefined && item.llm_usd > allowanceLeft + 1e-9))) {
-      return stopAfterSettle({ reason: 'budget_exhausted', message: `Stopped before ${item.source_id}:${item.slug}: this run's paid-model allowance `
-        + `${llmSpent >= opts.maxLlmUsd! ? 'is used up' : `cannot cover its estimate ($${item.llm_usd!.toFixed(4)})`} `
-        + `($${llmSpent.toFixed(4)} spent of $${opts.maxLlmUsd!.toFixed(4)}; ${remaining} item(s) still pending). Rerun \`${result.apply_command}\` to resume.` });
-    }
-    const full = admits ? (await capacity(ctx)).find(c => c.used + (c.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR) > c.stop_at) : undefined;
-    if (full) {
-      const perItem = full.resource === 'lifetime_ids' ? 1 : RECEIPT_RESERVATION_FLOOR;
-      const needed = Math.ceil((full.used + remaining * perItem) / STOP_RATIO) + 1;
-      return stopAfterSettle({ reason: 'capacity', message: `Stopped before crossing 90% of ${full.scope} ${full.resource} (${full.used} of ${full.limit} used; `
-        + `${remaining} item(s) still need ${remaining * perItem} more). Run: gbrain config set ${full.config_key} ${needed} — then rerun \`${result.apply_command}\` to resume.` });
-    }
+    const prefetched = batched.get(index);
+    batched.delete(index);
     try {
-      const applied = await handler.apply({ ...ctx, sourceId: item.source_id, ...(unresolved.length ? { writeWaitMs: 0 } : {}) }, item, { embed: opts.embed === true, runId,
-        ...(llm && opts.maxLlmUsd !== undefined ? { llmAllowanceUsd: opts.maxLlmUsd - llmSpent } : {}),
-        ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.expect ? { expect: opts.expect } : {}) });
+      const applied = prefetched ? await ('error' in prefetched ? Promise.reject(prefetched.error) : prefetched.value)
+        : await step(() => handler.apply({ ...ctx, sourceId: item.source_id, ...(unresolved.length ? { writeWaitMs: 0 } : {}) }, item, { embed: opts.embed === true, runId,
+          ...(llm && opts.maxLlmUsd !== undefined ? { llmAllowanceUsd: opts.maxLlmUsd - llmSpent } : {}),
+          ...(opts.deadline !== undefined ? { deadline: opts.deadline } : {}), ...(opts.noLlm ? { noLlm: true } : {}), ...(opts.expect ? { expect: opts.expect } : {}) }));
       if (llm && typeof applied === 'object' && applied.llm_usd) {
         llmSpent += applied.llm_usd;
         result.cost = { ...result.cost, llm_usd: llmSpent, llm_cap_remaining_usd: llmLeft(llmSpent) };
@@ -549,8 +644,17 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
           fix: readFix(`Previews ${handler.kind} again (read-only) to show whether the database accepts work again.`, { argv: ['gbrain', 'repair', handler.kind, ...(opts.sourceFlag ? ['--source', opts.sourceFlag] : []), '--json'] }) });
       }
       // An apply bound to an approved preview (`--expect`) applies that set or answers why not; only the kinds' own refusals continue it.
-      if (opts.expect && !(error instanceof OperationError && REPAIR_ITEM_FAILURE_CODES.has(error.code))) throw error;
-      const { failure, systemic: stop } = items.record(`${item.source_id}:${item.slug}`, error);
+      if (opts.expect && !(error instanceof OperationError && REPAIR_ITEM_FAILURE_CODES.has(error.code))) {
+        if (![...batched.values()].some(entry => 'value' in entry)) throw error;
+        // GBRA-443: later pages of this item's batch were already written; stop with this error so the result still counts them.
+        const code = error instanceof OperationError ? error.code : classifyItemFailure(error).code;
+        return stopAfterSettle({ reason: code, message: redactConnectionInfo(`Stopped at ${item.source_id}:${item.slug} (${code}): ${(error instanceof Error ? error.message : String(error)).slice(0, 300)} `
+          + `Pages of its batch after it that were already published are counted in this result. Fix this page, then rerun \`${result.apply_command}\`.`),
+          fix: readFix(`Previews ${handler.kind} again (read-only) to show this page's current state.`, { argv: ['gbrain', 'repair', handler.kind, ...(opts.sourceFlag ? ['--source', opts.sourceFlag] : []), '--json'] }) });
+      }
+      const carried = item.retried === true && error instanceof OperationError && REPAIR_DECLINE_CODES.has(error.code);
+      const { failure, systemic: stop } = carried ? { failure: { ...classifyItemFailure(error), key: `${item.source_id}:${item.slug}` }, systemic: null }
+        : items.record(`${item.source_id}:${item.slug}`, error);
       if (stop) {
         return stopAfterSettle({ reason: stop.code, message: redactConnectionInfo(`${stop.message} Fix the shared cause, then rerun \`${result.apply_command}\` to resume.`),
           fix: readFix(`Previews ${handler.kind} again (read-only) to show whether the shared cause is gone.`, { argv: ['gbrain', 'repair', handler.kind, ...(opts.sourceFlag ? ['--source', opts.sourceFlag] : []), '--json'] }) });
@@ -558,9 +662,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
       // A per-item failure: recorded, nothing written, no cursor for it; the next full scan retries it (PR #6459, GBRA-130).
       const message = redactConnectionInfo(failure.message);
       const failedItem = `${item.source_id}:${item.slug}`;
-      result.failed.push({ item: failedItem, source_id: item.source_id, slug: item.slug, reason: failure.code, message, retry: 'next_full_scan',
-        fix: readFix(`Previews ${handler.kind} for source ${item.source_id} (read-only); it lists ${item.slug} again with its current state. A run with no stored cursor retries it.`,
-          { argv: ['gbrain', 'repair', handler.kind, '--source', item.source_id, '--json'] }) });
+      result.failed.push(failedEntry(handler.kind, item, failure));
       failedItems.push({ item, failure });
       result.outcomes = { ...result.outcomes, failed: (result.outcomes?.failed ?? 0) + 1 };
       if ((result.outcome_items ??= []).length < (handler.outcomeItemsLimit ?? SAMPLE * 2)) {
@@ -578,6 +680,28 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
   // A limited run whose attempted items all failed keeps no cursor either: the next run is a full scan, not a resume past them.
   if (result.complete || (latest === null && result.failed.length > 0)) await writeCursor(ctx.engine, handler.kind, scope, null, null, opts.expect);
   return finish();
+}
+
+/** One item-scoped failure as `result.failed` reports it: nothing written, and the next full scan retries the item. */
+function failedEntry(kind: string, item: RepairItem, failure: ItemFailure): RepairResult['failed'][number] {
+  return { item: `${item.source_id}:${item.slug}`, source_id: item.source_id, slug: item.slug, reason: failure.code, message: redactConnectionInfo(failure.message), retry: 'next_full_scan',
+    fix: readFix(`Previews ${kind} for source ${item.source_id} (read-only); it lists ${item.slug} again with its current state. A run with no stored cursor retries it.`,
+      { argv: ['gbrain', 'repair', kind, '--source', item.source_id, '--json'] }) };
+}
+
+/**
+ * GBRA-443: the items from `index` one batch applies: at most `room`, one write per page (a page already pending or earlier in
+ * the batch ends it), and never the item at `stopBefore` (a preview-bound run's last approved item while writes are unresolved).
+ */
+function batchRun(pending: RepairItem[], index: number, room: number, busy: RepairItem[], stopBefore: number | null): RepairItem[] {
+  const pages = new Set([...busy, pending[index]!].map(other => other.source_id + '\0' + other.slug));
+  let end = index + 1;
+  for (; end < pending.length && end - index < room; end++) {
+    const key = pending[end]!.source_id + '\0' + pending[end]!.slug;
+    if (pages.has(key) || end === stopBefore) break;
+    pages.add(key);
+  }
+  return pending.slice(index, end);
 }
 
 /** Cursor order shared by the kinds' SQL: (phase, id) strictly after `after`. */

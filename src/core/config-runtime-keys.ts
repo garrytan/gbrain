@@ -24,5 +24,8 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'serve.vector_prewarm', // config.ts loadConfigWithEngine (snapshot only) → serve.ts: a Postgres serve prewarms the HNSW indexes into shared_buffers at start when they fit, default off
   'mcp.stdio_member', // access/caller.ts (GBRA-218): binds a local stdio MCP server to one member; unbound, stdio reads no page that names readers
   'persistence.adopt_quiet_ms', // persistence/local-edit-adoption.ts (GST-1601): how long a local edit must be quiet before it is adopted, default 5000
+  'access.owner_member', // access/owner.ts (GST-2059): the member who owns this brain; credentials bound to it read private pages (gbrain access owner set)
   'mcp.stdio_may_act_for', // access/audience.ts (GBRA-231): whom a local stdio server may act for (_meta.on_behalf_of); unset, stdio refuses every audience
+  'proposals.ttl_hours', 'proposals.max_pending_per_actor', 'proposals.max_pending_per_credential', // persistence/memory-proposals.ts: held QM proposal TTL (168 h) and pending caps (10 per person, 50 per credential)
+  'proposals.retention_days', 'proposals.max_payload_chars', 'proposals.max_reason_chars', // persistence/memory-proposals.ts: closed-row retention (30 d), payload (1,000) and deny-reason (500) character caps
 ];

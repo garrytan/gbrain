@@ -371,19 +371,19 @@ describe('request_tools {surface} persist branch', () => {
     expect(parsed(other).persisted).toBe(true);
   });
 
-  test('{surface, tools} together → invalid_params, never a persist (D5 branch exclusivity)', async () => {
+  test('{surface, tools} together → the surface persists and the descriptors come back (GBRA-449; was refused under D5)', async () => {
     await seedClient('cl-both');
     const res = await dispatchToolCall(engine, 'request_tools', { surface: 'starter', tools: ['query'] }, {
       ...HTTP, surfaceCeiling: 'full', auth: authFor('cl-both', ['read']),
     });
-    expect(res.isError).toBe(true);
+    expect(res.isError ?? false).toBe(false);
     const body = parsed(res);
-    expect(body.error).toBe('invalid_params');
-    expect(body.message).toContain('not both');
+    expect(body.surface_change).toEqual({ persisted: true, surface: 'starter', note: 're-issue tools/list to see the new catalog' });
+    expect(body.tools.map((t: { name: string }) => t.name)).toEqual(['query']);
     const rows = await engine.executeRaw(
-      `SELECT surface FROM oauth_clients WHERE client_id = $1`, ['cl-both'],
+      `SELECT surface, surface_set_by FROM oauth_clients WHERE client_id = $1`, ['cl-both'],
     );
-    expect(rows[0].surface).toBe(null);
+    expect(rows[0]).toEqual({ surface: 'starter', surface_set_by: 'self' });
   });
 
   test('RateLimiter.refund returns a token so a race-lost persist never burns budget (adversarial fix)', async () => {

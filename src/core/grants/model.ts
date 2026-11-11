@@ -244,7 +244,7 @@ function columnList(value: unknown): string[] | null {
 }
 
 /** The grant the unified columns carry; an inconsistent source state reads as `none`. */
-export function tokenGrantFromColumns(row: Record<string, unknown>): TokenGrantAxes {
+export function tokenGrantFromColumns(row: TokenGrantRow): TokenGrantAxes {
   const write = typeof row.source_id === 'string' && row.source_id.length > 0 ? row.source_id : null;
   const reads = columnList(row.federated_read);
   let sources: GrantSources = { kind: 'none' };
@@ -268,14 +268,15 @@ function sameAxis(axis: LegacyGrantAxis, a: TokenGrantAxes, b: TokenGrantAxes): 
 
 /**
  * The effective grant of an `access_tokens` row (SELECT * keeps this working
- * on brains that predate the columns). Unified rows read the columns, and any
+ * on brains that predate the columns; a reader inside a transaction selects
+ * `TOKEN_GRANT_ROW_COLUMNS` instead). Unified rows read the columns, and any
  * axis whose JSONB mirror disagrees evaluates deny-all. A `source_grant IS
  * NULL` row has not been converted yet (the bulk migration converts every
  * active one; an older binary's `auth create` can still add one): it reads as
  * the conversion `migrateLegacyTokens` would write, and a malformed
  * `permissions` value denies every axis.
  */
-export function grantFromTokenRow(row: Record<string, unknown>): PrincipalGrant {
+export function grantFromTokenRow(row: TokenGrantRow): PrincipalGrant {
   const base = {
     principal: { kind: 'legacy_token' as const, id: String(row.id) },
     scopes: normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'],
@@ -390,3 +391,20 @@ export function tokenGrantColumnValues(g: Pick<PrincipalGrant, 'sources' | 'allo
   ];
 }
 export const TOKEN_GRANT_COLUMNS = ['source_grant', 'source_id', 'federated_read', 'allowed_operations', 'takes_holders'] as const;
+/**
+ * GST-2314: every access_tokens column `grantFromTokenRow` reads (its row type allows no other). A reader inside a
+ * transaction selects these by name: a prepared SELECT * whose plan was cached before a migration added a column
+ * fails there with 0A000 ("cached plan must not change result type") until the connection re-prepares it.
+ */
+export const TOKEN_GRANT_ROW_COLUMNS = ['id', 'scopes', 'permissions', 'private_pages', 'grant_revision', ...TOKEN_GRANT_COLUMNS] as const;
+/**
+ * The select list of `TOKEN_GRANT_ROW_COLUMNS` that this brain's access_tokens has. Admission authorizes before it
+ * replays an accepted request or refuses a schema behind this build, and membership has no schema admission, so a
+ * column a pending migration adds reads as absent, as it did under SELECT *.
+ */
+export async function tokenGrantRowSelect(engine: { executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> }): Promise<string> {
+  const present = new Set((await engine.executeRaw<{ attname: string }>(
+    "SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('access_tokens') AND attnum>0 AND NOT attisdropped")).map(c => c.attname));
+  return TOKEN_GRANT_ROW_COLUMNS.filter(c => present.has(c)).join(',');
+}
+export type TokenGrantRow = Partial<Record<(typeof TOKEN_GRANT_ROW_COLUMNS)[number], unknown>>;

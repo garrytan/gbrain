@@ -6,6 +6,7 @@
 op	remember	coordinator	submitRememberMutation admits a journaled page mutation.
 op	forget	coordinator	submitForgetMutation records a coordinated withdrawal.
 op	memory_write	coordinator	Each fact is a remember write (submitRememberMutation) under a per-member child request id.
+op	memory_propose	no_canonical_write	Inserts one memory_proposals row awaiting the owner; no page changes until gbrain memory-proposals approve admits the held write to the journal under the proposal's stored authority.
 op	put_page	coordinator	submitPageMutation; unbound Postgres sources refuse unless persistence.unbound_write=database_only.
 op	put_pages	coordinator	Every page is admitted as its own coordinated put_page write request, together in one journal transaction (#6007)
 op	delete_page	coordinator	submitPageMutation soft delete or trusted-local purge.

@@ -6,7 +6,8 @@
  * value, and nothing is pushed; an added line whose text starts with `++` (printed `+++`, like a file header) is
  * still scanned; added text over the scan cap, and a commit in the range that changes .gbrain-scan-allow or a
  * .gitattributes, refuse; a fingerprint in the working tree's .gbrain-scan-allow and a binary file are skipped; a clean
- * range publishes; without scanSecrets nothing changes.
+ * range publishes; without scanSecrets nothing changes; a remote rewound past a pushed secret (the tracking ref still names
+ * it) is fetched and scanned again instead of fast-forwarded over (#8896).
  * Seams: none; real repositories and a bare remote.
  */
 import { afterAll, expect, test } from 'bun:test';
@@ -146,6 +147,17 @@ test('attributes outside the range and diff settings never hide a secret or a ga
   const widened = refused(() => publish(noprefix.root));
   expect(widened.message).toContain('.gbrain-scan-allow (changes what the scan sees, ');
   expect(remoteTip(noprefix)).toBe(noprefix.base);
+});
+
+test('a remote rewound past a pushed secret is not published again through a stale tracking ref', () => {
+  const r = repo('rewound');
+  commit(r.root, 'notes.md', `Deploy token ${token}\n`);
+  git(r.root, 'push', '-q');
+  git(r.remote, 'update-ref', 'refs/heads/main', r.base);
+  commit(r.root, 'page.md', 'a clean page\n');
+  const error = refused(() => publish(r.root));
+  expect(error.message).toContain('notes.md:1 (');
+  expect(remoteTip(r)).toBe(r.base);
 });
 
 test('a NUL byte past the first 8000 bytes of a text file never hides a secret in it', () => {

@@ -100,7 +100,8 @@ pins `full`, callable and advertised: in the held-out agent benchmark, listing
 only `starter` or `verbs` lowered task success and saved no tokens. A harness
 that caps its tool count can register `--surface starter` or `--surface verbs`.
 Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
-On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
+On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface` (a
+`.env` file in the working directory cannot set it); a
 session widens itself with `request_tools {"surface":"full"}` (see
 `docs/operations/mcp-surface-runbook.md`).
 

@@ -1192,10 +1192,26 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
+            "name": "attest_read_shared_scope",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 174/174 public tables",
+            "message": "RLS enabled on 176/176 public tables",
             "name": "rls",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The Postgres host is on this machine; TLS is not required.",
+            "name": "postgres_tls",
             "status": "ok"
           },
           {
@@ -1203,6 +1219,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every gbrain function that pins a search_path ends it with pg_temp",
             "name": "function_search_path",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The database encoding is UTF8",
+            "name": "database_encoding",
             "status": "ok"
           },
           {
@@ -1215,14 +1238,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1394 column(s) verified against live schema",
+            "message": "1399 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 176 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -2027,6 +2050,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#atom-fence-rows",
+              "origin_unread": 0,
+              "repair": "atom-fence-rows"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No world atom carries a fence row its source page shows only to the owner.",
+            "name": "atom_fence_rows",
             "status": "ok"
           },
           {
@@ -3072,6 +3109,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No memory proposals await the owner.",
+            "name": "memory_proposals_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "conversation": null,
               "fix": "preview links: gbrain facts relink --dry-run",
@@ -3168,6 +3212,13 @@
             "elapsed_ms": "<volatile>",
             "message": "chronicle.* settings are valid.",
             "name": "chronicle_config_invalid",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No page holds live events from an earlier extraction run beside its newest one.",
+            "name": "chronicle_duplicate_events",
             "status": "ok"
           },
           {
@@ -6290,10 +6341,26 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
+            "name": "attest_read_shared_scope",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 174/174 public tables",
+            "message": "RLS enabled on 176/176 public tables",
             "name": "rls",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The Postgres host is on this machine; TLS is not required.",
+            "name": "postgres_tls",
             "status": "ok"
           },
           {
@@ -6301,6 +6368,13 @@
             "elapsed_ms": "<volatile>",
             "message": "Every gbrain function that pins a search_path ends it with pg_temp",
             "name": "function_search_path",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "The database encoding is UTF8",
+            "name": "database_encoding",
             "status": "ok"
           },
           {
@@ -6313,14 +6387,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "1394 column(s) verified against live schema",
+            "message": "1399 column(s) verified against live schema",
             "name": "schema_columns",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 174 table(s) the applied migrations create exist.",
+            "message": "All 176 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7125,6 +7199,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No atom retired by an empty re-extraction is waiting to be restored.",
             "name": "atom_retirements_restorable",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "by_source": [],
+              "count": 0,
+              "docs": "docs/guides/repair.md#atom-fence-rows",
+              "origin_unread": 0,
+              "repair": "atom-fence-rows"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No world atom carries a fence row its source page shows only to the owner.",
+            "name": "atom_fence_rows",
             "status": "ok"
           },
           {
@@ -8182,6 +8270,13 @@
           },
           {
             "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No memory proposals await the owner.",
+            "name": "memory_proposals_pending",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
             "details": {
               "conversation": null,
               "fix": "preview links: gbrain facts relink --dry-run",
@@ -8278,6 +8373,13 @@
             "elapsed_ms": "<volatile>",
             "message": "chronicle.* settings are valid.",
             "name": "chronicle_config_invalid",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "No page holds live events from an earlier extraction run beside its newest one.",
+            "name": "chronicle_duplicate_events",
             "status": "ok"
           },
           {

@@ -42,13 +42,14 @@
     "./ingestion/test-harness": "./src/core/ingestion/test-harness.ts",
     "./core/guardrails": "./src/core/guardrails.ts",
     "./core/skillopt": "./src/core/skillopt/index.ts",
+    "./skill-resolver": "./src/core/skills/resolver/index.ts",
     "./pglite-lock": "./src/core/pglite-lock.ts",
     "./version": "./src/version.ts"
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain src/cli.ts",
-    "build:all": "bun build --compile --no-compile-autoload-bunfig --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts && bun build --compile --no-compile-autoload-bunfig --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts",
+    "build": "bun build --compile --no-compile-autoload-bunfig --outfile bin/gbrain src/cli.ts src/core/skills/resolver/hook-worker.ts",
+    "build:all": "bun build --compile --no-compile-autoload-bunfig --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts src/core/skills/resolver/hook-worker.ts && bun build --compile --no-compile-autoload-bunfig --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts src/core/skills/resolver/hook-worker.ts",
     "build:admin": "cd admin && bun run build && cd .. && bun run scripts/build-admin-embedded.ts",
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bun run scripts/build-schema.ts",
@@ -211,6 +212,7 @@
     "@ai-sdk/provider-utils": "4.0.56",
     "@anthropic-ai/sdk": "^0.30.0",
     "@aws-sdk/client-s3": "^3.1028.0",
+    "@aws-sdk/s3-request-presigner": "3.1028.0",
     "@dqbd/tiktoken": "^1.0.22",
     "@electric-sql/pglite": "0.4.3",
     "@jsquash/avif": "^2.1.1",
@@ -253,8 +255,9 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.620.0",
+  "version": "0.60.666.0",
   "overrides": {
+    "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",
     "@hono/node-server": "^2.0.5",
     "fast-uri": "^3.1.9",

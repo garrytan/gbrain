@@ -158,6 +158,8 @@ git add -- ':(literal)tracked.txt' && echo "post-commit add ok" >> '${log}'
   test('the Git effect and its push, also when gbrain\'s own environment sets it; the session runs no repository hook', async () => {
     const { root, bare, hooks, log } = checkout({}, true);
     doorProbes(root, hooks, log);
+    // #8896: the effect's push refuses an unpublished commit that changes a .gitattributes, so the probe's is published first.
+    git(root, 'push', '-q');
     const receive = join(dirname(root), 'receive-probe');
     script(receive, `${probe(log, 'receive-pack')}exec git-receive-pack "$@"\n`);
     git(root, 'config', 'remote.origin.receivepack', receive);

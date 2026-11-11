@@ -80,7 +80,7 @@ describe('CI execution evidence', () => {
   test('macOS 26 validation typechecks in its own job, under a measured step timeout, saves its state on every outcome, and its verify skips tsc (#6056)', () => {
     const mac = loadWorkflow('macos-validation.yml') as Workflow & { jobs: Record<string, Job & { 'runs-on'?: string }> };
     const job = mac.jobs.typecheck;
-    expect(job['runs-on']).toBe('macos-26');
+    expect(job['runs-on']).toBe('macos-26-intel');
     expect(job.if).toBe(mac.jobs['macos-26'].if);
     const tsc = job.steps.find(step => step.run === 'bun run typecheck')!;
     expect(tsc['timeout-minutes']).toBe(15);

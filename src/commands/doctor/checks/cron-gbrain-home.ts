@@ -4,14 +4,13 @@
  * a checkout, or the `gbrain` binary while this brain is under a non-default GBRAIN_HOME, reads and writes
  * `~/.gbrain` instead: a second, silent brain state (locks, queue, config) beside the real one.
  *
- * Read-only and bounded: `crontab -l` (5 s; no check unless the crontab mentions gbrain or src/cli.ts), plus at most 20 scripts the lines name (64 KiB
+ * Read-only and bounded: `crontab -l` (5 s, or the entry deadline when sooner: local-audits.ts `localProbe`; no check unless the crontab mentions gbrain or src/cli.ts), plus at most 20 scripts the lines name (64 KiB
  * each). A line or script counts as setting the home when it assigns GBRAIN_HOME (on the line, in the crontab's
  * environment lines, or anywhere in the script). Warns, never fails; the user edits the crontab.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { execFileSync } from '../../../core/spawn.ts';
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
 
@@ -96,10 +95,4 @@ export function cronGbrainHomeCheck(crontab: string | null, customHome: string |
       why: 'A cron command without GBRAIN_HOME reads and writes a second brain state under ~/.gbrain; only the user edits the crontab.',
       user_message: `These cron commands run gbrain without GBRAIN_HOME: ${listed}. Add ${home} to each (or to the script it runs), or point them at a wrapper that exports it, so they act on this brain.`,
       verify: doctorVerify('cron_gbrain_home') } };
-}
-
-/** `crontab -l` on a local machine; null when there is no crontab or it cannot be read in 5 s. */
-export function readCrontab(): string | null {
-  try { return execFileSync('crontab', ['-l'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).toString(); }
-  catch { return null; }
 }

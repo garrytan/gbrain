@@ -225,7 +225,7 @@ export function assertPersistenceAccepting(engine: BrainEngine): void {
 }
 /** DX-A3: pending heads that need intervention, not more waiting. */
 export const BLOCKED_WRITE_REASONS = ['recovery_required', 'owner_unavailable', 'unexpected_file_bytes', 'unexpected_staging_bytes'] as const;
-const FATAL_READ_REASONS: readonly PgAccessReason[] = ['auth_failed', 'permission_denied', 'tenant_not_found', 'db_missing', 'schema_missing', 'storage_corrupt'];
+const FATAL_READ_REASONS: readonly PgAccessReason[] = ['auth_failed', 'permission_denied', 'tenant_not_found', 'db_missing', 'schema_missing', 'storage_corrupt', 'tls_required_default'];
 /** CEO-A7: the first poll waits this long (at most half the wait) for an in-process handoff, or not at all when this process already settled the request; later polls back off from 50 to 250 ms. */
 export const WRITE_POLL_START_MS = 200;
 export type WriteWait =

@@ -17,19 +17,38 @@ gbrain mcp admin client ID
 gbrain mcp admin register NAME --redirect-uri URI [--redirect-uri URI ...]
 gbrain mcp admin setup ID --harness ID [--flow authorization-code|client-credentials]
 gbrain mcp admin invalidate-tokens|revoke|delete ID [--yes --if-version N]
+gbrain mcp admin attest CLIENT_ID --attest-actor qm|none [--attest-ops LIST] [--dry-run]
+gbrain mcp admin members [--all]
+gbrain mcp admin member-add ID [--name NAME] [--email ADDR] [--groups G1,G2]
+gbrain mcp admin member-set ID --email ADDR|none
+gbrain mcp admin member-disable|member-enable ID
+gbrain mcp admin links [--member ID]
+gbrain mcp admin link MEMBER --qm CANONICAL_ID [--dry-run]
+gbrain mcp admin link --email ADDR --qm CANONICAL_ID [--dry-run]
+gbrain mcp admin unlink --qm CANONICAL_ID [--dry-run]
+gbrain mcp admin memory-proposals list [--source SOURCE] [--cursor CURSOR]
+gbrain mcp admin memory-proposals show REQUEST_ID
+gbrain mcp admin memory-proposals approve REQUEST_ID [--dry-run]
+gbrain mcp admin memory-proposals deny REQUEST_ID --reason TEXT [--dry-run]
 
 --url URL                          Running server URL or /mcp endpoint (required)
 --admin-token-file FILE            Private owner credential; otherwise GBRAIN_ADMIN_BOOTSTRAP_TOKEN
 --harness ID                       Setup instructions for this harness (default: generic)
 --flow FLOW                        Required when an existing client supports both flows
 --token-endpoint-auth-method METHOD none (default), client_secret_post, client_secret_basic
---source SOURCE                    New registration write source (default: default)
+--source SOURCE                    New registration write source (default: default); memory-proposals list: only this source
+--cursor CURSOR                    memory-proposals list: the next_cursor of the previous page (50 a page, oldest first)
+--reason TEXT                      memory-proposals deny: 1 to 500 characters the proposer reads on its receipt
 --federated-read S1,S2              New registration read sources
 --scopes SCOPES                    New registration scopes (default: read)
 --profile PROFILE                  Apply a named access profile during registration
 --credentials-out FILE             Explicit private export; required for confidential registration
 --dry-run                          Preview registration or lifecycle consequences
 --yes --if-version N               Apply reviewed lifecycle action; otherwise preview only
+--attest-actor qm|none             Grant or clear the right to name the person a call serves (x-qm-actor)
+--attest-ops LIST                  Operations an attested call may run (default get_write_request,memory_recall,memory_write)
+--qm ID                            A canonical person id from the trusted system
+--email ADDR                       A member's declared email (case-folded, unique); link finds the member by it
 --timeout-ms N                     Request timeout, 100..300000 (default: 30000)
 --json                             Structured result; credentials stay in private exports
 
@@ -43,6 +62,7 @@ OAuth admin scope does not grant owner administration authority.
 type Flow = 'authorization-code' | 'client-credentials';
 interface AdminArgs {
   command: string;
+  sub?: string;
   target?: string;
   values: Map<string, string[]>;
   flags: Set<string>;
@@ -53,20 +73,31 @@ const commandValues: Record<string, string[]> = {
   register: ['--redirect-uri', '--token-endpoint-auth-method', '--source', '--federated-read', '--scopes', '--profile', '--credentials-out', '--harness'],
   setup: ['--harness', '--flow', '--credentials-out'],
   'invalidate-tokens': ['--if-version'], revoke: ['--if-version'], delete: ['--if-version'],
+  attest: ['--attest-actor', '--attest-ops'], members: [], 'member-add': ['--name', '--groups', '--email'], 'member-set': ['--email'], 'member-disable': [], 'member-enable': [],
+  links: ['--member'], link: ['--qm', '--email'], unlink: ['--qm'], 'memory-proposals': [],
 };
+/** GST-2407: memory-proposals takes a subcommand; show, approve and deny take exactly one request id. */
+const proposalValues: Record<string, string[]> = { list: ['--source', '--cursor'], show: [], approve: [], deny: ['--reason'] };
+const untargeted = ['login-link', 'clients', 'members', 'links', 'unlink'];
+const previewable = ['register', 'invalidate-tokens', 'revoke', 'delete', 'attest', 'link', 'unlink'];
 
 export function parseMcpAdmin(args: string[]): AdminArgs {
   const command = args[0];
-  if (!command || !Object.hasOwn(commandValues, command)) throw new McpAdminError('invalid_admin_command', 'Expected login-link, clients, client, register, setup, invalidate-tokens, revoke, or delete. Use mcp admin --help.');
-  const targeted = !['login-link', 'clients'].includes(command);
-  const target = targeted ? args[1] : undefined;
-  if (targeted && (!target || target.startsWith('-'))) throw new McpAdminError('missing_target', `${command} requires ${command === 'register' ? 'a name' : 'a client ID'}.`);
-  const allowedValues = new Set([...common, ...commandValues[command]]);
+  if (!command || !Object.hasOwn(commandValues, command)) throw new McpAdminError('invalid_admin_command', `Expected one of: ${Object.keys(commandValues).join(', ')}. Use mcp admin --help.`);
+  const proposals = command === 'memory-proposals';
+  const sub = proposals ? args[1] : undefined;
+  if (proposals && !Object.hasOwn(proposalValues, sub ?? '')) throw new McpAdminError('invalid_admin_command', 'memory-proposals takes list, show, approve or deny.');
+  const at = proposals ? 2 : 1;
+  const targeted = proposals ? sub !== 'list' : !untargeted.includes(command) && !(command === 'link' && args[1]?.startsWith('-'));
+  const target = targeted ? args[at] : undefined;
+  if (targeted && (!target || target.startsWith('-'))) throw new McpAdminError('missing_target', `${proposals ? `memory-proposals ${sub}` : command} requires ${proposals ? 'a request ID' : command === 'register' ? 'a name' : command.startsWith('member') || command === 'link' ? 'a member ID' : 'a client ID'}.`);
+  const allowedValues = new Set([...common, ...(proposals ? proposalValues[sub!]! : commandValues[command])]);
   const lifecycle = ['invalidate-tokens', 'revoke', 'delete'].includes(command);
-  const allowedFlags = new Set(['--json', ...(command === 'register' || lifecycle ? ['--dry-run'] : []), ...(lifecycle ? ['--yes'] : [])]);
+  const preview = proposals ? sub === 'approve' || sub === 'deny' : previewable.includes(command);
+  const allowedFlags = new Set(['--json', ...(preview ? ['--dry-run'] : []), ...(lifecycle ? ['--yes'] : []), ...(command === 'members' ? ['--all'] : [])]);
   const values = new Map<string, string[]>();
   const flags = new Set<string>();
-  for (let i = targeted ? 2 : 1; i < args.length; i++) {
+  for (let i = targeted ? at + 1 : at; i < args.length; i++) {
     const flag = args[i];
     if (allowedFlags.has(flag)) {
       if (flags.has(flag)) throw new McpAdminError('invalid_arguments', `Duplicate argument: ${flag}`);
@@ -81,7 +112,59 @@ export function parseMcpAdmin(args: string[]): AdminArgs {
   if (!values.has('--url')) throw new McpAdminError('invalid_arguments', '--url is required. Point it at the existing running server.');
   if (flags.has('--yes') && flags.has('--dry-run')) throw new McpAdminError('invalid_arguments', 'Choose --dry-run or --yes, not both.');
   if (flags.has('--yes') && !values.has('--if-version')) throw new McpAdminError('revision_required', 'Preview the action first, then apply with --yes --if-version <reviewed-revision>.');
-  return { command, target, values, flags };
+  return { command, ...(sub === undefined ? {} : { sub }), target, values, flags };
+}
+
+type AdminClient = ReturnType<typeof createMcpAdminHttp>;
+const list = (raw: string | undefined) => raw === undefined ? undefined : raw.split(',').map(s => s.trim()).filter(Boolean);
+
+/** GST-1094 gap 4: the attest right, members and canonical-id links, over the owner session (serve-http-access.ts). */
+const ACCESS_COMMANDS: Record<string, (client: AdminClient, parsed: AdminArgs, value: (flag: string) => string | undefined) => Promise<unknown>> = {
+  attest: (client, parsed, value) => {
+    const actor = value('--attest-actor');
+    const ops = value('--attest-ops');
+    if (actor === undefined && ops === undefined) throw new McpAdminError('invalid_arguments', 'attest needs --attest-actor qm|none and/or --attest-ops <list>.');
+    const dryRun = parsed.flags.has('--dry-run');
+    return client.request('/admin/api/access/attest', { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin client ${parsed.target} --url ${client.base}`, body: {
+      clientId: parsed.target, dryRun, ...(actor === undefined ? {} : { attestActor: actor === 'none' ? null : actor }), ...(ops === undefined ? {} : { attestOps: list(ops) }) } });
+  },
+  members: (client, parsed) => client.request(`/admin/api/access/members${parsed.flags.has('--all') ? '?all=1' : ''}`),
+  'member-add': (client, parsed, value) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`,
+    body: { action: 'add', id: parsed.target, ...(value('--name') === undefined ? {} : { name: value('--name') }), ...(value('--email') === undefined ? {} : { email: value('--email') }),
+      ...(value('--groups') === undefined ? {} : { groups: list(value('--groups')) }) } }),
+  'member-set': (client, parsed, value) => {
+    const email = value('--email');
+    if (email === undefined) throw new McpAdminError('invalid_arguments', 'member-set needs --email <addr>|none.');
+    return client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'set', id: parsed.target, email: email === 'none' ? null : email } });
+  },
+  'member-disable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'disable', id: parsed.target } }),
+  'member-enable': (client, parsed) => client.request('/admin/api/access/members', { method: 'POST', mutation: true, nextAction: `gbrain mcp admin members --url ${client.base}`, body: { action: 'enable', id: parsed.target } }),
+  links: (client, _parsed, value) => client.request(`/admin/api/access/member-links${value('--member') ? `?member=${encodeURIComponent(value('--member')!)}` : ''}`),
+  link: (client, parsed, value) => linkRequest(client, parsed, value, 'link'),
+  unlink: (client, parsed, value) => linkRequest(client, parsed, value, 'unlink'),
+  'memory-proposals': (client, parsed, value) => {
+    if (parsed.sub === 'list') {
+      const query = new URLSearchParams({ ...(value('--source') === undefined ? {} : { source: value('--source')! }), ...(value('--cursor') === undefined ? {} : { cursor: value('--cursor')! }) });
+      return client.request(`/admin/api/memory-proposals${query.size ? `?${query}` : ''}`);
+    }
+    const path = `/admin/api/memory-proposals/${encodeURIComponent(parsed.target!)}`;
+    if (parsed.sub === 'show') return client.request(path);
+    const reason = value('--reason');
+    if (parsed.sub === 'deny' && reason === undefined) throw new McpAdminError('invalid_arguments', 'deny needs --reason TEXT: the proposer reads it on its receipt.');
+    const dryRun = parsed.flags.has('--dry-run');
+    return client.request(path, { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin memory-proposals show ${parsed.target} --url ${client.base}`,
+      body: { action: parsed.sub, dryRun, ...(reason === undefined ? {} : { reason }) } });
+  },
+};
+
+function linkRequest(client: AdminClient, parsed: AdminArgs, value: (flag: string) => string | undefined, action: 'link' | 'unlink'): Promise<unknown> {
+  const externalId = value('--qm');
+  if (externalId === undefined) throw new McpAdminError('invalid_arguments', `${action} needs --qm <canonical id>.`);
+  const email = value('--email');
+  if (action === 'link' && (email === undefined) === (parsed.target === undefined)) throw new McpAdminError('invalid_arguments', 'link needs a member ID or --email <addr>, not both.');
+  const dryRun = parsed.flags.has('--dry-run');
+  return client.request('/admin/api/access/member-links', { method: 'POST', mutation: !dryRun, nextAction: `gbrain mcp admin links --url ${client.base}`,
+    body: { action, externalId, dryRun, ...(action === 'link' ? (email === undefined ? { member: parsed.target } : { email }) : {}) } });
 }
 
 function destinationAvailable(path: string): void {
@@ -115,7 +198,7 @@ export async function runMcpAdmin(args: string[], dependencies: Pick<McpAdminHtt
     if (!args.length || args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
     const parsed = parseMcpAdmin(args);
     stage = parsed.command;
-    if (parsed.command !== 'register') clientId = parsed.target;
+    if (!['register', 'link', 'memory-proposals'].includes(parsed.command) && !parsed.command.startsWith('member')) clientId = parsed.target;
     const value = (flag: string) => parsed.values.get(flag)?.[0];
     const json = parsed.flags.has('--json');
     const print = (result: unknown) => console.log(sanitize(JSON.stringify(redactAdminValue(result), null, json ? undefined : 2)));
@@ -134,6 +217,12 @@ export async function runMcpAdmin(args: string[], dependencies: Pick<McpAdminHtt
     }
     if (parsed.command === 'clients' || parsed.command === 'client') {
       print(await client.request(parsed.command === 'clients' ? '/admin/api/clients' : path));
+      return;
+    }
+    if (parsed.command in ACCESS_COMMANDS) {
+      const result = await ACCESS_COMMANDS[parsed.command]!(client, parsed, value);
+      print(result);
+      if (parsed.sub === 'approve' && (result as { outcome?: string }).outcome === 'failed') setCliExitVerdict(1);
       return;
     }
     if (parsed.command === 'register') {

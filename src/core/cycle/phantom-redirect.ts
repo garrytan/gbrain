@@ -60,6 +60,7 @@ import { tryAcquireDbLock, syncLockId, type DbLockHandle } from '../db-lock.ts';
 import { isAborted } from '../abort-check.ts';
 import { logPhantomEvent, type PhantomOutcome } from '../facts/phantom-audit.ts';
 import { MOVE_WITHDRAWAL_SUBJECT_SQL } from '../facts/withdrawal-schema.ts';
+import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody, replaceStoredBody, replaceableFile } from '../facts/file-body-guard.ts';
 import { recordRenameAlias } from '../page-state/rename-alias.ts';
@@ -261,7 +262,7 @@ async function mergeIntoCanonicalFile(
   if (phantomFacts.length === 0) return { renumber: new Map<number, number>() };
   await materializeCanonicalToDisk(engine, canonical, sourceId, canonicalPath);
   const bytes = fs.readFileSync(canonicalPath, 'utf-8');
-  const { body: newBody, renumber } = mergePhantomFenceRows(bytes, phantomFacts, dbMaxRowNum);
+  const { body: newBody, renumber } = mergePhantomFenceRows((await withHeldFactsFence(engine, sourceId, canonical, { compiled_truth: bytes })).compiled_truth, phantomFacts, dbMaxRowNum);
   const stored = await readStoredBody(engine, sourceId, canonical);
   if (stored && !fileBodyMatchesStored(bytes, canonical, stored)) return { held: canonicalDriftToken(canonical, phantomSlug, sourceId, 'before') };
   if (newBody === null) return { renumber };
@@ -309,7 +310,8 @@ async function mergeIntoCanonicalBody(
 ): Promise<{ renumber: Map<number, number> } | { held: string }> {
   const expected = canonical && await readStoredBody(engine, sourceId, canonical.slug);
   if (!canonical || !expected) throw new Error('canonical page is gone');
-  const { body, renumber } = mergePhantomFenceRows(expected.compiled_truth ?? '', phantomFacts, dbMaxRowNum);
+  const { body, renumber } = mergePhantomFenceRows((await withHeldFactsFence(engine, sourceId, canonical.slug, { compiled_truth: expected.compiled_truth ?? '', timeline: expected.timeline })).compiled_truth,
+    phantomFacts, dbMaxRowNum);
   if (body === null) return { renumber };
   const written = await maintenanceTransaction(engine, tx =>
     replaceStoredBody(tx, sourceId, canonical.slug, { compiled_truth: body, timeline: expected.timeline ?? '' }, expected));

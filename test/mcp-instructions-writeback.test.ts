@@ -29,6 +29,15 @@ const BASE_OPTS = {
 };
 
 describe('buildAmbientWritebackSection (F1 leaf — the single source)', () => {
+  test('GST-2243: a member caller is told to omit visibility and share team facts with share: true', () => {
+    for (const visibility of ['world', 'private'] as const) {
+      const s = buildAmbientWritebackSection({ ...BASE_OPTS, visibility, member: true });
+      expect(s).not.toContain('Pass visibility:');
+      expect(s).toContain('share: true');
+      expect(s).toContain('only the brain host can withdraw it');
+    }
+  });
+
   test('salient mode carries the durable-only candidate policy', () => {
     const s = buildAmbientWritebackSection(BASE_OPTS);
     expect(s).toContain('mode: salient');

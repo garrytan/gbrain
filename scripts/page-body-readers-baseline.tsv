@@ -232,6 +232,7 @@ src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToM
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	field	SEGW	assertInlineBody before the fence write
 src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	field	SEGW	the body materializedPage read back within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) first
 src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	call:serializePageToMarkdown	SEGW	materializedPage within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) before rendering, as prepareFenceFactAppend's remember write does
+src/core/facts/fence-write.ts	writeFactsToFence	field	NONE	reads compiled_truth back from the object withHeldFactsFence returns for the file text already in hand; a segmented page returned database-only (page_body_segmented) before the file was compared
 src/core/facts/file-body-guard.ts	fileBodyMatchesStored	field	SEGW	a segmented page reads NULL inline columns, never matches, and the caller holds it (nothing written)
 src/core/facts/file-body-guard.ts	mirroredBody	field	NONE	the parsed checkout file body, not a page row
 src/core/facts/file-body-guard.ts	readStoredBody	sql	SEGW	reads the inline columns only; a segmented page reads NULL and every caller holds it
@@ -266,7 +267,9 @@ src/core/facts/retire.ts	retireFactsFromPage	field	INLINE	a segmented page is sk
 src/core/facts/subject-infer-write.ts	linkAllowed	field	STREAM	
 src/core/facts/unfenced-facts.ts	auditUnadoptableFacts	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	fenceDatabaseOnlyPage	call:serializePageToMarkdown	SEGW	
+src/core/facts/unfenced-facts.ts	planFence	field	NONE	reads compiled_truth from the object withHeldFactsFence returns for the body string its caller passed; no stored page body is read here
 src/core/facts/unfenced-facts.ts	planManagedPage	call:serializePageToMarkdown	SEGW	
+src/core/facts/unfenced-facts.ts	withHeldFactsFence	field	NONE	the body object its caller passes (file text or an inline snapshot); no stored page body is read here
 src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	field	STREAM	inline rows only
 src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	sql	STREAM	page scan reads inline bodies (NULL never matches); segmented pages are found by the chunk scan and their mirror writers refuse or skip (per-segment discovery, PR 2)
 src/core/fence-repair/census.ts	judgePages	field	STREAM	
@@ -547,6 +550,8 @@ src/core/repair/accepted-takes.ts	livePage	call:serializePageToMarkdown	SEGW	mat
 src/core/repair/agent-session-facts.ts	retireTakes	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its takes are kept (changed_since_preview)
 src/core/repair/agent-session-facts.ts	rewriteFencedFacts	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced facts are kept (changed_since_preview)
 src/core/repair/agent-session-facts.ts	rewriteFencedFacts	field	INLINE	inline pages only: a segmented page returns before the read and its fenced facts are kept (changed_since_preview)
+src/core/repair/atom-fence-rows.ts	atomFenceRowsRepair	call:serializePageToMarkdown	SEGW	
+src/core/repair/atom-fence-rows.ts	findAtomFenceRows	sql	INLINE	inline source pages only: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
 src/core/repair/captured-facts.ts	strikeFencedRows	call:serializePageToMarkdown	SEGW	
 src/core/repair/captured-facts.ts	strikeFencedRows	field	SEGW	
 src/core/repair/connector-fences.ts	candidates	sql	STREAM	
@@ -566,11 +571,17 @@ src/core/repair/fences.ts	afterBytes	field	STREAM
 src/core/repair/fences.ts	fencesRepair	field	STREAM	
 src/core/repair/frontmatter.ts	analyzeFile	field	LEAD	
 src/core/repair/frontmatter.ts	pagesByOrigin	sql	LEAD	
+src/core/repair/lost-fence-rows.ts	lostIn	field	NONE	walks the history scanLostFenceRows built (inline page_versions bodies and a materialized snapshot); no stored page body is read here
+src/core/repair/lost-fence-rows.ts	plannedPage	call:serializePageToMarkdown	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
+src/core/repair/lost-fence-rows.ts	plannedPage	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
+src/core/repair/lost-fence-rows.ts	scanLostFenceRows	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
+src/core/repair/lost-fence-rows.ts	scanLostFenceRows	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
 src/core/repair/orphan-children.ts	PROBE_SQL	sql	META	
 src/core/repair/overwritten-edits.ts	previewEdit	call:serializePageToMarkdown	SEGW	only high-confidence edits (live page and version both inline at scan time) are previewed; a page whose revision moved since the scan is skipped before it is serialized
 src/core/repair/overwritten-edits.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	inline versions only: a segmented version has no lost_digest and is never previewed; the restore goes through revert_version, which refuses a segmented page or version
 src/core/repair/overwritten-edits.ts	versionMarkdown	field	SEGW	inline versions only: overwriteContent returns null for a segmented version, which answers version_changed
 src/core/repair/overwritten-edits.ts	versionMarkdown	sql	SEGW	selects body_storage; a segmented version answers version_changed
+src/core/repair/private-labels.ts	prepareWrite	call:serializePageToMarkdown	SEGW	a segmented page returns segmented_page before the read and keeps its label
 src/core/repair/redacted-facts.ts	pageTexts	field	INLINE	inline branch only (a segmented page's body is read through readBodyRange in segmentedText)
 src/core/repair/redacted-facts.ts	pageTexts	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
 src/core/repair/redacted-facts.ts	restoreFencedRows	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced rows preview as class segmented

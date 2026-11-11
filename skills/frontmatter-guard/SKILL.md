@@ -57,6 +57,7 @@ Without a guard, these accumulate silently until `gbrain sync` chokes or search 
 
   Exit 1 means fix it first. The default is the strict producer rule: YAML gbrain could still import by quoting a value fails too, because other tools reject it. `--importable` answers the narrower question "would sync hold it?".
 - Never write a key gbrain reads for access or identity (`visibility`, `derived_from`, `slug`, `type`, `id`, `source_id`) from untrusted text.
+- Write no `visibility`, `access`, `confidentiality` or `readable_by` unless the page needs it ([page privacy](../conventions/page-privacy.md)).
 
 ## Held files: read them, then fix them
 
