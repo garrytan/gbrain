@@ -62,7 +62,9 @@ export interface GitEffectOwner {
   onReclaim?: (receipt: IndexLockReclaim) => void;
 }
 
-export interface GitSession { root: string; hooks: string; signal?: AbortSignal; timeoutMs: number; owner?: GitEffectOwner; indexFile?: string }
+export interface GitSession { root: string; hooks: string; signal?: AbortSignal; timeoutMs: number; owner?: GitEffectOwner; indexFile?: string;
+  /** GST-2128: puts back the index entries a step staged; withSession runs it when the work throws. */
+  undoStaging?: () => Promise<void> }
 
 /** #7759: no global --literal-pathspecs (Git would export it to every hook and child); pathspecs pass through literalPathspecs. */
 const gitArgs = (session: GitSession, args: string[]) =>
@@ -218,9 +220,14 @@ async function stageTarget(session: GitSession, relativePath: string): Promise<{
 async function refuseIgnoredTarget(session: GitSession, relativePath: string): Promise<void> {
   const status = await git(session, ['status', '--porcelain', '--ignored=matching', '--untracked-files=all', '--', ...literalPathspecs([relativePath])]);
   if (status.code !== 0 || !status.stdout.startsWith('!! ')) return;
+  throw ignoredTargetError(relativePath, await ignoreRule(session, relativePath));
+}
+
+/** The ignore rule (`source:line: pattern`) that matches `relativePath`, tracked or not; `.gitignore` when git cannot name it. */
+async function ignoreRule(session: GitSession, relativePath: string): Promise<string> {
   // check-ignore refuses pathspec magic and reads a path literally except a leading ':', which ./ keeps literal; it only names the rule.
-  const matched = await run(session, ['check-ignore', '-v', '--', relativePath.startsWith(':') ? `./${relativePath}` : relativePath]);
-  throw ignoredTargetError(relativePath, matched.error ? '.gitignore' : matched.stdout.split('\t')[0]!.replace(/^(.*?):(\d+):/, '$1:$2: '));
+  const matched = await run(session, ['check-ignore', '--no-index', '-v', '--', relativePath.startsWith(':') ? `./${relativePath}` : relativePath]);
+  return matched.error ? '.gitignore' : matched.stdout.split('\t')[0]!.replace(/^(.*?):(\d+):/, '$1:$2: ');
 }
 
 /** The refusal of a target a .gitignore `rule` (`source:line: pattern`) excludes; `detail` names the rule. */
@@ -240,7 +247,8 @@ export async function withSession<T>(root: string, signal: AbortSignal | undefin
   try {
     const session: GitSession = { root, hooks, signal, owner, timeoutMs: GIT_STEP_TIMEOUT_MS };
     if (scaled) session.timeoutMs = await stepTimeoutMs(session);
-    return await work(session);
+    try { return await work(session); }
+    catch (error) { await session.undoStaging?.(); throw error; }
   } finally { rmSync(hooks, { recursive: true, force: true }); }
 }
 
@@ -310,6 +318,8 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     // #7091: ls-files and `diff --relative` print paths relative to the root, but status prints them relative to the
     // repository toplevel; a root below the toplevel (local_path <repo>/brain) strips its prefix so every listing compares.
     const prefix = paths.length ? (await git(session, ['rev-parse', '--show-prefix'])).stdout.replace(/\n$/, '') : '';
+    const indexBefore = await indexSnapshot(session, paths);
+    session.undoStaging = () => restoreIndex(session, prefix, paths, indexBefore);
     const tracked = new Set((await list(['ls-files', '-z'])).split('\0').filter(Boolean));
     const dirty = new Set((await list(['status', '--porcelain', '-z', '--no-renames', '--untracked-files=all'])).split('\0').filter(Boolean)
       .map(entry => entry.slice(3)).map(path => path.startsWith(prefix) ? path.slice(prefix.length) : path));
@@ -331,13 +341,37 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
       else results.set(requested, { git: 'unchanged' });
     }
     if (staged.length) {
-      const add = await git(session, ['add', '-A', '--', ...literalPathspecs([...new Set(staged)])]);
-      if (add.code !== 0) throw gitFailure('Cannot stage the canonical Git target.', `git add failed for this group of ${new Set(staged).size} file(s).`);
-      const diff = await git(session, ['diff', '--cached', '--name-only', '--relative', '-z', '--no-renames', '--', ...literalPathspecs([...new Set(staged)])]);
-      if (diff.code !== 0) throw gitFailure('Cannot compare the canonical Git target.', `git diff --cached failed for this group of ${new Set(staged).size} file(s).`);
+      // GST-2128: tracked paths stage with add -u, which takes a tracked file under a folder an ignore rule covers (plain
+      // add stages it yet exits 1) and can never add an untracked file; untracked paths with add -A, which refuses an
+      // ignored one. A file either add refuses never parks the group: each file is then staged alone, and a refused one
+      // fails by itself (git_target_ignored naming the rule when that is why) with what was staged of it put back.
+      const stage = async (paths: string[]) => {
+        const kept = paths.filter(path => tracked.has(path)), fresh = paths.filter(path => !tracked.has(path));
+        const runs = [...(kept.length ? [['add', '-u', '--', ...literalPathspecs(kept)]] : []), ...(fresh.length ? [['add', '-A', '--', ...literalPathspecs(fresh)]] : [])];
+        for (const args of runs) { const out = await git(session, args); if (out.code !== 0) return out; }
+        return null;
+      };
+      let addable = [...new Set(staged)];
+      if (await stage(addable)) {
+        const refused = new Map<string, OperationError>();
+        for (const path of addable) {
+          const out = await stage([path]);
+          if (out) refused.set(path, /ignored by one of your \.gitignore files/.test(out.stderr) ? ignoredTargetError(path, await ignoreRule(session, path))
+            : gitFailure('Cannot stage the canonical Git target.', `git add failed for ${path}.`));
+        }
+        // Every file refused for a reason other than an ignore rule is git itself failing, not one file: the group fails as before.
+        if (refused.size === addable.length && [...refused.values()].every(error => error.code !== 'git_target_ignored')) {
+          throw gitFailure('Cannot stage the canonical Git target.', `git add failed for this group of ${addable.length} file(s).`);
+        }
+        for (const [requested, path] of normalized) if (refused.has(path)) results.set(requested, refused.get(path)!);
+        if (refused.size) await restoreIndex(session, prefix, [...refused.keys()], indexBefore);
+        addable = addable.filter(path => !refused.has(path));
+      }
+      const diff = addable.length ? await git(session, ['diff', '--cached', '--name-only', '--relative', '-z', '--no-renames', '--', ...literalPathspecs(addable)]) : { code: 0, stdout: '' };
+      if (diff.code !== 0) throw gitFailure('Cannot compare the canonical Git target.', `git diff --cached failed for this group of ${addable.length} file(s).`);
       const indexed = new Set(diff.stdout.split('\0').filter(Boolean));
       for (const [requested, path] of normalized) {
-        if (!staged.includes(path) || results.has(requested)) continue;
+        if (!addable.includes(path) || results.has(requested)) continue;
         if (indexed.has(path)) changed.push({ requested, path });
         else results.set(requested, { git: 'unchanged' });
       }
@@ -385,8 +419,57 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     const outcome = result.code === 0 ? { git: 'committed' } : gitFailure('Cannot commit the canonical Git target.',
       `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) results.set(c.requested, outcome);
+    if (!('git' in outcome)) await session.undoStaging();
   });
   return results;
+}
+
+interface IndexSnapshot { entries: Map<string, string>; flagged: Map<string, string> }
+
+/** The index records (`ls-files -s`) and assume-unchanged or skip-worktree tags (`ls-files -v`) under `paths`, keyed by repository path. */
+async function indexSnapshot(session: GitSession, paths: string[]): Promise<IndexSnapshot> {
+  if (!paths.length) return { entries: new Map(), flagged: new Map() };
+  const listed = await git(session, ['ls-files', '-s', '--full-name', '-z', '--', ...literalPathspecs(paths)]);
+  const tagged = await git(session, ['ls-files', '-v', '--full-name', '-z', '--', ...literalPathspecs(paths)]);
+  if (listed.code !== 0 || tagged.code !== 0) throw gitFailure('Cannot inspect the canonical Git index.', `git ls-files failed for this group of ${paths.length} file(s).`);
+  const records = (out: string) => out.split('\0').filter(Boolean);
+  return {
+    entries: new Map(records(listed.stdout).map(record => [record.slice(record.indexOf('\t') + 1), record.slice(0, record.indexOf('\t'))])),
+    flagged: new Map(records(tagged.stdout).filter(record => /^[a-zS] /.test(record)).map(record => [record.slice(2), record[0]!])),
+  };
+}
+
+/**
+ * GST-2128: puts the index entries under `paths` back to `before` after an effect group's add or commit failed. `git add`
+ * already staged them in the checkout's shared index, and a parked effect that leaves them there makes every later
+ * commit-push naming that folder refuse `commit_prestaged_paths`. Only entries that changed and still differ from HEAD
+ * are rewritten, so a commit that landed before its step failed is never reversed in the index; a rewritten entry gets
+ * its assume-unchanged or skip-worktree flag back. It runs without the session's abort signal, since an aborted step is
+ * one it has to clean up after. Best effort: a failure here never hides the step's own.
+ */
+async function restoreIndex(session: GitSession, prefix: string, paths: string[], before: IndexSnapshot): Promise<void> {
+  try {
+    session = { ...session, signal: undefined };
+    const now = await indexSnapshot(session, paths);
+    const local = (path: string) => path.startsWith(prefix) ? path.slice(prefix.length) : path;
+    // ls-tree reads its paths literally and relative to the root, like update-index.
+    const tree = await git(session, ['ls-tree', '-r', '--full-name', '-z', 'HEAD', '--', ...paths]);
+    const head = new Map(tree.code !== 0 ? [] : tree.stdout.split('\0').filter(Boolean).map(record => {
+      const [mode, , oid] = record.slice(0, record.indexOf('\t')).split(' ');
+      return [record.slice(record.indexOf('\t') + 1), `${mode} ${oid} 0`] as const;
+    }));
+    const staged = (path: string) => now.entries.get(path) !== head.get(path);
+    const wanted = new Set(paths);
+    const added = [...now.entries.keys()].filter(path => !before.entries.has(path) && staged(path));
+    const changed = [...before.entries].filter(([path, entry]) => wanted.has(local(path)) && now.entries.get(path) !== entry && staged(path));
+    if (added.length) await git(session, ['update-index', '--force-remove', '--', ...added.map(local)]);
+    const cacheinfo = changed.filter(([, entry]) => entry.endsWith(' 0')).flatMap(([path, entry]) => ['--cacheinfo', `${entry.split(' ')[0]},${entry.split(' ')[1]},${path}`]);
+    if (cacheinfo.length) await git(session, ['update-index', '--add', ...cacheinfo]);
+    for (const [flag, tags] of [['--skip-worktree', /[sS]/], ['--assume-unchanged', /[a-z]/]] as const) {
+      const flagged = changed.map(([path]) => path).filter(path => tags.test(before.flagged.get(path) ?? ''));
+      if (flagged.length) await git(session, ['update-index', flag, '--', ...flagged.map(local)]);
+    }
+  } catch { /* the step's own failure is what the effect reports and retries */ }
 }
 
 /**
