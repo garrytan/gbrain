@@ -21,7 +21,8 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { planFactWithdrawal, recordFactWithdrawal } from '../facts/withdrawal.ts';
 import { rebuildPendingPageProjections } from '../page-state/projections.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { ownerReadPolicyFragment, privateProvenanceFilterFragment, readPolicyFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { folderAccessForAll, memberIdentityFor } from '../access/caller.ts';
 import { remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { materializedPage } from './segmented-apply.ts';
 import { prepareFileTarget, snapshotLedger, unreadPageFile } from './page-prepare.ts';
@@ -29,7 +30,7 @@ import { pageIdentityError } from './page-identity.ts';
 import { MEMBER_PAGE_PREFIX, onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import { storedOwnerSpeaksForItself } from './page-visibility.ts';
 import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordinator.ts';
-import type { WriteRequest } from './model.ts';
+import type { WriteAuthority, WriteRequest } from './model.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 
@@ -72,14 +73,26 @@ export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId:
     'Keep the fact. To withdraw the claim everywhere, ask the user to forget it on the brain host.');
 }
 
+/** The owner's member identity and the folder rules it satisfies, as ownerReachesFact judges them. */
+export interface OwnerReader { identity: readonly string[]; satisfied: readonly string[] }
+
+/** GST-2346: the OwnerReader of a stored write's principal, re-resolved live (a member disabled or unbound reads as nobody). */
+export async function storedOwnerReader(engine: BrainEngine, authority: WriteAuthority): Promise<OwnerReader> {
+  const identity = await memberIdentityFor(engine, authority);
+  return { identity, satisfied: (await folderAccessForAll(engine, [identity])).satisfiedRuleIds };
+}
+
 /**
- * GST-2346 D1: whether fact id is one the brain owner's own credential withdraws besides shared facts and the facts on
- * its member page: a private fact on no member or scope page, held by a page no remote writer is kept from (or by no
- * page). A fact on a private page or on a page that names readers stays with the brain host.
+ * GST-2346 D1: whether fact id is one the brain owner's own credential withdraws besides the facts every remote caller
+ * reads and the facts on its member page: a fact on no member or scope page whose source page and entity page (each
+ * where one exists) the owner both reads under GST-2490's owner read rule and may write as a member (readers that name
+ * it, folder rules it satisfies, no private visibility). A fact on or about a private page, another member's page or a
+ * page whose readers leave the owner out stays with the brain host; the owner opt-in to read such pages never widens this.
  */
-export async function ownerReachesPrivateFact(engine: BrainEngine, id: number, sourceId: string): Promise<boolean> {
-  return (await engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND visibility='private'
-    AND NOT ${onOwnedMemoryPageSql('facts')} AND ${privateProvenanceFilterFragment('facts')}`, [id, sourceId])).length > 0;
+export async function ownerReachesFact(engine: BrainEngine, id: number, sourceId: string, owner: OwnerReader): Promise<boolean> {
+  const page = `(${ownerReadPolicyFragment('pp', owner.identity, owner.satisfied)} AND ${readPolicyFragment('pp', owner.identity, true, owner.satisfied)})`;
+  return (await engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND NOT ${onOwnedMemoryPageSql('facts')}
+    AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id=facts.source_id AND pp.slug IN (facts.source_markdown_slug, facts.entity_slug) AND NOT ${page})`, [id, sourceId])).length > 0;
 }
 
 /**
@@ -106,13 +119,16 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   const reason = typeof p.reason === 'string' && p.reason.trim() ? p.reason.trim() : null;
   // GST-359 D: a member's withdrawal of a fact on its own member page (submitForgetMutation records the page).
   const ownPage = remote && typeof p.member_page === 'string' && p.member_page === row.slug && row.slug.startsWith(MEMBER_PAGE_PREFIX) ? row.slug : null;
-  // GST-2346 D1: the owner's withdrawal of a private fact off its member page (submitForgetMutation marks it). The owner
-  // is judged again here from the stored principal, so a request whose writer is no longer the owner reads the fact as
-  // any remote caller does: not found. Such a withdrawal never reaches a copy on a page kept from remote writers.
+  // GST-2346 D1: the owner's withdrawal of a fact off its member page that other remote callers do not reach
+  // (submitForgetMutation marks it). The owner and the fact's page are judged again here from the stored principal, so a
+  // request whose writer is no longer the owner, or whose page no longer names it, reads the fact as any remote caller
+  // does: not found. The fact itself is judged by ownerReachesFact; another copy of the claim on a page kept from remote
+  // writers still refuses the withdrawal.
   const ownerReach = remote && !ownPage && p.owner_reach === true && Number.isSafeInteger(id) && id > 0
-    && await storedOwnerSpeaksForItself(engine, row.authority) && await ownerReachesPrivateFact(engine, id, sourceId);
+    && await storedOwnerSpeaksForItself(engine, row.authority) && await ownerReachesFact(engine, id, sourceId, await storedOwnerReader(engine, row.authority));
   const worldOnly = remote && !ownerReach;
-  const excludePrivate = ownerReach || await resolveExcludePrivatePages(engine, remote);
+  const excludePrivate = !ownerReach && await resolveExcludePrivatePages(engine, remote);
+  const copiesHidden = ownerReach || excludePrivate;
   const missing = () => verbError(row.operation === 'forget' ? 'not_found' : 'fact_not_found',
     `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
   if (!Number.isSafeInteger(id) || id <= 0) throw missing();
@@ -169,9 +185,10 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
     validate: async tx => {
       // Under the publication's locks: the fact is still visible, no more trusted than a remote caller, and reaches no other copy.
       const current = await readForgetTarget(tx, id, sourceId, worldOnly, excludePrivate, true, ownPage);
-      if (!current || (ownerReach && !await storedOwnerSpeaksForItself(tx, row.authority))) throw missing();
+      if (!current || (ownerReach && !(await storedOwnerSpeaksForItself(tx, row.authority)
+        && await ownerReachesFact(tx, id, sourceId, await storedOwnerReader(tx, row.authority))))) throw missing();
       if (remote && supersessionGuarded('agent_written', current.trust_tier)) throw remoteForgetRaced(id);
-      if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, current, worldOnly, excludePrivate);
+      if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, current, worldOnly, copiesHidden);
       await held?.validate?.(tx);
     },
     apply: async (tx, preimage) => {
