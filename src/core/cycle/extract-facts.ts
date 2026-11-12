@@ -458,7 +458,20 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     if (desired && desired.fact === fact.fact) matched.set(desired.row_num, fact);
     else stale.push(fact);
   }
-  const updates = extracted.filter(f => {
+  // GST-2511: a contested row whose widening the owner has not accepted keeps its visibility; the fence's world cell is
+  // the lower-tier writer's request, which only the owner's accept applies (trust/fence-guard.ts).
+  const widening = extracted.flatMap(f => {
+    const fact = matched.get(f.row_num);
+    return fact && fact.visibility !== 'world' && (f.visibility ?? 'private') === 'world' ? [Number(fact.id)] : [];
+  });
+  const heldWidening = new Set(widening.length ? (await db.executeRaw<{ id: number }>(
+    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action = 'supersede_fact' AND related_table = 'facts'
+      AND related_id = ANY($2::bigint[]) AND status IN ('pending', 'rejected', 'undone') AND before_state->'visibility' IS NOT NULL`,
+    [sourceId, widening])).map(r => Number(r.id)) : []);
+  const updates = extracted.map((f): FenceExtractedFact => {
+    const fact = matched.get(f.row_num);
+    return fact && heldWidening.has(Number(fact.id)) ? { ...f, visibility: fact.visibility as FenceExtractedFact['visibility'] } : f;
+  }).filter(f => {
     const fact = matched.get(f.row_num);
     return fact !== undefined && factCellsDiffer(fact, f);
   });
