@@ -259,7 +259,9 @@ function gitVerdict(state: SyncPathState): Matched {
   switch (rest.cls) {
     // G8a: a page no import record proves (legacy_unverified, typically the unknown side of a held drift) takes the commit too.
     case 'drift': case 'keep_db': case 'deleted_edited': case 'legacy_unverified': return wins({ cls: 'import', settled: false, action: 'import' });
-    case 'db_ahead': return rest.sub === 'pending' ? rest : wins({ cls: 'import', settled: false, action: 'import' });
+    // GST-2519: a page under a declared storage.db_only dir is canonical in the database, so a version the database moved to
+    // while Git did not move stays, as on a source that is not strict.
+    case 'db_ahead': return rest.sub === 'pending' || state.dbOnly === true ? rest : wins({ cls: 'import', settled: false, action: 'import' });
     case 'delete': case 'delete_drift':
       if (state.originEvidence === undefined || rest.uncommitted === 'storage_invalid') return rest;
       if (state.originEvidence !== 'committed') return wins({ cls: 'kept', settled: true, action: 'none' });

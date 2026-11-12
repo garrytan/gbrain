@@ -50,6 +50,39 @@ const KEY_LINES: Record<string, RegExp> = {
   visibility: /^visibility[ \t]*:(?:[ \t]|\r?\n|$)/, access: /^access[ \t]*:(?:[ \t]|\r?\n|$)/, confidentiality: /^confidentiality[ \t]*:(?:[ \t]|\r?\n|$)/,
   readable_by: /^readable_by[ \t]*:(?:[ \t]|\r?\n|$)/,
 };
+/**
+ * GST-2519: `text`, a file under a declared storage.db_only path about to be imported over its page, with each privacy
+ * label the stored page holds and the file does not state, so an import there never widens who reads the page; a label
+ * the file states (narrower or wider) is the owner's and applies. Null when there is nothing to keep.
+ */
+export function withStoredLabels(text: string, stored: Record<string, unknown> | null | undefined, incoming: Record<string, unknown>): string | null {
+  const kept = storedLabelsToKeep(stored, incoming);
+  if (!kept.length) return null;
+  const lines = kept.map(key => `${key}: ${JSON.stringify(stored![key])}\n`).join('');
+  const bom = text.startsWith('\uFEFF') ? '\uFEFF' : '';
+  const body = text.slice(bom.length);
+  const lead = /^(?:[ \t\r]*\n)*/.exec(body)![0];
+  const open = /^---[ \t]*\r?\n/.exec(body.slice(lead.length));
+  const close = open ? /^---[ \t]*(?:\r?\n|$)/m.exec(body.slice(lead.length + open[0].length)) : null;
+  let mapping = false;
+  if (open && close) {
+    try {
+      const block = loadBoundedYaml(body.slice(lead.length + open[0].length, lead.length + open[0].length + close.index));
+      mapping = block == null || (typeof block === 'object' && !Array.isArray(block));
+    } catch { mapping = false; }
+  }
+  if (!open || !close || !mapping) return `${bom}---\n${lines}---\n${body}`;
+  const from = lead.length + open[0].length, at = from + close.index;
+  const blank = (line: string) => kept.some(key => new RegExp(`^${key}[ \\t]*:[ \\t]*(?:~|null|Null|NULL|''|"")?[ \\t]*\\r?$`).test(line));
+  const block = body.slice(from, at).split('\n').filter((line, i, all) => !(i < all.length - 1 && blank(line))).join('\n');
+  return bom + body.slice(0, from) + block + lines + body.slice(at);
+}
+
+/** GST-2519: the privacy labels the stored page holds that the incoming frontmatter does not state (absent, null or blank). */
+export function storedLabelsToKeep(stored: Record<string, unknown> | null | undefined, incoming: Record<string, unknown>): string[] {
+  return EDIT_KEYS.filter(key => stored?.[key] != null && (incoming[key] == null || incoming[key] === ''));
+}
+
 const listEntry = (entry: string) => (loadBoundedYaml(`[${entry}]`) as unknown[])[0] === entry ? entry : `'${entry}'`;
 const valueText = (value: string | string[]) => Array.isArray(value) ? `[${value.map(listEntry).join(', ')}]` : value;
 const keyLine = (key: string) => KEY_LINES[key] ?? /(?!)/;
