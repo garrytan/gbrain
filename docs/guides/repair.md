@@ -3388,6 +3388,13 @@ file, commit it and sync), and leaves its hold in place. Naming the page with
 database edit the apply drops. A page whose file is gone is never deleted by a
 comparison or by `--prefer file` unless you select its deleted state.
 
+Every `--prefer` preview also counts what the apply drops from the side it
+overwrites: each page's listing line ends "drops N line(s) the file holds" (or
+"the page holds"), a warning gives the total across the run, and `--json`
+carries `details.pages[].lost_lines` and `details.lost_lines_total`. A line
+counts when the result doesn't carry it; blank lines and trailing spaces don't
+count. Read those lines before you agree to the apply.
+
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|
 | `tombstone_edited` | Keeps the deletion and removes the file. | Restores the page and imports the file. |

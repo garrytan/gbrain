@@ -22,6 +22,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - **A page whose file is gone under a `gbrain.yml` `db_only` folder is no drift.** An existing deleted-side hold there now releases.
 - **`gbrain repair file-drift` compares without a winner.** Any selection without `--prefer` lists, per page, what differs, which side is newer (the file's last commit against the page's `updated_at`) and what a repair would do, and writes nothing. A `--prefer` preview with no side names that comparison as its fix.
 - **`--prefer file` never drops a newer page in bulk.** A `--held`, `--all-drifted` or `--request` preview lists a page edited after its file's last commit as `kept_newer_page` and leaves it held; naming the page with `--slug` still resolves it, with a warning naming the edit it drops. A page whose file is gone is never deleted by a comparison (GST-2568).
+- **A `--prefer` preview says how much it drops.** Each page's listing line counts the lines of the side the apply overwrites that the result doesn't carry ("drops 3 line(s) the file holds"), a warning gives the total for the run, and `--json` carries `details.pages[].lost_lines` and `details.lost_lines_total`, so whoever agrees to the apply sees what the losing side held.
 
 ## [0.60.699.0] - 2026-11-12
 

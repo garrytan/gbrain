@@ -114,6 +114,23 @@ export async function comparePage(engine: BrainEngine, sourceId: string, target:
   }
 }
 
+/**
+ * How many non-blank lines of `losing` the `winning` text does not carry, each line counted as often as it repeats: what
+ * a repair that keeps `winning` drops from the side it overwrites. Trailing spaces are ignored; nothing else is.
+ */
+export function linesNotCarried(losing: string, winning: string): number {
+  const kept = new Map<string, number>();
+  for (const line of winning.split('\n')) { const key = line.trimEnd(); if (key.trim()) kept.set(key, (kept.get(key) ?? 0) + 1); }
+  let lost = 0;
+  for (const line of losing.split('\n')) {
+    const key = line.trimEnd();
+    if (!key.trim()) continue;
+    const left = kept.get(key) ?? 0;
+    if (left) kept.set(key, left - 1); else lost++;
+  }
+  return lost;
+}
+
 /** The listing row of a compared page. */
 export function comparedListing(page: ComparedPage): RepairListing {
   const evidence = page.evidence ? `differs: ${page.evidence.differs}${page.evidence.keys.length ? ` (${page.evidence.keys.join(', ')})` : ''}; newer: ${page.evidence.newer}; ` : '';

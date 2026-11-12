@@ -77,7 +77,7 @@ test('a held origin twin is listed by the preview with an apply command, and --p
   const planned = await preview(engine, 'database');
   expect(planned.residuals).toEqual({});
   expect(planned.affected).toBe(1);
-  expect(planned.listing).toEqual([{ item: `default:${SLUG}`, class: 'prefer_database', detail: 'exactly the preferred side; adopts the file at its slug path' }]);
+  expect(planned.listing).toEqual([{ item: `default:${SLUG}`, class: 'prefer_database', detail: 'exactly the preferred side; adopts the file at its slug path; drops 1 line(s) the file holds' }]);
   expect((await preview(engine, 'database', planned.preview_hash!)).outcomes).toEqual({ repaired: 1 });
   await settleManagedGitEffects(engine);
   git(root, 'commit', '-qam', 'commit the repaired file');

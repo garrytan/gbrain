@@ -93,7 +93,8 @@ import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/r
 import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
-import { comparedListing, comparePage, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
+import { comparedListing, comparePage, linesNotCarried, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
+import { serializePageToMarkdown } from '../markdown.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 export type DriftSide = 'file' | 'database';
@@ -106,7 +107,9 @@ export interface ArtifactPage { slug: string; prefer: DriftSide; class?: DriftCl
   /** #6712 wave: the canonical file is gone from the last commit and the apply recreates it from the page. */
   file_gone?: true;
   /** GBRA-133: file wins appends protected keys or timeline rows to the canonical file (`fileWinsContent`). */
-  file_appended?: true }
+  file_appended?: true;
+  /** How many lines of the side the repair overwrites the result does not carry (`linesNotCarried`, both sides rendered alike). */
+  lost_lines: number }
 /** #6712 wave: a page whose canonical file is gone from the last commit, resolved `--prefer file`: soft-delete exactly that page. */
 export interface SoftDeletePage { slug: string; prefer: 'file'; exceptions: DriftException[]; soft_delete: { ghost: GhostPage; owner: GhostOwner } }
 /**
@@ -539,7 +542,9 @@ export async function prepareDriftPage(engine: BrainEngine, sourceId: string, sl
     if (error instanceof OperationError && !error.fix) error.fix = readFix(`gbrain wrote a reconcile preview of ${slug} that its own apply refuses, so nothing was approved or written; report it with the output of gbrain doctor --json (the command in fix).`, { argv: ['gbrain', 'doctor', '--json'] });
     throw error;
   }
-  return { slug, prefer, adopt_slug_path: adopt, exceptions: driftExceptions(prepared.result, prefer === 'file' ? file : database), result: prepared.result, preview,
+  const rendered = (page: ParsedPage) => serializePageToMarkdown({ ...state.snapshot.page, ...page }, page.tags);
+  const lost_lines = opts.fileGone ? 0 : linesNotCarried(rendered(prefer === 'database' ? file : database), rendered(prepared.result));
+  return { slug, prefer, adopt_slug_path: adopt, exceptions: driftExceptions(prepared.result, prefer === 'file' ? file : database), result: prepared.result, preview, lost_lines,
     ...(opts.fileGone ? { file_gone: true as const } : {}), ...(appends ? { file_appended: true as const } : {}) };
 }
 
@@ -911,7 +916,8 @@ export const fileDriftRepair: RepairHandler = {
           if (classes.has(slug)) page.class = classes.get(slug);
           pages.push(page);
           listing.push({ item: `${sourceId}:${slug}`, class: `prefer_${opts.prefer}`,
-            detail: `${page.exceptions.length ? `kept: ${[...new Set(page.exceptions.map(e => e.reason))].join(', ')}` : 'exactly the preferred side'}${page.adopt_slug_path ? '; adopts the file at its slug path' : ''}` });
+            detail: `${page.exceptions.length ? `kept: ${[...new Set(page.exceptions.map(e => e.reason))].join(', ')}` : 'exactly the preferred side'}${page.adopt_slug_path ? '; adopts the file at its slug path' : ''}`
+              + (page.lost_lines ? `; drops ${page.lost_lines} line(s) the ${opts.prefer === 'database' ? 'file' : 'page'} holds` : '') });
         } catch (error) {
           if (!(error instanceof OperationError) || ['owner_unavailable', 'writer_registration_required'].includes(error.code)) throw error;
           count(`refused_${error.code}`);
@@ -939,6 +945,9 @@ export const fileDriftRepair: RepairHandler = {
     let warnings: string[] = nextCommand ? [`This preview covered ${previewed} of the ${held!.targets.length} selected held pages${opts.cursor ? ' after its cursor' : ''} (one window stops at ${HELD_WINDOW_PAGES} pages or ${HELD_WINDOW_BUDGET_MS / 1000} s); its hash and apply command cover only these. `
       + `After applying this window (or deciding not to), preview the next one: ${nextCommand}`] : [];
     if (newerPages.length) warnings.unshift(`The apply drops a database edit newer than its file for ${newerPages.length} page(s): ${newerPages.join(' ')}`);
+    const losing = pages.flatMap(page => 'preview' in page && page.lost_lines ? [page] : []);
+    const lostLines = losing.reduce((sum, page) => sum + page.lost_lines, 0);
+    if (lostLines) warnings.push(`The apply drops ${lostLines} line(s) the ${opts.prefer === 'database' ? 'files' : 'pages'} it overwrites hold and the result does not carry, across ${losing.length} page(s); details.pages[].lost_lines counts each. Read them before agreeing.`);
     const releases = pages.filter(page => 'release_hold' in page).length;
     if (releases) warnings.push(`The apply only schedules a re-screen of ${releases} held file(s) whose page and file agree; the next sync (gbrain sync --source ${sourceId}) releases each that still agrees.`);
     let undoneBySync: { recreated: number; removed: number } | null = null;
@@ -970,6 +979,7 @@ export const fileDriftRepair: RepairHandler = {
         ...(undoneBySync ? { undone_by_next_sync_unless_committed: undoneBySync } : {}),
         ...(held ? { window: { previewed, remaining, complete: remaining === 0, ...(nextCursor ? { next_cursor: nextCursor, next_command: nextCommand } : {}) } } : {}),
         ...(held?.provenance ? { provenance: held.provenance } : {}),
+        lost_lines_total: lostLines,
         pages: pages.map(page => ({ ...('release_hold' in page ? { slug: page.slug, action: 'release_hold', path: page.release_hold.path, verb: 're-screen the held file (the page and the file agree)', exceptions: page.exceptions }
           : 'soft_delete' in page ? { slug: page.slug, action: 'soft_delete', path: page.soft_delete.ghost.path, verb: fileDriftActionVerb('deleted', 'file_gone', 'file'), exceptions: page.exceptions }
           : 'detach_page' in page ? { slug: page.slug, action: 'detach_page', path: page.detach_page.path, verb: 'keep the page database-only (no file)', exceptions: page.exceptions }
@@ -977,7 +987,7 @@ export const fileDriftRepair: RepairHandler = {
           : 'import_file' in page ? { slug: page.slug, action: 'import_file', state: page.import_file.state, path: page.import_file.path, verb: fileDriftActionVerb('deleted', page.import_file.state, 'file'), exceptions: page.exceptions, result_digest: page.import_file.result_digest }
           : { slug: page.slug, ...(page.file_gone ? { action: 'recreate_file' } : {}), ...(page.class ? { class: page.class } : {}),
             verb: page.file_gone ? fileDriftActionVerb('deleted', 'file_gone', 'database') : fileDriftActionVerb('both', undefined, page.prefer),
-            adopt_slug_path: page.adopt_slug_path, exceptions: page.exceptions, result_digest: page.preview.result_digest }),
+            adopt_slug_path: page.adopt_slug_path, exceptions: page.exceptions, result_digest: page.preview.result_digest, lost_lines: page.lost_lines }),
           ...(provenanceOf.get(page.slug) ? { provenance: provenanceOf.get(page.slug) } : {}) })),
         protections: 'Protected metadata stays as the database holds it, tags are the union of both sides, and protected takes and private fact rows are kept; exceptions lists each page\'s.' } };
   },

@@ -22,6 +22,8 @@
  * - item 4: `--prefer file` never drops a page edited after its file's last commit in bulk (`kept_newer_page`, the hold
  *   stays), names the drop in a warning when one `--slug` asks for it, and the comparison never proposes deleting a page
  *   whose file is gone;
+ * - a `--prefer` preview counts, per page and in total, the lines of the side it overwrites that the result does not carry, in
+ *   its listing, a warning and `details.lost_lines`;
  * - a caller's write (put_page, import) that names the type a retype replaced still takes that type: only a file reading keeps
  *   the retype's stamp.
  * PGLite always; Postgres too when DATABASE_URL is set. Holds exist only where sync imports a Git checkout, so there is no
@@ -241,6 +243,22 @@ for (const backend of testBackends()) {
     const single = await repair(engine, { slugs: ['notes/newer-page'], prefer: 'file' }) as Plan;
     expect(classes(single)['notes/newer-page']).toBe('prefer_file');
     expect(single.warnings?.join(' ')).toContain('drops a database edit newer than its file');
+  }, { databaseUrl, setup: heldSetup }), 240_000);
+
+  test(`GST-2568 [${backend}]: a --prefer preview counts the lines of the overwritten side the result drops, per page and in total`, () => managedBrain(async ({ engine, root }) => {
+    await heldPages(engine, root);
+    const lost = (plan: Plan) => Object.fromEntries((plan.details!.pages as Array<{ slug: string; lost_lines?: number }>).flatMap(page => page.lost_lines === undefined ? [] : [[page.slug, page.lost_lines]]));
+    const detail = (plan: Plan, slug: string) => plan.listing!.find(entry => entry.item === `default:${slug}`)!.detail;
+    const byFile = await repair(engine, { slugs: ['notes/newer-file', 'notes/newer-page'], prefer: 'file' }) as Plan;
+    expect(lost(byFile)).toEqual({ 'notes/newer-file': 1, 'notes/newer-page': 1 });
+    expect(byFile.details!.lost_lines_total).toBe(2);
+    expect(detail(byFile, 'notes/newer-file')).toContain('drops 1 line(s) the page holds');
+    expect(byFile.warnings?.join(' ')).toContain('The apply drops 2 line(s) the pages it overwrites hold and the result does not carry, across 2 page(s)');
+    const byDatabase = await repair(engine, { slugs: ['notes/newer-page'], prefer: 'database' }) as Plan;
+    expect([lost(byDatabase), byDatabase.details!.lost_lines_total]).toEqual([{ 'notes/newer-page': 1 }, 1]);
+    expect(detail(byDatabase, 'notes/newer-page')).toContain('drops 1 line(s) the file holds');
+    const released = await repair(engine, { held: true, side: 'unknown', prefer: 'file' }) as Plan;
+    expect(released.details!.pages.find((page: { slug: string }) => page.slug === 'notes/same').lost_lines).toBeUndefined();
   }, { databaseUrl, setup: heldSetup }), 240_000);
 }
 
