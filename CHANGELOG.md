@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.695.0] - 2026-11-12
 
 **An upgrade no longer adopts another application's OAuth table and then stops halfway, and rerunning `gbrain apply-migrations --force-schema` now recovers a brain that stopped.** gbrain creates `oauth_tokens`, `oauth_clients` and `oauth_codes` with `CREATE TABLE IF NOT EXISTS`, so when another application sharing the Postgres database already had a table with one of those names, gbrain took it over, added its own columns to it, and a later upgrade stopped at v210 with `operator does not exist: timestamp with time zone > bigint`. That error named neither the table nor the column, and it came after earlier migrations in the same run had already applied. The documented recovery, rerunning the same command, then could not create gbrain's own table.
 
