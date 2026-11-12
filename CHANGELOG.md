@@ -18,7 +18,7 @@ Since v0.60.677.0, every unknown-side `file_drift` hold written under the earlie
 
 - The re-screen now reads every held path's history through one `git cat-file --batch-check` per 2,000 paths, with no file bodies, and reports progress as each path's history arrives. A Git read that hangs still reports nothing, so the no-progress check still stops it. On a generated repository with 80,000 files and 3,000 commits, 10,000 holds took 6.2 s instead of 141 s, and 80,000 holds took 66 s instead of 17 minutes. The longest silence was 36 ms instead of the whole read.
 - A pass stopped partway keeps the holds it re-screened, and the next pass reads only the rest.
-- `gbrain sync status` reads `resumable` / `commits_waiting` when nothing else is pending but the checkout's HEAD is past the last synced commit, with a `next` that runs the sync. It used to read `synced` / `nothing_pending` until the next sync happened to run.
+- `gbrain sync status` reads `resumable` / `commits_waiting` when nothing else is pending (or only holds that need no person) but the checkout's HEAD is past the last synced commit, with a `next` that runs the sync. It used to read `synced` until the next sync happened to run. A hold that needs a person keeps its own reason, and a company-brain source, which syncs to its approved revision, never reads it.
 - With `sync.on_commit` off, the notifier's fix now says so, instead of saying that no resident runs.
 
 ## [0.60.685.0] - 2026-11-12

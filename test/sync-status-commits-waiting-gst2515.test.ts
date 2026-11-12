@@ -30,10 +30,17 @@ for (const backend of testBackends()) {
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'two');
     const waiting = await readSyncStatus(engine, 'default');
     expect(waiting).toMatchObject({ state: 'resumable', reason: 'commits_waiting' });
-    expect(waiting.next?.argv.slice(0, 2)).toEqual(['gbrain', 'sync']);
+    expect(waiting.next?.argv?.slice(0, 2)).toEqual(['gbrain', 'sync']);
     expect(waiting.next?.argv).toContain('default');
     expect(waiting.next?.why).toContain('1 commit(s) past the last synced commit');
     await performManagedSync(engine, OPTS);
     expect(await readSyncStatus(engine, 'default')).toMatchObject({ state: 'synced', reason: 'nothing_pending', last_commit: git(root, 'rev-parse', 'HEAD') });
+  }, { databaseUrl, setup }), 120_000);
+  test('[' + backend + '] a company-brain source, which syncs to its approved revision, never reads commits_waiting', () => managedBrain(async ({ engine, root }) => {
+    await performManagedSync(engine, OPTS);
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"company_brain":{}}'::jsonb WHERE id='default'`);
+    writeFileSync(join(root, 'notes/two.md'), '---\ntitle: Two\n---\n\nThe second note.\n');
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'two');
+    expect((await readSyncStatus(engine, 'default')).reason).not.toBe('commits_waiting');
   }, { databaseUrl, setup }), 120_000);
 }
