@@ -507,7 +507,10 @@ What one purge does, in one transaction:
 - records a text-free tombstone: the claim's fingerprint, its source,
   visibility, entity, request id and reason. Any later write of the same
   normalized claim is refused with `purged_content`, and a stale file, re-sync
-  or revert drops the row on import.
+  or revert drops the row on import. The tombstone applies to the whole brain:
+  it refuses a member's save on its own member page too, even when that member
+  could never read the purged fact, so a member who saves matching text learns
+  that a purge exists.
 
 On a terminal the CLI prints the dry-run receipt and asks you to type the
 fact's 8-character token; without a terminal it needs `--yes` and
