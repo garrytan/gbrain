@@ -523,10 +523,15 @@ jobs:
     # 121 s in verify's pool and timed out at the cap. A timed-out tsc also
     # writes no tsbuildinfo, so every rerun restored the same stale state.
     # Step timeout from measurement: 3 x the worst cold CI time (121 s) is
-    # about 6 minutes. tsc is single-threaded, so 4 vCPUs (16 GB; peak heap
-    # is about 5.3 GB) do the work of verify's 8.
+    # about 6 minutes per attempt. tsc is single-threaded, so 4 vCPUs (16 GB)
+    # do the work of verify's 8. A cold tsc of the tree peaks at about 6.5 GB
+    # RSS (6.51 GB on gbrain#9184's head, 2026-11-11), close to the heap cap
+    # in package.json's typecheck script; an incremental run seeded from a
+    # distant head's tsbuildinfo goes past it and aborts (exit 134).
+    # scripts/ci-typecheck.sh then runs it once more from cold, so the step
+    # and job allow two attempts.
     runs-on: ubicloud-standard-4-ubuntu-2404
-    timeout-minutes: 15
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -552,14 +557,18 @@ jobs:
           key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
           restore-keys: |
             tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
-      - name: Typecheck (tsc, incremental)
-        timeout-minutes: 6
-        run: bun run typecheck
+      - name: Typecheck (tsc, incremental; cold once more on an abort)
+        id: tsc
+        timeout-minutes: 12
+        run: bash scripts/ci-typecheck.sh bun run typecheck
       # Saved even when this check finds type errors, and whatever the other
       # jobs do: tsc writes its state on an error too, so the next master run
-      # starts from this commit instead of an older, colder state.
+      # starts from this commit instead of an older, colder state. Not saved
+      # when tsc's last attempt aborted or timed out, or the step never
+      # reported (cancelled): tsc wrote no state, and saving the restored file
+      # under this head's key would make every rerun restore it again.
       - name: Save the typecheck state
-        if: always()
+        if: always() && steps.tsc.outputs.state_written == 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: node_modules/.cache/gbrain-typecheck.tsbuildinfo

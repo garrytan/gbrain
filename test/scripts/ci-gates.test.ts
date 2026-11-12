@@ -57,13 +57,14 @@ describe('CI execution evidence', () => {
     expect(pkg.scripts.verify).toContain('scripts/run-verify-parallel.sh');
   });
 
-  test('typecheck runs as its own job beside verify, under a measured step timeout, saves its state on every outcome and gates test-status', () => {
+  test('typecheck runs as its own job beside verify, under a measured step timeout, saves its state whenever tsc finished and gates test-status', () => {
     const job = unit.jobs.typecheck;
-    const tsc = job.steps.find(step => step.run === 'bun run typecheck')!;
-    expect(tsc['timeout-minutes']).toBe(6);
+    const tsc = job.steps.find(step => step.run === 'bash scripts/ci-typecheck.sh bun run typecheck')! as Job['steps'][number] & { id?: string };
+    expect(tsc.id).toBe('tsc');
+    expect(tsc['timeout-minutes']).toBe(12);
     const restore = job.steps.find(step => step.uses?.startsWith('actions/cache/restore@') && step.with?.path === 'node_modules/.cache/gbrain-typecheck.tsbuildinfo')!;
     const save = job.steps.find(step => step.uses?.startsWith('actions/cache/save@'))!;
-    expect(save.if).toBe('always()');
+    expect(save.if).toBe("always() && steps.tsc.outputs.state_written == 'true'");
     expect(save.with).toEqual({ path: restore.with!.path, key: restore.with!.key });
     expect(job.steps.indexOf(save)).toBeGreaterThan(job.steps.indexOf(tsc));
     const verify = unit.jobs.verify.steps.find(step => step.run === 'bun run verify')!;
