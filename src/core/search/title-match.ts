@@ -49,6 +49,11 @@ function contentTokens(tokens: string[]): string[] {
   return tokens.filter(t => !STOPWORDS.has(t));
 }
 
+/** Number of non-stopword tokens in `s`. */
+export function contentTokenCount(s: string): number {
+  return contentTokens(tokenizeTitle(s)).length;
+}
+
 /** True iff `needle` appears as a contiguous token run inside `haystack`. */
 function containsTokenRun(haystack: string[], needle: string[]): boolean {
   if (needle.length === 0 || needle.length > haystack.length) return false;

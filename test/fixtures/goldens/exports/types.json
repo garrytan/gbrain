@@ -1547,6 +1547,7 @@
           "page_id: number",
           "page_slug?: string | undefined",
           "provenance?: \"generated\" | undefined",
+          "qualified_alias_hit?: boolean | undefined",
           "quoted?: \"transcript\" | undefined",
           "rank_prior?: number | undefined",
           "rank_score?: number | undefined",
@@ -1580,6 +1581,7 @@
           "thread_id?: string | undefined",
           "title: string",
           "title_match_boost?: number | undefined",
+          "title_mention_boost?: number | undefined",
           "trust_tier?: \"user_confirmed\" | \"operator_curated\" | \"tool_observed\" | \"agent_written\" | \"unknown\" | \"external_untrusted\" | undefined",
           "type: string",
           "unconfirmed?: true | undefined",
@@ -8509,7 +8511,7 @@
         "kind": "function",
         "name": "applyAliasHop",
         "signature": [
-          "(engine: BrainEngine, results: SearchResult[], query: string, opts: IdentityTierOpts & { tokenHop?: boolean; }) => Promise<SearchResult[]>"
+          "(engine: BrainEngine, results: SearchResult[], query: string, opts: IdentityTierOpts & { tokenHop?: boolean; qualified?: boolean; }) => Promise<SearchResult[]>"
         ]
       },
       {
@@ -10379,6 +10381,7 @@
           "page_id: number",
           "page_slug?: string | undefined",
           "provenance?: \"generated\" | undefined",
+          "qualified_alias_hit?: boolean | undefined",
           "quoted?: \"transcript\" | undefined",
           "rank_prior?: number | undefined",
           "rank_score?: number | undefined",
@@ -10412,6 +10415,7 @@
           "thread_id?: string | undefined",
           "title: string",
           "title_match_boost?: number | undefined",
+          "title_mention_boost?: number | undefined",
           "trust_tier?: \"user_confirmed\" | \"operator_curated\" | \"tool_observed\" | \"agent_written\" | \"unknown\" | \"external_untrusted\" | undefined",
           "type: string",
           "unconfirmed?: true | undefined",

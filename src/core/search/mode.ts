@@ -429,6 +429,10 @@ export interface ModeBundle {
   rank_priors: boolean;
   /** #7175: keyword phrase factor (sql-ranking.ts KEYWORD_PHRASE_FACTOR). Off in every bundle (opt-in). Override: `search.keyword_phrase` (boolean). */
   keyword_phrase: boolean;
+  /** Qualified alias hop (alias-hop.ts): a 3-6 token sub-phrase of the query that is one readable page's alias leads. Off in every bundle (opt-in). Override: `search.qualified_aliases` (boolean). */
+  qualified_aliases: boolean;
+  /** Qualified title boost (intent-weights.ts): a person or company title mentioned inside the query. Off in every bundle (opt-in). Override: `search.title_qualified` (boolean). */
+  title_qualified: boolean;
   /**
    * Ranker wave (Phase E2, Cat 13) — arm-confidence-weighted fusion of the
    * LEXICAL arms (arm-confidence.ts). When the keyword arm's scale-free
@@ -539,6 +543,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     collapse: true,
     rank_priors: true,
     keyword_phrase: false,
+    qualified_aliases: false,
+    title_qualified: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -611,6 +617,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     collapse: true,
     rank_priors: true,
     keyword_phrase: false,
+    qualified_aliases: false,
+    title_qualified: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -683,6 +691,8 @@ export const MODE_BUNDLES: Readonly<Record<SearchMode, Readonly<ModeBundle>>> = 
     collapse: true,
     rank_priors: true,
     keyword_phrase: false,
+    qualified_aliases: false,
+    title_qualified: false,
     autocut_jump: 0.2,
     autocut_min_top: 0.35,
     autocut_min_keep: 1,
@@ -758,6 +768,8 @@ export interface SearchKeyOverrides {
   collapse?: boolean;
   rank_priors?: boolean;
   keyword_phrase?: boolean;
+  qualified_aliases?: boolean;
+  title_qualified?: boolean;
   // Ranker wave (Phase E2) — keyword-arm confidence floor override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate override (`always` | `lexical`).
@@ -832,6 +844,8 @@ export interface SearchPerCallOpts {
   collapse?: boolean;
   rank_priors?: boolean;
   keyword_phrase?: boolean;
+  qualified_aliases?: boolean;
+  title_qualified?: boolean;
   // Ranker wave (Phase E2) — keyword-arm confidence floor per-call override (null = off; (0, 1]).
   keyword_arm_confidence_floor?: number | null;
   // Ranker wave (Phase E3) — metadata boost gate per-call override (`always` | `lexical`).
@@ -946,6 +960,8 @@ export function resolveSearchMode(input: ResolveSearchModeInput): ResolvedSearch
     collapse: pick('collapse'),
     rank_priors: pick('rank_priors'),
     keyword_phrase: pick('keyword_phrase'),
+    qualified_aliases: pick('qualified_aliases'),
+    title_qualified: pick('title_qualified'),
     keyword_arm_confidence_floor: pick('keyword_arm_confidence_floor'),
     metadata_boost_gate: pick('metadata_boost_gate'),
     resolved_mode,
@@ -1307,6 +1323,8 @@ export function knobsHash(
     ...(knobs.collapse === false ? ['col=0'] : []),
     ...(knobs.rank_priors === false ? ['rpr=0'] : []),
     ...(knobs.keyword_phrase === true ? ['kph=1'] : []),
+    ...(knobs.qualified_aliases === true ? ['qa=1'] : []),
+    ...(knobs.title_qualified === true ? ['tq=1'] : []),
   ];
   // #5691 (append-only, no version bump): only a non-empty query prefix adds
   // a part, so every row written without one keeps its key.
@@ -1569,6 +1587,10 @@ export function loadOverridesFromConfig(
   if (rpr !== undefined) out.rank_priors = rpr;
   const kph = parseBoolKnob(get('search.keyword_phrase'));
   if (kph !== undefined) out.keyword_phrase = kph;
+  const qa = parseBoolKnob(get('search.qualified_aliases'));
+  if (qa !== undefined) out.qualified_aliases = qa;
+  const tq = parseBoolKnob(get('search.title_qualified'));
+  if (tq !== undefined) out.title_qualified = tq;
   // Ranker wave (Phase E2) — keyword-arm confidence floor: the literal
   // `off`/`null` pins the knob off (null); a number in (0, 1] is the floor;
   // anything else falls through to the bundle. ONE range contract with the
@@ -1646,6 +1668,8 @@ export const KNOB_CONFIG_KEY: Readonly<Record<keyof ModeBundle, string>> = Objec
   collapse: 'search.collapse',
   rank_priors: 'search.rank_priors',
   keyword_phrase: 'search.keyword_phrase',
+  qualified_aliases: 'search.qualified_aliases',
+  title_qualified: 'search.title_qualified',
   keyword_arm_confidence_floor: 'search.keyword_arm_confidence_floor',
   metadata_boost_gate: 'search.metadata_boost_gate',
 });

@@ -69,6 +69,8 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   collapse: 'Result-time collapse: same-slug twins in other sources, redirect stubs and copies of one document fold into the best row (listed in collapsed)',
   rank_priors: 'Rank priors after the reranker: organization over person when no person is named, weak OCR matches, dated over undated rows on when-questions',
   keyword_phrase: 'Keyword phrase factor (opt-in): a chunk holding the query as one contiguous phrase ranks higher in the keyword arm',
+  qualified_aliases: 'Qualified alias hop (opt-in): a 3-6 word phrase inside the query that is the alias of exactly one readable page leads with that page',
+  title_qualified: 'Qualified title boost (opt-in): a person or company title mentioned inside a longer query gets the title boost',
   diverse_pool_depth: 'Session-diverse pool before the reranker: each arm fetches at least N candidates, one row per session, the reranker reads at least N (0..100; 0 = off)',
   // Ranker wave (Phase E2) arm-confidence fusion
   keyword_arm_confidence_floor: 'Keyword-arm confidence floor: below this margin ratio the keyword + title lists fuse at half weight (null = off; (0, 1])',
