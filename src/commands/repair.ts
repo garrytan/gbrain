@@ -40,6 +40,7 @@ import { normalizeSeatLabel } from '../core/context/seat.ts';
 import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
 import { isAbsolute } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 /** The content-repair lane's command word (#6377): parsed like a kind, dispatched to repair-content.ts, never a RepairKind. */
 export const CONTENT_LANE = 'content';
@@ -102,6 +103,8 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
        gbrain repair provenance [--source <id>] [--slug <slug>]... [--include-ambiguous] [--apply --expect <preview-hash> --yes] [--json]
        gbrain repair secret-spans --source <id> --slug <slug>... [--rules <rule,...>] [--no-embed] [--apply --expect <preview-hash>] [--json]
        gbrain repair segmented-tiling --source <id> [--slug <slug>]... [--apply --expect <preview-hash>] [--json]
+       gbrain repair visibility [--source <id>] (--slug <slug>... | --slugs-file <file>) --readers <id,group:<g>,...|none>
+                                [--allow-without-owner] [--apply --expect <preview-hash>] [--json]
 ${REPAIR_ORDER_HELP}
 ${REPAIR_CONTACTS_HELP}
        gbrain repair rename-identity --source <id> [--slug <new-slug> [--from <old-slug>] [--close]
@@ -138,6 +141,15 @@ Options:
   --slug <slug>  fences, file-drift: select a database page by slug (repeatable); the hash covers the selection.
                  rename-identity: the new page of the one open pair to preview (--from <old-slug> when two pairs share it).
   --close        rename-identity: release the pair's purge hold instead of carrying its identity; nothing moves.
+  --readers <id,group:<g>,...|none>
+                 visibility, with --slug or --slugs-file: set the named pages' readable_by (none removes it) through the
+                 label-only door: tier, provenance stamps and every other line of the file kept. Each reader must be an
+                 enabled member or an existing group; a list that leaves out the brain owner refuses (a group holding the
+                 owner does not count). Preview-bound: --apply --expect <hash>.
+  --slugs-file <file>
+                 visibility --readers: the pages, one slug per line (blank lines and # comments ignored).
+  --allow-without-owner
+                 visibility --readers: accept readers that leave out the brain owner, whose own keys then stop reading those pages.
   --cwd <prefix>, --session <id>, --principal <label>
                  agent-session-facts: sessions whose recorded cwd is under an absolute prefix, or this session id, are agent-launched
                  (both repeatable); --principal names the agent in the note when no speaker sidecar does. The hash covers them.
@@ -205,8 +217,8 @@ Pages a managed sync's checkpoint moved past with an older version of their file
 A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/guides/repair.md#url-clone-fences.
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
-const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held']);
-const VALUE_FLAGS = new Set(['--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal']);
+const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner']);
+const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
@@ -218,12 +230,13 @@ const KIND_FLAGS: Record<string, readonly string[]> = {
   '--after': ['uncommitted-deletions'],
   '--kind': ['generations'], '--mode': ['generations'], '--run': ['generations'], '--key': ['generations'], '--generation': ['generations'], '--day': ['fact-claim-dates'], '--rules': ['secret-spans'],
   '--cwd': ['agent-session-facts'], '--session': ['agent-session-facts'], '--principal': ['agent-session-facts'],
+  '--readers': ['visibility'], '--slugs-file': ['visibility'], '--allow-without-owner': ['visibility'],
 };
 const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit': '50', '--expect': 'PLAN_HASH', '--only': 'notes/a.md', '--skip': 'notes/a.md',
   '--slug': 'notes/a', '--max-usd': '0.50', '--prefer': 'file', '--request': 'REQUEST_UUID', '--class': 'review_required', '--since': '7d', '--side': 'deleted', '--state': 'tombstone_edited', '--keep': 'prior',
   '--request-id': '123e4567-e89b-42d3-a456-426614174000', '--older-than': '30d', '--from': 'notes/old', '--after': '1200', '--cursor': 'NEXT_CURSOR', '--provenance': 'never_committed',
   '--kind': 'atom', '--mode': 'restore', '--run': 'RUN_ID', '--key': 'page:notes/a', '--generation': '42', '--day': '2026-01-15', '--rules': 'openai,aws_access_key',
-  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a' };
+  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a', '--readers': 'alice-example,group:team-a', '--slugs-file': 'slugs.txt' };
 /** A usage refusal whose fix is the read-only preview (gbrain repair without --apply writes nothing). */
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
@@ -234,7 +247,7 @@ interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolea
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string;
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean; afterPage?: number;
   generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[];
-  cwdPrefixes: string[]; sessions: string[]; principal?: string }
+  cwdPrefixes: string[]; sessions: string[]; principal?: string; readers?: string; slugsFile?: string; allowWithoutOwner: boolean }
 
 /** `--max-usd` on a kind that never calls a paid model: the cap belongs to the doctor remediation run. */
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
@@ -264,10 +277,21 @@ function fileDriftKeepRefusal(args: string[], keep: string): OperationError {
     { fix: readFix('Previews the file-drift resolution with the database copy winning; without --apply it writes nothing.', { argv }) });
 }
 
+/** GST-2476: the slugs a --slugs-file lists, one per line; blank lines and # comments are skipped. */
+function readSlugsFile(path: string): string[] {
+  let text: string;
+  try { text = readFileSync(path, 'utf8'); } catch (error) {
+    throw invalid(`--slugs-file ${path} could not be read (${(error as NodeJS.ErrnoException).code ?? 'error'}).`, 'Pass a readable file with one slug per line.', ['gbrain', 'repair', 'visibility', '--json']);
+  }
+  const slugs = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#'));
+  if (!slugs.length) throw invalid(`--slugs-file ${path} lists no slug.`, 'Write one slug per line (e.g. notes/a-example).', ['gbrain', 'repair', 'visibility', '--json']);
+  return slugs;
+}
+
 /** Strict parse: every flag is known, value flags carry a value, at most one kind. */
 export function parseRepairArgs(args: string[]): RepairArgs {
   const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, includeCrossEntity: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
-    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [] };
+    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [], allowWithoutOwner: false };
   const used = new Set<string>();
   const positional: string[] = [];
   let maxUsdText: string | undefined;
@@ -299,6 +323,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       else if (flag === '--include-failures') parsed.includeFailures = true;
       else if (flag === '--force') parsed.force = true;
       else if (flag === '--close') parsed.close = true;
+      else if (flag === '--allow-without-owner') parsed.allowWithoutOwner = true;
       else parsed.noEmbed = true;
       continue;
     }
@@ -310,6 +335,8 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     else if (flag === '--only') parsed.only.push(value);
     else if (flag === '--skip') parsed.skip.push(value);
     else if (flag === '--slug') parsed.slugs.push(value);
+    else if (flag === '--readers') parsed.readers = value;
+    else if (flag === '--slugs-file') parsed.slugsFile = value;
     else if (flag === '--max-usd') { maxUsdText = value; maxUsdFlag = flag; }
     else if (flag === '--prefer') {
       if (value !== 'file' && value !== 'database') throw invalid('--prefer takes file or database.', 'Pass --prefer file (the canonical file wins) or --prefer database (the database copy wins).',
@@ -383,6 +410,11 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     `Kinds: ${REPAIR_KINDS.join(', ')}.`);
   parsed.kind = positional[0];
   if (keepText !== undefined && parsed.kind === 'file-drift') throw fileDriftKeepRefusal(args, keepText);
+  if (parsed.readers === undefined && (parsed.slugsFile !== undefined || parsed.allowWithoutOwner)) {
+    throw invalid(`${parsed.slugsFile !== undefined ? '--slugs-file' : '--allow-without-owner'} applies only with --readers.`,
+      'Set readers on named pages: gbrain repair visibility --slugs-file <file> --readers <ids> (or --slug <slug>).', ['gbrain', 'repair', 'visibility', '--json']);
+  }
+  if (parsed.slugsFile !== undefined && parsed.slugs.length) throw invalid('Pass --slug or --slugs-file, not both.', 'List every page in the slugs file, or name them with --slug.', ['gbrain', 'repair', 'visibility', '--json']);
   if (used.has('--yes') && REPAIR_REGISTRY.find(spec => spec.kind === parsed.kind)?.consent !== 'destructive') throw invalid('`--yes` is not accepted by gbrain repair; pass --apply to write.',
     `Preview first with gbrain repair${parsed.kind ? ` ${parsed.kind}` : ''}, then run the same command with --apply instead of --yes.`,
     ['gbrain', 'repair', ...(parsed.kind ? [parsed.kind] : []), ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
@@ -476,7 +508,8 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
-    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal } = parseRepairArgs(args);
+    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner } = parseRepairArgs(args);
+  const readersRequest = readers === undefined ? undefined : { readers, ...(allowWithoutOwner ? { allowWithoutOwner } : {}), ...(slugsFile ? { slugsFile: { path: slugsFile, slugs: readSlugsFile(slugsFile) } } : {}) };
   const generations: GenerationsSelection | undefined = kind === 'generations' ? { kind: generationKind ?? '', mode: (generationMode ?? 'restore') as GenerationMode,
     ...(run ? { run } : {}), ...(since ? { since } : {}), ...(key ? { key } : {}), ...(generation !== undefined ? { generation } : {}), ...(held ? { held } : {}) } : undefined;
   if (generations) {
@@ -541,7 +574,7 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
     ...(k === kind && k === 'receipt-compaction' ? { olderThan, includeFailures, force } : {}),
     ...(k === kind && k === 'rename-identity' ? { from, close } : {}), ...(k === kind && afterPage !== undefined ? { afterPage } : {}),
     ...(k === kind && generations ? { generations } : {}), ...(k === kind && day ? { day } : {}), ...(k === kind && rules ? { rules } : {}),
-    ...(k === kind && k === 'agent-session-facts' ? { cwdPrefixes, sessions, principal } : {}),
+    ...(k === kind && k === 'agent-session-facts' ? { cwdPrefixes, sessions, principal } : {}), ...(k === kind && readersRequest ? { readers: readersRequest } : {}),
     ...(apply ? { stop: stop.signal, recordDatabaseStops: true } : {}) })).finally(() => releaseSignals?.());
   if (apply) clearHealthMemo(engine);
   const paidKinds = results.filter(r => r.paid).map(r => r.kind);
