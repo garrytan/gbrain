@@ -5008,8 +5008,8 @@
         "idempotent": true,
         "name": "requester_scope",
         "sql": {
-          "length": 2072,
-          "sha256": "b631dbd4ceca33ed40b55c2e9aaea7b1cebcb624158c9193037a0bb0d04728f8"
+          "length": 2079,
+          "sha256": "fcdb37ee34cc76e6eea960568c1c57d128061d53e8b19d2a8a83470eee414ad2"
         },
         "sqlFor": "absent",
         "transaction": "absent",
