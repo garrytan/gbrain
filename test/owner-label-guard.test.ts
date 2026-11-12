@@ -242,6 +242,21 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
   }), 180_000);
 
+  test('a labels-only accept keeps the owner tier an earlier dropped lowering left: a later agent drop is still held', () => repoless(async (b, reads) => {
+    const slug = 'notes/accept-after-drop-example', canary = 'canaryacceptdrop';
+    const labels = ['visibility: private', 'readable_by: [alice-example, ' + OWNER + ']'];
+    await seedOwnerPage(b.engine, SRC, slug, file(slug, labels, canary));
+    const rewrite = await put(b, slug, file(slug, labels, canary, 'An agent rewrote the body.'));
+    await decide(b, rewrite.trust_lowered.proposal_ref, 'reject');
+    expect((await pageRow(b.engine, SRC, slug)).tier).toBe('agent_written');
+    const widened = await put(b, slug, file(slug, ['visibility: private', 'readable_by: [alice-example, bob-example, ' + OWNER + ']'], canary, 'An agent rewrote the body.'));
+    const accepted = await decide(b, widened.privacy_labels_kept.proposal_ref, 'accept');
+    expect(accepted.detail).toMatchObject({ status: 'labelled', tier: 'agent_written' });
+    const dropped = await put(b, slug, file(slug, [], canary, 'An agent dropped the labels.'));
+    expect([...dropped.privacy_labels_kept?.keys ?? []].sort()).toEqual(['readable_by', 'visibility']);
+    expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
+  }), 180_000);
+
   test('a label door that clears the labels leaves no guard: the agent\'s own later label is its own to drop', () => repoless(async (b) => {
     const slug = 'notes/cleared-example', canary = 'canarycleared';
     await call(b, 'put_page', { slug, content: file(slug, ['readable_by: [alice-example, ' + OWNER + ']'], canary) });

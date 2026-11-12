@@ -147,7 +147,8 @@ export interface LabelGuard { tier: TrustTier | null; owner: { member: string; i
  * tier holds a page that is private by its labels or names readers when the write is below it: the stored tier (an
  * unclassified `unknown` page reads as operator_curated lowered by its frontmatter caps, as its marker does), raised to
  * the tier the owner's label door left (GST-2521, `page_label_guards`) and to the prior tier of every `lower_page`
- * proposal of the page since the owner last accepted one (pending, dismissed, reverted or undone). So owner-set labels,
+ * proposal of the page since the owner last accepted one (pending, dismissed, reverted or undone; an accept that wrote only
+ * the labels and kept an agent tier, `labels_applied`, vouches for nothing and is no cutoff). So owner-set labels,
  * earlier lowering edits, or a rejected or undone widening do not let an equal-tier write widen the page.
  * GST-2521: `owner` is set when the brain owner reads the page by its readers now (and the owner opt-in to read restricted
  * pages is off), so the write cannot take the owner out of them. `incoming` is the written frontmatter when known; a write
@@ -163,7 +164,8 @@ export async function privacyLabelGuard(engine: BrainEngine, row: Pick<WriteRequ
     const [guard] = await engine.executeRaw<{ owner_set: string | null; priors: (string | null)[] | null }>(`SELECT
       (SELECT tier FROM page_label_guards WHERE page_id = $1) AS owner_set,
       ARRAY(SELECT before_state->>'prior_tier' FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status <> 'accepted'
-        AND id > COALESCE((SELECT max(id) FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'), 0)) AS priors`,
+        AND id > COALESCE((SELECT max(id) FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'
+          AND after_state->>'resolution' IS DISTINCT FROM 'labels_applied'), 0)) AS priors`,
     [Number(page.id)]);
     tier = maxTrust(stored === 'unknown' ? minTrust(OWNER_TIER_FLOOR, ...frontmatterTrustCaps(labels)) : stored,
       ...[guard?.owner_set ?? null, ...(guard?.priors ?? [])].filter(isTrustTier));
