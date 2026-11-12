@@ -10,6 +10,27 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**The brain host can now set who reads a page without lowering its trust.** `gbrain repair visibility --slug <page> --readers alice-example,group:team-a` (or `--slugs-file <file>` for a long list, `--readers none` to remove the field) sets a page's `readable_by` through the same label-only door: the page keeps its tier and provenance, no `lower_page` proposal is filed, and its file changes only on the `readable_by` line. Before, the only way was a `put_page`, which lowered the page to "written by an agent". Readers are checked first: an unknown or disabled member or an unknown group refuses with nothing written, and a list that leaves out the brain owner refuses unless `--allow-without-owner` is passed, because `readable_by` binds the owner too. A list of thousands holds no run-wide lock: on a managed brain each admission window of pages is admitted together (Postgres publishes them in groups of up to 8), the Git effect commits the ready files together (up to 100 per commit), and `--json` counts them by effect state in `details.git`. A managed page with no file outside a declared `storage.db_only` path is now held `canonical_file_missing` with nothing written (it was refused as a failed `source_changed`), for every `repair visibility` write.
+
+**A visibility repair now closes a fenced fact instead of leaving a world copy beside it.** When `gbrain repair visibility --class facts` made a `## Facts` row private and the stored row was more trusted than the repair, the fence guard kept the original world row live and filed a contested private copy, so remote callers could still read the fact while the page and its file read as fixed. A write that only makes a fence row private now makes the stored row private in place, keeping its id and trust tier, and files no proposal. On a brain without managed persistence the repair makes the fenced row private itself, because that import does not re-project the fence. A write that makes a more trusted private row world is still held for the owner.
+
+### Itemized changes
+
+#### Set who reads a page, label-only (GST-2476, #9184)
+
+- `src/core/persistence/label-edit.ts`: the label edit also takes `readable_by`, written as a one-line list (`readable_by: [a, b]`); block lists and duplicate keys are declined. `LABEL_KEYS` is unchanged, so `gbrain trust backfill --label-lowerings` reads as before.
+- `src/core/repair/readers.ts` (new), `src/core/repair/visibility.ts`, `src/commands/repair.ts`: `gbrain repair visibility (--slug <slug>... | --slugs-file <file>) --readers <ids|none> [--allow-without-owner]`, preview-bound (`--apply --expect <hash>`), up to 10,000 pages per run; reader validation (`access_member_invalid`, owner rule); `details.git` effect counts on apply; a managed run admits each window of pages together (`applyBatch`, `publishMaintenancePages` under the run's batch id); a managed page with no canonical file outside `storage.db_only` held `canonical_file_missing`.
+- `src/core/repair/label-write.ts`: a readers run publishes its pages under one maintenance batch.
+- Tests: `test/readers-label-setter.test.ts` (managed Git source with tracked files, a `storage.db_only` page and a page with no file; repo-less brain with remote reads by member, a 150-page slugs file, refusals and `preview_changed`).
+
+#### A visibility repair closes a fenced fact (GST-2487, #9188)
+
+- `src/core/trust/fence-guard.ts`: a guarded row whose claim the writer kept and whose visibility it only narrowed (world to private) moves to the new row's position and turns private in place, instead of being detached and contested.
+- `src/core/repair/visibility.ts`: on a brain without managed persistence, a fenced fact row the label write made private in the fence is made private in the database too; `fact_left_readable` and `fact_left_world` stay for the rows that still cannot be closed.
+- Tests: `test/label-only-repairs.test.ts` (managed and repo-less, PGLite and Postgres) and `test/trust-guarded-supersession.test.ts` (narrowing applies in place; widening stays guarded).
+
 ## [0.60.685.0] - 2026-11-12
 
 **`remember` now tells the truth about a fact saved for something that has no page yet, a source that lives in Git keeps that fact in Git, and the brain owner's own agents save facts shared by default.** Three changes to how agents save and withdraw facts land together.
@@ -77,8 +98,6 @@ Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
 
 **Making a page private through an operator repair no longer lowers its trust or rewrites its file.** On a managed brain, an operator who added `visibility: private` to one page through a local `put_page`, or ran `gbrain repair visibility`, saw the page drop from "your notes" (operator_curated) to "written by an agent", a pending `lower_page` proposal only a typed token could settle, and a re-rendered file: a `slug` key removed, a `source_kind` value overwritten with `put_page`, keys reordered, and provenance stamps and a `trust_tier` marker added. Both repairs and `gbrain repair private-labels` now write through one label-only door. The page keeps its tier, no proposal is filed, and its file changes only on the label lines, with every other key, its order and the body kept byte for byte. A new slug-bound form, `gbrain repair visibility --slug <page>`, is the operator's single-page way to make a page private (preview first, then `--apply --expect <hash>`). A plain `put_page`, local or remote, is still an agent edit and lowers the page as before. `gbrain trust backfill --label-lowerings` lists every `lower_page` proposal as label-only or content, counted by proposer, so an operator can see which lowerings came from label-only writes; it changes nothing, and raising a page back stays a trust decision.
 
-**The brain host can now set who reads a page without lowering its trust.** `gbrain repair visibility --slug <page> --readers alice-example,group:team-a` (or `--slugs-file <file>` for a long list, `--readers none` to remove the field) sets a page's `readable_by` through the same label-only door: the page keeps its tier and provenance, no `lower_page` proposal is filed, and its file changes only on the `readable_by` line. Before, the only way was a `put_page`, which lowered the page to "written by an agent". Readers are checked first: an unknown or disabled member or an unknown group refuses with nothing written, and a list that leaves out the brain owner refuses unless `--allow-without-owner` is passed, because `readable_by` binds the owner too. A list of thousands holds no run-wide lock: on a managed brain each admission window of pages is admitted together (Postgres publishes them in groups of up to 8), the Git effect commits the ready files together (up to 100 per commit), and `--json` counts them by effect state in `details.git`. A managed page with no file outside a declared `storage.db_only` path is now held `canonical_file_missing` with nothing written (it was refused as a failed `source_changed`), for every `repair visibility` write.
-
 ### Itemized changes
 
 - `src/core/persistence/label-edit.ts` (new): the `label_edit` intent (`set` and `remove` over `visibility`, `access`, `confidentiality`) and the line editor that applies it to a file's frontmatter, or declines a label line it cannot edit as one line.
@@ -89,10 +108,6 @@ Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
 - `src/core/repair/private-labels.ts`: clears and restores carry their label edit, so the file loses or regains only those lines.
 - `src/core/trust/label-lowerings.ts` (new), `src/cli/commands/trust.ts`: `gbrain trust backfill --label-lowerings [--source ID] [--json]`, read-only.
 - Tests: `test/label-only-repairs.test.ts` (managed Git source and repo-less brain, PGLite and Postgres); `test/owner-member-boundary.test.ts` pins that the owner reads its private pages and pages that list it, and never another member's restricted page, on every read path.
-- `src/core/persistence/label-edit.ts`: the label edit also takes `readable_by`, written as a one-line list (`readable_by: [a, b]`); block lists and duplicate keys are declined. `LABEL_KEYS` is unchanged, so `gbrain trust backfill --label-lowerings` reads as before.
-- `src/core/repair/readers.ts` (new), `src/core/repair/visibility.ts`, `src/commands/repair.ts`: `gbrain repair visibility (--slug <slug>... | --slugs-file <file>) --readers <ids|none> [--allow-without-owner]`, preview-bound (`--apply --expect <hash>`), up to 10,000 pages per run; reader validation (`access_member_invalid`, owner rule); `details.git` effect counts on apply; a managed run admits each window of pages together (`applyBatch`, `publishMaintenancePages` under the run's batch id); a managed page with no canonical file outside `storage.db_only` held `canonical_file_missing`.
-- `src/core/repair/label-write.ts`: a readers run publishes its pages under one maintenance batch.
-- Tests: `test/readers-label-setter.test.ts` (managed Git source with tracked files, a `storage.db_only` page and a page with no file; repo-less brain with remote reads by member, a 150-page slugs file, refusals and `preview_changed`).
 
 ## [0.60.682.0] - 2026-11-11
 

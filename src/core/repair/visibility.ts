@@ -262,11 +262,14 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
 
 /**
  * One fact item: a fenced row gets `private` in its page's `## Facts` fence by a
- * revision-bound label write (labelWrite; the projection then stores it private); a
- * database-only row is updated in place (a database-only maintenance request
- * on a managed brain). A page stored in segments is left for the owner. A fenced row that stays world and live is
- * reported, never as done: `fact_left_readable` when remote callers can read it now, `fact_left_world` when only its
- * page's privacy hides it (worldFactsFromPrivateSources `readable`).
+ * revision-bound label write (labelWrite; the projection then stores it private, and a
+ * more trusted row turns private in place, trust/fence-guard.ts); a database-only row is
+ * updated in place (a database-only maintenance request on a managed brain). On a brain
+ * without managed persistence the page import does not re-project the fence, so the fenced
+ * row is made private in place there too, keeping its id and tier (GST-2487). A page stored
+ * in segments is left for the owner. A fenced row that stays world and live is reported,
+ * never as done: `fact_left_readable` when remote callers can read it now, `fact_left_world`
+ * when only its page's privacy hides it (worldFactsFromPrivateSources `readable`).
  */
 const leftWorld = (fact: { id: number; readable: boolean }, why: string): RepairItemOutcome => fact.readable
   ? { applied: false, outcome: 'fact_left_readable', detail: { fact_id: Number(fact.id) }, reason: `${why}; the fact row is still world, so remote callers can still read it` }
@@ -296,6 +299,9 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
   if (held) return held;
   const [stored] = await ctx.engine.executeRaw<{ visibility: string; live: boolean }>('SELECT visibility, expired_at IS NULL AS live FROM facts WHERE id=$1', [factId]);
   if (!stored || stored.visibility === 'private' || !stored.live) return true;
+  if (!await managedPersistenceEnabled(ctx.engine) && (await maintenanceTransaction(ctx.engine, tx => tx.executeRaw(
+    `UPDATE facts SET visibility='private' WHERE source_id=$1 AND id=$2 AND row_num=$3 AND visibility='world' AND expired_at IS NULL RETURNING id`,
+    [item.source_id, factId, fact.row_num]))).length > 0) return true;
   return leftWorld(fact, 'its fence row was written private, but the original row is more trusted than the repair and was kept beside it');
 }
 
