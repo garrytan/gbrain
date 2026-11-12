@@ -22,6 +22,10 @@
  *     an entry that is not an object (a hand-edited null) counts as unset
  *   skills.resolver.pinned      skill ids the harness always loads itself,
  *     never suggested (at most 1,024)
+ *   skills.resolver.per_harness.hermes.owner_sender_ids  the senders whose
+ *     turns get suggestions (Hermes's extra.sender_id); a turn from anyone
+ *     else, or with no sender, gets none. Unset or empty: every turn. The
+ *     same rule as the OpenClaw plugin's owner_sender_ids.
  */
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -101,13 +105,28 @@ export function laneTurnSettings(section: Record<string, unknown>, harness: stri
     const key = `${p}per_harness.${h}`;
     if (!(HARNESSES as readonly string[]).includes(h)) throw configInvalid(key, `names no harness (one of ${HARNESSES.join(', ')})`);
     if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
-    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match')) throw configInvalid(key, 'may hold only top_k and min_match');
+    if (Object.keys(o).some(k => k !== 'top_k' && k !== 'min_match' && (k !== 'owner_sender_ids' || h !== 'hermes'))) throw configInvalid(key, `may hold only top_k and min_match${h === 'hermes' ? ' and owner_sender_ids' : ''}`);
     const r = o as Record<string, unknown>;
     const parsed: LaneTurnSettings = {
       ...(r.top_k !== undefined ? { top_k: validateTopK(r.top_k, `${key}.top_k`) } : {}),
       ...(r.min_match !== undefined ? { min_match_strength: validateMinMatch(r.min_match, `${key}.min_match`) } : {}),
     };
+    if (h === 'hermes' && r.owner_sender_ids !== undefined) validateOwnerSenders(r.owner_sender_ids, `${key}.owner_sender_ids`);
     if (h === harness) mine = parsed;
   }
   return { ...global, ...mine };
+}
+
+export const OWNER_SENDERS_MAX = 64;
+
+export function validateOwnerSenders(v: unknown, key: string): string[] {
+  if (Array.isArray(v) && v.length <= OWNER_SENDERS_MAX && v.every(x => typeof x === 'string' && /^[\x21-\x7e]{1,128}$/.test(x))) return v as string[];
+  throw configInvalid(key, `must be a list of at most ${OWNER_SENDERS_MAX} sender ids (1-128 visible characters each)`);
+}
+
+/** The senders whose turns get suggestions on `harness` (Hermes only), or null for every turn. Call after laneTurnSettings, which validates it. */
+export function laneOwnerSenders(section: Record<string, unknown>, harness: string): string[] | null {
+  const mine = (section.per_harness as Record<string, unknown> | undefined)?.[harness] as { owner_sender_ids?: string[] } | null | undefined;
+  const ids = harness === 'hermes' && mine && typeof mine === 'object' ? mine.owner_sender_ids : undefined;
+  return ids?.length ? ids : null;
 }

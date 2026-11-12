@@ -14,6 +14,13 @@
  * records the approval for this exact command in Hermes's own allowlist, the
  * way `gbrain setup codex` writes its hook trust entries. Removal strips the
  * block and that approval.
+ *
+ * The same block also carries the skill-resolver lane's entry
+ * (`gbrain setup hermes --skill-loading resolve`, skill-resolver-hook.ts):
+ * config.yaml can hold one top-level `hooks:` key, so both lanes share one
+ * marked block, each entry with its own approval. Each lane writes and removes
+ * only its own entry, so declining the brain-first rule keeps the resolver
+ * and the reverse; the block goes when its last entry does.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -22,6 +29,7 @@ import { acquireNativeLockSync } from '../persistence/native-lock.ts';
 import { loadBoundedYaml } from '../data-frontmatter.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../managed-block.ts';
 import { renderBrainFirstTurnRule, writeUnlessChanged, type BrainFirstAccess } from './brain-first.ts';
+import { isSkillResolverCommand } from './skill-resolver-lane.ts';
 
 const MARKERS: BlockMarkers = { begin: '# gbrain:turn-rule:begin', end: '# gbrain:turn-rule:end', label: 'turn-rule', rerun: 'gbrain setup hermes --instructions-only' };
 const EVENT = 'pre_llm_call';
@@ -34,13 +42,29 @@ export function hermesTurnHookCommand(access: BrainFirstAccess): string {
   return `/bin/echo '${JSON.stringify({ context: renderBrainFirstTurnRule(access, 'hermes') }).replace(/'/g, '\\u0027')}'`;
 }
 
-const commandIn = (interior: string | undefined): string | null => {
-  const quoted = /command: (".*")/.exec(interior ?? '')?.[1];
-  return quoted ? (JSON.parse(quoted) as string) : null;
+/** The lanes that own an entry in gbrain's block, in the order the block lists them, with each entry's timeout. */
+export type HermesHookLane = 'turn-rule' | 'skill-resolver';
+const LANES: Record<HermesHookLane, { timeout: number; what: string }> = {
+  'turn-rule': { timeout: 10, what: 'per-turn rule hook' },
+  'skill-resolver': { timeout: 15, what: 'skill-resolver lane hook' },
 };
+const laneOf = (command: string): HermesHookLane => (isSkillResolverCommand(command) ? 'skill-resolver' : 'turn-rule');
 
-function hookYaml(command: string): string {
-  return `hooks:\n  ${EVENT}:\n    - command: ${JSON.stringify(command)}\n      timeout: 10\n`;
+/** Each lane's command in the block (the first entry of each lane). */
+function entriesIn(interior: string | undefined): Partial<Record<HermesHookLane, string>> {
+  const out: Partial<Record<HermesHookLane, string>> = {};
+  for (const m of (interior ?? '').matchAll(/command: (".*")/g)) {
+    const command = JSON.parse(m[1]!) as string;
+    out[laneOf(command)] ??= command;
+  }
+  return out;
+}
+
+const commandIn = (interior: string | undefined): string | null => entriesIn(interior)['turn-rule'] ?? null;
+
+function hooksYaml(entries: Partial<Record<HermesHookLane, string>>): string {
+  const items = (Object.keys(LANES) as HermesHookLane[]).flatMap((lane) => (entries[lane] ? [`    - command: ${JSON.stringify(entries[lane])}\n      timeout: ${LANES[lane].timeout}\n`] : []));
+  return `hooks:\n  ${EVENT}:\n${items.join('')}`;
 }
 
 interface Allowlist { approvals: Array<Record<string, unknown>> }
@@ -93,9 +117,26 @@ function revoke(hermesHome: string, command: string): void {
 
 /** Write or update the hook (accepted decision). Never throws: anything gbrain cannot edit safely is printed to add by hand. */
 export function syncHermesTurnHook(opts: { hermesHome: string; access: BrainFirstAccess; dryRun: boolean }): HermesTurnHookOutcome {
+  return syncHermesHook({ hermesHome: opts.hermesHome, lane: 'turn-rule', command: hermesTurnHookCommand(opts.access), dryRun: opts.dryRun });
+}
+
+/** A `pre_llm_call` entry with exactly this command in config.yaml outside gbrain's block (pasted by hand from a printed snippet). */
+function pastedIn(doc: Record<string, unknown> | null | undefined, command: string): boolean {
+  const entries = (doc?.hooks as Record<string, unknown> | undefined)?.[EVENT];
+  return Array.isArray(entries) && entries.some((e) => (e as { command?: unknown } | null)?.command === command);
+}
+
+/**
+ * Write or update one lane's entry in gbrain's block, keeping the other
+ * lane's. Never throws: anything gbrain cannot edit safely is printed to add
+ * by hand. The resolver's entry pasted by hand under the user's own `hooks:`
+ * (the printed snippet) is kept and approved.
+ */
+export function syncHermesHook(opts: { hermesHome: string; lane: HermesHookLane; command: string; dryRun: boolean }): HermesTurnHookOutcome {
   const path = join(opts.hermesHome, 'config.yaml');
-  const command = hermesTurnHookCommand(opts.access);
-  const print = (why: string): HermesTurnHookOutcome => ({ action: 'print', path, detail: `${why}; add this to ${path} and approve it when Hermes asks (non-interactive runs: HERMES_ACCEPT_HOOKS=1)`, snippet: hookYaml(command) });
+  const { command, lane } = opts;
+  const what = LANES[lane].what;
+  const print = (why: string): HermesTurnHookOutcome => ({ action: 'print', path, detail: `${why}; add this to ${path} and approve it when Hermes asks (non-interactive runs: HERMES_ACCEPT_HOOKS=1)`, snippet: hooksYaml({ [lane]: command }) });
   if (!existsSync(opts.hermesHome)) return print(`${opts.hermesHome} does not exist yet`);
   try {
     const missing = !existsSync(path);
@@ -105,22 +146,28 @@ export function syncHermesTurnHook(opts: { hermesHome: string; access: BrainFirs
     if (probe.state === 'absent') {
       const doc = loadBoundedYaml(text) as Record<string, unknown> | null | undefined;
       if (doc !== null && doc !== undefined && typeof doc !== 'object') return print('config.yaml is not a YAML mapping');
+      if (doc && lane === 'skill-resolver' && pastedIn(doc as Record<string, unknown>, command)) {
+        readAllowlist(join(opts.hermesHome, ALLOWLIST));
+        if (!opts.dryRun) approve(opts.hermesHome, command);
+        return { action: 'keep', path, detail: `${what} (${EVENT}) in ${path}, added by hand` };
+      }
       if (doc && 'hooks' in doc) return print('config.yaml already has a hooks: section, which gbrain does not edit');
     }
     readAllowlist(join(opts.hermesHome, ALLOWLIST));
-    const next = spliceBlock(MARKERS, text, hookYaml(command));
+    const entries = entriesIn(probe.interior);
+    const next = spliceBlock(MARKERS, text, hooksYaml({ ...entries, [lane]: command }));
     if (probe.state === 'absent' && !(loadBoundedYaml(next) as Record<string, unknown> | null)?.hooks) return print('config.yaml would not parse with the hook appended');
     if (next === text) {
       if (!opts.dryRun) approve(opts.hermesHome, command);
-      return { action: 'keep', path, detail: `per-turn rule hook (${EVENT}) in ${path}` };
+      return { action: 'keep', path, detail: `${what} (${EVENT}) in ${path}` };
     }
     if (!opts.dryRun) {
       writeUnlessChanged(path, text, missing, next);
-      const previous = commandIn(probe.interior);
+      const previous = entries[lane];
       if (previous && previous !== command) revoke(opts.hermesHome, previous);
       approve(opts.hermesHome, command);
     }
-    return { action: 'write', path, detail: `per-turn rule hook (${EVENT}) in ${path}, approved in ${ALLOWLIST}` };
+    return { action: 'write', path, detail: `${what} (${EVENT}) in ${path}, approved in ${ALLOWLIST}` };
   } catch (e) {
     return print(`config.yaml could not be updated (${(e as Error).message})`);
   }
@@ -128,20 +175,46 @@ export function syncHermesTurnHook(opts: { hermesHome: string; access: BrainFirs
 
 /** Strip the hook and its approval (decline or --remove). Never throws. */
 export function removeHermesTurnHook(opts: { hermesHome: string; dryRun: boolean }): HermesTurnHookOutcome {
+  return removeHermesHook({ ...opts, lane: 'turn-rule' });
+}
+
+/** Strip one lane's entry and its approval, keeping the other lane's; the block goes with its last entry. Never throws. */
+export function removeHermesHook(opts: { hermesHome: string; lane: HermesHookLane; dryRun: boolean }): HermesTurnHookOutcome {
   const path = join(opts.hermesHome, 'config.yaml');
+  const what = LANES[opts.lane].what;
   try {
-    if (!existsSync(path)) return { action: 'skip', path, detail: `no per-turn rule hook in ${path}` };
+    if (!existsSync(path)) return { action: 'skip', path, detail: `no ${what} in ${path}` };
     const text = readFileSync(path, 'utf8');
     const probe = probeBlock(MARKERS, text);
-    if (probe.state !== 'present') return { action: 'skip', path, detail: `no per-turn rule hook in ${path}` };
-    const command = commandIn(probe.interior);
+    const entries = probe.state === 'present' ? entriesIn(probe.interior) : {};
+    const command = entries[opts.lane];
+    if (probe.state !== 'present' || (!command && (opts.lane === 'skill-resolver' || Object.keys(entries).length > 0))) return { action: 'skip', path, detail: `no ${what} in ${path}` };
+    const rest = { ...entries, [opts.lane]: undefined };
+    const left = Object.values(rest).some(Boolean);
     if (!opts.dryRun) {
-      writeUnlessChanged(path, text, false, removeBlock(MARKERS, text).text);
+      writeUnlessChanged(path, text, false, left ? spliceBlock(MARKERS, text, hooksYaml(rest)) : removeBlock(MARKERS, text).text);
       if (command) revoke(opts.hermesHome, command);
     }
-    return { action: 'remove', path, detail: `per-turn rule hook removed from ${path}` };
+    return { action: 'remove', path, detail: `${what} removed from ${path}` };
   } catch (e) {
-    return { action: 'skip', path, detail: `per-turn rule hook in ${path} left as it is (${(e as Error).message})` };
+    return { action: 'skip', path, detail: `${what} in ${path} left as it is (${(e as Error).message})` };
+  }
+}
+
+/** Read-only: is the skill-resolver lane's entry in config.yaml (gbrain's block, else pasted by hand), and does Hermes's allowlist approve it? */
+export function inspectHermesResolverHook(hermesHome: string): { state: 'absent' | 'unapproved' | 'approved'; path: string; command?: string } {
+  const path = join(hermesHome, 'config.yaml');
+  try {
+    const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    const probe = probeBlock(MARKERS, text);
+    const doc = probe.state === 'absent' ? loadBoundedYaml(text) as Record<string, unknown> | null | undefined : null;
+    const pasted = doc && typeof doc === 'object' ? ((doc.hooks as Record<string, unknown> | undefined)?.[EVENT] as Array<{ command?: unknown }> | undefined) : undefined;
+    const command = probe.state === 'present' ? entriesIn(probe.interior)['skill-resolver']
+      : Array.isArray(pasted) ? pasted.map((e) => e?.command).find((c): c is string => typeof c === 'string' && isSkillResolverCommand(c)) : undefined;
+    if (!command) return { state: 'absent', path };
+    return { state: readAllowlist(join(hermesHome, ALLOWLIST)).approvals.some((e) => approves(e, command)) ? 'approved' : 'unapproved', path, command };
+  } catch {
+    return { state: 'absent', path };
   }
 }
 

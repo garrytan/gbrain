@@ -1,8 +1,8 @@
 /**
  * `skill_resolver` (GBRA-377 PR B): the skill-resolver hook lane that
- * `gbrain setup <claude-code|codex> --skill-loading resolve` turns on
+ * `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` turns on
  * (src/core/skills/resolver/hook-lane.ts). Per harness it reports the lane's
- * hook (wired, untrusted in Codex, outdated when it predates the SessionStart
+ * hook (wired, untrusted in Codex or unapproved in Hermes, outdated when it predates the SessionStart
  * compaction reset, or missing), each catalog's freshness
  * (the content tier: source re-read, index re-hashed) and the recent
  * outcomes and error codes from the lane log. It emits nothing when the
@@ -24,7 +24,7 @@ import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState 
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
 
 const name = 'skill_resolver';
-const HARNESSES: ResolverHarness[] = ['claude-code', 'codex'];
+const HARNESSES: ResolverHarness[] = ['claude-code', 'codex', 'hermes'];
 /** Lane-log lines doctor reads (the newest), and the tail it reads them from. */
 const RECENT_LINES = 200;
 const LOG_TAIL_BYTES = 64 * 1024;
@@ -105,12 +105,12 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} The hook lane prints nothing until it can read it.`, details: { ...details, code: 'skill_resolver_config_unreadable' },
       fix: { consent: [], actor: 'user', requires_exclusive: false, verify: doctorVerify(name), docs: 'docs/guides/skill-resolver.md#skill_resolver_config_unreadable',
         why: 'gbrain never rewrites a config file it cannot parse; the lane and setup leave it alone.',
-        user_message: `gbrain's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: gbrain setup <claude-code|codex> --skill-loading resolve` } };
+        user_message: `gbrain's config file (${join(configDir(), 'config.json')}) is not valid JSON, so the skill resolver is paused. Fix or move it, then run: gbrain setup <claude-code|codex|hermes> --skill-loading resolve` } };
   }
   const broken = v.harnesses.find((h) => h.on && (h.hook !== 'wired' || !h.catalogs.some((c) => isTurnCatalog(h.harness, c.name))));
   if (broken) {
     const what = broken.hook === 'outdated' ? `its hook has no SessionStart entry (installed before the compaction reset), so skills offered before a compaction are not offered again; ${setupArgv(broken.harness).join(' ')} adds it`
-      : `${broken.hook === 'untrusted' ? 'its Codex hook is not trusted' : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing'}, so no skills block is added`;
+      : `${broken.hook === 'untrusted' ? (broken.harness === 'hermes' ? 'its Hermes hook is not approved in shell-hooks-allowlist.json (hermes hooks doctor shows it)' : 'its Codex hook is not trusted') : broken.hook === 'absent' ? 'its hook entry is missing' : 'its user catalog is missing'}, so no skills block is added`;
     return { name, status: 'warn', message: `${describeSkillResolver(v)} ${broken.harness}: the resolver is on but ${what}.`, details,
       fix: { argv: setupArgv(broken.harness), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name),
         why: `Rebuilds the ${broken.harness} user catalog and rewrites only the skill-resolver hook entry; --skill-loading off removes it instead.` } };

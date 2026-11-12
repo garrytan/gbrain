@@ -1,12 +1,14 @@
 /**
- * skill-resolver-setup.ts — `gbrain setup <claude-code|codex> --skill-loading
- * resolve` (and its undo, `--skill-loading off|spring` and `setup --remove`).
+ * skill-resolver-setup.ts — `gbrain setup <claude-code|codex|hermes>
+ * --skill-loading resolve` (and its undo, `--skill-loading off|spring` and `setup --remove`).
  *
  * On: build the harness's user-level catalog (<harness>-user, from
- * ~/.claude/skills; Codex: ~/.agents/skills and CODEX_HOME/skills) and, for
+ * ~/.claude/skills; Codex: ~/.agents/skills and CODEX_HOME/skills; Hermes:
+ * $HERMES_HOME/skills) and, for
  * Claude Code, claude-code-plugins from its enabled user-scope plugins; only
  * when those builds indexed at least one skill, write the file-plane keys
- * (skill-resolver-config.ts) and the lane's hook (skill-resolver-hook.ts).
+ * (skill-resolver-config.ts) and the lane's hook (skill-resolver-hook.ts);
+ * Hermes also gets the operator's pins in SOUL.md (hermes-skill-pins.ts).
  * Otherwise nothing is written and the result carries
  * skill_resolver_setup_incomplete with the scanned directories. A re-run with
  * a fresh catalog, the keys and the hook in place changes nothing. It ends
@@ -30,9 +32,10 @@ import { CLAUDE_PLUGINS_CATALOG, logsDir, sessionsDir, skillIndexRoot } from '..
 import { resolveSkills } from '../skills/resolver/resolve.ts';
 import { claudePluginRoots, readDirSources } from '../skills/resolver/sources.ts';
 import { readResolverConfig, resolverHarnesses, setResolverHarness } from './skill-resolver-config.ts';
-import { inspectSkillResolverHook, removeSkillResolverHook, syncSkillResolverHook, type ResolverHarness, type ResolverHookPaths } from './skill-resolver-hook.ts';
+import { syncHermesPins } from './hermes-skill-pins.ts';
+import { hermesHomeDir, inspectSkillResolverHook, removeSkillResolverHook, syncSkillResolverHook, type ResolverHarness, type ResolverHookPaths } from './skill-resolver-hook.ts';
 
-export interface ResolverStep { step: 'catalog' | 'config' | 'hook' | 'state'; action: 'write' | 'keep' | 'remove' | 'skip'; detail: string }
+export interface ResolverStep { step: 'catalog' | 'config' | 'hook' | 'pins' | 'state'; action: 'write' | 'keep' | 'remove' | 'skip'; detail: string }
 export interface ResolverSetupError { code: 'skill_resolver_setup_incomplete' | 'skill_resolver_config_unreadable'; message: string; scanned: string[] }
 export interface ResolverSetupResult {
   harness: ResolverHarness;
@@ -75,6 +78,7 @@ async function syncPluginCatalog(home: string, dryRun: boolean): Promise<{ skill
 /** The user-level skill directories a harness loads natively, whether or not they exist. */
 export function harnessSkillDirs(harness: ResolverHarness): string[] {
   if (harness === 'claude-code') return [claudeUserSkillsDir()];
+  if (harness === 'hermes') return [join(hermesHomeDir(), 'skills')];
   return [join(process.env.HOME?.trim() || '', '.agents', 'skills'), join(dirname(codexConfigPath()), 'skills')];
 }
 
@@ -133,6 +137,10 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
   const hook = syncSkillResolverHook({ harness, gbrainBin: opts.gbrainBin, gbrainHome: opts.gbrainHome, paths: opts.paths, dryRun });
   if (hook.action === 'refuse') return { ...out, error: incomplete(dirs, hook.detail, 'The catalog and the config keys were written; re-run after fixing that.') };
   out.steps.push({ step: 'hook', action: hook.action === 'keep' ? 'keep' : 'write', detail: hook.detail });
+  if (harness === 'hermes') {
+    const pins = syncHermesPins({ home, hermesHome: opts.paths?.hermesHome ?? hermesHomeDir(), dryRun });
+    if (pins) out.steps.push({ step: 'pins', action: pins.action, detail: pins.detail });
+  }
   if (dryRun) return out;
 
   const built = [...(skills ? [catalog] : []), ...(pluginSkills ? [CLAUDE_PLUGINS_CATALOG] : [])];
@@ -161,6 +169,10 @@ export async function removeSkillResolverSetup(opts: { harness: ResolverHarness;
   if (cfg.state === 'unreadable') return { ...out, error: { code: 'skill_resolver_config_unreadable', scanned: [], message: `${cfg.path} cannot be read (${cfg.why}), so setup did not touch it or anything else for the skill resolver.` } };
   const hook = removeSkillResolverHook({ harness, paths: opts.paths, dryRun });
   if (hook.action === 'remove') out.steps.push({ step: 'hook', action: 'remove', detail: hook.detail });
+  if (harness === 'hermes') {
+    const pins = syncHermesPins({ home, hermesHome: opts.paths?.hermesHome ?? hermesHomeDir(), off: true, dryRun });
+    if (pins) out.steps.push({ step: 'pins', action: pins.action, detail: pins.detail });
+  }
   const keys = setResolverHarness(cfg, harness, false, dryRun);
   const left = resolverHarnesses(cfg.state === 'ok' ? cfg.doc : null).filter((h) => h !== harness);
   if (keys.changed) out.steps.push({ step: 'config', action: 'remove', detail: `${left.length ? `${harness} from skills.resolver.harnesses` : 'skills.resolver.enabled and skills.resolver.harnesses'} in ${cfg.path}${keys.deletedFile ? ' (the file held nothing else, so it was removed)' : ''}` });

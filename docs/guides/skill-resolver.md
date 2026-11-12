@@ -9,7 +9,7 @@ model.
 
 - **Off by default.** Nothing changes until you build a catalog and wire a
   harness to call `gbrain skills resolve`, or turn on the hook lane with
-  `gbrain setup <claude-code|codex> --skill-loading resolve` (OpenClaw: the
+  `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw: the
   plugin below). Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
@@ -94,21 +94,37 @@ per-turn hook that puts the block in front of the model on every prompt:
 `--dry-run` lists every write, and re-running changes nothing. A bare
 `gbrain setup <harness>` refreshes a lane that is on.
 
-**Hermes** runs the same lane as a `pre_llm_call` shell hook. Hermes splits
-the command without a shell and needs its first word to be a path that
-exists, so pass the environment through `/usr/bin/env` and name gbrain by its
-absolute path:
-`/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes`.
-Setup does not wire it yet, so build `hermes-user` yourself
-(`gbrain skills index build --catalog hermes-user --dir ~/.hermes/skills
---harness hermes`), add `hermes` to `skills.resolver.harnesses` in
-`~/.gbrain/config.json` by hand (`gbrain config set` refuses that key, which
-setup owns) and set `skills.resolver.enabled` to `true` there; the lane is
-off without it. Doctor's `skill_resolver` check does not cover Hermes yet. The lane
-reads `extra.user_message`, `session_id` and `cwd` from the hook's stdin and
-answers `{"context": "<block>"}`. Hermes sends the whole conversation history
-on every turn, so the lane streams stdin and keeps only those three strings
-(each capped at 8 KB): a history of any size is read, never refused.
+**Hermes**: `gbrain setup hermes --skill-loading resolve` builds `hermes-user`
+from `$HERMES_HOME/skills` (nested category folders included) and adds the
+lane's `pre_llm_call` entry to gbrain's marked `hooks:` block in
+`$HERMES_HOME/config.yaml`, the same block that carries the brain-first turn
+rule, approving it in `shell-hooks-allowlist.json`. Each lane owns only its
+own entry: `--no-instructions` drops the turn rule and keeps the resolver,
+`--skill-loading off` the reverse, and the block goes with its last entry.
+Hermes splits the command like a shell would but runs no shell, so it starts
+with `/usr/bin/env`:
+`/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver <launcher> /abs/path/to/gbrain hook user-prompt --harness hermes`.
+When config.yaml already has a `hooks:` section of yours, setup refuses with
+the entry to paste under it; once pasted, the next run approves and keeps it.
+A Hermes with no SOUL.md still gets the resolver. `hermes hooks doctor` checks
+the entry on the Hermes host, and gbrain's doctor `skill_resolver` check
+covers Hermes.
+
+The lane reads `extra.user_message`, `session_id`, `cwd`, `extra.sender_id`,
+`extra.is_first_turn` and the length of `extra.conversation_history` from
+the hook's stdin and answers `{"context": "<block>"}`. Hermes sends the whole
+conversation history on every turn, so the lane streams stdin and keeps only
+those fields (each string capped at 8 KB): a history of any size is read,
+never refused. Hermes compacts in place, keeping the session id, and tells
+hooks nothing, so a first turn, or a history shorter than the last turn saw,
+starts the session's dedupe fresh. To show suggestions only on turns from
+some senders (a group chat), list them:
+`gbrain config set skills.resolver.per_harness.hermes.owner_sender_ids <id>,<id>`;
+a turn from anyone else, or with no sender, then gets no block.
+
+Pinned skills for Hermes (`gbrain skills pin add <id> --catalog hermes-user`)
+go in a marked block in `$HERMES_HOME/SOUL.md` while the lane is on, so every
+turn sees them; with no pins there is no block, and SOUL.md is never created.
 
 The lane runs the resolver in the hook process (never through `gbrain serve`),
 so it works with serve down and with no brain. Each block names the skill ids
@@ -146,7 +162,7 @@ The lane always exits 0 and prints nothing when it cannot deliver:
 - **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
   0.165 and later) resets the session, so skills can be offered again. A Codex
   install from before gets the SessionStart group on its next setup run.
-  Hermes has no compaction event yet.
+  Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
 Each turn appends one line (outcome, error code, duration, catalogs; never
 turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,

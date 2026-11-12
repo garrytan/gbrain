@@ -43,6 +43,7 @@ import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE, registrationA
 import { hookLauncherPath } from '../core/setup/hook-launcher.ts';
 import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
 import { describeResolverSetup, removeSkillResolverSetup, syncSkillResolverSetup, type ResolverSetupResult } from '../core/setup/skill-resolver-setup.ts';
+import type { ResolverHarness } from '../core/setup/skill-resolver-hook.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { peekLock } from '../core/pglite-lock.ts';
 import { claudePluginProvidesName, codexPluginProvidesName } from '../core/bootstrap/plugin-lanes.ts';
@@ -181,10 +182,11 @@ Flags:
                        gbrain's bundled skills beside the brain-first block (about
                        1.5k tokens) and loads a skill's full text only when a task
                        matches (gbrain bundled-skill <name>, from this gbrain).
-                       resolve (claude-code, codex) indexes the harness's own skills
-                       (~/.claude/skills; Codex: ~/.agents/skills, CODEX_HOME/skills)
-                       and adds a separate per-turn hook that names the few skills
-                       that fit each prompt (word match; nothing leaves the machine).
+                       resolve (claude-code, codex, hermes) indexes the harness's own
+                       skills (~/.claude/skills; Codex: ~/.agents/skills,
+                       CODEX_HOME/skills; Hermes: $HERMES_HOME/skills) and adds a
+                       separate per-turn hook that names the few skills that fit
+                       each prompt (word match; nothing leaves the machine).
                        off removes what an earlier run wrote. The
                        choice is remembered; GBRAIN_SKILL_LOADING sets it too.
   --skills-index-only  Refresh every skills index recorded for this harness (its
@@ -300,8 +302,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   const envLoading = process.env[SKILL_LOADING_ENV]?.trim();
   if (flagLoading === undefined && envLoading && envLoading !== 'resolve' && !isSkillLoading(envLoading)) return new InvalidSkillLoadingEnv(envLoading).message;
   const openclaw = positionals[0] === 'openclaw';
-  const resolverHarness = positionals[0] === 'claude-code' || positionals[0] === 'codex' || openclaw;
-  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code, Codex and OpenClaw (claude-code, codex, openclaw); other harnesses call gbrain skills resolve from their own adapter (docs/guides/skill-resolver.md)';
+  const resolverHarness = positionals[0] === 'claude-code' || positionals[0] === 'codex' || positionals[0] === 'hermes' || openclaw;
+  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code, Codex, Hermes and OpenClaw (claude-code, codex, hermes, openclaw); other harnesses call gbrain skills resolve from their own adapter (docs/guides/skill-resolver.md)';
   if (flagLoading === 'shadow' && !openclaw) return '--skill-loading shadow is for openclaw only (it resolves and logs each turn without showing the model anything)';
   const agentFlags = args.flatMap((a, i) => (a === '--agent' ? [args[i + 1] ?? ''] : []));
   if (agentFlags.some((a) => !/^[\w.@:-]{1,128}$/.test(a))) return '--agent needs an OpenClaw agent id';
@@ -902,12 +904,12 @@ function removeSkillsFor(harness: BrainFirstHarness, where: { scope?: WiringScop
 }
 
 /**
- * The skill-resolver lane for this run (claude-code, codex): --skill-loading
+ * The skill-resolver lane for this run (claude-code, codex, hermes): --skill-loading
  * resolve turns it on, off or spring turns it off, and with no choice a lane
  * that is on is refreshed. Null when there is nothing to do, so an install
  * that never turned it on gets no new output.
  */
-async function resolverFor(harness: SetupHarnessId, flags: SetupFlags, launcher: string): Promise<ResolverSetupResult | null> {
+async function resolverFor(harness: ResolverHarness, flags: SetupFlags, launcher: string): Promise<ResolverSetupResult | null> {
   const home = configDir();
   if (flags.skillResolver === 'off' || (flags.remove && flags.skillResolver !== 'on')) return removeSkillResolverSetup({ harness, home, dryRun: flags.dryRun });
   const cfg = readResolverConfig(home);
@@ -1025,7 +1027,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   // Loud failure: an accepted install whose per-turn hook does not load exits non-zero and names the harness's own check.
   // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.
   const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' ? verifyTurnHook(harness, { projectDir }) : null;
-  const resolver = harness === 'claude-code' || harness === 'codex' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
+  const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags) : null;
   const code = instructions?.action === 'preserve' || skillsFailed(skills) || (check && !check.ok) || resolver?.error ? 1 : 0;
   if (out.json) {
@@ -1054,7 +1056,7 @@ async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> 
     return refuse(opError('invalid_params', `--skills-index-only needs a harness with an instruction file: ${BRAIN_FIRST_HARNESSES.join(', ')}`, 'Pass the harness whose skills index to refresh, e.g. gbrain setup claude-code --skills-index-only.'), out);
   }
   const outcomes = refreshSkillsIndexes(harness, { mode: flags.skillLoading, launcher: flags.gbrainBin, dryRun: flags.dryRun });
-  const resolver = harness === 'claude-code' || harness === 'codex' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
+  const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags, true) : null;
   const code = outcomes.some((o) => o.action === 'preserve') || resolver?.error ? 1 : 0;
   if (out.json) {
