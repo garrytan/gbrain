@@ -388,6 +388,14 @@ export class MinionWorker extends EventEmitter {
     return this._configurationReleaseResults;
   }
 
+  /** GST-2529: at most every min(wait, 5 s), ask whether a marked job is past its wait; a failed probe errs toward the drain. */
+  private async probeOverdueSuspect(): Promise<void> {
+    if (Date.now() < this.suspectProbeDueAt) return;
+    this.suspectProbeDueAt = Date.now() + Math.min(this.opts.watchdogSuspectWaitMs, SUSPECT_PROBE_EVERY_MS);
+    this.suspectOverdue = await this.queue.hasOverdueWatchdogSuspect(this.opts.queue, this.registeredNames, this.opts.watchdogSuspectWaitMs)
+      .catch(() => true);
+  }
+
   private probeDatabase(): Promise<DbProbeResult> {
     const dualPool = getConnectionRouting(this.engine)?.isDualPoolActive?.() === true;
     const getDiag = (this.engine as { getPoolDiagnostics?: () => PoolDiagnostics | null }).getPoolDiagnostics;
@@ -817,12 +825,7 @@ export class MinionWorker extends EventEmitter {
           }
         }
 
-        if (Date.now() >= this.suspectProbeDueAt) {
-          this.suspectProbeDueAt = Date.now() + Math.min(this.opts.watchdogSuspectWaitMs, SUSPECT_PROBE_EVERY_MS);
-          this.suspectOverdue = await this.queue.hasOverdueWatchdogSuspect(this.opts.queue, this.registeredNames, this.opts.watchdogSuspectWaitMs)
-            .catch(() => true);
-        }
-
+        await this.probeOverdueSuspect();
         if (!this.running) break;
 
         // Claim jobs up to concurrency limit — unless the system-wide pause

@@ -6577,6 +6577,7 @@
           "private pausedByMarkerAnnounced",
           "private pendingClaim",
           "private probeDatabase",
+          "private probeOverdueSuspect",
           "private queue",
           "private reconnectAfterConnectionError",
           "private releaseClaimForPause",
