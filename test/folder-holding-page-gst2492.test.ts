@@ -753,7 +753,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
       upkeep = await runExtractFacts(engine, { sourceId: 'default' });
     } finally { __setMaintenanceWriteWaitForTests(null); await lock.release(); }
     await runExtractFacts(engine, { sourceId: 'default' });
-    const [pending] = await engine.executeRaw<{ request_id: string }>("SELECT request_id::text AS request_id FROM persistence_requests WHERE slug = 'notes/garden-plan' AND intent->>'kind' = 'managed_maintenance_move_held_fact'");
+    const [pending] = await engine.executeRaw<{ request_id: string }>("SELECT request_id::text AS request_id FROM persistence_requests WHERE slug = 'notes/garden-plan' AND intent->>'kind' = 'managed_maintenance_move_held_fact' ORDER BY sequence");
     const request = pending!.request_id;
     expect(applied.held_facts).toEqual({ moved: 0, unmovable: [], complete: false, pending: [{ slug: 'notes/garden-plan', from: HOLD, request_id: request }] });
     expect(words).toContain(`Incomplete: the move of held facts off ${HOLD} to notes/garden-plan is accepted and still pending (request ${request}; gbrain write-request ${request} shows it)`);
