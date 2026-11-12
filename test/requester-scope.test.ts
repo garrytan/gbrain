@@ -45,6 +45,7 @@ import { ownerLines } from '../src/commands/access.ts';
 import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
+import { CODES } from '../src/core/error-registry.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -229,6 +230,27 @@ for (const kind of testBackends()) {
         expect(out.json.message).not.toContain('serves several');
         for (const canary of Object.values(PAGES)) expect(out.text).not.toContain(canary);
         expect((await withConfigReadsFailing(true, () => search('alice-key'))).isError).toBe(false);
+      } finally { await engine.unsetConfig('access.serves'); }
+    }, 60_000);
+
+    test('N2: on a brain pinned one, a double config-read failure is a wait-and-retry for an unbound read, saying the settings could not be read; bound callers read', async () => {
+      await engine.setConfig('access.serves', 'one');
+      try {
+        const out = await withConfigReadsFailing(true, () => search('old-unbound'));
+        expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code: 'requester_scope_unknown' });
+        const err = out.structured?.error;
+        expect(err).toMatchObject({ code: 'requester_scope_unknown', detail: 'retry_after_ms=2000',
+          fix: { next: 'wait', actor: 'provider', argv: ['gbrain', 'doctor', '--json'], consent: [], verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
+        expect({ retryable: out.json.retryable, class: out.json.class }).toEqual({ retryable: true, class: 'retryable' });
+        expect(err.fix.why).toContain('retry_after_ms=2000');
+        expect(CODES.requester_scope_unknown.why).toContain('config read');
+        expect(out.json.message).toContain("settings could not be read");
+        expect(out.json.message).toContain('not an access decision');
+        expect(out.json.message).not.toMatch(/denied|bound to nobody|serves several/i);
+        for (const canary of Object.values(PAGES)) expect(out.text).not.toContain(canary);
+        const bound = await withConfigReadsFailing(true, () => search('alice-key'));
+        expect(bound.isError).toBe(false);
+        expect(bound.meta?.access?.requester_scope).toBeUndefined();
       } finally { await engine.unsetConfig('access.serves'); }
     }, 60_000);
 

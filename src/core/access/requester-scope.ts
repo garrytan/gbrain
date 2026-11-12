@@ -161,11 +161,12 @@ export async function withServesReread<T extends Partial<CallerAccess>>(engine: 
 
 function requesterScopeUnknown(op: string, c: Connection): OperationError {
   return opError('requester_scope_unknown',
-    `Whether this brain serves one person or several could not be read (its config read failed twice), so ${op} from ${c.handle}, which is bound to no member, was refused and nothing was read.`,
+    `This brain's settings could not be read (whether it serves one person or several; the config read failed twice), so ${op} from ${c.handle}, which is bound to no member, was not answered and nothing was read. This is not an access decision: the same call can succeed once the database answers.`,
     'Retry the same call in a few seconds. If it keeps failing, the brain host\'s operator checks the database with gbrain doctor --json.',
     { retryable: true, detail: 'retry_after_ms=2000',
       fix: { argv: ['gbrain', 'doctor', '--json'], consent: [], actor: 'provider', requires_exclusive: false,
-        why: 'Nothing was read. Repeat the same call after about 2 s (retry_after_ms=2000); this read-only command shows whether the database is answering.' } });
+        why: 'Nothing was read. Repeat the same call after about 2 s (retry_after_ms=2000); this read-only command shows whether the database is answering.',
+        verify: { argv: ['gbrain', 'access', 'serves', '--json'] } } });
 }
 
 function requesterScopeRequired(op: string, c: Connection, serves: ServesPolicy, transport: Transport, reason: string): OperationError {
