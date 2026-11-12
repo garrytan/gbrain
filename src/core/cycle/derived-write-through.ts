@@ -397,12 +397,13 @@ export async function derivedWriteThrough(
 /** What a dream reverse-write did with one page's file. `held` is its `file_database_drift` entry. */
 export type DreamPageFileWrite = { written: true; path: string } | { written: false; held?: string; skipped?: string; error?: string };
 
-/** The file of a dream page: its record target (`resolvePageWriteTarget`), else the caller's brainDir layout; null when it has none. */
+/** The file of a dream page: its record target (`resolvePageWriteTarget`), else the caller's brainDir layout, unless brainDir is the native source's read-only checkout (#8935). */
 async function dreamFileTarget(engine: BrainEngine, brainDir: string, slug: string, sourceId: string, nativeSourceId: string):
   Promise<{ filePath: string; root: string } | { skipped: string }> {
   const target = await resolvePageWriteTarget(engine, slug, sourceId);
   if (!target.ok && (!brainDir || (target.skipped !== 'no_repo_configured' && target.skipped !== 'repo_not_found'))) return { skipped: target.skipped };
   if (target.ok) return { filePath: target.filePath, root: target.writeRoot };
+  if (sourceId !== nativeSourceId && await sourceMirrorReadOnly(engine, nativeSourceId)) return { skipped: 'read_only_checkout' };
   return { filePath: sourceId === nativeSourceId ? join(brainDir, `${slug}.md`) : join(brainDir, '.sources', sourceId, `${slug}.md`), root: brainDir };
 }
 
