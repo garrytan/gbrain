@@ -98,8 +98,9 @@ import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from
 import { originCommitted } from './sync-markers.ts';
 import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
 import { withTrustKeep } from './context.ts';
-import { isFenceEditWrite, pageGateTrust, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier } from '../trust/page-write.ts';
-import { compareTrust, type WriteTrust } from '../trust/tier.ts';
+import { holdPrivacyLabels, isFenceEditWrite, pageGateTrust, privacyLabelGuard, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier,
+  type HeldPrivacyLabels } from '../trust/page-write.ts';
+import { compareTrust, maxTrust, type WriteTrust } from '../trust/tier.ts';
 import { suppliedTrustMarkerView } from '../trust/channel.ts';
 import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
@@ -903,6 +904,19 @@ function assertPrivateRequestAllowed(row: WriteRequest, content: string, frontma
   assertPrivateRequestKept(row, frontmatter);
 }
 
+/**
+ * Core marking is owner-only: a remote write that omits always_load or
+ * core_priority keeps the stored values instead of silently un-coring the page.
+ */
+function remoteCoreMarkingKept(row: WriteRequest, snapshot: PageSnapshot | null, content: string, activePack: ParseOpts['activePack']): string {
+  if (!row.authority.remote || !snapshot || snapshot.page.deleted_at || typeof content !== 'string'
+    || (snapshot.page.frontmatter?.always_load === undefined && snapshot.page.frontmatter?.core_priority === undefined)) return content;
+  const parsed = parseMarkdown(content, row.slug, { activePack });
+  const carried = carryCoreMarking(snapshot.page.frontmatter, parsed.frontmatter ?? {});
+  if (carried.always_load === parsed.frontmatter?.always_load && carried.core_priority === parsed.frontmatter?.core_priority) return content;
+  return serializePageToMarkdown({ ...snapshot.page, ...parsed, frontmatter: carried }, parsed.tags);
+}
+
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
   preparedIntent: Parameters<typeof preparePageMutation>[3], signal: AbortSignal | undefined,
   options: NonNullable<Parameters<typeof preparePageMutation>[5]>): Promise<PreparedMutation> {
@@ -986,16 +1000,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     if (compiled_truth!==parsed.compiled_truth || timeline!==(parsed.timeline??'')) content=serializePageToMarkdown({
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
   }
-  // Core marking is owner-only: a remote write that omits always_load or
-  // core_priority keeps the stored values instead of silently un-coring the page.
-  if (row.authority.remote && snapshot && !snapshot.page.deleted_at && typeof content === 'string'
-    && (snapshot.page.frontmatter?.always_load !== undefined || snapshot.page.frontmatter?.core_priority !== undefined)) {
-    const parsed = parseMarkdown(content, row.slug, { activePack });
-    const carried = carryCoreMarking(snapshot.page.frontmatter, parsed.frontmatter ?? {});
-    if (carried.always_load !== parsed.frontmatter?.always_load || carried.core_priority !== parsed.frontmatter?.core_priority) {
-      content = serializePageToMarkdown({ ...snapshot.page, ...parsed, frontmatter: carried }, parsed.tags);
-    }
-  }
+  content = remoteCoreMarkingKept(row, snapshot, content, activePack);
   const projected = !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
   const writer = replacesTombstone || ((row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
     && (preparedIntent !== undefined || typeof p.expected_revision === 'string')) ? 'editing' : 'preserving';
@@ -1032,6 +1037,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // #5575: the page's tier, computed once before import so the write gate sees exactly it (ENG-18).
   const trust = provenanceWriteTrust(row, typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null, snapshot?.page.frontmatter);
   const gateTrust = pageGateTrust(row, trust, storedTier);
+  // GST-2518: a lower-tier local write keeps the page's privacy labels it would widen; its proposal carries the request.
+  const labelGuard = await privacyLabelGuard(engine, row, trust, snapshot?.page ?? null, storedTier);
+  let heldLabels: HeldPrivacyLabels | null = null;
   const defaultSourceWriter = row.operation === 'restore_page' || row.operation === 'revert_version' ? null : await defaultSourceMemberWriter(engine, row.authority), defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter);
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
@@ -1053,6 +1061,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     prepareFrontmatter: page => {
       provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
+      if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
@@ -1144,7 +1153,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       const applied = await (isFenceEditWrite(row) ? withTrustKeep(tx, ['pages'], () => ready.apply(tx, lean ? preimage : undefined)) : ready.apply(tx, lean ? preimage : undefined));
       projectionPending = applied?.segmented?.complete === false || applied?.projectionPending === true;
       segmentedWrite = applied?.segmented !== undefined;
-      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: prior, revision: snapshot!.revision }) : null;
+      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: heldLabels && labelGuard ? maxTrust(prior, labelGuard) : prior, revision: snapshot!.revision }, undefined, heldLabels) : null;
       // Mandatory metadata shares publication rollback; exact no-ops never heal it. These, and the
       // projections (facts, takes, timeline rows of the page the import just wrote live), are independent and sent together.
       const [, pinned] = await pipelined(tx, [
@@ -1183,6 +1192,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
         else if (!applied?.projectionPending && !(applied?.sealed && row.operation !== 'restore_page' && !versionTags && !links && !targetDeleted)) await sealPageTextProjection(tx, row.slug, row.source_id);
         if (core) await core.record(tx, (await tx.readPageSnapshot(row.slug, source))?.revision ?? null);
       }
+    } else if (heldLabels && snapshot && labelGuard) {
+      // GST-2518: a write that only widened labels publishes nothing once they are kept; its request still reaches the owner.
+      lowered = await recordAgentPageLowering(tx, row, { tier: labelGuard, revision: snapshot.revision }, undefined, heldLabels);
     }
     const coreUsage = core?.usage();
     const gate = noop ? undefined : gateField(ready.result.gate, `p:${row.source_id}/${row.slug}`, null);
@@ -1201,7 +1213,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       ...(!noop && quarantineOutcome(ready.parsedPage.frontmatter) ? { quarantined: quarantineOutcome(ready.parsedPage.frontmatter) } : {}),
       ...(row.operation === 'capture' ? { channel: 'capture', content_hash: p.capture_hash } : {}),
       ...(edited ? editDiff(row.slug, edited.before, edited.after) : {}), ...fencesNormalized, ...fenceRepairOutcome,
-      ...(lowered ? { trust_lowered: lowered } : {}), ...(gate ? { gate } : {}),
+      ...(lowered ? { trust_lowered: lowered } : {}), ...(lowered && heldLabels ? { privacy_labels_kept: { keys: heldLabels.keys, proposal_ref: lowered.proposal_ref } } : {}), ...(gate ? { gate } : {}),
       // DX-1: a guarded supersession reports contested (the first proposal; every one when the write contested several rows).
       ...(contested.length ? { contested: { proposal_ref: contested[0], ...(contested.length > 1 ? { proposal_refs: contested } : {}) } } : {}) };
   } };

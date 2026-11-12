@@ -279,6 +279,27 @@ page's tier, file no `lower_page` item, and change only the label lines of its
 file. A `put_page` that adds the same label is an agent edit and lowers the
 page, because a local agent with a shell is indistinguishable from you.
 
+A local agent edit can't make a page more readable on its own. When a write
+below your tier drops or widens a page's `visibility`, `access`,
+`confidentiality` or `readable_by`, gbrain publishes the rest of the edit with
+the page's earlier labels kept, in the database and in the file it commits.
+The write's receipt names the kept keys under `privacy_labels_kept`. The
+page's `lower_page` item in `gbrain trust review` shows what the edit asked
+for, for example `visibility private -> (none)`.
+
+- `gbrain trust confirm tp<id>` endorses the edit and applies exactly those
+  labels, if the page hasn't changed since.
+- `gbrain trust drop tp<id>` keeps the earlier labels.
+- Undoing a confirm puts the earlier labels and the edit's tier back.
+
+Until you decide, the page stays private to remote callers and to members
+who weren't readers; a credential bound to you still reads it. The hold also
+applies after you drop the item, and after an earlier agent edit that lowered
+the page, so a later agent write still can't widen the labels. It doesn't
+apply to a write that only narrows a label, to a write that leaves the labels
+alone, to a writer at or above the page's tier, or to your own edits (a file
+you edit and sync, `gbrain repair visibility`).
+
 ```bash
 gbrain trust backfill --label-lowerings [--source <id>] [--json]   # read-only
 ```

@@ -280,6 +280,7 @@ test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
 test/list-pages-empty-type-notice-gbra449.test.ts
+test/lower-tier-label-hold.test.ts
 test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
 test/managed-cycle-pull-upstream.test.ts
