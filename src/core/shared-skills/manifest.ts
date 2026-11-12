@@ -184,14 +184,44 @@ export function skillMetadata(name: string, files: StoredSkillFile[], params: Re
     throw opError('invalid_params', 'private must be boolean.', 'Pass private as true or false, or omit it.');
   }
   const markers = new Map<string, boolean>();
+  const seenMarkers = new Set<string>();
+  let publishChannel: SkillMetadata['publish_channel'];
+  let declaredWritePaths: string[] | undefined;
   for (const [key, value] of Object.entries(fm)) {
     const canonical = key.trim().toLowerCase().replace(/-/g, '_');
     if (!['private', 'publish', 'mcp_publish', 'writes_pages', 'mutating'].includes(canonical)) continue;
-    if (markers.has(canonical) || typeof value !== 'string' || !['true', 'false', 'yes', 'no'].includes(value.toLowerCase())) {
+    // These two legacy declarations carry channel/path intent, not permission.
+    // Keep their raw bytes and require the exact spelling, rather than accepting
+    // arbitrary strings as truthy publication or silently losing write paths.
+    const channel = key === 'publish' && value === 'teio';
+    const paths = key === 'writes_pages' && Array.isArray(value);
+    if (seenMarkers.has(canonical) || !channel && !paths &&
+      (typeof value !== 'string' || !['true', 'false', 'yes', 'no'].includes(value.toLowerCase()))) {
       throw opError('approval_required', 'A publication/privacy marker has ambiguous or unknown intent and requires owner review.',
         `Set ${key} once in skills/${name}/SKILL.md's frontmatter, to true, false, yes or no, then resubmit; ask the user which they intend if unsure.`);
     }
-    markers.set(canonical, ['true', 'yes'].includes(value.toLowerCase()));
+    seenMarkers.add(canonical);
+    if (channel) { publishChannel = 'teio'; continue; }
+    if (paths) {
+      if (!value.length || fm.writes_to !== undefined) {
+        throw opError('approval_required', 'A page-write path declaration is empty or mixes two declaration formats.',
+          `Use a non-empty writes_pages path list without writes_to in skills/${name}/SKILL.md, or use the existing boolean writes_pages plus writes_to directory format; do not guess between conflicting declarations.`);
+      }
+      stringList(value, 'writes_pages');
+      // Accept contained paths and one terminal /* only. This validates declared
+      // syntax; it neither expands a glob nor authorizes a page operation.
+      for (const path of value as string[]) {
+        if (!path.includes('/')) {
+          throw opError('approval_required', 'A page-write declaration must name an explicit relative directory and path.',
+            `Use a contained path such as inbox/note.md or inbox/* in skills/${name}/SKILL.md's writes_pages list; bare scalars do not establish path intent.`);
+        }
+        skillPath(path.replace(/\/\*$/, ''));
+      }
+      declaredWritePaths = [...value] as string[];
+      markers.set(canonical, true);
+      continue;
+    }
+    markers.set(canonical, ['true', 'yes'].includes((value as string).toLowerCase()));
   }
   const requirements = stringList([...stringList(params.requirements, 'requirements'), ...stringList(fm.requires, 'requires'), ...stringList(fm.tools, 'tools').map(t => `tool:${t}`)], 'requirements');
   return { description, triggers: stringList(params.triggers ?? fm.triggers, 'triggers'), requirements,
@@ -199,5 +229,7 @@ export function skillMetadata(name: string, files: StoredSkillFile[], params: Re
     private: params.private === true || markers.get('private') === true || markers.get('publish') === false || markers.get('mcp_publish') === false,
     audience: files.find(f => f.path === `skills/${name}/SKILL.md`)!.audience,
     writes_pages: markers.get('writes_pages') ?? false, mutating: markers.get('mutating') ?? false,
+    ...(publishChannel ? { publish_channel: publishChannel } : {}),
+    ...(declaredWritePaths ? { declared_write_paths: declaredWritePaths } : {}),
     file_policy: files.map(f => ({ file_class: f.file_class, audience: f.audience })) };
 }

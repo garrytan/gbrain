@@ -53,6 +53,10 @@ export interface SkillMetadata {
   private: boolean;
   audience: string[];
   writes_pages: boolean;
+  /** Legacy plugin distribution channel; never a disclosure or execution grant. */
+  publish_channel?: 'teio';
+  /** Exact declared page paths, not filing directories or enforced authorization. */
+  declared_write_paths?: string[];
   mutating: boolean;
   file_policy: Array<Pick<SharedSkillFile, 'file_class' | 'audience'>>;
   /** #5150: false when the SKILL.md declared no `tools`, so readers inherit the caller's brain tools; absent on revisions published before it was recorded. */

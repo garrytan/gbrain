@@ -338,6 +338,27 @@ Review actual bytes before recording hashes. This local-only operation refuses
 changed hashes or revisions and does not approve a broader publication policy.
 Do not simply regenerate hashes to dismiss an unreviewed conflict.
 
+### Legacy frontmatter declarations
+
+The canonical publisher preserves the original SKILL.md bytes. The exact legacy
+`publish: teio` value selects a plugin distribution channel; it is exposed as
+`publish_channel`, not interpreted as permission to disclose, follow or execute.
+Other unknown strings remain refused. Existing boolean-like `private`, `publish`
+and `mcp_publish` markers keep their meaning: a private declaration or explicit
+publication opt-out still prevents remote catalog disclosure, including when a
+channel is present.
+
+`writes_pages` may also declare a non-empty bounded list of contained relative
+paths with an explicit directory component, optionally ending in one `/*`,
+such as `[inbox/*]`. Bare scalars do not establish path intent. The catalog reports
+`writes_pages: true` and retains the exact list as `declared_write_paths`. These
+are declared capabilities, not enforced path grants. Absolute/traversal paths,
+other wildcard syntax and mixed array-form `writes_pages` plus `writes_to` are
+refused. The existing boolean `writes_pages` plus `writes_to` filing-directory
+format is unchanged; the publisher does not translate globs into directories.
+Source policy, file audiences/classes, runtime requirements and tool grants
+remain independent checks. No metadata declaration executes the skill.
+
 ### Inspect and bound revision storage
 
 Retention administration is local-only, not an MCP editor permission:

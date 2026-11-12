@@ -41,7 +41,7 @@ export async function getLegacySharedSkill(ctx: OperationContext, name: unknown,
   const { sharedSkillToolAccess } = await import('./tool-access.ts');
   const access = await sharedSkillToolAccess(ctx);
   return { schema_version: 1, name: skill.name, frontmatter: { name: skill.name, description: skill.description, triggers: skill.triggers,
-    tools, writes_pages: fm?.writes_pages ?? false, mutating: fm?.mutating ?? false }, body: skill.body,
+    tools, writes_pages: skill.writes_pages, mutating: fm?.mutating ?? false }, body: skill.body,
     usable_tools: skill.usable_tools, unavailable_tools: skill.unavailable_tools,
     client_guidance: { nature: SKILL_CLIENT_GUIDANCE.nature, protocol: [...SKILL_CLIENT_GUIDANCE.protocol], available_brain_tools: access, mutating: fm?.mutating ?? false } };
 }
