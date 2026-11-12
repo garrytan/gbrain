@@ -106,6 +106,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_may_act_for_wildcard',
   // GST-2490: the owner opt-in (doctor/checks/owner-reads-restricted.ts).
   'access_owner_reads_restricted',
+  // GBRA-108: raw-only rules, audience members and members-read-lineage (doctor/checks/access-lineage.ts).
+  'access_raw_only_rules',
+  'access_audience_members',
+  'access_members_read_lineage',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   'extractor_facts_expired',
