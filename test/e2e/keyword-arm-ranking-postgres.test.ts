@@ -85,7 +85,12 @@ describe('keyword arm plan (postgres)', () => {
       const scoped = await capturedKeywordStatement(query, { excludePrivate: true, sourceIds: ['default'] });
       expect(scoped.rows).toBe(unscoped.rows);
       expect(scoped.sql).toMatch(chunkDriven);
-      expect(scoped.sql).toMatch(/WHERE NOT EXISTS \(SELECT 1 FROM sources ls WHERE NOT ls\.archived AND ls\.id <> ALL\(\$\d+::text\[\]\)\)\s+UNION ALL/);
+      expect(scoped.sql).toMatch(/WHERE NOT EXISTS \(SELECT 1 FROM sources ls WHERE NOT ls\.archived AND \(ls\.id <> ALL\(\$\d+::text\[\]\)\) IS NOT FALSE\)\s+UNION ALL/);
+      type Node = { 'Node Type': string; 'Actual Rows'?: number; Plans?: Node[] };
+      const nodes = (node: Node): Node[] => [node, ...(node.Plans ?? []).flatMap(nodes)];
+      const [analyzed] = await engine.executeRaw<{ 'QUERY PLAN': Array<{ Plan: Node }> }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${scoped.sql}`, scoped.params);
+      const [arms] = nodes(analyzed!['QUERY PLAN'][0]!.Plan).filter(node => node['Node Type'] === 'Append');
+      expect(arms!.Plans!.map(arm => arm['Actual Rows']! > 0)).toEqual([true, false]);
       for (const { sql, params } of [unscoped, scoped]) {
         const plan = (await engine.executeRaw<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`, params)).map((r) => r['QUERY PLAN']).join('\n');
         expect(plan).toContain('content_chunks');

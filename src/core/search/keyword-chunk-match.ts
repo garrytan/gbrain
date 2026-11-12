@@ -118,8 +118,9 @@ export function buildKeywordChunkMatch(ftsLang: string, excludePrivate: boolean 
  * only when no page filter can be selective: no type, frontmatter or date
  * filter (`pageFiltered`), and a source scope (`scope`: the parameter index of
  * the source id or ids) that leaves no live source out, decided per execution
- * by a one-time filter over the UNION ALL. Local callers keep the join, which
- * plans well without the visibility subplans.
+ * by a one-time filter over the UNION ALL (a NULL id in the scope counts as
+ * leaving sources out). Local callers keep the join, which plans well without
+ * the visibility subplans.
  */
 export function keywordCandidatesSql(ftsLang: string, c: {
   excludePrivate?: boolean; pageFiltered: boolean; score: string; pageJoin: string; chunkFilters: string; pageFilters: string;
@@ -141,7 +142,7 @@ export function keywordCandidatesSql(ftsLang: string, c: {
           LIMIT 1
         ) p`;
   if (!c.scope) return chunkDriven;
-  const allSources = `NOT EXISTS (SELECT 1 FROM sources ls WHERE NOT ls.archived AND ls.id <> ${c.scope.many ? `ALL($${c.scope.idx}::text[])` : `$${c.scope.idx}`})`;
+  const allSources = `NOT EXISTS (SELECT 1 FROM sources ls WHERE NOT ls.archived AND (ls.id <> ${c.scope.many ? `ALL($${c.scope.idx}::text[])` : `$${c.scope.idx}`}) IS NOT FALSE)`;
   return `SELECT * FROM (${chunkDriven} WHERE ${allSources}
         UNION ALL
         ${c.pageJoin} AND NOT ${allSources}) arms`;

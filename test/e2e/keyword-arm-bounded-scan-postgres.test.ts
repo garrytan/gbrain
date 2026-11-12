@@ -74,6 +74,7 @@ describe('bounded keyword arm (postgres)', () => {
     expect(incomplete).toBe(true);
     const [row] = await engine.transaction(async (tx) => {
       await tx.executeRaw(`SET LOCAL work_mem = '32MB'`);
+      await tx.executeRaw(`SET LOCAL enable_seqscan = off`);
       return tx.executeRaw<{ 'QUERY PLAN': Array<{ Plan: Node }> }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params);
     });
     const read = nodes(row!['QUERY PLAN'][0]!.Plan)
