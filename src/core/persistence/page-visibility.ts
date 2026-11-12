@@ -207,6 +207,17 @@ export async function defaultSourceWriterIsOwner(engine: SqlEngine, writer: stri
 }
 
 /**
+ * GST-2346 D1: whether a stored remote write came from the brain owner's own credential speaking for itself, judged
+ * live from the stored authority (the request-time twin is ownerSpeaksForItself): no attested actor, no audience, no
+ * subagent and no slug fence, and the principal's member is the enabled owner now. A credential unbound, a member
+ * disabled or an owner changed after submission is not the owner here.
+ */
+export async function storedOwnerSpeaksForItself(engine: SqlEngine, authority: WriteAuthority): Promise<boolean> {
+  if (!authority.remote || authority.actingFor || authority.restrictedNamespace || authority.slugPrefixes != null) return false;
+  return defaultSourceWriterIsOwner(engine, (await memberIdentityFor(engine, authority)).find(p => p.startsWith('member:')) ?? null);
+}
+
+/**
  * GST-2051: the readers a page written by a default-source member writer (defaultSourceMemberWriter) keeps when its content
  * names none: the stored page's readers when it has them, else the writer alone for a page this write creates, unless
  * the writer is the brain owner (GST-2059), whose new pages stay shared. An existing page with no readers stays as it

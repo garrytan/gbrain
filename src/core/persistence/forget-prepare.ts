@@ -26,7 +26,8 @@ import { remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handl
 import { materializedPage } from './segmented-apply.ts';
 import { prepareFileTarget, snapshotLedger, unreadPageFile } from './page-prepare.ts';
 import { pageIdentityError } from './page-identity.ts';
-import { MEMBER_PAGE_PREFIX } from '../access/member-facts.ts';
+import { MEMBER_PAGE_PREFIX, onOwnedMemoryPageSql } from '../access/member-facts.ts';
+import { storedOwnerSpeaksForItself } from './page-visibility.ts';
 import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
@@ -72,6 +73,16 @@ export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId:
 }
 
 /**
+ * GST-2346 D1: whether fact id is one the brain owner's own credential withdraws besides shared facts and the facts on
+ * its member page: a private fact on no member or scope page, held by a page no remote writer is kept from (or by no
+ * page). A fact on a private page or on a page that names readers stays with the brain host.
+ */
+export async function ownerReachesPrivateFact(engine: BrainEngine, id: number, sourceId: string): Promise<boolean> {
+  return (await engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND visibility='private'
+    AND NOT ${onOwnedMemoryPageSql('facts')} AND ${privateProvenanceFilterFragment('facts')}`, [id, sourceId])).length > 0;
+}
+
+/**
  * The fact a forget names, under the caller's visibility (locked inside a transaction when `lock`); null when it is not
  * visible. GST-359 D: a member's forget (`ownPage`, its member page) reads only the private facts on that page while
  * the page names the member among its readers; the coordinator checks the page's visibility to the stored writer.
@@ -93,15 +104,21 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   const sourceId = row.source_id;
   const remote = row.authority.remote !== false;
   const reason = typeof p.reason === 'string' && p.reason.trim() ? p.reason.trim() : null;
-  const excludePrivate = await resolveExcludePrivatePages(engine, remote);
   // GST-359 D: a member's withdrawal of a fact on its own member page (submitForgetMutation records the page).
   const ownPage = remote && typeof p.member_page === 'string' && p.member_page === row.slug && row.slug.startsWith(MEMBER_PAGE_PREFIX) ? row.slug : null;
+  // GST-2346 D1: the owner's withdrawal of a private fact off its member page (submitForgetMutation marks it). The owner
+  // is judged again here from the stored principal, so a request whose writer is no longer the owner reads the fact as
+  // any remote caller does: not found. Such a withdrawal never reaches a copy on a page kept from remote writers.
+  const ownerReach = remote && !ownPage && p.owner_reach === true && Number.isSafeInteger(id) && id > 0
+    && await storedOwnerSpeaksForItself(engine, row.authority) && await ownerReachesPrivateFact(engine, id, sourceId);
+  const worldOnly = remote && !ownerReach;
+  const excludePrivate = ownerReach || await resolveExcludePrivatePages(engine, remote);
   const missing = () => verbError(row.operation === 'forget' ? 'not_found' : 'fact_not_found',
     `No fact with id "${rawId}".`, 'Ids come from remember/recall. Recall the entity first to find the right fact.');
   if (!Number.isSafeInteger(id) || id <= 0) throw missing();
-  const fact = await readForgetTarget(engine, id, sourceId, remote, excludePrivate, false, ownPage);
+  const fact = await readForgetTarget(engine, id, sourceId, worldOnly, excludePrivate, false, ownPage);
   if (!fact) throw missing();
-  const plan = await planFactWithdrawal(engine, id, sourceId, remote, ownPage ? undefined : excludePrivate, ownPage);
+  const plan = await planFactWithdrawal(engine, id, sourceId, worldOnly, ownPage ? undefined : excludePrivate, ownPage);
   if (!plan) throw missing();
   // The files are struck with this timestamp, and the ledger row records it, so the file and the read overlay agree.
   const withdrawnAt = new Date().toISOString();
@@ -151,17 +168,17 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
     ...(row.operation === 'forget_fact' && fact.expired_at !== null ? { failure: { code: 'fact_already_expired', message: `Fact id ${id} already expired.` } } : {}),
     validate: async tx => {
       // Under the publication's locks: the fact is still visible, no more trusted than a remote caller, and reaches no other copy.
-      const current = await readForgetTarget(tx, id, sourceId, remote, excludePrivate, true, ownPage);
+      const current = await readForgetTarget(tx, id, sourceId, worldOnly, excludePrivate, true, ownPage);
       if (!current) throw missing();
       if (remote && supersessionGuarded('agent_written', current.trust_tier)) throw remoteForgetRaced(id);
-      if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, current, remote, excludePrivate);
+      if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, current, worldOnly, excludePrivate);
       await held?.validate?.(tx);
     },
     apply: async (tx, preimage) => {
       if (held) await held.apply(tx, preimage ?? null);
       // Even an expired legacy fact acquires a ledger row (forget_fact then finishes failed), so a stale import cannot reactivate it.
       const publication = { withdrawnAt, expectedSlugs: plan.slugs };
-      pages = (await recordFactWithdrawal(tx, id, sourceId, remote, ownPage
+      pages = (await recordFactWithdrawal(tx, id, sourceId, worldOnly, ownPage
         ? { requestId: row.id, semanticReview: false, memberPage: ownPage, publication }
         : { requestId: row.id, semanticReview: p.semantic_review !== false, excludePrivate, publication })).pages.map(page => page.slug);
       if (reason) await tx.executeRaw(`UPDATE facts SET context=concat_ws(' | ',NULLIF(context,''),$3::text)
