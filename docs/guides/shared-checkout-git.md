@@ -346,24 +346,33 @@ and the next sync imports it; when the file still holds gbrain's bytes, the
 effect stages them again and commits them on top. A strict source's write
 refuses `git_target_changed` instead.
 
-To find edits a brain already lost this way, look for a gbrain commit whose
-parent is someone else's commit, made at most two minutes earlier, that changed
-the same file. This loop only reads history:
+To find edits a brain already lost this way, look for a gbrain commit (its
+subject starts with `gbrain:`) whose one parent is someone else's commit, made at
+most two minutes earlier, that changed a file the gbrain commit also changed.
+The loop reads the history reachable from `HEAD` in one `git log` pass and then
+diffs only those pairs. It writes nothing, takes no lock and doesn't run gbrain,
+so it works the same before and after upgrading. On a synthetic history of
+200,000 commits it took about 5 seconds and 360 MB of memory.
 
 ```bash
 BRAIN=/path/to/brain-checkout
 TOP=$(git -C "$BRAIN" rev-parse --show-toplevel)
 g() { git -C "$TOP" -c core.quotePath=false "$@"; }
-g log --no-merges --format='%H %P' | while read -r c p extra; do
-  [ -n "$p" ] && [ -z "$extra" ] || continue
-  case "$(g log -1 --format=%s "$c")" in gbrain:*) ;; *) continue ;; esac
-  case "$(g log -1 --format=%s "$p")" in gbrain:*) continue ;; esac
-  [ $(( $(g log -1 --format=%ct "$c") - $(g log -1 --format=%ct "$p") )) -le 120 ] || continue
+g log --format='%H%x09%P%x09%ct%x09%s' | awk -F'\t' '
+  { parent[$1] = $2; at[$1] = $3; ours[$1] = ($4 ~ /^gbrain:/) }
+  END { for (c in parent) { p = parent[c]; if (ours[c] && p != "" && p !~ / / && (p in at) && !ours[p] && at[c] - at[p] <= 120) print c, p } }' |
+while read -r c p; do
   g diff-tree -r --no-commit-id --name-only "$c" | while IFS= read -r f; do
     g diff-tree -r --no-commit-id --name-only --root -m --first-parent "$p" -- ":(literal)$f" | grep -qxF -- "$f" \
       && echo "$f: edit in $(g log -1 --format='%h (%an, %ci)' "$p") replaced by gbrain commit $(g log -1 --format=%h "$c")"
   done
 done
+```
+
+A hit looks like this, one line per file:
+
+```text
+notes/alice-example.md: edit in 9ee21f7422 (Alice Example, 2026-11-12 10:23:27 +0000) replaced by gbrain commit 15134a6136
 ```
 
 Each line is a candidate, not proof: a gbrain write made right after someone
