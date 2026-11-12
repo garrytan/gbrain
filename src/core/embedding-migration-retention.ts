@@ -5,6 +5,7 @@ import { eligibleFactEmbedding, retainedFactEmbedding } from './facts/embedding-
 import { AUDIT_ROW_SOURCES } from './facts/audit-sources.ts';
 import { quoteIdentifier, resolveWriteColumnFromConfigRows } from './search/embedding-column.ts';
 import { countArchivedEmbeddingWork } from './embedding-readiness.ts';
+import { sameEmbeddingModel } from './embedding-model-identity.ts';
 
 export async function assertRetainedEmbeddingRebuildability(tx: BrainEngine, dimensions: number, model?: string, plan?: Pick<EmbeddingMigrationPlan, 'from_model' | 'from_dims'>): Promise<boolean> {
   let counts: { pages: number; facts: number; takes: number };
@@ -42,7 +43,8 @@ export async function assertRetainedEmbeddingRebuildability(tx: BrainEngine, dim
         prior.state?.to_model === model && prior.state.to_dims === dimensions ? prior.state
           : { from_model: plan?.from_model ?? storedModel ?? 'unrecorded', from_dims: plan?.from_dims ?? width ?? 0 };
       clearCompanions = !state.companion_vectors_invalidated
-        && (state.from_model !== model || state.from_dims !== dimensions || storedModel !== model);
+        && (!sameEmbeddingModel(state.from_model, model) || state.from_dims !== dimensions
+          || !sameEmbeddingModel(storedModel, model));
     }
     const factColumns = await tx.executeRaw<{ type: string }>(`SELECT format_type(atttypid,atttypmod) AS type
       FROM pg_attribute WHERE attrelid='facts'::regclass AND attname='embedding' AND attnum>0 AND NOT attisdropped`);
