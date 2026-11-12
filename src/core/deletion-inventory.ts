@@ -133,6 +133,7 @@ const ROWS: readonly Row[] = [
   ['page_embedding_budget', 'out_of_scope', 'no_memory_text', 'state reason embedding_signature'],
   ['page_extraction_state', 'out_of_scope', 'no_memory_text', 'pipeline watermark_sha256 input_truncated'],
   ['page_facts_reconcile', 'out_of_scope', 'no_memory_text', 'outcome'],
+  ['page_label_guards', 'out_of_scope', 'no_memory_text', 'tier'],
   ['page_mention_state', 'out_of_scope', 'no_memory_text', 'source_id'],
   ['page_projection_jobs', 'out_of_scope', 'no_memory_text', 'slug reason'],
   ['page_purges', 'out_of_scope', 'text_free_ledger', 'source_id content_hash slug'],

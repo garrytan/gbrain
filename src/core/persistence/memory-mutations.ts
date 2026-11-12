@@ -1,5 +1,6 @@
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
-import { guardRemoteForget, remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
+import { forgetRequiresOwner, guardRemoteForget, remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
+import { storedTrustTier } from '../trust/tier.ts';
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import type { OperationContext } from '../ops/contract.ts';
@@ -13,7 +14,7 @@ import { parseFactsFence } from '../facts-fence.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { segmentedRememberRefusal, type RememberCarry } from './verb-errors.ts';
 import { materializedPage, segmentedOverCeiling } from './segmented-apply.ts';
-import { excludesPrivateWrites } from './page-visibility.ts';
+import { excludesPrivateWrites, storedOwnerSpeaksForItself } from './page-visibility.ts';
 import { emitFenceNotice, initializeLocalPersistence, requestPrincipalForContext } from './page-mutations.ts';
 import { authorizeStoredRequest, submissionAuthority } from './authority.ts';
 import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequest, intentDigest } from './journal.ts';
@@ -24,7 +25,7 @@ import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts
 import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
-import { readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
+import { ownerReachesFact, readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
 import { callerIsOwner, currentCallerAccess, folderRestricted, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
@@ -276,7 +277,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     await decideReplacement(ctx.engine, sourceId, factIntent, Number(p.replaces),
       { pageSlug: slug, remote: ctx.remote !== false, excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), slugPrefixes: authority.slugPrefixes });
   }
-  await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent, { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote) });
+  await assertFactNotWithdrawn(ctx.engine, sourceId, factIntent, { excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote), remote: ctx.remote !== false });
   const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation: 'remember', sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
     // The transport's session (MCP `_meta.session_id`) is recorded on the fact, as extract_facts records
@@ -390,36 +391,60 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const mine = member !== null && (await ownMemberFactIds(ctx.engine, sourceId, [id])).has(id);
   // GST-2346 D1: the owner speaking for itself withdraws a fact off its member page as a caller with no member page does.
   const asOwner = member !== null && !mine && ownerSpeaksForItself(ctx) && await readForgetTarget(ctx.engine, id, sourceId, remote, excludePrivate) !== null;
-  const ownPage = member && !asOwner ? memberPageSlug(member) : null;
+  let ownPage = member && !asOwner ? memberPageSlug(member) : null;
+  const hostWithdraws = () => verbError('permission_denied', ownerSpeaksForItself(ctx)
+    ? `Fact #${rawId} is one this credential reads but cannot withdraw. Nothing was forgotten.`
+    : `Fact #${rawId} is not on your member page ${ownPage}, so this credential cannot withdraw it. Nothing was forgotten.`,
+  ownerSpeaksForItself(ctx)
+    ? `The brain owner's credential withdraws shared facts, facts on its member page and other facts it reads on pages it can write. The brain host withdraws this one with gbrain forget ${rawId}.`
+    : `A member credential withdraws only the facts on its own member page. The brain host withdraws this one with gbrain forget ${rawId}.`);
+  let ownerReach = false;
   if (ownPage && !mine) {
     // #9101: a fact the caller reads (one it shared, or a teammate's shared fact) is refused by name; a fact it cannot read stays not_found.
     // An attested QM actor keeps not_found for every fact off its page, as QM memory-provider contract v3 states.
     if (currentCallerAccess().actor) throw missing();
     const readable = callerIsOwner() ? 'TRUE' : factVisibilitySql('facts', ['world']);
     const eligible = projectionEligibleSql('facts', 'facts', await resolveReadEligibility(ctx));
-    const reads = (await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : ''}`, [id, sourceId])).length > 0;
-    if (!reads) throw missing();
-    throw verbError('permission_denied', `Fact #${rawId} is not on your member page ${ownPage}, so this credential cannot withdraw it. Nothing was forgotten.`,
-      `A member credential withdraws only the facts on its own member page. The brain host withdraws this one with gbrain forget ${rawId}.`);
+    const readsUnder = async (provenance: string) => (await ctx.engine.executeRaw(`SELECT 1 FROM facts WHERE id=$1 AND source_id=$2 AND ${readable} AND ${eligible}${provenance}`, [id, sourceId])).length > 0;
+    const reads = await readsUnder(excludePrivate ? ` AND ${privateProvenanceFilterUnderPolicy('facts')}` : '');
+    // GST-2346 D1: the owner speaking for itself also withdraws a fact it reads on a page its credential may write: a
+    // private one the brain host wrote, or one on a page whose readers name the owner (GST-2490's owner read rule, for
+    // this withdrawal only). Preparation judges the owner and the page again from the stored principal.
+    const access = currentCallerAccess();
+    ownerReach = ownerSpeaksForItself(ctx) && await ownerReachesFact(ctx.engine, id, sourceId, { identity: access.identity, satisfied: access.satisfiedRuleIds })
+      && (reads || await readsUnder(''));
+    if (!reads && !ownerReach) throw missing();
+    if (!ownerReach) throw hostWithdraws();
+    ownPage = null;
   }
+  // The owner's withdrawal judged the fact itself (ownerReachesFact) and never reaches a copy on a page kept from remote writers.
+  const worldOnly = remote && !ownerReach;
+  const targetHidden = !ownerReach && excludePrivate;
+  const hidePrivate = ownerReach || excludePrivate;
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
   if (remote) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
   const [source] = await ctx.engine.executeRaw<RememberSource>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw sourceInactive(sourceId);
-  const fact = await readForgetTarget(ctx.engine, id, sourceId, remote, excludePrivate, false, ownPage);
+  const fact = await readForgetTarget(ctx.engine, id, sourceId, worldOnly, targetHidden, false, ownPage);
   if (!fact) throw missing();
-  if (remote && supersessionGuarded('agent_written', fact.trust_tier)) throw remoteForgetRaced(id);
-  if (!ownPage) await refuseForgetReachingOtherCopies(ctx.engine, sourceId, fact, remote, excludePrivate);
+  if (remote && supersessionGuarded('agent_written', fact.trust_tier)) {
+    // guardRemoteForget reads shared facts only: a more trusted private fact the owner reaches asks the owner the same way.
+    throw ownerReach ? await forgetRequiresOwner(ctx.engine, { sourceId, factId: id, principal, reason, factTier: storedTrustTier(fact.trust_tier), writerTier: 'agent_written' }) : remoteForgetRaced(id);
+  }
+  if (!ownPage) await refuseForgetReachingOtherCopies(ctx.engine, sourceId, fact, worldOnly, hidePrivate);
   const slug = fact.source_markdown_slug ?? fact.entity_slug ?? UNATTRIBUTED_MEMORY_SLUG;
   enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
-  const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug);
+  // A page the fact is about that turned private since is one this credential may not write: the brain host withdraws that fact.
+  const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug)
+    .catch((error: unknown) => { throw ownerReach && error instanceof OperationError && error.code === 'page_not_found' ? hostWithdraws() : error; });
+  if (ownerReach && !await storedOwnerSpeaksForItself(ctx.engine, authority)) throw hostWithdraws();
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   // The pages a withdrawal strikes publish through the source's canonical worktree, as remember's do. A source whose
   // root has no owner refuses when a canonical file carries the claim (Git is the parent: a database-only withdrawal
   // would come back on a rebuild from Git); a claim only database-only pages carry is withdrawn database-only.
-  const plan = await planFactWithdrawal(ctx.engine, id, sourceId, remote, ownPage ? undefined : excludePrivate, ownPage);
+  const plan = await planFactWithdrawal(ctx.engine, id, sourceId, worldOnly, ownPage ? undefined : targetHidden, ownPage);
   // GST-2492: a fact held on memory/unattributed for an entity with no page is struck there too (its row names the entity).
   const heldOn = fact.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG && fact.entity_slug !== null ? UNATTRIBUTED_MEMORY_SLUG : null;
   const struck = plan ? plan.slugs.filter(page => plan.subject === '*' || plan.subject === page || page === heldOn) : [];
@@ -443,7 +468,7 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   // GST-359 D: a member's own-page withdrawal is recorded for that page alone and queues no semantic review.
   const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation, sourceId, sourceIncarnation: source.incarnation,
     slug, pageId: snapshot?.page.id ?? null, requestId, clientRequestId, callerIntent,
-    intent: { ...callerIntent, reason, semantic_review: !ownPage && p.semantic_review !== false, ...(ownPage ? { member_page: ownPage } : {}) }, authority,
+    intent: { ...callerIntent, reason, semantic_review: !ownPage && p.semantic_review !== false, ...(ownPage ? { member_page: ownPage } : {}), ...(ownerReach ? { owner_reach: true } : {}) }, authority,
     worktreeId: binding?.worktree_id ?? null, topologyGeneration: binding?.topology_generation ?? null, deferrable: true });
   const written = await waitForWrite(ctx.engine, row, ctx.config, waitMs ?? ctx.writeWaitMs);
   return withSimilarActive(ctx, operation, sourceId, p, writeResponse(written));

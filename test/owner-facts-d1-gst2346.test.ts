@@ -27,10 +27,15 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
-import { setOwner } from '../src/core/access/owner.ts';
+import { setOwner, setOwnerReadsRestricted } from '../src/core/access/owner.ts';
 import { linkMember } from '../src/core/access/actor.ts';
 import { remoteCallerAccess } from '../src/core/access/caller.ts';
 import { operationsByName } from '../src/core/operations.ts';
+import { prepareForgetMutation } from '../src/core/persistence/forget-prepare.ts';
+import { withCoordinatedWrite, withTrustPromotion } from '../src/core/persistence/context.ts';
+import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
+import { decideTrustProposal } from '../src/core/trust/decide.ts';
+import { parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { FACTS_DEFAULT_VISIBILITY_KEY } from '../src/core/facts/visibility.ts';
 import { ambientOptsFrom, writebackCaller } from '../src/core/facts/writeback-config.ts';
 import { buildAmbientWritebackSection } from '../src/core/facts/writeback-instructions.ts';
@@ -42,6 +47,8 @@ import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.t
 const ACME = 'companies/acme-example';
 const GLOBEX = 'companies/globex-example';
 const INITECH = 'companies/initech-example';
+const UMBRELLA = 'companies/umbrella-example';
+const KEPT = 'companies/kept-example';
 const OWNER = 'carol-example';
 const OWNER_PAGE = 'memory/members/' + OWNER;
 const ATTEST_OPS = ['forget', 'forget_fact', 'get_write_request', 'memory_recall', 'memory_write', 'recall', 'remember'];
@@ -273,6 +280,383 @@ for (const kind of testBackends()) {
       } finally { await engine.setConfig('memory.auto_writeback', 'off'); }
     }, 120_000);
 
+    /** A private fact the brain host wrote (the trusted local caller) about Acme, or about the entity extra names. */
+    const hostFact = async (fact: string, extra: Record<string, unknown> = {}) => {
+      const out = await dispatchToolCall(engine, 'remember', { fact, entity: ACME, provenance: 'owner facts test', visibility: 'private', ...extra }, { remote: false, sourceId: SRC });
+      expect(out.isError === true ? out.content[0]?.text : 'ok').toBe('ok');
+      return String(JSON.parse(out.content[0]!.text).id);
+    };
+
+    test("the owner withdraws a private fact the brain host wrote, by forget and by forget_fact; a member never read it", async () => {
+      const id = await hostFact('Acme host kept a quiet reserve canaryhostprivate');
+      expect(await h.row('canaryhostprivate')).toMatchObject({ visibility: 'private', source_markdown_slug: ACME });
+      expect((await h.call('owner', 'recall', { entity: ACME })).text).toContain('canaryhostprivate');
+      expect((await h.call('alice', 'recall', { entity: ACME })).text).not.toContain('canaryhostprivate');
+      const out = await h.call('owner', 'forget', { id });
+      expect(out.isError ? out.text : 'ok').toBe('ok');
+      expect((await h.row('canaryhostprivate'))!.active).toBe(false);
+      const second = await hostFact('Acme host kept a second reserve canaryhostsecond');
+      const viaFact = await h.call('owner', 'forget_fact', { id: Number(second) });
+      expect(viaFact.isError ? viaFact.text : 'ok').toBe('ok');
+      expect((await h.row('canaryhostsecond'))!.active).toBe(false);
+    }, 120_000);
+
+    test("a member, an attested actor, a shared room, a subagent and a fenced owner credential still cannot withdraw a host-written private fact", async () => {
+      const id = await hostFact('Acme host kept a sealed note canaryhostsealed');
+      const room = { audience: 'member:' + OWNER + ', member:alice-example' };
+      const answers = {
+        member: (await h.call('alice', 'forget', { id })).json.error,
+        unbound: (await h.call('plain', 'forget', { id })).json.error,
+        actor: (await h.call('qm', 'forget', { id }, { actor: 'U0CAROL' })).json.error,
+        room: (await h.call('room', 'forget', { id }, room)).json.error,
+        ownerRoom: (await h.call('ownerRoom', 'forget', { id }, room)).json.error,
+        ownerAlone: (await h.call('ownerRoom', 'forget', { id }, { audience: 'member:' + OWNER })).json.error,
+        subagent: (await h.asSubagent('forget', { id })).json.error,
+        fenced: (await h.call('fenced', 'forget', { id })).json.error,
+        viaFact: (await h.call('alice', 'forget_fact', { id: Number(id) })).json.error,
+      };
+      // Each answer is the one that caller got before the owner's route existed.
+      expect(answers).toEqual({ member: 'not_found', unbound: 'not_found', actor: 'not_found', room: 'not_found', ownerRoom: 'not_found',
+        ownerAlone: 'scope_denied', subagent: 'scope_denied', fenced: 'permission_denied', viaFact: 'fact_not_found' });
+      expect((await h.row('canaryhostsealed'))!.active).toBe(true);
+    }, 120_000);
+
+    test("a private fact on a page kept from remote writers stays with the brain host, and the refusal names it", async () => {
+      const id = await hostFact('Initech host kept a sealed audit canaryhostinitech', { entity: INITECH });
+      const out = await h.call('owner', 'forget', { id });
+      expect([out.isError, out.json.error, out.text.includes('brain host'), out.text.includes('gbrain forget ' + id)]).toEqual([true, 'scope_denied', true, true]);
+      expect((await h.row('canaryhostinitech'))!.active).toBe(true);
+    }, 120_000);
+
+    test("a host-written private fact more trusted than an agent's writes is not withdrawn: the owner is asked, as for a shared one", async () => {
+      const id = await hostFact('Acme host confirmed its charter canaryhostconfirmed');
+      await engine.transaction(tx => withCoordinatedWrite(tx, [SRC], () => withTrustPromotion(tx, 'user_confirmed', () =>
+        tx.executeRaw("UPDATE facts SET trust_tier='user_confirmed' WHERE id=$1", [Number(id)])), TEST_WRITE_ATTRIBUTION));
+      const out = await h.call('owner', 'forget', { id });
+      expect([out.isError, out.json.error, out.json.code]).toEqual([true, 'scope_denied', 'forget_requires_owner']);
+      expect((await h.row('canaryhostconfirmed'))!.active).toBe(true);
+      // The proposal names the fact by id and tier only, and the owner's accept on the brain host applies the forget.
+      const ref = JSON.parse(out.json.detail).proposal_ref as string;
+      const [proposal] = await engine.executeRaw<{ stored: string }>('SELECT row_to_json(t)::text AS stored FROM trust_proposals t WHERE id=$1', [parseTrustProposalRef(ref)!]);
+      expect([proposal!.stored.includes('"forget"'), proposal!.stored.includes('canaryhostconfirmed')]).toEqual([true, false]);
+      expect((await decideTrustProposal(engine, parseTrustProposalRef(ref)!, 'accept', { confirmation: { via: 'tty' as const } })).status).toBe('accepted');
+      expect((await h.row('canaryhostconfirmed'))!.active).toBe(false);
+    }, 120_000);
+
+    test("preparation judges the owner again from the stored principal: a stored request from any other writer reads the fact as not found", async () => {
+      const id = await hostFact('Acme host kept a dated note canaryhostprepare');
+      const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, ACME]);
+      const stored = async (who: string, authority: Record<string, unknown> = {}, intent: Record<string, unknown> = { owner_reach: true }) => ({
+        operation: 'forget', id: randomUUID(), request_id: randomUUID(), source_id: SRC, slug: ACME, page_id: page!.id, worktree_id: null, intent: { id, ...intent },
+        authority: { version: 1, remote: true, principal: (await h.auth(who) as unknown as { principal: unknown }).principal, sourceId: SRC, slugPrefixes: null, ...authority },
+      }) as never;
+      const prepare = async (...row: Parameters<typeof stored>) => prepareForgetMutation(engine, await stored(...row), {} as never).then(() => 'prepared', (error: { code?: string }) => error.code);
+      expect(await prepare('owner')).toBe('prepared');
+      expect(await prepare('owner', {}, {})).toBe('not_found');
+      expect(await prepare('alice')).toBe('not_found');
+      expect(await prepare('plain')).toBe('not_found');
+      expect(await prepare('owner', { actingFor: ['member:' + OWNER] })).toBe('not_found');
+      expect(await prepare('owner', { restrictedNamespace: true })).toBe('not_found');
+      expect(await prepare('owner', { slugPrefixes: ['companies/'] })).toBe('not_found');
+      // A request prepared while its writer was the owner is judged once more under the publication's locks.
+      const prepared = await prepareForgetMutation(engine, await stored('owner'), {} as never);
+      await prepared.validate!(engine);
+      await setOwner(engine, 'bob-example');
+      try {
+        expect(await prepare('owner')).toBe('not_found');
+        expect(await prepare('bob')).toBe('prepared');
+        await expect(prepared.validate!(engine)).rejects.toMatchObject({ code: 'not_found' });
+      } finally { await setOwner(engine, OWNER); __resetPrivateVisibilityCacheForTests(); }
+      expect((await h.row('canaryhostprepare'))!.active).toBe(true);
+    }, 120_000);
+
+    test("a stdio server bound to the owner withdraws a host-written private fact the same way; one bound to a member does not", async () => {
+      const stdio = async (id: string, stdioMember: string) => {
+        const out = await dispatchToolCall(engine, 'forget', { id }, { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'], stdioMember });
+        let json: Record<string, any> = {};
+        try { json = JSON.parse(out.content[0]?.text ?? ''); } catch { /* prose */ }
+        return { isError: out.isError === true, json };
+      };
+      const id = await hostFact('Acme host kept a stdio note canaryhoststdio');
+      expect((await stdio(id, 'alice-example')).json.error).toBe('not_found');
+      expect((await h.row('canaryhoststdio'))!.active).toBe(true);
+      const out = await stdio(id, OWNER);
+      expect(out.isError ? JSON.stringify(out.json) : 'ok').toBe('ok');
+      expect((await h.row('canaryhoststdio'))!.active).toBe(false);
+    }, 120_000);
+
+    test("the owner's forget never reaches a copy its credential cannot write: another member's copy, a page that turned private; it reaches a page that names it as a reader", async () => {
+      const active = async (canary: string) => (await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE fact LIKE $1 ORDER BY id', ['%' + canary + '%'])).map(r => r.active);
+      // Another member holds the same private claim about the same entity: the withdrawal would cover it, so nothing is withdrawn.
+      await h.remember('alice', 'Acme pays a quiet bonus canaryhostcopy');
+      const copy = await h.call('owner', 'forget', { id: await hostFact('Acme pays a quiet bonus canaryhostcopy') });
+      expect([copy.isError, copy.text.includes('claim_linked'), copy.text.includes('canaryhostcopy')]).toEqual([true, true, false]);
+      expect(await active('canaryhostcopy')).toEqual([true, true]);
+      // The fact's page was made private after the host saved it: the refusal names the brain host, as for any page kept from remote writers.
+      const hooli = await hostFact('Hooli runs a quiet lab canaryhostturned', { entity: 'companies/hooli-example' });
+      await importFromContent(engine, 'companies/hooli-example', '---\ntype: company\ntitle: Hooli Example\nvisibility: private\n---\n# Hooli Example\n\nHooli example.', { sourceId: SRC });
+      const turned = await h.call('owner', 'forget', { id: hooli });
+      expect([turned.isError, turned.json.error, turned.text.includes('brain host')]).toEqual([true, 'scope_denied', true]);
+      expect(await active('canaryhostturned')).toEqual([true]);
+      // A page that names the owner as a reader: the owner reads the fact there and its credential may write the page, so forget withdraws it.
+      const globex = await h.call('owner', 'forget', { id: await hostFact('Globex pilot is quiet canaryhostglobex', { entity: GLOBEX }) });
+      expect(globex.isError ? globex.text : 'ok').toBe('ok');
+      expect(await active('canaryhostglobex')).toEqual([false]);
+    }, 120_000);
+
+    /** forget as each caller shape that is not the enabled owner speaking for itself; the answer each one gets. */
+    const nonOwnerAnswers = async (id: string) => {
+      const room = { audience: 'member:' + OWNER + ', member:alice-example' };
+      return {
+        member: (await h.call('alice', 'forget', { id })).json.error,
+        unbound: (await h.call('plain', 'forget', { id })).json.error,
+        actor: (await h.call('qm', 'forget', { id }, { actor: 'U0CAROL' })).json.error,
+        room: (await h.call('room', 'forget', { id }, room)).json.error,
+        ownerRoom: (await h.call('ownerRoom', 'forget', { id }, room)).json.error,
+        ownerAlone: (await h.call('ownerRoom', 'forget', { id }, { audience: 'member:' + OWNER })).json.error,
+        subagent: (await h.asSubagent('forget', { id })).json.error,
+        fenced: (await h.call('fenced', 'forget', { id })).json.error,
+        viaFact: (await h.call('alice', 'forget_fact', { id: Number(id) })).json.error,
+      };
+    };
+
+    test("the owner withdraws a fact it reads on a page that names it as a reader, private or shared, by forget and by forget_fact", async () => {
+      const kept = await hostFact('Globex host kept a pilot budget canaryreaderprivate', { entity: GLOBEX });
+      const shared = await hostFact('Globex pilot runs on harbor ledgers canaryreadershared', { entity: GLOBEX, visibility: 'world' });
+      expect(await h.row('canaryreaderprivate')).toMatchObject({ visibility: 'private', source_markdown_slug: GLOBEX });
+      expect(await h.row('canaryreadershared')).toMatchObject({ visibility: 'world', source_markdown_slug: GLOBEX });
+      const recalled = (await h.call('owner', 'recall', { entity: GLOBEX })).text;
+      expect([recalled.includes('canaryreaderprivate'), recalled.includes('canaryreadershared')]).toEqual([true, true]);
+      expect((await h.call('alice', 'recall', { entity: GLOBEX })).text).not.toContain('canaryreader');
+      const viaForget = await h.call('owner', 'forget', { id: kept });
+      expect(viaForget.isError ? viaForget.text : 'ok').toBe('ok');
+      const viaFact = await h.call('owner', 'forget_fact', { id: Number(shared) });
+      expect(viaFact.isError ? viaFact.text : 'ok').toBe('ok');
+      expect([(await h.row('canaryreaderprivate'))!.active, (await h.row('canaryreadershared'))!.active]).toEqual([false, false]);
+      expect((await h.call('owner', 'recall', { entity: GLOBEX })).text).not.toContain('canaryreader');
+    }, 120_000);
+
+    test("on a page that names the owner as a reader, every caller that is not the owner speaking for itself gets the answer it got before", async () => {
+      const id = await hostFact('Globex host kept a sealed pilot note canaryreadersealed', { entity: GLOBEX });
+      // Each answer is the one that caller got before the owner reached such a page (the audience of the owner alone and the
+      // subagent, which never read the page, answer not_found here where they answer scope_denied on a page every reader reads).
+      expect(await nonOwnerAnswers(id)).toEqual({ member: 'not_found', unbound: 'not_found', actor: 'not_found', room: 'not_found', ownerRoom: 'not_found',
+        ownerAlone: 'not_found', subagent: 'not_found', fenced: 'permission_denied', viaFact: 'fact_not_found' });
+      // A member the page names as a reader beside the owner keeps the member route: it withdraws only its own member page's facts.
+      await importFromContent(engine, UMBRELLA, '---\ntype: company\ntitle: Umbrella Example\nreadable_by: [' + OWNER + ', bob-example]\n---\n# Umbrella Example\n\nUmbrella example tests vaccines.', { sourceId: SRC });
+      const shared = await hostFact('Umbrella runs a quiet trial canaryreaderbob', { entity: UMBRELLA });
+      const bob = await h.call('bob', 'forget', { id: shared });
+      expect([bob.isError, bob.json.error]).toEqual([true, 'not_found']);
+      expect([(await h.row('canaryreadersealed'))!.active, (await h.row('canaryreaderbob'))!.active]).toEqual([true, true]);
+    }, 120_000);
+
+    test("a page kept to another member stays with the brain host even while the owner opt-in lets the owner read it", async () => {
+      await importFromContent(engine, KEPT, '---\ntype: company\ntitle: Kept Example\nreadable_by: [alice-example]\n---\n# Kept Example\n\nKept example.', { sourceId: SRC });
+      const id = await hostFact('Kept example signed a lease canaryoptinkept', { entity: KEPT });
+      const before = await h.call('owner', 'forget', { id });
+      await setOwnerReadsRestricted(engine, true, { remote: false });
+      __resetPrivateVisibilityCacheForTests();
+      try {
+        expect((await h.call('owner', 'recall', { entity: KEPT })).text).toContain('canaryoptinkept');
+        const during = await h.call('owner', 'forget', { id });
+        expect([during.isError, during.json.error]).toEqual([before.isError, before.json.error]);
+        expect([before.isError, before.json.error]).toEqual([true, 'not_found']);
+      } finally { await setOwnerReadsRestricted(engine, false, { remote: false }); __resetPrivateVisibilityCacheForTests(); }
+      expect((await h.row('canaryoptinkept'))!.active).toBe(true);
+    }, 120_000);
+
+    test("a fact about a page kept from the owner stays with the brain host, whatever page holds it", async () => {
+      const keptTwo = 'companies/kept-two-example';
+      await importFromContent(engine, keptTwo, '---\ntype: company\ntitle: Kept Two Example\nreadable_by: [alice-example]\n---\n# Kept Two Example\n\nKept two example.', { sourceId: SRC });
+      // A row held by a page the owner reads and writes (one naming it as a reader, or one with no readers) whose entity page is kept to alice.
+      const onReaders = await hostFact('Kept two holds a sealed lease canaryentityreaders', { entity: keptTwo });
+      const onOpen = await hostFact('Kept two holds a second lease canaryentityopen', { entity: keptTwo });
+      const holdOn = (id: string, slug: string) => engine.executeRaw('UPDATE facts SET source_markdown_slug=$2, row_num=9000+id WHERE id=$1', [Number(id), slug]);
+      await holdOn(onReaders, GLOBEX);
+      await holdOn(onOpen, ACME);
+      expect((await h.call('owner', 'recall', { entity: keptTwo })).text).not.toContain('canaryentity');
+      for (const id of [onReaders, onOpen]) {
+        const viaForget = await h.call('owner', 'forget', { id });
+        expect([viaForget.isError, viaForget.json.error]).toEqual([true, 'not_found']);
+        const viaFact = await h.call('owner', 'forget_fact', { id: Number(id) });
+        expect([viaFact.isError, viaFact.json.error]).toEqual([true, 'fact_not_found']);
+      }
+      expect([(await h.row('canaryentityreaders'))!.active, (await h.row('canaryentityopen'))!.active]).toEqual([true, true]);
+    }, 120_000);
+
+    test("on a page that names the owner as a reader, preparation judges the owner and the page again: a changed owner, a disabled one or readers that drop it read the fact as not found", async () => {
+      const id = await hostFact('Globex host kept a dated pilot note canaryreaderprepare', { entity: GLOBEX });
+      const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, GLOBEX]);
+      // Principals are read once, while their members are enabled: a stored request keeps the principal it was accepted with.
+      const principals: Record<string, unknown> = {};
+      const principalOf = async (who: string) => principals[who] ??= (await h.auth(who) as unknown as { principal: unknown }).principal;
+      const stored = async (who: string, authority: Record<string, unknown> = {}, intent: Record<string, unknown> = { owner_reach: true }) => ({
+        operation: 'forget', id: randomUUID(), request_id: randomUUID(), source_id: SRC, slug: GLOBEX, page_id: page!.id, worktree_id: null, intent: { id, ...intent },
+        authority: { version: 1, remote: true, principal: await principalOf(who), sourceId: SRC, slugPrefixes: null, ...authority },
+      }) as never;
+      const prepare = async (...row: Parameters<typeof stored>) => prepareForgetMutation(engine, await stored(...row), {} as never).then(() => 'prepared', (error: { code?: string }) => error.code);
+      expect(await prepare('owner')).toBe('prepared');
+      expect(await prepare('owner', {}, {})).toBe('not_found');
+      expect(await prepare('alice')).toBe('not_found');
+      expect(await prepare('plain')).toBe('not_found');
+      expect(await prepare('owner', { actingFor: ['member:' + OWNER] })).toBe('not_found');
+      expect(await prepare('owner', { restrictedNamespace: true })).toBe('not_found');
+      expect(await prepare('owner', { slugPrefixes: ['companies/'] })).toBe('not_found');
+      const prepared = await prepareForgetMutation(engine, await stored('owner'), {} as never);
+      await prepared.validate!(engine);
+      await setOwner(engine, 'bob-example');
+      try {
+        expect(await prepare('owner')).toBe('not_found');
+        await expect(prepared.validate!(engine)).rejects.toMatchObject({ code: 'not_found' });
+      } finally { await setOwner(engine, OWNER); __resetPrivateVisibilityCacheForTests(); }
+      await engine.executeRaw('UPDATE access_members SET disabled_at=now() WHERE id=$1', [OWNER]);
+      try {
+        expect(await prepare('owner')).toBe('not_found');
+        await expect(prepared.validate!(engine)).rejects.toMatchObject({ code: 'not_found' });
+      } finally { await engine.executeRaw('UPDATE access_members SET disabled_at=NULL WHERE id=$1', [OWNER]); __resetPrivateVisibilityCacheForTests(); }
+      // Readers that no longer name the owner, after preparation: the check under the publication's locks reads it as not found.
+      await importFromContent(engine, GLOBEX, '---\ntype: company\ntitle: Globex Example\nreadable_by: [alice-example]\n---\n# Globex Example\n\nGlobex example runs a quiet pilot.', { sourceId: SRC });
+      try {
+        await expect(prepared.validate!(engine)).rejects.toMatchObject({ code: 'not_found' });
+        expect(await prepare('owner')).toBe('not_found');
+      } finally {
+        await importFromContent(engine, GLOBEX, '---\ntype: company\ntitle: Globex Example\nreadable_by: [' + OWNER + ']\n---\n# Globex Example\n\nGlobex example runs a quiet pilot.', { sourceId: SRC });
+      }
+      expect(await prepare('owner')).toBe('prepared');
+      expect((await h.row('canaryreaderprepare'))!.active).toBe(true);
+    }, 120_000);
+
+    /**
+     * A remember reply with what differs between two saves by construction replaced: UUIDs (the revision and the
+     * request_id), ISO timestamps (created_at, updated_at) and the new fact's id (`id`, `status_text`'s "fact #N").
+     */
+    const normalized = (text: string) => text
+      .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>')
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, '<time>')
+      .replace(/"id":"\d+"/g, '"id":"<id>"').replace(/fact #\d+/g, 'fact #<id>');
+
+    test("a member's save on its own page answers the same whether or not a claim it never read exists, existed or was withdrawn", async () => {
+      const claim = 'Acme pays a quiet signing bonus canarypart2';
+      const never = await h.remember('alice', claim + 'never');
+      // The brain host's private copy of the claim exists, then the host withdraws one, then the owner withdraws one remotely.
+      await hostFact(claim + 'exists');
+      const exists = await h.remember('alice', claim + 'exists');
+      const hostWithdrawn = await hostFact(claim + 'host');
+      const hostForget = await dispatchToolCall(engine, 'forget', { id: hostWithdrawn }, { remote: false, sourceId: SRC });
+      expect(hostForget.isError === true ? hostForget.content[0]?.text : 'ok').toBe('ok');
+      const afterHost = await h.remember('alice', claim + 'host');
+      const ownerWithdrawn = await hostFact(claim + 'owner');
+      const ownerForget = await h.call('owner', 'forget', { id: ownerWithdrawn });
+      expect(ownerForget.isError ? ownerForget.text : 'ok').toBe('ok');
+      const afterOwner = await h.remember('alice', claim + 'owner');
+      for (const reply of [never, exists, afterHost, afterOwner]) expect(reply.text).not.toContain('canarypart2');
+      expect(normalized(exists.text)).toBe(normalized(never.text));
+      expect(normalized(afterHost.text)).toBe(normalized(never.text));
+      expect(normalized(afterOwner.text)).toBe(normalized(never.text));
+      // Each save is the member's own active row on its own page, and its recall shows it.
+      for (const suffix of ['never', 'exists', 'host', 'owner']) {
+        const [mine] = await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE fact=$1 AND source_markdown_slug=$2', [claim + suffix, 'memory/members/alice-example']);
+        expect([suffix, mine?.active]).toEqual([suffix, true]);
+      }
+      const recalled = (await h.call('alice', 'recall', { entity: ACME })).text;
+      expect(['never', 'exists', 'host', 'owner'].map(suffix => recalled.includes(claim + suffix))).toEqual([true, true, true, true]);
+    }, 120_000);
+
+    test("a member's batch save on its own page answers the same whether or not a claim it never read was withdrawn", async () => {
+      const claim = 'Acme pays a quiet batch bonus canarybatch';
+      const batch = (suffix: string) => h.call('alice', 'remember', { provenance: 'owner facts test', items: [
+        { fact: 'Acme keeps a batch neighbour note canarybatchside' + suffix, entity: ACME }, { fact: claim + suffix, entity: ACME }] });
+      const never = await batch('never');
+      const hostWithdrawn = await hostFact(claim + 'host');
+      expect((await dispatchToolCall(engine, 'forget', { id: hostWithdrawn }, { remote: false, sourceId: SRC })).isError).not.toBe(true);
+      const afterHost = await batch('host');
+      const ownerWithdrawn = await hostFact(claim + 'owner');
+      const ownerForget = await h.call('owner', 'forget', { id: ownerWithdrawn });
+      expect(ownerForget.isError ? ownerForget.text : 'ok').toBe('ok');
+      const afterOwner = await batch('owner');
+      for (const reply of [never, afterHost, afterOwner]) expect(reply.text).not.toContain('canarybatch');
+      expect(normalized(afterHost.text)).toBe(normalized(never.text));
+      expect(normalized(afterOwner.text)).toBe(normalized(never.text));
+      for (const suffix of ['never', 'host', 'owner']) {
+        const [mine] = await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE fact=$1 AND source_markdown_slug=$2', [claim + suffix, 'memory/members/alice-example']);
+        expect([suffix, mine?.active]).toEqual([suffix, true]);
+      }
+    }, 120_000);
+
+    test("a member's replayed save, its replace and their write receipts answer the same whether or not a claim it never read was withdrawn", async () => {
+      const claim = 'Acme pays a quiet replay bonus canaryreplay';
+      /** Every reply the member gets for one claim: the save, its replay, its receipt, a replace onto the claim, that replace's replay and receipt. */
+      const replies = async (suffix: string) => {
+        const saveId = randomUUID();
+        const save = await h.remember('alice', claim + suffix, { request_id: saveId });
+        const replay = await h.remember('alice', claim + suffix, { request_id: saveId });
+        const receipt = await h.call('alice', 'get_write_request', { request_id: saveId });
+        const old = await h.remember('alice', 'Acme keeps a draft replay note canaryreplayold' + suffix);
+        const replaceId = randomUUID();
+        const replace = await h.remember('alice', claim + suffix + ' revised', { replaces: String(old.json.id), request_id: replaceId });
+        const replaceReplay = await h.remember('alice', claim + suffix + ' revised', { replaces: String(old.json.id), request_id: replaceId });
+        const replaceReceipt = await h.call('alice', 'get_write_request', { request_id: replaceId });
+        const all = { save, replay, receipt, replace, replaceReplay, replaceReceipt };
+        for (const [name, reply] of Object.entries(all)) expect([name, reply.text.includes('canaryreplay')]).toEqual([name, false]);
+        // Also replaced: the superseded fact's id, and the background embedding effect's progress (a timing, not an answer).
+        return Object.fromEntries(Object.entries(all).map(([name, reply]) => [name, normalized(reply.text)
+          .replace(/"superseded_fact_id":"\d+"/g, '"superseded_fact_id":"<id>"').replace(/"kind":"embedding","state":"[a-z_]+"/g, '"kind":"embedding","state":"<state>"')]));
+      };
+      const never = await replies('never');
+      expect([never.save, never.replace].map(text => text.includes('"status":"failed"') || text.includes('fact_withdrawn'))).toEqual([false, false]);
+      for (const suffix of ['host', 'owner']) {
+        for (const text of [claim + suffix, claim + suffix + ' revised']) {
+          const id = await hostFact(text);
+          const out = suffix === 'host' ? await dispatchToolCall(engine, 'forget', { id }, { remote: false, sourceId: SRC }) : await h.call('owner', 'forget', { id });
+          expect(out.isError === true ? JSON.stringify(out) : 'ok').toBe('ok');
+        }
+        expect([suffix, await replies(suffix)]).toEqual([suffix, never]);
+      }
+    }, 120_000);
+
+    test("a batch item for a claim the member withdrew or could read still refuses fact_withdrawn, and the batch's other items save", async () => {
+      const own = await h.remember('alice', 'Acme member kept a batch note canarybatchown');
+      expect((await h.call('alice', 'forget', { id: String(own.json.id) })).isError).toBe(false);
+      await h.remember('alice', 'Acme pays a held batch bonus canarybatchcopy');
+      const hostCopy = await hostFact('Acme pays a held batch bonus canarybatchcopy');
+      expect((await dispatchToolCall(engine, 'forget', { id: hostCopy }, { remote: false, sourceId: SRC })).isError).not.toBe(true);
+      const reply = await h.call('alice', 'remember', { provenance: 'owner facts test', items: [
+        { fact: 'Acme member kept a batch note canarybatchown', entity: ACME }, { fact: 'Acme keeps a fresh batch note canarybatchfresh', entity: ACME },
+        { fact: 'Acme pays a held batch bonus canarybatchcopy', entity: ACME }] });
+      const items = reply.json.items as Array<{ status: string; error?: { code: string; message: string } }>;
+      expect(items.map(item => [item.status, item.error?.code, item.error ? item.error.message.startsWith('fact_withdrawn') : null])).toEqual([
+        ['failed', 'invalid_params', true], [expect.any(String), undefined, null], ['failed', 'invalid_params', true]]);
+      expect(items[1]!.status).not.toBe('failed');
+      expect(reply.json.partial).toBe(true);
+      expect((await h.row('canarybatchfresh'))).toMatchObject({ active: true, source_markdown_slug: 'memory/members/alice-example' });
+    }, 120_000);
+
+    test("a withdrawal the member made, or of a claim it read, still refuses its save with fact_withdrawn", async () => {
+      const refused = (reply: Call) => [reply.isError, reply.json.error, String(reply.json.message).startsWith('fact_withdrawn')];
+      // The member forgets its own fact, then saves it again.
+      const own = await h.remember('alice', 'Acme member kept a note canarypart2own');
+      expect((await h.call('alice', 'forget', { id: String(own.json.id) })).isError).toBe(false);
+      expect(refused(await h.remember('alice', 'Acme member kept a note canarypart2own'))).toEqual([true, 'invalid_params', true]);
+      // The brain host withdraws a claim the member held a copy of: the member's copy is withdrawn with it, and saving it again is refused.
+      await h.remember('alice', 'Acme pays a held bonus canarypart2copy');
+      const hostCopy = await hostFact('Acme pays a held bonus canarypart2copy');
+      expect((await dispatchToolCall(engine, 'forget', { id: hostCopy }, { remote: false, sourceId: SRC })).isError).not.toBe(true);
+      expect(refused(await h.remember('alice', 'Acme pays a held bonus canarypart2copy'))).toEqual([true, 'invalid_params', true]);
+      // The owner reads the host's private fact, so after the host withdraws it the owner's private save on its own page is refused.
+      const hostOnly = await hostFact('Acme pays a reserve bonus canarypart2owner');
+      expect((await dispatchToolCall(engine, 'forget', { id: hostOnly }, { remote: false, sourceId: SRC })).isError).not.toBe(true);
+      const ownerSave = await h.remember('owner', 'Acme pays a reserve bonus canarypart2owner', { visibility: 'private' });
+      expect(refused(ownerSave)).toEqual([true, 'invalid_params', true]);
+      expect(ownerSave.json.withdrawn).toMatchObject({ subject: ACME, visibility: 'private' });
+    }, 120_000);
+
+    test("a row on a member page that its own page's withdrawal covers is marked withdrawn again when written active", async () => {
+      const own = await h.remember('alice', 'Acme member kept a dated note canarypart2restamp');
+      expect((await h.call('alice', 'forget', { id: String(own.json.id) })).isError).toBe(false);
+      await engine.executeRaw('UPDATE facts SET expired_at=NULL, valid_until=NULL WHERE id=$1', [Number(own.json.id)]);
+      expect((await h.row('canarypart2restamp'))!.active).toBe(false);
+    }, 120_000);
+
     test("an unbound connection never reads or withdraws the owner's private fact", async () => {
       const kept = await h.remember('owner', 'Acme private owner note canaryunboundhidden', { visibility: 'private' });
       expect((await h.call('plain', 'recall', { entity: ACME })).text).not.toContain('canaryunboundhidden');
@@ -298,6 +682,25 @@ for (const kind of testBackends()) {
         const forget = await h.call('owner', 'forget', { id: String(out.json.id) });
         expect(forget.isError ? forget.text : 'ok').toBe('ok');
         expect((await h.row('canarymanagedowner'))!.active).toBe(false);
+        // A private fact the brain host wrote sits in the page's file; the owner's forget strikes it there.
+        const kept = await operationsByName.remember!.handler(ctx, { fact: 'Acme host kept a ledger canarymanagedhost', entity: ACME, provenance: 'owner facts test', visibility: 'private' }) as { id: string };
+        await settleManagedGitEffects(engine);
+        expect(readFileSync(file, 'utf8')).toContain('| Acme host kept a ledger canarymanagedhost |');
+        const hostForget = await h.call('owner', 'forget', { id: String(kept.id) });
+        expect(hostForget.isError ? hostForget.text : 'ok').toBe('ok');
+        expect((await h.row('canarymanagedhost'))!.active).toBe(false);
+        await settleManagedGitEffects(engine);
+        expect(readFileSync(file, 'utf8')).toContain('~~Acme host kept a ledger canarymanagedhost~~');
+        // A private fact the brain host wrote on a page that names the owner as a reader: the owner's forget strikes it in that page's file.
+        const reader = await operationsByName.remember!.handler(ctx, { fact: 'Globex host kept a pilot ledger canarymanagedreader', entity: GLOBEX, provenance: 'owner facts test', visibility: 'private' }) as { id: string };
+        await settleManagedGitEffects(engine);
+        const readerFile = join(root, GLOBEX + '.md');
+        expect(readFileSync(readerFile, 'utf8')).toContain('| Globex host kept a pilot ledger canarymanagedreader |');
+        const readerForget = await h.call('owner', 'forget', { id: String(reader.id) });
+        expect(readerForget.isError ? readerForget.text : 'ok').toBe('ok');
+        expect((await h.row('canarymanagedreader'))!.active).toBe(false);
+        await settleManagedGitEffects(engine);
+        expect(readFileSync(readerFile, 'utf8')).toContain('~~Globex host kept a pilot ledger canarymanagedreader~~');
         const member = await h.remember('alice', 'Acme member note canarymanagedmember');
         expect([member.isError, member.json.page, member.json.visibility]).toEqual([false, 'memory/members/alice-example', 'private']);
       }, kind === 'postgres' ? { databaseUrl: process.env.DATABASE_URL! } : {});
