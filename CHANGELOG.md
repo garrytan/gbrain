@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.699.0] - 2026-11-12
+
+### The Ubicloud gate VMs run a current git
+
+**The test suite passes on a gate VM again.** Gate VMs ran stock Ubuntu 24.04's git 2.43. GitHub's runners and dev machines are on 2.5x. Three test files depend on newer git:
+- `test/effect-git-secret-gate.test.ts` needs `git maintenance run --detach`, which arrived in git 2.47.
+- `test/sync-partial-clone-2331.test.ts` (both the unit and PostgreSQL arms) needs newer partial-clone behaviour.
+
+Because of that, every VM gate (`bun run ci:ubicloud`, `scripts/pregate-remote-gate.sh` when it can't reuse a CI run) failed those files no matter what the change was.
+
+- `scripts/ubicloud/setup-ci-vm.sh` now installs git from the git-core PPA, as GitHub's runner images do. It requires at least git 2.47.0 (`GIT_MIN`) and fails setup with the version it found when git is older. A prebuilt image whose git is older than that no longer counts as ready, so it runs the apt step too. On one standard-16 VM, setup took 97 s and installed git 2.56.1. All three files passed there: effect-git-secret-gate 29/0, sync-partial-clone-2331 unit 12/0, its PostgreSQL arm 23/0. sync-disabled-cycle-window's PostgreSQL arm also passed, 7/0.
 ## [0.60.698.0] - 2026-11-12
 
 **A stalled background sync of a large source is retried with a budget that can finish it, and the retries no longer stop silently**
