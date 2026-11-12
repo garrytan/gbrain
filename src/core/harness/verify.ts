@@ -89,10 +89,11 @@ export async function verifyHarnessConnection(c: HarnessCredentials, options: Ve
       if (pageMode) cleanupSlug = `${typeof prefix === 'string' ? prefix.replace(/\/?\*?$/, '/') : 'gbrain-verification/'}${fixture}`;
       else factAttempted = true;
       const wrote = await stage('write', async () => {
+        const member = pageMode ? null : (identity.access ?? await active.call('whoami', {}).then(w => w?.access, () => null))?.member;
         mutationAttempted = true;
         const saved = await active.call(pageMode ? 'put_page' : 'remember', pageMode
-          ? { request_id: writeRequestId, slug: cleanupSlug, title: 'Connection check', content: `# Connection check\n\n${fixture}\n` }
-          : { request_id: writeRequestId, fact: fixture, entity: fixtureEntity, provenance: 'GBrain randomized connection verification', visibility: 'world' });
+          ? { request_id: writeRequestId, slug: cleanupSlug, content: `---\ntitle: Connection check\n---\n# Connection check\n\n${fixture}\n` }
+          : { request_id: writeRequestId, fact: fixture, entity: fixtureEntity, provenance: 'GBrain randomized connection verification', ...(member ? {} : { visibility: 'world' }) });
         if (saved.state !== undefined && saved.state !== 'committed') throw new Error('write_not_committed');
         if (!pageMode) factId = String(saved.id ?? '');
         mutationConfirmed = true;

@@ -108,7 +108,10 @@ in `page`. A fact saved for an entity with no page has no `page`, and its
 `write_through` reads `{"written": false, "skipped": "entity_page_missing"}`;
 each item of an `items` batch says the same for itself. If the brain's pages
 are in a Git repository, the reply also carries an `entity_page_missing`
-notice with the `put_page` call that creates the page. Once the page exists,
+notice whose step is `ask_user`: tell the user the fact is saved in the
+database only and ask whether to create a page for the entity (its
+`user_message` says this); if they agree, its fix is the `put_page` call that
+creates the page. Once the page exists,
 the next maintenance cycle (`gbrain dream`) can move the facts saved for that
 entity into the page's Facts table and its file. On a source whose pages are
 canonical in Git (`canonical: git`), the fact is not left in the database

@@ -3,6 +3,10 @@ import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { EMBED_MAX_CHARS } from '../ai/embed-batch-plan.ts';
 import { estimateTokens } from '../chunkers/token-estimate.ts';
 
+// GST-2346: the withdrawal subjects that cover a fact (access/member-facts.ts withdrawalCoversFactSql): a fact on a member
+// page is covered by its page's own withdrawals alone.
+const WITHDRAWAL_SUBJECTS = "CASE WHEN starts_with(COALESCE(f.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[f.source_markdown_slug] ELSE ARRAY['*', f.entity_slug] END";
+
 // #6960: one anti-join per fingerprint, each an equality on fact_hash, so the
 // planner hashes or index-probes the fingerprint once per fact. A single
 // `fact_hash IN (fp, fp_v1)` left both fingerprints in the join filter,
@@ -11,10 +15,10 @@ export const retainedFactEmbedding = `f.expired_at IS NULL AND f.superseded_by I
   AND (f.valid_until IS NULL OR f.valid_until>now())
   AND NOT (f.source = ANY($2::text[]))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
-    AND w.visibility=f.visibility AND w.subject = ANY(ARRAY['*', f.entity_slug])
+    AND w.visibility=f.visibility AND w.subject = ANY(${WITHDRAWAL_SUBJECTS})
     AND w.fact_hash = gbrain_fact_fingerprint(f.fact))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
-    AND w.visibility=f.visibility AND w.subject = ANY(ARRAY['*', f.entity_slug])
+    AND w.visibility=f.visibility AND w.subject = ANY(${WITHDRAWAL_SUBJECTS})
     AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))`;
 
 export const eligibleFactEmbedding = `${retainedFactEmbedding}
