@@ -16,7 +16,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ### Itemized changes
 
-#### Labelled-only members (GBRA-108 design 1)
+#### Labelled-only members
 
 - The labelled-only migration (`src/core/schema-migrations/`, numbered at merge): `access_members.labelled_only` (default false) and the SQL function `gbrain_access_origin_labelled_for()`, which passes a derived page only when it has an origin and every origin names the caller. Nothing is rewritten.
 - `src/core/access/labelled-only.ts`: `gbrain access member labelled-only <id> [on|off]`, local operator only (remote callers get `permission_denied`), never on the owner (`access_labelled_only_owner`, exit 3; `gbrain access owner` refuses a labelled-only member the same way).
