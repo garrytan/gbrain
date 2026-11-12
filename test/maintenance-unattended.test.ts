@@ -36,6 +36,7 @@ import { DEGRADED_STATE } from '../src/core/degraded-marker.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 
 const KEYLESS: SafePhaseProviders = { embedding: false, decideConflict: false, fenceRepairModel: false, contentRepairModel: false };
 const KEYED: SafePhaseProviders = { ...KEYLESS, embedding: true };
@@ -95,6 +96,7 @@ for (const kind of testBackends()) {
 
     beforeEach(async () => {
       calls.length = 0;
+      _resetCliExitVerdictForTests();
       __setEmbedTransportForTests(null);
       resetGateway();
       await engine.executeRaw("DELETE FROM config WHERE key LIKE 'maintenance.%' OR key = 'autopilot.last_global_at'");
@@ -137,6 +139,33 @@ for (const kind of testBackends()) {
       const record = await readUpkeepRecord(engine);
       expect(record!.steps.map((s) => s.name)).toContain('bookkeeping_gc');
       expect(record!.steps.map((s) => s.name)).not.toContain('purge');
+    });
+
+    test('maintain --purge previews, refuses a missing or stale hash, and purges exactly the previewed set', async () => {
+      await engine.putPage('notes/gone', { type: 'concept', title: 'Gone', compiled_truth: 'Deleted long ago.' });
+      await engine.putPage('notes/recent', { type: 'concept', title: 'Recent', compiled_truth: 'Deleted an hour ago.' });
+      await engine.softDeletePage('notes/gone');
+      await engine.softDeletePage('notes/recent');
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE slug = 'notes/gone'");
+      const remaining = async () => (await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE slug LIKE 'notes/%' ORDER BY slug")).map((r) => r.slug);
+
+      const preview = await maintainJson(['--purge', '--json']);
+      expect(preview).toMatchObject({ mode: 'preview', count: 1, pages: [{ slug: 'notes/gone' }] });
+      expect(typeof preview.hash).toBe('string');
+      expect(await remaining()).toEqual(['notes/gone', 'notes/recent']);
+
+      for (const args of [['--purge', '--yes'], ['--purge', '--yes', '--expect', 'stale0hash00']]) {
+        _resetCliExitVerdictForTests();
+        await withEnv({ GBRAIN_HOME: home }, () => runMaintain(engine, args));
+        expect(currentExitCode()).toBe(1);
+        expect(await remaining()).toEqual(['notes/gone', 'notes/recent']);
+      }
+
+      _resetCliExitVerdictForTests();
+      const applied = await maintainJson(['--purge', '--yes', '--expect', String(preview.hash), '--json']);
+      expect(applied).toMatchObject({ mode: 'applied', purged: 1 });
+      expect(currentExitCode()).toBe(0);
+      expect(await remaining()).toEqual(['notes/recent']);
     });
 
     test('stamp honesty: a keyed brain keeps last_full_cycle_at and last_source_cycle_at', async () => {

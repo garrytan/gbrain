@@ -24,6 +24,8 @@ import { readUpkeepStatus } from '../core/maintenance/status.ts';
 import { cliRenderContext, noticeBlock, renderAction, renderNotice, type Action } from '../core/agent-output.ts';
 import { ItemRun } from '../core/item-failure.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { writeCliError } from '../cli/cli-error.ts';
+import { opError } from '../core/ops/contract.ts';
 
 type ActionStatus = 'ok' | 'would_apply' | 'applied' | 'blocked' | 'skipped';
 
@@ -365,10 +367,8 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
   }
   if (opts.expect !== hash) {
     const why = opts.expect ? `The purge set changed since the preview (expected ${opts.expect}, now ${hash}); nothing was deleted.` : 'A purge needs --expect <hash> from the preview; nothing was deleted.';
-    setCliExitVerdict(3);
     const fix: Action = { argv: ['gbrain', 'maintain', '--purge'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the current purge set and its hash; it deletes nothing.' };
-    if (opts.json) console.log(JSON.stringify({ mode: 'refused', code: 'preview_changed', why, hash, fix: renderAction(fix, cliRenderContext()) }, null, 2));
-    else console.error(`${why} Preview again: gbrain maintain --purge`);
+    setCliExitVerdict(writeCliError(opError('preview_changed', why, 'Preview again: gbrain maintain --purge', { fix, detail: `current hash ${hash}` }), 'maintain', { json: !!opts.json }));
     return;
   }
   const result = await purgeDeletedPagesCoordinated(engine, retention, { automatic: true });

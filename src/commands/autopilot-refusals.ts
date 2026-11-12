@@ -12,8 +12,8 @@ const UPKEEP_STATUS_FIX = {
 
 /** GBRA-438: the PGLite daemon refusal through the agent error contract (code, why, fix). */
 export function autopilotPgliteRefusal(message: string) {
-  return opError('autopilot_pglite_daemon', message.split('\n')[0]!,
-    'Run gbrain serve instead (it owns the lock and runs the resident sweep), check free upkeep with gbrain maintain --status, or re-run with --force for a dedicated-brain daemon.',
+  return opError('autopilot_pglite_daemon', `${message.split('\n')[0]!} To install the daemon anyway on a dedicated brain, re-run with --force.`,
+    'Run gbrain serve instead (it owns the lock and runs the resident sweep). Check free upkeep with gbrain maintain --status. For a dedicated-brain daemon, re-run gbrain autopilot --install --force.',
     { why: 'A PGLite brain has one writer; a daemon holding it all day would block every other gbrain process.', fix: UPKEEP_STATUS_FIX });
 }
 

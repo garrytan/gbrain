@@ -15,7 +15,7 @@ describe('autopilot --install refusals (GBRA-438)', () => {
   test('PGLite daemon refusal points at free upkeep', () => {
     const e = autopilotPgliteRefusal('PGLite holds one writer.\nsecond line');
     expect(e.code).toBe('autopilot_pglite_daemon');
-    expect(e.message).toBe('PGLite holds one writer.');
+    expect(e.message).toBe('PGLite holds one writer. To install the daemon anyway on a dedicated brain, re-run with --force.');
     expect(e.why).toBeTruthy();
     expect(e.fix).toMatchObject({ argv: ['gbrain', 'maintain', '--status'], consent: [] });
   });
