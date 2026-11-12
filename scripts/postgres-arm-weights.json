@@ -81,6 +81,7 @@
   "test/doctor-strict-facts-outside-git.test.ts": 7643,
   "test/doctor-sync-freshness-skill-pack-6076.test.ts": 5394,
   "test/edge-whitespace-twins.test.ts": 9721,
+  "test/effect-commit-moved-head.test.ts": 22118,
   "test/embed-once-per-content-version.serial.test.ts": 17930,
   "test/embed-stale-images-managed-6529.test.ts": 11128,
   "test/embedding-completion-atomic.serial.test.ts": 8616,
