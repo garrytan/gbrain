@@ -3314,7 +3314,7 @@ wrote the page over its file even when the file held another writer's commit
 that sync had not imported yet, and the preview said "exactly the preferred
 side". Now a database-wins write goes ahead only when the database itself held
 the version the file's bytes record: the bytes the page's last import read or left
-on disk (sync's import record), or bytes a Git effect of one of the page's own
+on disk (sync's import record, including a blob a sync adopted into it), or bytes a Git effect of one of the page's own
 writes put in the file for a revision the page has held (its live revision or one
 in its version history). So a database edit made after the file's last commit
 still wins, shorter or not. Anything else is a change the database never held,
@@ -3329,8 +3329,9 @@ import record and no write of its own.
 
 Every `gbrain repair file-drift` apply now needs the user's consent: run the
 printed apply without `--yes` and it exits 3 with the consent message, which
-lists each newer change the database copy overwrites; add `--yes` only after
-the user agrees. `gbrain sources reconcile` (and MCP
+lists each newer change the database copy overwrites and each file a
+`tombstone_edited` or `purged_differs` `--prefer database` apply removes; add
+`--yes` only after the user agrees. `gbrain sources reconcile` (and MCP
 `writer_reconcile_preview` / `writer_reconcile_apply`) refuses
 `source_changed` (detail `unimported_file_edit`) when a decision takes the
 database copy over what such a file says (`take_database`, `delete` or

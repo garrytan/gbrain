@@ -10,8 +10,9 @@
  *   - gbrain's own writer commit counts the same as anyone's: a file holding gbrain's write of a revision the database
  *     never took (the Git commit landed, the row fell back) is kept_newer_file in bulk and named with --slug;
  *   - a database copy that is provably newer still wins: the file holds the bytes sync imported, or gbrain's write of a
- *     revision the page has since moved past (a later, shorter database edit included, --all-drifted --only), and the
- *     repair is listed and applied as before.
+ *     revision the page has since moved past (a later, shorter database edit included, --all-drifted --only), or a blob
+ *     sync adopted into the page's import record (with the version history pruned), and the repair is listed and applied
+ *     as before.
  * Real PGLite (and Postgres when DATABASE_URL is set), a managed worktree with real Git commits; no seams.
  */
 import { expect, test } from 'bun:test';
@@ -157,6 +158,10 @@ for (const backend of testBackends()) {
     expect(kept).toMatchObject({ format_version: 1, retention: 'pre_admission_or_terminal' });
     expect(Buffer.from(kept.preview.preimages.file_base64, 'base64').toString('utf8')).toBe(EDIT);
     expect(kept.preview.decisions).toContainEqual({ path: '/compiled_truth', action: 'take_database' });
+    // The guide's read-only lookup (docs/guides/repair.md#file-drift-past-losses) finds the overwritten commit from the backup.
+    expect([typeof kept.request_id, kept.preview.preconditions.slug, kept.preview.preconditions.relative_path]).toEqual(['string', 'notes/a', 'notes/a.md']);
+    const blob = execFileSync('git', ['-C', root, 'hash-object', '--no-filters', '--stdin'], { input: Buffer.from(kept.preview.preimages.file_base64, 'base64') }).toString().trim();
+    expect(git(root, 'log', '--all', `--find-object=${blob}`, '--format=%H %an')).toContain(`${commit} Other Writer`);
   }), 240_000);
 
   test(`${backend}: sources reconcile refuses to take the database copy over the unimported commit, in its preview and its apply`, () => brain(backend, async ({ engine, root, commit }) => {
@@ -277,6 +282,32 @@ for (const backend of testBackends()) {
 
     const preview = await runner(engine, { allDrifted: true, only: ['notes/**'], prefer: 'database' });
     expect(preview.affected).toBe(1);
+    expect(preview.residuals.kept_newer_file).toBeUndefined();
+    expect(preview.listing!.find(entry => entry.item === 'default:notes/a')!.class).toBe('prefer_database');
+    expect((await runner(engine, { allDrifted: true, only: ['notes/**'], prefer: 'database', expect: preview.preview_hash })).outcomes).toEqual({ repaired: 1 });
+    await settleManagedGitEffects(engine);
+    expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).not.toContain(WRITER_LINE);
+  }, backendOpts(backend)), 240_000);
+  test(`${backend}: a file holding the blob sync adopted for gbrain's own write still loses to a later database edit when the version history no longer keeps that revision`, () => managedBrain(async ({ engine, ctx, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    await engine.executeRaw("UPDATE persistence_host_bindings SET git_durability='enabled'");
+    const first = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/a', content: WRITER, request_id: randomUUID(), expected_revision: first.revision } });
+    await settleManagedGitEffects(engine);
+    // Sync adopts gbrain's committed write into the page's import record.
+    await performManagedSync(engine, SYNC);
+    await engine.setConfig('sync.write_through', 'false');
+    const written = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/a', content: FIRST, request_id: randomUUID(), expected_revision: written.revision } });
+    await engine.setConfig('sync.write_through', 'true');
+    expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toContain(WRITER_LINE);
+    const newer = (await engine.readPageSnapshot('notes/a', { sourceId: 'default' }))!;
+    expect((await refusal(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/a', content: '---\ntype: concept\ntitle: A\n---\n\nA refused edit.\n',
+      request_id: randomUUID(), expected_revision: newer.revision } }))).code).toBe('source_changed');
+    // Retention pruned the version history, so no page_versions row keeps the revision gbrain's write carried.
+    await engine.executeRaw("DELETE FROM page_versions WHERE page_id=(SELECT id FROM pages WHERE source_id='default' AND slug='notes/a')");
+    const preview = await runner(engine, { allDrifted: true, only: ['notes/**'], prefer: 'database' });
     expect(preview.residuals.kept_newer_file).toBeUndefined();
     expect(preview.listing!.find(entry => entry.item === 'default:notes/a')!.class).toBe('prefer_database');
     expect((await runner(engine, { allDrifted: true, only: ['notes/**'], prefer: 'database', expect: preview.preview_hash })).outcomes).toEqual({ repaired: 1 });

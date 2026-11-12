@@ -30,6 +30,7 @@ import { SYNC_ORIGIN_DELETED_OP } from '../src/core/persistence/sync-pass-row.ts
 import { gitHoldItem, readGitHold, writeGitHold, type FileDriftDeletedState, type FileDriftSide } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
+import { fileDriftConsentText } from '../src/core/repair/file-drift.ts';
 import { resolveRepairScope } from '../src/core/repair/core.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -218,7 +219,10 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
     expect(preview).toMatchObject({ mode: 'dry_run', affected: 1 });
     expect(preview.details!.pages).toEqual([expect.objectContaining({ slug: 'notes/tomb', action: 'remove_file', state: 'tombstone_edited', verb: 'keep the deletion and remove the file' })]);
     expect(preview.listing).toEqual(expect.arrayContaining([expect.objectContaining({ detail: `keep the deletion and remove the file: ${path}` })]));
-    expect(preview.warnings).toEqual([expect.stringContaining("leaves each removed file's deletion uncommitted")]);
+    expect(preview.warnings).toEqual([expect.stringContaining("leaves each removed file's deletion uncommitted"),
+      `The apply removes 1 file(s) that changed after their page was deleted; the deleted page does not hold what they say: ${path}`]);
+    // GST-2579: the consent names each file the apply removes.
+    expect(fileDriftConsentText(preview.preview_hash!, f.sourceId).user_message).toContain(`It also removes 1 file(s) that changed after their page was deleted, and the page does not hold what they say: ${path}.`);
     expect(existsSync(join(f.root, path))).toBe(true);
     const applied = await run(f.sourceId, { side: 'deleted', state: 'tombstone_edited', prefer: 'database', expect: preview.preview_hash! });
     expect(applied.outcomes).toEqual({ repaired: 1 });

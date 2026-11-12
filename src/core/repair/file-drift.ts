@@ -743,16 +743,22 @@ function item(page: ApprovedPage, index: number, hash: string, last: boolean, pr
  */
 export function fileDriftConsentText(hash: string, sourceId: string | undefined): { what: string; why: string; risk: string; user_message: string } {
   let discards: UnimportedFile[] = [];
-  try { discards = [...readArtifact(hash, `gbrain repair file-drift --source ${sourceId ?? '<source>'}`).values()].flatMap(page => 'discards' in page && page.discards ? [page.discards] : []); }
-  catch { /* the apply itself refuses a missing or changed artifact */ }
-  const named = discards.slice(0, 10).map(unimportedFileText).join('; ') + (discards.length > 10 ? `; and ${discards.length - 10} more (listed in the preview)` : '');
+  let removals: string[] = [];
+  try {
+    const pages = [...readArtifact(hash, `gbrain repair file-drift --source ${sourceId ?? '<source>'}`).values()];
+    discards = pages.flatMap(page => 'discards' in page && page.discards ? [page.discards] : []);
+    removals = pages.flatMap(page => 'remove_file' in page ? [page.remove_file.path] : []);
+  } catch { /* the apply itself refuses a missing or changed artifact */ }
+  const list = (items: string[]) => items.slice(0, 10).join('; ') + (items.length > 10 ? `; and ${items.length - 10} more (listed in the preview)` : '');
+  const named = list(discards.map(unimportedFileText));
+  const removing = removals.length ? ` It also removes ${removals.length} file(s) that changed after their page was deleted, and the page does not hold what they say: ${list(removals)}.` : '';
   return {
     what: 'Apply the previewed file-drift resolutions: each listed page takes the preferred side, so either the canonical file is rewritten from the database copy or the page is replaced from the file.',
-    why: `The preview ${hash} listed each page and the side that wins it${discards.length ? `, and the file edits sync never imported that the database copy overwrites (${discards.length})` : ''}.`,
-    risk: 'The losing side is replaced: a file rewrite is a new commit (git revert brings the edit back) and reconcile keeps a private backup of the replaced copy; a page that changed since the preview is skipped.',
-    user_message: discards.length
+    why: `The preview ${hash} listed each page and the side that wins it${discards.length ? `, and the file edits sync never imported that the database copy overwrites (${discards.length})` : ''}${removals.length ? `, and the files it removes (${removals.length})` : ''}.`,
+    risk: 'The losing side is replaced: a file rewrite is a new commit (git revert brings the edit back) and reconcile keeps a private backup of the replaced copy; a removed file comes back with git revert only when it was committed; a page that changed since the preview is skipped.',
+    user_message: (discards.length
       ? `Apply the previewed file-drift repair? It overwrites file edits sync never imported with the database copy: ${named}.`
-      : 'Apply the previewed file-drift repair? Each listed page takes the side the preview showed, and the other copy is replaced.',
+      : 'Apply the previewed file-drift repair? Each listed page takes the side the preview showed, and the other copy is replaced.') + removing,
   };
 }
 
@@ -904,11 +910,13 @@ export const fileDriftRepair: RepairHandler = {
     const appended = pages.flatMap(page => 'preview' in page && page.file_appended ? [page.preview.preconditions.relative_path] : []);
     // #6712 PR 4b: a removed file is gone only once its deletion is committed; without Git durability the next sync finds the committed file held again.
     const removed = pages.flatMap(page => 'remove_file' in page ? [page.remove_file.path] : []);
+    const removalWarning = removed.length ? [`The apply removes ${removed.length} file(s) that changed after their page was deleted; the deleted page does not hold what they say: ${removed.slice(0, 10).join(' ')}${removed.length > 10 ? ` and ${removed.length - 10} more` : ''}`] : [];
     let warnings: string[] = nextCommand ? [`This preview covered ${previewed} of the ${held!.targets.length} selected held pages${opts.cursor ? ' after its cursor' : ''} (one window stops at ${HELD_WINDOW_PAGES} pages or ${HELD_WINDOW_BUDGET_MS / 1000} s); its hash and apply command cover only these. `
       + `After applying this window (or deciding not to), preview the next one: ${nextCommand}`] : [];
     const discarded = pages.flatMap(page => 'preview' in page && page.discards ? [page.discards] : []);
     if (discarded.length) warnings.unshift(`This apply writes the database copy over ${discarded.length} file change(s) sync never imported, and needs the user's consent: ${discarded.map(unimportedFileText).join('; ')}. `
       + 'Each write is a new commit, so git revert brings the change back; reconcile also keeps the replaced bytes in its private backup.');
+    warnings.push(...removalWarning);
     const releases = pages.filter(page => 'release_hold' in page).length;
     if (releases) warnings.push(`The apply only schedules a re-screen of ${releases} held file(s) whose page and file agree; the next sync (gbrain sync --source ${sourceId}) releases each that still agrees.`);
     let undoneBySync: { recreated: number; removed: number } | null = null;

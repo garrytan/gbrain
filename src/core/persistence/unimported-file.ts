@@ -6,7 +6,8 @@
  *
  * The bytes count as known only when the database itself held the version they render: the bytes the page's last
  * recorded import read or left on disk (sync's import record: raw_sha256, disk_sha256, written in the publication that
- * stored them), or bytes a Git effect of one of the page's own writes put in that file (expected_hash) for a revision the
+ * stored them), the blob a sync adopted into that record for the revision the page held then (blob_oid, disk_blob_oid,
+ * written only while the page was at that revision), or bytes a Git effect of one of the page's own writes put in that file (expected_hash) for a revision the
  * page has held, live or in its version history. gbrain's own writer commit over a database row that never took that
  * revision (the Git commit landed and the row did not) is newer, as is anything else, including a page with no import
  * record and no write of its own: a wrong "newer" keeps a hold, a wrong "known" loses an edit. Git only describes the
@@ -78,6 +79,7 @@ export async function unimportedFile(engine: BrainEngine, state: Pick<ReconcileS
   if (pins.raw_file_hash === ABSENT_FILE_HASH) return null;
   const record = await readSyncImportProvenance(engine, pins.source_id, pins.source_incarnation, Number(pins.page_id));
   if (record && (record.raw_sha256 === pins.raw_file_hash || record.disk_sha256 === pins.raw_file_hash)) return null;
+  if (record && [record.blob_oid, record.disk_blob_oid].some(oid => oid && gitBlobOid(state.raw, oid.length === 64 ? 'sha256' : 'sha1') === oid)) return null;
   if (await gbrainWroteHeldBytes(engine, pins)) return null;
   const path = pins.relative_path.split('\\').join('/');
   const head = await headBlob(state.root, state.path);
