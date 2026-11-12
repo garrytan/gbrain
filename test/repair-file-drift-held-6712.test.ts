@@ -98,6 +98,9 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
     (await repairRunner(engine, { apply: opts.expect !== undefined, logger })).run('file-drift', await resolveRepairScope(engine, sourceId),
       { explicit: true, sourceFlag: sourceId, held: true, prefer: opts.prefer, ...(opts.side ? { side: opts.side } : {}), ...(opts.state ? { state: opts.state } : {}),
         ...(opts.only ? { only: opts.only } : {}), ...(opts.expect ? { expect: opts.expect } : {}) });
+  const runDatabaseSlug = async (sourceId: string, slug: string, expectHash?: string) =>
+    (await repairRunner(engine, { apply: expectHash !== undefined, logger })).run('file-drift', await resolveRepairScope(engine, sourceId),
+      { explicit: true, sourceFlag: sourceId, slugs: [slug], prefer: 'database', ...(expectHash ? { expect: expectHash } : {}) });
   const runSlug = async (sourceId: string, slug: string, expectHash?: string) =>
     (await repairRunner(engine, { apply: expectHash !== undefined, logger })).run('file-drift', await resolveRepairScope(engine, sourceId),
       { explicit: true, sourceFlag: sourceId, slugs: [slug], prefer: 'file', ...(expectHash ? { expect: expectHash } : {}) });
@@ -283,11 +286,14 @@ for (const backend of testBackends()) describe(`#6712 PR 4b: repair file-drift -
 
   test('file_gone: --prefer database recreates the file, --prefer file soft-deletes the page', () => fixture(async f => {
     const { path } = await fileGone(f, 'notes/gone');
-    const recreate = await run(f.sourceId, { side: 'deleted', state: 'file_gone', prefer: 'database' });
+    // GST-2579: the delete commit is newer than what sync imported, so the held database-wins run keeps it; naming the page recreates.
+    const kept = await run(f.sourceId, { side: 'deleted', state: 'file_gone', prefer: 'database' });
+    expect(kept).toMatchObject({ affected: 0, residuals: { kept_newer_delete: 1 } });
+    const recreate = await runDatabaseSlug(f.sourceId, 'notes/gone');
     expect(recreate.details!.pages).toEqual([expect.objectContaining({ slug: 'notes/gone', action: 'recreate_file', verb: 'recreate the file' })]);
     const soft = await run(f.sourceId, { side: 'deleted', state: 'file_gone', prefer: 'file' });
     expect(soft.details!.pages).toEqual([expect.objectContaining({ slug: 'notes/gone', action: 'soft_delete', verb: 'soft-delete the page' })]);
-    const applied = await run(f.sourceId, { side: 'deleted', state: 'file_gone', prefer: 'database', expect: recreate.preview_hash! });
+    const applied = await runDatabaseSlug(f.sourceId, 'notes/gone', recreate.preview_hash!);
     expect(applied.outcomes).toEqual({ repaired: 1 });
     expect(readFileSync(join(f.root, path), 'utf8')).toContain('The page.');
 
