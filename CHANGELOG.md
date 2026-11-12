@@ -16,7 +16,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 **context_pack reads a room as its audience.** A QM client that reads named sources as the scope used to be refused when it asked `context_pack` for a room's source, so QM had no session brief in shared conversations. Now a call that names `source_id` reads only that source: its entities and `entity_refs`, the core block, the counterparty brief and hot facts. Nothing from the person's own member page or from pages kept to named readers comes back, and privacy is never relaxed.
 - A scope call is refused with `invalid_params` before anything is read when it sends `entity_refs` without `source_id`, names an `entity_refs` entry in another source, or sends `session_id` (a session's thread rows are the person's).
-- A client set `--attest-read person` keeps reading as the person.
+- A client set `--attest-read person` keeps reading as the person, and its pack is narrowed to the named source the same way.
 - Contract `docs/contracts/qm-memory-provider/v5.json` marks `context_pack` `scope_read: true`. v1 to v4 stay byte for byte as published, and v4's markings are frozen in the builder.
 
 **`gbrain mcp admin attest <client> --attest-read person|scope|none`** sets the same `attest_read` that `gbrain auth rescope --attest-read` sets, over the owner session (`attestRead` on `/admin/api/access/attest`). It refuses what the local command refuses, previews with `--dry-run`, and logs `attest_read` in the `access_admin` row.

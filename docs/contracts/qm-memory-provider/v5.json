@@ -257,7 +257,7 @@
       "marked": "scope_read: true: a call that names sources (source_id, source_ids or all_sources, where the tool's input_schema declares them) reads those sources as their audience, never as the person, as memory_recall's scope_read does: no member-page fact, no page restricted to named readers, and privacy is never relaxed",
       "every_source": "under a scope read, source_id '__all__', '__all__' in source_ids and all_sources: true are refused with invalid_params; nothing is read",
       "unmarked": "scope_read: false: the tool reads as the person whatever the call names",
-      "context_pack": "a context_pack scope read names one source in source_id and reads only it: entities, cards, core memory, the counterparty brief and hot facts; entity_refs also name sources, and each must carry that same source_id; a call with entity_refs and no source_id, an entity_refs entry in another source, or session_id is refused with invalid_params, and nothing is read",
+      "context_pack": "a context_pack scope read names one source in source_id and reads only it: entities, cards, core memory, the counterparty brief and hot facts; entity_refs also name sources, and each must carry that same source_id; a call with entity_refs and no source_id (source_ids alone names none), an entity_refs entry in another source, or session_id is refused with invalid_params, and nothing is read; with --attest-read person the pack reads as the person, narrowed to source_id the same way",
       "as_person": "a credential the brain operator binds with --attest-read person reads named sources as the person instead, narrowed to those sources",
       "without_sources": "the person read (read_as above)"
     },

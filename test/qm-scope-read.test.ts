@@ -257,6 +257,11 @@ for (const kind of testBackends()) {
         expect((await call('ctx', 'context_pack', { counterparty: 'Zephyr Restricted Example' })).isError).toBe(false);
         const person = await call('ctxp', 'context_pack', { entities: 'Acme Example', source_id: SRC, session_id: 'session-a' });
         expect(person.isError).toBe(false);
+        const personRoom = await call('ctxp', 'context_pack', { entities: 'Room Example', counterparty: 'Acme Example', source_id: ROOM });
+        expect(personRoom.all).toContain('canarycoreroom');
+        for (const leak of ['canarycoresrc', 'acme-example']) expect(personRoom.all).not.toContain(leak);
+        const ids = await refused(call('ctx', 'context_pack', { entities: 'Acme Example', source_ids: [SRC] }), 'invalid_params');
+        expect(ids.all).toContain('names exactly one source in source_id');
       } finally {
         await engine.setConfig('memory.core.enabled', 'false');
       }

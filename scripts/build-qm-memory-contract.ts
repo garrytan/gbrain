@@ -215,7 +215,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
         every_source: "under a scope read, source_id '__all__', '__all__' in source_ids and all_sources: true are refused with invalid_params; nothing is read",
         unmarked: v5 ? 'scope_read: false: the tool reads as the person whatever the call names'
           : 'scope_read: false: the tool reads as the person whatever the call names; context_pack refuses a call that names sources or entity_refs with invalid_params (nothing is read) unless the credential reads named sources as the person',
-        ...(v5 ? { context_pack: 'a context_pack scope read names one source in source_id and reads only it: entities, cards, core memory, the counterparty brief and hot facts; entity_refs also name sources, and each must carry that same source_id; a call with entity_refs and no source_id, an entity_refs entry in another source, or session_id is refused with invalid_params, and nothing is read' } : {}),
+        ...(v5 ? { context_pack: 'a context_pack scope read names one source in source_id and reads only it: entities, cards, core memory, the counterparty brief and hot facts; entity_refs also name sources, and each must carry that same source_id; a call with entity_refs and no source_id (source_ids alone names none), an entity_refs entry in another source, or session_id is refused with invalid_params, and nothing is read; with --attest-read person the pack reads as the person, narrowed to source_id the same way' } : {}),
         as_person: 'a credential the brain operator binds with --attest-read person reads named sources as the person instead, narrowed to those sources',
         without_sources: 'the person read (read_as above)',
       } } : {}),

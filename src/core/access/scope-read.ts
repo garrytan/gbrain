@@ -64,7 +64,7 @@ function assertPackConfined(params: Record<string, unknown>): void {
   const source = params.source_id;
   const refused = (problem: string, fix: string) => opError('invalid_params', `context_pack: ${problem}, and this credential reads named sources as their audience, so it is refused. Nothing was read.`, fix,
     { why: 'A scope read must name exactly the one source it reads, so the pack never reads past the scope the turn serves.' });
-  if (typeof source !== 'string' || !source) throw refused('a call with entity_refs names no source_id', 'Pass source_id with the source the entity_refs name, or leave entity_refs out to read as the person.');
+  if (typeof source !== 'string' || !source) throw refused('a scope read of the pack names exactly one source in source_id, and this call names none', 'Pass source_id with the one source to read (the source every entity_refs entry names), or leave source_ids and entity_refs out to read as the person.');
   if ((params.entity_refs as unknown[] | undefined)?.some(ref => (ref as { source_id?: unknown } | null)?.source_id !== source)) {
     throw refused(`an entity_refs entry names a source other than source_id '${source}'`, 'Name only entities in the source_id the call reads, each with that source_id.');
   }
