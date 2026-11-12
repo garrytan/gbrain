@@ -498,8 +498,8 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
-test/privacy-label-ignored.test.ts
 test/physical-root-moved-8625.test.ts
+test/privacy-label-ignored.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/purge-expires-page-facts.test.ts
@@ -508,8 +508,8 @@ test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
-test/purge-scrub-followups-9068.test.ts
 test/purge-root-metafile-7613.test.ts
+test/purge-scrub-followups-9068.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
