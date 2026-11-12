@@ -37,7 +37,7 @@ export interface SessionLaneCensus {
   behind_pooler: boolean;
 }
 
-export function sessionLaneLimitFromEnv(env: Record<string, string | undefined> = process.env): number | null {
+export function sessionLaneLimitFromEnv(env: Record<string, string | undefined>): number | null {
   const raw = env[SESSION_LANE_LIMIT_ENV]?.trim();
   if (!raw) return null;
   const value = Number(raw);
@@ -74,8 +74,8 @@ export function summarizeSessionLane(input: { rows: Array<{ application_name: st
     used: behindPooler || input.envLimit !== null ? total : input.serverClients, behind_pooler: behindPooler };
 }
 
-/** Reads the census on a Postgres engine (read-only; no query text leaves the server). `urls`: the configured database URLs (a Supabase pooler among them means the limit is the pooler's). */
-export async function readSessionLane(engine: BrainEngine, urls: readonly string[], env: Record<string, string | undefined> = process.env): Promise<SessionLaneCensus> {
+/** Reads the census on a Postgres engine (read-only; no query text leaves the server). `urls`: the configured database URLs (a Supabase pooler among them means the limit is the pooler's). `env`: the caller's environment, which holds the limit. */
+export async function readSessionLane(engine: BrainEngine, urls: readonly string[], env: Record<string, string | undefined>): Promise<SessionLaneCensus> {
   const rows = await engine.executeRaw<{ application_name: string | null; connections: number | string }>(
     `SELECT application_name, count(*)::int AS connections FROM pg_stat_activity
       WHERE datname = current_database() AND usename = current_user AND backend_type = 'client backend' GROUP BY application_name`);

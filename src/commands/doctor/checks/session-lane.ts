@@ -23,7 +23,7 @@ async function runSessionLaneBudget(ctx: DoctorContext): Promise<Check[]> {
     return checks;
   }
   try {
-    const census = await readSessionLane(engine, [loadConfig()?.database_url ?? '', process.env.GBRAIN_DIRECT_DATABASE_URL ?? '']);
+    const census = await readSessionLane(engine, [loadConfig()?.database_url ?? '', process.env.GBRAIN_DIRECT_DATABASE_URL ?? ''], process.env);
     const kinds = Object.entries(census.by_kind).sort((a, b) => b[1] - a[1]).map(([kind, n]) => `${kind} ${n}`).join(', ') || 'none';
     const counts = `${census.gbrain} named by gbrain processes (${kinds})${census.pooler ? `, ${census.pooler} held by the pooler` : ''}${census.other ? `, ${census.other} by other clients` : ''}`;
     const details = { ...census, warn_ratio: SESSION_LANE_WARN_RATIO, docs: DOCS };
