@@ -350,7 +350,7 @@ export interface CallerAccess {
    */
   audienceKindMembers: readonly string[];
   /**
-   * GBRA-108 design 1 (labelled-only grant): the caller's member carries access_members.labelled_only (v306), so every
+   * GBRA-108 design 1 (labelled-only grant): the caller's member carries access_members.labelled_only (the labelled-only migration), so every
    * credential bound to it reads only pages that name it: its member id or one of its groups in readable_by, or a folder
    * or page rule that lists it (labelledOnlySql). An unlabelled page its source grant would otherwise open is hidden; a
    * derived page or fact with no readers and no rule of its own is hidden too, except under access.members_read_lineage
@@ -490,7 +490,7 @@ function labelledIdentity(access: LabelledRecord): string[] {
  * GBRA-108 design 1: `alias` names a labelled-only caller (CallerAccess.labelledOnly): its readable_by holds the caller's
  * member or one of its groups, or one of its folder or page rules lists them (a rule the caller satisfies). Under
  * access.members_read_lineage (a member read with lineage) a derived page with no label of its own passes only when it
- * has an origin and every origin names the caller (gbrain_access_origin_labelled_for, v306); with it off a derived page
+ * has an origin and every origin names the caller (gbrain_access_origin_labelled_for, the labelled-only migration); with it off a derived page
  * that names nobody is hidden, whatever its origins say. ANDed with the caller's ordinary access, so it only narrows.
  * `readers` false tests only the rules (a version snapshot carries its own readers). Ids embed as validated literals.
  */

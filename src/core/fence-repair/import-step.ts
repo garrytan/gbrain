@@ -11,7 +11,7 @@
  * number is never reused and a stored row keeps its number.
  */
 import type { BrainEngine } from '../engine.ts';
-import { parseFactsFence } from '../facts-fence.ts';
+import { parseFactsFenceFor } from '../facts-fence.ts';
 import { parseTakesFence } from '../takes-fence.ts';
 import { screenFenceCtx, type ContentRefusal, type FenceScreen, type ImportScreenResult } from '../import-screen.ts';
 import type { ParsedMarkdown, ParseOpts } from '../markdown.ts';
@@ -27,7 +27,7 @@ import type { FenceCtx, FenceFix, FenceKind, FencePage, StoredRowMap } from './t
 export function hiddenFenceRows(existing: FencePage): Set<number> {
   const rows = new Set<number>();
   for (const text of [existing.compiled_truth ?? '', existing.timeline ?? '']) {
-    for (const fact of parseFactsFence(text).facts) if (fact.visibility !== 'world') rows.add(fact.rowNum);
+    for (const fact of parseFactsFenceFor(text, existing).facts) if (fact.visibility !== 'world') rows.add(fact.rowNum);
     for (const take of parseTakesFence(text).takes) rows.add(take.rowNum);
   }
   return rows;
@@ -149,7 +149,7 @@ interface StoredPageInput { sourceId: string; slug: string; page: FencePage & { 
 
 /** Tier 1 over a page body the caller is about to write (switch read only when there is a fix; stored rows only for `renumber`). */
 async function storedPageStep(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, input: StoredPageInput): Promise<{ page: FencePage; step: FenceStep<FencePage> }> {
-  const page = { compiled_truth: input.page.compiled_truth ?? '', timeline: input.page.timeline ?? '' };
+  const page = { compiled_truth: input.page.compiled_truth ?? '', timeline: input.page.timeline ?? '', slug: input.slug };
   const ctx: FenceCtx = { pageVisibility: effectiveVisibility({ kind: 'page', page: { type: input.page.type ?? null, frontmatter: input.page.frontmatter,
     folder_restricted: await folderRestricted(engine, input.sourceId, input.slug) } }) };
   let step = fenceStep(page, ctx, { normalize: true });

@@ -8,7 +8,9 @@
  * - Guarded supersession: a row more trusted than the writer is never expired
  *   by it. The row is detached from its fence position and stays active; when
  *   the writer only renumbered it (same claim and visibility elsewhere in the
- *   fence, free slot) it moves there instead. Otherwise the new row at its old
+ *   fence, free slot) it moves there instead, and when the writer only made it
+ *   private (same claim, world to private, GST-2487) it moves there and turns
+ *   private in place, keeping its id and tier. Otherwise the new row at its old
  *   position is inserted contested with a `supersede_fact` proposal, or, when
  *   the writer removed it, a `forget` proposal asks the owner.
  * - Row gate (ENG-1): every new fence row is gated like other fact writers at
@@ -66,16 +68,17 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
     .map(r => Number(r.row_num)));
   let rows = input.rows;
   const contested: typeof guarded = [];
-  const moves: Array<{ id: number; row_num: number }> = [];
+  const moves: Array<{ id: number; row_num: number; visibility: string }> = [];
   for (const g of guarded) {
-    const target = rows.find(r => r.fact === g.fact && r.visibility === g.visibility && !occupied.has(r.row_num));
+    const free = rows.filter(r => r.fact === g.fact && !occupied.has(r.row_num));
+    const target = free.find(r => r.visibility === g.visibility) ?? (g.visibility === 'world' ? free.find(r => r.visibility === 'private') : undefined);
     if (!target) { contested.push(g); continue; }
-    moves.push({ id: Number(g.id), row_num: target.row_num });
+    moves.push({ id: Number(g.id), row_num: target.row_num, visibility: target.visibility ?? g.visibility });
     occupied.add(target.row_num);
     rows = rows.filter(r => r !== target);
   }
   // #6574: every guarded row moves in one statement; each starts detached (row_num NULL), so no move collides with another.
-  if (moves.length) await tx.executeRaw(`UPDATE facts f SET row_num = m.row_num FROM jsonb_to_recordset($1::text::jsonb) AS m(id bigint, row_num integer)
+  if (moves.length) await tx.executeRaw(`UPDATE facts f SET row_num = m.row_num, visibility = m.visibility FROM jsonb_to_recordset($1::text::jsonb) AS m(id bigint, row_num integer, visibility text)
     WHERE f.id = m.id`, [JSON.stringify(moves)]);
   const gated: Array<{ row: T; decision: GatedRowDecision }> = [];
   const inserted: T[] = [];

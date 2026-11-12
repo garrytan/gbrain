@@ -1,5 +1,5 @@
 /**
- * GBRA-108 design 1: the labelled-only grant. A member that carries access_members.labelled_only (v306; false by default
+ * GBRA-108 design 1: the labelled-only grant. A member that carries access_members.labelled_only (the labelled-only migration; false by default
  * and unchanged on upgrade) reads only pages that name it: its member id or one of its groups in readable_by, or a folder
  * or page rule that lists it. Unlabelled pages its source grant would otherwise open are hidden, and so is every derived
  * page and fact with no readers or rule of its own, except under access.members_read_lineage where every origin names it

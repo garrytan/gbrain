@@ -24,7 +24,7 @@ const rowKey = (row: { row_num: number | null; fact: string; visibility?: string
 /** The (row number, claim, visibility) of every row a body's facts fence holds; nothing for a body that was not read whole. */
 export function fenceRowKeys(body: FenceBody, slug: string, sourceId: string): Set<string> {
   if (isSegmentedPage(body as { body_storage?: 'segmented' | null }) || body.compiled_truth == null) return new Set();
-  const scan = scanCanonicalFences({ compiled_truth: body.compiled_truth, timeline: body.timeline ?? '' });
+  const scan = scanCanonicalFences({ compiled_truth: body.compiled_truth, timeline: body.timeline ?? '', slug });
   return new Set(extractFactsFromFenceText(scan.facts, slug, sourceId).map(rowKey));
 }
 

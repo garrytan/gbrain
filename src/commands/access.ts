@@ -139,7 +139,7 @@ function positionals(args: string[]): string[] {
 }
 
 function memberLine(m: MemberRecord): string {
-  return `  ${m.id}${m.display_name ? ` (${m.display_name})` : ''}  ${m.status}  ${m.kind}${m.labelled_only ? '  labelled-only' : ''}${m.email ? `  email: ${m.email}` : ''}${m.groups.length ? `  groups: ${m.groups.join(', ')}` : ''}`;
+  return `  ${m.id}${m.display_name ? ` (${m.display_name})` : ''}  ${m.status}${m.kind === 'audience' ? '  audience' : ''}${m.labelled_only ? '  labelled-only' : ''}${m.email ? `  email: ${m.email}` : ''}${m.groups.length ? `  groups: ${m.groups.join(', ')}` : ''}`;
 }
 
 export interface WhoCanReadEntry {

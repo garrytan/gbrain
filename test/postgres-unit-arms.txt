@@ -333,6 +333,7 @@ test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
 test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
+test/owner-facts-d1-gst2346.test.ts
 test/owner-member-boundary.test.ts
 test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts
@@ -502,6 +503,7 @@ test/qm-personal-tools.test.ts
 test/qm-scope-read.test.ts
 test/qm-scope-writes.test.ts
 test/read-meta-diag.test.ts
+test/readers-label-setter.test.ts
 test/reason-trailers-gbra217.test.ts
 test/recall-page-fill.test.ts
 test/receipt-compaction-newest-sync-gbra130.test.ts
@@ -518,7 +520,9 @@ test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/remember-pageless-entity-gst2446.test.ts
 test/remember-share-gst2243.test.ts
+test/remember-strict-held-gst2492.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts
@@ -594,6 +598,7 @@ test/sync-drain-effect-recovery-blocked.test.ts
 test/sync-drain-head-blocked-6543.test.ts
 test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
+test/sync-drift-rescreen-progress-gst2515.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
 test/sync-fenced-slices-gbra133.test.ts
@@ -639,6 +644,7 @@ test/sync-prescreen-drift-6712.test.ts
 test/sync-restored-file-purge.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
+test/sync-status-commits-waiting-gst2515.test.ts
 test/sync-status-failure-detail-6513.test.ts
 test/sync-status-truthful-7243.test.ts
 test/sync-storage-invalid-8007.test.ts

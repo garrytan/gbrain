@@ -118,7 +118,7 @@ These rules follow the origin, so nobody writes them by hand:
 - anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
   remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
   origin of it (a folder rule kept to the owner, or readers that list the owner). Three operator settings change this,
-  all off by default: a raw-only rule does not hide what is derived from its pages, an audience member's own member
+  and all are off by default. A raw-only rule does not hide what is derived from its pages, an audience member's own member
   page reads to the owner as if it named the owner, and `access.members_read_lineage` gives every member the owner's
   rule (all below).
 
@@ -136,7 +136,9 @@ at the source root, or one whose file left git, which a `visibility` edit cannot
 the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
 shared brain, and it binds the owner too: the owner reads such a page only when listed, unless the brain operator
 turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
-none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a
+none. The page's writers set it; on an existing page the brain host sets or removes it with
+`gbrain repair visibility --slug <page> --readers <list>` (or `--slugs-file`), which keeps the page's trust tier and
+changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. A credential bound to a
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).
@@ -145,8 +147,9 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 `access.yml`, `covers_derived: false` on the rule) keeps the pages under `transcripts/` to their readers, but not the
 pages and facts derived from them: an atom, a summary, a synthesized concept, a chronicle event or a fact made from a
 raw-only page is read by whoever reads that derived page. Use it for raw material such as call transcripts, whose
-summaries are meant to be shared. Never use it for a folder whose content is itself the secret: a summary of a
-raw-only page carries what the page says. A page's own `readable_by` still hides what is derived from it, and a page
+summaries are meant to be shared. Never use it for a folder whose content is itself the secret. A summary of a
+raw-only page carries what the page says, and the facts extracted from it are readable like any other derived page,
+so the facts pulled out of a fenced transcript are not fenced. A page's own `readable_by` still hides what is derived from it, and a page
 that another covering rule also matches stays covered. Every rule written before this existed covers derived pages and
 keeps its digest. Making a rule raw-only widens access, so it waits for `gbrain access apply` (preview, then
 `--expect <plan_hash>`); making it covering again (the same command without `--raw-only`) applies at once. Doctor's
@@ -156,10 +159,15 @@ for rules in the database (a repo-less brain) and in `access.yml`.
 ### Fact visibility (`private` | `world`)
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
-explicit private `facts.default_visibility`. A remote credential bound to a member, the owner's included, saves
-`private` on its own member page (`memory/members/<member>`) unless the call passes `share: true`, and its
-`visibility: "world"` is refused; it withdraws only facts on that page, and the brain host withdraws the rest
-(`gbrain forget <id>`). Extracted facts follow `facts.default_visibility` (private when unset)
+explicit private `facts.default_visibility`. A remote credential bound to a member saves `private` on its own member
+page (`memory/members/<member>`) unless the call passes `share: true`, and its `visibility: "world"` is refused; it
+withdraws only facts on that page, and the brain host withdraws the rest (`gbrain forget <id>`). The owner's own
+credential (or a stdio server started with `--stdio-member <owner>`), speaking for itself (no audience, not a
+subagent job, no slug fence), saves like a credential bound to no member: shared on the subject's page, or `private` on its member page when it passes `visibility: "private"` or the
+page or `facts.default_visibility` keeps facts private (the reply names the `page` and `visibility`; an explicit
+`visibility: "world"` onto a page whose facts are kept private is refused, `share_target_restricted`), and its
+`forget` withdraws a shared fact it reads. The trade-off: an owner agent that follows a planted instruction can share a fact
+without passing any flag, so pass `visibility: "private"` for a fact that must stay with the owner. Extracted facts follow `facts.default_visibility` (private when unset)
 and are never wider than their page. Remote fact reads return private facts to the owner only.
 
 ### The owner (`gbrain access owner`)
@@ -195,7 +203,7 @@ pages and its facts as if the page named the owner, with or without the owner op
 the opt-in is on. Only that page: a page that lists the audience in `readable_by` stays under the usual rules (the
 owner opt-in opens it), and a person member's member page stays closed to the owner. Nothing changes for any other
 caller, and no write widens. Only the brain operator on the brain host sets a kind; a remote caller is refused
-(`permission_denied`). `gbrain access member list` shows each member's kind, `who-can-read` lists the owner on such a
+(`permission_denied`). `gbrain access member list` marks each audience member, `who-can-read` lists the owner on such a
 page, and doctor's `access_audience_members` lists the audience members.
 
 ### Members read lineage (`gbrain access members-read-lineage`)

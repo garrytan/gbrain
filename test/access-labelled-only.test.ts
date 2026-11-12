@@ -26,7 +26,7 @@ import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 /**
- * GBRA-108 design 1: the labelled-only grant (access_members.labelled_only, v306; off by default, set only by the operator
+ * GBRA-108 design 1: the labelled-only grant (access_members.labelled_only, the labelled-only migration; off by default, set only by the operator
  * on the brain host with gbrain access member labelled-only <id> on|off).
  * 1. Protects: every credential bound to a labelled-only member reads only pages that name it (its id or one of its
  *    groups in readable_by, or a folder rule listing them), on every read path: MCP over HTTP tokens, the --as preview
