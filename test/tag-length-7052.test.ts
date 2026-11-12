@@ -93,6 +93,17 @@ describe('#7052 tag byte limit', () => {
     expect(await engine.getTags('notes/add', { sourceId: 'default' })).toEqual(['ok']);
   });
 
+  test('add_tag with an over-long tag on a page a remote caller cannot read answers page_not_found, not tag_too_long, and changes nothing', async () => {
+    for (const [slug, labels] of [['notes/hidden-private', 'visibility: private'], ['notes/hidden-readers', 'readable_by: [alice-example]']] as const) {
+      expect((await call('put_page', { slug, content: `---\ntitle: Hidden\n${labels}\ntags: [ok]\n---\n\nBody text.\n` }, LOCAL)).isError).toBe(false);
+      const hidden = await call('add_tag', { slug, tag: randomTag(3200) }, REMOTE);
+      expect({ slug, isError: hidden.isError, code: hidden.body.code, suggestion: hidden.body.suggestion }).toEqual({ slug, isError: true, code: 'page_not_found',
+        suggestion: expect.stringContaining('Do not retry this slug as a create; ask the user') });
+      expect(JSON.stringify(hidden.body)).not.toContain('tag_too_long');
+      expect(await engine.getTags(slug, { sourceId: 'default' })).toEqual(['ok']);
+    }
+  });
+
   test('a file import skips the file as tag_too_long instead of failing the insert', async () => {
     const file = join(dir, 'imported.md');
     writeFileSync(file, page([randomTag(3200)]));
