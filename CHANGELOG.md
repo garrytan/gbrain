@@ -10,6 +10,24 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.689.0] - 2026-11-12
+
+**Three opt-in ways to share what is derived from member-restricted pages: raw-only folder rules, audience members the owner reads, and member lineage reads.** A folder rule kept the summaries, atoms, chronicle events and facts made from its pages as tightly as the pages themselves, so a transcript folder kept to one member hid every summary of those calls from everyone else; a group chat's own memory page was closed to the brain owner; and only the owner could read the derived pages and facts of pages it already reads. Each now has an operator setting, off by default, and nothing changes on upgrade: `gbrain access rule add --raw-only` keeps a folder's pages to its readers but lets whoever reads a derived page read it (use it for transcripts, never for a folder whose content is itself the secret: summaries of a raw-only page, and the facts extracted from it, are readable like any other derived page, so the facts pulled out of a fenced transcript are not fenced); `gbrain access member kind <id> audience` lets the owner read that member's own member page, versions, derived pages and facts; and `gbrain access members-read-lineage on` lets every member read the derived pages and facts of pages it reads, as the owner does. All three work the same on a repo-less brain and with rules in `access.yml`, only the operator on the brain host sets them, and no write widens.
+
+### Itemized changes
+
+#### Access lineage designs (GBRA-108 designs 2, 3 and 4)
+
+- Migration v305 (`src/core/schema-migrations/v305-access-lineage-designs.ts`): `access_rules.covers_derived` (default true), `access_members.kind` (`person` | `audience`, default `person`), the SQL function `gbrain_access_lineage_rules()`, and new versions of `gbrain_access_origin_restricted()`, `gbrain_access_origin_closed_for()` (10 arguments) and `gbrain_access_origin_hidden_for()` (9 arguments); the v304 signatures stay as wrappers. Nothing is rewritten, and every existing rule keeps its digest.
+- Raw-only rules: `src/core/access/folder-rules.ts` (`covers_derived: false` in `access.yml`, the held widening `derived_released` and the narrowing `derived_covered`), `src/core/access/policy.ts` (stored, compared and previewed with `lineage` in `gbrain access apply`), `src/commands/access-rules.ts` (`rule add --raw-only`).
+- Audience members: `src/core/access/members.ts` (`setMemberKind`, `member add --kind`, refused for remote callers with `permission_denied`), `src/core/search/private-visibility.ts` (the owner's read of an audience member page, its versions, derived pages and facts), `gbrain access member kind <id> person|audience`; `member list` marks audience members.
+- Member lineage: config `access.members_read_lineage` (`src/core/access/lineage.ts`, `gbrain access members-read-lineage [on|off]`, refused for remote callers); `src/core/access/caller.ts` and `src/cli/as-preview.ts` give it to a member speaking for itself, never to an audience of several or an unbound credential (an unbound `granted_sources` token included), while a member-bound `granted_sources` token gets its member's lineage; `whoami` adds `members_read_lineage` while it is on.
+- `src/cli/enforced-member.ts`: the enforced member CLI's output guard judges slugs under the record the read ran under, so with member lineage on it no longer withholds output naming a derived page the member reads.
+- The semantic cache key (`src/core/search/mode.ts`) and the per-caller key (`src/core/access/member-facts.ts`) carry the member lineage and the owner's audience members.
+- `gbrain access check` and `who-can-read` explain all three; doctor `access_raw_only_rules`, `access_audience_members` and `access_members_read_lineage` (`src/commands/doctor/checks/access-lineage.ts`).
+- Docs: `docs/guides/access-designations.md` (raw-only rules, audience members, members read lineage), key-files entry.
+- Tests: `test/access-raw-only-rules.test.ts`, `test/access-audience-members.test.ts`, `test/access-members-read-lineage.test.ts` (every read path for every caller, off and on, the held widening, remote refusals, cache keys and the write gate; PGLite and Postgres, rules in the database and in `access.yml`); shared fixture `test/helpers/access-lineage-fixture.ts`; migration, catalog and doctor goldens.
+
 ## [0.60.688.0] - 2026-11-12
 
 **Sync no longer wedges on a source with thousands of old file-drift holds, and `sync status` stops calling a source synced while new commits wait**
