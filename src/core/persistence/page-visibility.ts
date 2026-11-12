@@ -6,7 +6,7 @@ import type { AudiencePrincipal } from '../access/audience.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { ACCESS_ID_RE, hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
-import type { SqlEngine, WriteAuthority } from './model.ts';
+import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 
@@ -31,8 +31,9 @@ export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote
  * member disabled or unbound after submission (a queued job, a replay) loses the page before commit, and the
  * member-access part applies even when an operator relaxed privacy.
  */
-export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, slug: string): Promise<void> {
+export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, page: string): Promise<void> {
   if (!authority.remote) return;
+  const slug = authorizedSlug(authority, page);
   if (authority.excludePrivate ?? true) {
     // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
     // opens a page that names readers or sits under a folder rule), so a page visible with none needs no policy read

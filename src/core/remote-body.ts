@@ -1,4 +1,4 @@
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable } from './facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFenceFor, renderFactsTable } from './facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from './takes-fence.ts';
 import { sanitizeText } from './batch-rows.ts';
 import { stripMaterializedMarkers } from './timeline-marker.ts';
@@ -37,7 +37,7 @@ export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: bool
 /** What sanitizeRemoteBody puts in place of one protected facts region: its world rows rendered, or nothing. */
 export function renderFactsRegion(region: string, includeWithdrawn = false): string {
   try {
-    const parsed = parseFactsFence(region);
+    const parsed = parseFactsFenceFor(region, { reader: true });
     if (parsed.warnings.length === 0) return renderFactsTable(parsed.facts.filter(row => row.visibility === 'world' && (includeWithdrawn || !row.forgotten)));
   } catch {
     // A protected block that cannot be parsed is omitted, never echoed.

@@ -82,6 +82,7 @@ import {
 } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unfenced-facts.ts';
+import { moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
 import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
@@ -405,7 +406,7 @@ interface FenceReconcilePlan {
 async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: string, sourceId: string, warnings: string[], managed: boolean): Promise<FenceReconcilePlan | null> {
   // A segmented page's view and fence text come from its fences rows: only runs changed since their row was written are read.
   const segmented = isSegmentedPage(page) ? await incrementalFactsFence(db, page) : null;
-  const view = segmented?.view ?? factsFenceView(page);
+  const view = segmented?.view ?? factsFenceView({ ...page, slug });
   // #6686: a lone fence below the timeline sentinel that parses cleanly is the page's fence, read where the writers
   // edit it; one that does not parse keeps the #3625 guard below.
   const below = !view.sections.body && view.sections.timeline ? view.timeline : null;
@@ -725,6 +726,8 @@ export interface ExtractFactsResult {
   legacyPages: string[];
   /** Unfenced rows this run appended to their page's fence and stamped with a row number (#5299). */
   unfencedRowsFenced: number;
+  /** GST-2492: facts held on memory/unattributed this run moved into their new entity page (present only when it moved any). */
+  heldFactsMoved?: number;
   /** Active fence-owned rows expired because their page was soft-deleted. */
   factsExpiredForDeletedPages: number;
   guardTriggered: boolean;
@@ -842,6 +845,16 @@ export async function runExtractFacts(
     } catch (e) {
       fenceStepFailed = !isFenceHold(e);
       result.warnings.push(`FACTS_FENCE_FAILED: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
+    }
+    // GST-2492: facts a strict source held on memory/unattributed move into their entity page once it exists.
+    try {
+      const held = await moveHeldFacts(engine, sourceId);
+      if (held.moved) result.heldFactsMoved = held.moved;
+      result.pagesFailed += held.write_errors;
+      for (const row of held.unmovable) result.warnings.push(`HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`);
+    } catch (e) {
+      fenceStepFailed ||= !isFenceHold(e);
+      result.warnings.push(`HELD_FACT_UNMOVABLE: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
     }
   }
 

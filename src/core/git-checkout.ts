@@ -29,6 +29,16 @@ import { dirname, join, resolve } from 'node:path';
 
 export type GitCheckoutClass = 'git' | 'not_git' | 'unknown';
 
+/** True when `dir` itself holds a `.git` entry: the checkout is the repository, not a folder somewhere under one. */
+export function isGitCheckoutRoot(dir: string): boolean {
+  try {
+    lstatSync(join(dir, '.git'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function classifyGitCheckout(dir: string, stat: (path: string) => Pick<Stats, 'uid' | 'mode' | 'isDirectory'> = statSync): GitCheckoutClass {
   let current = resolve(dir);
   let owner: number;
