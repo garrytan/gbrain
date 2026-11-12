@@ -15,6 +15,7 @@ import { __resetCapacityNoticesForTests, cachedCapacitySnapshot, CAPACITY_NOTICE
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { renderCapacityMetrics } from '../src/commands/serve-http-metrics.ts';
 import { NOTICE_CODES } from '../src/core/error-registry.ts';
+import { renderNotice } from '../src/core/agent-output.ts';
 import { readCapacityForecast } from '../src/core/persistence/capacity-forecast.ts';
 import { oneYearCapacity, recommendedLimit } from '../src/core/persistence/limits.ts';
 import { editRequest, freshBrainFactory, requestFixture } from './helpers/persistence-request-fixture.ts';
@@ -67,8 +68,13 @@ for (const kind of testBackends()) {
       // GST-2107: the notice rides a write that succeeded, so its last lines name a read-only check, never a cap raise for the user.
       expect(first[0]).toMatchObject({ kind: 'info', fix: { actor: 'agent', argv: ['gbrain', 'doctor', '--only', 'persistence_capacity', '--json'] } });
       expect(first[0]!.why).toContain('81%');
-      expect(first[0]!.why).toContain('This write was saved');
+      expect(first[0]!.why).toContain('This notice is not a refusal');
       expect(first[0]!.why).not.toContain('config set');
+      // A remote agent reads the rendered notice: over MCP its fix is the read-scope get_brain_health call, never a step to relay.
+      for (const transport of ['http', 'stdio'] as const) {
+        const fix = renderNotice(first[0]!, { transport, isCallable: tool => tool === 'get_brain_health', preapproved: () => true }).fix;
+        expect(fix).toMatchObject({ actor: 'agent', next: 'run', mcp: { tool: 'get_brain_health' } });
+      }
       expect(await capacityNotices(engine, { throttle: true, now: t0 + 1000 })).toEqual([]);
       expect(codes(await capacityNotices(engine, { throttle: false, now: t0 + 1000 }))).toEqual(['write_capacity_low']);
       expect(codes(await capacityNotices(engine, { throttle: true, now: t0 + CAPACITY_NOTICE_INTERVAL_MS }))).toEqual(['write_capacity_low']);
@@ -140,15 +146,51 @@ for (const kind of testBackends()) {
       });
       await engine.setConfig('persistence.limits.principal_lifetime_ids', '1101');
       await engine.setConfig('persistence.limits.principal_terminal_bytes', String(16 * 1024 ** 3));
+      // The forecast a receipt, doctor or /metrics read in the last minute records the rates the refusal uses under its locks.
+      const forecast = await readCapacityForecast(engine);
       const refusal = await fixture.admit('one-more').then(() => null, (error: { code?: string; fix?: { argv?: string[] } }) => error);
       expect(refusal).toMatchObject({ code: 'write_quota_exhausted', reason: 'lifetime_ids' });
-      const forecast = await readCapacityForecast(engine);
       const doctor = forecast.rows.find(r => r.scope.startsWith('principal:') && r.resource === 'lifetime_ids')!;
       expect(doctor.recommended_limit).toBe(Math.ceil(1101 + (1100 / 7) * 365));
       expect(Number(refusal!.fix!.argv!.at(-1))).toBe(doctor.recommended_limit);
       const principal = forecast.rows.find(r => r.scope.startsWith('principal:'))!.scope;
       const terminal = forecast.rows.find(r => r.scope === principal && r.resource === 'terminal_bytes')!;
       expect(await oneYearCapacity(engine, principal, 'TerminalBytes', terminal.used, terminal.limit)).toBe(terminal.recommended_limit);
+    });
+
+    check('the one-year value counts the week\'s lifecycle changes, as doctor does (GST-2107)', async engine => {
+      const fixture = await requestFixture(engine);
+      for (let i = 0; i < 14; i++) await fixture.admit(`week-${i}`);
+      await engine.transaction(async tx => {
+        await declarePersistenceProtocol(tx);
+        await tx.executeRaw(`INSERT INTO persistence_topology_changes(principal_id,request_id,digest,operation,source_id,state,terminal_bytes)
+          SELECT gen_random_uuid(),gen_random_uuid(),'d','source_add','source-a','committed',2048 FROM generate_series(1,56)`);
+      });
+      await engine.setConfig('persistence.limits.brain_lifetime_ids', '10');
+      await engine.setConfig('persistence.limits.brain_terminal_bytes', '1');
+      const forecast = await readCapacityForecast(engine);
+      for (const [resource, setting] of [['lifetime_ids', 'LifetimeIds'], ['terminal_bytes', 'TerminalBytes']] as const) {
+        const doctor = forecast.rows.find(r => r.scope === 'brain' && r.resource === resource)!;
+        expect(await oneYearCapacity(engine, 'brain', setting, doctor.used, doctor.limit)).toBe(doctor.recommended_limit);
+      }
+    });
+
+    check('a refusal under the counter locks reads at most the latest 1,000 admissions, and none after a forecast recorded the rates', async engine => {
+      const fixture = await requestFixture(engine);
+      for (let i = 0; i < 3; i++) await fixture.admit(`rate-${i}`);
+      await engine.setConfig('persistence.limits.brain_lifetime_ids', '10');
+      const reads: string[] = [];
+      const counted = { ...engine, executeRaw: (sql: string, params?: unknown[]) => {
+        if (/FROM persistence_requests/.test(sql)) reads.push(sql);
+        return engine.executeRaw(sql, params);
+      } } as unknown as BrainEngine;
+      await oneYearCapacity(counted, 'brain', 'LifetimeIds', 3, 10);
+      expect(reads.some(sql => sql.includes('LIMIT 1000'))).toBe(true);
+      expect(reads.some(sql => /LIMIT (?!1\b|1000\b)\d+/.test(sql))).toBe(false);
+      const doctor = (await readCapacityForecast(counted)).rows.find(r => r.scope === 'brain' && r.resource === 'lifetime_ids')!;
+      reads.length = 0;
+      expect(await oneYearCapacity(counted, 'brain', 'LifetimeIds', doctor.used, doctor.limit)).toBe(doctor.recommended_limit);
+      expect(reads.some(sql => sql.includes('LIMIT 1000'))).toBe(false);
     });
 
     check('writes within a minute share one snapshot; the next minute reads again', async engine => {

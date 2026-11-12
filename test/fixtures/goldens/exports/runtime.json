@@ -796,6 +796,7 @@
         "isFrontmatterHoldMessage",
         "isRelativeFileUri",
         "isTimelineHeadingAfterDash",
+        "needsEmptyTimelineSentinel",
         "nullBytesError",
         "parseMarkdown",
         "parseMarkdownHead",

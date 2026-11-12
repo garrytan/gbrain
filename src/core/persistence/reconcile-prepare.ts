@@ -6,7 +6,7 @@ import type { GBrainConfig } from '../config.ts';
 import { importFromContent, type ParsedPage } from '../import-file.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { alignWithStored } from './align-stored.ts';
-import { parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows, type ParsedFact } from '../facts-fence.ts';
+import { parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, restoreHiddenFactRows, type ParsedFact } from '../facts-fence.ts';
 import { opError } from '../ops/contract.ts';
 import { privateRequestRefusal } from './visibility-request.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
@@ -77,7 +77,7 @@ export function privateFactViolation(next: readonly ParsedFact[], prior: readonl
 }
 
 function preservePrivateFacts(incoming: string, stored: string, section: string, sourceId: string, slug: string): string {
-  const next = parseFactsFence(incoming), prior = parseFactsFence(stored);
+  const next = parseFactsFenceFor(incoming, { slug }), prior = parseFactsFenceFor(stored, { slug });
   if (next.warnings.length || prior.warnings.length) throw opError('invalid_params', 'Fact fences must parse losslessly before reconciliation.',
     'The ## Facts table of the file or of the stored page has rows that do not parse cleanly, so reconciliation cannot prove its private facts are kept; nothing was written. Repair the malformed rows in the file, then generate a fresh preview and apply it.');
   const row = privateFactViolation(next.facts, prior.facts);

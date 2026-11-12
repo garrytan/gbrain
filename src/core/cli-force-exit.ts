@@ -724,7 +724,18 @@ export function drainStdoutQueueSync(deadlineMs: number = resolveStdoutDrainDead
  * (EAGAIN mid-payload) or a prior in-flight write defers to the async tail,
  * preserving order.
  */
+let stdoutCapture: ((text: string) => void) | null = null;
+
+/** GST-2476 G2: while set, every fd-1 write this module makes goes to the capture instead (enforced member mode withholds an allowed command's output). */
+export function setStdoutCapture(capture: ((text: string) => void) | null): void {
+  stdoutCapture = capture;
+}
+
 function chainStdoutWrite(data: string | Uint8Array, encoding?: BufferEncoding): Promise<void> {
+  if (stdoutCapture) {
+    stdoutCapture(typeof data === 'string' ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf8'));
+    return Promise.resolve();
+  }
   const buf =
     typeof data === 'string'
       ? Buffer.from(data, encoding ?? 'utf8')

@@ -36,6 +36,16 @@ export function renderCuratedHelp(command: string, spec: CliHelpSpec): string {
   return `${lines.join('\n')}\n`;
 }
 
+/**
+ * #8510: a command's own help text, for a handler that prints its help without a curated spec. Under `--json` it is one
+ * `{command, help, contract_version}` document (the guard sends console.log to stderr, so fd 1 got nothing); otherwise the
+ * text exactly as before.
+ */
+export async function printHelpText(command: string, text: string, args: readonly string[]): Promise<void> {
+  if (jsonRequested(args)) await writeJsonDocument(JSON.stringify({ command, help: text, contract_version: CONTRACT_VERSION }));
+  else console.log(text);
+}
+
 /** Prints the curated help when the command has one; returns false otherwise. */
 export async function printCuratedHelp(command: string, args: readonly string[]): Promise<boolean> {
   const spec = await loadCuratedHelp(command);

@@ -26,6 +26,7 @@ test/access-on-behalf-of.test.ts
 test/access-owner-default-writes.test.ts
 test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
+test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
 test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
@@ -89,6 +90,7 @@ test/edge-whitespace-twins.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts
+test/enforced-member.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
@@ -96,6 +98,7 @@ test/extract-atoms-raised-cap-drain-7391.test.ts
 test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
+test/extract-facts-fence-failure-health-8758.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
@@ -151,6 +154,7 @@ test/held-read-signals.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
 test/hosted-repo-g7b2.test.ts
+test/ignored-privacy-labels.test.ts
 test/import-file-result-callback-gbra130.test.ts
 test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
@@ -325,7 +329,9 @@ test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
 test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
+test/owner-facts-d1-gst2346.test.ts
 test/owner-member-boundary.test.ts
+test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-change-reason-gbra217.test.ts
@@ -474,6 +480,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/privacy-label-ignored.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/purge-expires-page-facts.test.ts
@@ -509,7 +516,9 @@ test/refresh-retry-hint-gst1582.test.ts
 test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
+test/remember-pageless-entity-gst2446.test.ts
 test/remember-share-gst2243.test.ts
+test/remember-strict-held-gst2492.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts

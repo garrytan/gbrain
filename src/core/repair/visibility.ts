@@ -269,8 +269,8 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
  * page's privacy hides it (worldFactsFromPrivateSources `readable`).
  */
 const leftWorld = (fact: { id: number; readable: boolean }, why: string): RepairItemOutcome => fact.readable
-  ? { applied: false, outcome: 'fact_left_readable', detail: { fact_id: fact.id }, reason: `${why}; the fact row is still world, so remote callers can still read it` }
-  : { applied: false, outcome: 'fact_left_world', detail: { fact_id: fact.id },
+  ? { applied: false, outcome: 'fact_left_readable', detail: { fact_id: Number(fact.id) }, reason: `${why}; the fact row is still world, so remote callers can still read it` }
+  : { applied: false, outcome: 'fact_left_world', detail: { fact_id: Number(fact.id) },
     reason: `${why}; the fact row is still world, and only its page's privacy keeps remote callers from reading it` };
 async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, factId: number): Promise<boolean | RepairItemOutcome> {
   const [fact] = await worldFactsFromPrivateSources(ctx.engine, [item.source_id], [factId]);

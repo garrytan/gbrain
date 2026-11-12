@@ -303,6 +303,8 @@ import { v299 } from './v299-access-member-sources.ts';
 import { v300 } from './v300-memory-proposals.ts';
 import { v301 } from './v301-member-email.ts';
 import { v302 } from './v302-link-transitions-source.ts';
+import { v303 } from './v303-access-page-rules.ts';
+import { v304 } from './v304-access-owner-origin.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -604,4 +606,6 @@ export const MIGRATIONS: Migration[] = [
   v300,
   v301,
   v302,
+  v303,
+  v304,
 ];

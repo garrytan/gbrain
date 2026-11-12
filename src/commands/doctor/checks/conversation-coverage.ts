@@ -4,13 +4,13 @@
  * computeExtractAtomsBacklogCheck pattern. doctor.ts re-exports it under the
  * facade rule.
  *
- * Scans up to 200 most-recent conversation-type pages (50 per allowed type),
+ * Scans the most recent conversation-type pages (50 per concrete type, granular aliases included),
  * runs parseConversation in dry mode, reports per-pattern hit counts +
  * unmatched count. Warn at >10% unmatched with paste-ready hint pointing at
  * `gbrain conversation-parser scan <slug>`.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
-import { ALLOWED_TYPES, isConversationFactsEligiblePage, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
+import { ALLOWED_TYPES, isConversationFactsEligiblePage, pageTypesForAllowed, requireParseableConversationFlag } from '../../../core/facts/conversation-types.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError } from '../check-fix.ts';
 
@@ -24,10 +24,11 @@ export async function computeConversationFormatCoverageCheck(
   try {
     const { ConversationBodyTooLargeError, readConversationBodyForParsing } = await import('../../../core/conversation-parser/body.ts');
     const { parseConversation } = await import('../../../core/conversation-parser/parse.ts');
-    // Single source of truth for the conversation-facts type allowlist (#4135).
-    const allowedTypes = ALLOWED_TYPES;
-    // PageFilters supports singular `type` only; iterate the allowed types
-    // and cap at ~50/each to land at ~200 total max.
+    // Single source of truth for the conversation-facts type allowlist (#4135),
+    // expanded to the granular collector types the extractor reads (#8469).
+    const allowedTypes = pageTypesForAllowed(ALLOWED_TYPES);
+    // PageFilters supports singular `type` only; iterate the concrete types
+    // and cap at TYPE_SAMPLE each.
     const sample: import('../../../core/types.ts').Page[] = [];
     // #5330: sample only pages the extractor would claim.
     const strict = await requireParseableConversationFlag(engine);

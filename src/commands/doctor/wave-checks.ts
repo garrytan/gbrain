@@ -80,6 +80,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => { const { derivedVisibilityCheck } = await import('./checks/derived-visibility.ts'); return perSource(scope, id => derivedVisibilityCheck(engine, id)); },
   },
   {
+    id: 'privacy_label_ignored', resolution: 'operator', registration: 'wave',
+    count: d => Number(d.pages ?? 0),
+    impact: 'Some pages carry an access or confidentiality value gbrain does not read as private, so the label does not hide them from remote callers or keep them out of git',
+    instruction: 'List the pages with `gbrain list --where <key>=<value> --json` on the brain host and add `visibility: private` to each page that should stay private; gbrain rewrites no label itself.',
+    run: async (engine, scope) => (await import('./checks/privacy-label-ignored.ts')).privacyLabelIgnoredCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'safe_index_pending', resolution: 'repair', registration: 'wave',
     count: d => Number(d.pages_pending ?? 0),
     impact: 'Some pages are below the safe-chunk index version and are withheld from remote search',

@@ -490,7 +490,10 @@ What one purge does, in one transaction:
 - drops the row (not a strike) from the page's facts or takes fence, from the
   stored page body and from every saved page version, then rebuilds that page's
   chunks; the canonical file is rewritten by the owner and committed as
-  `gbrain: purge fact <hash8>` (no claim text in the commit);
+  `gbrain: purge fact <hash8>` (no claim text in the commit). A purge of a
+  fact held on `memory/unattributed` for an entity with no page also drops
+  every copy of the same claim text on that page, whether it is held for
+  another entity or has no entity;
 - redacts stored write intents that carry the claim (a write that is running
   or recovering blocks the purge with `purge_blocked_pending_recovery` until it
   finishes; retry with the same request id; a write still queued, or deferred
