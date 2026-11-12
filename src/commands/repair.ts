@@ -211,7 +211,7 @@ const VALUE_FLAGS = new Set(['--rules', '--source', '--limit', '--expect', '--on
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
   '--include-cross-entity': ['duplicate-facts'],
-  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility', 'private-labels'], '--since': ['file-drift', 'generations'],
+  '--slug': ['fences', 'file-drift', 'rename-identity', 'overwritten-edits', 'origin-twins', 'timeline-order', 'contact-rows', 'provenance', 'secret-spans', 'segmented-tiling', 'visibility'], '--from': ['rename-identity'], '--close': ['rename-identity'], '--prefer': ['file-drift'], '--request': ['file-drift'], '--all-drifted': ['file-drift'], '--class': ['file-drift', 'visibility', 'private-labels'], '--since': ['file-drift', 'generations'],
   '--held': ['file-drift', 'generations'], '--side': ['file-drift'], '--state': ['file-drift'], '--cursor': ['file-drift'], '--provenance': ['file-drift'],
   '--keep': ['stuck-recovery'], '--request-id': ['stuck-recovery'],
   '--older-than': ['receipt-compaction'], '--include-failures': ['receipt-compaction'], '--force': ['receipt-compaction'],
@@ -456,6 +456,12 @@ export function renderRepairResult(result: RepairResult, opts: { diff: boolean }
   const render = repairSpec(result.kind).handler.render;
   if (result.details && render) lines.push(...render(result.details, opts));
   if (result.mode === 'apply' && result.outcomes) lines.push(`  outcomes: ${Object.entries(result.outcomes).map(([k, v]) => `${k}=${v}`).join(', ')}`);
+  if (result.mode === 'apply' && result.outcomes?.fact_left_readable) {
+    lines.push(`  NOT CLOSED: ${result.outcomes.fact_left_readable} fact row(s) could not be made private and stay readable by remote callers (listed below).`);
+  }
+  if (result.mode === 'apply' && result.outcomes?.fact_left_world) {
+    lines.push(`  NOT CLOSED: ${result.outcomes.fact_left_world} fact row(s) could not be made private and are still world; only their page's privacy hides them from remote callers (listed below).`);
+  }
   for (const outcome of result.mode === 'apply' ? result.outcome_items ?? [] : []) {
     if (!outcome.detail) continue;
     lines.push(`  ${outcome.outcome}: ${outcome.item} ${Object.entries(outcome.detail).filter(([key]) => key !== 'commit_step' && key !== 'fix').map(([k, v]) => `${k}=${v}`).join(', ')}${outcome.reason ? ` (${outcome.reason})` : ''}`);

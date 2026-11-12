@@ -672,6 +672,7 @@ src/core/transcripts/secret-audit.ts	auditTranscriptSecrets	field	STREAM
 src/core/transcripts/secret-audit.ts	auditTranscriptSecrets	sql	STREAM	
 src/core/trust/held-removals.ts	acceptHeldRemoval	field	SEGW	materializeSegmentedBody within the single-string ceiling; over it assertInlineBody refuses (no fences there) and the proposal stays pending
 src/core/trust/held-removals.ts	heldRow	sql	SEGW	inline body only; acceptHeldRemoval reads a segmented page within the single-string ceiling with materializeSegmentedBody
+src/core/trust/label-lowerings.ts	listLabelLowerings	sql	INLINE	read-only listing compares inline bodies in SQL (no body leaves the database); a segmented page or version (compiled_truth NULL) is classed unreadable
 src/core/trust/page-handlers.ts	markdownWithoutMarker	call:serializeMarkdown	SEGW	
 src/core/trust/page-handlers.ts	markdownWithoutMarker	field	SEGW	
 src/core/trust/page-handlers.ts	plannedProvenanceRestore	call:serializeMarkdown	SEGW	refuses a segmented page (assertInlineBody); gbrain repair provenance lists segmented pages needs_review

@@ -22,12 +22,12 @@
  * (class, page id) order under a hash, with every category's count over the scope before
  * and after the window; --apply --expect <hash> applies exactly that window, re-deciding
  * each page against its live revision and labels first. A bare --apply is refused. Each
- * item is one revision-bound maintenance write, so it keeps the page's trust tier (no
- * trust_tier marker, no lower_page proposal) and its gate markers: a managed brain
- * publishes it through the maintenance door (the Git door on a repo source) with keep_trust,
- * an unmanaged one imports it in a maintenance transaction under the page lock, also
- * keeping the stored tier. readable_by and folder
- * rules are left as they are.
+ * item is one revision-bound label-only write (repair/label-write.ts), so it keeps the page's
+ * trust tier (no trust_tier marker, no lower_page proposal) and its gate markers: a managed
+ * brain publishes it through the maintenance door (the Git door on a repo source) with
+ * keep_trust and its label edit, so the page's file changes only in the removed or re-added
+ * label lines (GST-2468); an unmanaged one imports it in a maintenance transaction under the
+ * page lock, also keeping the stored tier. readable_by and folder rules are left as they are.
  *
  * The preview also counts, per window and by category, the pages whose only privacy is a listed
  * page's label and that the window would expose with it (`dependents`, never slugs): derived_from
@@ -50,18 +50,16 @@
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
-import { maintenanceTransaction } from '../persistence/attribution.ts';
-import { withTrustKeep } from '../persistence/context.ts';
-import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { isPlainLabelValue, type LabelEdit } from '../persistence/label-edit.ts';
+import { filesInCheckout, writeLabelPage } from './label-write.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
 import { isTerminal } from '../persistence/model.ts';
 import { requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { digest } from '../persistence/digest.ts';
 import { modeRequiresSynopsis } from '../embedding-context.ts';
 import { chunkGenerationFilter } from '../search/safe-chunks.ts';
-import { importFromContent } from '../import-file.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { PRIVACY_ALIASES, privacyAliasSql, privacyPartSql, privateSnapshotFilterFragment, readHonorAliases } from '../search/private-visibility.ts';
 import { asciiLower } from '../edge-whitespace.ts';
@@ -294,36 +292,6 @@ async function windowDependents(engine: BrainEngine, window: Approved[]): Promis
   return { counts, exposes };
 }
 
-/**
- * GST-2128 item 1: on a brain without managed persistence, the pages with a recorded file (`source_path`) in a source that
- * has a checkout (`local_path`, or `sync.repo_path` for the default source), by page id. This repair writes only the
- * database there, so the file would put the label back at the next sync or re-import. The core reads no filesystem
- * (GBRA-248), so a recorded file that is gone still counts, which only holds a page. Empty on a managed brain.
- */
-async function filesInCheckout(engine: BrainEngine, pageIds: number[]): Promise<Map<number, string>> {
-  if (!pageIds.length || await managedPersistenceEnabled(engine)) return new Map();
-  const rows = await engine.executeRaw<{ id: number; source_id: string; source_path: string; local_path: string | null }>(`SELECT p.id, p.source_id, p.source_path, s.local_path
-    FROM pages p JOIN sources s ON s.id = p.source_id WHERE p.id = ANY($1::integer[]) AND p.source_path IS NOT NULL`, [pageIds], bounded);
-  const repoPath = rows.some(row => row.source_id === 'default' && !row.local_path) ? await engine.getConfig('sync.repo_path') : null;
-  return new Map(rows.flatMap(row => (row.local_path ?? (row.source_id === 'default' ? repoPath : null)) ? [[Number(row.id), row.source_path] as const] : []));
-}
-
-/**
- * Unmanaged brains: the legacy maintenance import (an owner path: no write gate, no trust marker, gate markers kept),
- * under withTrustKeep so the page keeps its stored tier, bound to the previewed revision under the page lock. The revision
- * it wrote; null when the page moved.
- */
-async function importAtRevision(engine: BrainEngine, entry: Approved, revision: string, content: string, embed: boolean): Promise<string | null> {
-  return maintenanceTransaction(engine, async tx => {
-    await tx.lockPageKeys([{ sourceId: entry.source_id, slug: entry.slug }]);
-    if ((await tx.readPageSnapshot(entry.slug, { sourceId: entry.source_id }))?.revision !== revision) return null;
-    const result = await withTrustKeep(tx, ['pages'], () => importFromContent(tx, entry.slug, content, { sourceId: entry.source_id, noEmbed: !embed, preserveGateMarkers: true }));
-    if (result.status === 'error') throw opError('invalid_params', `${entry.source_id}:${entry.slug} was not written: ${result.error ?? 'the import refused it'}`,
-      'Preview gbrain repair private-labels again; the page is listed with its current state.');
-    return (await tx.readPageSnapshot(entry.slug, { sourceId: entry.source_id }))?.revision ?? null;
-  });
-}
-
 /** GBRA-443: lines this run appended to its ledger, by phase (the apply result's ledger_rows_written and ledger_rows), kept on the ledger it was handed. */
 type CountedLedger = PrivateLabelsLedger & { rows?: { intent: number; committed: number } };
 function recordLine(ledger: CountedLedger, line: LedgerLine & { phase: 'intent' | 'committed' }): void {
@@ -382,6 +350,9 @@ async function prepareWrite(ctx: OperationContext, item: LabelsItem): Promise<Re
     next = Object.fromEntries(Object.entries(frontmatter).filter(([key]) => !Object.hasOwn(labels, key)));
   } else {
     if (Object.keys(labels).some(key => Object.hasOwn(frontmatter, key))) return { outcome: CHANGED };
+    if (!Object.values(labels).every(isPlainLabelValue)) {
+      return { outcome: { applied: false, outcome: 'label_not_plain', reason: `${describeLabels(labels)} cannot be written back as plain label lines; add it to the page's file by hand, commit it, then run: gbrain sync --source ${entry.source_id}` } };
+    }
     next = { ...frontmatter, ...labels };
   }
   const file = (await filesInCheckout(ctx.engine, [entry.page_id])).get(entry.page_id);
@@ -423,17 +394,16 @@ function committedOutcome(item: LabelsItem, line: LedgerLine, written: string | 
 
 const writtenRevision = async (engine: BrainEngine, entry: Approved) => (await engine.readPageSnapshot(entry.slug, { sourceId: entry.source_id }))?.revision ?? null;
 
-/** One item's page write after its intent line: the maintenance door on a managed brain, the legacy import under the page lock otherwise. */
+/** The label edit an item makes: a clear removes its recorded keys, a restore sets them back. */
+const labelEditOf = (entry: Approved): LabelEdit => entry.mode === 'clear' ? { set: {}, remove: Object.keys(entry.labels) }
+  : { set: entry.labels as Record<string, string>, remove: [] };
+
+/** One item's page write after its intent line (repair/label-write.ts): the maintenance door on a managed brain, the legacy import under the page lock otherwise. */
 async function writeOne(ctx: OperationContext, item: LabelsItem, ready: Ready, line: LedgerLine, authority: MaintenanceAuthority | null, embed: boolean): Promise<RepairItemOutcome> {
   recordIntent(item, line);
-  let written: string | null;
-  if (authority) {
-    await publishMaintenancePage(ctx.engine, authority, item.entry.slug, ready.content, { expectedRevision: ready.revision, requestId: line.request_id, keepTrust: true });
-    written = await writtenRevision(ctx.engine, item.entry);
-  } else {
-    written = await importAtRevision(ctx.engine, item.entry, ready.revision, ready.content, embed);
-    if (!written) return CHANGED;
-  }
+  const written = await writeLabelPage(ctx, item.entry, { revision: ready.revision, content: ready.content, edit: labelEditOf(item.entry), requestId: line.request_id, embed,
+    preview: 'gbrain repair private-labels' }, authority);
+  if (!written && !authority) return CHANGED;
   return committedOutcome(item, line, written);
 }
 
@@ -578,7 +548,7 @@ export const privateLabelsRepair: RepairHandler = {
         }
         if (!admitted.length) continue;
         const published = await publishMaintenancePages(ctx.engine, authority, admitted.map(({ index, line }) => ({ slug: items[index]!.entry.slug, content: ready[index]!.content,
-          expectedRevision: ready[index]!.revision, requestId: line.request_id, keepTrust: true as const })), { batch: digest(['private-labels-batch-v1', opts.expect ?? opts.runId ?? '', sourceId]) });
+          expectedRevision: ready[index]!.revision, requestId: line.request_id, keepTrust: true as const, labelEdit: labelEditOf(items[index]!.entry) })), { batch: digest(['private-labels-batch-v1', opts.expect ?? opts.runId ?? '', sourceId]) });
         wrote = true;
         for (const [position, { index, line }] of admitted.entries()) {
           const settled = published[position]!;

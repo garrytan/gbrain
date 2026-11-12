@@ -163,6 +163,7 @@ test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
+test/label-only-repairs.test.ts
 test/lane-apply-pipelining.test.ts
 test/large-pages/append-concurrency.test.ts
 test/large-pages/append-cost.test.ts
@@ -327,6 +328,7 @@ test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
 test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
+test/owner-member-boundary.test.ts
 test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts
 test/pack-relation-direction-engine.test.ts
