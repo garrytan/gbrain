@@ -816,8 +816,8 @@ Two guards run in `bun run verify`:
 Collision recovery: an unapplied branch migration is renumbered (`git mv`, edit
 `version`, regenerate); one already applied to a disposable dev DB means rebuilding
 that DB and replaying; one applied to retained data needs explicit `schema_version`
-reconciliation, never just a counter edit. `bun run migrations:renumber` does the
-renumbering after merging `origin/master` and prints the old-to-new mapping
+reconciliation, never just a counter edit. `bun run migrations:renumber`
+renumbers after merging `origin/master` and prints the old-to-new mapping
 ([RELEASING.md](RELEASING.md#releases-per-batch)). Pinned by
 `test/scripts/build-schema-migrations.test.ts` and `test/migrations-golden.test.ts`.
 
