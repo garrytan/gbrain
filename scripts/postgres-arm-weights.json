@@ -114,6 +114,7 @@
   "test/forecast-journal.test.ts": 33091,
   "test/frontmatter-reserved-keys-6454.test.ts": 9014,
   "test/g4-forget-fence-edit.test.ts": 100033,
+  "test/gated-hold-strict-page-gst2535.test.ts": 58877,
   "test/get-chunks-paging.test.ts": 7403,
   "test/git-canonical-conversion-evidence-d4.test.ts": 69424,
   "test/git-canonical-conversion-g8a.test.ts": 285780,
