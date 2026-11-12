@@ -10,6 +10,19 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+### Broad keyword searches from MCP clients answer again instead of timing out
+
+**A remote caller's hybrid search no longer times out its keyword arm on a common word.** Hybrid search ranks at most 50,000 matching chunks, but for a remote (MCP) caller the planner still read every matching chunk before that bound applied, because the private-page checks made the page join look expensive. On a large Postgres brain a word in most chunks then ran past the 8 s keyword statement timeout, the search answered from vectors alone (`keyword_arm_failed`), and the serving process skipped the keyword arm for that query for the next 10 minutes.
+
+- When a remote caller sets no type, frontmatter or date filter and its source scope covers every live source (the usual MCP scope), the keyword statement now reads matching chunks straight from the full-text index and checks each one's page by key, with every visibility, member-access, quarantine, deletion and archived-source filter applied before the bound. It stops reading once it has 50,000 candidates.
+- Measured on a synthetic 2.1M-chunk Postgres brain (warm, median): a word in 95% of chunks went from 9.9 s to 0.65 s, a word in a third of chunks from 1.5 s to 0.76 s, and a word in 5% of chunks from 0.93 s to 0.70 s. Rare terms are unchanged (about 40 ms), and their results are identical.
+- Results are identical whenever a query matches fewer than 50,000 chunks. Above that, the 50,000-chunk sample is drawn in index order instead of another plan's order, so which pages of a very broad term rank can change; the result was already a sample there (`keyword_candidates_incomplete`).
+- Local callers, typed or dated searches and narrower source scopes run the same statement as before.
+- The keyword-mode page statement and the strict page count now run with the same 32 MB `work_mem` as the keyword arm, so a common word's bitmap no longer goes lossy: 5.8 s to 3.7 s for keyword paging and 0.68 s to 0.26 s for a count on the same brain.
+- `scripts/bench/retrieval-scale/keyword-broad.ts` times the keyword statements for broad, medium and rare terms and can diff two checkouts' results; `run.ts` takes `--queries` and `--no-query-cache`.
+
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git
