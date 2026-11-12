@@ -12,8 +12,8 @@ import type { Migration } from './types.ts';
 // brain it is not in the files, so a brain rebuilt from a clone starts with no rows (the owner's label door sets them
 // again). No schema.sql mirror: like v282, v283 and v300, it exists only through migrations. Provisional number:
 // renumbered at the merge slot.
-export const v305: Migration = {
-  version: 305,
+export const v306: Migration = {
+  version: 306,
   name: 'page_label_guards',
   idempotent: true,
   sql: `

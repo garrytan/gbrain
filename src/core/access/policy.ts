@@ -25,7 +25,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { userInfo } from 'node:os';
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
-import { classifyRulebook, folderRulesAllow, rulebookDigest, rulesFromJson, sortRules, type Classification, type FolderRule, type RuleChange } from './folder-rules.ts';
+import { classifyRulebook, coversDerived, folderRulesAllow, ruleCovers, rulebookDigest, rulesFromJson, sortRules, type Classification, type FolderRule, type RuleChange } from './folder-rules.ts';
 import { identityFor } from './principals.ts';
 import { listMembers } from './members.ts';
 
@@ -114,9 +114,9 @@ export async function lockSource(tx: Exec, sourceId: string): Promise<void> {
 }
 
 export async function appliedRules(engine: Exec, sourceId: string): Promise<FolderRule[]> {
-  const rows = await engine.executeRaw<{ rule_id: string; prefix: string; readable_by: string[] }>(
-    'SELECT rule_id, prefix, readable_by FROM access_rules WHERE source_id = $1 ORDER BY rule_id', [sourceId]);
-  return sortRules(rows.map(r => ({ id: r.rule_id, prefix: r.prefix, readable_by: [...(r.readable_by ?? [])] })));
+  const rows = await engine.executeRaw<{ rule_id: string; prefix: string; readable_by: string[]; covers_derived: boolean }>(
+    'SELECT rule_id, prefix, readable_by, covers_derived FROM access_rules WHERE source_id = $1 ORDER BY rule_id', [sourceId]);
+  return sortRules(rows.map(r => ({ id: r.rule_id, prefix: r.prefix, readable_by: [...(r.readable_by ?? [])], ...(r.covers_derived === false ? { covers_derived: false as const } : {}) })));
 }
 
 export async function listRevisions(engine: Exec, sourceId: string, limit = 50): Promise<RevisionRow[]> {
@@ -140,6 +140,7 @@ export async function coverageRows(engine: Exec, sourceId: string): Promise<Cove
 }
 
 const key = (r: FolderRule) => `${r.id}\u0000${r.prefix}`;
+const sameRule = (a: FolderRule, b: FolderRule) => a.prefix === b.prefix && a.readable_by.join('\u0000') === b.readable_by.join('\u0000') && coversDerived(a) === coversDerived(b);
 
 /**
  * Makes `target` the applied rulebook inside the caller's locked transaction. Rules whose (id, prefix) pair is new get
@@ -163,15 +164,15 @@ async function installRulebook(tx: Exec, sourceId: string, target: readonly Fold
   const targetKeys = new Set(target.map(key));
   for (const r of current) {
     const next = after.get(r.id);
-    if (!next || next.prefix !== r.prefix || next.readable_by.join('\u0000') !== r.readable_by.join('\u0000')) {
+    if (!next || !sameRule(next, r)) {
       await tx.executeRaw('DELETE FROM access_rules WHERE source_id = $1 AND rule_id = $2', [sourceId, r.id]);
     }
   }
   for (const r of target) {
     const prior = before.get(r.id);
-    if (prior && prior.prefix === r.prefix && prior.readable_by.join('\u0000') === r.readable_by.join('\u0000')) continue;
-    await tx.executeRaw('INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision, created_by) VALUES ($1, $2, $3, $4::text[], $5, $6)',
-      [sourceId, r.id, r.prefix, r.readable_by, revision, actor]);
+    if (prior && sameRule(prior, r)) continue;
+    await tx.executeRaw('INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision, created_by, covers_derived) VALUES ($1, $2, $3, $4::text[], $5, $6, $7)',
+      [sourceId, r.id, r.prefix, r.readable_by, revision, actor, coversDerived(r)]);
   }
   const added = target.filter(r => !currentKeys.has(key(r)));
   for (const r of added) {
@@ -304,6 +305,11 @@ export interface WideningImpact {
   sample: string[];
   /** Members who read at least one page after the change that they cannot read now; 'every_source_reader' when unbound callers gain too. */
   gains: string[] | 'every_source_reader';
+  /**
+   * Raw-only rules (derived_released): no page gains readers; `pages` and `sample` are the pages the rule covers, whose
+   * derived pages and facts stop being hidden by it from whoever reads those derivatives.
+   */
+  lineage?: true;
 }
 
 export interface ApplyPreview {
@@ -338,6 +344,12 @@ export async function previewApply(engine: BrainEngine, sourceId: string, revisi
   const widening: WideningImpact[] = [];
   for (const change of cls.held) {
     const old = current.find(r => r.id === change.rule);
+    if (change.kind === 'derived_released') {
+      const covered = (await engine.executeRaw<{ slug: string }>(
+        'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) ORDER BY slug', [sourceId, change.prefix])).map(r => r.slug).filter(s => ruleCovers(s, change.prefix));
+      widening.push({ change, pages: covered.length, sample: covered.slice(0, 20), gains: 'every_source_reader', lineage: true });
+      continue;
+    }
     const prefixes = [...new Set([old?.prefix, change.prefix].filter((p): p is string => !!p))];
     const slugs = (await engine.executeRaw<{ slug: string }>(
       'SELECT slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE starts_with(slug, pfx)) ORDER BY slug',

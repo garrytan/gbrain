@@ -14,6 +14,7 @@
       "access_member_sources.access_member_sources_pkey": "p PRIMARY KEY (member_id, source_id)",
       "access_members.access_members_email_check": "c CHECK (((email IS NULL) OR ((length(email) <= 254) AND (email ~ '^[^@[:space:]]+@[^@[:space:]]+$'::text))))",
       "access_members.access_members_id_check": "c CHECK ((id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'::text))",
+      "access_members.access_members_kind_check": "c CHECK ((kind = ANY (ARRAY['person'::text, 'audience'::text])))",
       "access_members.access_members_pkey": "p PRIMARY KEY (id)",
       "access_pending_coverage.access_pending_coverage_pkey": "p PRIMARY KEY (source_id, prefix, reason)",
       "access_pending_coverage.access_pending_coverage_prefix_check": "c CHECK (((prefix = ''::text) OR ((length(prefix) <= 512) AND (prefix ~ '^(([a-z0-9][a-z0-9._-]*/)+|([a-z0-9][a-z0-9._-]*/)*[a-z0-9][a-z0-9._-]*)$'::text) AND (POSITION(('..'::text) IN (prefix)) = 0))))",
@@ -599,11 +600,14 @@
       "enforce_minion_queue_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=be82640d1979fc81dc812efb78bb3596ef536f656d20750e5e4aa19016bf4784",
       "gbrain_access_derive_page_readers()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=55923fb552adcdc8e5e3c820a0b4ba11f74748b4478f52de2e1b7506e969ac4d",
       "gbrain_access_folder_rules(p_source text, p_slug text)": "RETURNS text[] kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=a476d94909ef46bf697ec14b0e5034eaf504004553264298107d3962fa3059cd",
+      "gbrain_access_lineage_rules(p_source text, p_rules text[])": "RETURNS text[] kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d2373deb5c27c3ba3794e223754c116a6ded14a54cb296882fff69464d74f0e5",
       "gbrain_access_mark_restricted()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e45dc26421664fa3d409fba6c612af88905d2df35923f9592bcb759fc1ea618f",
       "gbrain_access_norm_readers(vals text[])": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, pg_temp] body_sha256=b536c2604461abac62c90c090d127b71bdda8ed23d43ae25790606a8ee64f769",
-      "gbrain_access_origin_closed_for(o_source text, o_slug text, o_frontmatter jsonb, o_readers text[], o_rules text[], p_identity text[], p_satisfied text[], p_open boolean, p_own_page text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=67c5094be3455630ad49372cb6385911718bc183acba4546194978dd6e307444",
-      "gbrain_access_origin_hidden_for(p_id integer, p_source_id text, p_type text, fm jsonb, p_identity text[], p_satisfied text[], p_open boolean, p_own_page text)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=ea3c9cddcba7f9c01b136778aa4490f63fc204f900a280c37e7fb31d6fd3e38d",
-      "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d33ef57dcf408ee17d85ce50e05d881c1cd2f4df2ae1424612ad38092d154948",
+      "gbrain_access_origin_closed_for(o_source text, o_slug text, o_frontmatter jsonb, o_readers text[], o_rules text[], p_identity text[], p_satisfied text[], p_open boolean, p_own_page text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=72cab846e7394f7dc707d5ba4398aca28282577ef0ddfd7344e1d331c14d9736",
+      "gbrain_access_origin_closed_for(o_source text, o_slug text, o_frontmatter jsonb, o_readers text[], o_rules text[], p_identity text[], p_satisfied text[], p_open boolean, p_own_page text, p_audience_pages text[])": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=141ca5767c490e897b509cee46d2e7b54ce8ff12176c4c45ec36fb7b048cd660",
+      "gbrain_access_origin_hidden_for(p_id integer, p_source_id text, p_type text, fm jsonb, p_identity text[], p_satisfied text[], p_open boolean, p_own_page text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=3eac3806fcfc6e54e07a28f06ce153b4ac415709cd53c50d3b24e4423646be3c",
+      "gbrain_access_origin_hidden_for(p_id integer, p_source_id text, p_type text, fm jsonb, p_identity text[], p_satisfied text[], p_open boolean, p_own_page text, p_audience_pages text[])": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=74057c9cd464b1993aa10970e8d21cc5fb2f66c7c7fe91dc271680901f927188",
+      "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=506a29c639348746278d0c472b43a013bf2e39a8e83de4cd3641424116160c6d",
       "gbrain_access_pending_covers(p_source text, p_slug text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=57448e941169ad1e65fbdab4bbe4572cc7b6f164ef19fd61a3666640e85f253c",
       "gbrain_access_readers(fm jsonb)": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=18348cb56089106aaec6470076ee652d7ed3bfbcb20e950a24abd52a21e7a380",
       "gbrain_access_stamp_folder_rules()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7fb49ce62f4f6153ef0c844a1816f5f5bb7d765b8610ff66fec137283469fc09",
@@ -1806,7 +1810,8 @@
           "4 tombstoned_at timestamp with time zone/timestamptz NULL",
           "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "7 email text/text NULL"
+          "7 email text/text NULL",
+          "8 kind text/text NOT NULL DEFAULT 'person'::text"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -1865,7 +1870,8 @@
           "4 readable_by ARRAY/_text NOT NULL",
           "5 revision bigint/int8 NOT NULL",
           "6 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "7 created_by text/text NULL"
+          "7 created_by text/text NULL",
+          "8 covers_derived boolean/bool NOT NULL DEFAULT true"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

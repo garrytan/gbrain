@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 300,
+    "count": 301,
     "gaps": [
       17,
       18,
@@ -52,7 +52,7 @@
       "PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX": "4759eaf319a6ad8d99aae7648acb6556745ed7cba051175273e2f46927c77d52",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
       "PERSISTENCE_SYNC_WATERMARK_INDEX": "93523954a30e8483717f07ec97a3e0cd062b15d8a60cc759281054b06c23bb40",
-      "PINNED_FUNCTION_NAMES": "f940551717a5d974effd67e25cd93c287af7394f16e458af0e318619d1f01901",
+      "PINNED_FUNCTION_NAMES": "e1fae0df5d24dc4721ffc1939c661ed377c3da6f8f8eea1913a497893a2a5090",
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "POSTGRES_15_GATE": "09c990d8c0bd6e4ebeb3b897477748609035b0e695b5b2c6a9bf7539f7352193",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
@@ -103,7 +103,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 305,
+    "latest": 306,
     "records": [
       {
         "handler": {
@@ -4967,6 +4967,19 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "access_lineage_designs",
+        "sql": {
+          "length": 9778,
+          "sha256": "f893b1ba189ad260c2503b589fe097af29938504419ae56a6865ad95a80e1332"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 305
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "page_label_guards",
         "sql": {
           "length": 537,
@@ -4975,7 +4988,7 @@
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
-        "version": 305
+        "version": 306
       }
     ],
     "versions": [
@@ -5278,7 +5291,8 @@
       302,
       303,
       304,
-      305
+      305,
+      306
     ]
   },
   "normalizer": "migrations-record-v1"

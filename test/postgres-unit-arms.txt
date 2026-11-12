@@ -12,6 +12,7 @@
 # other Postgres lane runs. The unit, serial and slow lanes unset
 # themselves from scripts/postgres-arm-weights.json.
 test/access-as.test.ts
+test/access-audience-members.test.ts
 test/access-binding.test.ts
 test/access-federated-member-writes.test.ts
 test/access-folder-lock-order.test.ts
@@ -21,6 +22,7 @@ test/access-folder-scoped-role.test.ts
 test/access-hidden-page-writes.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
+test/access-members-read-lineage.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts
 test/access-owner-default-writes.test.ts
@@ -28,6 +30,7 @@ test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
+test/access-raw-only-rules.test.ts
 test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
@@ -596,6 +599,7 @@ test/sync-drain-effect-recovery-blocked.test.ts
 test/sync-drain-head-blocked-6543.test.ts
 test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
+test/sync-drift-rescreen-progress-gst2515.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
 test/sync-fenced-slices-gbra133.test.ts
@@ -641,6 +645,7 @@ test/sync-prescreen-drift-6712.test.ts
 test/sync-restored-file-purge.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
+test/sync-status-commits-waiting-gst2515.test.ts
 test/sync-status-failure-detail-6513.test.ts
 test/sync-status-truthful-7243.test.ts
 test/sync-storage-invalid-8007.test.ts

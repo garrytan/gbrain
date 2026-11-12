@@ -2,7 +2,8 @@
  * GBRA-218 local `--as <member>`: an operation's reads previewed as one member.
  * The handler runs under that member's identity with the remote read policy
  * (readers and privacy; GST-2059: the brain owner reads with privacy relaxed, and GST-2490: with access.owner_reads_restricted
- * on, past readers lists and rules too), while ctx.remote stays false, so upload confinement
+ * on, past readers lists and rules too; GBRA-108: a read previews the lineage the member's own credential gets, owner
+ * or access.members_read_lineage, and the owner's audience members), while ctx.remote stays false, so upload confinement
  * and write trust are unchanged. An unknown or ill-formed member is refused
  * before any work.
  */
@@ -36,19 +37,24 @@ export async function openAsPreview(engine: BrainEngine, member: string | undefi
   let identity: string[];
   let owner: boolean;
   let ownerReadsRestricted: boolean;
+  let lineage: boolean;
+  let audienceKindMembers: string[];
   try {
-    const resolved = await (await import('../core/access/members.ts')).memberIdentity(engine, member);
+    const membersModule = await import('../core/access/members.ts');
+    const resolved = await membersModule.memberIdentity(engine, member);
     identity = resolved.identity;
     const ownerModule = await import('../core/access/owner.ts');
     owner = resolved.member === await ownerModule.ownerMemberId(engine);
     ownerReadsRestricted = owner && await ownerModule.ownerReadsRestrictedOn(engine);
+    lineage = readOnly && (owner || await (await import('../core/access/lineage.ts')).membersReadLineageOn(engine));
+    audienceKindMembers = owner && lineage ? await membersModule.audienceMemberIds(engine) : [];
   } catch (e: unknown) {
     await finishCliTeardown({ engine });
     exitCliError(e, command);
   }
   const { withCallerAccess } = await import('../core/search/private-visibility.ts');
   const folder = await (await import('../core/access/caller.ts')).folderAccessFor(engine, identity);
-  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, ownerLineage: owner && readOnly, ownerReadsRestricted: ownerReadsRestricted && readOnly, privateReadableSources: [] };
+  const access = { identity, ...folder, applyRemoteReadPolicy: true, hidePrivate: !owner, owner, lineage, ownerReadsRestricted: ownerReadsRestricted && lineage, audienceKindMembers, privateReadableSources: [] };
   return {
     run: fn => withCallerAccess(access, fn),
     context: ctx => ({ ...ctx, accessIdentity: identity, applyRemoteReadPolicy: true }),

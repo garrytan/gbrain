@@ -156,11 +156,14 @@ export async function readNotifierBlock(engine: BrainEngine, sourceId: string, o
   // #7243: the resident the row last recorded (the one its trace rows name), whose notifier lease is no longer live.
   const recorded = !live && row.owner_kind ? { kind: row.owner_kind, pid: remote || row.owner_pid == null ? null : Number(row.owner_pid), host_id: remote ? null : row.owner_host_id,
     seen_at: iso(row.owner_seen_at), lease_expired_at: iso(row.lease_expires_at) } : null;
+  // GST-2515: with sync.on_commit off no resident watches any source's HEAD, even while one runs this host's notifier.
+  const onCommit = live || holder || recorded ? true : parseOnCommit(await engine.getConfig(SYNC_ON_COMMIT_KEY).catch(() => null));
   const fix = !live && !holder
     ? syncNowFix(sourceId, recorded
       ? `The ${recorded.kind} resident recorded as this source's notifier${recorded.pid ? ` (PID ${recorded.pid})` : ''} holds no live notifier lease${recorded.lease_expired_at ? ` (it lapsed at ${recorded.lease_expired_at})` : ''}, `
         + `so nothing watches this source now; this syncs the checkout HEAD now. If that resident is still running, it is not renewing its lease: restart it, and it catches up on its own.`
-      : 'No resident (gbrain serve, gbrain jobs work or the autopilot daemon) watches this source; this syncs the checkout HEAD now. A resident started later catches up on its own.')
+      : onCommit ? 'No resident (gbrain serve, gbrain jobs work or the autopilot daemon) watches this source; this syncs the checkout HEAD now. A resident started later catches up on its own.'
+        : 'No resident watches this source\'s HEAD: sync.on_commit is off, so a running resident (gbrain serve, gbrain jobs work or the autopilot daemon) syncs only explicit requests; this syncs the checkout HEAD now. `gbrain config set sync.on_commit true` turns on watching.')
     : !live ? (holderStalled(holder, lease?.db_now) ? syncNowFix(sourceId, `No notifier watches this source, and the ${holder!.kind} process holding its drain lease has made no commit or cursor save for ${HOLDER_STALL_MS / 60_000} min or more; `
       + 'a foreground sync follows it and takes over when its lease lapses.') : null)
     : stalled ? syncNowFix(sourceId, `The notifier made no progress after ${Number(row.attempts ?? 0)} attempts (${row.last_error_code ?? row.reason ?? 'blocked'}); a foreground sync shows the error`
