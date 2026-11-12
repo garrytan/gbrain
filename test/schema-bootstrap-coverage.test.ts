@@ -1254,6 +1254,11 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // exist only through migrations, so no index or function in either blob references covers_derived or kind.
   'access_rules.covers_derived',
   'access_members.kind',
+  // GST-363 (migration v308) - a credential the operator marked to read unscoped on a brain that serves several people.
+  // Absent from both schema blobs, so no index or function there references it; only the requester-scope gate, access
+  // check and bindCredential read it, all after migrations have run.
+  'access_tokens.reads_unscoped',
+  'oauth_clients.reads_unscoped',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',
