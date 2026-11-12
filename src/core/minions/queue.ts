@@ -187,6 +187,11 @@ async function coalesceReturn(
 }
 
 
+/** SQL true for a job with the watchdog mark (`mark`) whose last requeue is at least `waitMs` milliseconds old (GST-2529). */
+function overdueSuspectSql(mark: string, waitMs: string): string {
+  return `(${markedJobSql(mark)} AND updated_at <= now() - (${waitMs}::double precision * interval '1 millisecond'))`;
+}
+
 export class MinionQueue {
   readonly maxSpawnDepth: number;
   readonly maxAttachmentBytes: number;
@@ -1478,8 +1483,7 @@ export class MinionQueue {
     const params: unknown[] = [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams()];
     const param = (value: unknown) => `$${params.push(value)}`;
     const mark = opts.excludeWatchdogSuspects || opts.suspectWaitMs !== undefined ? param(WATCHDOG_SUSPECT_MARK) : '';
-    const overdue = opts.suspectWaitMs === undefined ? null
-      : `(${markedJobSql(mark)} AND updated_at <= now() - (${param(opts.suspectWaitMs)}::double precision * interval '1 millisecond'))`;
+    const overdue = opts.suspectWaitMs === undefined ? null : overdueSuspectSql(mark, param(opts.suspectWaitMs));
     const suspects = !opts.excludeWatchdogSuspects ? '' : ` AND ${unmarkedJobSql(mark)}${overdue ? ` AND NOT EXISTS (SELECT 1 FROM minion_jobs s WHERE s.queue = $3
            AND s.status = 'waiting' AND s.submission_authority IS NOT NULL AND s.name = ANY($4) AND ${overdue})` : ''}`;
     const names = excludeNames ? ` AND NOT (name = ANY(${param(excludeNames)}))` : '';
@@ -1511,6 +1515,18 @@ export class MinionQueue {
       params,
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
+  }
+
+  /** GST-2529: whether a marked job this worker could claim has waited `suspectWaitMs` since its requeue. The worker asks at most every
+   *  few seconds and passes `suspectWaitMs` to `claim` only when one has, so a claim with no such job keeps the claim index's order. */
+  async hasOverdueWatchdogSuspect(queue: string, registeredNames: string[], suspectWaitMs: number): Promise<boolean> {
+    if (registeredNames.length === 0) return false;
+    const rows = await this.engine.executeRaw<{ overdue: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM minion_jobs WHERE queue = $1 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($2)
+         AND ${overdueSuspectSql('$3', '$4')}) AS overdue`,
+      [queue, registeredNames, WATCHDOG_SUSPECT_MARK, suspectWaitMs],
+    );
+    return rows[0]?.overdue === true;
   }
 
   /** A co-runner of a watchdog drain back to waiting, marked, no attempt burned (token-fenced). */
