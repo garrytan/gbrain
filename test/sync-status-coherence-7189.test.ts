@@ -79,6 +79,8 @@ test('the notifier names the process holding the drain lease instead of saying n
   expect(idle!.resident).toBeNull();
   expect(idle!.drain_holder).toBeNull();
   expect(idle!.fix!.why).toContain('No resident');
+  // GST-2515: with sync.on_commit off, the fix says why nothing watches the source's HEAD rather than implying no resident runs.
+  expect(idle!.fix!.why).toContain('sync.on_commit is off');
   const seen: Array<Awaited<ReturnType<typeof readNotifierBlock>>> = [];
   await withDrainLease(engine, id, { holder: { kind: 'serve', id: 'serve-example' } }, async () => {
     seen.push(await readNotifierBlock(engine, id), await readNotifierBlock(engine, id, { remote: true }));

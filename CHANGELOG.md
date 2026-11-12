@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.688.0] - 2026-11-12
+
+**Sync no longer wedges on a source with thousands of old file-drift holds, and `sync status` stops calling a source synced while new commits wait**
+
+Since v0.60.677.0, every unknown-side `file_drift` hold written under the earlier drift screen is screened once more, and that screen reads each held path's earlier committed versions. It read them with one Git process per path and reported nothing while it ran. On a source with thousands of such holds, the pass stayed silent past the sync's 300-second no-progress check and was stopped (`drain_stalled`) before it stamped any hold, so every later pass repeated the same reads and the source never synced again.
+
+- The re-screen now reads every held path's history through one `git cat-file --batch-check` per 2,000 paths, with no file bodies, and reports progress as each path's history arrives. A Git read that hangs still reports nothing, so the no-progress check still stops it. On a generated repository with 80,000 files and 3,000 commits, 10,000 holds took 6.2 s instead of 141 s, and 80,000 holds took 66 s instead of 17 minutes. The longest silence was 36 ms instead of the whole read.
+- A pass stopped partway keeps the holds it re-screened, and the next pass reads only the rest.
+- `gbrain sync status` reads `resumable` / `commits_waiting` when nothing else is pending (or only holds that need no person) but the checkout's HEAD is past the last synced commit, with a `next` that runs the sync. It used to read `synced` until the next sync happened to run. A hold that needs a person keeps its own reason, and a company-brain source, which syncs to its approved revision, never reads it.
+- With `sync.on_commit` off, the notifier's fix now says so, instead of saying that no resident runs.
+
 ## [0.60.687.0] - 2026-11-12
 
 **An upgrade can no longer run the same schema step twice at once.** When two gbrain processes started on one brain together (a cron job and an agent, or two hosts after an upgrade), both could apply the same schema migration. On Postgres reached through a transaction-mode pooler such as PgBouncer or Supabase's pooler, the lock meant to keep them apart did not hold. The pooler hands each statement to whichever server connection is free, so the lock could be taken on one connection and left behind on another. The second process then ran the step too, which showed up as a failed migration (for example a duplicate key on `pg_proc` while a function was being created) or as a step applied twice, and a lock left behind could keep later upgrades waiting until they timed out. Every path that changes the schema now takes one lock that holds for the whole run, through a pooler or a direct connection, and on PGLite. There is nothing to do beyond upgrading.
