@@ -1035,10 +1035,12 @@ export async function dispatchToolCall(
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
-      // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
+      // envelope QM reads, never a thrown call; a coded refusal (access_identity_unavailable) is an error result, before
+      // anything is admitted; anything else keeps the caller's own error path.
       if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) {
-        if (!actorNamed) throw e;
-        return withStructuredError(errorResult(e, opts, { op: name }));
+        if (actorNamed) return withStructuredError(errorResult(e, opts, { op: name }));
+        if (e instanceof OperationError) return errorResult(e, opts, { op: name });
+        throw e;
       }
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));

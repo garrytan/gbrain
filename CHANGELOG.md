@@ -10,6 +10,21 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A labelled-only member no longer reads and writes as an unbound guest when the database hiccups.** When gbrain looks up which member a token, OAuth client or local server is bound to, a dropped connection, a timeout or a failed statement used to look the same as "bound to nobody". A credential bound to nobody reads and writes every page that names no readers, so during that hiccup a member kept to its labelled pages could read, overwrite or create unlabelled pages. Now the request fails with `access_identity_unavailable`, a retryable error that tells the agent to wait a few seconds and send the same request again; nothing is read or written. Credentials that really are unbound read exactly as before, and so does every caller on a brain whose database predates member access.
+
+### Itemized changes
+
+#### Member lookups fail closed
+
+- `src/core/access/caller.ts`: `liveIdentity` (behind `memberIdentityFor` and `stdioMemberIdentity`) throws `access_identity_unavailable` when its lookup fails, instead of returning the empty identity. An unbound credential, an unknown member and a disabled or removed member stay empty. A missing table or column (SQLSTATE 42P01 or 42703, the same code on PGLite and Postgres) still reads as unbound: every table and column the lookup reads arrived with the member-access migration, before the labelled-only column, so no member of any kind can exist there.
+- New error code `access_identity_unavailable` (`src/core/error-registry.ts`, `src/core/error-catalogue.ts`): class `retryable`, `retry_after_ms=2000`, and a fix whose `next` is `wait` that calls `whoami` to confirm the binding reads again. Documented in `docs/guides/write-refusals.md` and `docs/guides/error-codes.md`.
+- `src/mcp/dispatch.ts`: a coded error raised while resolving the caller's access comes back as an MCP error result, as every other refusal does, instead of a thrown call.
+- `src/mcp/server.ts`: `gbrain serve` with a stdio member still starts when that member's lookup fails at startup; its writeback instructions treat the server as bound to a member, which keeps its writes private.
+- `src/core/persistence/page-visibility.ts`: the labelled-only create check drops a shortcut that skipped the check when the request's own policy said the brain had no restrictions. The check runs inside the persistence consumer, where that policy is never set, so the shortcut never fired; the check now always asks the database whether any labelled-only member exists.
+- Tests: `test/access-labelled-only-fail-closed.test.ts` on PGLite and Postgres. A labelled-only credential whose lookups fail gets `access_identity_unavailable` on `get_page`, `list_pages`, `search` and the stdio binding, and cannot update or create an unlabelled page; a missing table or column still reads as unbound. It also pins the create refusal when the grant reaches a brain that served unrestricted requests. It covers one long-lived engine, a member that already wrote, a second serve process (Postgres only, because PGLite locks its data directory to one process) and `access.restrictions_present` deleted by hand. A failed visibility probe never lets a write through inside a transaction, and outside one it counts as labelled-only.
+
 ## [0.60.702.0] - 2026-11-12
 
 **A member can now be kept to pages labelled for it.** A group chat bot or a shared assistant bound to a member read every unlabelled page its source grant opened, and every summary, atom and fact made from them. `gbrain access member labelled-only <id> on` (off by default, unchanged on upgrade) keeps every credential of that member to pages that name it: the member or one of its groups in `readable_by`, or a folder or page rule listing them. Unlabelled pages, and derived pages and facts that name nobody, are hidden on every read path; with `access.members_read_lineage` on, a derived page passes only when every origin names the member. Writes follow the same rule. Only the operator on the brain host sets it, and never on the owner. It works the same on a repo-less brain and with rules in `access.yml`.

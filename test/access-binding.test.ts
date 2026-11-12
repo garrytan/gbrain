@@ -149,7 +149,7 @@ for (const kind of testBackends()) {
       expect(await memberIdentityFor(noQueries, { ...joined, member: { id: 'alice-example', groups: ['team-a'] } })).toEqual(['group:team-a', 'member:alice-example']);
       expect(await memberIdentityFor(noQueries, { ...joined, member: null })).toEqual([]);
       expect(await memberIdentityFor(engine, joined)).toEqual(['group:team-a', 'member:alice-example']);
-      expect(await memberIdentityFor(noQueries, joined)).toEqual([]);
+      await expect(memberIdentityFor(noQueries, joined)).rejects.toMatchObject({ code: 'access_identity_unavailable' });
     });
 
     test('a stored principal whose token was revoked resolves to the empty identity, like may_act_for', async () => {

@@ -9,15 +9,24 @@
  * its principal. A local stdio server reads its binding from its own
  * `gbrain serve --stdio-member <id>` (the harness's MCP entry, so one
  * registration on one machine), else from config `mcp.stdio_member` set by
- * hand. A brain with no member-access restriction skips all of
- * it. Every failure (pre-migration schema, unreadable row, unknown or
- * disabled member) yields an empty identity, which reads no restricted page.
+ * hand. A remote read or write on a brain with no member-access restriction
+ * and no owner never looks a binding up. An empty identity means the
+ * credential is unbound or its member is unknown, disabled or removed; it
+ * reads no restricted page. A lookup that fails (a dropped connection, a
+ * timeout, a failed statement) throws access_identity_unavailable, which is
+ * retryable: reading the credential as unbound instead would open every
+ * unlabelled page to a labelled-only member. The one failure that stays empty
+ * is a schema older than the member tables (v282), whose lookup misses a table
+ * or column (SQLSTATE 42P01 or 42703 on both engines); no member, labelled-only
+ * (v308) or not, can exist there, and every owner caller there is unbound.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
 import { remotePrivacyRelaxed, requestRemotePolicy, type CallerAccess, type FolderCoverage, type RemotePolicy } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
+import type { Action } from '../agent-output.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
@@ -34,22 +43,40 @@ const MEMBERS_WHERE_SQL = (predicate: string) => `SELECT m.id, COALESCE(array_ag
   GROUP BY m.id`;
 const MEMBER_SQL = (member: string) => MEMBERS_WHERE_SQL(`m.id = (${member})`);
 
+/** Missing table and missing column: the lookup's schema predates the member tables (v282). */
+const SCHEMA_PREDATES_MEMBERS = new Set(['42P01', '42703']);
+const IDENTITY_RETRY_AFTER_MS = 2_000;
+const WHOAMI: NonNullable<Action['verify']> = { argv: ['gbrain', 'whoami', '--json'], mcp: { tool: 'whoami', arguments: {} } };
+
+function identityUnavailable(): OperationError {
+  return opError('access_identity_unavailable', 'The member this connection is bound to could not be looked up, so nothing was read or written.',
+    'Retry the same request in a few seconds (a write with the same request_id); if it keeps failing, ask the brain operator to run gbrain doctor --json on the brain host.', {
+      why: 'Reading the credential\'s member binding failed (a dropped connection, a timeout or a failed statement). Reading the connection as unbound instead would open pages its member may not read, so the request stops here.',
+      detail: `retry_after_ms=${IDENTITY_RETRY_AFTER_MS}`,
+      fix: { ...WHOAMI, consent: [], actor: 'provider', requires_exclusive: false, verify: WHOAMI,
+        why: 'After a few seconds whoami reads the binding again and shows the member this connection reads as; then repeat the original request.' },
+    });
+}
+
 async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
+  let row: { id: string; groups: string[] } | undefined;
   try {
-    const [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
-    if (!row || normalizePrincipal(`member:${row.id}`) !== `member:${row.id}`) return [];
-    const groups = (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`);
-    return identityFor(row.id, groups);
-  } catch {
-    return [];
+    [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
+  } catch (error) {
+    if (SCHEMA_PREDATES_MEMBERS.has(String((error as { code?: unknown } | null)?.code))) return [];
+    throw error instanceof OperationError ? error : identityUnavailable();
   }
+  if (!row || normalizePrincipal(`member:${row.id}`) !== `member:${row.id}`) return [];
+  const groups = (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`);
+  return identityFor(row.id, groups);
 }
 
 /**
  * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal (a local
  * stdio principal reads the member its serve was started with, stamped as `stdioMember` on a stored write, else
- * config mcp.stdio_member, as stdio reads do); empty when unbound, unknown or unreadable. A write's publication passes
- * only its stored principal, so a member disabled or a binding removed after submission takes effect.
+ * config mcp.stdio_member, as stdio reads do); empty when unbound or the member is unknown or not enabled, and
+ * access_identity_unavailable when the lookup fails (liveIdentity). A write's publication passes only its stored
+ * principal, so a member disabled or a binding removed after submission takes effect.
  */
 export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
@@ -75,7 +102,8 @@ export async function stdioMemberId(engine: BrainEngine): Promise<string | null>
 /**
  * The identity of a local stdio server: the live member its serve was started with (--stdio-member), else the live
  * member config mcp.stdio_member names, else empty. A named member that is disabled or unknown reads as nobody and
- * never falls back to the config key.
+ * never falls back to the config key; a lookup that fails throws access_identity_unavailable. With no member named it
+ * runs no query.
  */
 export async function stdioMemberIdentity(engine: BrainEngine, registered?: string): Promise<string[]> {
   const member = registered ?? await stdioMemberId(engine);

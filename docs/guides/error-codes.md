@@ -72,6 +72,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### access_identity_unavailable
+
+<a id="access_identity_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The member a credential (access token, OAuth client or stdio binding) is bound to could not be looked up, so the request was refused and nothing was read or written. | Reading the binding failed: a dropped connection, a timeout or a failed statement. Reading the credential as unbound instead would open every unlabelled page to a labelled-only member, so the request stops, and the same request succeeds once the database answers. | Retry the same request in a few seconds (a write with the same request_id); if it keeps failing, ask the brain operator to run gbrain doctor --json on the brain host. | provider | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#access_identity_unavailable](../../docs/guides/write-refusals.md#access_identity_unavailable)
+
 ### access_labelled_only_owner
 
 <a id="access_labelled_only_owner"></a>

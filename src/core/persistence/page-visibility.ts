@@ -109,9 +109,7 @@ async function writerLabelledOnly(engine: SqlEngine, authority: WriteAuthority, 
 export async function assertLabelledOnlyCreate(engine: SqlEngine, authority: WriteAuthority, slug: string,
   stored: { deleted_at?: unknown } | null | undefined, frontmatter: unknown): Promise<void> {
   if (!authority.remote || (stored && stored.deleted_at == null)) return;
-  // A labelled-only member is a member, and adding one marks the brain restricted for good, so a request whose ambient
-  // policy shows no restrictions needs no probe; stored writes and replays carry no ambient policy and probe.
-  if (currentCallerAccess().remotePolicy?.restricted === false || !await anyLabelledOnlyMember(engine)) return;
+  if (!await anyLabelledOnlyMember(engine)) return;
   const identities = await writerIdentities(engine, authority);
   if (!await writerLabelledOnly(engine, authority, identities)) return;
   const named = new Set(identities.flat());

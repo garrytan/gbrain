@@ -332,13 +332,14 @@ const READ_ONLY_SERVE_NOTE = '[gbrain-serve] read-only: no persistence consumer,
 
 /**
  * The ambient writeback section's options for a stdio serve: what the session can call, and whether the stdio member (`--stdio-member`, else mcp.stdio_member) binds
- * it to a member, whose writes stay private unless shared (GST-2243), so its rule never says "pass visibility: world".
+ * it to a member, whose writes stay private unless shared (GST-2243), so its rule never says "pass visibility: world". The lookup runs only when a
+ * member is named, so one that fails (access_identity_unavailable) still reads as bound and serve starts.
  */
 export async function stdioAmbientOpts(engine: BrainEngine, writeback: WritebackConfig, allowedOps: ReadonlySet<string> | undefined, stdioMember?: string) {
   return ambientOptsFrom(writeback, {
     remember: allowedOps ? allowedOps.has('remember') : true,
     extractFacts: allowedOps ? allowedOps.has('extract_facts') : true,
-    member: (await stdioMemberIdentity(engine, stdioMember)).some(p => p.startsWith('member:')),
+    member: await stdioMemberIdentity(engine, stdioMember).then(identity => identity.some(p => p.startsWith('member:')), () => true),
   });
 }
 
