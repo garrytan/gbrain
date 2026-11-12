@@ -7,13 +7,14 @@
  *   gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths…>
  *   gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] [--expect-remote <sha> --resolve <p>=ours|theirs|file:<f>…]
  *   gbrain git commit-push --pull [--path <dir>] [--require-clean]
- *   gbrain git commit-push --dry-run [--path <dir>] [-m <msg>] [--] <paths…>
+ *   gbrain git commit-push --untrack [--path <dir>] -m <msg> [--] <paths…>
+ *   gbrain git commit-push --dry-run [--untrack] [--path <dir>] [-m <msg>] [--] <paths…>
  *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { commitAndPush, checkoutRoot, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
+import { commitAndPush, checkoutRoot, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -30,6 +31,7 @@ const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--
        gbrain git commit-push --push-only [--keep-checkout] [--path <dir>] --expect-remote <sha> --resolve <path>=ours|theirs|file:<file>...
        gbrain git commit-push --pull [--path <dir>] [--require-clean]
        gbrain git commit-push --pending [--path <dir>] [-m <msg>]
+       gbrain git commit-push --untrack [--path <dir>] -m <msg> [--] <paths...>
        gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
 
 Commit only the named paths and push them, safely, in a checkout other agents
@@ -65,7 +67,12 @@ Flags:
                       ledger doctor's dirty_age reports), then push.
   --allow-outside-source-root  Commit and publish files outside the checkout's source root(s)
                       (git config gbrain.sourceRoot); only after the user agrees.
+  --untrack           Remove the named paths from Git (git rm --cached), keeping the files on disk; a
+                      directory untracks every file Git holds under it. In a managed canonical worktree
+                      only files under a storage.db_only dir that gbrain.yml at HEAD declares and
+                      .gitignore ignores; it commits there and never pushes.
   --dry-run           Print the paths, branch and lock that would be used; take no lock, write nothing.
+                      With --untrack, the real run's path checks run first and refuse as it would.
   --json              One JSON result (or the error envelope) on stdout.
 
 Paths are relative to --path when it is given (like git -C), else to the current
@@ -82,12 +89,12 @@ is installed.`;
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
-  requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[];
+  requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[]; untrack: boolean;
   pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean;
 }
 
 function parse(args: string[]): Parsed {
-  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [], base: [],
+  const p: Parsed = { json: false, pushOnly: false, pull: false, requireClean: false, dryRun: false, help: false, keepCheckout: false, paths: [], resolve: [], base: [], untrack: false,
     pending: false, allowOutside: false, install: false, uninstall: false, scanSecrets: false };
   let rest = false;
   for (let i = 0; i < args.length; i++) {
@@ -109,6 +116,7 @@ function parse(args: string[]): Parsed {
     else if (a === '--pull') p.pull = true;
     else if (a === '--require-clean') p.requireClean = true;
     else if (a === '--dry-run') p.dryRun = true;
+    else if (a === '--untrack') p.untrack = true;
     else if (a === '--pending') p.pending = true;
     else if (a === '--allow-outside-source-root') p.allowOutside = true;
     else if (a === '--install') p.install = true;
@@ -190,11 +198,11 @@ export async function runGit(args: string[]): Promise<number> {
     const repo = checkoutRoot(p.path ?? process.cwd());
     if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
-    if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch))
+    if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch)) || (p.untrack && (p.pull || p.pushOnly || p.pending))
       || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout || p.scanSecrets) && !p.pushOnly)
       || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull) || (p.base.length && (p.pull || p.pushOnly || p.pending))) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
-        'Use one mode: -m <msg> -- <paths> (commit + push), --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
+        'Use one mode: -m <msg> -- <paths> (commit + push), --untrack -m <msg> -- <paths>, --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
     }
     const bases = new Map(p.base.map(spec => {
       const eq = spec.lastIndexOf('=');
@@ -212,8 +220,9 @@ export async function runGit(args: string[]): Promise<number> {
       const lock = execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', COMMIT_LOCK_NAME], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const branch = execFileSync('git', ['-C', repo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
-      emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : 'commit-push' },
-        `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `commit ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); nothing written`);
+      const untracked = p.untrack && paths.length ? previewUntrack(repo, paths, { allowOutsideSourceRoot: p.allowOutside }) : undefined;
+      emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : p.untrack ? 'untrack' : 'commit-push', ...(untracked ? { untracked } : {}) },
+        `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `${p.untrack ? 'untrack' : 'commit'} ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); nothing written`);
       return 0;
     }
 
@@ -232,6 +241,7 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
       ...(p.scanSecrets ? { scanSecrets: true } : {}),
+      ...(p.untrack ? { untrack: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
       ...(p.expectRemote ? { expectRemote: p.expectRemote } : {}),
