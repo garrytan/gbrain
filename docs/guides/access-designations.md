@@ -146,7 +146,8 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 pages and facts derived from them: an atom, a summary, a synthesized concept, a chronicle event or a fact made from a
 raw-only page is read by whoever reads that derived page. Use it for raw material such as call transcripts, whose
 summaries are meant to be shared. Never use it for a folder whose content is itself the secret: a summary of a
-raw-only page carries what the page says. A page's own `readable_by` still hides what is derived from it, and a page
+raw-only page carries what the page says, and the facts extracted from it are readable like any other derived page,
+so the facts pulled out of a fenced transcript are not fenced. A page's own `readable_by` still hides what is derived from it, and a page
 that another covering rule also matches stays covered. Every rule written before this existed covers derived pages and
 keeps its digest. Making a rule raw-only widens access, so it waits for `gbrain access apply` (preview, then
 `--expect <plan_hash>`); making it covering again (the same command without `--raw-only`) applies at once. Doctor's
