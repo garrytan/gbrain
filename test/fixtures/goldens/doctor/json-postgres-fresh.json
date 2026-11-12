@@ -1034,6 +1034,33 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "Not applicable: every folder and page rule also keeps the pages and facts derived from its pages to its readers (no rule has covers_derived: false).",
+          "name": "access_raw_only_rules",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
+          "name": "access_audience_members",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.",
+          "name": "access_members_read_lineage",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
           "name": "attest_read_shared_scope",
           "readiness_state": "not_applicable",
@@ -3677,7 +3704,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "No retrieval-affecting files changed in working tree.",
+          "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/search/mode.ts, src/core/search/private-visibility.ts. Re-run `gbrain eval run-all` after committing these changes.",
           "name": "eval_drift",
           "status": "ok"
         },
