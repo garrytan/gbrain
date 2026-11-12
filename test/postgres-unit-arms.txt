@@ -594,6 +594,7 @@ test/sync-drain-effect-recovery-blocked.test.ts
 test/sync-drain-head-blocked-6543.test.ts
 test/sync-drain-inpass-stall.test.ts
 test/sync-drain-write-capacity.test.ts
+test/sync-drift-rescreen-progress-gst2515.test.ts
 test/sync-dry-run-drain-7167.test.ts
 test/sync-exits-l4-6712.test.ts
 test/sync-fenced-slices-gbra133.test.ts
@@ -639,6 +640,7 @@ test/sync-prescreen-drift-6712.test.ts
 test/sync-restored-file-purge.test.ts
 test/sync-slug-root-mode-6694.test.ts
 test/sync-staged-catchup.test.ts
+test/sync-status-commits-waiting-gst2515.test.ts
 test/sync-status-failure-detail-6513.test.ts
 test/sync-status-truthful-7243.test.ts
 test/sync-storage-invalid-8007.test.ts

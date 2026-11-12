@@ -33,6 +33,8 @@ export class SyncTreeReadIncomplete extends Error {
 }
 
 const READ_TIMEOUT_MS = 120_000;
+/** GST-2515: held paths per history read, so one read of a path's specs stays well inside READ_TIMEOUT_MS on a deep history. */
+const HISTORY_GROUP_PATHS = 2_000;
 const PROBE_TIMEOUT_MS = 60_000;
 const LFS_POINTER_MAX_BYTES = 1024;
 const OID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -241,32 +243,41 @@ export async function readRenameHints(gitRoot: string, from: string, to: string)
 }
 
 /**
- * #7199: the blob ids `path` had at `commit` and its first `depth - 1` first-parent ancestors, newest first, one
- * per commit that has the path (one `cat-file --batch` of `<commit>~k:<path>` specs; bodies are read past, never kept).
- * Empty for a path a spec line cannot carry.
+ * #7199, GST-2515: the blob ids each path had at `commit` and its first `depth - 1` first-parent ancestors, newest first, one
+ * per commit that has the path. One `cat-file --batch-check` per group of paths answers every `<commit>~k:<path>` spec (no
+ * bodies are read); `onPath` runs as each path's last answer arrives, and a throw from it (an abort) kills the read and rejects.
+ * A group whose read is incomplete leaves its unanswered paths out of the map; a path a spec line cannot carry has no entry.
  */
-export async function pathBlobHistory(gitRoot: string, commit: string, path: string, depth: number): Promise<string[]> {
-  if (!OID.test(commit) || /[\n\r]/.test(path) || depth < 1) return [];
-  const oids: string[] = [];
-  let header: Buffer[] = [], skip = 0, answered = 0;
-  const result = await gitStream(gitRoot, ['cat-file', '--batch'], { timeoutMs: READ_TIMEOUT_MS,
-    stdin: lines(Array.from({ length: depth }, (_, k) => `${commit}~${k}:${path}`), '\n'), onChunk: chunk => {
-      let at = 0;
-      while (at < chunk.length) {
-        if (skip) { const take = Math.min(skip, chunk.length - at); skip -= take; at += take; continue; }
-        const newline = chunk.indexOf(10, at);
-        if (newline < 0) { header.push(chunk.subarray(at)); break; }
-        const line = Buffer.concat([...header, chunk.subarray(at, newline)]).toString('utf8');
-        header = []; at = newline + 1; answered += 1;
-        if (line.endsWith(' missing') || line.endsWith(' ambiguous')) continue;
-        const [oid = '', type = '', size = ''] = line.split(' ');
-        if (!OID.test(oid) || !/^\d+$/.test(size)) throw malformed('cat-file', line);
-        if (type === 'blob') oids.push(oid);
-        skip = Number(size) + 1;
-      }
-    } });
-  if (!result.ok || skip || header.length || answered !== depth) throw new SyncTreeReadIncomplete('cat-file', result.ok ? `${answered} of ${depth} specs answered` : outcome(result));
-  return oids;
+export async function pathBlobHistories(gitRoot: string, commit: string, paths: readonly string[], depth: number,
+  onPath?: (path: string) => void): Promise<Map<string, string[]>> {
+  const histories = new Map<string, string[]>();
+  if (!OID.test(commit) || depth < 1) return histories;
+  const carried = paths.filter(path => !/[\n\r]/.test(path));
+  for (let start = 0; start < carried.length; start += HISTORY_GROUP_PATHS) {
+    const group = carried.slice(start, start + HISTORY_GROUP_PATHS);
+    let header: Buffer[] = [], answered = 0, oids: string[] = [];
+    await gitStream(gitRoot, ['cat-file', '--batch-check'], { timeoutMs: READ_TIMEOUT_MS,
+      stdin: lines(group.flatMap(path => Array.from({ length: depth }, (_, k) => `${commit}~${k}:${path}`)), '\n'), onChunk: chunk => {
+        let at = 0;
+        while (at < chunk.length) {
+          const newline = chunk.indexOf(10, at);
+          if (newline < 0) { header.push(chunk.subarray(at)); break; }
+          const line = Buffer.concat([...header, chunk.subarray(at, newline)]).toString('utf8');
+          header = []; at = newline + 1;
+          if (!line.endsWith(' missing') && !line.endsWith(' ambiguous')) {
+            const [oid = '', type = '', size = ''] = line.split(' ');
+            if (!OID.test(oid) || !/^\d+$/.test(size)) throw malformed('cat-file', line);
+            if (type === 'blob') oids.push(oid);
+          }
+          if (++answered % depth) continue;
+          const path = group[answered / depth - 1]!;
+          histories.set(path, oids);
+          oids = [];
+          onPath?.(path);
+        }
+      } }).catch((error: unknown) => { if (!(error instanceof SyncTreeReadIncomplete)) throw error; });
+  }
+  return histories;
 }
 
 /**
