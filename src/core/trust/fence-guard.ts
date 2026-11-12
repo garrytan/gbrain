@@ -70,8 +70,8 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   const contested: typeof guarded = [];
   const moves: Array<{ id: number; row_num: number; visibility: string }> = [];
   for (const g of guarded) {
-    const target = rows.find(r => r.fact === g.fact && !occupied.has(r.row_num)
-      && (r.visibility === g.visibility || (g.visibility === 'world' && r.visibility === 'private')));
+    const free = rows.filter(r => r.fact === g.fact && !occupied.has(r.row_num));
+    const target = free.find(r => r.visibility === g.visibility) ?? (g.visibility === 'world' ? free.find(r => r.visibility === 'private') : undefined);
     if (!target) { contested.push(g); continue; }
     moves.push({ id: Number(g.id), row_num: target.row_num, visibility: target.visibility ?? g.visibility });
     occupied.add(target.row_num);

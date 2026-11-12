@@ -255,6 +255,26 @@ describe('guarded fence re-projection (A5, ENG-1)', () => {
       expect(flipped.contested?.proposal_ref).toMatch(/^tp\d+$/);
     }
   }), 90_000);
+
+  test('GST-2487: a writer that only swaps the rows of one claim moves both confirmed rows, each keeping its visibility, with no proposal', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const b = await brain(engine);
+      const slug = 'people/jade-example';
+      const as = (r: ReturnType<typeof row>, visibility: string) => ({ ...r, visibility });
+      await run(b.local, 'put_page', { slug, content: page('Jade', body([row(1, 'Jade sails'), as(row(2, 'Jade sails'), 'private')])) });
+      const live = () => engine.executeRaw<{ id: number; visibility: string; row_num: number | null; trust_tier: string }>(
+        'SELECT id::int AS id, visibility, row_num, trust_tier FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL ORDER BY id', [b.sourceId, slug]);
+      const before = await live();
+      for (const r of before) await confirmFact(b, Number(r.id));
+      const current = await operationsByName.get_page.handler(b.remote, { slug, include_content: true }) as Record<string, any>;
+      const swapped = await run(b.remote, 'put_page', { slug, content: page('Jade', body([as(row(1, 'Jade sails'), 'private'), row(2, 'Jade sails')])), expected_revision: current.revision });
+      expect(swapped.contested).toBeUndefined();
+      expect(await live()).toEqual([
+        { id: Number(before[0]!.id), visibility: 'world', row_num: 2, trust_tier: 'user_confirmed' },
+        { id: Number(before[1]!.id), visibility: 'private', row_num: 1, trust_tier: 'user_confirmed' }]);
+      expect(await listTrustProposals(engine, { sourceId: b.sourceId })).toEqual([]);
+    }
+  }), 90_000);
 });
 
 describe('guarded takes supersession and the takes gate', () => {
