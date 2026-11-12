@@ -77,31 +77,73 @@ self_test_guard() {
   return "$failed"
 }
 
-# Guards are independent (each reads only its own fixture root), so run up to
-# GUARD_SELF_TEST_JOBS at once and print results in manifest order.
-JOBS="${GUARD_SELF_TEST_JOBS:-4}"
-OUT_DIR="$(mktemp -d)"
-trap 'rm -rf "$OUT_DIR"' EXIT
+# Each worker reads its own fixture root. Refill any completed slot instead
+# of waiting for the oldest PID (one slow guard must not idle the whole pool).
+# Eight bounds concurrent AST startups; GUARD_SELF_TEST_JOBS can reduce it.
+JOBS="${GUARD_SELF_TEST_JOBS:-8}"
+case "$JOBS" in
+  ''|*[!0-9]*|???*) echo "ERROR: GUARD_SELF_TEST_JOBS must be an integer from 1 to 64" >&2; exit 2 ;;
+esac
+JOBS=$((10#$JOBS))
+if [ "$JOBS" -lt 1 ] || [ "$JOBS" -gt 64 ]; then
+  echo "ERROR: GUARD_SELF_TEST_JOBS must be an integer from 1 to 64" >&2
+  exit 2
+fi
+OUT_DIR="$(mktemp -d)" || exit 1
+pids=()
+cleanup() {
+  # Do not remove result storage while an admitted worker can still write it.
+  for pid in ${pids[@]+"${pids[@]}"}; do wait "$pid" 2>/dev/null || true; done
+  rm -rf "$OUT_DIR"
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 guards=()
 while IFS=$'\t' read -r guard klass selftest _notes; do
   case "$guard" in ''|'#'*) continue ;; esac
   [ "$selftest" = "yes" ] || continue
   guards+=("$guard")
 done < "$MANIFEST"
-pids=()
+active=()
+reap_finished() {
+  local i pending=()
+  for i in ${active[@]+"${active[@]}"}; do
+    if [ -f "$OUT_DIR/$i.rc" ] || ! kill -0 "${pids[$i]}" 2>/dev/null; then
+      # wait also handles a worker killed before it could record its result.
+      if ! wait "${pids[$i]}"; then
+        echo "FAIL  ${guards[$i]}: self-test worker exited without completing" >> "$OUT_DIR/$i.out"
+        echo 1 > "$OUT_DIR/$i.rc"
+      fi
+    else
+      pending+=("$i")
+    fi
+  done
+  active=( ${pending[@]+"${pending[@]}"} )
+}
 for i in "${!guards[@]}"; do
-  if [ "${#pids[@]}" -ge "$JOBS" ]; then
-    wait "${pids[0]}"
-    pids=("${pids[@]:1}")
-  fi
+  while [ "${#active[@]}" -ge "$JOBS" ]; do
+    reap_finished
+    [ "${#active[@]}" -lt "$JOBS" ] || sleep 0.02
+  done
   ( self_test_guard "${guards[$i]}" > "$OUT_DIR/$i.out" 2>&1; echo $? > "$OUT_DIR/$i.rc" ) &
-  pids+=("$!")
+  pids[$i]=$!
+  active+=("$i")
 done
-wait
+for i in ${active[@]+"${active[@]}"}; do
+  if ! wait "${pids[$i]}"; then
+    echo "FAIL  ${guards[$i]}: self-test worker exited without completing" >> "$OUT_DIR/$i.out"
+    echo 1 > "$OUT_DIR/$i.rc"
+  fi
+done
 for i in "${!guards[@]}"; do
   tested=$((tested + 1))
-  cat "$OUT_DIR/$i.out"
-  failures=$((failures + $(cat "$OUT_DIR/$i.rc" 2>/dev/null || echo 1)))
+  cat "$OUT_DIR/$i.out" || failures=$((failures + 1))
+  rc="$(cat "$OUT_DIR/$i.rc" 2>/dev/null)"
+  case "$rc" in
+    ''|*[!0-9]*) echo "FAIL  ${guards[$i]}: missing or invalid self-test result"; failures=$((failures + 1)) ;;
+    *) failures=$((failures + rc)) ;;
+  esac
 done
 
 # Manifest completeness: every scripts/check-* guard must have a manifest row
