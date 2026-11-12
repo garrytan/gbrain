@@ -333,6 +333,7 @@
   "test/purge-global-marker.test.ts": 5204,
   "test/purge-missing-cache-6911.test.ts": 10826,
   "test/purge-read-surfaces.test.ts": 15834,
+  "test/readers-label-setter.test.ts": 21304,
   "test/recall-page-fill.test.ts": 7624,
   "test/receipt-compaction-newest-sync-gbra130.test.ts": 4363,
   "test/remediation-manual-only.test.ts": 8860,

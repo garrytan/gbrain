@@ -37,7 +37,7 @@ export function readLabelEdit(value: unknown): LabelEdit | undefined {
     && Object.entries(set).every(([key, v]) => EDIT_KEYS.includes(key) && plainValue(key, v))
     && remove.every(key => typeof key === 'string' && EDIT_KEYS.includes(key) && !Object.hasOwn(set, key));
   if (!valid) throw opError('invalid_params', 'The label edit names a key or value a label edit cannot write.',
-    `A label edit sets or removes only ${EDIT_KEYS.join(', ')}, each value a plain word (${READERS_KEY}: a list of member ids or group:<id>). This is a gbrain planning defect: report it with the gbrain version; nothing was written.`);
+    `A label edit sets or removes only ${EDIT_KEYS.join(', ')}, each value a plain word (${READERS_KEY}: a list of member ids and group: ids). This is a gbrain planning defect: report it with the gbrain version; nothing was written.`);
   return { set: Object.fromEntries(Object.entries(set as LabelEdit['set']).map(([key, v]) => [key, Array.isArray(v) ? [...v] : v])), remove: [...new Set(remove as string[])] };
 }
 
