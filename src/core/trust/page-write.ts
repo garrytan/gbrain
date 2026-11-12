@@ -245,13 +245,14 @@ export function withLabels(frontmatter: Record<string, unknown>, labels: Record<
 /**
  * CEO-12, inside the publication transaction after the page write: when the
  * write lowered a page's tier, file (or refresh) its `lower_page` proposal.
- * `prior` is the tier and revision read under the page lock before the write.
+ * `prior` is the tier and revision read under the page lock before the write (GST-2521: `pageTier`, the page's own tier
+ * when `tier` is a raised guard tier, is recorded as before_state.page_tier for the accept of held labels).
  * Content writes and derived page publications (#7917) file it; another writer
  * that lowers a page on purpose names itself in `proposer`. GST-2518: `labels` (a held write's, with `prior` at the label
  * guard tier) ride the after state, and a later write's after state without them withdraws them.
  */
 export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRequest, 'operation' | 'source_id' | 'slug'> & { intent?: WriteRequest['intent'] | null },
-  prior: { tier: TrustTier; revision: string | null } | null, proposer?: string, labels?: HeldPrivacyLabels | null): Promise<{ proposal_ref: string } | null> {
+  prior: { tier: TrustTier; revision: string | null; pageTier?: TrustTier | null } | null, proposer?: string, labels?: HeldPrivacyLabels | null): Promise<{ proposal_ref: string } | null> {
   const derived = !CONTENT_OPERATIONS.includes(row.operation) && declaresDerivation(row.intent);
   if (!prior || !(proposer || CONTENT_OPERATIONS.includes(row.operation) || derived)) return null;
   const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
@@ -278,7 +279,7 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
     'SELECT id FROM page_versions WHERE page_id = $1 AND trust_tier = $2 ORDER BY id DESC LIMIT 1', [pageId, prior.tier]);
   const proposal = await insertTrustProposal(tx, {
     action: 'lower_page', sourceId: row.source_id, target: { table: 'pages', id: pageId }, proposer: proposer ?? (derived ? `derived_page:${row.operation}` : `agent_page_edit:${row.operation}`),
-    before: { slug: row.slug, prior_tier: prior.tier, prior_revision: prior.revision, version_id: version ? Number(version.id) : null }, after,
+    before: { slug: row.slug, prior_tier: prior.tier, page_tier: prior.pageTier ?? prior.tier, prior_revision: prior.revision, version_id: version ? Number(version.id) : null }, after,
   });
   if (!proposal.created) await updatePendingTrustProposalAfter(tx, proposal.id, after);
   return { proposal_ref: `tp${proposal.id}` };

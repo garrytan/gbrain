@@ -207,7 +207,7 @@
   "test/origin-guard-6948.test.ts": 18397,
   "test/origin-twins-6948.test.ts": 1635,
   "test/overwritten-edits-6712.test.ts": 39503,
-  "test/owner-label-guard.test.ts": 18275,
+  "test/owner-label-guard.test.ts": 26999,
   "test/owner-refusal.test.ts": 5596,
   "test/pack-relation-direction-engine.test.ts": 7462,
   "test/page-embedding-budget.test.ts": 1684,

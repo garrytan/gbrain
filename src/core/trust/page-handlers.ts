@@ -17,7 +17,9 @@
  *   (`revertLoweredPage`) = restore the prior owner version's content and tier.
  *   GST-2518: when the agent write was held from widening privacy labels, accept
  *   also writes the labels it asked for (in the same owner page write), and undo
- *   (`undoPageLabels`) puts the kept labels and the edited tier back.
+ *   (`writePageLabels`) puts the kept labels and the edited tier back. GST-2521: on a page whose own tier was an
+ *   agent's before the held write, accept writes only the requested labels and keeps the tier, so saying yes to a
+ *   label change never vouches for the body.
  * - #6550 marker repair (`repairPageMarker`, local CLI only): rewrite a page's
  *   `trust_tier: unknown` marker to its stored tier (removed at owner tiers);
  *   the row keeps its tier. trust/marker-repair.ts decides which pages.
@@ -190,7 +192,7 @@ export interface PageActionInput {
 }
 
 export interface PageActionResult {
-  status: 'confirmed' | 'reverted' | 'repaired' | 'restored' | 'unchanged';
+  status: 'confirmed' | 'reverted' | 'repaired' | 'restored' | 'labelled' | 'unchanged';
   ref: string;
   tier: TrustTier;
   prior_tier: TrustTier;
@@ -199,9 +201,9 @@ export interface PageActionResult {
 }
 
 type OwnerPageIntent = {
-  mode: 'confirm' | 'revert' | 'repair_marker' | 'restore_provenance' | 'undo_labels';
+  mode: 'confirm' | 'revert' | 'repair_marker' | 'restore_provenance' | 'write_labels';
   expected_revision: string;
-  /** GST-2518: confirm and undo_labels write these privacy labels (null removes a key); undo_labels restores `tier`. */
+  /** GST-2518: confirm and write_labels write these privacy labels (null removes a key); write_labels keeps the page at most at `tier`. */
   labels?: Record<string, unknown>;
   tier?: TrustTier;
   version_id?: number;
@@ -259,21 +261,22 @@ export async function confirmPage(engine: BrainEngine, input: PageActionInput): 
 export const repairedMarker = (tier: TrustTier): TrustTier | null => compareTrust(tier, OWNER_TIER_FLOOR) >= 0 ? null : tier;
 
 const ACTION_NAMES: Record<OwnerPageIntent['mode'], string> = { confirm: 'its confirmation', revert: 'the revert', repair_marker: 'the marker repair', restore_provenance: 'the provenance restore',
-  undo_labels: 'the undo' };
+  write_labels: 'the label change' };
 /** GST-2518: the keys an owner page intent may write as labels. */
 const LABEL_KEYS = ['visibility', 'access', 'confidentiality', 'readable_by'];
 
 /**
- * GST-2518: undoes an accepted held-label proposal: the page gets `input.labels` (the labels the hold kept) and `tier`
- * (the edited tier the accept raised), with its marker, bound to the approved revision. Only lowers.
+ * GST-2518: writes `input.labels` on the page at the revision the owner saw, with the page at most at `tier` and its
+ * marker: an undo of an accepted held-label proposal (the kept labels, the edited tier) and, GST-2521, the accept of a
+ * held-label proposal on an agent page (the requested labels, the page's own tier). Never raises the tier.
  */
-export async function undoPageLabels(engine: BrainEngine, input: PageActionInput & { tier: TrustTier }): Promise<PageActionResult> {
+export async function writePageLabels(engine: BrainEngine, input: PageActionInput & { tier: TrustTier }): Promise<PageActionResult> {
   const ref = pageRef(input.sourceId, input.slug);
   const state = await readPageTrustState(engine, input.sourceId, input.slug);
   if (!state) throw opError('page_not_found', `No live page ${ref}.`, 'Check the ref; gbrain trust review lists pages waiting for you.');
-  if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, ACTION_NAMES.undo_labels);
+  if (state.revision !== input.expectedRevision) throw changedSincePreview(ref, ACTION_NAMES.write_labels);
   const tier = minTrust(input.tier, state.tier);
-  await publishOwnerPage(engine, input, { mode: 'undo_labels', expected_revision: input.expectedRevision, via: input.confirmation.via, proposal: input.proposal,
+  await publishOwnerPage(engine, input, { mode: 'write_labels', expected_revision: input.expectedRevision, via: input.confirmation.via, proposal: input.proposal,
     labels: input.labels, tier }, markdownWithoutMarker(state.snapshot, repairedMarker(tier), input.labels), tier);
   return { status: 'restored', ref, tier, prior_tier: state.tier };
 }
@@ -434,7 +437,7 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
   const intent = row.intent as unknown as OwnerPageIntent | null;
   const labelsValid = intent?.labels === undefined || (typeof intent.labels === 'object' && intent.labels !== null && Object.keys(intent.labels).every(key => LABEL_KEYS.includes(key)));
   if (row.operation !== TRUST_OWNER_PAGE_OPERATION || !intent || !Object.hasOwn(ACTION_NAMES, intent.mode) || typeof intent.expected_revision !== 'string' || !labelsValid
-    || (intent.mode === 'undo_labels' && (!intent.labels || !isTrustTier(intent.tier)))
+    || (intent.mode === 'write_labels' && (!intent.labels || !isTrustTier(intent.tier)))
     || (row.authority.remote && (LOCAL_ONLY_MODES.includes(intent.mode) || !(row.authority.scopes ?? []).includes(MEMORY_CONFIRM_SCOPE)))) {
     throw opError('confirmation_required', 'This owner page action is not confirmed by the owner; nothing was changed.',
       'Run the gbrain trust command on the brain host in an interactive terminal.');
@@ -455,7 +458,7 @@ export async function prepareTrustOwnerPageMutation(engine: BrainEngine, row: Wr
     tier = state.tier;
     content = markdownWithoutMarker(state.snapshot, repairedMarker(tier));
   } else if (intent.mode === 'restore_provenance') ({ content, tier } = await plannedProvenanceRestore(engine, state, intent));
-  else if (intent.mode === 'undo_labels') {
+  else if (intent.mode === 'write_labels') {
     tier = minTrust(intent.tier!, state.tier);
     content = markdownWithoutMarker(state.snapshot, repairedMarker(tier), intent.labels);
   } else content = markdownWithoutMarker(state.snapshot, null, intent.labels);
@@ -487,6 +490,11 @@ export interface LowerPageState {
   edited_tier: TrustTier;
   /** GST-2518: the privacy labels the edit asked to widen and the page kept, or null. */
   labels: HeldPrivacyLabels | null;
+  /**
+   * GST-2521: the held labels are on a page whose own tier before the edit (before_state.page_tier) was an agent's (known
+   * and below operator_curated), so accept writes only the labels and keeps the tier. Unknown and older proposals confirm.
+   */
+  labels_only: boolean;
 }
 
 export function lowerPageState(proposal: TrustProposalRow): LowerPageState {
@@ -497,6 +505,7 @@ export function lowerPageState(proposal: TrustProposalRow): LowerPageState {
     prior_revision: typeof b.prior_revision === 'string' ? b.prior_revision : null,
     version_id: b.version_id === null || b.version_id === undefined ? null : Number(b.version_id),
     edited_revision: typeof a.revision === 'string' ? a.revision : null, edited_tier: storedTrustTier(a.tier), labels: heldPrivacyLabels(a),
+    labels_only: heldPrivacyLabels(a) !== null && isTrustTier(b.page_tier) && b.page_tier !== 'unknown' && compareTrust(b.page_tier, OWNER_TIER_FLOOR) < 0,
   };
 }
 
@@ -530,6 +539,13 @@ registerTrustProposalHandler('lower_page', {
     const page = await staleUnlessAt(engine, proposal, state);
     if (!('pageId' in page)) return page;
     const labels = heldPrivacyLabels(proposal.after_state);
+    if (labels && state.labels_only) {
+      const written = await writePageLabels(engine, {
+        sourceId: proposal.source_id, slug: state.slug, expectedRevision: page.revision, confirmation: ctx.confirmation, by: ctx.decidedBy, config: ctx.config,
+        labels: labels.requested, tier: page.tier, proposal: { id: proposal.id, to: 'accepted', after: { ...proposal.after_state, resolution: 'labels_applied' } },
+      });
+      return decisionResult(proposal, 'accept', 'accepted', { detail: { ...written, status: 'labelled' } });
+    }
     const result = await confirmPage(engine, {
       sourceId: proposal.source_id, slug: state.slug, expectedRevision: page.revision, confirmation: ctx.confirmation,
       by: ctx.decidedBy, config: ctx.config, ...(labels ? { labels: labels.requested } : {}),
@@ -545,7 +561,7 @@ registerTrustProposalHandler('lower_page', {
     const page = state.slug ? await readPageTrustState(engine, proposal.source_id, state.slug) : null;
     if (!page || page.pageId !== proposal.target_id) return decisionResult(proposal, 'undo', 'stale', { reason: 'page_missing' });
     if (page.revision !== proposal.after_state.accepted_revision) return decisionResult(proposal, 'undo', 'stale', { reason: 'page_changed_since' });
-    const result = await undoPageLabels(engine, {
+    const result = await writePageLabels(engine, {
       sourceId: proposal.source_id, slug: state.slug, expectedRevision: page.revision, confirmation: ctx.confirmation, by: ctx.decidedBy, config: ctx.config,
       labels: labels.kept, tier: state.edited_tier,
       proposal: { id: proposal.id, from: 'accepted', to: 'undone', after: { ...proposal.after_state, resolution: 'undone' } },

@@ -311,6 +311,8 @@ function proposalSummary(p: TrustProposalRow, verb: 'Accept' | 'Dismiss' | 'Reve
     const page = pageRef(p.source_id, s.slug);
     // GST-2518: the privacy labels the edit asked for and the page kept.
     const labels = s.labels ? heldLabelsText(s.labels) : '';
+    // GST-2521: on an agent page, accept changes only the labels.
+    if (verb === 'Accept' && s.labels_only) return `Change the privacy labels of ${page}: ${labels}; the page stays "${trustLabel(s.edited_tier)}"`;
     if (verb === 'Accept') return `Endorse the agent edit of ${page}: raise it from "${trustLabel(s.edited_tier)}" to "confirmed by you"${labels ? ` and change its privacy labels: ${labels}` : ''}`;
     if (verb === 'Revert') return `Revert the agent edit of ${page}: restore version ${s.version_id ?? '?'} and its tier "${trustLabel(s.prior_tier)}"`;
     return `Dismiss ${trustProposalRef(p.id)}: ${page} stays "${trustLabel(s.edited_tier)}"${labels ? ' and keeps its privacy labels' : ''}`;

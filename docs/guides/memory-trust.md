@@ -287,8 +287,12 @@ The write's receipt names the kept keys under `privacy_labels_kept`. The
 page's `lower_page` item in `gbrain trust review` shows what the edit asked
 for, for example `visibility private -> (none)`.
 
-- `gbrain trust confirm tp<id>` endorses the edit and applies exactly those
-  labels, if the page hasn't changed since.
+- `gbrain trust confirm tp<id>` applies exactly those labels, if the page
+  hasn't changed since. On a page of yours it also endorses the edit, and the
+  page takes your tier. On a page whose own tier is an agent's (one you set
+  labels on, or an agent's page that kept you as a reader), it changes only the
+  labels and the page keeps the agent's tier, so saying yes to a label change
+  never vouches for the body.
 - `gbrain trust drop tp<id>` keeps the earlier labels.
 - Undoing a confirm puts the earlier labels and the edit's tier back, if the
   page hasn't changed since the confirm.
@@ -310,8 +314,13 @@ agent tier, but it raises the page's label guard to your tier, so a later agent
 write at the page's tier that drops or widens your labels is held the same way.
 The guard is kept in the database and set only by a label repair run after the
 upgrade, so labels you set earlier, and a managed Git brain rebuilt from a
-clone, start without it; run the label repair again to set it. A repair that
-leaves the page with no privacy label removes the guard.
+clone, start without it. Run the label repair again to set it: on a page that
+already has the labels, `gbrain repair visibility --slug <page>` (for a private
+page) or `--readers <list>` (with the readers the page already names) lists it
+as `... kept, label guard raised` and raises the guard without changing the
+labels or writing the page. `gbrain repair private-labels` raises it only on
+pages it writes. A repair that leaves the page with no privacy label removes the
+guard.
 
 An agent also can't take you out of a page's readers. When a write below your
 tier sets `readable_by` to a list that leaves you, the brain owner, out of a

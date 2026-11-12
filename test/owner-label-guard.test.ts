@@ -109,6 +109,9 @@ async function repairVisibility(engine: BrainEngine, argv: string[]): Promise<Re
   const preview = await run(['visibility', ...argv]);
   return run(['visibility', ...argv, '--apply', '--expect', preview.results?.[0]?.preview_hash ?? preview.preview_hash]);
 }
+const guardOf = async (engine: BrainEngine, sourceId: string, slug: string) => (await engine.executeRaw<{ tier: string }>(
+  'SELECT g.tier FROM page_label_guards g JOIN pages p ON p.id = g.page_id WHERE p.source_id=$1 AND p.slug=$2', [sourceId, slug]))[0]?.tier ?? null;
+const labelsOf = (fm: Record<string, unknown>) => Object.fromEntries(['visibility', 'access', 'confidentiality', 'readable_by'].filter(k => fm[k] !== undefined).map(k => [k, fm[k]]));
 const readsOf = async (reads: (who: Reader, slug: string, canary: string) => Promise<boolean>, slug: string, canary: string) =>
   ({ unbound: await reads('unbound', slug, canary), bob: await reads('bob', slug, canary), owner: await reads('owner', slug, canary) });
 
@@ -145,7 +148,11 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     expect(held.frontmatter.visibility).toBe('private');
     expect(held.body).toContain('An agent rewrote it.');
     expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
-    expect(await decide(b, written.privacy_labels_kept.proposal_ref, 'accept')).toMatchObject({ status: 'accepted' });
+    expect(await decide(b, written.privacy_labels_kept.proposal_ref, 'accept')).toMatchObject({ status: 'accepted', detail: { status: 'labelled', tier: 'agent_written' } });
+    const accepted = await pageRow(b.engine, SRC, slug);
+    expect(accepted.tier).toBe('agent_written');
+    expect(accepted.frontmatter.visibility).toBeUndefined();
+    expect(accepted.body).toContain('An agent rewrote it.');
     expect(await readsOf(reads, slug, canary)).toEqual({ unbound: true, bob: true, owner: true });
   }), 180_000);
 
@@ -173,8 +180,9 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
     const [proposal] = await proposalsOf(b, slug);
     expect(proposal!.after_state.labels).toMatchObject({ keys: ['readable_by'], requested: { readable_by: ['alice-example'] } });
-    expect(await decide(b, written.privacy_labels_kept.proposal_ref, 'accept')).toMatchObject({ status: 'accepted' });
+    expect(await decide(b, written.privacy_labels_kept.proposal_ref, 'accept')).toMatchObject({ status: 'accepted', detail: { status: 'confirmed' } });
     expect((await pageRow(b.engine, SRC, slug)).frontmatter.readable_by).toEqual(['alice-example']);
+    expect((await pageRow(b.engine, SRC, slug)).tier).toBe('user_confirmed');
     expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: false });
   }), 180_000);
 
@@ -183,6 +191,12 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     await call(b, 'put_page', { slug: own, content: file(own, ['readable_by: [alice-example, ' + OWNER + ']'], canary) });
     const narrowed = await put(b, own, file(own, ['readable_by: [alice-example]'], canary, 'Narrowed.'));
     expect(narrowed.privacy_labels_kept?.keys).toEqual(['readable_by']);
+    expect(await readsOf(reads, own, canary)).toEqual({ unbound: false, bob: false, owner: true });
+    expect(await decide(b, narrowed.privacy_labels_kept.proposal_ref, 'accept')).toMatchObject({ status: 'accepted', detail: { status: 'labelled' } });
+    expect(await pageRow(b.engine, SRC, own)).toMatchObject({ tier: 'agent_written', frontmatter: { readable_by: ['alice-example'] } });
+    expect(await readsOf(reads, own, canary)).toEqual({ unbound: false, bob: false, owner: false });
+    expect(await decide(b, narrowed.privacy_labels_kept.proposal_ref, 'undo')).toMatchObject({ status: 'undone' });
+    expect(await pageRow(b.engine, SRC, own)).toMatchObject({ tier: 'agent_written', frontmatter: { readable_by: ['alice-example', OWNER] } });
     expect(await readsOf(reads, own, canary)).toEqual({ unbound: false, bob: false, owner: true });
 
     const open = 'notes/open-example', openCanary = 'canaryopen';
@@ -206,6 +220,27 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     await expect(privacyLabelGuard(failing, row, { tier: 'agent_written' } as any, { id: Number(page!.id), frontmatter: { readable_by: ['alice-example', OWNER] } },
       'operator_curated', { readable_by: ['alice-example'] })).rejects.toThrow('connection reset');
   }), 120_000);
+
+  test('re-running the label repair on a page that already has the labels raises the guard without changing them', () => repoless(async (b, reads) => {
+    const slug = 'notes/already-labelled-example', canary = 'canaryalready';
+    await call(b, 'put_page', { slug, content: file(slug, ['visibility: private', 'readable_by: [alice-example, ' + OWNER + ']'], canary) });
+    const before = await pageRow(b.engine, SRC, slug);
+    const revision = async () => (await b.engine.readPageSnapshot(slug, { sourceId: SRC }))?.revision;
+    const written = await revision();
+    expect(await guardOf(b.engine, SRC, slug)).toBeNull();
+    await repairVisibility(b.engine, ['--source', SRC, '--slug', slug]);
+    expect(await guardOf(b.engine, SRC, slug)).toBe('operator_curated');
+    await b.engine.executeRaw('DELETE FROM page_label_guards');
+    await repairVisibility(b.engine, ['--source', SRC, '--slug', slug, '--readers', 'alice-example,' + OWNER]);
+    expect(await guardOf(b.engine, SRC, slug)).toBe('operator_curated');
+    expect(await revision()).toBe(written);
+    const after = await pageRow(b.engine, SRC, slug);
+    expect(labelsOf(after.frontmatter)).toEqual(labelsOf(before.frontmatter));
+    expect(after.tier).toBe('agent_written');
+    const dropped = await put(b, slug, file(slug, [], canary, 'Dropped both.'));
+    expect([...dropped.privacy_labels_kept?.keys ?? []].sort()).toEqual(['readable_by', 'visibility']);
+    expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
+  }), 180_000);
 
   test('a label door that clears the labels leaves no guard: the agent\'s own later label is its own to drop', () => repoless(async (b) => {
     const slug = 'notes/cleared-example', canary = 'canarycleared';
@@ -268,5 +303,24 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     expect(committed()).toContain('An agent narrowed it.');
     expect(committed()).toContain(OWNER);
     expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
+  }, { databaseUrl, setup }), 240_000);
+
+  test('re-running the readers repair on pages that already name those readers raises their guards with no commit', () => managedBrain(async ({ engine, ctx, root }) => {
+    const b: Brain = { engine, ctx, sourceId: 'default', home: root };
+    await remoteReaders(engine, 'default');
+    mkdirSync(join(root, 'notes'), { recursive: true });
+    const slugs = ['notes/rerun-a-example', 'notes/rerun-b-example'];
+    for (const slug of slugs) await call(b, 'put_page', { slug, content: file(slug, ['readable_by: [alice-example, ' + OWNER + ']'], 'canaryrerun') });
+    await settleManagedGitEffects(engine);
+    const head = git(root, 'rev-parse', 'HEAD');
+    await repairVisibility(engine, ['--source', 'default', ...slugs.flatMap(slug => ['--slug', slug]), '--readers', 'alice-example,' + OWNER]);
+    await settleManagedGitEffects(engine);
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(head);
+    for (const slug of slugs) {
+      expect(await guardOf(engine, 'default', slug)).toBe('operator_curated');
+      expect((await pageRow(engine, 'default', slug)).frontmatter.readable_by).toEqual(['alice-example', OWNER]);
+    }
+    const narrowed = await put(b, slugs[0]!, file(slugs[0]!, ['readable_by: [alice-example]'], 'canaryrerun', 'An agent narrowed it.'));
+    expect(narrowed.privacy_labels_kept?.keys).toEqual(['readable_by']);
   }, { databaseUrl, setup }), 240_000);
 });

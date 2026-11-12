@@ -1155,7 +1155,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       const applied = await (isFenceEditWrite(row) ? withTrustKeep(tx, ['pages'], () => ready.apply(tx, lean ? preimage : undefined)) : ready.apply(tx, lean ? preimage : undefined));
       projectionPending = applied?.segmented?.complete === false || applied?.projectionPending === true;
       segmentedWrite = applied?.segmented !== undefined;
-      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: heldLabels && labelGuard?.tier ? maxTrust(prior, labelGuard.tier) : prior, revision: snapshot!.revision }, undefined, heldLabels) : null;
+      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: heldLabels && labelGuard?.tier ? maxTrust(prior, labelGuard.tier) : prior, revision: snapshot!.revision, pageTier: prior }, undefined, heldLabels) : null;
       // Mandatory metadata shares publication rollback; exact no-ops never heal it. These, and the
       // projections (facts, takes, timeline rows of the page the import just wrote live), are independent and sent together.
       const [, pinned] = await pipelined(tx, [
@@ -1196,7 +1196,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       }
     } else if (heldLabels && snapshot && labelGuard) {
       // GST-2518: a write that only widened labels publishes nothing once they are kept; its request still reaches the owner.
-      lowered = await recordAgentPageLowering(tx, row, { tier: labelGuard.tier ?? storedTier!, revision: snapshot.revision }, undefined, heldLabels);
+      lowered = await recordAgentPageLowering(tx, row, { tier: labelGuard.tier ?? storedTier!, revision: snapshot.revision, pageTier: storedTier }, undefined, heldLabels);
     }
     const coreUsage = core?.usage();
     const gate = noop ? undefined : gateField(ready.result.gate, `p:${row.source_id}/${row.slug}`, null);
