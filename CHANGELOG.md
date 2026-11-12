@@ -10,6 +10,50 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A source delete can no longer leave its pages behind, a purge keeps the conversation-facts outcome rows, an older gbrain can no longer roll back a newer schema, and the commit door's dry run refuses whatever the real run refuses.** This is the persistence/sync salvage wave: five fix PRs built in late October (#7853, #8237, #8152, #8320, #8330) rebuilt on current master, so the fixes they carry that master does not already have finally ship.
+
+### Data you could lose before
+
+- **A source delete never strands its pages (#7072).** On a brain without managed persistence, an expired-archive purge, `gbrain sources purge` or `sources remove` now refuses with `source_pages_remain` and changes nothing when the database would not cascade the delete to the source's pages (the pages-to-sources foreign key is missing, does not cascade, or its trigger is disabled). The nightly purge lists that source under `blocked` and moves on. Brains whose foreign key is intact purge as before, and pages an earlier purge already stranded are not touched. Managed brains already delete a source's pages before its row.
+- **Older binaries can't overwrite a newer schema (#7776).** An older gbrain that runs `gbrain init`, `apply-migrations` (including `--force-schema`) or `upgrade` against a brain a newer gbrain migrated now refuses with `client_behind` before anything runs. Before, its schema replay reinstalled its own older function bodies, write guards included. New doctor check `schema_function_bodies` compares the installed bodies with this binary's.
+- **Facts purge keeps outcome rows (#7831).** `gbrain forget <id> --purge` on a claim whose text is exactly `EXTRACTION_COMPLETE` or `EXTRACTION_NOT_APPLICABLE` no longer deletes the outcome rows with the same text, so those pages aren't extracted (and paid for) again.
+- **Secret audit (#8034).** `audit-secrets` and re-scans again report a password glued to a redaction marker by punctuation. Import-time redaction is unchanged.
+- **Ghost code pages (#7967).** `gbrain repair ghost-pages` retires a code or image page at its recorded file instead of at `<slug>.md`, and on a git-canonical source the door commits the file's removal.
+- **Failed repairs change nothing (#7960 item 1).** When `gbrain repair provenance --apply` fails in the database after writing the page file, it puts the file back and reverts its commit.
+- **Dream write-through (#8092).** After a refused commit, rewrites of existing atom and concept files and removals of retired atoms' files are retried on the next run, and a busy commit lock no longer freezes the worker's event loop.
+- **Read-only mirrors stay read-only (#7098).** On a brain without managed persistence, a source marked `gbrain sources mirror-readonly` is left alone by page write-through and delete, timeline entries, fact fences, `forget`, the extract cycle, `sync --full` and `brainstorm --save`; owner trust repairs list its pages `needs_review`.
+- **An agent's sessions are not saved as you (#8080).** Dream synthesis and OpenClaw sub-agent compaction honor the agent speaker marker. When an agent continues a session already saved as yours, gbrain saves nothing from it and reports `speaker_mismatch`. `gbrain repair agent-session-facts --apply` reads the session corpus once per run and keeps in-page rows attributed correctly after a slow write.
+
+### The commit door
+
+- **Dry run (#7752).** `gbrain git commit-push --dry-run` runs the real run's path checks (source root, a `--base` that moved, a sparse-checkout exclusion, another writer's staged file, a staged rename, a deleted or modified file under an ignore rule) against a copy of the index and exits 1 with the same error. It still writes nothing and takes no lock.
+- **Literal paths (#7792, #7793).** The `brain-commit-push.sh` fallback treats glob characters as literal, so committing `[ab].md` no longer also commits `a.md`, and the fix commands the door prints for another writer's staged file name literal paths.
+- **Extract receipts (#7620).** Receipts are sealed in the transaction that writes them, so remote `search` and `query` no longer report `safe_index_pending` after every extraction. Receipts written before this release still need `gbrain repair safe-chunks --apply` once.
+- **Strict door index refresh (#7755, #7756, #7757, #7758, #7717).** The refresh removes index copies a killed gbrain left behind, retries a briefly refused rename on Windows, and a page committed with a legacy file mode (100664) gets no mode-only commit.
+
+### Clearer refusals and next steps
+
+- **Protocol guard refusals (#7777)** fail with the guard's own code and remedy instead of an "unexpected owner exception" `storage_error`. Contributed by @javieraldape (#7913, rewritten on master).
+- **`unreadable_state` (#7780)** says the role cannot fully read the writer state and asks before suggesting a role change.
+- **Stored source paths (#7646)** are judged absolute by one rule everywhere (sync, `config set`, write-through, `set-path --clear`, doctor). Writes on a relative root record `relative_root` and name `gbrain sources set-path`.
+- **Git-canonical conversion (#7956)** refuses a root it can't read with `source_root_unreadable`, and an apply whose source was switched back to mixed while it ran reports `incomplete`.
+- **`git-durability` enable (#7634)** checks its approval before writing `AGENTS.md`, wiring a credential or retrying parked pushes.
+- **Parked push retry (#7110)** keeps going past a request whose page became private and ends `partial`.
+- **Embedding stop signal (#7772)** retries as `embedding_aborted` instead of failing for good.
+- **Retired grandfather receipts (#7837)** read as history in doctor's `persistence_terminal_failures`.
+- **Synthesis holds (#7849)** each name the fix that releases them, and doctor counts swept holds.
+- **Copied brain (#7671)** `physical_root_directory_changed` names the relocated-root self-transfer as its fix. Nothing is re-stamped automatically.
+- **Repair wording (#7715, #7910, #7881):** stuck-recovery on a git-canonical source says commit-then-sync; `repair url-clone-fences` lists a held file once; a streamed put/capture refusal uses the page-write wording.
+
+Brainstorm message idea from @javieraldape (#7113, rewritten on master). Every change behaves the same on a repo-less brain except the door and conversion items, which need a checkout as they always have.
+
+### For contributors
+
+- No git call under `src` passes git's global `--literal-pathspecs` switch any more; read paths name each path as `:(literal)<path>` through `literalPathspecs`, `test/git-env-guard.test.ts` refuses the switch anywhere in `src`, and `literalPathspecs('')` throws.
+- The crash robot reports a failed page read as `read_failure` instead of a false `projection_drift` (#7651).
+
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git
