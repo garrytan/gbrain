@@ -331,6 +331,50 @@ A file flagged assume-unchanged or skip-worktree that differs from HEAD stays
 in the ledger (git add skips or refuses it), and `--pending` then fails
 `commit_paths_skipped` naming it.
 
+<a id="effect-reverted-edits"></a>
+## Edits a gbrain commit reverted
+
+When another writer committed a page file while one of gbrain's Git effects
+was committing the same file, older gbrain versions could rebuild the effect's
+commit on top of the other commit with the bytes gbrain had staged before it.
+HEAD then went back to gbrain's version without any warning, the next sync
+imported nothing for that file, and the other writer's edit survived only in
+its own commit. Current versions never lay staged bytes over a commit that
+changed the file: when that commit also changed the file on disk, it stays
+HEAD, the effect completes `superseded` (reason `committed_by_another_writer`)
+and the next sync imports it; when the file still holds gbrain's bytes, the
+effect stages them again and commits them on top. A strict source's write
+refuses `git_target_changed` instead.
+
+To find edits a brain already lost this way, look for a gbrain commit whose
+parent is someone else's commit, made at most two minutes earlier, that changed
+the same file. This loop only reads history:
+
+```bash
+BRAIN=/path/to/brain-checkout
+TOP=$(git -C "$BRAIN" rev-parse --show-toplevel)
+g() { git -C "$TOP" -c core.quotePath=false "$@"; }
+g log --no-merges --format='%H %P' | while read -r c p extra; do
+  [ -n "$p" ] && [ -z "$extra" ] || continue
+  case "$(g log -1 --format=%s "$c")" in gbrain:*) ;; *) continue ;; esac
+  case "$(g log -1 --format=%s "$p")" in gbrain:*) continue ;; esac
+  [ $(( $(g log -1 --format=%ct "$c") - $(g log -1 --format=%ct "$p") )) -le 120 ] || continue
+  g diff-tree -r --no-commit-id --name-only "$c" | while IFS= read -r f; do
+    g diff-tree -r --no-commit-id --name-only --root -m --first-parent "$p" -- ":(literal)$f" | grep -qxF -- "$f" \
+      && echo "$f: edit in $(g log -1 --format='%h (%an, %ci)' "$p") replaced by gbrain commit $(g log -1 --format=%h "$c")"
+  done
+done
+```
+
+Each line is a candidate, not proof: a gbrain write made right after someone
+else's commit on purpose looks the same. To confirm one, read both versions
+(`git show <their commit>:<file>` and `git show <gbrain commit>:<file>`).
+While the commit ledger still holds that time, the reverting effect also has an
+earlier `effect` line there whose sha is not in history and whose parent is the
+other commit's parent (`git log -1 --format=%P <sha>`). Ask the user which
+version to keep, then write the chosen content back as an ordinary page write
+(`gbrain put` or `put_page` with the page's current revision).
+
 <a id="scripts-and-the-managed-checkout"></a>
 ## Scripts and the managed checkout
 
