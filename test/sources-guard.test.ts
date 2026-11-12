@@ -38,7 +38,7 @@ const refused = async (promise: Promise<unknown>) => promise.then(() => null, e 
 
 test('the opt-in hook is byte-identical; both owner-path modes guard only the owner worktree; enforce drops only the rewrite exemptions', () => {
   const ownerOnly = 'only the owner worktree is guarded';
-  expect(createHash('sha256').update(renderGuardHook()).digest('hex')).toBe('f5afdf64fd917d42c444c7e5b3f721670b2701a92047fceaa2e8fd2c0dac962d');
+  expect(createHash('sha256').update(renderGuardHook()).digest('hex')).toBe('7c8bef80eb57508b863407f9f6e43d5b01acfac11bd46967ce579618321450d3');
   expect(renderGuardHook()).not.toContain(ownerOnly);
   const owner = renderGuardHook('default');
   expect(owner).toContain(ownerOnly);

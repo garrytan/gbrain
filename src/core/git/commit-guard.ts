@@ -51,7 +51,13 @@ _gd="$(git rev-parse --absolute-git-dir 2>/dev/null)" && [ -n "$_gd" ] && _gd="$
   [ -e "$(git rev-parse --git-path "$_op")" ] && exit 0
 done
 _lock="$(git rev-parse --path-format=absolute --git-path ${COMMIT_LOCK_NAME} 2>/dev/null || true)"
-if [ -n "$_lock" ] && [ "\${${COMMIT_VIA_ENV}:-}" = "$_lock" ]; then
+_via="\${${COMMIT_VIA_ENV}:-}"
+# Windows: gbrain names the lock C:\\...\\${COMMIT_LOCK_NAME}, git C:/.../${COMMIT_LOCK_NAME}, a Git Bash helper /c/.../${COMMIT_LOCK_NAME}; compare one spelling.
+if [ -n "$_lock" ] && [ -n "$_via" ] && command -v cygpath >/dev/null 2>&1; then
+  _lock="$(cygpath -m -- "$_lock" 2>/dev/null || printf '%s' "$_lock")"
+  _via="$(cygpath -m -- "$_via" 2>/dev/null || printf '%s' "$_via")"
+fi
+if [ -n "$_lock" ] && [ "$_via" = "$_lock" ]; then
   command -v flock >/dev/null 2>&1 || exit 0
   flock -n "$_lock" true 2>/dev/null || exit 0
 fi
