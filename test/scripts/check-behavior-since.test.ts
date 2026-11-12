@@ -50,7 +50,7 @@ function repo(): string {
   git(root, 'init', '-q', '-b', 'master');
   git(root, 'config', 'user.email', 't@t.co');
   git(root, 'config', 'user.name', 't');
-  put(root, { VERSION: '0.60.322.0\n', 'CHANGELOG.md': changelog('0.60.322.0'), [NOTICE_FILE]: notice('0.60.321.0', '0.60.322.0') });
+  put(root, { VERSION: '0.60.322.0\n', 'CHANGELOG.md': changelog('0.60.322.0'), [NOTICE_FILE]: notice('0.60.321.0', '0.60.322.0'), '.gstack/ship-policy.json': '{ "bump": "patch" }\n' });
   commit(root, 'master');
   git(root, 'update-ref', 'refs/remotes/origin/master', 'HEAD');
   git(root, 'checkout', '-q', '-b', 'feature');
@@ -107,6 +107,19 @@ describe('check:behavior-since', () => {
     const root = repo();
     rmSync(join(root, NOTICE_FILE));
     expect(run(root, ['--stamped']).code).toBe(1);
+  });
+
+  test('--stamped fails closed when .gstack/ship-policy.json is missing or cannot be parsed', () => {
+    const root = repo();
+    rmSync(join(root, '.gstack/ship-policy.json'));
+    const missing = run(root, ['--stamped']);
+    expect(missing.code).toBe(1);
+    expect(missing.out).toContain('FAIL: .gstack/ship-policy.json is missing');
+    put(root, { '.gstack/ship-policy.json': '{ "merge": "direct",\n' });
+    const broken = run(root, ['--stamped']);
+    expect(broken.code).toBe(1);
+    expect(broken.out).toContain('FAIL: .gstack/ship-policy.json cannot be parsed');
+    expect(run(root).code).toBe(0);
   });
 
   test('master refuses a TBD row: by GITHUB_REF, by HEAD at the base, and when the base itself ships one', () => {
