@@ -24,7 +24,11 @@
  *    soak with every integrity gate (INTEGRITY_GATES) passing in every cell; on the
  *    important-only path it must contain one of the important fixes. It is
  *    promoted through scripts/promote-stable.ts promote(), so every promotion
- *    check (published release, exact tree, never older) still applies.
+ *    check (published release, exact tree, never older) still applies. A release
+ *    that was stable before (its stable-v<version> record tag exists: promoted,
+ *    then rolled back) or that stable.json lists as known_bad or not_promotable
+ *    (bad on outside evidence the soak cannot see) is never a candidate or soaked
+ *    (#8792).
  * 4. Nothing promotable yet: the newest release is soaked (one dispatch of the
  *    soak on its tag) unless a soak is already running, or a soak on any newer
  *    release did not qualify (a maintainer decides; past the weekly floor it
@@ -37,7 +41,7 @@ import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync } from '
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  authorize, compareVersions, currentStable, DOCS, onReleaseBranch, processDeps, promote, readPriorRecord, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
+  authorize, compareVersions, currentStable, DOCS, onReleaseBranch, processDeps, promote, readPriorRecord, refExists, Refusal, requireSoakWorkflow, scheduleAuthorized, STABLE_REF,
   type PromoteDeps, type Promotion,
 } from './promote-stable.ts';
 
@@ -150,6 +154,10 @@ export async function daily(deps: DailyDeps): Promise<DailyResult> {
     if (!VERSION_RE.test(version) || compareVersions(version, current.version) <= 0) continue;
     const commit = await ok(deps, ['rev-parse', `refs/tags/${tag}^{commit}`]);
     if (!(await onReleaseBranch(deps, commit))) { deps.log(`[stable-daily] skipping ${tag}: ${commit} is not on master.`); continue; }
+    if (published.knownBad.includes(version)) { deps.log(`[stable-daily] skipping ${tag}: stable.json lists it as known bad (withdrawn).`); continue; }
+    const blocked = published.notPromotable.find(e => e.version === version);
+    if (blocked) { deps.log(`[stable-daily] skipping ${tag}: stable.json lists it as not promotable (${blocked.reason}; fixed in v${blocked.fixed_in}).`); continue; }
+    if (await refExists(deps, `refs/tags/stable-v${version}`)) { deps.log(`[stable-daily] skipping ${tag}: stable-v${version} exists, so it was stable before and was rolled back; a maintainer re-promotes it by hand if it should return.`); continue; }
     releases.push({ version, commit });
   }
   releases.sort((a, b) => compareVersions(b.version, a.version));

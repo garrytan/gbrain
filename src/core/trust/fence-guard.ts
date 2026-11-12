@@ -8,9 +8,16 @@
  * - Guarded supersession: a row more trusted than the writer is never expired
  *   by it. The row is detached from its fence position and stays active; when
  *   the writer only renumbered it (same claim and visibility elsewhere in the
- *   fence, free slot) it moves there instead. Otherwise the new row at its old
+ *   fence, free slot) it moves there instead, and when the writer only made it
+ *   private (same claim, world to private, GST-2487) it moves there and turns
+ *   private in place, keeping its id and tier. Otherwise the new row at its old
  *   position is inserted contested with a `supersede_fact` proposal, or, when
- *   the writer removed it, a `forget` proposal asks the owner.
+ *   the writer removed it, a `forget` proposal asks the owner. A new world row
+ *   that replaces a guarded non-world row, or restates the claim of a more
+ *   trusted non-world fact of the page at any row number, is inserted at that
+ *   row's visibility and its proposal carries the widening, which only the
+ *   owner's accept applies (GST-2511); until then later writes of the same
+ *   fence keep that contested row narrower.
  * - Row gate (ENG-1): every new fence row is gated like other fact writers at
  *   the writer's tier; a held row is not inserted (the hold keeps it), a
  *   flagged row records its receipt after insert.
@@ -48,14 +55,21 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   /** #8819: rows the fence never held, which this write keeps as they are. */ kept?: readonly number[] },
   expire: () => Promise<unknown>): Promise<FenceGuard<T>> {
   const { sourceId, slug, incoming } = input;
-  const guarded = (await tx.executeRaw<{ id: number; row_num: number; fact: string; visibility: string; trust_tier: string }>(
-    `SELECT f.id, f.row_num, f.fact, f.visibility, f.trust_tier FROM facts f
+  // GST-2511: a contested row a widening proposal stored narrower (pending, rejected or undone) is held at its visibility
+  // against a writer that could not widen the row it contests, while the fence still asks for world at its position.
+  const held = `f.visibility <> 'world' AND EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.action = 'supersede_fact' AND tp.related_table = 'facts'
+      AND tp.related_id = f.id AND tp.status IN ('pending', 'rejected', 'undone') AND tp.before_state->'visibility' IS NOT NULL
+      AND ${trustRankSql("tp.before_state->'old'->>'tier'")} > ${WRITER_RANK})
+    AND EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS w(row_num integer, fact text, visibility text)
+      WHERE w.row_num = f.row_num AND w.fact = f.fact AND w.visibility = 'world')`;
+  const guarded = (await tx.executeRaw<{ id: number; row_num: number; fact: string; visibility: string; trust_tier: string; above: boolean }>(
+    `SELECT f.id, f.row_num, f.fact, f.visibility, f.trust_tier, ${trustRankSql('f.trust_tier')} > ${WRITER_RANK} AS above FROM facts f
       WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
         AND (COALESCE(f.source, '') NOT LIKE 'cli:extract-conversation-facts%'
           OR EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS c(row_num integer) WHERE c.row_num = f.row_num))
         AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, fact text, visibility text)
           WHERE n.row_num = f.row_num AND n.fact = f.fact AND n.visibility = f.visibility)
-        AND ${trustRankSql('f.trust_tier')} > ${WRITER_RANK}
+        AND (${trustRankSql('f.trust_tier')} > ${WRITER_RANK} OR (${held}))
       ORDER BY f.row_num FOR UPDATE`, [sourceId, slug, incoming])).filter(row => !input.kept?.includes(Number(row.id)));
   if (guarded.length) await tx.executeRaw('UPDATE facts SET row_num = NULL WHERE id = ANY($1::bigint[])', [guarded.map(g => Number(g.id))]);
   await expire();
@@ -66,16 +80,25 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
     .map(r => Number(r.row_num)));
   let rows = input.rows;
   const contested: typeof guarded = [];
-  const moves: Array<{ id: number; row_num: number }> = [];
+  const moves: Array<{ id: number; row_num: number; visibility: string }> = [];
   for (const g of guarded) {
-    const target = rows.find(r => r.fact === g.fact && r.visibility === g.visibility && !occupied.has(r.row_num));
+    const free = rows.filter(r => r.fact === g.fact && !occupied.has(r.row_num));
+    if (!g.above) {
+      const target = free.find(r => r.row_num === Number(g.row_num));
+      if (!target) continue;
+      moves.push({ id: Number(g.id), row_num: target.row_num, visibility: g.visibility });
+      occupied.add(target.row_num);
+      rows = rows.filter(r => r !== target);
+      continue;
+    }
+    const target = free.find(r => r.visibility === g.visibility) ?? (g.visibility === 'world' ? free.find(r => r.visibility === 'private') : undefined);
     if (!target) { contested.push(g); continue; }
-    moves.push({ id: Number(g.id), row_num: target.row_num });
+    moves.push({ id: Number(g.id), row_num: target.row_num, visibility: target.visibility ?? g.visibility });
     occupied.add(target.row_num);
     rows = rows.filter(r => r !== target);
   }
   // #6574: every guarded row moves in one statement; each starts detached (row_num NULL), so no move collides with another.
-  if (moves.length) await tx.executeRaw(`UPDATE facts f SET row_num = m.row_num FROM jsonb_to_recordset($1::text::jsonb) AS m(id bigint, row_num integer)
+  if (moves.length) await tx.executeRaw(`UPDATE facts f SET row_num = m.row_num, visibility = m.visibility FROM jsonb_to_recordset($1::text::jsonb) AS m(id bigint, row_num integer, visibility text)
     WHERE f.id = m.id`, [JSON.stringify(moves)]);
   const gated: Array<{ row: T; decision: GatedRowDecision }> = [];
   const inserted: T[] = [];
@@ -85,6 +108,25 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   const cfg = rows.some(r => !occupied.has(r.row_num)) && compareTrust((await writerTrust(tx)).tier, 'tool_observed') < 0 ? await input.cfg(tx) : null;
   // Only a row this write inserts at a guarded row's old position replaces it; a moved row never does.
   const fresh = new Set(rows.filter(r => !occupied.has(r.row_num)).map(r => r.row_num));
+  // GST-2511: a new world row that replaces a guarded non-world row, or restates the claim of a non-world fact of this page
+  // more trusted than the writer, is inserted at that row's visibility; its proposal carries the widening, which only the
+  // owner's accept applies.
+  const widened = new Map<number, { from: string; copy?: { id: number; trust_tier: string } }>();
+  for (const g of contested) {
+    const at = rows.find(r => r.row_num === Number(g.row_num) && fresh.has(r.row_num));
+    if (at && g.visibility !== 'world' && at.visibility === 'world') widened.set(at.row_num, { from: g.visibility });
+  }
+  const restated = rows.filter(r => fresh.has(r.row_num) && r.visibility === 'world' && !widened.has(r.row_num));
+  const trustedPrivate = restated.length ? await tx.executeRaw<{ id: number; fact: string; visibility: string; trust_tier: string }>(
+    `SELECT f.id, f.fact, f.visibility, f.trust_tier FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.expired_at IS NULL
+      AND f.visibility <> 'world' AND f.fact = ANY($3::text[]) AND ${trustRankSql('f.trust_tier')} > ${WRITER_RANK}
+      AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.source_markdown_slug = $2 AND w.expired_at IS NULL AND w.visibility = 'world' AND w.fact = f.fact)
+      ORDER BY f.id`, [sourceId, slug, restated.map(r => r.fact)]) : [];
+  for (const r of restated) {
+    const copy = trustedPrivate.find(t => t.fact === r.fact);
+    if (copy) widened.set(r.row_num, { from: copy.visibility, copy: { id: Number(copy.id), trust_tier: copy.trust_tier } });
+  }
+  if (widened.size) rows = rows.map(r => fresh.has(r.row_num) && widened.has(r.row_num) ? { ...r, visibility: widened.get(r.row_num)!.from } : r);
   for (const row of rows) {
     if (!cfg || occupied.has(row.row_num)) { inserted.push(row); continue; }
     const decision = decideFactWrite({ fact: row.fact, context: row.context ?? null, source: row.source ?? null }, { sourceId, slug,
@@ -105,12 +147,19 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
         const replacement = fresh.has(Number(g.row_num)) ? await at(Number(g.row_num)) : undefined;
         if (replacement) {
           refs.push((await recordContestedFact(db, { sourceId, oldId: Number(g.id), oldTier: storedTrustTier(g.trust_tier), newId: Number(replacement.id),
-            newTier: storedTrustTier(replacement.trust_tier), guard: 'fence_projection' })).proposal_ref);
+            newTier: storedTrustTier(replacement.trust_tier), guard: 'fence_projection',
+            ...(widened.has(Number(g.row_num)) ? { visibility: { from: widened.get(Number(g.row_num))!.from, to: 'world' } } : {}) })).proposal_ref);
         } else {
           const { id } = await insertTrustProposal(db, { action: 'forget', sourceId, target: { table: 'facts', id: Number(g.id) }, proposer: 'fence_projection',
             before: { guard: 'fence_projection', fact: { id: Number(g.id), tier: storedTrustTier(g.trust_tier) }, writer_tier: (await writerTrust(db)).tier, slug } });
           refs.push(`tp${id}`);
         }
+      }
+      for (const [rowNum, { from, copy }] of widened) {
+        const restatement = copy ? await at(rowNum) : undefined;
+        if (!copy || !restatement) continue;
+        refs.push((await recordContestedFact(db, { sourceId, oldId: copy.id, oldTier: storedTrustTier(copy.trust_tier), newId: Number(restatement.id),
+          newTier: storedTrustTier(restatement.trust_tier), guard: 'fence_projection', visibility: { from, to: 'world' } })).proposal_ref);
       }
       for (const { row, decision } of gated) {
         const stored = await at(row.row_num);

@@ -59,6 +59,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'atom_provenance_drift',
   // #7013: atoms an empty managed re-extraction retired that atoms-restore can bring back (doctor/checks/atom-retirements.ts).
   'atom_retirements_restorable',
+  // World atoms that carry an owner-only fence row of their source page (doctor/checks/atom-fence-rows.ts).
+  'atom_fence_rows',
   'captured_facts_active',
   // #8064: owner-attributed capture facts from agent-launched sessions (doctor/checks/agent-session-facts.ts).
   'agent_session_facts',
@@ -88,6 +90,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_release_unpreviewed_fields',
   'credential_projection_pending',
   'derived_visibility',
+  'privacy_label_ignored',
   // GBRA-218: member read access (doctor/checks/member-access.ts).
   'access_readers_malformed',
   'access_unknown_readers',
@@ -97,8 +100,18 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_widening_held',
   'access_policy_invalid',
   'access_policy_store_mismatch',
+  // GST-363: a brain that serves several people keeps each people/<name>/ folder to its readers (doctor/checks/unlabeled-people-folders.ts).
+  'unlabeled_people_folders',
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
+  // GST-2490: the owner opt-in (doctor/checks/owner-reads-restricted.ts).
+  'access_owner_reads_restricted',
+  // GBRA-108: raw-only rules, audience members and members-read-lineage (doctor/checks/access-lineage.ts).
+  'access_raw_only_rules',
+  'access_audience_members',
+  'access_members_read_lineage',
+  // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
+  'attest_read_shared_scope',
   'extractor_facts_expired',
   'unwithdrawn_facts',
   'loop_facts_drift',
@@ -117,6 +130,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'auto_chronicle',
   'auto_chronicle_default_on',
   'chronicle_config_invalid',
+  'chronicle_duplicate_events',
   'facts_drain',
   'fact_take_vectors',
   'code_chunk_metadata',
@@ -236,12 +250,16 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'takes_weight_grid',
   // #5836: active facts with no entity (invisible to entity recall and the conflict sweep).
   'unlinked_facts',
+  // GST-1158: QM's proposed writes awaiting the owner (doctor/checks/memory-proposals.ts).
+  'memory_proposals_pending',
   // #7160: title-prefixed person pages that likely duplicate an unprefixed page (preview only).
   'person_title_duplicates',
   // Git-canonical G1: the database compared with the commit at HEAD per source, informational (doctor/checks/db-ahead-of-git.ts).
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
   'git_index_lag',
+  // GST-2492 PR 2: facts of a strict source without a Git home, or held for more than 30 days (doctor/checks/strict-facts-outside-git.ts).
+  'strict_facts_outside_git',
   // GST-1601: local edits adopted in the last 24 h per source (doctor/checks/local-edit-adoptions.ts).
   'local_edit_adoptions',
   'edge_validity',
@@ -312,6 +330,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'chat_fallback_chain',
   // Agent operator wave: is an agent harness wired to this brain (registration read; --only adds the smoke test).
   'harness_wiring',
+  // GBRA-377 PR B: the skill-resolver hook lane's hook, catalog freshness and recent error codes; silent when unconfigured (doctor/checks/skill-resolver.ts).
+  'skill_resolver',
   // Cat 41: the provider-use decision gbrain setup recorded; declined = no provider request (discovery, probe).
   'provider_consent',
   'frontmatter_hook',
@@ -436,8 +456,12 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'unscoped_multi_user_token',
   'reranker_health',
   'rls',
+  // The session's TLS state on a non-loopback Postgres host (doctor/checks/postgres-tls.ts).
+  'postgres_tls',
   // #7632: every gbrain function that pins a search_path ends it with pg_temp.
   'function_search_path',
+  // A Postgres brain whose server_encoding is not UTF8 (doctor/checks/database-encoding.ts).
+  'database_encoding',
   'rls_event_trigger',
   'search_mode',
   'decide_health',

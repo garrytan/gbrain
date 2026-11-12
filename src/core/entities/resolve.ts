@@ -30,7 +30,7 @@ import { slugifySegment } from '../sync.ts';
 const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
   (await import('../mentions/siblings.ts')).siblingCanonical(...args);
 import { isMissingSchemaObject } from '../utils.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller, privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 
 /**
@@ -480,17 +480,19 @@ export type StrictResolution =
  * same-name trigram arm. Never guesses from a bare-name prefix and never
  * falls back to a slugified name. With `excludePrivate`, private pages are
  * removed before uniqueness is counted, so an unreadable namesake can neither
- * be returned nor change the outcome for a remote caller.
+ * be returned nor change the outcome for a remote caller. `forCaller` reads with
+ * the caller's policy (a remote read); without it the plain privacy fragment
+ * applies, which a derived-visibility decision needs.
  */
 export async function resolveStrictEntityReference(
   engine: BrainEngine,
   source_id: string,
   raw: string,
-  opts: { sameName?: boolean; excludePrivate?: boolean } = {},
+  opts: { sameName?: boolean; excludePrivate?: boolean; forCaller?: boolean } = {},
 ): Promise<StrictResolution> {
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
-  const privacy = opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : '';
+  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}` : '';
   const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.executeRaw<{ slug: string; type: string | null }>(
     `SELECT p.slug, p.type FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${privacy}`,
@@ -567,12 +569,12 @@ export async function entityReferenceCandidates(
   engine: BrainEngine,
   source_id: string,
   raw: string,
-  opts: { excludePrivate?: boolean } = {},
+  opts: { excludePrivate?: boolean; forCaller?: boolean } = {},
 ): Promise<string[]> {
   const trimmed = raw.trim();
   const token = slugify(trimmed);
   if (!token) return [];
-  const privacy = opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : '';
+  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}` : '';
   const aliases = await aliasHitSlugs(engine, source_id, trimmed).catch(() => [] as string[]);
   const prefixed = (await findPrefixCandidates(engine, source_id, token)).map(c => c.slug);
   const named = await engine.executeRaw<{ slug: string }>(

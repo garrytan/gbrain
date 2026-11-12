@@ -18,6 +18,7 @@
  * is never read: the message carries identifiers only.
  */
 import postgres from '#postgres';
+import { withPgTls } from '../pg-tls.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { isLockTimeoutError } from '../retry-matcher.ts';
 
@@ -100,7 +101,7 @@ export function schemaLockBlockedError(input: { step: string; timeoutMs: number;
 export function schemaDiagnosticConnection(url: string | undefined): SchemaLockTimeoutOpts['diagnostic'] {
   if (!url) return undefined;
   return async () => {
-    const sql = postgres(url, { max: 1, connect_timeout: 10, prepare: false, onnotice: () => {}, connection: { application_name: 'gbrain-schema-lock-diagnostic' } });
+    const sql = postgres(url, withPgTls(url, { max: 1, connect_timeout: 10, prepare: false, onnotice: () => {}, connection: { application_name: 'gbrain-schema-lock-diagnostic' } }));
     return { unsafe: (query: string, params?: unknown[]) => sql.unsafe(query, params as never), end: () => sql.end({ timeout: 5 }) };
   };
 }

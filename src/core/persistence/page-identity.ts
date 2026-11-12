@@ -41,12 +41,12 @@ export function yamlLocator(text: string | null | undefined): string {
 
 /**
  * GST-359 C2: a member page (GST-1113: or scope page) another write created after this remember was accepted is the same page, not a recreation;
- * so is memory/unattributed, which the first subjectless remember creates (concurrent first saves all land on it).
- * Preparation and the coordinator's publication check share it.
+ * so is memory/unattributed, which the first subjectless (or, GST-2492, held) remember creates (concurrent first saves
+ * all land on it). Preparation and the coordinator's publication check share it.
  */
-export function rememberAcceptsPageCreatedSince(row: Pick<WriteRequest, 'operation' | 'slug' | 'page_id' | 'intent'>,
+export function rememberAcceptsPageCreatedSince(row: Pick<WriteRequest, 'operation' | 'slug' | 'page_id' | 'intent' | 'authority'>,
   snapshot: { page: { deleted_at?: Date | string | null } } | null): boolean {
   const p = row.intent;
   return row.operation === 'remember' && row.page_id === null && snapshot !== null && !snapshot.page.deleted_at && !!p
-    && (p.member_page === true || p.scope_page === true || (row.slug === UNATTRIBUTED_MEMORY_SLUG && p.entity_slug == null));
+    && (p.member_page === true || p.scope_page === true || (row.slug === UNATTRIBUTED_MEMORY_SLUG && (p.entity_slug == null || row.authority.heldFor === p.entity_slug)));
 }

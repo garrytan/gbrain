@@ -7,10 +7,14 @@ import { assertFactNotPurged } from './withdrawal.ts';
 import { cosineVerdict } from './capture-dedup.ts';
 import { interleaveFusion } from '../search/fusion-lists.ts';
 import { readSupersessionThreshold } from './supersession-threshold.ts';
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { ownerReadPolicyFragment, privateProvenanceFilterFragment, readPolicyFragment } from '../search/private-visibility.ts';
+import { folderAccessForAll } from '../access/caller.ts';
+import { memberIdentity } from '../access/members.ts';
+import { ownerMemberId } from '../access/owner.ts';
+import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
-import { ownedPageWithdrawalSubject, onOwnedMemoryPageSql, withdrawalCoversFactSql } from '../access/member-facts.ts';
+import { ownedPageWithdrawalSubject, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
 import { sameClaimSlot } from './typed-claim.ts';
 
@@ -53,10 +57,50 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
 /**
  * `excludePrivate`: the caller cannot read private pages. A withdrawal whose withdrawn rows all sit on pages it
  * cannot read is refused exactly as a page it may not see is, so the refusal never confirms a claim it cannot see.
+ * `remote`: GST-2346, a remote save onto a member page meets only memberPageWithdrawal's withdrawals.
  */
-export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<void> {
+export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean; remote?: boolean } = {}): Promise<void> {
   await assertFactNotPurged(engine, sourceId, input);
+  if (opts.remote && input.page_slug?.startsWith(MEMBER_PAGE_PREFIX)) {
+    const met = await memberPageWithdrawal(engine, sourceId, input, input.page_slug);
+    if (met) throw withdrawnRefusal(met);
+    return;
+  }
   if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug))) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
+}
+
+type WithdrawalRow = { subject: string; withdrawn_at: string; visibility: 'world' | 'private' };
+
+function withdrawnRefusal(row: WithdrawalRow | undefined): OperationError {
+  const error = verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
+  if (row) error.withdrawn = { at: new Date(row.withdrawn_at).toISOString(), subject: row.subject === '*' ? 'all_entities' : row.subject, visibility: row.visibility };
+  return error;
+}
+
+/**
+ * GST-2346: the withdrawal a remote save onto member page `page` meets, or null. What the member gets back never depends
+ * on a claim it could not read, so the save meets the page's own withdrawals and a withdrawal of another subject only
+ * when a row it withdrew is one the page's member reads: a row on that page, or a row on pages it reads (a shared one,
+ * or for the enabled brain owner any one, under GST-2490's owner read rule). Otherwise the save is the member's own
+ * row, which the insert guards leave active (facts/withdrawal-schema.ts). Judged by the page's member, live: a member
+ * disabled or removed reads nothing.
+ */
+async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, page: string): Promise<WithdrawalRow | null> {
+  const memberId = page.slice(MEMBER_PAGE_PREFIX.length);
+  const identity = (await memberIdentity(engine, memberId).catch(() => null))?.identity ?? [];
+  const satisfied = identity.length ? (await folderAccessForAll(engine, [identity])).satisfiedRuleIds : [];
+  const owner = identity.length > 0 && await ownerMemberId(engine) === memberId;
+  const reads = (alias: string) => owner ? ownerReadPolicyFragment(alias, identity, satisfied) : readPolicyFragment(alias, identity, true, satisfied);
+  const readable = `(f.source_markdown_slug = $5::text OR (${owner ? 'TRUE' : `f.visibility = 'world'`}
+    AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = f.source_id AND pp.slug = f.source_markdown_slug AND NOT ${reads('pp')})
+    AND NOT EXISTS (SELECT 1 FROM pages ep WHERE ep.source_id = f.source_id AND ep.slug = f.entity_slug AND NOT ${reads('ep')})))`;
+  const [row] = await engine.executeRaw<WithdrawalRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at FROM fact_withdrawals w
+    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+      AND (w.subject=$5::text OR ((w.subject='*' OR w.subject=$4::text) AND EXISTS (SELECT 1 FROM facts f
+        WHERE f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
+          AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND ${withdrawalReachedFactSql('w', 'f')} AND ${readable})))
+    ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.entity_slug, page]);
+  return row ?? null;
 }
 
 /**
@@ -73,24 +117,22 @@ export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string
         COALESCE(bool_or(NOT ${seen(5)}), false) AS hidden
       FROM facts f JOIN fact_withdrawals w ON w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND ${withdrawalCoversFactSql('w', 'f')}
+        AND ${withdrawalReachedFactSql('w', 'f')}
       WHERE f.source_id=$1 AND f.visibility=$2 AND f.expired_at IS NOT NULL
         AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND (w.subject='*' OR w.subject=$4::text OR w.subject=$5::text)`,
     [sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug)]);
     if (backing?.hidden && !backing.visible) return pageNotVisibleError();
   }
-  const [row] = await engine.executeRaw<{ subject: string; withdrawn_at: string; visibility: 'world' | 'private' }>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
+  const [row] = await engine.executeRaw<WithdrawalRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at
     FROM fact_withdrawals w LEFT JOIN facts f ON f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
-      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalCoversFactSql('w', 'f')}
+      AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact)) AND ${withdrawalReachedFactSql('w', 'f')}
     WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
       AND (w.subject='*' OR w.subject=$4::text OR w.subject=$6::text)
     GROUP BY w.subject,w.visibility,w.withdrawn_at
     HAVING $5::boolean=false OR COALESCE(bool_or(${seen(6)}), false) OR NOT COALESCE(bool_or(f.id IS NOT NULL), false)
     ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`,
   [sourceId, input.visibility, input.fact, input.entity_slug, opts.excludePrivate === true, ownedPageWithdrawalSubject(input.page_slug)]);
-  const error = verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
-  if (row) error.withdrawn = { at: new Date(row.withdrawn_at).toISOString(), subject: row.subject === '*' ? 'all_entities' : row.subject, visibility: row.visibility };
-  return error;
+  return withdrawnRefusal(row);
 }
 export const CANDIDATE_FUSION_KEY = 'facts.candidate_fusion';
 export type CandidateFusion = 'rrf_free' | 'interleave';
@@ -224,7 +266,8 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
       'Pass the same entity as the fact being replaced, or forget the old fact and remember the new one separately.');
   }
   // GBRA-190 G4: a fact saved without an entity is a row of memory/unattributed; linking it strikes that row in the same write.
-  const linking = target.entity_slug == null && input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
+  // GST-2492: so does replacing a fact a strict source held there for the same entity (checked above).
+  const linking = input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
   if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug && !linking) {
     const derived = String(candidate.source ?? '').startsWith('cli:extract-conversation-facts');
     throw verbError('invalid_params', `replaces_cross_page: fact #${targetId} lives on page ${candidate.source_markdown_slug}${derived ? ', extracted from that conversation page' : ''}.`,

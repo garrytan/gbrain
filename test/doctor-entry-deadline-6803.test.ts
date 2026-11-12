@@ -13,9 +13,13 @@
  * - The frontmatter scan stops at its entry's deadline and names the source it did not finish, not unknown.
  * - --only X --budget-ms N gives X the whole N; the budget-unknown fix names --budget-ms above the time taken,
  *   and running it completes the check (scaled down: 200 ms entry budget, 600 ms statements).
+ * - #8979: the entries before the connection lane get at most half the run's time, so one that runs out the clock
+ *   still leaves the cheap incident checks their share; a local probe that hangs (npm, crontab, which) is killed at
+ *   its entry's deadline instead of blocking the run past it, and no probe outlives the run.
+ * - #8979: under --fast the entries before the connection lane keep the whole budget (no DB lane follows).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from '#postgres';
@@ -25,17 +29,20 @@ import { buildChecks, type Check } from '../src/commands/doctor.ts';
 import { CHEAP_INCIDENT_CHECKS, DOCTOR_CHECK_REGISTRY, runDoctorRegistry } from '../src/commands/doctor/registry.ts';
 import { connectionGateEntry } from '../src/commands/doctor/checks/db-connection.ts';
 import { frontmatterEntry } from '../src/commands/doctor/checks/content-quality.ts';
+import { homeDirInWorktreeEntry } from '../src/commands/doctor/checks/local-audits.ts';
+import { linksExtractionLagEntry } from '../src/commands/doctor/checks/sync-search.ts';
 import { persistenceCapacityEntry } from '../src/commands/doctor/checks/ops-sections.ts';
 import { startDoctorDeadline } from '../src/commands/doctor/budget.ts';
 import type { DoctorContext, DoctorEntry } from '../src/commands/doctor/context.ts';
 import { StatementDeadlineError, deadlineBoundEngine, withStatementDeadline } from '../src/core/statement-deadline.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const ENTRY_BUDGET = 'doctor.entry_budget_ms';
 const noProgress = new Proxy({}, { get: () => () => undefined }) as DoctorContext['progress'];
 
-function ctxFor(engine: BrainEngine, args: string[]): DoctorContext {
+function ctxFor(engine: BrainEngine | null, args: string[]): DoctorContext {
   return {
     engine, args, jsonOutput: true, fastMode: false, doFix: false, dryRun: false, scope: 'brain', orphanRatioSourceId: undefined,
     progress: noProgress, skillsDirResolution: { dir: null, source: 'none' }, skillsDir: null, autoFixReport: null, schemaVersion: 0,
@@ -96,6 +103,55 @@ test('C2: every entry that emits a cheap incident check runs before the first fu
   expect([...CHEAP_INCIDENT_CHECKS].filter((n) => !emitted.has(n))).toEqual([]);
 });
 
+test('#8979: a local probe that hangs is killed at its entry deadline instead of blocking the run past it', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'gbrain-8979-bin-'));
+  const pids = join(bin, 'pids');
+  for (const tool of ['npm', 'crontab', 'which']) {
+    // A wrapper that ignores SIGTERM and waits on a child of its own, so only a hard kill of the whole group ends both.
+    writeFileSync(join(bin, tool), `#!/bin/sh\ntrap '' TERM\necho $$ >> '${pids}'\nsleep 6 &\necho $! >> '${pids}'\nwait\n`, { mode: 0o755 });
+  }
+  try {
+    await withEnv({ PATH: `${bin}:${process.env.PATH}` }, async () => {
+      const args = ['--json', '--budget-ms', '1000'];
+      const started = Date.now();
+      const checks = await runDoctorRegistry(ctxFor(null, args), [homeDirInWorktreeEntry]);
+      expect(Date.now() - started).toBeLessThan(1_000 + 400);
+      // Cut short by the deadline, the probes' checks are unknown, never absent.
+      expect(byName(checks, 'npm_squat')?.details).toMatchObject({ health: 'unknown', reason: 'budget' });
+    });
+    await new Promise((r) => setTimeout(r, 1_500));
+    const launched = readFileSync(pids, 'utf8').split('\n').filter(Boolean).map(Number);
+    expect(launched.length).toBeGreaterThan(0);
+    const alive = launched.filter((pid) => { try { process.kill(pid, 0); return true; } catch { return false; } });
+    expect(alive).toEqual([]);
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('#8979: a local probe that answers in time feeds its check', async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'gbrain-8979-bin-'));
+  writeFileSync(join(bin, 'crontab'), "#!/bin/sh\necho '0 * * * * gbrain sync --all'\n", { mode: 0o755 });
+  try {
+    await withEnv({ PATH: `${bin}:${process.env.PATH}`, GBRAIN_HOME: undefined }, async () => {
+      const checks = await runDoctorRegistry(ctxFor(null, ['--json']), [homeDirInWorktreeEntry]);
+      expect(byName(checks, 'cron_gbrain_home')).toMatchObject({ status: 'ok' });
+    });
+  } finally {
+    rmSync(bin, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test('#8979: under --fast an entry before the connection lane keeps the whole budget', async () => {
+  const entry: DoctorEntry = {
+    name: 'fast_filesystem_example', emits: ['fast_filesystem_example'],
+    run: () => new Promise((r) => setTimeout(() => r([{ name: 'fast_filesystem_example', status: 'ok', message: 'ok' }]), 700)),
+  };
+  const args = ['--json', '--fast', '--budget-ms', '1200'];
+  const checks = await runDoctorRegistry({ ...ctxFor(null, args), fastMode: true }, [entry, connectionGateEntry]);
+  expect(byName(checks, 'fast_filesystem_example')?.status).toBe('ok');
+}, 15_000);
+
 for (const kind of testBackends()) {
   describe(`#6803 doctor deadlines (${kind})`, () => {
     let engine: BrainEngine;
@@ -136,6 +192,21 @@ for (const kind of testBackends()) {
       // The run did hit its deadline: some later check is unknown for the overall budget.
       expect(checks.some((c) => c.details?.reason === 'budget' && c.details?.limit === 'overall')).toBe(true);
     }, 60_000);
+
+    test('#8979: an entry before the connection lane that runs out the clock leaves the cheap incident checks their share', async () => {
+      const slowFilesystem: DoctorEntry = {
+        name: 'slow_filesystem_example', emits: ['slow_filesystem_example'],
+        run: () => new Promise((r) => setTimeout(() => r([{ name: 'slow_filesystem_example', status: 'ok', message: 'ok' }]), 3_000)),
+      };
+      const args = ['--json', '--scope=brain', '--budget-ms', '2000'];
+      const started = Date.now();
+      const checks = await runDoctorRegistry(ctxFor(engine, args), [slowFilesystem, connectionGateEntry, persistenceCapacityEntry, linksExtractionLagEntry]);
+      expect(Date.now() - started).toBeLessThan(2_000 + 400);
+      expect(byName(checks, 'slow_filesystem_example')?.details).toMatchObject({ health: 'unknown', reason: 'budget', limit: 'overall' });
+      const lag = byName(checks, 'links_extraction_lag');
+      expect(lag?.details?.health, JSON.stringify(lag)).not.toBe('unknown');
+      expect(byName(checks, 'persistence_capacity')?.details?.health).not.toBe('unknown');
+    }, 30_000);
 
     test('--only X --budget-ms N gives X the whole N; the budget fix names a larger --budget-ms and running it completes the check', async () => {
       const slow = instrumented(engine, { slow: { match: /FROM persistence_counters/, ms: 600 } });

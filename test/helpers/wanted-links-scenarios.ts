@@ -85,6 +85,46 @@ export async function bareNameReferenceSettles(databaseUrl?: string) {
   }, { databaseUrl });
 }
 
+/**
+ * #9140: a bare-name frontmatter reference resolved under a directory hint stays unresolved even when a
+ * top-level page has the exact slug. It settles after one extraction, and a row an older build stamped
+ * `-infinity` settles on its origin's next extraction.
+ */
+export async function topLevelSlugNameReferenceSettles(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    await put(ctx, 'acme-toolkit', 'Acme toolkit.');
+    await put(ctx, 'people/alice-example', 'Alice.', 'person', 'founded: ["acme-toolkit"]\n');
+    await extractStale(engine);
+    expect(await wantedRows(engine)).toEqual([{ target_ref: 'acme-toolkit', ref_kind: 'name', producer: 'frontmatter' }]);
+    expect(await stale(engine)).toBe(0);
+    await engine.executeRaw("UPDATE wanted_links SET checked_at = '-infinity'::timestamptz WHERE target_ref = 'acme-toolkit'");
+    expect(await stale(engine)).toBe(1);
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    const [row] = await engine.executeRaw<{ settled: boolean }>(
+      "SELECT checked_at > '-infinity'::timestamptz AS settled FROM wanted_links WHERE target_ref = 'acme-toolkit'");
+    expect(row?.settled).toBe(true);
+  }, { databaseUrl });
+}
+
+const staleSlugs = async (engine: BrainEngine) =>
+  (await engine.listStalePagesForExtraction({ versionTs: LINK_EXTRACTOR_VERSION_TS, batchSize: 100 })).map(page => page.slug).sort();
+
+/** #9140: a later write of a bare name's exact-slug page still wakes its origin, and one extraction settles it again. */
+export async function topLevelSlugNamePageEditWakesOnce(databaseUrl?: string) {
+  await managedBrain(async ({ engine, ctx }) => {
+    const first = await put(ctx, 'acme-toolkit', 'Acme toolkit.');
+    await put(ctx, 'people/alice-example', 'Alice.', 'person', 'founded: ["acme-toolkit"]\n');
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    await put(ctx, 'acme-toolkit', 'Acme toolkit, edited.', 'note', '', (first.outcome ?? first).revision);
+    expect(await staleSlugs(engine)).toEqual(['acme-toolkit', 'people/alice-example']);
+    await extractStale(engine);
+    expect(await stale(engine)).toBe(0);
+    expect(await wantedRows(engine)).toEqual([{ target_ref: 'acme-toolkit', ref_kind: 'name', producer: 'frontmatter' }]);
+  }, { databaseUrl });
+}
+
 /** A remote caller never sees targets referenced only from private pages, nor counts that include them. */
 export async function privateOriginsStayPrivate(databaseUrl?: string) {
   await managedBrain(async ({ engine, ctx }) => {

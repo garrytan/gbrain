@@ -1239,7 +1239,15 @@ async function runGitHubSyncInner(engine: BrainEngine, sourceId: string, cfg: Gi
           // so they are re-fetched every sweep. Cost is bounded by the number
           // of open PRs, which is small in practice.
           const isOpenPr = item.kind === 'pr' && item.state === 'open';
-          const { fresh, hasDetail } = await storedPage(deps, filePath, item.updated_at);
+          // #9062: a stored page this read cannot load (one stored in segments over the single-string ceiling) fails this item, not the run.
+          let stored: Awaited<ReturnType<typeof storedPage>>;
+          try {
+            stored = await storedPage(deps, filePath, item.updated_at);
+          } catch (err) {
+            await itemFailed(repo, item, err, ' stored page read');
+            continue;
+          }
+          const { fresh, hasDetail } = stored;
           if (!opts.full && !isOpenPr && fresh && hasDetail) {
             // Cursor accounting: a fresh skip is a success too. Without this,
             // a repo whose newest item is always fresh stays re-listed on

@@ -43,7 +43,7 @@ import { isEmbeddingZeroNormError, type EmbeddingZeroNormError } from './ai/embe
 import { slugifyPath, slugifyCodePath, isCodeFilePath, hasMalformedPathSegment } from './sync.ts';
 import { addCodeReferenceLinks } from './engine-sql/links.ts';
 import type { ChunkInput, Page, PageInput, PageType } from './types.ts';
-import type { PageSnapshot } from './page-state/types.ts';
+import { assertPageRevision, type PageSnapshot } from './page-state/types.ts';
 import { pipelined } from './page-state/transactions.ts';
 import { addPageTags } from './page-state/tags.ts';
 import { computeEffectiveDate, fallbackCreatedAt, isValidTimeZone } from './effective-date.ts';
@@ -67,7 +67,7 @@ import { abortSegmentedStaging, bodyStorageOf, demoteSegmentedPage, materialized
   stringWriteStorage, type SegmentedImport } from './persistence/segmented-apply.ts';
 import type { SegmentedStagingOwner } from './page-body/ingest.ts';
 import type { PageBodyPolicy } from './page-body/limits.ts';
-import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
+import { parseFactsFenceFor, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
 import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
@@ -93,8 +93,8 @@ function mergeHiddenFactRowsIntoBody(
   existingBody: string | null | undefined,
 ): string {
   if (!existingBody) return incomingBody;
-  const incomingFacts = parseFactsFence(incomingBody);
-  const existingFacts = parseFactsFence(existingBody);
+  const incomingFacts = parseFactsFenceFor(incomingBody, { slug });
+  const existingFacts = parseFactsFenceFor(existingBody, { slug });
   const merge = restoreHiddenFactRows(incomingFacts, existingFacts);
   if (merge) {
     if (merge.renumbered.length > 0) {
@@ -351,6 +351,8 @@ export async function importFromContent(
     /** #7880: external content (ingest_capture, connector and company-brain files) asking for `visibility: private` in a spelling page privacy does not read refuses `visibility_noncanonical` (`screenImportContent`); nothing is stored. */
     holdNoncanonicalPrivate?: boolean;
     beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>;
+    /** GST-2112: the revision (null: no page) a caller's check read; a different base refuses `revision_conflict`, and the write transaction re-proves the base. */
+    expectedBaseRevision?: string | null;
     onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void;
   } & ImportFenceOptions = {},
 ): Promise<ImportResult> {
@@ -441,6 +443,7 @@ export async function importFromContent(
     // unscoped-check/scoped-write bug class).
     const existingSnapshot = !opts.prepare ? null : await materializedSnapshot(engine, opts.coordinated && opts.existingSnapshot !== undefined ? opts.existingSnapshot : await engine.readPageSnapshot(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
     const existing = opts.prepare ? existingSnapshot?.page ?? null : await materializedPage(engine, await engine.getPage(slug, { sourceId: sourceId ?? 'default', includeDeleted: true }));
+    if (opts.expectedBaseRevision !== undefined) assertPageRevision(existing ? { revision: existing.knowledge_revision! } : null, { expectedRevision: opts.expectedBaseRevision });
     if (existing) stabilizeSafetyAssessments(parsed.frontmatter, existing.frontmatter);
 
     const collisionOwner = collidingSlugOwner(existing, slug, opts.sourceRoot, opts.sourcePath);

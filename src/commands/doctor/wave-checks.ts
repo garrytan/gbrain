@@ -80,6 +80,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     run: async (engine, scope) => { const { derivedVisibilityCheck } = await import('./checks/derived-visibility.ts'); return perSource(scope, id => derivedVisibilityCheck(engine, id)); },
   },
   {
+    id: 'privacy_label_ignored', resolution: 'operator', registration: 'wave',
+    count: d => Number(d.pages ?? 0),
+    impact: 'Some pages carry an access or confidentiality value gbrain does not read as private, so the label does not hide them from remote callers or keep them out of git',
+    instruction: 'List the pages with `gbrain list --where <key>=<value> --json` on the brain host and add `visibility: private` to each page that should stay private; gbrain rewrites no label itself.',
+    run: async (engine, scope) => (await import('./checks/privacy-label-ignored.ts')).privacyLabelIgnoredCheck(engine, scope.sourceIds),
+  },
+  {
     id: 'safe_index_pending', resolution: 'repair', registration: 'wave',
     count: d => Number(d.pages_pending ?? 0),
     impact: 'Some pages are below the safe-chunk index version and are withheld from remote search',
@@ -337,6 +344,13 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => Number(d.count ?? 0),
     impact: 'Some atoms were retired when a re-extraction returned no atoms, and the purge removes them once their hold ends',
     run: async (engine, scope) => (await import('./checks/atom-retirements.ts')).atomRetirementsRestorableCheck(engine, scope.sourceIds),
+  },
+  {
+    id: 'atom_fence_rows', resolution: 'repair', registration: 'wave',
+    hostOnly: 'Narrowing atoms to private is a host-side, explicit-only repair.',
+    count: d => Number(d.count ?? 0),
+    impact: 'Some world atoms carry text of a fence row their source page shows only to the owner',
+    run: async (engine, scope) => (await import('./checks/atom-fence-rows.ts')).atomFenceRowsCheck(engine, scope.sourceIds),
   },
   {
     id: 'generation_retirements', resolution: 'repair', registration: 'wave',

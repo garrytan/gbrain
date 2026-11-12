@@ -21,6 +21,7 @@ import postgres from '#postgres'
 import { reservedTransactions, type ReservedTransactions } from './postgres-engine/reserved-transactions.ts';
 import { holdSearchConnection } from './search/connection-budget.ts';
 import { traceSqlOptions } from './sql-trace.ts';
+import { tlsRequiredDefaultError, withPgTls } from './pg-tls.ts';
 import { hasPostgresCancellationCapability, postgresCancellationUnavailable, reserveWithCancellation } from './postgres-engine/cancellation.ts';
 import { runBoundedStatement, runDeadlineRead } from './postgres-engine/bounded-statement.ts';
 import { needsJitOff, runJitOffStatement } from './postgres-engine/jit-off-statement.ts';
@@ -123,14 +124,15 @@ import { commonOrTokens, narrowedOrFallbackText, readOrTokenShares } from './sea
 import { keywordArmRows } from './search/keyword-identifier-probe.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { buildKeywordChunkMatch, KEYWORD_RANK_CANDIDATES, KEYWORD_RANKED_ROWS_CTE, KEYWORD_STATEMENT_SETTINGS } from './search/keyword-chunk-match.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateFactFilterForCaller, privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { deletedPageProjectionHiddenSql } from './eligibility/sql.ts';
 import { DEFAULT_EMBEDDING_MODEL, DEFAULT_EMBEDDING_DIMENSIONS } from './ai/defaults.ts';
 import { readStoredEmbeddingIdentity } from './stored-embedding-identity.ts';
 import { assertEmbeddedEmbedding, embeddedSchemaEmbedding, embeddedSettingsRecord, isEmbeddedEngine, settingsConnectionOptions } from './embedded-engine.ts';
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
-import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
+import { holdSchemaMigrationSessionLock, holdSchemaMigrationTransactionLock } from './postgres-engine/init-schema-lock.ts';
 import { isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
@@ -181,6 +183,7 @@ import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
 import { writerStamp } from './persistence/writer-versions.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
+import { insertEvalCandidate } from './feedback/store.ts';
 
 function escapeSqlStringLiteral(value: string): string {
   return value.replace(/'/g, "''");
@@ -371,7 +374,7 @@ export class PostgresEngine implements BrainEngine {
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
-    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge);
+    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge, cancelSettleMs());
     if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
       return await callback(this.sql);
     }
@@ -468,8 +471,9 @@ export class PostgresEngine implements BrainEngine {
       if (typeof prepare === 'boolean') {
         opts.prepare = prepare;
       }
-      this._sql = postgres(url, traceSqlOptions(embedded ? { ...opts, ...settingsConnectionOptions(url) } : opts, 'instance'));
-      await db.checkPoolAndLoadSharedTypes(this._sql, url, { persisted: !embedded });
+      const instanceOpts = embedded ? { ...opts, ...settingsConnectionOptions(url) } : opts;
+      this._sql = postgres(url, traceSqlOptions(withPgTls(url, instanceOpts), 'instance'));
+      await db.checkPoolAndLoadSharedTypes(this._sql, url, { persisted: !embedded }).catch(async (e: unknown) => { throw (await tlsRequiredDefaultError(url, e, instanceOpts)) ?? e; });
       await db.setSessionDefaults(this._sql);
       this._connectionStyle = 'instance';
 
@@ -602,51 +606,44 @@ export class PostgresEngine implements BrainEngine {
     }
     let sqlText = getPostgresSchema(dims, model);
 
-    // Advisory lock prevents concurrent initSchema() calls from deadlocking
-    // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock).
-    //
-    // pg_advisory_lock(42) is session-scoped but ddl() returns a POOL, so on a
-    // pool of more than one backend the acquire, DDL and unlock are pinned to
-    // one reserved backend (no long-hold permit: migrations reserve their own,
-    // and a pool of one is already a single backend).
-    const pinned = pool.options.max > 1;
-    if (pinned) this.checkoutGauge.acquire('reserved');
-    const conn: postgres.Sql = pinned ? await pool.reserve().catch((e) => { this.checkoutGauge.release('reserved'); throw e; }) : pool;
-    if (pinned) this.checkoutGauge.checkedOut();
+    // GBRA-467: the schema migration lock covers the bootstrap, the replay and the migrations (holdSchemaMigrationLock).
+    const { runMigrations, withSchemaMigrationLock } = await import('./migrate.ts'); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
+    const t0 = Date.now();
+    logConnectionEvent({
+      pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
+      op: 'acquire',
+      caller: 'PostgresEngine.initSchema',
+    });
     try {
-      const t0 = Date.now();
-      logConnectionEvent({
-        pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
-        op: 'acquire',
-        caller: 'PostgresEngine.initSchema',
-      });
-      // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — initSchema DDL mutates the whole database; a per-source key would let two initSchema calls deadlock on shared DDL.
-      // #2898: deadlined pg_try_advisory_lock loop + stderr heartbeat instead of
-      // an unbounded pg_advisory_lock — a leaked pooler session holding key 42
-      // hung every gbrain invocation forever with no output. On timeout the
-      // error names the holder pid with pg_terminate_backend recovery guidance.
-      await acquireInitSchemaAdvisoryLock((q) => conn.unsafe(q));
-      try {
+      await withSchemaMigrationLock(this, async () => {
         // Another initSchema may have recorded an identity between the read above and this lock: check it again here.
         const lockedIdentity = storedIdentity ? null : await readStoredEmbeddingIdentity(this);
         if (lockedIdentity?.model) {
           if (embedded) assertEmbeddedEmbedding(embedded, lockedIdentity);
           if (lockedIdentity.dimensions !== dims || lockedIdentity.model !== model) sqlText = getPostgresSchema(lockedIdentity.dimensions, lockedIdentity.model);
         }
-        // Pre-schema bootstrap: add forward-referenced state the embedded schema
-        // blob requires but that older brains don't have yet (issues #366/#375/
-        // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
-        // Threads the DDL connection (same one holding the advisory lock above)
-        // so bootstrap probes run on the locked connection — without this, the
-        // probes ran through `this.sql` (the pooler/instance pool) outside the
-        // lock, opening a concurrent-bootstrap race for Supabase users on the
-        // transaction pooler. Codex P1 finding from v0.36 dreamy-thompson wave.
-        await this.applyForwardReferenceBootstrap(conn);
+        // The bootstrap and the replay share one backend: withSchemaLockTimeout sets a session lock_timeout on it.
+        // On a pool of more than one it is a reserved backend (checkout gauge only, no long-hold permit: migrations
+        // reserve their own); a pool of one is already a single backend.
+        const pinned = pool.options.max > 1;
+        if (pinned) this.checkoutGauge.acquire('reserved');
+        const conn: postgres.Sql = pinned ? await pool.reserve().catch((e) => { this.checkoutGauge.release('reserved'); throw e; }) : pool;
+        if (pinned) this.checkoutGauge.checkedOut();
+        try {
+          // Pre-schema bootstrap: add forward-referenced state the embedded schema
+          // blob requires but that older brains don't have yet (issues #366/#375/
+          // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
+          // Threads the DDL connection so the bootstrap probes run inside the schema
+          // lock, not on the pooler outside it (Codex P1 finding, v0.36 dreamy-thompson wave).
+          await this.applyForwardReferenceBootstrap(conn);
 
-        await retrySchemaReplayOnDeadlock(() => withSchemaLockTimeout(conn, () => conn.unsafe(sqlText), { step: 'replay', diagnostic: schemaDiagnosticConnection(this._savedConfig?.database_url) })); // #5227: bounded wait, typed schema_lock_blocked; #6143: a deadlock victim runs again
+          await retrySchemaReplayOnDeadlock(() => withSchemaLockTimeout(conn, () => conn.unsafe(sqlText), { step: 'replay', diagnostic: schemaDiagnosticConnection(this._savedConfig?.database_url) })); // #5227: bounded wait, typed schema_lock_blocked; #6143: a deadlock victim runs again
+        } finally {
+          if (pinned) { (conn as postgres.ReservedSql).release(); this.checkoutGauge.release('reserved'); }
+        }
 
         // Run any pending migrations automatically
-        const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
+        const { applied } = await runMigrations(this);
         if (applied > 0) {
           process.stderr.write(`  ${applied} migration(s) applied\n`);
         }
@@ -669,17 +666,34 @@ export class PostgresEngine implements BrainEngine {
             process.stderr.write(`  HNSW sweep: dropped ${result.dropped.length} zombie index(es)\n`);
           }
         } catch { /* best-effort */ }
-      } finally {
-        await conn`SELECT pg_advisory_unlock(42)`;
-        logConnectionEvent({
-          pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
-          op: 'release',
-          caller: 'PostgresEngine.initSchema',
-          duration_ms: Date.now() - t0,
-        });
-      }
+      });
     } finally {
-      if (pinned) { (conn as postgres.ReservedSql).release(); this.checkoutGauge.release('reserved'); }
+      logConnectionEvent({
+        pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
+        op: 'release',
+        caller: 'PostgresEngine.initSchema',
+        duration_ms: Date.now() - t0,
+      });
+    }
+  }
+
+  /**
+   * GBRA-467: the schema migration lock (key 42, brain-global), transaction-scoped on a backend reserved from the
+   * DDL pool, or from the statement pool when the DDL pool has one connection (a short-lived command's direct pool,
+   * left idle by the migrations until its idle timeout drops it). Session lock only when every pool has one.
+   */
+  async holdSchemaMigrationLock<T>(fn: (assertHeld: () => Promise<void>) => Promise<T>): Promise<T> {
+    const ddl = this.connectionManager ? await this.connectionManager.ddl() : this.sql;
+    const pool = ddl.options.max > 1 ? ddl : this.sql.options.max > 1 ? this.sql : null;
+    if (!pool) return holdSchemaMigrationSessionLock(ddl, fn);
+    this.checkoutGauge.acquire('reserved');
+    const conn = await pool.reserve().catch((e) => { this.checkoutGauge.release('reserved'); throw e; });
+    this.checkoutGauge.checkedOut();
+    try {
+      return await holdSchemaMigrationTransactionLock(conn, fn);
+    } finally {
+      conn.release();
+      this.checkoutGauge.release('reserved');
     }
   }
 
@@ -1876,7 +1890,7 @@ export class PostgresEngine implements BrainEngine {
     sourceId?: string;
     sourceIds?: string[];
     excludePrivate?: boolean;
-    mode?: 'inbound' | 'islanded';
+    mode?: 'inbound' | 'islanded'; scopeInbound?: boolean;
   }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; source_id?: string }>> {
     return linksImpl.findOrphanPages(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), opts);
   }
@@ -2012,9 +2026,8 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length
       ? sql`AND source_id = ANY(${opts.sourceIds})`
       : sql`AND (${opts?.sourceId ?? null}::text IS NULL OR source_id = ${opts?.sourceId ?? null})`;
-    // Page-visibility gate on the provenance page, applied BEFORE DISTINCT ON
-    // so the untrusted caller resolves the newest value they may see.
-    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privateProvenanceFilterFragment('facts')}`) : sql``;
+    // Provenance/entity page gates and the deleted-page hide, BEFORE DISTINCT ON: the caller gets the newest value they may see.
+    const privacy = sql.unsafe(`AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`);
     const visibility = opts?.visibility ? sql`AND visibility = ANY(${opts.visibility})` : sql``;
     const rows = await sql<OntologyValue[]>`
       SELECT DISTINCT ON (dimension)
@@ -2051,9 +2064,9 @@ export class PostgresEngine implements BrainEngine {
     const scope = opts?.sourceIds && opts.sourceIds.length
       ? sql`AND source_id = ANY(${opts.sourceIds})`
       : sql`AND (${opts?.sourceId ?? null}::text IS NULL OR source_id = ${opts?.sourceId ?? null})`;
-    // Same provenance-page gate as getOntology, inside the CTE so a conflict
+    // Same page gates as getOntology, inside the CTE so a conflict
     // that only exists because of a hidden provenance is never reported.
-    const privacy = opts?.excludePrivate ? sql.unsafe(`AND ${privateProvenanceFilterFragment('facts')}`) : sql``;
+    const privacy = sql.unsafe(`AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`);
     const visibility = opts?.visibility ? sql`AND visibility = ANY(${opts.visibility})` : sql``;
     const rows = await sql<{ entity_slug: string; dimension: string; values: OntologyConflict['values'] }[]>`
       WITH cur AS (
@@ -3082,20 +3095,7 @@ export class PostgresEngine implements BrainEngine {
 
   // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
-    const sql = this.sql;
-    const rows = await sql`
-      INSERT INTO eval_candidates (
-        tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
-        expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
-        latency_ms, remote, job_id, subagent_id, embedding_column
-      ) VALUES (
-        ${input.tool_name}, ${input.query}, ${input.retrieved_slugs}, ${input.retrieved_chunk_ids}, ${input.source_ids},
-        ${input.expand_enabled}, ${input.detail}, ${input.detail_resolved}, ${input.vector_enabled}, ${input.expansion_applied},
-        ${input.latency_ms}, ${input.remote}, ${input.job_id}, ${input.subagent_id}, ${input.embedding_column ?? null}
-      )
-      RETURNING id
-    `;
-    return rows[0]!.id as number;
+    return insertEvalCandidate(this, input);
   }
 
   async listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]> {

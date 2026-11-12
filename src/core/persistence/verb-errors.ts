@@ -7,9 +7,9 @@ import { isFrontmatterHoldMessage } from '../markdown.ts';
 import { fenceLocationFromMessage, fenceWhere } from '../fence-repair/refusal.ts';
 import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
-import { PAGE_CHANGED_AFTER_READ_MESSAGE } from '../page-state/types.ts';
+import { PAGE_CHANGED_AFTER_READ_MESSAGE, PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from '../page-state/types.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { ERROR_CATALOGUE } from '../error-catalogue.ts';
+import { codeEntry, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { SOURCE_CHECKOUT_MISSING, type CheckoutRefusalOrigin } from './publication-failure.ts';
 import { ownershipRecordNotPrivateError, physicalRootDirectoryChangedError } from './physical-root-record.ts';
 
@@ -54,9 +54,7 @@ export const FACTS_BATCH_INCOMPLETE_MESSAGE = 'Some extracted facts have not com
 export const FACTS_ENTITY_CHANGED_MESSAGE = 'The fact entity changed after extraction admission.';
 export const FACTS_ENTITY_CHANGED_IN_PREPARATION_MESSAGE = 'The fact entity changed during preparation.';
 export const FACTS_DEDUP_CHANGED_MESSAGE = 'The fact deduplication state changed before publication.';
-/** The coordinator's refusal when the page moved between preparation and publication (coordinator.ts, group-publish.ts), also
- * thrown when a staged large file no longer matches its stage (large-file.ts); fact requests never stage large files. */
-export const PAGE_CHANGED_DURING_PREPARATION_MESSAGE = 'The page changed during preparation.';
+export { PAGE_CHANGED_DURING_PREPARATION_MESSAGE };
 /**
  * #7602: entity request refusals a follow-up batch re-admits at the entity's current revision (facts-maintenance.ts), and
  * that `gbrain repair failed-writes` lists. Stored receipts are matched by this exact text, so never reword these messages.
@@ -143,7 +141,7 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     };
     if (message === 'The canonical file was removed outside coordinated publication.') return {
       reason: 'canonical_file_missing', message: 'The canonical file is missing; the database page was not overwritten.',
-      suggestion: 'Review the deletion and recover the intended canonical file or import the intended deletion before retrying. Reconciliation does not restore missing files.',
+      suggestion: 'Review the deletion and recover the intended canonical file or import the intended deletion before retrying. Reconciliation does not restore missing files. To narrow who reads the page without restoring its file, add a page rule: gbrain access rule add --slug <slug> --readers <member> --source <source>.',
     };
     if (message === 'An unindexed file already occupies the canonical page path.') return {
       reason: 'canonical_path_occupied', message: 'An unindexed file already occupies this page path; it was not overwritten.',
@@ -199,6 +197,8 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
     suggestion: 'A company-brain source never rewrites repository files: fix the named fence in the repository, commit it, and resume the sync.' };
   // Wave B: a page whose body is stored in segments refuses a whole-body write; a deliberate per-page verdict, never a server fault.
   if (code === 'page_body_segmented') return { reason: code, message: message ?? SEGMENTED_WRITE_MESSAGE, suggestion: SEGMENTED_WRITE_SUGGESTION };
+  // #8522: a page whose segment rows readable here do not cover its body refuses every whole-body write the same way; the message names the page.
+  if (code === 'page_body_rows_unreadable') return { reason: code, message: message ?? codeEntry(code)!.summary, suggestion: codeEntry(code)!.suggestion };
   // #5575: a purged claim or page content is refused for good; the owner alone can clear its tombstone.
   if (code === 'purged_content') return { reason: code, message: 'This content was purged from this source and cannot be saved again.',
     suggestion: PURGED_SUGGESTION };
@@ -289,7 +289,7 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     // its retry_after_ms detail and its wait fix ride along so the caller retries the same request_id.
     if (error.code === 'worktree_refreshing') {
       const fenced = verbError('unavailable', error.message, error.suggestion ?? 'Retry the same request_id after retry_after_ms.', error.detail);
-      Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true });
+      Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true, requestId: error.requestId });
       throw markNotAdmitted(fenced);
     }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
@@ -331,6 +331,7 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
   if (!pending) error.detail = diagnostic.reason;
   if (writeError === 'purged_content') error.canonical = 'purged_content';
   if (writeError === 'page_body_segmented') Object.assign(error, { canonical: 'page_body_segmented', fix: segmentedRememberFix() });
+  if (writeError === 'page_body_rows_unreadable') error.canonical = 'page_body_rows_unreadable';
   error.writeError = writeError;
   error.writeRequest = receipt;
   return error;

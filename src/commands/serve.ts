@@ -8,6 +8,7 @@ export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serv
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
+import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
 import { RESIDENT_POOL_FLOOR } from '../core/pg-access-classify.ts';
 import { redirectStdoutLoggingToStderr } from '../core/console-prefix.ts';
 import { startFactsDrainScheduler, type FactsDrainScheduler, type FactsDrainSchedulerOpts } from '../core/facts/drain-scheduler.ts';
@@ -294,6 +295,16 @@ async function serveBrain(
     throw new Error('--access read-only applies to stdio serve only; for HTTP narrow each token with ' +
       'gbrain auth rescope-token <name> --operations <op,...> (see docs/mcp/ADMIN.md#read-only-stdio-serve)');
   }
+  // GST-363: --stdio-member binds this one stdio server (the harness entry that starts it) to one member.
+  const stdioMember = parseStdioMemberFlag(args);
+  if (stdioMember !== undefined && isHttp) {
+    throw new Error('--stdio-member binds a stdio serve only; over HTTP bind each key to its person with ' +
+      'gbrain auth create <name> --member <id> (or gbrain auth rescope --token <name> --member <id>)');
+  }
+  const sharedHarness = stdioMember !== undefined ? (await import('./setup-serves.ts')).sharedStdioHarness() : null;
+  if (sharedHarness) {
+    throw new Error(`--stdio-member refused: ${sharedHarness} is installed on this host, and its sessions serve several people, so serve does not start a stdio server bound to one member here; remove the flag from this harness entry (gbrain setup claude-code|codex --no-stdio-member) and give each person their own key over HTTP (gbrain serve --http with gbrain auth create <name> --member <id>)`);
+  }
 
   // --source-guard (plugin lanes, EV1): fail-closed write routing for
   // user-global serves whose cwd is meaningless (plugin snapshots). Write/
@@ -477,7 +488,7 @@ async function serveBrain(
   }
 
   try {
-    await start(engine, { surface, surfaceSource: resolved.source, ...(resolved.invalidEnv !== undefined ? { invalidSurfaceEnv: resolved.invalidEnv } : {}), ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; bootProgressAt = Date.now(); }, ...(access === 'read-only' ? { access } : {}), ...(advertise ? { advertise } : {}) });
+    await start(engine, { surface, surfaceSource: resolved.source, ...(resolved.invalidEnv !== undefined ? { invalidSurfaceEnv: resolved.invalidEnv } : {}), ...(sourceGuard ? { sourceGuard } : {}), onBootPhase: phase => { bootPhase = phase; bootProgressAt = Date.now(); }, ...(access === 'read-only' ? { access } : {}), ...(advertise ? { advertise } : {}), ...(stdioMember !== undefined ? { stdioMember } : {}) });
     // `--stdio-idle-timeout` arms its timer during lifecycle installation,
     // but its stdin activity listener must wait until startMcpServer has
     // attached the MCP SDK transport listener. Attaching any `data` listener

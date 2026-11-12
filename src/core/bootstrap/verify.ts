@@ -561,7 +561,7 @@ async function ensureDefaultVisibilityPosture(engine: BrainEngine): Promise<Veri
         ok: true,
         detail:
           `facts default visibility: world (set by bootstrap verify — was unset). ` +
-          `Governs extraction-path writes only — \`remember\` always defaults to world regardless; pass \`visibility\` per call to keep a remembered fact private. ` +
+          `Governs extraction-path writes only — \`remember\` defaults to world either way, except from a member-bound credential, whose saves stay private on its member page; pass \`visibility\` per call to keep a remembered fact private. ` +
           `Flip with \`gbrain config set ${FACTS_DEFAULT_VISIBILITY_KEY} private\` if less-trusted surfaces will read this brain.`,
       };
     }
@@ -570,7 +570,7 @@ async function ensureDefaultVisibilityPosture(engine: BrainEngine): Promise<Veri
       ok: true,
       detail:
         `facts default visibility: ${existing.trim()} (explicit operator value — untouched). ` +
-        `Governs extraction-path writes only — \`remember\` always defaults to world regardless; pass \`visibility\` per call to keep a remembered fact private. ` +
+        `Governs extraction-path writes only — \`remember\` defaults to world either way, except from a member-bound credential, whose saves stay private on its member page; pass \`visibility\` per call to keep a remembered fact private. ` +
         `Flip with \`gbrain config set ${FACTS_DEFAULT_VISIBILITY_KEY} <world|private>\`.`,
     };
   } catch (e) {

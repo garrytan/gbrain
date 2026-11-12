@@ -99,6 +99,9 @@ import { withTrustPromotion } from '../src/core/persistence/context.ts';
 import { decideTrustProposal } from '../src/core/trust/decide.ts';
 import { parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { enableTrustProtections } from './helpers/trust-protections.ts';
+import { addMember } from '../src/core/access/members.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 
 async function confirmFact(b: Brain, id: number) {
   await b.engine.transaction(tx => withCoordinatedWrite(tx, [b.sourceId], () => withTrustPromotion(tx, 'user_confirmed', () =>
@@ -228,6 +231,223 @@ describe('guarded fence re-projection (A5, ENG-1)', () => {
       const supersede = proposals.find(p => p.action === 'supersede_fact')!;
       expect((await decideTrustProposal(engine, supersede.id, 'accept', owner)).status).toBe('accepted');
       expect((await factRow(b, before['Erin lives in Oslo'])).expired_at).not.toBeNull();
+    }
+  }), 90_000);
+
+  test('GST-2487: an agent that only makes a confirmed fence row private turns that row private in place; making one world stays guarded', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const b = await brain(engine);
+      const slug = 'people/ivy-example';
+      const as = (r: ReturnType<typeof row>, visibility: string) => ({ ...r, visibility });
+      await run(b.local, 'put_page', { slug, content: page('Ivy', body([row(1, 'Ivy lives in Lyon'), as(row(2, 'Ivy keeps bees'), 'private')])) });
+      const live = () => engine.executeRaw<{ id: number; fact: string; visibility: string; row_num: number | null; trust_tier: string }>(
+        'SELECT id::int AS id, fact, visibility, row_num, trust_tier FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL ORDER BY id', [b.sourceId, slug]);
+      const before = await live();
+      for (const r of before) await confirmFact(b, Number(r.id));
+      const current = await operationsByName.get_page.handler(b.remote, { slug, include_content: true }) as Record<string, any>;
+      const flipped = await run(b.remote, 'put_page', { slug, content: page('Ivy', body([as(row(1, 'Ivy lives in Lyon'), 'private'), row(2, 'Ivy keeps bees')])), expected_revision: current.revision });
+      const after = await live();
+      const by = (fact: string) => after.filter(r => r.fact === fact);
+      expect(by('Ivy lives in Lyon')).toEqual([{ id: Number(before[0]!.id), fact: 'Ivy lives in Lyon', visibility: 'private', row_num: 1, trust_tier: 'user_confirmed' }]);
+      // GST-2511: widening is not a tightening: the confirmed private row stays private and detached, and the agent's row waits on the
+      // owner stored private (no world copy exists before the accept); its proposal carries the widening.
+      expect(by('Ivy keeps bees')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: Number(before[1]!.id), visibility: 'private', row_num: null, trust_tier: 'user_confirmed' }),
+        expect.objectContaining({ visibility: 'private', row_num: 2, trust_tier: 'agent_written' })]));
+      expect(by('Ivy keeps bees').filter(r => r.visibility === 'world')).toEqual([]);
+      const proposals = await listTrustProposals(engine, { sourceId: b.sourceId });
+      expect(proposals.map(p => [p.action as string, p.target_id])).toEqual([['supersede_fact', Number(before[1]!.id)]]);
+      expect(proposals[0]!.before_state.visibility).toEqual({ from: 'private', to: 'world' });
+      expect(flipped.contested?.proposal_ref).toMatch(/^tp\d+$/);
+    }
+  }), 90_000);
+
+  test('GST-2487: a writer that only swaps the rows of one claim moves both confirmed rows, each keeping its visibility, with no proposal', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const b = await brain(engine);
+      const slug = 'people/jade-example';
+      const as = (r: ReturnType<typeof row>, visibility: string) => ({ ...r, visibility });
+      await run(b.local, 'put_page', { slug, content: page('Jade', body([row(1, 'Jade sails'), as(row(2, 'Jade sails'), 'private')])) });
+      const live = () => engine.executeRaw<{ id: number; visibility: string; row_num: number | null; trust_tier: string }>(
+        'SELECT id::int AS id, visibility, row_num, trust_tier FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL ORDER BY id', [b.sourceId, slug]);
+      const before = await live();
+      for (const r of before) await confirmFact(b, Number(r.id));
+      const current = await operationsByName.get_page.handler(b.remote, { slug, include_content: true }) as Record<string, any>;
+      const swapped = await run(b.remote, 'put_page', { slug, content: page('Jade', body([as(row(1, 'Jade sails'), 'private'), row(2, 'Jade sails')])), expected_revision: current.revision });
+      expect(swapped.contested).toBeUndefined();
+      expect(await live()).toEqual([
+        { id: Number(before[0]!.id), visibility: 'world', row_num: 2, trust_tier: 'user_confirmed' },
+        { id: Number(before[1]!.id), visibility: 'private', row_num: 1, trust_tier: 'user_confirmed' }]);
+      expect(await listTrustProposals(engine, { sourceId: b.sourceId })).toEqual([]);
+    }
+  }), 90_000);
+
+  /** A confirmed fence page (row 1 world, row 2 private), and remote fact reads for an unbound token and a non-owner member. */
+  async function widenFixture(engine: BrainEngine, slug: string, claim: string) {
+    const b = await brain(engine);
+    const as = (r: ReturnType<typeof row>, visibility: string) => ({ ...r, visibility });
+    await run(b.local, 'put_page', { slug, content: page('Kim', body([row(1, 'Kim lives in Turin'), as(row(2, claim), 'private')])) });
+    const live = () => engine.executeRaw<{ id: number; fact: string; visibility: string; row_num: number | null; trust_tier: string }>(
+      'SELECT id::int AS id, fact, visibility, row_num, trust_tier FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL ORDER BY id', [b.sourceId, slug]);
+    for (const r of await live()) await confirmFact(b, Number(r.id));
+    const member = `member-${randomUUID().slice(0, 8)}`;
+    await addMember(engine, member);
+    const asMember = { ...b.remote, auth: { ...b.remote.auth!, member: { id: member, groups: [] } } } as OperationContext;
+    /** The claims each remote caller's recall returns for the page's entity, through MCP dispatch (which resolves the caller's member access). */
+    const remoteClaims = async () => Promise.all([b.remote, asMember].map(async ctx => {
+      const out = await dispatchToolCall(engine, 'recall', { entity: slug }, { remote: true, transport: 'http', auth: ctx.auth, sourceId: b.sourceId,
+        takesHoldersAllowList: ['world'] }) as { isError?: boolean; content: Array<{ text: string }> };
+      expect(out.isError ?? false).toBe(false);
+      return (JSON.parse(out.content[0]!.text).facts as Array<{ fact: string }>).map(f => f.fact).sort();
+    }));
+    /** A remote agent write, or (`local`) a local write after the source's default tier was lowered to agent_written: a writer that reads private rows. */
+    const write = async (rows: ReturnType<typeof row>[], prose = '', ctx: 'remote' | 'local' = 'remote') => {
+      const content = page('Kim', body(rows).replace('Profile.', `Profile.${prose}`));
+      const current = await operationsByName.get_page.handler(b[ctx], { slug, include_content: true }) as Record<string, any>;
+      return run(b[ctx], 'put_page', { slug, content, expected_revision: current.revision });
+    };
+    const lowerSource = async () => {
+      const log = console.log;
+      console.log = () => {};
+      try { await runSetTrust(engine, [b.sourceId, 'agent_written']); } finally { console.log = log; }
+    };
+    return { b, live, remoteClaims, write, lowerSource };
+  }
+
+  test('GST-2511: an agent that makes a confirmed private fence row world exposes nothing to remote fact reads until the owner accepts; later writes keep it private', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const { b, live, remoteClaims, write } = await widenFixture(engine, 'people/kim-example', 'Kim keeps bees');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      const widened = await write([row(1, 'Kim lives in Turin'), row(2, 'Kim keeps bees')]);
+      expect(widened.contested?.proposal_ref).toMatch(/^tp\d+$/);
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      // The agent's next write of the same fence keeps its contested row private and files nothing new.
+      await write([row(1, 'Kim lives in Turin'), row(2, 'Kim keeps bees')], ' Updated.');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      expect((await live()).filter(r => r.visibility === 'world').map(r => r.fact)).toEqual(['Kim lives in Turin']);
+      const proposals = await listTrustProposals(engine, { sourceId: b.sourceId });
+      expect(proposals.map(p => p.id)).toEqual([parseTrustProposalRef(widened.contested.proposal_ref)!]);
+      expect((await decideTrustProposal(engine, proposals[0]!.id, 'accept', owner)).status).toBe('accepted');
+      expect(await remoteClaims()).toEqual([['Kim keeps bees', 'Kim lives in Turin'], ['Kim keeps bees', 'Kim lives in Turin']]);
+      expect((await live()).find(r => r.fact === 'Kim keeps bees')).toMatchObject({ visibility: 'world', row_num: 2, trust_tier: 'user_confirmed' });
+      expect((await live()).filter(r => r.fact === 'Kim keeps bees')).toHaveLength(1);
+      // Undo returns the claim to private.
+      expect((await decideTrustProposal(engine, proposals[0]!.id, 'undo', owner)).status).toBe('undone');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+    }
+  }), 90_000);
+
+  test('GST-2511: on a repo-less brain (no managed persistence) the widening is stored private and the owner accept makes it world', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const { b, live, remoteClaims, write } = await widenFixture(engine, 'people/noa-example', 'Noa keeps bees');
+      await disposePersistenceConsumer(engine);
+      await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      try {
+        expect(await engine.executeRaw('SELECT p.enabled, s.local_path FROM persistence_brain p, sources s WHERE p.singleton=1 AND s.id=$1', [b.sourceId]))
+          .toEqual([{ enabled: false, local_path: null }]);
+        const widened = await write([row(1, 'Kim lives in Turin'), row(2, 'Noa keeps bees')]);
+        expect(widened.contested?.proposal_ref).toMatch(/^tp\d+$/);
+        await write([row(1, 'Kim lives in Turin'), row(2, 'Noa keeps bees')], ' Again.');
+        expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+        expect((await live()).filter(r => r.fact === 'Noa keeps bees').map(r => r.visibility)).toEqual(['private', 'private']);
+        expect((await decideTrustProposal(engine, parseTrustProposalRef(widened.contested.proposal_ref)!, 'accept', owner)).status).toBe('accepted');
+        expect(await remoteClaims()).toEqual([['Kim lives in Turin', 'Noa keeps bees'], ['Kim lives in Turin', 'Noa keeps bees']]);
+        expect(await listTrustProposals(engine, { sourceId: b.sourceId })).toEqual([]);
+      } finally { await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
+    }
+  }), 90_000);
+
+  test('GST-2511: restating a confirmed private claim world at another row number is stored private too; confirming the old side keeps it private', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const { previewOwnerAction, applyOwnerAction } = await import('../src/core/trust/owner-actions.ts');
+    for (const engine of engines) {
+      const { b, live, remoteClaims, write } = await widenFixture(engine, 'people/ona-example', 'Ona keeps bees');
+      const [trusted] = (await live()).filter(r => r.fact === 'Ona keeps bees');
+      // The remote writer never saw row 2 (#2044 restores it); its copy of the claim lands at row 3.
+      const copied = await write([row(1, 'Kim lives in Turin'), row(3, 'Ona keeps bees')]);
+      expect(copied.contested?.proposal_ref).toMatch(/^tp\d+$/);
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      expect((await live()).filter(r => r.fact === 'Ona keeps bees').map(r => [r.row_num, r.visibility])).toEqual([[2, 'private'], [3, 'private']]);
+      const ref = `f${trusted!.id}`;
+      const preview = await previewOwnerAction(engine, { action: 'confirm', ref });
+      const confirmed = await applyOwnerAction(engine, { action: 'confirm', ref }, { binding: preview.binding, confirmation: { via: 'tty' }, by: { kind: 'local_cli', id: 'owner-example' } });
+      expect(confirmed).toMatchObject({ detail: { resolved_proposal: copied.contested.proposal_ref } });
+      // The owner kept the private row; the agent restating the claim world again is contested again, never live world.
+      await write([row(1, 'Kim lives in Turin'), row(4, 'Ona keeps bees')], ' Again.');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      expect((await live()).filter(r => r.fact === 'Ona keeps bees' && r.visibility === 'world')).toEqual([]);
+      expect((await listTrustProposals(engine, { sourceId: b.sourceId, status: 'all' })).map(p => p.status)).toEqual(['rejected', 'pending']);
+    }
+  }), 90_000);
+
+  test('GST-2511 review: the extract_facts reconcile does not widen a contested row the owner has not decided', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      for (const [claim, rows] of [['Pia keeps bees', (c: string) => [row(1, 'Kim lives in Turin'), row(2, c)]],
+        ['Pia keeps hives', (c: string) => [row(1, 'Kim lives in Turin'), { ...row(3, c), source: 'chat-example' }]]] as const) {
+        const { b, live, remoteClaims, write } = await widenFixture(engine, 'people/pia-example', claim);
+        const widened = await write(rows(claim));
+        expect(widened.contested?.proposal_ref).toMatch(/^tp\d+$/);
+        await runExtractFacts(engine, { sourceId: b.sourceId, slugs: ['people/pia-example'] });
+        expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+        expect((await live()).filter(r => r.fact === claim && r.visibility === 'world')).toEqual([]);
+      }
+    }
+  }), 90_000);
+
+  test('GST-2511 review: accepting a widening the writer has since withdrawn (wrote the row private again) keeps the claim private', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const { live, remoteClaims, write } = await widenFixture(engine, 'people/rae-example', 'Rae keeps bees');
+      const as = (r: ReturnType<typeof row>, visibility: string) => ({ ...r, visibility });
+      const widened = await write([row(1, 'Kim lives in Turin'), row(2, 'Rae keeps bees')]);
+      await write([row(1, 'Kim lives in Turin'), as(row(2, 'Rae keeps bees'), 'private')], ' Withdrawn.');
+      expect((await decideTrustProposal(engine, parseTrustProposalRef(widened.contested.proposal_ref)!, 'accept', owner)).status).toBe('accepted');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      expect((await live()).filter(r => r.fact === 'Rae keeps bees')).toEqual([expect.objectContaining({ visibility: 'private', row_num: 2, trust_tier: 'user_confirmed' })]);
+    }
+  }), 90_000);
+
+  test('GST-2511 review: restating a claim the page already holds world is not a widening', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const b = await brain(engine);
+      const slug = 'people/sol-example';
+      await run(b.local, 'put_page', { slug, content: page('Sol', body([row(1, 'Sol keeps bees'), { ...row(2, 'Sol keeps bees'), visibility: 'private' }])) });
+      for (const r of await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [b.sourceId, slug])) await confirmFact(b, Number(r.id));
+      const current = await operationsByName.get_page.handler(b.remote, { slug, include_content: true }) as Record<string, any>;
+      const added = await run(b.remote, 'put_page', { slug, content: page('Sol', body([row(1, 'Sol keeps bees'), row(3, 'Sol keeps bees')])), expected_revision: current.revision });
+      expect(added.contested).toBeUndefined();
+      expect(await listTrustProposals(engine, { sourceId: b.sourceId })).toEqual([]);
+      expect(await engine.executeRaw('SELECT row_num, visibility FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL ORDER BY row_num', [b.sourceId, slug]))
+        .toEqual([{ row_num: 1, visibility: 'world' }, { row_num: 2, visibility: 'private' }, { row_num: 3, visibility: 'world' }]);
+    }
+  }), 90_000);
+
+  test('GST-2511: rejecting the widening leaves the claim private, and a later agent write does not widen it', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const { b, live, remoteClaims, write } = await widenFixture(engine, 'people/lee-example', 'Lee keeps bees');
+      const widened = await write([row(1, 'Kim lives in Turin'), row(2, 'Lee keeps bees')]);
+      expect((await decideTrustProposal(engine, parseTrustProposalRef(widened.contested.proposal_ref)!, 'reject', owner)).status).toBe('rejected');
+      await write([row(1, 'Kim lives in Turin'), row(2, 'Lee keeps bees')], ' Again.');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      expect((await live()).filter(r => r.fact === 'Lee keeps bees').map(r => r.visibility)).toEqual(['private', 'private']);
+      expect((await listTrustProposals(engine, { sourceId: b.sourceId, status: 'all' })).map(p => p.status)).toEqual(['rejected']);
+    }
+  }), 90_000);
+
+  test('GST-2511: a different claim written world at a confirmed private row is stored private until the owner accepts the replacement', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const { b, live, remoteClaims, write, lowerSource } = await widenFixture(engine, 'people/max-example', 'Max keeps bees');
+      // A remote writer never sees the private row, so its row at that number is renumbered as a new claim (#2044); a local agent-tier writer reads it.
+      await lowerSource();
+      const replaced = await write([row(1, 'Kim lives in Turin'), row(2, 'Max keeps honeybees')], '', 'local');
+      expect(replaced.contested?.proposal_ref).toMatch(/^tp\d+$/);
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      await write([row(1, 'Kim lives in Turin'), row(2, 'Max keeps honeybees')], ' Again.', 'local');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin'], ['Kim lives in Turin']]);
+      expect((await live()).find(r => r.fact === 'Max keeps honeybees')).toMatchObject({ visibility: 'private', row_num: 2, trust_tier: 'agent_written' });
+      const id = parseTrustProposalRef(replaced.contested.proposal_ref)!;
+      expect((await decideTrustProposal(engine, id, 'accept', owner)).status).toBe('accepted');
+      expect(await remoteClaims()).toEqual([['Kim lives in Turin', 'Max keeps honeybees'], ['Kim lives in Turin', 'Max keeps honeybees']]);
+      expect((await live()).map(r => r.fact).sort()).toEqual(['Kim lives in Turin', 'Max keeps honeybees']);
+      expect(await listTrustProposals(engine, { sourceId: b.sourceId })).toEqual([]);
     }
   }), 90_000);
 });

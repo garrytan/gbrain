@@ -305,6 +305,7 @@ export async function runHook(args: string[], io: HookIo = {}): Promise<number> 
   // for silence, and a disabled hook writing telemetry would be a lie).
   if (process.env.GBRAIN_HOOKS === '0') return 0;
 
+  if (process.env.GBRAIN_HOOK_LANE === 'skill-resolver') return (await import('../core/skills/resolver/hook-lane.ts')).runSkillResolverLane(event, harnessIdx >= 0 && args[harnessIdx + 1] === 'hermes' ? 'hermes' : io.harness === 'codex' ? 'codex' : 'claude-code', io.cwd ? { cwd: io.cwd } : {});
   // #4043 harness-lane defer guard: Claude Code MERGES user- and
   // project-scope hook settings, so a machine wired by `bootstrap harness`
   // (user scope) plus a real workspace bootstrap install (settings.local.json,

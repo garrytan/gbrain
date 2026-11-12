@@ -14,7 +14,7 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { parseFactsFence } from '../facts-fence.ts';
+import { parseFactsFenceFor } from '../facts-fence.ts';
 import { contentHash } from '../utils.ts';
 import type { WriteRequest } from './model.ts';
 
@@ -39,7 +39,7 @@ export async function intentCarriesPurgedContent(tx: BrainEngine, row: Pick<Writ
   const claims = [intent.fact, intent.claim].filter((c): c is string => typeof c === 'string' && !!c.trim()).map(claim => ({ claim, subject }));
   let parsed: ReturnType<typeof parseMarkdown> | null = null;
   try { parsed = content ? parseMarkdown(content, `${row.slug}.md`) : null; } catch { parsed = null; }
-  if (parsed) for (const body of [parsed.compiled_truth, parsed.timeline ?? '']) claims.push(...parseFactsFence(body).facts.map(f => ({ claim: f.claim, subject: row.slug })));
+  if (parsed) for (const body of [parsed.compiled_truth, parsed.timeline ?? '']) claims.push(...parseFactsFenceFor(body, { slug: row.slug }).facts.map(f => ({ claim: f.claim, subject: row.slug })));
   if (has.facts && claims.length) {
     const hit = await tx.executeRaw(`SELECT 1 FROM fact_purges p JOIN jsonb_to_recordset($2::text::jsonb) AS c(claim text, subject text)
       ON p.fact_hash=gbrain_fact_fingerprint(c.claim) AND (p.subject='*' OR p.subject=c.subject) WHERE p.source_id=$1 LIMIT 1`,

@@ -14,6 +14,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname, sep } from 'node:path';
 import { createHash } from 'node:crypto';
+import { parseDataFrontmatter } from '../data-frontmatter.ts';
 import { pruneDir } from '../sync.ts';
 import { realpathOrResolve, resolvedPrefixContained } from '../path-confine.ts';
 import { CORPUS_SPOOL_SUBDIR, corpusFileSessionId } from '../context/corpus-segments.ts';
@@ -32,7 +33,7 @@ export interface DiscoveredTranscript {
   content: string;
   /** Filename basename without extension; used as a topic-slug seed. */
   basename: string;
-  /** Inferred date if the basename matches `YYYY-MM-DD...` (or null). */
+  /** The basename's leading `YYYY-MM-DD`, else the frontmatter `date` (#7267), else null. */
   inferredDate: string | null;
   /** #4618: the capturing seat from the session's `.seat.json` sidecar, when one exists. */
   seat?: string;
@@ -47,7 +48,7 @@ export interface DiscoverOpts {
   minChars?: number;
   /** Word-boundary regex strings. The discoverer auto-wraps bare words. */
   excludePatterns?: string[];
-  /** Restrict to a single date (YYYY-MM-DD basename match). */
+  /** Restrict to a single date (YYYY-MM-DD, matched against `inferredDate`). */
   date?: string;
   /** Inclusive range start (YYYY-MM-DD). */
   from?: string;
@@ -77,6 +78,24 @@ export interface DiscoverOpts {
 
 const DATE_RE = /^(\d{4}-\d{2}-\d{2})/;
 const WORD_BOUNDARY_HEURISTIC = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+
+/** A transcript's frontmatter; none, or unreadable, is `{}` (a plain-text header is not an error). */
+export function transcriptFrontmatter(content: string): Record<string, unknown> {
+  try {
+    return parseDataFrontmatter(content).data;
+  } catch {
+    return {};
+  }
+}
+
+/** The calendar day of a frontmatter `date`; an impossible day (2026-02-30) is none. */
+function frontmatterDay(fm: Record<string, unknown>): string | null {
+  const raw = fm.date instanceof Date ? fm.date.toISOString() : typeof fm.date === 'string' ? fm.date : '';
+  const day = DATE_RE.exec(raw)?.[1];
+  if (!day) return null;
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().startsWith(day) ? day : null;
+}
 
 /**
  * Self-consumption guard: identity-marker check against `dream_generated: true`
@@ -280,7 +299,7 @@ function listTextFiles(dir: string): string[] {
  *
  * Skips files that:
  *  - aren't `.txt`
- *  - have date-prefixed basenames outside the requested window
+ *  - have a date (basename prefix, else frontmatter `date`, #7267) outside the requested window
  *  - have content shorter than `minChars`
  *  - are gbrain claude-cli self-captures (`selfCaptureSessionIds`) or sit under a
  *    dream output directory (`excludeDirs`); each class is counted in one stderr line
@@ -308,9 +327,8 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
     for (const filePath of listTextFiles(dir)) {
       const ext = filePath.endsWith('.md') ? '.md' : '.txt';
       const baseName = transcriptBaseName(filePath, ext);
-      const dateMatch = DATE_RE.exec(baseName);
-      const inferredDate = dateMatch ? dateMatch[1] : null;
-      if (!isInDateRange(inferredDate, opts)) continue;
+      const nameDate = DATE_RE.exec(baseName)?.[1] ?? null;
+      if (nameDate && !isInDateRange(nameDate, opts)) continue;
       if (ext === '.txt' && opts.selfCaptureSessionIds?.has(corpusFileSessionId(basename(filePath)))) {
         selfCaptureSkips += 1;
         continue;
@@ -332,6 +350,8 @@ export function discoverTranscripts(opts: DiscoverOpts): DiscoveredTranscript[] 
       // #6091: turns captured under memory.auto_writeback off never feed synthesis.
       if (ext === '.txt') content = withoutOffPeriodTurns(filePath, content);
       if (content === null || content.length < minChars) continue;
+      const inferredDate = nameDate ?? frontmatterDay(transcriptFrontmatter(content));
+      if (!isInDateRange(inferredDate, opts)) continue;
       if (isDreamOutput(content, bypass)) {
         process.stderr.write(`[dream] skipped ${baseName}: dream_generated marker (self-consumption guard)\n`);
         continue;
@@ -400,14 +420,13 @@ export function readSingleTranscript(
   }
   const ext = filePath.endsWith('.md') ? '.md' : '.txt';
       const baseName = transcriptBaseName(filePath, ext);
-  const dateMatch = DATE_RE.exec(baseName);
   const seat = transcriptSeat(filePath);
   return {
     filePath,
     contentHash: hashContent(content),
     content,
     basename: baseName,
-    inferredDate: dateMatch ? dateMatch[1] : null,
+    inferredDate: DATE_RE.exec(baseName)?.[1] ?? frontmatterDay(transcriptFrontmatter(content)),
     ...(seat ? { seat } : {}),
   };
 }
@@ -491,8 +510,7 @@ function frontmatterOf(row: ConversationRow): Record<string, unknown> {
 }
 
 function pageDate(fm: Record<string, unknown>, slug: string): string | null {
-  const raw = fm.date instanceof Date ? fm.date.toISOString() : typeof fm.date === 'string' ? fm.date : '';
-  return DATE_RE.exec(raw)?.[1] ?? DATE_RE.exec(slug.split('/').pop() ?? '')?.[1] ?? null;
+  return frontmatterDay(fm) ?? DATE_RE.exec(slug.split('/').pop() ?? '')?.[1] ?? null;
 }
 
 /** Live conversation pages in one source (used for the not-consumed warning). */

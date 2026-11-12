@@ -8,7 +8,7 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `extractor-facts`, `unwithdrawn-facts`,
+The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `atom-fence-rows`, `extractor-facts`, `unwithdrawn-facts`,
 `captured-facts`, `agent-session-facts`, `redacted-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases`, `rename-identity` and `segmented-mirror`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
@@ -78,7 +78,65 @@ concept-provenance links), reports progress on stderr, lists one window
 ```bash
 gbrain repair visibility --class facts        # one class: facts, events, aliases or lineage
 gbrain repair visibility --class facts --apply --expect <hash>   # exactly that window
+gbrain repair visibility --slug notes/a-example                  # make named pages private (repeatable)
+gbrain repair visibility --slug notes/a-example --apply --expect <hash>
+gbrain repair visibility --slug notes/a-example --readers alice-example,group:team-a   # set who reads it
+gbrain repair visibility --slugs-file pages.txt --readers alice-example --apply --expect <hash>
+gbrain repair visibility --slug notes/a-example --readers none   # remove readable_by
 ```
+
+Every visibility write is label-only: the page keeps its trust tier, files no
+`lower_page` proposal, and its file changes only on the `visibility` line (a fact
+item: its fence row). A file that cannot take the change without being
+re-rendered (a label with a block value or a duplicate key, no frontmatter
+block) is refused with nothing written; make that edit by hand. `--slug` is the operator's way to make one page private;
+a `put_page` that adds the label is an agent edit and lowers the page. On a brain
+without managed persistence, a page whose file sits in its source's checkout gets
+the same edit in that file and in the database together, so the next sync reads
+the same page. A file holding an edit the database lacks refuses with nothing
+written (run `gbrain sync` first). A file the repair cannot write
+(`sync.write_through` is off, a clone gbrain pulls, a write error) is held
+`file_backed` with nothing written, because the next sync would put the old
+label back from the file; make that edit in the file by hand.
+
+`--readers <list>` sets the named pages' `readable_by` (members by id, groups as
+`group:<id>`, `none` removes it) through the same label-only write: the page
+keeps its trust tier and provenance, files no `lower_page` proposal, and its
+file changes only on the `readable_by` line (written `readable_by: [a, b]`).
+Name the pages with `--slug` (repeatable) or `--slugs-file <file>` (one slug per
+line; blank lines and `#` comments are skipped; up to 10,000 pages, all in one
+preview). An unknown or disabled member, or an unknown group, refuses
+`access_member_invalid` with nothing written. A list that leaves out the brain
+owner (`gbrain access owner`) refuses too, because `readable_by` binds the owner
+and its own keys would stop reading the page; a group the owner belongs to does
+not count. Pass `--allow-without-owner` when that is what you want. A page whose
+readers changed after the preview is skipped.
+
+No lock or transaction spans the run, so a long list does not hold up other
+writers. On a managed brain the apply admits a source's pages together, one
+admission window at a time; on Postgres the owner publishes them in groups of
+up to 8 pages (PGLite publishes one at a time). The Git effect then commits the
+files that are ready together, up to 100 per commit, and waits briefly while
+more of the run's writes are still publishing, so a long list lands in a few
+large commits rather than one per page. Each page still succeeds or fails on
+its own. `--json` reports
+`details.git`, the run's files by effect state (`committed`, `pending`,
+`failed`, and `skipped` for a `storage.db_only` page, which has no file). A
+managed page with no file, outside any declared `storage.db_only` path, is held
+`canonical_file_missing` with nothing written, because the write would put the
+database ahead of Git: declare its folder under `storage.db_only` in `gbrain.yml`
+and preview again, or restore the file (`gbrain repair ghost-pages` lists pages
+whose file is gone). On a repo-less brain the database is the record, and every
+page is written there.
+
+A fenced fact row the apply could not make private is counted in the outcomes
+(`--json`: `outcomes`, each row in `outcome_items`), and the text output says
+`NOT CLOSED`: `fact_left_readable` when remote callers can still read the row,
+`fact_left_world` when the row is still world and only its page's privacy hides
+it from them. Today that happens when
+the original row is more trusted than the repair (it is kept beside the new
+private row), when the page is stored in segments, or when the row is not found
+in the page's facts fence.
 
 The apply touches only the listed items and resumes after its last applied
 item if it stops. Apply the window (or decide not to), then preview again for
@@ -144,7 +202,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | Kind | Doctor check that points here | What it does | Left alone and counted |
 | --- | --- | --- | --- |
 | `timeline` | `timeline_history` | Re-saves each page with its current body through a revision-bound `put_page`. The save writes each database-only timeline entry back into the page as a bullet preceded by `<!-- gbrain:materialized v1 <hash> -->`. | `kept_unrenderable_rows`: entries that would change if written as a bullet (for example an empty source). They stay in the database. |
-| `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. They stay as they are, and remote readers already treat a missing visibility as private. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
+| `visibility` | `derived_visibility` | Stamps an explicit `visibility` on extracted atoms and synthesized concepts. An atom takes its origin page's visibility; transcript atoms and atoms whose origin is gone become `private`; a concept takes the strictest visibility of its input atoms. A concept input found only through an atom's `concepts:` list counts as private. Atoms are repaired before concepts. It never loosens an explicit value: `private` stays `private`, and `world` can only become `private`. A missing value is stamped with the origin's value, which is `world` when the origin page is public. | `concepts_without_lineage`: concepts whose inputs cannot be found. One with no visibility is stamped `private` (what remote readers already treat it as), so the doctor warning clears; an explicit value stays as it is. `atoms_origin_gone_to_private` counts atoms made private because their origin page no longer exists. |
 | `request-indexes` | `persistence_request_indexes` | Creates a missing request-table index (the managed sync checkpoint pair, the purge slug index, the dream postprocess request-id index, the write claims' foreground-commit index, the failed-writes replay and page-sequence indexes), or drops an INVALID one (left by an interrupted concurrent build) and rebuilds it, on a brain whose schema version is already current. Postgres builds each index `CONCURRENTLY`, one at a time, so writes continue; PGLite builds inline. It changes no user data, takes no journal admission and runs brain-wide (`--source` does not narrow it). See [managed sync request indexes](#request-indexes). | `building`: an index another session is still building; it is never dropped. |
 | `connector-fences` | none (a `connector_fence_below_timeline` refusal names it) | Moves a facts or takes fence that sits below the timeline sentinel of a Google or GitHub page into the page body through a revision-bound `put_page`, so the connector's next re-render carries the fence instead of refusing. Then re-attempt the held item with `gbrain sources retry-held <source>`. | `kept_ambiguous_pages`: pages whose fences are duplicated, unbalanced or unparseable. Move the fence by hand: read the page, place the fence above the `<!-- timeline -->` line, and save it with the current `expected_revision`. |
 | `take-supersession` | none | Rebuilds `takes.superseded_by` for supersession chains written before the pointer moved onto the old fence row (#5886). Each struck take is linked to the row that replaced it only from evidence: a committed `takes_supersede` receipt, a stored `superseded_by`, or a row carrying the old `superseded by #<own row>` pointer with exactly one possible predecessor. The pointer is written onto the old row (`<source>; superseded by #N`) and stale self-pointers are dropped through a revision-bound `put_page`; a page whose fence is already right but whose stored pointers differ is reprojected without a page write. See [take supersession](#take-supersession). | `ambiguous_pages` / `ambiguous_rows`: pages where a new row has two or more possible predecessors, or where evidence conflicts. The preview lists each with its candidates and the manual edit; nothing on them changes. `unparsed_pages`: pages whose takes fence does not parse cleanly. |
@@ -1976,6 +2034,47 @@ their count, origins, oldest and newest retirement and the date the first hold
 ends; its fix is the read-only preview. Show the user the preview before
 running the apply.
 
+### Atom fence rows
+
+A world atom carries the claim of a fence row its source page shows only to
+the owner when an older extraction read the whole page: a facts row whose
+`visibility` is not `world`, or a takes row whose holder is not `world`.
+Extraction now reads a page as a world reader sees it, so new atoms never
+carry such a row, but atoms already stored keep what they copied and a remote
+read returns it. `gbrain repair atom-fence-rows` finds them and, only when you
+apply it, makes them private. It is explicit-only and preview-bound, and
+nothing runs on upgrade.
+
+```bash
+gbrain doctor --only atom_fence_rows --json            # count per source; ok when none
+gbrain repair atom-fence-rows --source <id> --json     # preview: each atom, its source page, the row kinds and numbers, and a hash
+gbrain repair atom-fence-rows --source <id> --apply --expect <hash>
+```
+
+An atom is listed when it is live, page-bound (`source_slug`), stamped
+`visibility: world`, and its title, body or `source_quote` contains (case and
+whitespace folded) the claim of such a row in any fence of its live source page
+a world reader does not see (a fence quoted in a code block included), unless
+the page's world text holds the same claim too. Claims shorter than 12 characters
+are not matched. The preview names each atom with its source page and the
+rows (`facts row 2`, `takes row 1`), never the row text, and changes nothing.
+A source page stored in segments is not read: its world atoms are counted as
+`origin_unread`.
+
+The apply sets `visibility: private` on exactly the previewed set through a
+revision-bound put_page, which re-chunks and re-embeds each atom; remote reads
+and search stop returning it, local reads keep it. An atom whose revision,
+source page or matched rows changed since the preview reports
+`changed_since_preview` and is kept. `--apply` without `--expect` refuses
+with the preview and apply commands; a stale hash or another `--source`
+refuses with [`preview_changed`](#preview-changed).
+
+Cost: doctor and the preview read every world atom whose source page names a
+facts or takes fence, in pages of 500 by id, and each such source page once;
+no model is called. Doctor bounds each statement at 120 seconds and reports
+the count as unknown when one overruns. Show the user the preview before
+running the apply.
+
 ### Generations
 
 Unmanaged atom extraction publishes each page's or transcript's atoms as one
@@ -2088,6 +2187,189 @@ A page with no file changes through `get_page` (`include_content: true`) and
 `put_page` with that revision as `expected_revision`; `edit_page` refuses to
 write fence markers. Neither outcome is a default, and nothing changes until the
 user chooses.
+
+### Private labels (over-stamped `access: private`)
+
+Older writer templates stamped `access: private` on ordinary research and ops
+pages, so remote callers other than the brain owner get `not_found` for them.
+`gbrain repair private-labels` clears those labels in reviewed windows and can
+put every one back. It is explicit-only and preview-bound, and nothing runs on
+upgrade.
+
+**Say to your agent:** *"Preview which of my pages carry an over-stamped access: private label."*
+
+```bash
+gbrain repair private-labels --source <id> --json                          # preview: one window, counts and a hash
+gbrain repair private-labels --source <id> --apply --expect <preview_hash>
+```
+
+What it clears and what it keeps:
+
+- **Cleared:** `access: private` with no `visibility` (class `alias`: the
+  `access` key goes), and `access: private` with `visibility: private` (class
+  `alias-and-visibility`: both keys go). Nothing else on the page changes, and
+  `readable_by` and folder rules still apply.
+- **Kept and counted:** pinned questions; derived pages (atoms, pages with
+  `derived_from` or `source_slug`, synthesized concepts, life-chronicle
+  events), whose privacy follows their origin; `access: restricted` or
+  `confidential` and any `confidentiality` value; an explicit
+  `visibility: private` with no `access: private`.
+
+The preview lists one window of pages under a hash, with every class's count
+before and after the window. It also counts, by category and without slugs, the
+pages that the window would expose along with its own (`details.dependents`).
+It judges each page by the same rules remote reads use, before and after the
+window: `derived_from` pages, atoms whose origin is a listed page, synthesized
+concepts built from such atoms, and life-chronicle events extracted from a
+listed page. A warning names the counts when they aren't zero. To keep one of
+those pages private, give it its own label before you apply. The preview hash
+covers the pages it counted, so if a new page would be exposed by the time you
+apply, the apply refuses with `preview_changed` and you preview again.
+
+`--apply --expect <preview_hash>` applies exactly that window and checks each
+page against its current revision and labels first. A page edited since the
+preview reports `changed_since_preview` and is left alone. A bare `--apply` is
+refused. On a brain without managed persistence the repair writes only the
+database, so a page whose file sits in its source's checkout is held with
+outcome `file_backed`. The next sync or re-import would put the label back from
+the file, so edit the file's frontmatter, commit it, and run
+`gbrain sync --source <id>`. Repo-less pages clear as usual. A clear or restore
+changes only the label lines of the page's file and keeps its trust tier; a
+restore whose label value isn't a plain word is held as `label_not_plain`, so
+add that label to the file by hand.
+
+**Windows and resume.** `--limit <n>` sets the window size (default 1000, at
+most 10000). When more pages remain past the window, the preview says so: apply
+this window, then preview again for the next one. An apply that stops before
+it's done (an interrupt, a time or capacity stop, a pending write or a failed
+page) keeps its approved preview. Rerun the same `--apply --expect` command and
+it resumes after the last applied page. You need a new preview only after the
+window has been applied in full, or when the preview hash changed
+([`preview_changed`](#preview-changed)).
+
+**Batches, declines and the exit code.** On a brain with managed persistence the
+apply admits a window's pages together, up to 64 at a time (fewer when the
+writer's outstanding-request cap is low), and the owner
+publishes them in groups of up to 8, instead of one page and one wait at a time.
+Each page still has its own fate: a page whose write is declined fails alone and
+the rest of its group lands. A decline is the page's own state refusing the
+write: its file differs from the database or is gone (`source_changed`), or its
+body is stored in segments. The page is left unchanged, the result counts it
+under `declined` by reason, and when every failure of a complete run is a
+decline the command exits 0, so a script working through windows carries on.
+Any other failure, or a stop, still exits 1. The next preview lists pages an
+earlier apply tried and that didn't change after every page not tried yet
+(`details.window.tried_before` counts them), so they stop heading each window.
+Clearing a declined page is a separate choice per page: see
+[file drift](#file-drift). Such a page declining again doesn't count toward the
+run's systemic-failure stop (`item_failures_systemic`), so a window whose tail,
+or whole listing, is carried declines completes; pages not tried yet that all
+fail the same way, as a dirty checkout makes them, still stop the run.
+A script that previews and applies windows in a loop should stop when every
+listed page was tried before (`details.window.tried_before` equals
+`details.window.listed`): what's left is pages that keep declining.
+
+**Upgrading from a release before 0.60.649.0.** Those releases wrote an undo
+ledger line only for a page write that landed, so a page that declined under
+them has no record, and the first preview after the upgrade lists it like a
+page not tried yet. If five or more such pages head the window, that apply
+stops once with `item_failures_systemic` after its first batch, which is at
+most one admission window (up to 64 pages, fewer when the writer's
+outstanding-request cap is low). Nothing is written to the declined pages; the
+pages of that batch after them that published stay published and are counted
+in the result. Every page of the batch sent for writing got its intent line
+first, so the next preview lists the declined ones last. Repeat the preview and
+the apply: each round gets through at most one window of such pages, and a
+window of only carried declines completes with exit 0.
+
+An apply that meets a `gbrain sources refresh` waits for the refresh to
+finish, for up to 10 minutes per step, instead of being refused after 10
+seconds. A refresh that runs longer ends the apply with `worktree_refreshing`
+(exit 1): the message names the refresh, its phase, how long it has run and how
+long the apply waited. The pages already published stay published, each with its
+undo line, the rest are unchanged, and rerunning the same
+`--apply --expect <hash>` after the refresh resumes the window.
+
+A brain without managed persistence (repo-less included) writes one page at a
+time, as before; the ordering, the exit code, the decline rule and the ledger
+fields below apply there too.
+
+**Git-canonical sources.** Private pages there are database-only, so clearing
+one commits it into the source's Git history for the first time. That class,
+`git-publish`, is never in the default preview. Run it only by name:
+`gbrain repair private-labels --class git-publish`. The commit is one-way:
+restore re-adds the label and removes the file from the checkout, but every
+earlier commit, and any remote it was pushed to, keeps the page's content.
+
+**Undo.** Every change goes to an undo ledger at
+`~/.gbrain/repair/private-labels/<brain>.jsonl` (under `$GBRAIN_HOME/.gbrain/` if
+set) on the host that ran it. Each page gets an `intent` line with the exact
+removed values before its write and a `committed` line after it. A run that
+stops between the two can still be undone. If the ledger can't take the intent
+line, the apply refuses with `storage_error` and changes nothing. An apply
+result names the ledger (`details.ledger`) and the lines it appended:
+`details.ledger_rows_written`, split into `details.ledger_rows.intent` and
+`.committed`. The file grows by exactly `ledger_rows_written`, and `committed`
+equals `applied` unless a commit line could not be saved, which the item's
+outcome then says.
+
+```bash
+gbrain repair private-labels --source <id> --class restore --json
+gbrain repair private-labels --source <id> --class restore --apply --expect <preview_hash>
+```
+
+Restore re-adds only `access` and `visibility: private` from the ledger, and
+only to pages that are still live and lack those keys. It counts `restorable`,
+`already_restored`, `page_gone` and `removed_after_restore` (a page whose label
+was removed by hand after a restore landed; it isn't listed again). A ledger
+line with any other key, a non-string value or a page id that isn't an integer
+is counted as unreadable and never applied. Run restore on the host and
+`GBRAIN_HOME` that ran the clear, because the ledger lives there.
+
+### Lost fence rows
+
+A page rewrite that drops its `## Facts` or takes section is safe on its
+own: the section's rows stay live, held `fence_absent`, until you put the
+section back or write an empty one. Before this release, a later `remember`,
+`takes add`, fact extraction or `gbrain facts relink` on that page built a
+new section holding only its own rows, and the next ordinary write (a tag, a
+timeline entry, an append, a get and put) read that section as your answer:
+the held facts expired and the held takes were deleted. Those writers now put
+the held rows back into the section they create. `gbrain repair
+lost-fence-rows` brings back the rows an older gbrain already lost.
+
+```bash
+gbrain repair lost-fence-rows --json                      # preview; writes nothing
+gbrain repair lost-fence-rows --source <id> --json        # one source
+gbrain repair lost-fence-rows --apply --expect <hash> --yes
+```
+
+A row is listed only when the records prove this shape: a facts or takes
+generation retired it without an empty-section proof, no row with the same
+claim is on the page now, and page history shows the row in a section that
+then vanished before the retirement. A row you removed by editing a section
+that stayed in place, a row retired by an explicit empty section, and a
+forgotten fact are never listed, and neither is a row you re-added after the
+loss and then removed again, or any row of a page where you wrote an empty
+section after the loss. A section you rebuilt by hand without a row
+leaves the same records as the bug, so read the preview with the user before
+applying it. `gbrain repair generations --mode restore`
+does not cover this case, because the retiring write published a fence that
+parsed; this kind reads page history instead.
+
+Each row comes back byte for byte from the newest page version that held it,
+at its old row number when that number is free. The apply republishes each
+page through one revision-bound page write that adds only those rows; a page
+changed since the preview is skipped and asks for a new preview. A restored
+fact is a new facts row (the expired row stays as history). A restored row
+never gets more trust than it had: a fact comes back at the tier the expired
+row had, and a take, or a fact with no recorded tier, at the lowest tier
+(`external_untrusted`); the preview says which on each row. If the apply
+stops because its page write is still pending, rerun the same apply command:
+it finishes lowering the tiers.
+
+It is explicit-only and nothing runs on upgrade: show the
+user the preview before running the apply.
 
 ### Extractor facts
 
@@ -2502,6 +2784,49 @@ gained a page, lost its target or whose facts changed since the preview reports
 the target is merged rather than copied. It writes the database only; no page is
 rewritten.
 
+<a id="facts-home"></a>
+### Facts of a strict source with no Git home
+
+On a source whose pages are canonical in Git (`canonical: git`), every fact
+should be a row in some page's Facts table, so that a database rebuilt from Git
+keeps it. Facts saved before the source became strict, or by an older gbrain,
+can still live in the database only: a fact for an entity that has no page, or a
+fact with no entity. The doctor check `strict_facts_outside_git` counts them.
+`gbrain repair facts-home` gives them a home in Git. It is explicit-only and
+preview-bound, and it never runs on upgrade.
+
+**Say to your agent:** *"Doctor says some facts of my strict source are not in
+Git. Preview giving them a home, then apply after I agree."* The agent runs
+`gbrain repair facts-home --source <id>` and, after you agree, the printed
+apply command.
+
+```bash
+gbrain repair facts-home --source <id>                          # preview: one line per fact, by group
+gbrain repair facts-home --source <id> --apply --expect <hash>  # writes at most 500 facts per run
+```
+
+The preview puts each fact in one group:
+
+| Group | What the apply does |
+|---|---|
+| `entity_page_missing` | Writes the fact to `memory/unattributed` as a held row that names its entity, in one commit. Once the entity has a page, the next maintenance cycle moves it there. |
+| `no_entity` | Writes the fact to `memory/unattributed`. |
+| `entity_page_exists` | Nothing: the entity has a page, and the next maintenance cycle (`gbrain dream`) moves the fact into it. |
+| `cannot_render` | Nothing: the Facts table cannot show the fact as it stands (the class says why). It stays in the database, active and searchable. |
+| `folder_restricted` | Nothing: the entity is under a folder access rule, so the fact is never named on the world-readable holding page. It stays in the database only. |
+| `entity_page_deleted` | Nothing: the entity's page is deleted (it may have been private, and purging it would not reach a row on the holding page). Restore the page or purge it; the fact stays in the database only. |
+| `held_fact_unmovable` | Nothing: a held row whose page cannot take it, with the reason. `entity_ambiguous` names the pages a bare name could mean; save the fact again with the page slug and forget the held one. |
+| `held_over_30_days` | Nothing: a held row whose entity still has no page after 30 days, with the nearest existing page gbrain finds. |
+| `fenced_page_missing` | Nothing: a row of a page that was deleted. Restore the page or purge it. |
+| `ontology_observation` | Nothing: an ontology observation belongs to its entity's ontology and has no Facts row. |
+
+The apply writes exactly the facts the preview listed. A hash that no longer
+matches refuses with `preview_changed` and prints the preview to run again; a
+fact that changed since the preview is kept and reported. Facts keep their ids,
+provenance and embeddings. On a source that is not strict the preview lists
+nothing and says why, because its database keeps such facts by design.
+`gbrain sources git-gap <id>` shows how far it is from its commit.
+
 <a id="consolidate-ties"></a>
 ### Facts consolidation closed at their own effective time
 
@@ -2641,8 +2966,10 @@ gbrain older than v0.60.38.0 refuses writes it should allow. And a write ends
 copy differed at publication, as every write did on a brain whose v0.13.1
 grandfather `validate: false` stamp lived only in the database (#6429, fixed
 in v0.60.157.0: that stamp is no longer read as a file edit). Each refused
-write keeps a receipt with its full intent until receipt compaction
-(`persistence.receipt_retention_days`, 30 days by default). `gbrain repair
+write keeps a receipt with its full intent until a later request writes,
+removes or repeats it: receipt compaction skips such a refused caller write
+however old it is, and `gbrain repair receipt-compaction --include-failures`
+is the explicit way to drop one. `gbrain repair
 failed-writes` submits those writes again. It is explicit-only and
 preview-bound, and needs v0.60.38.0 or later (`gbrain doctor --json` reports
 schema version 197 or later). Doctor's `lost_caller_writes` counts the
@@ -2664,7 +2991,6 @@ me the list, then apply after I agree."* The agent runs `gbrain repair
 failed-writes` and, after you agree, the printed apply command.
 
 ```bash
-gbrain config set persistence.receipt_retention_days 90   # keep the receipts while you recover
 gbrain repair failed-writes --source <id>                 # preview: every refused write with its class
 gbrain repair failed-writes --source <id> --apply --expect <hash>
 gbrain repair failed-writes --source <id>                 # replayed writes now read already_written
@@ -2770,6 +3096,8 @@ and recalled from the database with no fence row (`row_num` empty), and page
 write-through reports `skipped: "url_clone"`. A managed brain does the same
 with `gbrain sources mirror-readonly <id>`.
 
+Local commits made in an owned clone are different: `gbrain sources git-reconcile` (autopilot, each tick) publishes them after a secret scan. `gbrain config set sources.refresh_publish_diverged false` (every source) or `gbrain sources set-sync <id> off` (one source) keeps them local.
+
 A clone an older release already dirtied still blocks its pulls. `gbrain sync
 --source <id>` then prints `pull_blocked_local_changes` with the changed files
 and an `ask_user` fix naming this repair (the sync JSON `reason` stays
@@ -2835,25 +3163,64 @@ gbrain sources record-origin <id>... --remote --apply           # records the id
 gbrain sources record-origin <id>... --local --apply            # records the rest as local adds
 ```
 
-`--remote` writes the same record a remote add writes, so the next reclone
-clones with git-lfs downloads and hooks off; `--local` records a local add, and
+`--remote` writes the same record a remote add writes, so every later reclone
+clones with git-lfs downloads and hooks off, and it turns the same settings on
+in the existing checkout's own `.git/config` now (`lfs.fetchexclude=*`,
+`core.hooksPath=/dev/null`, `lfs.locksverify=false`). That is the safer of the
+two choices: a reclone happens only when a checkout is lost or replaced, so
+without it the checkout would keep fetching git-lfs objects from the endpoint
+its repository names, and keep running hooks, while doctor already reads
+green. The settings go into the repository's shared config (the one
+`git rev-parse --git-common-dir` names, so a linked worktree gets them too),
+and the command then reads back the values Git uses in the checkout: when a
+worktree-scoped or included setting still overrides one, it refuses
+`write_failed`, names the key, and says the settings were already written.
+A source already recorded as remote whose checkout lacks the lock-down (one
+recorded before this) gets it on `--remote --apply` and reports `recorded`,
+even when its files now use git-lfs (no `lfs_tracked` refusal for it; only a
+checkout Git cannot place refuses it, as `lfs_unknown`); one that has it stays
+`already_recorded`, and the record is never removed. Each setting's existing values are removed before it is written, so a key that
+already holds several values ends with the one clone-time value. The settings
+are written to a copy held as Git's `config.lock` and renamed over the config in
+one step, so a failure part way leaves the config as it was (a `config.lock`
+another Git process holds refuses `write_failed`).
+Only `.git/config` changes, never a tracked file; a gbrain frontmatter
+hook wired through `core.hooksPath` stops running there, as on any clone a
+remote caller adds. `--local` records a local add and changes no checkout, and
 doctor stops listing either. Each apply re-reads the source inside one
-transaction and refuses `source_changed` if it moved since the check. Without
-git-lfs files a clone with these settings holds the same tracked bytes, so the
-stored writer manifest needs no change and the reclone verifies as before.
-`--remote` refuses, writing nothing:
+transaction and refuses `source_changed` if it moved since the check. On a
+managed brain it first takes the worktree locks and rows a reclone takes, so
+no reclone runs between the record and the clone; while a reclone, refresh or
+write holds them the id is refused `source_busy` (nothing changed, unless
+the reason says the checkout already got the lock-down; run it again once
+that process or refresh has finished). A write that fails is reported for its own id as
+`write_failed`, saying whether the checkout already got all or part of the
+lock-down, and the other ids keep their results. Without git-lfs files a
+clone with these settings holds the same tracked bytes, so the stored writer
+manifest needs no change and the reclone verifies as before. `--remote`
+refuses, writing nothing:
 
-- `lfs_tracked`: the checkout tracks files with git-lfs (any tracked path with
-  `filter=lfs`, or a committed `.gitattributes` that names `filter=lfs`; a
-  reclone gets only the committed attributes, so clone-local ones do not count).
-  An apply inspects the checkout again under the row lock before it writes. A clone with git-lfs downloads off holds pointer files where
+- `lfs_tracked`: the checkout tracks files with git-lfs (a tracked path with
+  `filter=lfs`), or a committed `.gitattributes` declares an LFS filter (a
+  rule naming `filter=lfs`, even one that matches no file yet; comment lines
+  do not count). A reclone gets only the committed attributes, so clone-local
+  ones do not count either.
+  An apply inspects the checkout again under its locks before it writes. A clone with git-lfs downloads off holds pointer files where
   this checkout holds their content, so its next reclone would stop at
   `writer_manifest_mismatch`, and converting the checkout rewrites its files,
   which this command does not do. If the source should not keep those files,
   check that nothing in its checkout is unpushed or only local, then remove it
   with `gbrain sources remove <id> --confirm-destructive`.
-- `lfs_unknown`: the checkout is missing or Git cannot list it, so gbrain
-  cannot confirm it has no git-lfs files. Restore the checkout and run it again.
+- `lfs_unknown`: gbrain cannot confirm the checkout has no git-lfs files (for
+  a source already recorded as remote, cannot reach it to turn them off),
+  and the reason names which cause applies: the checkout is missing (restore
+  it, then run this again); the clone directory is not the top level of its
+  own Git repository, because Git resolves it to an enclosing repository or to
+  none (check what the directory holds); Git refuses the checkout because
+  another user owns it (`safe.directory`); or Git could not list or read it
+  (for example a corrupt `.git`). A
+  clone of an empty repository (no commit yet) has no committed attributes,
+  so it is not refused.
 - `custom_clone_dir`: the clone sits where only the local CLI can clone.
 - `recorded_remote` (`--local`): the source is already recorded as a remote
   add; this command never removes that record.

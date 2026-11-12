@@ -156,7 +156,7 @@ export async function prepareCoreGuard(engine: BrainEngine, input: CoreGuardInpu
     if (total > settings.maxChars && grew) {
       // Remote diagnostics never name pages outside the write's own source or private pages.
       const seen = remote
-        ? await listCorePages(exec, { sourceIds: [row.source_id], excludePrivate: true, exclude: { sourceId: row.source_id, slug: row.slug } })
+        ? await listCorePages(exec, { sourceIds: [row.source_id], excludePrivate: true, forCaller: true, exclude: { sourceId: row.source_id, slug: row.slug } })
         : pages;
       const hidden = pages.reduce((n, p) => n + p.chars, 0) - seen.reduce((n, p) => n + p.chars, 0);
       throw budgetError(row, total, settings.maxChars, afterChars, seen, hidden);

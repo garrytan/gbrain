@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skill-resolver.v1.build-input.json",
+  "title": "gbrain skill resolver: catalog snapshot for `skills index build --from-json` (schema_version 1)",
+  "description": "An adapter's skill list: an array of skills, {\"skills\": [...]}, or OpenClaw's `skills list --json` document as is (its entries have no id: the name is the id, and an entry that is not eligible, is disabled, blocked by the allowlist or the agent filter, or not model-visible is skipped as ineligible). At most 10,000 entries and 64 MB; bodies are trimmed to the 4 KB the ranker reads, and a snapshot over 8 MB is kept trimmed. A stdin snapshot is kept as source.json beside the index and is never rebuilt automatically.",
+  "$defs": {
+    "skill": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "name"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "The harness's load selector."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "type": "string"
+        },
+        "when_to_use": {
+          "type": "string",
+          "description": "Frontmatter when_to_use; ranked with the description, as a SKILL.md folder build does."
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "routing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "body": {
+          "type": "string",
+          "description": "Only the first 4 KB is indexed."
+        },
+        "path": {
+          "type": "string"
+        },
+        "eligible": {
+          "type": "boolean",
+          "description": "false: never indexed (recorded as skipped: ineligible)."
+        },
+        "disable_model_invocation": {
+          "type": "boolean",
+          "description": "true: never indexed (recorded as skipped: not_model_invocable), like disable-model-invocation in SKILL.md."
+        }
+      }
+    },
+    "list": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "$ref": "#/$defs/skill"
+      }
+    },
+    "openclawSkill": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "description": "The skill's name, which skills_read({name}) takes; also its id."
+        },
+        "description": {
+          "type": "string"
+        },
+        "when_to_use": {
+          "type": "string",
+          "description": "Frontmatter when_to_use; ranked with the description, as a SKILL.md folder build does."
+        },
+        "body": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "routing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "eligible": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "blockedByAllowlist": {
+          "type": "boolean"
+        },
+        "blockedByAgentFilter": {
+          "type": "boolean"
+        },
+        "modelVisible": {
+          "type": "boolean"
+        },
+        "disable_model_invocation": {
+          "type": "boolean",
+          "description": "true: never indexed (recorded as skipped: not_model_invocable), like disable-model-invocation in SKILL.md."
+        }
+      }
+    }
+  },
+  "anyOf": [
+    {
+      "$ref": "#/$defs/list"
+    },
+    {
+      "type": "object",
+      "required": [
+        "skills"
+      ],
+      "properties": {
+        "skills": {
+          "$ref": "#/$defs/list"
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "skills"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "workspaceDir"
+          ]
+        },
+        {
+          "required": [
+            "managedSkillsDir"
+          ]
+        }
+      ],
+      "properties": {
+        "skills": {
+          "type": "array",
+          "maxItems": 10000,
+          "items": {
+            "$ref": "#/$defs/openclawSkill"
+          }
+        }
+      },
+      "description": "OpenClaw's skills list --json output."
+    }
+  ]
+}

@@ -3556,7 +3556,7 @@ export function openAIPromptCacheKey(args: {
   return `gbrain:${createHash('sha256').update(basis).digest('hex').slice(0, 32)}`;
 }
 
-export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, any> | undefined {
+export function toAISDKTools(tools: ChatToolDef[] | undefined, strict?: boolean): Record<string, any> | undefined {
   if (!tools || tools.length === 0) return undefined;
   return tools.reduce((acc, t) => {
     acc[t.name] = {
@@ -3567,6 +3567,7 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined): Record<string, a
       // raw JSON Schema with the SDK's jsonSchema() helper so tool calls work
       // through the real toolLoop (skillopt rollouts + subagent jobs).
       inputSchema: jsonSchema(t.inputSchema as any),
+      ...(strict !== undefined ? { strict } : {}),
     };
     return acc;
   }, {} as Record<string, any>);
@@ -3672,7 +3673,8 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     ? { [OPENROUTER_CACHE_HEADER]: '1' }
     : undefined;
 
-  const tools = toAISDKTools(opts.tools);
+  // The Responses API treats a tool with no strict field as strict and marks every property required (GST-2435).
+  const tools = toAISDKTools(opts.tools, recipe.implementation === 'native-openai' ? false : undefined);
 
   let providerOptions: Record<string, any> = {};
   if (useCache) {

@@ -30,6 +30,7 @@ import { withWriteAttribution } from './context.ts';
 import { decideTakeWrite, recordFlaggedRow, recordWriteGateHold } from '../write-gate-store.ts';
 import { writeGateRejectedError } from '../write-gate.ts';
 import { beliefTransaction } from '../belief/writers.ts';
+import { clearFenceHold, fenceOwnerKey, readFenceBlocks, TAKE_FENCE_KIND } from '../generations/fence.ts';
 
 /** Server-derived values are frozen after replay lookup, before admission. */
 export async function normalizeTakesIntent(ctx: OperationContext, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -92,6 +93,26 @@ async function takeRemovalRequiresOwner(engine: BrainEngine, row: WriteRequest, 
   return error;
 }
 
+/**
+ * Every stored take of page `pageId` as its fence row, in row order (resolution cells included when it is graded), while
+ * its take_fence generation is held `fence_absent`: once a fence parses again the projection compares it with exactly
+ * these rows (canonical-projections.ts `heldTakeFence`). None otherwise.
+ */
+export async function heldTakeRows(engine: BrainEngine, sourceId: string, slug: string, pageId: number): Promise<ParsedTake[]> {
+  if (!(await engine.executeRaw(`SELECT 1 FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason='fence_absent'`,
+    [sourceId, TAKE_FENCE_KIND, fenceOwnerKey(slug)])).length) return [];
+  const rows = await engine.executeRaw<{ row_num: number; claim: string; kind: string; holder: string; weight: number; since_date: string | null; until_date: string | null;
+    source: string | null; active: boolean; resolved_at: Date | string | null; resolved_quality: TakeQuality | null; resolved_outcome: boolean | null; resolved_source: string | null;
+    resolved_value: number | null; resolved_unit: string | null; resolved_by: string | null }>(`SELECT row_num, claim, kind, holder, weight, since_date, until_date, source, active,
+      resolved_at, resolved_quality, resolved_outcome, resolved_source, resolved_value, resolved_unit, resolved_by FROM takes WHERE page_id=$1 ORDER BY row_num`, [pageId]);
+  return rows.map(t => ({ rowNum: Number(t.row_num), claim: t.claim, kind: t.kind, holder: t.holder, weight: Number(t.weight), active: t.active,
+    ...(t.since_date ? { sinceDate: t.since_date } : {}), ...(t.until_date ? { untilDate: t.until_date } : {}), ...(t.source ? { source: t.source } : {}),
+    ...(t.resolved_quality ? { resolvedQuality: t.resolved_quality, resolvedAt: t.resolved_at ? new Date(t.resolved_at).toISOString() : undefined,
+      ...(t.resolved_outcome !== null ? { resolvedOutcome: t.resolved_outcome } : {}), ...(t.resolved_source ? { resolvedEvidence: t.resolved_source } : {}),
+      ...(t.resolved_value !== null ? { resolvedValue: Number(t.resolved_value) } : {}), ...(t.resolved_unit ? { resolvedUnit: t.resolved_unit } : {}),
+      ...(t.resolved_by ? { resolvedBy: t.resolved_by } : {}) } : {}) }));
+}
+
 /** `editBody`: a same-page edit published with the takes change (consolidation closes its fenced facts here). */
 export async function prepareTakesMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, editBody?: (body: string) => string): Promise<PreparedMutation> {
   try { return await prepare(engine,row,config,editBody); } catch (error) { return fail(error); }
@@ -110,7 +131,12 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   const defect = appends ? undefined : scanCanonicalFences(snapshot.page).defects.find(d => d.fence === 'takes');
   if (defect) throw targetFenceRefusal(defect, row.slug, row.source_id);
   const target = appends ? await normalizeTargetFences(engine, { sourceId: row.source_id, slug: row.slug, kind: 'takes', page: snapshot.page }) : null;
-  const body = serializePageToMarkdown(target ? { ...snapshot.page, ...target.page } : snapshot.page,snapshot.tags);
+  const rendered = serializePageToMarkdown(target ? { ...snapshot.page, ...target.page } : snapshot.page,snapshot.tags);
+  // A rewrite that dropped the takes fence left the page's takes stored (held fence_absent): a takes write that creates
+  // the fence again renders them into it first, or the next projected write would read the new fence as their removal.
+  const recreated = readFenceBlocks(target?.page ?? snapshot.page,'takes').state==='absent';
+  const held = recreated ? await heldTakeRows(engine,row.source_id,row.slug,snapshot.page.id) : [];
+  const body = held.length ? edit.replaceFence(upsertTakeRow(rendered,held[0]!).body,held) : rendered;
   const parsed = parseTakesFence(body);
   edit.assertFenceRoundTrips(parsed);
   for (const key of ['claim','kind','holder','source','evidence','unit','resolved_by']) {
@@ -224,7 +250,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
     payload: { page_id: snapshot.page.id, claim: p.claim, kind: p.kind ?? null, holder: p.holder ?? null, weight: p.weight ?? null, source: p.source ?? null, since: p.since ?? null },
     input: gateInput(trust, row.id), cfg: await loadWriteGateConfig(engine) }) : null;
   if (gate?.action === 'reject') throw writeGateRejectedError(gate.assessment);
-  if (gate?.action === 'hold') return { observedRevision: snapshot.revision, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
+  if (gate?.action === 'hold') return { observedRevision: snapshot.revision, noop: true, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   // Rows Tier 1 rewrote are re-indexed with the row this write changes.
   const normalizedRows=new Set((target?.fixes ?? []).filter(f=>f.fence==='takes' && f.row!==null).map(f=>f.row!));
   if (normalizedRows.size) changed=[...changed,...parseTakesFence(next).takes.filter(t=>normalizedRows.has(t.rowNum) && !changed.some(c=>c.rowNum===t.rowNum))];
@@ -258,6 +284,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
       if (written && contestedOld) result.contested=await recordContestedTake(tx,{sourceId:row.source_id,oldId:contestedOld.id,oldTier:storedTrustTier(contestedOld.tier),
         newId:Number(written.id),newTier:storedTrustTier(written.trust_tier),guard:'takes_supersede'});
       if (acceptedProposal) await finishOwnerAcceptedTake(tx,acceptedProposal);
+      if (recreated && readFenceBlocks({compiled_truth:next},'takes').state==='parsed') await clearFenceHold(tx,{kind:TAKE_FENCE_KIND,sourceId:row.source_id,ownerKey:fenceOwnerKey(row.slug)});
       const flagged=written && gate ? gateField(gate.assessment,`t${written.id}`,await recordFlaggedRow(tx,gate,{table:'takes',id:Number(written.id),sourceId:row.source_id})) : undefined;
       if (flagged) result.gate=flagged;
     }

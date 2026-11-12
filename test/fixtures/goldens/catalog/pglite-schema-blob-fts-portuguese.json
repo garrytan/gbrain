@@ -17,6 +17,8 @@
       "chat_usage_log.chat_usage_log_pkey": "p PRIMARY KEY (id)",
       "chronicle_judge_reservations.chronicle_judge_reservations_pkey": "p PRIMARY KEY (id)",
       "chronicle_page_state.chronicle_page_state_attempts_check": "c CHECK ((attempts >= 0))",
+      "chronicle_page_state.chronicle_page_state_judge_input_failures_check": "c CHECK ((judge_input_failures >= 0))",
+      "chronicle_page_state.chronicle_page_state_judge_window_chars_check": "c CHECK ((judge_window_chars >= 0))",
       "chronicle_page_state.chronicle_page_state_max_attempts_check": "c CHECK ((max_attempts > 0))",
       "chronicle_page_state.chronicle_page_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "chronicle_page_state.chronicle_page_state_pkey": "p PRIMARY KEY (source_id, page_id, content_hash, extractor_version)",
@@ -990,7 +992,7 @@
       "link_relationships_pkey": "CREATE UNIQUE INDEX link_relationships_pkey ON public.link_relationships USING btree (from_page_id, to_page_id, link_type, scope)",
       "link_relationships_source_idx": "CREATE INDEX link_relationships_source_idx ON public.link_relationships USING btree (source_id, status_now)",
       "link_relationships_to_idx": "CREATE INDEX link_relationships_to_idx ON public.link_relationships USING btree (to_page_id, link_type, scope)",
-      "link_transitions_identity_idx": "CREATE UNIQUE INDEX link_transitions_identity_idx ON public.link_transitions USING btree (origin_page_id, from_page_id, to_page_id, link_type, kind, occurred_on, producer) NULLS NOT DISTINCT",
+      "link_transitions_identity_idx": "CREATE UNIQUE INDEX link_transitions_identity_idx ON public.link_transitions USING btree (origin_page_id, from_page_id, to_page_id, link_type, link_source, kind, occurred_on, producer) NULLS NOT DISTINCT",
       "link_transitions_origin_idx": "CREATE INDEX link_transitions_origin_idx ON public.link_transitions USING btree (origin_page_id)",
       "link_transitions_pkey": "CREATE UNIQUE INDEX link_transitions_pkey ON public.link_transitions USING btree (id)",
       "link_transitions_relationship_idx": "CREATE INDEX link_transitions_relationship_idx ON public.link_transitions USING btree (from_page_id, to_page_id, link_type)",
@@ -1396,7 +1398,11 @@
           "23 max_attempts integer/int4 NULL",
           "24 pricing_policy text/text NULL",
           "25 campaign_max_usd numeric/numeric NULL",
-          "26 cost_attempts ARRAY/_int4 NOT NULL DEFAULT '{}'::integer[]"
+          "26 cost_attempts ARRAY/_int4 NOT NULL DEFAULT '{}'::integer[]",
+          "27 judge_input_hash text/text NULL",
+          "28 judge_window_chars integer/int4 NULL",
+          "29 judge_window_hash text/text NULL",
+          "30 judge_input_failures integer/int4 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -1977,7 +1983,8 @@
           "9 producer text/text NOT NULL",
           "10 origin_page_id integer/int4 NULL",
           "11 line_hash text/text NOT NULL DEFAULT ''::text",
-          "12 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+          "12 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "13 link_source text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

@@ -120,17 +120,24 @@ jobs:
     # #6056: tsc ran inside the verify step's pool, cold on every nightly (the
     # tsbuildinfo cache was saved only after a fully green job, so a red
     # nightly never saved it), and was killed at the 240 s per-check cap:
-    # 110-142 s alone on this 3-core arm64 runner, 121-167 s inside verify.
+    # 110-142 s alone on the earlier 3-core arm64 runner, 121-167 s inside verify.
     # Same shape as test.yml's typecheck job: its own job, a step timeout from
     # measurement, and the incremental state saved on every outcome. Step
     # timeout: 3 x the worst measured run is about 15 minutes (282 s from an
     # older commit's state, run 39168836406; a cold run is no faster).
     # Same gate as macos-26 (named exception, docs/TESTING.md#event-parity).
+    # GST-2333: on Intel (4 cores, 14 GB). tsc on this tree peaks near 6.7 GB
+    # resident; the 7 GB arm64 runner swapped, and a check from an older state
+    # took 7 to 15 minutes (915 s hit the step cap, run 42813311634). Intel,
+    # cold: 234 s, 6.68 GB peak, no swap (run 42821135693). An attempt that
+    # aborts (exit 134 or a signal: a run seeded from another head's state can
+    # pass the heap cap) runs once more from cold (scripts/ci-typecheck.sh), so
+    # the step and job allow two 15-minute attempts.
     if: |
       github.event_name != 'pull_request' ||
       contains(github.event.pull_request.labels.*.name, 'macos-validation')
-    runs-on: macos-26
-    timeout-minutes: 25
+    runs-on: macos-26-intel
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -148,13 +155,17 @@ jobs:
           key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
           restore-keys: |
             tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
-      - name: Typecheck (tsc, incremental)
-        timeout-minutes: 15
-        run: bun run typecheck
+      - name: Typecheck (tsc, incremental; cold once more on an abort)
+        id: tsc
+        timeout-minutes: 30
+        env:
+          GBRAIN_TYPECHECK_ATTEMPT_SECONDS: '900'
+        run: bash scripts/ci-typecheck.sh bun run typecheck
       # Saved even when tsc finds type errors or another job fails: tsc
-      # writes its state on an error too, so the next run starts warm.
+      # writes its state on an error too, so the next run starts warm. Not
+      # saved when its last attempt aborted or timed out: it wrote no state.
       - name: Save the typecheck state
-        if: always()
+        if: always() && steps.tsc.outputs.state_written == 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
