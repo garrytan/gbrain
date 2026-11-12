@@ -39,12 +39,9 @@ export interface UnimportedFile {
 }
 
 function valueAt(page: unknown, path: string): { has: boolean; value?: unknown } {
-  let node = page;
-  for (const key of path.slice(1).split('/').map(part => part.replace(/~1/g, '/').replace(/~0/g, '~'))) {
-    if (node === null || typeof node !== 'object' || Array.isArray(node) || !Object.hasOwn(node, key)) return { has: false };
-    node = (node as Record<string, unknown>)[key];
-  }
-  return { has: true, value: node };
+  return path.slice(1).split('/').map(part => part.replace(/~1/g, '/').replace(/~0/g, '~')).reduce<{ has: boolean; value?: unknown }>((at, key) =>
+    at.has && at.value !== null && typeof at.value === 'object' && !Array.isArray(at.value) && Object.hasOwn(at.value, key)
+      ? { has: true, value: (at.value as Record<string, unknown>)[key] } : { has: false }, { has: true, value: page });
 }
 
 /** The decided paths (automatic additive ones excepted) whose result drops what the file says there. */
