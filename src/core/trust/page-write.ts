@@ -159,8 +159,17 @@ export async function privacyLabelGuard(engine: BrainEngine, row: Pick<WriteRequ
   if (!labelGuardApplies(row, trust, page, stored)) return null;
   const labels = page.frontmatter ?? {};
   const tier = await labelGuardTier(engine, trust!, page, stored!);
-  const owner = normalizeReaders(labels) !== null || !incoming || normalizeReaders(incoming) !== null ? await ownerReader(engine, labels) : null;
+  const owner = await labelGuardOwner(engine, labels, incoming);
   return tier || owner ? { tier, owner } : null;
+}
+
+/**
+ * privacyLabelGuard's owner for a write of `incoming` over stored labels `labels`. GST-2521: the write's publication reads
+ * it again under the page lock (page-prepare.ts), so an owner set, enabled or opted out of reading past readers after
+ * preparation is not missed.
+ */
+export async function labelGuardOwner(engine: BrainEngine, labels: Record<string, unknown>, incoming?: Record<string, unknown> | null): Promise<LabelGuard['owner']> {
+  return normalizeReaders(labels) !== null || !incoming || normalizeReaders(incoming) !== null ? ownerReader(engine, labels) : null;
 }
 
 /** Whether privacyLabelGuard holds anything for this write: a local content write or derived publication below operator_curated over a stored page. */

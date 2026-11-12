@@ -286,6 +286,31 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     expect(retried.privacy_labels_kept?.keys).toEqual(['visibility']);
   }), 180_000);
 
+  test('an agent write prepared while the owner read past readers does not drop the owner once the opt-in is off: it refuses revision_conflict', () => repoless(async (b, reads) => {
+    const slug = 'notes/owner-race-example', canary = 'canaryownerrace';
+    await call(b, 'put_page', { slug, content: file(slug, ['readable_by: [alice-example, ' + OWNER + ']'], canary) });
+    await setOwnerReadsRestricted(b.engine, true, { remote: false });
+    await disposePersistenceConsumer(b.engine);
+    const [source] = await b.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [SRC]);
+    const authority = await submissionAuthority(b.ctx, 'put_page', SRC, source!.incarnation, slug);
+    const dropped = file(slug, ['readable_by: [alice-example]'], canary, 'An agent took the owner out.');
+    const page = await pageRow(b.engine, SRC, slug);
+    const pageId = (await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, slug]))[0]!.id;
+    await admitWrite(b.engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: SRC, sourceIncarnation: source!.incarnation,
+      slug, pageId: Number(pageId), requestId: randomUUID(), callerIntent: { content: dropped, expected_revision: page.revision },
+      intent: { content: dropped, expected_revision: page.revision } });
+    const row = (await claimNextWrite(b.engine, localHostId()))!;
+    const prepared = await preparePageMutation(b.engine, row, b.ctx.config);
+    await setOwnerReadsRestricted(b.engine, false, { remote: false });
+    const published = await publishMutation(b.engine, row, prepared).then(r => r, (error: unknown) => error);
+    expect((published as { code?: string }).code ?? (published as { error_code?: string }).error_code).toBe('revision_conflict');
+    expect((await pageRow(b.engine, SRC, slug)).frontmatter.readable_by).toEqual(['alice-example', OWNER]);
+    expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
+    const retried = await put(b, slug, dropped);
+    expect(retried.privacy_labels_kept?.keys).toEqual(['readable_by']);
+    expect(await reads('owner', slug, canary)).toBe(true);
+  }), 180_000);
+
   test('a label door that clears the labels leaves no guard: the agent\'s own later label is its own to drop', () => repoless(async (b) => {
     const slug = 'notes/cleared-example', canary = 'canarycleared';
     await call(b, 'put_page', { slug, content: file(slug, ['readable_by: [alice-example, ' + OWNER + ']'], canary) });

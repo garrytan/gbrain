@@ -98,8 +98,8 @@ import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from
 import { originCommitted } from './sync-markers.ts';
 import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
 import { withTrustKeep } from './context.ts';
-import { holdPrivacyLabels, isFenceEditWrite, labelGuardApplies, labelGuardTier, pageGateTrust, privacyLabelGuard, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier,
-  type HeldPrivacyLabels } from '../trust/page-write.ts';
+import { holdPrivacyLabels, isFenceEditWrite, labelGuardApplies, labelGuardOwner, labelGuardTier, pageGateTrust, privacyLabelGuard, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier,
+  type HeldPrivacyLabels, type LabelGuard } from '../trust/page-write.ts';
 import { compareTrust, maxTrust, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import { suppliedTrustMarkerView } from '../trust/channel.ts';
 import { gateField, gateInput } from '../trust/gate-outcomes.ts';
@@ -127,14 +127,18 @@ export function pageRefusal(code: RegistryCode, message: string, row: WriteReque
 }
 
 /**
- * GST-2521: under the publication's page lock, a write whose label guard tier moved since preparation refuses
- * `revision_conflict` (a guard raised over labels that already match moves no page revision), so it prepares again and is held.
+ * GST-2521: under the publication's page lock, a write whose label guard (its tier, or the owner it keeps as a reader)
+ * moved since preparation refuses `revision_conflict`: a guard raised over labels that already match, or an owner set,
+ * enabled or opted out after preparation, moves no page revision. The write publishes nothing; submitted again, it is
+ * prepared against the current guard and held.
  */
 async function assertLabelGuardUnchanged(tx: BrainEngine, row: WriteRequest, trust: WriteTrust | undefined, page: PageSnapshot['page'] | null,
-  stored: TrustTier | null, prepared: TrustTier | null): Promise<void> {
-  if (!labelGuardApplies(row, trust, page, stored) || await labelGuardTier(tx, trust!, page, stored!) === prepared) return;
-  throw pageRefusal('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, row,
-    `The label guard of page ${row.slug} changed while this write was being prepared, so it published nothing. Read the current page and revision, then submit the intended change against it.`);
+  stored: TrustTier | null, incoming: Record<string, unknown> | null, prepared: LabelGuard | null): Promise<void> {
+  if (!labelGuardApplies(row, trust, page, stored)) return;
+  const [tier, owner] = await Promise.all([labelGuardTier(tx, trust!, page, stored!), labelGuardOwner(tx, page.frontmatter ?? {}, incoming)]);
+  if (tier === (prepared?.tier ?? null) && JSON.stringify(owner) === JSON.stringify(prepared?.owner ?? null)) return;
+  throw pageRefusal('revision_conflict', 'The page\'s label guard changed while this write was being prepared.', row,
+    `The label guard of page ${row.slug} (the labels and the owner reader it keeps) changed after this write was prepared, so it published nothing; the page itself is unchanged. Submit the same write again: it is prepared against the current guard.`);
 }
 
 /**
@@ -1158,7 +1162,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
   const publication: PreparedMutation = { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnly,
     ...(core ? { exclusiveSources: core.exclusiveSources } : {}), ...(trust ? { trust } : {}), ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
-    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, labelGuard?.tier ?? null); },
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, incoming, labelGuard); },
     apply: async (tx, preimage) => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     let removedTimeline: TimelineRowsRemoved | null = null;
