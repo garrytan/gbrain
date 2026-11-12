@@ -6,7 +6,8 @@
  *    with no entity, or for an entity with no page, to memory/unattributed in one commit (a held row names its entity) and
  *    moves their rows in place (same ids); every other group stays as it is and is listed. A rebuild from a clone of HEAD
  *    brings the written facts back. A stale hash refuses preview_changed with the preview as its fix and the git-gap census
- *    as its verify step; a source that isn't strict refuses invalid_params (not_strict).
+ *    as its verify step; a source that isn't strict lists nothing, writes nothing and says why, so the bare preview a
+ *    remediation plan prints exits 0.
  * 2. Fails when: the preview writes, the apply writes a fact the preview did not list, an entity under a folder rule is
  *    named on the holding page, a written fact gets a new id or is lost on a rebuild, or a stale hash applies anything.
  * 3. Existing coverage: none for this kind; test/strict-background-writers-gst2492.test.ts covers the writers.
@@ -168,11 +169,12 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     expect(await factRow(engine, SUBJECTLESS)).toMatchObject({ entity_slug: null, source_markdown_slug: HOLD, row_num: 1 });
   }), 120_000);
 
-  test('a source that is not strict refuses not_strict and names the census', () => brain(async ({ engine }) => {
+  test('a source that is not strict lists nothing, writes nothing and names the census', () => brain(async ({ engine }) => {
     await legacy(engine, SUBJECTLESS, null);
-    const refusal = await repair(engine).then(() => null, (error: Record<string, any>) => error);
-    expect(refusal).toMatchObject({ code: 'invalid_params', reason: 'not_strict' });
-    expect(refusal!.fix.argv).toEqual(['gbrain', 'sources', 'git-gap', 'default']);
+    const preview = await repair(engine);
+    expect(classes(preview)).toEqual([]);
+    expect(preview.warnings).toEqual([expect.stringContaining('Source default is not strict')]);
+    expect(preview.details).toMatchObject({ strict: false, verify: 'gbrain sources git-gap default --json' });
     expect(await factRow(engine, SUBJECTLESS)).toMatchObject({ row_num: null });
   }), 120_000);
 });

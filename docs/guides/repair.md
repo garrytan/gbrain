@@ -2823,8 +2823,8 @@ The preview puts each fact in one group:
 The apply writes exactly the facts the preview listed. A hash that no longer
 matches refuses with `preview_changed` and prints the preview to run again; a
 fact that changed since the preview is kept and reported. Facts keep their ids,
-provenance and embeddings. A source that is not strict is refused with
-`not_strict`, because its database keeps such facts by design;
+provenance and embeddings. On a source that is not strict the preview lists
+nothing and says why, because its database keeps such facts by design.
 `gbrain sources git-gap <id>` shows how far it is from its commit.
 
 <a id="consolidate-ties"></a>

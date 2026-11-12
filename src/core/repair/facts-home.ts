@@ -7,7 +7,8 @@
  * entity under a folder access rule, a held row its page cannot take, and a held row older than 30 days (with the nearest
  * existing page the resolver finds) are listed and left alone. `--apply --expect <hash>` writes exactly the previewed set
  * in one maintenance publication through the write door; the facts rows move in place (ids, vectors and provenance kept).
- * A source that isn't strict refuses `invalid_params` (`not_strict`). Runs only when named; never on upgrade.
+ * A source that isn't strict lists nothing and says so (its database keeps such facts by design), so the bare preview a
+ * remediation plan prints runs as pasted. Runs only when named; never on upgrade.
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
@@ -72,9 +73,9 @@ export const factsHomeRepair: RepairHandler = {
     const sourceId = scope.source_ids[0]!;
     const scan = await scanFactsHome(engine, sourceId);
     if (!scan.strict) {
-      throw opError('invalid_params', `Source ${sourceId} is not strict (its pages are not canonical in Git), so its database-only facts are not a gap; nothing was listed or changed.`,
-        'On a source that is not strict the database keeps these facts by design. gbrain sources git-gap shows how far the source is from its commit.',
-        { reason: 'not_strict', fix: readFix(`Shows how far source ${sourceId} is from its commit, read-only.`, { argv: ['gbrain', 'sources', 'git-gap', sourceId] }), docs: FACTS_HOME_DOCS });
+      return { items: [], preview_hash: previewHash(hashParts(scope, scan, [])), residuals: {},
+        warnings: [`Source ${sourceId} is not strict (its pages are not canonical in Git), so the database keeps its facts by design and none is a gap; nothing is listed.`],
+        details: { docs: FACTS_HOME_DOCS, strict: false, verify: gitGapArgv(sourceId).join(' ') } };
     }
     const approved = await approvedFacts(engine, scan);
     const hash = previewHash(hashParts(scope, scan, approved));

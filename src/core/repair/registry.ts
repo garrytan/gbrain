@@ -658,7 +658,7 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
   'facts-home': {
     handler: factsHomeRepair, embeds: 'none', checks: ['strict_facts_outside_git'], explicit_only: true, preview_bound: true,
     summary: 'Give the facts of a strict source (pages canonical in Git) that live in the database alone a home in Git (GST-2492). Needs --source; '
-      + 'a source that is not strict refuses not_strict. The preview lists every such fact by group and writes nothing: a fact with no entity, or for an '
+      + 'a source that is not strict lists nothing. The preview lists every such fact by group and writes nothing: a fact with no entity, or for an '
       + 'entity with no page, is written to memory/unattributed (a held row names its entity and moves to the page of its entity once that page exists); a fact whose '
       + 'entity has a page is left to the extract_facts upkeep step; facts the Facts table cannot render, facts for an entity under a folder access rule, '
       + 'held rows their page cannot take and held rows older than 30 days (with the nearest existing page) are listed and left alone. --apply --expect '
