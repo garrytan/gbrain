@@ -33,22 +33,28 @@
  * private, tighten-only, preview-bound (a bare `--apply` refuses). It is the operator's single-page label change.
  * Every item writes through the label-only door (repair/label-write.ts): the page keeps its trust tier, files no
  * lower_page proposal and its file changes only on the visibility line (a fact item: its fence row).
+ *
+ * `--readers <list>` with `--slug` or `--slugs-file` (GST-2476, repair/readers.ts) sets the named pages' readable_by through
+ * the same door instead. A managed page with no file in its checkout outside a declared storage.db_only path is held
+ * `canonical_file_missing` with nothing written: a database-only label there would put the database ahead of Git.
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { derivationPrivateSql, effectiveVisibility, folderRestrictedSql, privacyAliasSql, privateSnapshotFilterFragment, strictestVisibility, type Visibility } from '../search/private-visibility.ts';
 import { strikeFenceRow } from '../facts/forget.ts';
-import { opError } from '../ops/contract.ts';
+import { opError, OperationError } from '../ops/contract.ts';
 import { authorizeWrite } from '../persistence/authority.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import { digest } from '../persistence/digest.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, publishMaintenancePages, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
+import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairCursor } from './core.ts';
+import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
 import { filesInCheckout, writeLabelFile, writeLabelPage } from './label-write.ts';
+import { applyReaders, planReaders, readersBatch, readersGitCounts, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -256,11 +262,14 @@ export async function prepareFactVisibilityTighten(engine: BrainEngine, row: Wri
 
 /**
  * One fact item: a fenced row gets `private` in its page's `## Facts` fence by a
- * revision-bound label write (labelWrite; the projection then stores it private); a
- * database-only row is updated in place (a database-only maintenance request
- * on a managed brain). A page stored in segments is left for the owner. A fenced row that stays world and live is
- * reported, never as done: `fact_left_readable` when remote callers can read it now, `fact_left_world` when only its
- * page's privacy hides it (worldFactsFromPrivateSources `readable`).
+ * revision-bound label write (labelWrite; the projection then stores it private, and a
+ * more trusted row turns private in place, trust/fence-guard.ts); a database-only row is
+ * updated in place (a database-only maintenance request on a managed brain). On a brain
+ * without managed persistence the page import does not re-project the fence, so the fenced
+ * row is made private in place there too, keeping its id and tier (GST-2487). A page stored
+ * in segments is left for the owner. A fenced row that stays world and live is reported,
+ * never as done: `fact_left_readable` when remote callers can read it now, `fact_left_world`
+ * when only its page's privacy hides it (worldFactsFromPrivateSources `readable`).
  */
 const leftWorld = (fact: { id: number; readable: boolean }, why: string): RepairItemOutcome => fact.readable
   ? { applied: false, outcome: 'fact_left_readable', detail: { fact_id: Number(fact.id) }, reason: `${why}; the fact row is still world, so remote callers can still read it` }
@@ -290,22 +299,44 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
   if (held) return held;
   const [stored] = await ctx.engine.executeRaw<{ visibility: string; live: boolean }>('SELECT visibility, expired_at IS NULL AS live FROM facts WHERE id=$1', [factId]);
   if (!stored || stored.visibility === 'private' || !stored.live) return true;
+  if (!await managedPersistenceEnabled(ctx.engine) && (await maintenanceTransaction(ctx.engine, tx => tx.executeRaw(
+    `UPDATE facts SET visibility='private' WHERE source_id=$1 AND id=$2 AND row_num=$3 AND visibility='world' AND expired_at IS NULL RETURNING id`,
+    [item.source_id, factId, fact.row_num]))).length > 0) return true;
   return leftWorld(fact, 'its fence row was written private, but the original row is more trusted than the repair and was kept beside it');
+}
+
+/**
+ * The held outcome of a managed page whose canonical file is missing outside any declared storage.db_only path (the
+ * maintenance door refused it before admission, nothing written); any other error is rethrown.
+ */
+function missingFileHeld(item: Pick<RepairItem, 'source_id' | 'slug'>, error: unknown): RepairItemOutcome {
+  if (!(error instanceof OperationError) || error.detail !== CANONICAL_FILE_MISSING) throw error;
+  return { applied: false, outcome: CANONICAL_FILE_MISSING, detail: { path: `${item.slug}.md` },
+    reason: `${item.source_id}:${item.slug} has no file in its source's checkout and is not under a declared storage.db_only path, so a label write would put the `
+      + `database ahead of Git; nothing was written. If the page belongs in the database only, declare its folder under storage.db_only in gbrain.yml, commit it `
+      + `and preview again; if its file was removed by mistake, restore it (gbrain repair ghost-pages --source ${item.source_id} lists pages whose file is gone).` };
 }
 
 /**
  * GST-2468: one item's page write is a label-only maintenance write (repair/label-write.ts): it keeps the page's trust
  * tier, files no lower_page proposal and changes only the label lines of the page's file (a fact item: its fence row).
  * On a brain without managed persistence a page whose file sits in its source's checkout gets the same splice in that
- * file (label-write.ts writeLabelFile). Null once written; the held outcome for a page stored in segments or a file the
- * repair cannot write. A page that moved since it was read throws `revision_conflict`, which the apply counts as skipped.
+ * file (label-write.ts writeLabelFile). Null once written; the held outcome for a page stored in segments, a file the
+ * repair cannot write, or a managed page whose canonical file is missing (`canonical_file_missing`: never written, or gone
+ * outside gbrain, outside any declared storage.db_only path). A page that moved since it was read throws
+ * `revision_conflict`, which the apply counts as skipped.
  */
-async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, snapshot: PageSnapshot, content: string, edit: LabelEdit): Promise<RepairItemOutcome | null> {
+async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, snapshot: PageSnapshot, content: string, edit: LabelEdit, batch?: string): Promise<RepairItemOutcome | null> {
   if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit it by hand on the brain host.' };
   const path = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).get(Number(snapshot.page.id));
-  const write = { revision: snapshot.revision, content, edit, embed: true, preview: 'gbrain repair visibility' };
-  const written = path ? await writeLabelFile(ctx.engine, item, { ...write, path })
-    : await writeLabelPage(ctx, item, { ...write, requestId: await repairRequestId(ctx, 'visibility', item, snapshot.revision) });
+  const write = { revision: snapshot.revision, content, edit, embed: true, preview: 'gbrain repair visibility', ...(batch ? { batch } : {}) };
+  let written: Awaited<ReturnType<typeof writeLabelFile>>;
+  try {
+    written = path ? await writeLabelFile(ctx.engine, item, { ...write, path })
+      : await writeLabelPage(ctx, item, { ...write, requestId: await repairRequestId(ctx, 'visibility', item, snapshot.revision) });
+  } catch (error) {
+    return missingFileHeld(item, error);
+  }
   if (written === null) throw opError('revision_conflict', `${item.source_id}:${item.slug} changed after it was read, so it was not written.`,
     'Preview gbrain repair visibility again; the page is listed with its current state.');
   return typeof written === 'string' ? null : written;
@@ -359,7 +390,10 @@ async function planClass(engine: BrainEngine, sourceIds: string[], cls: Visibili
 
 export const visibilityRepair: RepairHandler = {
   kind: 'visibility',
+  /** A --readers apply lists every page's outcome (--json outcome_items). */
+  outcomeItemsLimit: VISIBILITY_WINDOW_MAX,
   async plan(engine: BrainEngine, scope: RepairScope, after: RepairCursor | null, opts?: RepairPlanOptions): Promise<RepairPlan> {
+    if (opts?.readers) return planReaders(engine, scope, after, { ...opts, readers: opts.readers });
     const named = [...new Set(opts?.slugs ?? [])].sort();
     if (named.length && opts?.driftClass !== undefined) throw opError('invalid_params', 'gbrain repair visibility takes --slug or --class, not both.',
       'Name pages with --slug to make exactly them private, or preview a class with --class.');
@@ -430,9 +464,53 @@ export const visibilityRepair: RepairHandler = {
       listing: items.map(item => ({ item: `${item.source_id}:${item.slug}`, class: CLASS_OF_PHASE[item.target.phase]!, detail: item.action })),
       details: { window: { size, listed: items.length, pending, pending_past_window: pendingPastWindow, not_read: notRead, timed_out: timedOut, next_preview: next } } };
   },
+  /** A --readers apply: how its managed writes reached Git (`details.git`, effect states; readers.ts readersGitCounts). */
+  async report(ctx, scope, result, opts) {
+    return opts.readers && result.mode === 'apply' && opts.expect ? { details: { ...result.details, git: await readersGitCounts(ctx.engine, scope, opts.expect) } } : {};
+  },
+  render(details) {
+    const git = details.git as Record<string, number> | undefined;
+    return git ? [`  git: ${Object.entries(git).map(([key, value]) => `${key}=${value}`).join(', ')} (file(s) by Git effect state; queued files commit together, up to 100 per commit)`] : [];
+  },
+  /**
+   * GST-2476: a run of readers items of one managed source at once. Each page is re-checked as apply does; the pages are
+   * admitted together under the run's maintenance batch (publishMaintenancePages; Postgres publishes them in groups of up to
+   * 8), so the Git effect commits their ready files together (up to 100 per commit), each page its own fate. Other classes, a source
+   * without managed persistence, and a run of one apply item by item (no settlement leaves an item to apply).
+   */
+  async applyBatch(ctx, entries) {
+    const items = entries as ReadersItem[];
+    const sourceId = items[0]?.source_id;
+    const end = items.findIndex(item => (item.target ?? item.cursor).phase !== READERS_PHASE || item.source_id !== sourceId || !item.hash);
+    const run = end < 0 ? items : items.slice(0, end);
+    if (run.length < 2) return [];
+    const authority = await maintenancePreflight(ctx.engine, sourceId!);
+    if (!authority) return [];
+    const out: RepairSettlement[] = [];
+    const pages: Array<{ index: number; item: ReadersItem; ready: ReadersWrite; requestId: string }> = [];
+    try {
+      for (const [index, item] of run.entries()) {
+        const ready = await readersWrite(ctx.engine, item).catch((error: unknown) => ({ error }));
+        if (ready !== false && 'snapshot' in ready) pages.push({ index, item, ready, requestId: await repairRequestId(ctx, 'visibility', { ...item, cursor: item.target }, ready.snapshot.revision) });
+        else out[index] = ready !== false && 'error' in ready ? { error: ready.error } : { value: ready };
+      }
+      if (!pages.length) return out;
+      const published = await publishMaintenancePages(ctx.engine, authority, pages.map(({ item, ready, requestId }) => ({ slug: item.slug, content: ready.content,
+        expectedRevision: ready.snapshot.revision, requestId, keepTrust: true as const, labelEdit: ready.edit })), { batch: readersBatch(run[0]!.hash!, sourceId!) });
+      pages.forEach(({ index, item }, position) => {
+        const settled = published[position]!;
+        if (!('error' in settled)) { out[index] = { value: readersOutcome(item) }; return; }
+        try { out[index] = { value: missingFileHeld(item, settled.error) }; } catch (error) { out[index] = { error }; }
+      });
+      return out;
+    } finally {
+      await retireReaders(ctx.engine, run);
+    }
+  },
   async apply(ctx, entry) {
     const item = entry as VisibilityItem;
     const target = item.target ?? item.cursor;
+    if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, { ...item, cursor: target }, snapshot, content, edit, batch));
     try {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });

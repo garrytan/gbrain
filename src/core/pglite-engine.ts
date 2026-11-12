@@ -1165,13 +1165,16 @@ export class PGLiteEngine implements BrainEngine {
       dims = storedIdentity.dimensions;
       model = storedIdentity.model;
     }
-    await this.applyForwardReferenceBootstrap();
-    await this.db.exec(getPGLiteSchema(dims, model));
+    const { runMigrations, withSchemaMigrationLock } = await import('./migrate.ts'); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
+    await withSchemaMigrationLock(this, async () => {
+      await this.applyForwardReferenceBootstrap();
+      await this.db.exec(getPGLiteSchema(dims, model));
 
-    const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
-    if (applied > 0) {
-      process.stderr.write(`  ${applied} migration(s) applied\n`);
-    }
+      const { applied } = await runMigrations(this);
+      if (applied > 0) {
+        process.stderr.write(`  ${applied} migration(s) applied\n`);
+      }
+    });
     await registerManagedFilesystemEngine(this, this._savedConfig?.database_path);
   }
 

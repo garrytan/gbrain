@@ -902,6 +902,8 @@ src/core/routing-eval.ts	fs_import	1	W7: filesystem boundary moves to the local 
 src/core/runtime-build.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/runtime-version.ts	process_global	2	W7: process-wide effects move to src/cli
 src/core/schema-events.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/schema-migration-lock.ts	als_store	1	stays: GBRA-467 reentrancy scope of the schema migration lock held by this process (coordination state, not a setting)
+src/core/schema-migration-lock.ts	module_collection	1	stays: GBRA-467 per-engine in-process queue for engines without a cross-process schema lock (PGLite); coordination state, not a setting
 src/core/schema-pack/bundled-assets.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-pack/candidate-audit.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/schema-pack/candidate-audit.ts	process_env	1	W6: settings plane out of the core

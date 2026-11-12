@@ -120,7 +120,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
     expect(onDisk(root, slug)).toBe(withLine(before, 'visibility: private'));
   }, { databaseUrl, setup }), 180_000);
 
-  test('repair visibility facts: the page keeps its tier, files no lower_page proposal, and its file changes only in the fact row', () => managedBrain(async ({ engine, root }) => {
+  test('repair visibility facts: the fence row turns private in place, the page keeps its tier, and its file changes only in the fact row', () => managedBrain(async ({ engine, root }) => {
     const slug = 'notes/fact-example';
     const header = '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |' + NL
       + '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|' + NL;
@@ -128,19 +128,19 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
       + '<!--- gbrain:facts:begin -->' + NL + NL + header + '| 1 | Alice Example works at acme-example. | fact | 1.0 | ' + visibility + ' | medium | 2026-10-01 |  | test |  |' + NL
       + '<!--- gbrain:facts:end -->' + NL);
     await seed(engine, root, { [slug]: withFacts('world') });
+    const live = "SELECT id, visibility, trust_tier::text AS tier FROM facts WHERE source_markdown_slug=$1 AND expired_at IS NULL ORDER BY id";
+    const [before] = await engine.executeRaw<{ id: number; visibility: string; tier: string }>(live, [slug]);
+    expect(before).toMatchObject({ visibility: 'world', tier: 'operator_curated' });
     const { applied } = await previewApply(engine, ['visibility', '--class', 'facts']);
     await settleManagedGitEffects(engine);
-    // The original world row is more trusted than the repair and stays live (GST-2487): the apply must say so, never "done".
-    expect(applied.applied).toBe(0);
-    // The page is private, so only its privacy hides the row today: the apply says "still world", not "readable".
-    expect(applied.outcomes).toMatchObject({ fact_left_world: 1 });
-    expect(applied.outcomes.fact_left_readable).toBeUndefined();
-    expect(applied.outcome_items).toEqual([expect.objectContaining({ item: 'default:' + slug, outcome: 'fact_left_world' })]);
-    expect(renderRepairResult(applied)).toContain('NOT CLOSED: 1 fact row(s) could not be made private and are still world');
-    expect(await engine.executeRaw("SELECT visibility FROM facts WHERE source_markdown_slug=$1 AND expired_at IS NULL AND visibility='world'", [slug])).toEqual([{ visibility: 'world' }]);
+    // GST-2487: the more trusted row is the one made private, in place: no world copy stays live and no contest is filed.
+    expect(applied.applied).toBe(1);
+    expect(applied.outcomes ?? {}).toEqual({});
+    expect(await engine.executeRaw(live, [slug])).toEqual([{ id: before!.id, visibility: 'private', tier: 'operator_curated' }]);
     expect((await page(engine, slug)).tier).toBe('operator_curated');
-    expect(await engine.executeRaw("SELECT id FROM trust_proposals WHERE action='lower_page'")).toEqual([]);
+    expect(await proposals(engine)).toEqual([]);
     expect(onDisk(root, slug)).toBe(withFacts('private'));
+    expect((await repair(engine, ['visibility', '--class', 'facts'])).listing ?? []).toEqual([]);
   }, { databaseUrl, setup }), 180_000);
 
   test('repair visibility --slug on a database-only page (a db_only path) writes only the label: tier and provenance kept, no file', () => managedBrain(async ({ engine, root, ctx }) => {
@@ -236,6 +236,37 @@ for (const backend of testBackends()) describe('[' + backend + '] label-only ope
           expect(await engine.executeRaw(stamps)).toEqual(stamped);
           expect(await proposals(engine)).toEqual([]);
           expect((await listLabelLowerings(engine)).counts.lower_page).toBe(0);
+        } finally { await disposePersistenceConsumer(engine); await close(); }
+      });
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  }, 180_000);
+
+  test('repair visibility facts turns a more trusted fence row private in place: no world copy, tier kept, no contest', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-label-repoless-facts-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+        const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
+        try {
+          const slug = 'notes/fact-example';
+          const fence = '## Facts' + NL + NL + '<!--- gbrain:facts:begin -->' + NL + NL
+            + '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |' + NL
+            + '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|' + NL
+            + '| 1 | Alice Example works at acme-example. | fact | 1.0 | world | medium | 2026-10-01 |  | test |  |' + NL + '<!--- gbrain:facts:end -->' + NL;
+          const content = file(slug, 'visibility: private').replace('Second paragraph.' + NL, 'Second paragraph.' + NL + NL + fence);
+          expect((await importFromContent(engine, slug, content, { noEmbed: true, sourceId: 'default' })).status).toBe('imported');
+          await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => withTrustBackfill(tx, async () => {
+            await tx.executeRaw("UPDATE pages SET trust_tier='operator_curated' WHERE source_id='default' AND slug=$1", [slug]);
+            await tx.executeRaw("INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, source_markdown_slug, row_num, valid_from, trust_tier) VALUES ('default', NULL, 'Alice Example works at acme-example.', 'fact', 'world', 'medium', 'test', $1, 1, '2026-10-01', 'operator_curated')", [slug]);
+          }), TEST_WRITE_ATTRIBUTION));
+          const live = "SELECT id, visibility, trust_tier::text AS tier FROM facts WHERE source_markdown_slug=$1 AND expired_at IS NULL ORDER BY id";
+          const [before] = await engine.executeRaw<{ id: number; visibility: string; tier: string }>(live, [slug]);
+          expect(before).toMatchObject({ visibility: 'world', tier: 'operator_curated' });
+          const { applied } = await previewApply(engine, ['visibility', '--source', 'default', '--class', 'facts']);
+          expect(applied.applied).toBe(1);
+          expect(applied.outcomes ?? {}).toEqual({});
+          expect(await engine.executeRaw(live, [slug])).toEqual([{ id: before!.id, visibility: 'private', tier: 'operator_curated' }]);
+          expect((await page(engine, slug)).tier).toBe('operator_curated');
+          expect(await proposals(engine)).toEqual([]);
         } finally { await disposePersistenceConsumer(engine); await close(); }
       });
     } finally { rmSync(home, { recursive: true, force: true }); }
