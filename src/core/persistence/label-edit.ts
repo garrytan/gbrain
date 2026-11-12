@@ -73,10 +73,12 @@ export function withStoredLabels(text: string, stored: Record<string, unknown> |
   }
   if (!open || !close || !mapping) return `${bom}---\n${lines}---\n${body}`;
   const from = lead.length + open[0].length, at = from + close.index;
-  const blank = (line: string) => kept.some(key => new RegExp(`^${key}[ \\t]*:[ \\t]*(?:~|null|Null|NULL|''|"")?[ \\t]*\\r?$`).test(line));
+  const blank = (line: string) => kept.includes(BLANK_LABEL_LINE.exec(line)?.[1] ?? '');
   const block = body.slice(from, at).split('\n').filter((line, i, all) => !(i < all.length - 1 && blank(line))).join('\n');
   return bom + body.slice(0, from) + block + lines + body.slice(at);
 }
+
+const BLANK_LABEL_LINE = /^(visibility|access|confidentiality|readable_by)[ \t]*:[ \t]*(?:~|null|Null|NULL|''|"")?[ \t]*\r?$/;
 
 /** GST-2519: the privacy labels the stored page holds that the incoming frontmatter does not state (absent, null or blank). */
 export function storedLabelsToKeep(stored: Record<string, unknown> | null | undefined, incoming: Record<string, unknown>): string[] {
