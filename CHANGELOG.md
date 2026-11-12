@@ -12,9 +12,13 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Stability for self-hosters: upgrades are tested from real releases every night, health alerts page only on what needs someone, routine maintenance noise heals itself, and an upgrade adds nothing you didn't turn on.**
+**Upgrade and maintenance stability for self-hosters: upgrades are tested from real releases every night, health alerts page only on what needs someone, routine maintenance noise heals itself, an upgrade adds nothing you didn't turn on, and twenty-one dream-cycle, doctor and repair fixes stop phantom work and false failures.**
 
 An upgrade could break a brain an older release created with no one noticing before its users did, a weekly health alert could read "score 30" because of the agent's own skills folder, a nightly cycle could end `partial` for reasons that needed no one, and one upgrade path installed a daemon on a brain that never asked for one. This release fixes all four.
+
+On a brain with no code, `resolve_symbol_edges` used to stamp up to 2,000 chunks per source on every run, each one a non-HOT row update on the largest table. It now skips sources with no symbol edges and walks only chunks that own one, and code-graph readiness waits on the same chunks. Several phases also misreported their own results: a drain window closing at the wrong moment read as a non-retryable `atom_drain_no_progress`, an accepted concept publication still committing failed the whole concept phase, and the managed conversation-facts backfill printed "0 facts inserted" while its facts were still publishing. Each now reports what actually happened.
+
+`doctor embedding_state` warned that thousands of deleted-page chunks were overdue and recommended a brain-wide irreversible purge that would remove almost none of them, because the purge holds derived retirements for 30 days. It now counts overdue chunks with the purge's own predicates and reports held chunks as information. `autopilot --status` and doctor's `global_maintenance_stalled` could keep a stalled verdict for up to a day after a clean pass; the pass now refreshes it.
 
 ### What changed
 
@@ -35,6 +39,36 @@ An upgrade could break a brain an older release created with no one noticing bef
 - New switches, on by default: `dream.write_deferral.enabled` and `embed.restamp.enabled`; `false` restores the old behavior. Every heal writes a row to the `heal.audit` config record (last 200 rows, 30 days). Nothing heals on upgrade, and repo-less brains get the same behavior.
 - The upgrade matrix runs nightly against the newest release, opens one `upgrade-break` issue on a red run and closes it on a green one; `gh workflow run upgrade-matrix.yml -f candidate=<tag>` runs it on demand, and pull requests touching migrations, the schema or the updater run a subset. Upgrading a v0.59.2.0 brain now passes the preservation check (#7814), so the matrix carries no known exceptions. Details: `docs/ci-upgrade-matrix.md`.
 - INSTALL_FOR_AGENTS.md has one **Opt-ins** list (keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel), and `gbrain setup <harness>` prints one line pointing to it. The default keyless install starts no daemon, writes no service, connects nothing and keeps self-upgrade in `notify` mode, now locked by `test/boring-default.test.ts`.
+
+### Itemized changes
+
+
+Dream cycle (#8326, from #8137):
+
+- Managed `gbrain extract --stale` counts pages waiting on an attendee's person page (`skipped_attendance_incomplete`) apart from pages edited during extraction (#6820).
+- Extract receipts no longer write the reserved `type` key into frontmatter, so doctor's `stale_frontmatter_keys` stops gaining a page every run (#7058).
+- `resolve_symbol_edges` stamps only chunks that own symbol edges and returns at once for a source with none; no migration and no bulk stamping (#7119).
+- The atom drain reports a window that closes before a batch starts as a window stop (exit 11, retryable), not `atom_drain_no_progress` (#7826).
+- The nightly `reports/drift-<date>` page counts as a derive-phase database-only page, so doctor's `ghost_pages` and `undeclared_db_only_pages` stop flagging it and `repair ghost-pages` stops proposing its deletion. The rest of `reports/` is unchanged (#8054).
+- The nightly LongMemEval probe fixture anchors its relative-date questions with a `question_date`, so "last month" and "this year" are judged against the haystack, not today's date (#7308, #7501).
+- The nightly probe runs its questions one at a time, so worst-case cost reservations fit the run cap; each question's judges still run together and no dollar cap changed (#7534).
+- Enrich republishes a page whose new write-up ends with its own `## Timeline` section instead of refusing it as `CONCEPT_REPUBLICATION_LOSSY` every night; the page keeps its own timeline (#7663).
+- `cycle.grade_takes.auto_resolve.enabled: true` now takes effect in the scheduled cycle, as documented; it stays off by default and the 0.95 threshold is unchanged (#7542).
+- A concept whose member links were lost gets them back on the next run, with no model call and no duplicate links (#7548).
+- On a managed brain, a concept publication still pending after its wait is reported as `publication_pending` (warn) instead of failing the phase; the next run reuses it (#7547).
+- The managed conversation-facts backfill reports how many pages are still publishing instead of a bare "0 facts inserted" (#7500).
+- `propose_takes` drops a claim whose exact text an operator already rejected on the same page, so an unrelated edit no longer puts it back in the queue; reworded claims are still proposed (#7299).
+
+Doctor, repair and maintenance (#8327, from #8137):
+
+- `doctor raw_provenance` exempts a generated page only when `raw_trace_exempt` is `true`; an explicit `false` no longer hides missing provenance (#8039).
+- `doctor --fast --only <check>` marks the report incomplete when the early stop skipped a selected check (#8114).
+- `doctor maintenance_write_drift` reports unknown (warn) instead of ok when candidates exist but none can be compared on this host (#8115).
+- `gbrain repair <kind> --apply` keeps its approved set when the last approved item fails, so the printed `--expect` command resumes instead of refusing `preview_changed` (#8058).
+- A clean brain-wide maintenance pass refreshes the verdict `autopilot --status` and doctor read, so a stalled warning clears with the pass (#7854).
+- `doctor embedding_state` warns only on deleted-page chunks `gbrain pages purge-deleted` would remove; `deleted_page_chunks` gains `purgeable` and `held` (#7825).
+- Maintenance preflight (dream `lint` and friends) recovers from a device-only physical-root change under the writer lock, as ordinary writes already did; any other identity change still refuses and a busy lock still fails closed (#7760).
+- Purging a deleted page drops that page's held fence generations, which no later write could settle, so doctor `generation_held` no longer warns about a page that no longer exists (#7774).
 
 ## [0.60.699.0] - 2026-11-12
 

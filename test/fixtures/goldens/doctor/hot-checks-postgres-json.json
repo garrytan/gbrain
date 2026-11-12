@@ -744,7 +744,9 @@
               },
               "covering_index": null,
               "deleted_page_chunks": {
+                "held": 0,
                 "past_window": 0,
+                "purgeable": 0,
                 "window_hours": 72,
                 "within_window": 0
               },
@@ -2900,7 +2902,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
             "name": "undeclared_db_only_pages",
             "status": "ok"
           },
@@ -5905,7 +5907,9 @@
               },
               "covering_index": null,
               "deleted_page_chunks": {
+                "held": 0,
                 "past_window": 0,
+                "purgeable": 0,
                 "window_hours": 72,
                 "within_window": 0
               },
@@ -8061,7 +8065,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
             "name": "undeclared_db_only_pages",
             "status": "ok"
           },

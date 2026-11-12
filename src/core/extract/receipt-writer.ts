@@ -8,8 +8,8 @@
  *
  * Two structural protections against extraction loops (D-EXTRACT-19,
  * belt + suspenders):
- *   1. `type: extract_receipt` — eligibility predicate's type filter
- *      rejects this type because it's not in ELIGIBLE_TYPES.
+ *   1. the page `type` column `extract_receipt` — eligibility predicate's
+ *      type filter rejects this type because it's not in ELIGIBLE_TYPES.
  *   2. `dream_generated: true` — the anti-loop guard at
  *      `src/core/facts/eligibility.ts:62` rejects this flag.
  *
@@ -160,13 +160,13 @@ function buildReceiptBody(input: ExtractReceiptInput): string {
 }
 
 /**
- * Build the receipt frontmatter. Two anti-loop flags
- * (type:extract_receipt + dream_generated:true) are stamped by every
- * writeReceipt call regardless of caller. Per D-EXTRACT-19.
+ * Build the receipt frontmatter. `dream_generated: true` is stamped by every
+ * writeReceipt call regardless of caller; the other anti-loop flag is the
+ * page-level `type` writeReceipt passes to putPage, never a frontmatter key
+ * (`type` is parser-reserved, #7058). Per D-EXTRACT-19.
  */
 function buildReceiptFrontmatter(input: ExtractReceiptInput): Record<string, unknown> {
   const fm: Record<string, unknown> = {
-    type: 'extract_receipt',
     dream_generated: true,
     // #1978: receipts record an operation, not a source document — the
     // run_id/round fields ARE the provenance. Explicit exemption keeps the

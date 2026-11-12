@@ -424,6 +424,15 @@ export function makeAutopilotGlobalMaintenanceHandler(engine: BrainEngine, deps:
         console.warn(`[autopilot-global-maintenance] failed to stamp last_global_at: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    // #7854: the verdict `autopilot --status` reads is otherwise rewritten only on the daemon's next full-cycle tick.
+    if (stamped) {
+      try {
+        const { recordGlobalMaintenanceStallStatus } = await import('../global-maintenance-stall.ts');
+        await recordGlobalMaintenanceStallStatus(engine);
+      } catch (e) {
+        console.warn(`[autopilot-global-maintenance] failed to refresh the status verdict: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     const streaks = Object.entries(progress.failures).map(([phase, s]) => ({ phase, ...s, fix: phaseStreakFix(phase, s) }));
     const stampedPast = stamped ? streaks.filter(s => progress.pass_bypassed!.includes(s.phase)) : [];
 
