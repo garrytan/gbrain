@@ -15,7 +15,7 @@ import type {
   MinionQueueOpts, ChildDoneMessage, ChildOutcome, Attachment, AttachmentInput,
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment, jobActorSql, NO_JOB_ACTOR, type JobActor } from './types.ts';
-import { WATCHDOG_SUSPECT_MARK, releaseWatchdogClaim, requeueCoRunnerStalls, unmarkedJobSql } from './watchdog-attribution.ts';
+import { WATCHDOG_SUSPECT_MARK, markedJobSql, releaseWatchdogClaim, requeueCoRunnerStalls, unmarkedJobSql } from './watchdog-attribution.ts';
 export { WATCHDOG_SUSPECT_MARK } from './watchdog-attribution.ts';
 import { coalesceOnIdempotencyKey, decideCoalesce, insertOrCoalesce } from './idempotency-coalesce.ts';
 import { withSubmitterLabel } from './job-insight.ts';
@@ -1452,8 +1452,10 @@ export class MinionQueue {
    * postgres.js double-encode trap; PGLite hides it, real PG does not).
    */
   /** `excludeWatchdogSuspects`: a worker with jobs in flight never claims a job marked by a shared watchdog drain (watchdog-attribution.ts).
+   *  `suspectWaitMs` (GST-2529): once a marked job this worker could claim has waited that long since its requeue, a worker with
+   *  jobs in flight claims nothing, so it drains, and one with nothing in flight takes that job first, so it runs alone and soon.
    *  `excludeNames`: skip these job names (the worker's long-job lane reservation, lanes.ts). */
-  async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts: { excludeWatchdogSuspects?: boolean; excludeNames?: string[] } = {}): Promise<MinionJob | null> {
+  async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts: { excludeWatchdogSuspects?: boolean; suspectWaitMs?: number; excludeNames?: string[] } = {}): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
     await assertNoUnreviewedJobs(this.engine);
 
@@ -1473,6 +1475,14 @@ export class MinionQueue {
     // repair, foreign tooling) must not grant a ~24-day lease to a worker
     // that crashes before its first renewal (or a 1ms one that thrashes).
     const excludeNames = opts.excludeNames?.length ? opts.excludeNames : null;
+    const params: unknown[] = [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams()];
+    const param = (value: unknown) => `$${params.push(value)}`;
+    const mark = opts.excludeWatchdogSuspects || opts.suspectWaitMs !== undefined ? param(WATCHDOG_SUSPECT_MARK) : '';
+    const overdue = opts.suspectWaitMs === undefined ? null
+      : `(${markedJobSql(mark)} AND updated_at <= now() - (${param(opts.suspectWaitMs)}::double precision * interval '1 millisecond'))`;
+    const suspects = !opts.excludeWatchdogSuspects ? '' : ` AND ${unmarkedJobSql(mark)}${overdue ? ` AND NOT EXISTS (SELECT 1 FROM minion_jobs s WHERE s.queue = $3
+           AND s.status = 'waiting' AND s.submission_authority IS NOT NULL AND s.name = ANY($4) AND ${overdue})` : ''}`;
+    const names = excludeNames ? ` AND NOT (name = ANY(${param(excludeNames)}))` : '';
     const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
@@ -1492,14 +1502,13 @@ export class MinionQueue {
         updated_at = now()
        WHERE id = (
          SELECT id FROM minion_jobs
-         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)${opts.excludeWatchdogSuspects ? ` AND ${unmarkedJobSql('$9')}` : ''}${excludeNames ? ` AND NOT (name = ANY($${opts.excludeWatchdogSuspects ? 10 : 9}))` : ''}
-         ORDER BY priority ASC, created_at ASC
+         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)${suspects}${names}
+         ORDER BY ${overdue && !opts.excludeWatchdogSuspects ? `${overdue} DESC, ` : ''}priority ASC, created_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
        RETURNING *`,
-      [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams(),
-        ...(opts.excludeWatchdogSuspects ? [WATCHDOG_SUSPECT_MARK] : []), ...(excludeNames ? [excludeNames] : [])]
+      params,
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
   }

@@ -360,7 +360,7 @@
   "test/pathological/a26-safe-chunks-reseal.test.ts": 9571,
   "test/pathological/a27-credential-reseal.test.ts": 10551,
   "test/pathological/a3-google-items.test.ts": 112165,
-  "test/pathological/a30-watchdog-attribution.test.ts": 8127,
+  "test/pathological/a30-watchdog-attribution.test.ts": 23264,
   "test/pathological/a31-migrate-loop-rows.serial.test.ts": 39610,
   "test/pathological/a4-synthesize-postprocess.test.ts": 17237,
   "test/pathological/a41-maintain-sources.test.ts": 49137,

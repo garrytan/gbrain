@@ -315,6 +315,7 @@ export class MinionWorker extends EventEmitter {
       childTiniPath: opts?.childTiniPath ?? '',
       longJobNames: opts?.longJobNames ?? DEFAULT_LONG_JOB_NAMES,
       shortJobReservedSlots: opts?.shortJobReservedSlots ?? DEFAULT_SHORT_JOB_RESERVED_SLOTS,
+      watchdogSuspectWaitMs: opts?.watchdogSuspectWaitMs ?? 60_000,
       onJobSettled: opts?.onJobSettled ?? (() => {}),
     };
     // Process isolation contract: 'process' without a resolved child CLI
@@ -840,7 +841,7 @@ export class MinionWorker extends EventEmitter {
               this.opts.lockDuration,
               this.opts.queue,
               this.registeredNames,
-              { excludeWatchdogSuspects: this.inFlight.size > 0, excludeNames: claimExclusions(this.opts, [...this.inFlight.values()].map(f => f.job.name)) },
+              { excludeWatchdogSuspects: this.inFlight.size > 0, suspectWaitMs: this.opts.watchdogSuspectWaitMs, excludeNames: claimExclusions(this.opts, [...this.inFlight.values()].map(f => f.job.name)) },
             ).then(claimed => {
               if (claimed) {
                 this.executions.set(lockToken, { job: claimed, lockToken, stopped: true });
