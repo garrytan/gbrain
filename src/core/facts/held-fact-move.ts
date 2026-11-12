@@ -27,6 +27,8 @@ export interface HeldFactMoveOutcome {
   unmovable: Array<{ code: 'held_fact_unmovable'; slug: string; fact_ids: number[]; reason: string }>;
   /** #8568: entities whose move threw (I/O, database), as opposed to holds the next run settles. */
   write_errors: number;
+  /** GST-2492 (B): saved versions of the shared page stored in segments, which the move could not edit (the most any one move counted). */
+  segmented_versions_not_edited: number;
 }
 
 /**
@@ -94,6 +96,24 @@ export async function ensurePageForHeldRows(engine: BrainEngine, sourceId: strin
 }
 
 type HeldRow = UnfencedFactRow & { from_slug: string };
+export type HoldingHome = Awaited<ReturnType<typeof holdingHome>>;
+
+/**
+ * GST-2492 (C4): where moveHeldFacts puts the held rows keyed `key` on holding page `from`, the one resolution the rule
+ * preview and the move share: the page the key resolves to (a bare name moves to the page it names), else the page an
+ * exact page rule names (created for the rows), else, off the shared page, the holding page `home` gives (the rules in
+ * force; a preview passes its desired rules). Null: the rows stay where they are.
+ */
+export async function heldRowDestination(engine: BrainEngine, sourceId: string, key: string, from: string,
+  home: (key: string) => Promise<HoldingHome> = k => holdingHome(engine, sourceId, k)):
+  Promise<{ slug: string; kind: 'page' | 'create' | 'rehome' } | { unmovable: string } | null> {
+  const target = await heldFactTarget(engine, sourceId, key);
+  if (target && 'ambiguous' in target) return { unmovable: ambiguousHeldReason(target.ambiguous) };
+  if (target) return { slug: target.slug, kind: 'page' };
+  const h = await home(key);
+  if (h && 'refused' in h) return h.refused === 'access_unreadable' ? { unmovable: 'access_unreadable' } : { slug: key, kind: 'create' };
+  return h && h.slug !== from && from === UNATTRIBUTED_MEMORY_SLUG ? { slug: h.slug, kind: 'rehome' } : null;
+}
 
 /**
  * GST-2492 (B2): after a sync releases its lease, the held facts a folder rule it applied now covers leave the shared page
@@ -107,7 +127,7 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
 }
 
 export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Promise<HeldFactMoveOutcome> {
-  const outcome: HeldFactMoveOutcome = { moved: 0, moved_slugs: [], rehomed: 0, unmovable: [], write_errors: 0 };
+  const outcome: HeldFactMoveOutcome = { moved: 0, moved_slugs: [], rehomed: 0, unmovable: [], write_errors: 0, segmented_versions_not_edited: 0 };
   const rows = await engine.executeRaw<HeldRow>(
     `SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
@@ -127,10 +147,10 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Prom
   let authority: Awaited<ReturnType<typeof maintenancePreflight>> | undefined;
   for (const [, group] of keys) {
     const { from_slug: from, entity_slug: key } = group[0]!;
-    let target = await heldFactTarget(engine, sourceId, key!);
-    const home = target ? null : await holdingHome(engine, sourceId, key!);
-    if (home && 'refused' in home && home.refused === 'access_unreadable') { unmovable(key!, group.map(r => r.id), 'access_unreadable'); continue; }
-    if (home && 'refused' in home) {
+    const dest = await heldRowDestination(engine, sourceId, key!, from);
+    if (!dest) continue;
+    if ('unmovable' in dest) { unmovable(key!, group.map(r => r.id), dest.unmovable); continue; }
+    if (dest.kind === 'create') {
       // An exact page rule on the entity: only its own page carries those readers, so the page is created for its rows.
       authority ??= await maintenancePreflight(engine, sourceId);
       if (!authority) return outcome;
@@ -138,11 +158,8 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Prom
         unmovable(key!, group.map(r => r.id), (error instanceof Error ? error.message : String(error)).slice(0, 300));
         continue;
       }
-      target = { slug: key! };
     }
-    if (target && 'ambiguous' in target) unmovable(key!, group.map(r => r.id), ambiguousHeldReason(target.ambiguous));
-    else if (target) groups.push({ slug: target.slug, from, ...(target.slug === key ? {} : { fromEntity: key! }), group, rehome: false });
-    else if (home && 'slug' in home && home.slug !== from && from === UNATTRIBUTED_MEMORY_SLUG) groups.push({ slug: home.slug, from, group, rehome: true });
+    groups.push({ slug: dest.slug, from, ...(dest.kind === 'rehome' || dest.slug === key ? {} : { fromEntity: key! }), group, rehome: dest.kind === 'rehome' });
   }
   if (groups.length === 0) return outcome;
   authority ??= await maintenancePreflight(engine, sourceId);
@@ -171,6 +188,9 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Prom
       for (const reason of new Set(rejected.map(r => r.class))) unmovable(slug, rejected.filter(r => r.class === reason).map(r => r.fact_id), reason);
       if (plan.kind === 'unadoptable') continue;
       await submitPlannedFactFenceAdoption(engine, authority, slug, plan.request, true);
+      const [edited] = await engine.executeRaw<{ n: number | null }>(`SELECT (outcome->'held_versions_edited'->>'segmented_versions_not_edited')::int AS n
+        FROM persistence_requests WHERE request_id = $1::uuid`, [plan.request.requestId]);
+      outcome.segmented_versions_not_edited = Math.max(outcome.segmented_versions_not_edited, Number(edited?.n ?? 0));
       if (rehome) outcome.rehomed += plan.fence.assignments.length;
       else { outcome.moved += plan.fence.assignments.length; outcome.moved_slugs.push(slug); }
     } catch (error) {

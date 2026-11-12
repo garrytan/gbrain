@@ -50,6 +50,8 @@ import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { rememberAcceptsPageCreatedSince } from '../persistence/page-identity.ts';
 import { fenceRowOf, withHeldFactsFence, type FenceRowInput } from './unfenced-facts.ts';
+import { rewriteVersionBodies } from './purge.ts';
+import { carriesClaimSql, claimNeedles } from './purge-verify.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
 
 export type FenceFactAppendInput = {
@@ -229,7 +231,8 @@ export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteR
 /**
  * GST-2492 (A2): the rows of `rows` (an entity's held claims) in the saved versions of holding page `slug`, removed when
  * `write`. Each edited version keeps every other byte; only the table lines of those rows go. Database only: Git
- * history is never rewritten. Idempotent (a second run finds nothing). Segmented versions are counted, not edited.
+ * history is never rewritten. Idempotent (a second run finds nothing). Reads and rewrites through purge's
+ * rewriteVersionBodies, the one inline saved-version reader; segmented versions are counted, not edited.
  */
 export async function heldRowsInVersions(db: BrainEngine, sourceId: string, slug: string, rows: ReadonlyArray<{ entity: string; claim: string }>, write: boolean):
   Promise<{ versions: number; rows: number; segmented: number }> {
@@ -237,34 +240,25 @@ export async function heldRowsInVersions(db: BrainEngine, sourceId: string, slug
   const keys = new Set(rows.map(r => `${r.entity}\0${r.claim.trim()}`));
   const entities = [...new Set(rows.map(r => r.entity))];
   if (!keys.size) return out;
-  const versions = await db.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; segmented: boolean }>(
-    `SELECT v.id, v.compiled_truth, v.timeline, v.body_storage = 'segmented' AS segmented FROM page_versions v JOIN pages p ON p.id = v.page_id
-      WHERE p.source_id = $1 AND p.slug = $2 AND (v.body_storage = 'segmented' OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS e
-        WHERE strpos(COALESCE(v.compiled_truth, ''), e) > 0 OR strpos(COALESCE(v.timeline, ''), e) > 0)) ORDER BY v.id${write ? ' FOR UPDATE OF v' : ''}`,
-    [sourceId, slug, entities]);
-  const strip = (text: string): [string, number] => {
-    let removed = 0;
+  const strip = (text: string): string => {
     for (let from = 0; ;) {
       const begin = text.indexOf(FACTS_FENCE_BEGIN, from), end = begin < 0 ? -1 : text.indexOf(FACTS_FENCE_END, begin);
-      if (end < 0) return [text, removed];
+      if (end < 0) return text;
       const block = text.slice(begin, end + FACTS_FENCE_END.length);
       const drop = new Set(parseFactsFenceFor(block, { slug }).facts.filter(f => f.entity && keys.has(`${f.entity}\0${f.claim.trim()}`)).map(f => f.rowNum));
       const lines = block.split('\n');
       const kept = lines.filter(line => !drop.has(Number(/^\|\s*(\d+)\s*\|/.exec(line)?.[1] ?? NaN)));
-      removed += lines.length - kept.length;
+      out.rows += lines.length - kept.length;
       const next = kept.join('\n');
       text = text.slice(0, begin) + next + text.slice(end + FACTS_FENCE_END.length);
       from = begin + next.length;
     }
   };
-  for (const v of versions) {
-    if (v.segmented) { out.segmented++; continue; }
-    const [compiled, a] = strip(v.compiled_truth ?? ''), [timeline, b] = strip(v.timeline ?? '');
-    if (!a && !b) continue;
-    out.versions++; out.rows += a + b;
-    if (write) await db.executeRaw('UPDATE page_versions SET compiled_truth = $2, timeline = $3 WHERE id = $1',
-      [v.id, v.compiled_truth === null ? null : compiled, v.timeline === null ? null : timeline]);
-  }
+  await rewriteVersionBodies(db, { columns: '', where: `v.id>$2 AND p.slug=$3 AND (${entities.map((_, i) => carriesClaimSql('v', 4 + 2 * i)).join(' OR ')})`,
+    params: after => [sourceId, after, slug, ...entities.flatMap(claimNeedles)], lock: write }, strip, (_v, _edited, changed) => { if (changed) out.versions++; }, write);
+  const [segmented] = await db.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id = v.page_id
+    WHERE p.source_id = $1 AND p.slug = $2 AND v.body_storage = 'segmented'`, [sourceId, slug]);
+  out.segmented = Number(segmented?.n ?? 0);
   return out;
 }
 

@@ -228,8 +228,6 @@ src/core/facts/backstop.ts	runPipeline	field	STREAM
 src/core/facts/conversation-window-extract.ts	regularPageVersionToken	field	STREAM	
 src/core/facts/drain.ts	estimateBacklogUsd	sql	META	
 src/core/facts/eligibility.ts	isFactsBackstopEligible	field	LEAD	
-src/core/facts/fence-fact-append.ts	heldRowsInVersions	field	SEGW	GST-2492 A2, as purge's redactPageVersions: rewrites inline version bodies only; a segmented version is counted (segmented_versions_not_edited on the receipt), never read
-src/core/facts/fence-fact-append.ts	heldRowsInVersions	sql	SEGW	GST-2492 A2, as purge's redactPageVersions: selects inline version bodies; a segmented version is selected only to be counted
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	field	SEGW	assertInlineBody before the fence write
 src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	field	SEGW	the body materializedPage read back within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) first
@@ -255,11 +253,11 @@ src/core/facts/proposal-supersede.ts	prepareProposalMutation	field	SEGW	segmente
 src/core/facts/proposal-supersede.ts	undoUnmanaged	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge-verify.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/facts/purge-verify.ts	verifyPagePurge	sql	STREAM	segmented pages probed through their segment texts (withSegmentedProse)
-src/core/facts/purge.ts	redactPageVersions	field	SEGW	lane 1e: segmented versions carry no body
-src/core/facts/purge.ts	redactPageVersions	sql	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/purge.ts	rewritePageBodies	call:contentHash	META	inline pages only (see sql row)
 src/core/facts/purge.ts	rewritePageBodies	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge.ts	rewritePageBodies	sql	SEGW	refuses a segmented target with page_body_segmented before rewriting (segment purge in PR 2)
+src/core/facts/purge.ts	rewriteVersionBodies	field	SEGW	lane 1e: segmented versions carry no body
+src/core/facts/purge.ts	rewriteVersionBodies	sql	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/reconcile-watermark.ts	readFactsReconcileBacklog	sql	STREAM	
 src/core/facts/reconcile-watermark.ts	selectFactsReconcileDrain	sql	STREAM	
 src/core/facts/relink-publish.ts	prepareRelinkMutation	call:serializePageToMarkdown	SEGW	

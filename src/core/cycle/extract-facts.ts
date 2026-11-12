@@ -865,7 +865,7 @@ export async function runExtractFacts(
       const held = await moveHeldFacts(engine, sourceId);
       if (held.moved + held.rehomed) result.heldFactsMoved = held.moved + held.rehomed;
       result.pagesFailed += held.write_errors;
-      for (const row of held.unmovable) result.warnings.push(`HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`);
+      result.warnings.push(...held.unmovable.map(row => `HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`), ...(held.segmented_versions_not_edited ? [`HELD_VERSIONS_NOT_EDITED: ${held.segmented_versions_not_edited} saved version(s) of memory/unattributed are stored in segments and were not edited; readers of its saved versions can still read the moved rows in up to ${held.segmented_versions_not_edited} of them.`] : []));
     } catch (e) {
       fenceStepFailed ||= !isFenceHold(e);
       result.warnings.push(`HELD_FACT_UNMOVABLE: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);

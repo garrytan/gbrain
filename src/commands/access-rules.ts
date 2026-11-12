@@ -123,7 +123,7 @@ export interface RulePreview {
    */
   held_facts_moving: Array<{ fact_id: number; entity_slug: string; to: string }>;
   /** The rows of those facts in the shared page's saved versions, and those versions, the apply removes them from (database only; the version the move itself saves is edited too). */
-  held_versions_editing: { rows: number; versions: number };
+  held_versions_editing: { rows: number; versions: number; segmented_versions_not_edited?: number };
 }
 
 async function previewRules(engine: BrainEngine, sourceId: string, store: AccessStore, persisted: boolean, desired: FolderRule[]): Promise<RulePreview> {
@@ -150,18 +150,30 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   const credentials: RulePreview['credentials_losing'] = [];
   for (const m of losing) for (const c of await boundCredentials(engine, m)) credentials.push({ member: m, kind: c.kind, name: c.name });
   // A narrowing applies at once, so the held facts it covers leave the world-readable holding page in the same apply.
-  const heldRows = await engine.executeRaw<{ id: number; entity_slug: string; fact: string; page: boolean }>(`SELECT f.id::int AS id, f.entity_slug, f.fact,
-      EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page
+  const heldRows = await engine.executeRaw<{ id: number; entity_slug: string; fact: string }>(`SELECT f.id::int AS id, f.entity_slug, f.fact
     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
       AND f.entity_slug IS NOT NULL AND f.entity_slug <> $2 ORDER BY f.id`, [sourceId, UNATTRIBUTED_MEMORY_SLUG]);
-  const covered = heldRows.filter(row => cls.target.some(rule => ruleCovers(row.entity_slug, rule.prefix)));
-  const moving = covered.map(row => ({ fact_id: Number(row.id), entity_slug: row.entity_slug,
-    to: row.page || cls.target.some(rule => rule.prefix === row.entity_slug) ? row.entity_slug : folderHoldingSlug(row.entity_slug) }));
+  // C4: each row's `to` is where the apply's move puts it (heldRowDestination), with the desired rules deciding a page-less entity's home.
+  const { heldRowDestination, holdingHome } = await import('../core/facts/held-fact-move.ts');
+  const covers = (slug: string) => cls.target.some(rule => ruleCovers(slug, rule.prefix));
+  const desiredHome = async (key: string) => {
+    const now = await holdingHome(engine, sourceId, key);
+    if (!now || ('refused' in now && now.refused === 'access_unreadable')) return now;
+    if (cls.target.some(rule => rule.prefix === key)) return { refused: 'page_rule' as const };
+    return { slug: covers(key) ? folderHoldingSlug(key) : UNATTRIBUTED_MEMORY_SLUG };
+  };
+  const destinations = new Map<string, string | null>();
+  for (const key of new Set(heldRows.map(row => row.entity_slug))) {
+    const dest = await heldRowDestination(engine, sourceId, key, UNATTRIBUTED_MEMORY_SLUG, desiredHome);
+    destinations.set(key, dest && 'slug' in dest && covers(dest.slug) ? dest.slug : null);
+  }
+  const covered = heldRows.filter(row => destinations.get(row.entity_slug));
+  const moving = covered.map(row => ({ fact_id: Number(row.id), entity_slug: row.entity_slug, to: destinations.get(row.entity_slug)! }));
   // A2: the apply also removes those rows from the shared page's saved versions (database only; Git history stays).
   const versions = await heldRowsInVersions(engine, sourceId, UNATTRIBUTED_MEMORY_SLUG, covered.map(row => ({ entity: row.entity_slug, claim: row.fact })), false);
   return { source_id: sourceId, store, store_persisted: persisted, expect, desired, changes: cls.changes, held: cls.held, matched_pages: matched,
     unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, held_facts_moving: moving,
-    held_versions_editing: { rows: versions.rows, versions: versions.versions } };
+    held_versions_editing: { rows: versions.rows, versions: versions.versions, ...(versions.segmented ? { segmented_versions_not_edited: versions.segmented } : {}) } };
 }
 
 function previewLines(p: RulePreview, rerun: string): string[] {
@@ -174,6 +186,7 @@ function previewLines(p: RulePreview, rerun: string): string[] {
     ...(p.credentials_losing.length ? [`  Credentials losing access: ${p.credentials_losing.map(c => `${c.kind} ${c.name} (${c.member})`).join(', ')}`] : []),
     ...(p.held_facts_moving.length ? [`  Held facts leaving ${UNATTRIBUTED_MEMORY_SLUG} with this change: ${p.held_facts_moving.length} (${p.held_facts_moving.slice(0, 10).map(m => `fact ${m.fact_id} for ${m.entity_slug} to ${m.to}${m.to === m.entity_slug ? ' (its page)' : ''}`).join(', ')}${p.held_facts_moving.length > 10 ? ', ...' : ''})`] : []),
     ...(p.held_versions_editing.versions ? [`  Their rows also leave ${p.held_versions_editing.versions} saved version(s) of ${UNATTRIBUTED_MEMORY_SLUG} (${p.held_versions_editing.rows} row(s); database only, Git history is not rewritten)`] : []),
+    ...(p.held_versions_editing.segmented_versions_not_edited ? [`  Not edited: ${p.held_versions_editing.segmented_versions_not_edited} saved version(s) of ${UNATTRIBUTED_MEMORY_SLUG} are stored in segments, which this apply cannot edit. ${segmentedConsequence(p.held_versions_editing.segmented_versions_not_edited)} The apply will report itself incomplete.`] : []),
     'Pages under no rule are unchanged; unbound credentials and stdio read no page under a rule.',
     `Nothing written. To approve, add --yes --expect ${p.expect} (${rerun}).`,
   ];
@@ -193,7 +206,16 @@ export interface EditResult {
   git?: GitPolicyReceipt;
   note?: string;
   /** GST-2492: held facts this apply moved off memory/unattributed to a page the new rules cover, and those that could not move. */
-  held_facts?: { moved: number; unmovable: Array<{ slug: string; fact_ids: number[]; reason: string }> };
+  held_facts?: { moved: number; unmovable: Array<{ slug: string; fact_ids: number[]; reason: string }>; complete?: false; segmented_versions_not_edited?: number };
+}
+
+/** GST-2492 (B): what an unedited segmented saved version of the shared page leaves readable. */
+const segmentedConsequence = (n: number) => `Readers of ${UNATTRIBUTED_MEMORY_SLUG}'s saved versions can still read the moved rows in up to ${n} of those version(s).`;
+
+/** The words of a held-fact move that left segmented saved versions of the shared page unedited. */
+function heldIncompleteLines(held: EditResult['held_facts']): string[] {
+  const n = held?.segmented_versions_not_edited;
+  return n ? [`  Incomplete: the held facts moved, but ${n} saved version(s) of ${UNATTRIBUTED_MEMORY_SLUG} are stored in segments and were not edited. ${segmentedConsequence(n)}`] : [];
 }
 
 /**
@@ -211,9 +233,11 @@ async function withHeldFactsMoved(engine: BrainEngine, result: EditResult): Prom
 async function heldFactsMoved(engine: BrainEngine, sourceId: string): Promise<EditResult['held_facts']> {
   const { moveHeldFacts } = await import('../core/facts/held-fact-move.ts');
   const moved = await moveHeldFacts(engine, sourceId).catch((error: unknown) =>
-    ({ moved: 0, rehomed: 0, unmovable: [{ slug: UNATTRIBUTED_MEMORY_SLUG, fact_ids: [], reason: (error instanceof Error ? error.message : String(error)).slice(0, 300) }] }));
+    ({ moved: 0, rehomed: 0, segmented_versions_not_edited: 0, unmovable: [{ slug: UNATTRIBUTED_MEMORY_SLUG, fact_ids: [], reason: (error instanceof Error ? error.message : String(error)).slice(0, 300) }] }));
   if (!moved.moved && !moved.rehomed && !moved.unmovable.length) return undefined;
-  return { moved: moved.moved + moved.rehomed, unmovable: moved.unmovable.map(({ slug, fact_ids, reason }) => ({ slug, fact_ids, reason })) };
+  const segmented = moved.segmented_versions_not_edited;
+  return { moved: moved.moved + moved.rehomed, unmovable: moved.unmovable.map(({ slug, fact_ids, reason }) => ({ slug, fact_ids, reason })),
+    ...(segmented ? { complete: false as const, segmented_versions_not_edited: segmented } : {}) };
 }
 
 /** Writes a desired rulebook through the source's store (after the caller's preview) and reports the result. */
@@ -247,6 +271,7 @@ function editLines(r: EditResult): string[] {
     ...(r.pages_restamped ? [`  ${r.pages_restamped} page(s) restamped`] : []),
     ...(r.held_facts?.moved ? [`  ${r.held_facts.moved} held fact(s) moved to a page the rules now cover`] : []),
     ...(r.held_facts?.unmovable.length ? [`  Held facts that could not move yet (the next gbrain dream retries): ${r.held_facts.unmovable.map(u => `${u.slug} facts ${u.fact_ids.join(',')} (${u.reason})`).join('; ')}`] : []),
+    ...heldIncompleteLines(r.held_facts),
     ...(r.held.length ? [`Held: preview with gbrain access apply --source ${r.source_id}`] : []),
     ...(r.state === 'pending' ? [`Still pending: finish with gbrain access resume --source ${r.source_id}`] : []),
     ...(r.note ? [r.note] : []),
@@ -420,7 +445,7 @@ async function applyCmd(engine: BrainEngine, args: string[], json: boolean): Pro
   const held = await heldFactsMoved(engine, sourceId);
   return print(json, { ...r, ...(git ? { git } : {}), ...(held ? { held_facts: held } : {}) }, () => [`Source ${sourceId}: revision ${r.revision} approved and applied (${r.pages_restamped} page(s) restamped)`,
     ...(git ? [`  ${git.path} committed ${git.commit?.slice(0, 12) ?? '(unchanged)'} (${git.outcome})`] : []),
-    ...(r.held.length ? [`A later revision still holds ${r.held.length} widening change(s); preview with gbrain access apply --source ${sourceId}`] : [])]);
+    ...(r.held.length ? [`A later revision still holds ${r.held.length} widening change(s); preview with gbrain access apply --source ${sourceId}`] : []), ...heldIncompleteLines(held)]);
 }
 
 /** Dispatches `gbrain access rule|apply|resume`; false when `cmd` is not one of them. */
@@ -432,7 +457,7 @@ export async function runAccessRules(engine: BrainEngine, cmd: string, rest: str
       const sourceId = flag(rest, '--source') ?? 'default';
       const r = await resumePolicy(engine, sourceId, progressLogger(json));
       const held = await heldFactsMoved(engine, sourceId);
-      print(json, { source_id: sourceId, ...r, ...(held ? { held_facts: held } : {}) }, () => [`Source ${sourceId}: ${r.pages_restamped} page(s) restamped${r.pending_before.length ? `; pending prefixes cleared: ${r.pending_before.map(p => p || '(whole source)').join(', ')}` : '; nothing was pending'}`]);
+      print(json, { source_id: sourceId, ...r, ...(held ? { held_facts: held } : {}) }, () => [`Source ${sourceId}: ${r.pages_restamped} page(s) restamped${r.pending_before.length ? `; pending prefixes cleared: ${r.pending_before.map(p => p || '(whole source)').join(', ')}` : '; nothing was pending'}`, ...heldIncompleteLines(held)]);
       return true;
     }
     default: return false;

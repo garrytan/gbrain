@@ -200,7 +200,13 @@ Every write goes through the same door, whoever sends it:
   maintenance cycle moves them. The move also removes those rows from the
   shared page's saved versions in the database (the rule's preview counts
   them, and the move's write receipt records which rows, how many versions and
-  where they went). Git history is never rewritten: the shared page's earlier
+  where they went). A saved version stored in segments (a shared page over
+  1 MiB with `pages.segmented_storage` on) is not edited: the preview names how
+  many there are (`segmented_versions_not_edited`), the apply's result says it
+  is incomplete (`complete: false`), and readers of the shared page's saved
+  versions can still read the moved rows in up to that many versions. The
+  preview names each held fact's destination as the move resolves it, so a row
+  saved under a bare name shows the page that name resolves to. Git history is never rewritten: the shared page's earlier
   commits keep the row as it was before the rule. An entity under an exact page rule (a rule on the
   entity's own slug) has no holding page with its readers: the fact is refused
   with [`git_home_required`](write-refusals.md#git_home_required) (reason

@@ -424,6 +424,84 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
       [kept]: [{ entity_slug: 'notes/garden-plan', source_markdown_slug: HOLD }] });
   }), 300_000);
 
+  /** A saved version of `slug` stored in segments, with no body copy (as test/repair-unwithdrawn-facts-8819.test.ts seeds one). */
+  const segmentedVersion = (engine: BrainEngine, slug: string) => engine.executeRaw(`INSERT INTO page_versions (page_id, compiled_truth, timeline, body_storage, body_generation)
+    SELECT id, NULL, NULL, 'segmented', 1 FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
+  const humanLines = async (engine: BrainEngine, cmd: string, args: string[]) => {
+    const lines: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try { await runAccessRules(engine, cmd, args, false); } finally { spy.mockRestore(); }
+    return lines.join('\n');
+  };
+  const consequence = (n: number) => `Readers of ${HOLD}'s saved versions can still read the moved rows in up to ${n} of those version(s).`;
+
+  test('a saved version stored in segments is named before the apply, and the apply reports itself incomplete with what stays readable', () => strict(async ({ engine, ctx }) => {
+    const acme = 'The acme-example brief carries a segmented clause.';
+    const beta = 'The beta-example plan carries a segmented clause.';
+    await remember(ctx, acme, 'clients/acme-example/brief');
+    await remember(ctx, beta, 'clients/beta-example/plan');
+    await settleManagedGitEffects(engine);
+    await segmentedVersion(engine, HOLD);
+    const args = (prefix: string) => ['add', '--prefix', prefix, '--readers', 'alice-example', '--source', 'default'];
+    const preview = await cli(engine, ['rule', ...args('clients/acme-example/'), '--json']);
+    expect(preview.held_versions_editing).toMatchObject({ segmented_versions_not_edited: 1 });
+    const words = await humanLines(engine, 'rule', args('clients/acme-example/'));
+    expect(words).toContain(`Not edited: 1 saved version(s) of ${HOLD} are stored in segments, which this apply cannot edit. ${consequence(1)} The apply will report itself incomplete.`);
+    const applied = await cli(engine, ['rule', ...args('clients/acme-example/'), '--yes', '--expect', String(preview.expect), '--json']);
+    expect(applied.held_facts).toEqual({ moved: 1, unmovable: [], complete: false, segmented_versions_not_edited: 1 });
+    const second = await cli(engine, ['rule', ...args('clients/beta-example/'), '--json']);
+    expect(second.held_versions_editing).toMatchObject({ segmented_versions_not_edited: 1 });
+    const done = await humanLines(engine, 'rule', [...args('clients/beta-example/'), '--yes', '--expect', String(second.expect)]);
+    expect(done).toContain(`Incomplete: the held facts moved, but 1 saved version(s) of ${HOLD} are stored in segments and were not edited. ${consequence(1)}`);
+    expect(await factRows(engine, beta)).toMatchObject([{ source_markdown_slug: 'clients/beta-example/memory/unattributed' }]);
+  }), 300_000);
+
+  test('the sync path and the maintenance fallback report a move that left a segmented saved version unedited as incomplete', () => strict(async ({ engine, ctx, root }) => {
+    const moveModule = await import('../src/core/facts/held-fact-move.ts');
+    const original = moveModule.moveRuledSharedHeld;
+    const synced = 'The acme-example brief carries a segmented synced clause.';
+    const crashed = 'The beta-example plan carries a segmented synced clause.';
+    await remember(ctx, synced, 'clients/acme-example/brief');
+    await remember(ctx, crashed, 'clients/beta-example/plan');
+    await settleManagedGitEffects(engine);
+    await segmentedVersion(engine, HOLD);
+    const policy = (list: FolderRule[]) => commitPolicyFile(root, POLICY_FILE, () => serializePolicyYaml(list), 'access: rule');
+    const sync = () => performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true } as never);
+    let result: Awaited<ReturnType<typeof original>> = null;
+    const errors: string[] = [];
+    const spy = spyOn(moveModule, 'moveRuledSharedHeld').mockImplementation(async (e, s) => (result = await original(e, s)));
+    const stderr = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+    try {
+      policy([rule('acme', 'clients/acme-example/', ['alice-example'])]);
+      await sync();
+    } finally { spy.mockRestore(); stderr.mockRestore(); }
+    expect(result).toMatchObject({ rehomed: 1, segmented_versions_not_edited: 1 });
+    expect(errors.join('\n')).toContain('held facts moved under a new folder rule, incomplete: 1 saved version(s) of memory/unattributed are stored in segments and were not edited; readers of its saved versions can still read the moved rows in up to 1 of them.');
+    const died = spyOn(moveModule, 'moveRuledSharedHeld').mockImplementation(async () => { throw new Error('process died'); });
+    try {
+      policy([rule('acme', 'clients/acme-example/', ['alice-example']), rule('beta', 'clients/beta-example/', ['alice-example'])]);
+      await sync();
+    } finally { died.mockRestore(); }
+    const upkeep = await runExtractFacts(engine, { sourceId: 'default' });
+    expect(upkeep.heldFactsMoved).toBe(1);
+    expect(upkeep.warnings).toContain('HELD_VERSIONS_NOT_EDITED: 1 saved version(s) of memory/unattributed are stored in segments and were not edited; readers of its saved versions can still read the moved rows in up to 1 of them.');
+  }), 300_000);
+
+  test('the preview names as each held row\'s destination the page the apply moves it to, for a row keyed by a bare name', () => strict(async ({ engine, ctx }) => {
+    const claim = 'Kofi Example signs the acme-example lease.';
+    const saved = await remember(ctx, claim, 'Kofi Example');
+    expect(saved).toMatchObject({ entity_slug: 'kofi-example', page: HOLD });
+    await call(ctx, 'put_page', { slug: 'people/kofi-example', content: '---\ntype: person\ntitle: Kofi Example\n---\n\nNotes about Kofi Example.\n' });
+    await settleManagedGitEffects(engine);
+    const args = ['add', '--prefix', 'people/', '--readers', 'alice-example', '--source', 'default'];
+    const preview = await cli(engine, ['rule', ...args, '--json']);
+    const applied = await cli(engine, ['rule', ...args, '--yes', '--expect', String(preview.expect), '--json']);
+    expect(applied.held_facts).toMatchObject({ moved: 1 });
+    const [after] = await factRows(engine, claim);
+    expect(preview.held_facts_moving).toEqual([{ fact_id: Number(saved.id), entity_slug: 'kofi-example', to: after!.source_markdown_slug }]);
+    expect(after!.source_markdown_slug).toBe('people/kofi-example');
+  }), 300_000);
+
   test('the owner reads every holding page before and after a re-home: with the opt-in on, and off where the rules name the owner', () => strict(async ({ engine, ctx }) => {
     const as = await members(engine);
     await setOwner(engine, 'carol-example');
