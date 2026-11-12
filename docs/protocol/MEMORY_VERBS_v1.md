@@ -302,7 +302,12 @@ Save ONE fact with mandatory attribution.
   consent line. An omitted `visibility` saves `private` when the target page is
   private (by `visibility` or a privacy alias such as `access: private`) or the
   operator set `facts.default_visibility` to private; a save never lands wider
-  than the page it is written into.
+  than the page it is written into. In gbrain, a remote credential bound to
+  one member saves `private` on its own member page unless it passes
+  `share: true`, and its `visibility: "world"` is refused; the brain owner's
+  own credential saves as above (shared by default, `private` on its member
+  page when it asks or the page or default keeps facts private). The response
+  names the `page` and `visibility` the fact got.
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —
@@ -323,7 +328,10 @@ and a claim forgotten without an entity is withdrawn for every entity. To link
 a fact saved without an entity, do not forget it; remember it with `entity`
 and `replaces` set to its id. In gbrain, a fact saved without an entity is a
 row of the `memory/unattributed` page's `## Facts` table, created on first
-use; linking it strikes that row in the same write.
+use; linking it strikes that row in the same write. A remote save onto a
+member's own page is refused only when that member could read what was
+forgotten (a fact on its own page, or for the brain owner a fact it reads);
+a claim it never read saves as its own fact, with the reply a new claim gets.
 
 #### remember withdrawn refusal detail (additive)
 
@@ -408,6 +416,38 @@ Optional response fields; clients must ignore any they do not know.
   caller is never told about an entity it cannot read: that case is `NO_ENTITY`.
 - `hint: string` — present with `warnings`; names the `entity` input.
 
+#### remember: where the fact landed (additive)
+
+Optional response fields; clients must ignore any they do not know.
+
+- `page: string`: the page whose `## Facts` table now holds the fact. It is
+  absent when the fact is on no page: an `entity` slug that has no page, or a
+  fact with no entity on a source that cannot hold `memory/unattributed`.
+  `remember` never creates an entity page.
+- `visibility`: `world` or `private`, as saved.
+- `persistence: { mode }`: `filesystem` when the write changed a page file,
+  `database` when it changed the database alone.
+- `write_through: { written, skipped? }`: `skipped` says why no file was
+  written. `entity_page_missing`: the source has a checkout, but the entity
+  has no page to take the fact. `no_repo_configured`: the source has no
+  checkout, so the database is its record. `disabled_by_config` and
+  `subagent_sandbox`: write-through is off for the brain or for this caller.
+  `held_for: string`: on a source whose pages are canonical in Git, the
+  entity a fact was saved for while it has no page; the fact is a row of
+  `memory/unattributed` (`page`) whose `entity` column names it, until
+  maintenance moves it into the entity's page.
+
+A fact saved for an entity with no page is stored and recalled like any
+other. Where the source's pages are in Git, the reply also carries one
+`entity_page_missing` notice per entity per session. While the fact is in the
+database only, the notice's step is `next: ask_user`: its `user_message` says
+the fact is saved in the database only and asks whether to create a page for
+the entity, and its fix is the `put_page` call to make once the user agrees.
+When the fact is held in Git (`write_through.held_for`), the notice only says
+where it is and that it moves once the page exists; it has no fix. Once the
+page exists, the next maintenance cycle can move the entity's facts into its
+Facts table and file. A brain with no Git repository gets no such notice.
+
 #### remember items: several facts in one call (additive)
 
 `items` (1 to 20) replaces `fact` for a batch, typically right before
@@ -426,7 +466,7 @@ writes nothing twice.
 
 Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
-request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
+request_id, status, id?, entity_slug?, page?, visibility?, persistence?, write_through?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
 `{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Per-item hints
 appear once in `hints`. `partial: true`: some saved; resend
@@ -742,6 +782,11 @@ forgetting the unlinked fact is refused with `invalid_params`, message prefix
 says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
+In gbrain, a credential bound to one member withdraws only facts on its own
+member page (another fact it reads is refused naming the brain host); the
+brain owner's own credential also withdraws a shared fact it reads, and any
+other fact it reads on a page that credential can write, such as a page whose
+`readable_by` names the owner.
 
 #### forget publishes like a page write (additive note)
 

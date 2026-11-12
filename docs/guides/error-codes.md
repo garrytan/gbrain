@@ -72,6 +72,22 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### access_labelled_only_owner
+
+<a id="access_labelled_only_owner"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A labelled-only grant was asked for on the brain owner (gbrain access member labelled-only <owner> on), or a labelled-only member was named the owner (gbrain access owner set), so nothing was changed. | The owner reads the whole brain. A labelled-only grant hides every page that does not name its member, so on the owner it would silently hide the owner's own brain from every credential bound to it. | Ask the user which member the group or audience credential should read as; give it its own member and mark that one labelled-only, or clear the grant before naming the owner. | user | `repeat the read that failed` | 3 | no |
+
+### access_labelled_only_unnamed
+
+<a id="access_labelled_only_unnamed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A credential whose member is labelled-only tried to create a page that would not name it: the page has no readable_by holding the member or one of its groups, and no folder or page rule over its slug lists them, so nothing was written. | A labelled-only member reads only pages labelled for it, so a page it creates must name it; otherwise it would write a page it could never read back, readable by every other caller its source admits. | Add readable_by naming the member or one of its groups to the frontmatter (readable_by: [alice-example, group:team-a]), or ask the brain operator to add a folder rule over the path that lists it, then submit again with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
 ### access_member_disabled
 
 <a id="access_member_disabled"></a>
@@ -1562,6 +1578,18 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 |---|---|---|---|---|---|---|
 | The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### enforced_member_refused
+
+<a id="enforced_member_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The CLI runs under GBRAIN_ENFORCED_MEMBER and refused the command before it read or changed anything: the command or its arguments are not on the enforced member allow-list, the variable names no usable member, a target page or source is outside what the member reads, or the write would change an access or privacy label. | A launcher pins GBRAIN_ENFORCED_MEMBER so a shared agent turn acts as one member: reads show only what that member reads, writes never touch a page it cannot read or change a label, and anything not classified is refused rather than run as the trusted owner. Stderr starts with gbrain: refused under GBRAIN_ENFORCED_MEMBER=<member>: <command> [GBRAIN_ENFORCED_REFUSED]. | Do not retry here; nothing was changed. Ask the brain owner to run the command in a direct session, one without GBRAIN_ENFORCED_MEMBER. | user | `repeat the read that failed` | 3 | no |
+
+Reasons: `command_not_allowed`, `member_not_usable`, `target_not_readable`, `label_change`, `thin_client`, `as_flag`, `arguments_not_allowed`, `remember_needs_entity`.
+
+More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member.md#refused)
+
 ### engine_closed
 
 <a id="engine_closed"></a>
@@ -1925,6 +1953,16 @@ More: [docs/guides/repair.md#fix-not-writable](../../docs/guides/repair.md#fix-n
 | Following a brain's shared skills needs the user's explicit follow approval. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately](../../docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately)
+
+### foreign_table
+
+<a id="foreign_table"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A table gbrain owns by name (an OAuth table) already exists in the brain's schema without a column gbrain always gives it, or with a type gbrain never gives it, so schema setup stopped before the schema replay or any migration changed anything; the message names the table, the column, the type found and the type gbrain needs. | gbrain creates its tables with CREATE TABLE IF NOT EXISTS, so without this check it adopted a same-named table another application created in the shared database, added its own columns to it and failed partway through an upgrade on the first statement that compared the wrong type (#9190). The table holds that application's data, so gbrain never moves, renames or drops it. | Ask the user: give gbrain its own database, or move the other table to a schema of its own (ALTER TABLE <table> SET SCHEMA <other_schema> takes its indexes and constraints along) and point that application there; then run gbrain apply-migrations --force-schema --yes. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#foreign-table](../../docs/guides/troubleshooting.md#foreign-table)
 
 ### forget_requires_owner
 
@@ -5539,6 +5577,16 @@ More: [docs/guides/system-one.md#unpriced_model](../../docs/guides/system-one.md
 Reasons: `not_utf8`, `control_character`.
 
 More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-refusals.md#unsupported_path)
+
+### untrack_not_db_only
+
+<a id="untrack_not_db_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that gbrain.yml at HEAD declares, or .gitignore does not ignore it. | The next sync deletes the page of a file that leaves Git outside a declared storage.db_only dir, and a file .gitignore does not ignore can be committed again by any later commit. | Declare the folder under storage.db_only in gbrain.yml and add its <dir>/ line to .gitignore, commit both with gbrain git commit-push -m <msg> -- gbrain.yml .gitignore, then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#untrack](../../docs/guides/shared-checkout-git.md#untrack)
 
 ### upload_expired
 

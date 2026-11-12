@@ -82,6 +82,7 @@ import {
 } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unfenced-facts.ts';
+import { moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
 import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
@@ -405,7 +406,7 @@ interface FenceReconcilePlan {
 async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: string, sourceId: string, warnings: string[], managed: boolean): Promise<FenceReconcilePlan | null> {
   // A segmented page's view and fence text come from its fences rows: only runs changed since their row was written are read.
   const segmented = isSegmentedPage(page) ? await incrementalFactsFence(db, page) : null;
-  const view = segmented?.view ?? factsFenceView(page);
+  const view = segmented?.view ?? factsFenceView({ ...page, slug });
   // #6686: a lone fence below the timeline sentinel that parses cleanly is the page's fence, read where the writers
   // edit it; one that does not parse keeps the #3625 guard below.
   const below = !view.sections.body && view.sections.timeline ? view.timeline : null;
@@ -458,7 +459,20 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     if (desired && desired.fact === fact.fact) matched.set(desired.row_num, fact);
     else stale.push(fact);
   }
-  const updates = extracted.filter(f => {
+  // GST-2511: a contested row whose widening the owner has not accepted keeps its visibility; the fence's world cell is
+  // the lower-tier writer's request, which only the owner's accept applies (trust/fence-guard.ts).
+  const widening = extracted.flatMap(f => {
+    const fact = matched.get(f.row_num);
+    return fact && fact.visibility !== 'world' && (f.visibility ?? 'private') === 'world' ? [Number(fact.id)] : [];
+  });
+  const heldWidening = new Set(widening.length ? (await db.executeRaw<{ id: number }>(
+    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action = 'supersede_fact' AND related_table = 'facts'
+      AND related_id = ANY($2::bigint[]) AND status IN ('pending', 'rejected', 'undone') AND before_state->'visibility' IS NOT NULL`,
+    [sourceId, widening])).map(r => Number(r.id)) : []);
+  const updates = extracted.map((f): FenceExtractedFact => {
+    const fact = matched.get(f.row_num);
+    return fact && heldWidening.has(Number(fact.id)) ? { ...f, visibility: fact.visibility as FenceExtractedFact['visibility'] } : f;
+  }).filter(f => {
     const fact = matched.get(f.row_num);
     return fact !== undefined && factCellsDiffer(fact, f);
   });
@@ -725,6 +739,8 @@ export interface ExtractFactsResult {
   legacyPages: string[];
   /** Unfenced rows this run appended to their page's fence and stamped with a row number (#5299). */
   unfencedRowsFenced: number;
+  /** GST-2492: facts held on memory/unattributed this run moved into their new entity page (present only when it moved any). */
+  heldFactsMoved?: number;
   /** Active fence-owned rows expired because their page was soft-deleted. */
   factsExpiredForDeletedPages: number;
   guardTriggered: boolean;
@@ -842,6 +858,16 @@ export async function runExtractFacts(
     } catch (e) {
       fenceStepFailed = !isFenceHold(e);
       result.warnings.push(`FACTS_FENCE_FAILED: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
+    }
+    // GST-2492: facts a strict source held on memory/unattributed move into their entity page once it exists.
+    try {
+      const held = await moveHeldFacts(engine, sourceId);
+      if (held.moved) result.heldFactsMoved = held.moved;
+      result.pagesFailed += held.write_errors;
+      for (const row of held.unmovable) result.warnings.push(`HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`);
+    } catch (e) {
+      fenceStepFailed ||= !isFenceHold(e);
+      result.warnings.push(`HELD_FACT_UNMOVABLE: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
     }
   }
 

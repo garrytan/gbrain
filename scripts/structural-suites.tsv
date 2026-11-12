@@ -156,6 +156,7 @@ test/e2e/segmented-rls-scope.test.ts	(file-level)	5	readFileSync
 test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTALL_FOR_AGENTS.md flow)	6	readFileSync
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
+test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
@@ -442,6 +443,7 @@ test/timing-safe.test.ts	extraction contract	1	source-surface-helper
 test/title-fuzzy-index.test.ts	findByTitleFuzzy indexed threshold	2	source-surface-helper
 test/transcription-injection.test.ts	transcription — command injection (#245)	2	readFileSync
 test/trust-write-gate-drift.test.ts	(file-level)	1	readFileSync
+test/unmanaged-push-every-site-gst2456.serial.test.ts	gbrain git commit-push	8	readFileSync
 test/upgrade-post-swap-imports.test.ts	#6604 upgrade post-swap tail	3	readFileSync
 test/upgrade.serial.test.ts	detectInstallMethod — package-install classification (in-process)	5	readFileSync
 test/upgrade.serial.test.ts	runUpgrade target verification (#4366)	8	readFileSync

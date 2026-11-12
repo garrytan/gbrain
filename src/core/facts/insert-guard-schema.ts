@@ -14,6 +14,9 @@
  *   `gbrain_preserve_fact_withdrawal`): an inserted active row matching a
  *   fact_withdrawals row (v2 or v1 fingerprint) is stamped expired_at =
  *   min(withdrawn_at) and valid_until = LEAST(valid_until, withdrawn_at).
+ *   GST-2346: a row on a member page (memory/members/<id>) is stamped only
+ *   by that page's own withdrawals, as in gbrain_preserve_fact_withdrawal
+ *   (withdrawal-schema.ts).
  *   By default the per-row BEFORE INSERT trigger facts_preserve_withdrawal_insert
  *   stamps the row before it is written, so `INSERT ... RETURNING` reads the
  *   stamp. An insert made under FACT_WITHDRAWAL_STAMP_DEFERRED_SETTING (the
@@ -81,13 +84,14 @@ CREATE OR REPLACE FUNCTION gbrain_guard_inserted_facts() RETURNS trigger
       stamp_setting := current_setting('${FACT_WITHDRAWAL_STAMP_SETTING}', true);
       PERFORM set_config('${FACT_WITHDRAWAL_STAMP_SETTING}', 'on', true);
       WITH n AS MATERIALIZED (
-        SELECT i.id, i.source_id, i.visibility, i.entity_slug,
+        SELECT i.id, i.source_id, i.visibility, i.entity_slug, i.source_markdown_slug,
           gbrain_fact_fingerprint(i.fact) AS fact_hash, gbrain_fact_fingerprint_v1(i.fact) AS fact_hash_v1
         FROM inserted_facts i WHERE i.expired_at IS NULL),
       m AS (
         SELECT n.id, min(w.withdrawn_at) AS withdrawn_at FROM n JOIN fact_withdrawals w
           ON w.source_id = n.source_id AND w.visibility = n.visibility
-          AND w.subject IN ('*', n.entity_slug) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
+          AND w.subject = ANY(CASE WHEN starts_with(COALESCE(n.source_markdown_slug, ''), 'memory/members/') THEN ARRAY[n.source_markdown_slug]
+            ELSE ARRAY['*', n.entity_slug] END) AND w.fact_hash IN (n.fact_hash, n.fact_hash_v1)
         GROUP BY n.id)
       UPDATE facts f SET expired_at = m.withdrawn_at, valid_until = LEAST(COALESCE(f.valid_until, m.withdrawn_at), m.withdrawn_at)
         FROM m WHERE f.id = m.id;

@@ -5,7 +5,7 @@ import { fenceOperationError } from '../fence-repair/refusal.ts';
 import { withdrawnFact, withdrawalFenceBlocks } from './withdrawal-overlay.ts';
 import { ambiguousFenceClaims, discoverWithdrawalTargets, withdrawalDiscoveryFailure } from './withdrawal-discovery.ts';
 import { dropPurgedFenceRows } from './purge-overlay.ts';
-import { privateProvenanceFilterFragment } from '../search/private-visibility.ts';
+import { remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 import { outcomeMarkerSql } from './audit-sources.ts';
 import { coverageActive, noteBelief, readLedgerSource, withBeliefBatch } from '../belief/ledger.ts';
 import { createPageVersion } from '../page-state/versions.ts';
@@ -56,7 +56,7 @@ export function reviewWithdrawOn(raw: string | null | undefined): boolean {
  * member-page fact (`memberPage`, positional $4; the caller checked it). Positional $3 is worldOnly.
  */
 function withdrawalAdmitSql(excludePrivate?: boolean): string {
-  return `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`;
+  return `AND ($3::boolean=false OR visibility='world' OR (visibility='private' AND source_markdown_slug=$4::text))${excludePrivate ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`;
 }
 
 /**

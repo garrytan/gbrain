@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 287194,
-    "stdoutSha256": "77ce6903a27a21e1913a9b4cd49be328cffda29f27d55ef25465c189461d3af5",
+    "stdoutBytes": 287195,
+    "stdoutSha256": "0ce2ce7f78140fd56cf7bbd02098a18c5802abfb26bd5713b347d2f50e36e5f1",
     "toolNames": [
       "remember",
       "entity",
@@ -309,7 +309,7 @@
               "type": "string"
             },
             "share": {
-              "description": "Members save privately; true: all source readers recall it. Share team work, not facts about a person.",
+              "description": "Members save privately, owner shared; true: all source readers recall it. Not for facts about a person.",
               "type": "boolean"
             },
             "source_id": {

@@ -44,7 +44,7 @@ import { privateRequestRefusal } from '../../persistence/visibility-request.ts';
 import { parseMarkdown } from '../../markdown.ts';
 import { OperationError, opError, type OperationContext } from '../../ops/contract.ts';
 import { submitPageMutation } from '../../persistence/page-mutations.ts';
-import { authorizePageVisibility, defaultSourceMemberWriter, excludesPrivateWrites, remoteReadersChecked } from '../../persistence/page-visibility.ts';
+import { authorizePageVisibility, defaultSourceMemberWriter, excludesPrivateWrites, remoteLabelsChecked } from '../../persistence/page-visibility.ts';
 import type { Principal, WriteAuthority } from '../../persistence/model.ts';
 import { assertMemberPageWriter, assertScopePageWriter } from '../../access/member-facts.ts';
 import { validateSlug } from '../../utils.ts';
@@ -131,7 +131,8 @@ export async function assertWebhookWriterMayReplace(engine: BrainEngine, writer:
   if (content === undefined) return;
   // The capture writes through a trusted local path, so apply the remote put_page readers rule here: a body never
   // drops readable_by from a page that names readers, and the readers it names keep the writer.
-  await remoteReadersChecked(engine, authority, stored?.page.frontmatter, { parsedPage: { frontmatter: parseMarkdown(content, target + '.md', { validate: true }).frontmatter } });
+  const frontmatter = parseMarkdown(content, target + '.md', { validate: true }).frontmatter;
+  await remoteLabelsChecked(engine, authority, target, stored?.page, { parsedPage: { frontmatter } });
   // A page the revision backfill has not reached has no revision to bind the write to: refused, kept in the job row for `gbrain jobs retry`.
   if (stored?.revision === REVISION_BACKFILL_PENDING) throw new RevisionBackfillPendingError(null);
   return stored?.revision ?? null;

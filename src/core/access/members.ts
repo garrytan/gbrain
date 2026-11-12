@@ -14,10 +14,16 @@
  * GST-1158: a member may carry one operator-declared email (case-folded,
  * unique per brain), only so the operator can find the member when linking a
  * trusted system's id (`memberByEmail`). It never creates a member or a link.
+ *
+ * Audience members (GBRA-108 design 2): a member's kind is `person` (the default) or `audience` (a group chat, a
+ * shared assistant). An owner read treats an audience member's own member page, its older versions, its derived pages
+ * and its facts as if its readers named the owner (search/private-visibility.ts). Only the trusted local operator
+ * sets it (`gbrain access member kind`, `member add --kind`); a remote caller is refused.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { SqlQuery } from '../sql-query.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
+import { hostOnlyError } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { ACTOR_DEFERRED_OPS, DEFAULT_ATTEST_OPS } from './actor-model.ts';
@@ -28,9 +34,16 @@ export interface MemberRecord {
   display_name: string | null;
   email: string | null;
   status: 'enabled' | 'disabled' | 'removed';
+  /** GBRA-108 design 2: person (the default) or audience (a group chat, a shared assistant; the owner reads its member page). */
+  kind: MemberKind;
+  /** GBRA-108 design 1: reads only pages that name it (access/labelled-only.ts); false by default. */
+  labelled_only: boolean;
   groups: string[];
   created_at: string | null;
 }
+
+export type MemberKind = 'person' | 'audience';
+export const MEMBER_KINDS: readonly MemberKind[] = ['person', 'audience'];
 
 export interface CredentialRef { kind: 'token' | 'client'; id: string; name: string }
 
@@ -95,12 +108,14 @@ function toRecord(row: Record<string, unknown>): MemberRecord {
     display_name: (row.display_name as string | null) ?? null,
     email: (row.email as string | null) ?? null,
     status: row.tombstoned_at != null ? 'removed' : row.disabled_at != null ? 'disabled' : 'enabled',
+    kind: row.kind === 'audience' ? 'audience' : 'person',
+    labelled_only: row.labelled_only === true,
     groups: Array.isArray(row.groups) ? (row.groups as string[]) : [],
     created_at: iso(row.created_at),
   };
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.disabled_at, m.tombstoned_at, m.created_at,
+const MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
   COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
 
@@ -190,8 +205,10 @@ export async function legacyTokenByName(engine: BrainEngine, name: string): Prom
 
 export interface AddMemberResult { member: MemberRecord; groups_created: string[]; bound: CredentialRef | null }
 
-export async function addMember(engine: BrainEngine, rawId: unknown, opts: { name?: string; email?: unknown; groups?: readonly string[]; bindToken?: string } = {}): Promise<AddMemberResult> {
+export async function addMember(engine: BrainEngine, rawId: unknown, opts: { name?: string; email?: unknown; groups?: readonly string[]; bindToken?: string; kind?: unknown; remote?: boolean } = {}): Promise<AddMemberResult> {
   const id = assertAccessId(rawId);
+  const kind = opts.kind === undefined ? 'person' : assertMemberKind(opts.kind);
+  if (kind !== 'person') assertLocalKindChange(opts, id, kind);
   const groups = (opts.groups ?? []).map(g => assertAccessId(g, 'group'));
   const email = opts.email === undefined ? null : assertMemberEmail(opts.email);
   const existing = await getMember(engine, id);
@@ -208,7 +225,7 @@ export async function addMember(engine: BrainEngine, rawId: unknown, opts: { nam
   const bindTarget = opts.bindToken ? await legacyTokenByName(engine, opts.bindToken) : null;
   let created: string[] = [];
   await engine.transaction(async tx => {
-    await tx.executeRaw('INSERT INTO access_members (id, display_name, email) VALUES ($1, $2, $3)', [id, opts.name ?? null, email]);
+    await tx.executeRaw('INSERT INTO access_members (id, display_name, email, kind) VALUES ($1, $2, $3, $4)', [id, opts.name ?? null, email, kind]);
     created = await ensureGroups(tx, groups);
     for (const g of groups) await tx.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [g, id]);
     if (bindTarget) await tx.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id::text = $1', [bindTarget.id, id]);
@@ -236,6 +253,48 @@ export async function setMemberEmail(engine: BrainEngine, rawId: unknown, rawEma
   const updated = await engine.executeRaw<{ id: string }>('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL RETURNING id', [member.id, email]).catch(error => refuseEmailRace(engine, error, email, member.id));
   if (!updated.length) throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
   return { member: (await getMember(engine, member.id))!, changed: true };
+}
+
+/** A member kind (person or audience), validated; throws access_member_invalid otherwise. */
+export function assertMemberKind(raw: unknown): MemberKind {
+  if (raw === 'person' || raw === 'audience') return raw;
+  throw memberInvalid(`"${String(raw ?? '')}" is not a member kind.`, 'ill_formed', 'Use person or audience.',
+    'An audience member (a group chat, a shared assistant) is read by the owner as its own; every other member is a person.');
+}
+
+/** Refuses a kind change from anything but the trusted local operator (remote strictly false), before anything is written. */
+function assertLocalKindChange(ctx: { remote?: boolean }, id: string, kind: MemberKind): void {
+  if (ctx.remote === false) return;
+  throw hostOnlyError({ remote: true, transport: 'http' }, 'permission_denied',
+    'Only the brain operator on the brain host marks a member as an audience or a person, so nothing was changed.',
+    ['gbrain', 'access', 'member', 'kind', id, kind],
+    'An audience member\'s own member page, derived pages and facts are read by the brain owner. Whether the owner reads them is the brain operator\'s decision, never an agent\'s.');
+}
+
+/**
+ * GBRA-108 design 2: marks a member as an audience (a group chat, a shared assistant) or a person. Only the trusted
+ * local operator may (setOwnerReadsRestricted's rule): a remote caller is refused before anything is written.
+ */
+export async function setMemberKind(engine: BrainEngine, rawId: unknown, rawKind: unknown, ctx: { remote?: boolean }): Promise<{ member: MemberRecord; changed: boolean }> {
+  const id = assertAccessId(rawId);
+  const kind = assertMemberKind(rawKind);
+  assertLocalKindChange(ctx, id, kind);
+  const member = await existingMember(engine, id, 'changed');
+  if (member.status === 'removed') throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed.');
+  if (member.kind === kind) return { member, changed: false };
+  await engine.executeRaw('UPDATE access_members SET kind = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [member.id, kind]);
+  return { member: (await getMember(engine, member.id))!, changed: true };
+}
+
+/** GBRA-108 design 2: the enabled audience members, sorted; empty when none or unreadable (nothing widens). */
+export async function audienceMemberIds(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string[]> {
+  try {
+    const rows = await engine.executeRaw<{ id: string }>(
+      "SELECT id FROM access_members WHERE kind = 'audience' AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id");
+    return rows.map(r => r.id).filter(id => ACCESS_ID_RE.test(id));
+  } catch {
+    return [];
+  }
 }
 
 /** Credentials whose stored binding names `id` (active tokens, clients not deleted). */

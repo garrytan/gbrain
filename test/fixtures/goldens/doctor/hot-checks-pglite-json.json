@@ -1140,6 +1140,51 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the owner opt-in (access.owner_reads_restricted) is off; the owner reads a page that names readers or sits under a rule only when listed.",
+            "name": "access_owner_reads_restricted",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: every folder and page rule also keeps the pages and facts derived from its pages to its readers (no rule has covers_derived: false).",
+            "name": "access_raw_only_rules",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
+            "name": "access_audience_members",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.",
+            "name": "access_members_read_lineage",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
+            "name": "access_labelled_only_members",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -1184,7 +1229,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 177 table(s) the applied migrations create exist.",
+            "message": "All 178 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1472,6 +1517,22 @@
             "message": "1 timeline row(s) on 1 page(s) exist only in the database. Preview: gbrain repair timeline — apply: gbrain repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
             "name": "timeline_history",
             "status": "warn"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": "exact",
+              "pages": 0,
+              "scan_cap": 100000,
+              "truncated": false,
+              "value_count": 0,
+              "values": [],
+              "values_truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "name": "privacy_label_ignored",
+            "status": "ok"
           },
           {
             "category": "brain",
@@ -4083,6 +4144,17 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/repair.md#facts-home",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+            "name": "strict_facts_outside_git",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -6200,6 +6272,51 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the owner opt-in (access.owner_reads_restricted) is off; the owner reads a page that names readers or sits under a rule only when listed.",
+            "name": "access_owner_reads_restricted",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: every folder and page rule also keeps the pages and facts derived from its pages to its readers (no rule has covers_derived: false).",
+            "name": "access_raw_only_rules",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
+            "name": "access_audience_members",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.",
+            "name": "access_members_read_lineage",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
+            "name": "access_labelled_only_members",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -6244,7 +6361,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 177 table(s) the applied migrations create exist.",
+            "message": "All 178 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6532,6 +6649,22 @@
             "message": "2 timeline row(s) on 2 page(s) exist only in the database. Preview: gbrain repair timeline — apply: gbrain repair timeline --apply. 1 other row(s) cannot round-trip and are kept as-is.",
             "name": "timeline_history",
             "status": "warn"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "count": "exact",
+              "pages": 0,
+              "scan_cap": 100000,
+              "truncated": false,
+              "value_count": 0,
+              "values": [],
+              "values_truncated": false
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No page relies on an access or confidentiality value gbrain does not recognize.",
+            "name": "privacy_label_ignored",
+            "status": "ok"
           },
           {
             "category": "brain",
@@ -9150,6 +9283,17 @@
             "elapsed_ms": "<volatile>",
             "message": "No source is strict (git-canonical), so no index trails a commit.",
             "name": "git_index_lag",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "docs": "docs/guides/repair.md#facts-home",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+            "name": "strict_facts_outside_git",
             "status": "ok"
           },
           {

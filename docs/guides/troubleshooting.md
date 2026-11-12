@@ -26,6 +26,7 @@
 | Doctor `links_extraction_lag` or sync says "N page(s) have un-extracted edges" | `gbrain extract --stale --dry-run --json`, then on the host `gbrain extract --stale --catch-up [--source-id <id>]` | user above 120 s, else agent | none | dry run: `actionable: 0` |
 | Doctor `links_extraction_lag` says "N page(s) failed link extraction 3 runs in a row and are held", or `extract --stale` lists failed pages | Read each page's code (`unknown_source`: the page's source row is gone; restore the source or delete the page), fix the cause, then `gbrain extract --stale [--source-id <id>] --retry-held` | agent | none | `gbrain extract --stale --dry-run --json`: `held: 0` |
 | `gbrain apply-migrations --yes` or `gbrain upgrade` stops with `Migration <N> … exhausted retries` / SQLSTATE 57014 and the schema stays behind (`migrations_pending`, reason `still_behind`) | upgrade first (#7108: long backfills run in committed batches), then follow the error's or doctor `schema_version`'s `fix` ([migration statement timeout](#migration-statement-timeout)) | agent; a longer `--statement-timeout` or ending a session only after the user agrees | none for a rerun | `gbrain doctor --only schema_version --json` |
+| `gbrain apply-migrations`, `gbrain upgrade` or `gbrain init` stops with `foreign_table` ("`<schema>.<table>.<column>` is `<type>`, but gbrain's `<table>` needs `<type>`"), or an older release stopped at v210 with `operator does not exist: timestamp with time zone > bigint` | a table another application created under one of gbrain's names (`oauth_tokens`, `oauth_clients`, `oauth_codes`) is in the same schema; nothing was changed. Ask the user, then move that table or give gbrain its own database ([foreign table](#foreign-table)) and run `gbrain apply-migrations --force-schema --yes` | user (the other application's table); agent for the rerun | none for the rerun | `gbrain doctor --only schema_version --json` |
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
 | A graph read omits a relationship you know existed, or says someone still works somewhere they left | the default read returns relationships true today: repeat with `status: "all"` or `as_of`; to record an end, add a dated timeline line (`Ended works_at [[companies/x]]`) or `add_link ... valid_until` ([temporal edges](temporal-edges.md)) | agent | none | `gbrain doctor --only edge_validity --json` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
@@ -42,6 +43,7 @@
 | [`expected N dimensions, not M` on import](#embedding-dimensions) | `gbrain doctor` prints the exact `gbrain config set …` or `gbrain migrate embeddings --to <provider:model>` command | agent, after the user agrees | `migrate embeddings`: `paid`, needs the brain's writer lock | `gbrain doctor --only embeddings,embedding_width_consistency --json` |
 | [Keyword-only recall; the user wants semantic search](#embedding-dimensions) | the readiness fix: `gbrain init --force --embedding-model <provider:model> --path <brain path>` (keeps pages and facts) | agent, after the user agrees | `credentials`, `paid`; needs the brain's writer lock | `gbrain doctor --only embeddings --json` |
 | [Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`)](#doctor-residue) | preview `gbrain doctor --remediation-plan --json` or `gbrain repair`; then `gbrain repair <kind> --apply` | brain host, after the user agrees | `destructive` (rewrites derived rows) | `gbrain doctor --only timeline_history,derived_visibility,safe_index_pending --json` |
+| [Doctor `privacy_label_ignored`, or a write's `privacy_label_ignored` notice](#privacy-label-ignored) | `gbrain list --where <key>=<value> --json` (read-only), then add `visibility: private` to each page that should stay private | the agent, after the user agrees | none for the listing; the edit narrows who reads the page | `gbrain doctor --only privacy_label_ignored --json` |
 | Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
 | [Sync held a file (`Held <path>: invalid_frontmatter …`, `git_held_files`)](#held-files) | `gbrain sources status <id>`, then preview `gbrain repair frontmatter --source <id>` and apply the printed `--apply --expect <hash> --yes` | agent; the apply after the user agrees | `destructive` (rewrites the previewed lines of the files) | `gbrain doctor --only git_held_files --json` |
 | [Sync held a file for its facts or takes fence (`Held <path>: invalid_fence …`)](#held-fence-files) | nothing for most holds: the next maintenance run repairs and commits the fence. To see or do it now, preview `gbrain repair fences --source <id>` and run its printed `--apply --expect <hash>`; to pause automatic repair, `gbrain config set fences.repair.enabled false` (ask the user first). A `manual` reason needs the edit the hold names | agent; the apply needs no extra consent | none (model repair spends within the `fences.repair.*` caps; raising them is `paid`, the user's call) | `gbrain doctor --only fence_integrity --json` |
@@ -147,6 +149,8 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 <a id="write-refused"></a>**A save, sync or background effect was refused with a named reason?** Reasons such as `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity` and parked effects (`targets_parked`, doctor `parked_effects`) each come with a recovery step in the error's `suggestion`. [Write refusal reasons](write-refusals.md) explains each one and its recovery. **Say to your agent:** *"My save was refused. Explain the reason and show me the fix before you run it."*
 
 <a id="doctor-residue"></a>**`gbrain doctor` warns `timeline_history`, `derived_visibility`, or unsealed pages under `contextual_retrieval_coverage`?** Preview the fix with `gbrain repair`, then apply one kind at a time with `gbrain repair <kind> --apply` on the brain host. See [repair residual damage](repair.md).
+
+<a id="privacy-label-ignored"></a>**`gbrain doctor` reports `privacy_label_ignored`, or a write carried that notice?** Pages carry an `access` or `confidentiality` value gbrain does not read as private (only `access: private|restricted|confidential` and `confidentiality: confidential|secret|private|restricted` count) and no `visibility`, so the label is ignored: remote callers read them like unlabelled pages and, on a source with a git checkout, the label does not keep them out of git. The check counts pages by value, warns when a value plainly means private and reports the rest as information; it reads at most 100,000 labelled pages and 50 values, under a 15 s statement bound, through the frontmatter index. Its fix lists one value's pages read-only; for each page that should stay private, ask the user, then add `visibility: private`. Nothing is rewritten for you. See [unrecognized label values](access-designations.md#unrecognized-label-values).
 
 <a id="extract-health-halts"></a>**Doctor warns `extract_health` with "kind(s) with halt rate > 10%" after the cause was already fixed?** The check is a rate over the last 7 days, not a list of open faults: `halt_count` and `round_completed_count` are 7-day sums from the extraction rollup (one row per kind per day), so halts recorded before a fix keep the rate up until their days leave the window. Read each kind's age before acting: `last halt today` (or `1d ago`) means the extractor is still halting, while `last halt 5d ago` on a kind that has run since means the halts are history. `gbrain doctor --only extract_health --json` gives the same per kind in `details.kinds[]`: `halt_rate`, `last_halt_age_days`, `top_halt_reason` and every reason with its count in `halt_reasons`; runs that stopped at an expected budget or deadline cap count in `expected_limit_count`, not as halts. Fix the reason that is still current, then let the window age out: expiry is how a repaired cause clears, and there is no acknowledgement or reset command. A halt with `last_halt_age_days` at 0 after the fix means the cause is not fixed. **Say to your agent:** *"Is extract_health warning about current halts or old ones?"*
 
@@ -644,6 +648,43 @@ and doctor then name it and give the fix for the case:
 the budget for migration SQL and for the batches above. It doesn't lift the
 30-second caps that v160, v200 and v234 set on themselves, or the timeouts of
 migration handlers.
+
+## A table gbrain did not create is in the way
+
+<a id="foreign-table"></a>
+
+gbrain creates its tables with `CREATE TABLE IF NOT EXISTS` in the brain's schema
+(usually `public`). When another application shares the database and already has a
+table with one of gbrain's generic names (`oauth_tokens`, `oauth_clients`,
+`oauth_codes`), older releases adopted it, added their own columns to it and then
+stopped partway through an upgrade on the first statement that compared the wrong
+type, for example v210 with `operator does not exist: timestamp with time zone > bigint`
+(#9190). Schema setup now checks those tables before the schema replay and before any
+migration, and stops with `foreign_table`, naming the table, the column, the type it
+found and the type gbrain needs. Nothing was changed.
+
+The table holds the other application's data, so ask the user before touching it:
+
+1. Give gbrain a database of its own, or move the other table to a schema of its own.
+   Moving takes its indexes and constraints along:
+   ```sql
+   CREATE SCHEMA other_app_example;
+   ALTER TABLE public.oauth_tokens SET SCHEMA other_app_example;
+   ```
+   Then point that application at the new schema (for example
+   `ALTER ROLE other_app_role SET search_path = other_app_example, public`).
+2. Run `gbrain apply-migrations --force-schema --yes`. It replays the schema, which
+   creates gbrain's own table, and then applies the pending migrations. Since #9191
+   this works on a rerun too: the rerun used to skip the replay, so a table the replay
+   creates stayed missing (`relation "oauth_tokens" does not exist`).
+   `gbrain init --migrate-only --non-interactive` does the same.
+3. Verify with `gbrain doctor --only schema_version --json`.
+
+A brain an older release stopped at v210 recovers with the same steps after
+`gbrain upgrade`. That release had already added gbrain's columns (`token_type`,
+`scopes`, `resource`) to the other table and may have turned on row-level security
+for it. Tell the user, so the other application's owner can check: a role that does
+not own the table sees no rows while row-level security is on and no policy admits it.
 
 ## Global maintenance timeouts
 

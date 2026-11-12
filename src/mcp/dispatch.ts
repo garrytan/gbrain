@@ -18,7 +18,7 @@ import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, folderAccessFor, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
-import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
+import { attestedReadMode, SCOPE_READ_ACCESS, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
 import { attestedReadScope } from '../core/access/member-sources.ts';
 import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
@@ -312,6 +312,8 @@ export interface DispatchOpts {
   stdioSurface?: OperationContext['stdioSurface'];
   /** GST-363: OperationContext.stdioMember, from the stdio server's own argv (serve --stdio-member); no other transport sets it. */
   stdioMember?: string;
+  /** GST-2476 G2: an enforced member CLI read (cli/enforced-member.ts): privacy stays hidden whatever the hatches say, and no owner relaxation. */
+  enforcedMember?: true;
   /** Threaded into OperationContext.revealTools (stdio session tool reveal). */
   revealTools?: (names: string[]) => void;
   /**
@@ -1026,9 +1028,11 @@ export async function dispatchToolCall(
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
       // GST-1158 E1: an attested read that names sources reads as the scope (access/scope-read.ts), or as the person on an attest_read person credential.
       readMode = attested?.actor ? attestedReadMode(name, attested.params, attested.read) : null;
-      access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined);
+      if (readMode === 'scope' && attested?.access?.labelledOnly) throw scopeReadLabelledOnlyRefused(name);
+      access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined, readOnly);
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
+      if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
       // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.

@@ -38,11 +38,13 @@ describe('MinionWorker connection recovery', () => {
       ensureSchema: () => Promise<void>;
       promoteDelayed: () => Promise<unknown[]>;
       claim: () => Promise<null>;
+      hasOverdueWatchdogSuspect: () => Promise<boolean>;
       handleStalled: () => Promise<{ requeued: unknown[]; dead: unknown[] }>;
       handleTimeouts: () => Promise<unknown[]>;
       handleWallClockTimeouts: () => Promise<unknown[]>;
     } }).queue = {
       ensureSchema: async () => {},
+      hasOverdueWatchdogSuspect: async () => false,
       promoteDelayed: async () => {
         if (!promoted) {
           promoted = true;
