@@ -192,6 +192,8 @@
     "check:structural-manifest": "bash scripts/check-structural-manifest.sh",
     "regen:all": "bun scripts/regen-all.ts",
     "release:restamp": "bun scripts/release-restamp.ts",
+    "release:unstamp": "bun scripts/release-restamp.ts --unstamp",
+    "migrations:renumber": "bun scripts/release-restamp.ts --renumber",
     "check:regen-all": "bun scripts/regen-all.ts --check",
     "check:orphan-modules": "node scripts/check-orphan-modules.mjs",
     "check:test-placeholders": "node scripts/check-test-placeholders.mjs",
@@ -256,7 +258,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.704.0",
+  "version": "0.60.705.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

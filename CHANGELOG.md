@@ -10,6 +10,20 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.705.0] - 2026-11-12
+
+### Pull requests stop picking a version: they carry a changelog fragment, and a release PR numbers each batch
+
+**Releases are cut per batch instead of per pull request.** Until now every PR stamped the next PATCH version, wrote its own CHANGELOG section and appended its upgrade-notice row to one shared array. So every landing on master made almost every queued PR conflict in the same three places, and each one had to be restamped and tested again at its turn. From the next release on, a PR writes its entry to `changelog.d/<branch-slug>.md`, writes any new upgrade-notice row to `behavior-changes.d/<id>.md`, and touches no version. A release PR, opened a few times a day and right after an important fix, gives everything that landed since the last release one PATCH version and writes every stamp. Measured on 59 open PRs, keeping notice rows in their own files takes conflicts in the notice table from 22 to 0 and in the module size table from 27 to 1. This release is the last one a PR stamps by hand; `docs/RELEASING.md#releases-per-batch` describes the new flow.
+
+- `.gstack/ship-policy.json` turns on `merge: "direct"` with `changelog_fragments` in `changelog.d`. The release stamp runs `bun scripts/release-restamp.ts --stamp-only`, and `bun scripts/build-behavior-changes.ts` writes the one release output, `src/core/behavior-changes.generated.ts`.
+- `scripts/build-behavior-changes.ts` dates each `behavior-changes.d` row by the release section that holds its marker comment (the format is in `behavior-changes.d/README.md`), and `BEHAVIOR_CHANGES` spreads the generated table after its released rows, which stay where they are. It refuses an id that starts with a digit, a marker that appears twice and a fragment whose `bump:` line says anything but `patch`. A row whose text is computed stays in the table as `since: releasedIn('<id>')`.
+- `scripts/release-restamp.ts` gains `--stamp-only <version>` (the release PR's stamp, with no fetch, merge or commit), `bun run release:unstamp` (turns a PR stamped the old way into one commit holding only the stamp reset, its fragment and its notice-row files) and `bun run migrations:renumber`. Plain `release:restamp` refuses once master's policy says `merge: "direct"`, and unstamp refuses to overwrite a fragment that already exists.
+- `scripts/check-behavior-since.ts` refuses a literal `since: 'TBD'` row. With `--stamped`, which the Release workflow runs, it also refuses an unfolded fragment, a stale generated table and a missing or unreadable ship policy.
+- The Release workflow no longer follows a cancelled master run to a later commit with the same VERSION, because many commits share one VERSION between releases; it fails and names the run to re-run. A manual Release dispatch publishes only while master's head is the release commit, and otherwise refuses and names that commit's Release run.
+- test.yml and e2e.yml key master push runs by commit, so a newer push never cancels the release commit's run. Every landing on master now runs full Test and E2E to the end.
+- Docs: docs/RELEASING.md, CONTRIBUTING.md, CLAUDE.md, AGENTS.md, docs/TESTING.md and docs/contributing/version-recovery.md describe the new flow, and `changelog.d/README.md` and `behavior-changes.d/README.md` give the file formats.
+
 ## [0.60.704.0] - 2026-11-12
 
 ### QM can read a room's context pack, and the owner sets how a client reads named sources from another machine
