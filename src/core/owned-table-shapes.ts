@@ -3,13 +3,13 @@
  * application created in the brain's schema was adopted silently; later migrations then added columns to it and an
  * upgrade stopped midway on the first statement that compared the wrong type, naming neither table nor column.
  * Before the schema blob replays (engine-sql/bootstrap.ts) and before a migration run (migrate.ts), every table here
- * that already exists must have the column types gbrain has given it since it first created the table (v32), its key
- * column included. Otherwise schema setup refuses with `foreign_table` and changes nothing: the table is another
+ * that already exists must have every column gbrain has given it since it first created the table (v32), with the
+ * same type. Otherwise schema setup refuses with `foreign_table` and changes nothing: the table is another
  * application's data, so moving it is the user's decision.
  */
 import { opError, type OperationError } from './ops/contract.ts';
 
-/** Columns and types each table has had since v32; the first is its key and must exist. */
+/** Columns and types each table has had since v32; every one must exist with its type. */
 const OWNED_TABLE_COLUMNS: Record<string, ReadonlyArray<readonly [column: string, type: string]>> = {
   oauth_clients: [
     ['client_id', 'text'], ['client_secret_hash', 'text'], ['client_name', 'text'], ['redirect_uris', 'text[]'],
@@ -28,19 +28,19 @@ const OWNED_TABLE_COLUMNS: Record<string, ReadonlyArray<readonly [column: string
 };
 
 const EXPECTED_ROWS = Object.entries(OWNED_TABLE_COLUMNS)
-  .flatMap(([table, columns]) => columns.map(([column, type], i) => [table, column, type, i === 0] as const))
-  .map(([table, column, type, isKey], ord) => `('${table}', '${column}', '${type}', ${isKey}, ${ord})`);
+  .flatMap(([table, columns]) => columns.map(([column, type]) => [table, column, type] as const))
+  .map(([table, column, type], ord) => `('${table}', '${column}', '${type}', ${ord})`);
 
-/** One row naming the first mismatch in the current schema, or none. */
-const SHAPE_PROBE_SQL = `WITH expected(table_name, column_name, expected_type, is_key, ord) AS (VALUES ${EXPECTED_ROWS.join(', ')})
+/** One row naming the first mismatch in the current schema (a wrong type before a missing column), or none. */
+const SHAPE_PROBE_SQL = `WITH expected(table_name, column_name, expected_type, ord) AS (VALUES ${EXPECTED_ROWS.join(', ')})
 SELECT n.nspname AS schema_name, e.table_name, e.column_name, e.expected_type,
   format_type(a.atttypid, a.atttypmod) AS found_type
 FROM expected e
 JOIN pg_class c ON c.relname = e.table_name
 JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = current_schema()
 LEFT JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = e.column_name AND a.attnum > 0 AND NOT a.attisdropped
-WHERE (a.attname IS NULL AND e.is_key) OR (a.attname IS NOT NULL AND format_type(a.atttypid, a.atttypmod) <> e.expected_type)
-ORDER BY e.ord
+WHERE a.attname IS NULL OR format_type(a.atttypid, a.atttypmod) <> e.expected_type
+ORDER BY a.attname IS NULL, e.ord
 LIMIT 1`;
 
 interface ShapeMismatch { schema_name: string; table_name: string; column_name: string; expected_type: string; found_type: string | null }

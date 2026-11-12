@@ -85,11 +85,11 @@ for (const kind of testBackends()) {
       } };
     };
     const close = async (engine: BrainEngine) => { await engine.disconnect(); engines.splice(engines.indexOf(engine), 1); };
-    const forceSchema = async (b: Brain) => {
+    const applyMigrations = async (b: Brain, args: string[]) => {
       const home = makeHome({ engine: 'pglite' });
       homes.push(home);
       writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(b.config));
-      const r = await collect(spawnDriver(home, writeSchemaDriver(home, { migrations: ['noop'], args: FORCE_SCHEMA })));
+      const r = await collect(spawnDriver(home, writeSchemaDriver(home, { migrations: ['noop'], args })));
       return { code: r.code, out: r.stderr + r.stdout };
     };
     const shapeOf = async (engine: BrainEngine, qualified: string) => (await engine.executeRaw<{ t: string | null }>(
@@ -112,10 +112,11 @@ for (const kind of testBackends()) {
       expect(await engine.executeRaw('SELECT token_type FROM oauth_tokens')).toEqual([{ token_type: 'Bearer' }]);
     }, 300_000);
 
-    test('#9190: a fresh install refuses a foreign oauth_codes or oauth_clients before creating any gbrain table', async () => {
+    test('#9190: a fresh install refuses a foreign oauth_codes, oauth_clients or oauth_tokens before creating any gbrain table', async () => {
       for (const [ddl, named] of [
         ['CREATE TABLE oauth_codes (code_hash text PRIMARY KEY, client_id text, expires_at timestamptz)', 'oauth_codes.expires_at is timestamp with time zone'],
         ['CREATE TABLE oauth_clients (client_id uuid PRIMARY KEY, client_name text)', 'oauth_clients.client_id is uuid'],
+        ['CREATE TABLE oauth_tokens (token_hash text PRIMARY KEY, token_type text, client_id text, scopes text[], resource text, created_at timestamptz)', 'oauth_tokens.expires_at is missing'],
       ] as const) {
         const b = await brain(false);
         const engine = await b.open();
@@ -133,7 +134,7 @@ for (const kind of testBackends()) {
       await engine.executeRaw('DROP TABLE oauth_tokens');
       await engine.setConfig('version', '209');
       await close(engine);
-      const run = await forceSchema(b);
+      const run = await applyMigrations(b, FORCE_SCHEMA);
       expect(run.code, run.out).toBe(0);
       const after = await b.open();
       expect(await shapeOf(after, 'oauth_tokens')).toBe('bigint');
@@ -148,16 +149,18 @@ for (const kind of testBackends()) {
       await engine.executeRaw(FOREIGN_ROW);
       await engine.setConfig('version', '209');
       await close(engine);
-      const refused = await forceSchema(b);
-      expect(refused.code, refused.out).toBe(1);
-      expect(refused.out).toContain('[foreign_table]');
-      expect(refused.out).toContain('oauth_tokens.expires_at is timestamp with time zone');
+      for (const args of [FORCE_SCHEMA, ['--yes', '--non-interactive', '--no-autopilot-install']]) {
+        const refused = await applyMigrations(b, args);
+        expect(refused.code, refused.out).toBe(1);
+        expect(refused.out).toContain('[foreign_table]');
+        expect(refused.out).toContain('oauth_tokens.expires_at is timestamp with time zone');
+      }
 
       const moving = await b.open();
       await moving.executeRaw('CREATE SCHEMA other_app_example');
       await moving.executeRaw('ALTER TABLE oauth_tokens SET SCHEMA other_app_example');
       await close(moving);
-      const rerun = await forceSchema(b);
+      const rerun = await applyMigrations(b, FORCE_SCHEMA);
       expect(rerun.code, rerun.out).toBe(0);
       const after = await b.open();
       expect(await shapeOf(after, 'oauth_tokens')).toBe('bigint');

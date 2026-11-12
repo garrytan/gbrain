@@ -658,7 +658,7 @@
   "test/unbound-source-6536.test.ts": 8163,
   "test/unindexed-files-convergence-7149.test.ts": 15915,
   "test/unindexed-files.test.ts": 20566,
-  "test/upgrade-foreign-oauth-table.test.ts": 13356,
+  "test/upgrade-foreign-oauth-table.test.ts": 17000,
   "test/url-source-origin.test.ts": 54860,
   "test/v273-validate-timeouts.test.ts": 4976,
   "test/valid-time-gbra217.test.ts": 28349,
