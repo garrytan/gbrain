@@ -1250,6 +1250,10 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // through migrations, so no index or function in either blob references it, and only the operator's access commands
   // and owner-session routes read or write it.
   'access_members.email',
+  // Migration v305 - raw-only folder rules and audience members. Same posture as v301: access_rules and access_members
+  // exist only through migrations, so no index or function in either blob references covers_derived or kind.
+  'access_rules.covers_derived',
+  'access_members.kind',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',
