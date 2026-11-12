@@ -39,7 +39,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -117,7 +117,7 @@ type Row = { state: string; error_code: string | null; error_message: string | n
 for (const backend of testBackends()) describe(`[${backend}] transient publication failures are bounded`, () => {
   let engine: BrainEngine;
   let closePostgres: (() => Promise<void>) | undefined;
-  const home = mkdtempSync(join(tmpdir(), `gbrain-write-interrupted-${backend}-`));
+  const home = realpathSync(mkdtempSync(join(tmpdir(), `gbrain-write-interrupted-${backend}-`)));
   let n = 0;
   const context = (sourceId = 'default'): OperationContext => ({ engine, config: { engine: backend, embedding_disabled: true } as never,
     logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId });

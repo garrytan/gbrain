@@ -254,15 +254,19 @@ export async function assertPreparedFactWithdrawals(engine: BrainEngine, sourceI
   }
 }
 
-/** Explicit remember is not an implicit restore operation for that entity. A purged claim counts as withdrawn for every writer. */
+/**
+ * Explicit remember is not an implicit restore operation for that entity. A purged claim counts as withdrawn for every writer.
+ * A null `visibility` matches a withdrawal or purge at any visibility: automatic writers never admit a claim forgotten at
+ * another visibility, so narrowing the default visibility cannot bring it back.
+ */
 export async function isFactWithdrawn(
-  engine: BrainEngine, sourceId: string, visibility: string, claim: string, entitySlug: string | null, memberPage: string | null = null,
+  engine: BrainEngine, sourceId: string, visibility: string | null, claim: string, entitySlug: string | null, memberPage: string | null = null,
 ): Promise<boolean> {
   // GST-359 D: `memberPage` (a claim saved on a member page) also matches that page's own withdrawals.
   const rows = await engine.executeRaw(`SELECT 1 FROM fact_withdrawals
-    WHERE source_id=$1 AND visibility=$2 AND fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
+    WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
       AND (subject = '*' OR subject = $4::text OR subject = $5::text)
-    UNION ALL SELECT 1 FROM fact_purges WHERE source_id=$1 AND visibility=$2 AND fact_hash=gbrain_fact_fingerprint($3)
+    UNION ALL SELECT 1 FROM fact_purges WHERE source_id=$1 AND ($2::text IS NULL OR visibility=$2) AND fact_hash=gbrain_fact_fingerprint($3)
       AND (subject = '*' OR subject = $4::text) LIMIT 1`, [sourceId,visibility,claim,entitySlug,memberPage]);
   return rows.length > 0;
 }

@@ -23,7 +23,7 @@ export async function buildResolverLibrary(out: string): Promise<LibraryBuild> {
   const dir = dirname(out);
   mkdirSync(dir, { recursive: true });
   const tmp = `.${basename(out)}.tmp-${process.pid}`;
-  const result = await Bun.build({ entrypoints: [ENTRY], target: 'node', format: 'esm', outdir: dir, naming: tmp });
+  const result = await Bun.build({ entrypoints: [ENTRY], target: 'node', format: 'esm', outdir: dir, naming: tmp, minify: { whitespace: true } });
   if (!result.success) {
     rmSync(join(dir, tmp), { force: true });
     throw new Error(`the skill resolver library did not build: ${result.logs.map(String).join('; ')}`);

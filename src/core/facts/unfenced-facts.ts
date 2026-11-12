@@ -57,11 +57,14 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'nod
 import type { BrainEngine } from '../engine.ts';
 import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
-import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
+import { factsFenceHeld } from '../generations/fence-evidence.ts';
+import { readFenceBlocks } from '../generations/fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, UNATTRIBUTED_MEMORY_SLUG, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
 import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { withPageLock } from '../page-lock.ts';
+import { LockUnavailableError } from '../db-lock.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { assertLifetimeIdHeadroom } from '../persistence/journal.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
@@ -115,6 +118,8 @@ export interface UnfencedFactsOutcome {
   pages_touched: number;
   /** `<slug> (<reason>)` per page whose fence write failed; its rows stay unfenced. */
   failed_pages: string[];
+  /** #8568: pages in `failed_pages` whose fence write threw (I/O, lock, database), as opposed to holds the next run or another host settles. */
+  write_errors: number;
   /** Slugs whose fence this run wrote. */
   fenced_slugs: string[];
   /** Unmanaged: `<slug> (<reason>)` per live page whose recorded canonical file is not on this host (counted in skipped_no_page). */
@@ -304,7 +309,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   );
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
-    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
+    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
@@ -343,6 +348,41 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
 }
 
 /**
+ * The live facts rows of `slug` that a facts fence of the page held (fence-evidence.ts), each rendered as its fence row
+ * (`fenceRowOf`), in row order. A rewrite that drops the `## Facts` section keeps exactly these rows live (held
+ * `fence_absent`) until the user decides. A withdrawn row (expired: forgotten, struck, retired by an empty fence) is not
+ * among them, nor is a row no fence ever held or a conversation-extractor row (its replay owns it).
+ */
+export async function heldFenceFactRows(engine: BrainEngine, sourceId: string, slug: string): Promise<ParsedFact[]> {
+  const rows = await engine.executeRaw<FenceRowInput & { id: number; row_num: number; fact: string; entity_slug: string | null }>(`SELECT id, row_num, fact, kind, visibility, notability, context,
+      valid_from, valid_until, source, confidence, claim_metric, claim_value, claim_unit, claim_period, attributed_to, entity_slug FROM facts
+     WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL AND expired_at IS NULL
+       AND COALESCE(source,'') NOT LIKE 'cli:extract-conversation-facts%' ORDER BY row_num, id`, [sourceId, slug]);
+  if (!rows.length) return [];
+  const { held } = await factsFenceHeld(engine, { sourceId, slug, rows });
+  const seen = new Set<number>();
+  return rows.filter(r => held.has(Number(r.id)) && !seen.has(Number(r.row_num)) && seen.add(Number(r.row_num)))
+    .map(r => heldEntityCell(slug, r.entity_slug, fenceRowOf(r, Number(r.row_num), r.fact)));
+}
+
+/** GST-2492: on memory/unattributed a row whose entity has no page names it in the `entity` cell; every other page renders no such cell. */
+function heldEntityCell(slug: string, entity: string | null, row: ParsedFact): ParsedFact {
+  return slug === UNATTRIBUTED_MEMORY_SLUG && entity && entity !== slug ? { ...row, entity } : row;
+}
+
+/**
+ * `page` with its held facts rows (`heldFenceFactRows`) rendered into a new facts section when it has no facts fence
+ * at all, else unchanged. Every writer that adds a row to a page creates the section through this, so the section it
+ * creates carries the rows a dropped section held: otherwise the next projected write reads the new section as the
+ * user's answer and expires them.
+ */
+export async function withHeldFactsFence<T extends { compiled_truth: string; timeline?: string | null }>(engine: BrainEngine, sourceId: string, slug: string, page: T): Promise<T> {
+  if (readFenceBlocks(page, 'facts').state !== 'absent') return page;
+  const held = await heldFenceFactRows(engine, sourceId, slug);
+  return held.length ? { ...page, compiled_truth: replaceOrInsertFactsFence(page.compiled_truth, renderFactsTable(held)) } : page;
+}
+
+/**
  * Append a page's adoptable unfenced rows to its facts fence. Row numbering
  * starts above every occupied `row_num` on the page, conversation-extractor
  * rows included, so no fence row can take an extractor row's position. A
@@ -355,7 +395,8 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
  */
 export async function planFence(engine: BrainEngine, sourceId: string, entitySlug: string, body: string, group: UnfencedFactRow[]):
   Promise<{ body: string; assignments: Array<{ id: string; row_num: number; fact: string }>; rejected: UnadoptableFactRecord[] } | { warnings: string[] }> {
-  const existingFence = parseFactsFence(body);
+  body = (await withHeldFactsFence(engine, sourceId, entitySlug, { compiled_truth: body })).compiled_truth;
+  const existingFence = parseFactsFenceFor(body, { slug: entitySlug });
   if (existingFence.warnings.length > 0) return { warnings: existingFence.warnings };
   const occupiedRows = await engine.executeRaw<{ row_num: number; fact: string; source: string | null }>(
     `SELECT row_num, fact, source FROM facts
@@ -372,19 +413,21 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
   // same source and visibility (the projection's identity), or that an
   // earlier row of this group plans, is not adopted a second time. A private
   // and a world row with one text are two facts and both adopt, as before.
-  const dupKey = (claim: string, source: string | undefined, visibility: string) => `${claim}\u0000${source || FENCE_SOURCE_DEFAULT}\u0000${visibility}`;
+  // GST-2492: on memory/unattributed a row also names its entity, and two entities' rows with one claim are two facts.
+  const cellEntity = (entity: string | null | undefined) => entitySlug === UNATTRIBUTED_MEMORY_SLUG && entity && entity !== entitySlug ? entity : '';
+  const dupKey = (claim: string, source: string | undefined, visibility: string, entity: string) => `${claim}\u0000${source || FENCE_SOURCE_DEFAULT}\u0000${visibility}\u0000${entity}`;
   const planned = new Set<string>();
   const ownedKeys = new Set(existingFence.facts.filter(f => {
     const owner = occupied.get(f.rowNum);
     return f.active && owner !== undefined && owner.fact === f.claim && (owner.source ?? '') === (f.source ?? '');
-  }).map(f => dupKey(f.claim, f.source, f.visibility)));
+  }).map(f => dupKey(f.claim, f.source, f.visibility, f.entity ?? '')));
   for (const row of group) {
     const oracle = adoptableClaim(row);
     if ('rejected' in oracle) {
       rejected.push({ source_id: sourceId, slug: entitySlug, fact_id: Number(row.id), reason: 'fence_unrenderable', class: oracle.rejected });
       continue;
     }
-    const key = dupKey(oracle.claim, row.source, row.visibility);
+    const key = dupKey(oracle.claim, row.source, row.visibility, cellEntity(row.entity_slug));
     if (planned.has(key) || ownedKeys.has(key)) {
       rejected.push({ source_id: sourceId, slug: entitySlug, fact_id: Number(row.id), reason: 'duplicate_claim', class: 'duplicate_claim' });
       continue;
@@ -397,20 +440,20 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
     // cell would otherwise overwrite them.
     const existingAt = existingFence.facts.findIndex(f => {
       const owner = occupied.get(f.rowNum);
-      return f.active && !claimed.has(f.rowNum) && f.claim === oracle.claim &&
+      return f.active && !claimed.has(f.rowNum) && f.claim === oracle.claim && (f.entity ?? '') === cellEntity(row.entity_slug) &&
         (f.source ?? '') === (row.source ?? '') && (f.visibility === row.visibility || row.visibility === 'private') &&
         (!owner || owner.fact !== f.claim || (owner.source ?? '') !== (f.source ?? ''));
     });
     if (existingAt >= 0) {
       const at = existingFence.facts[existingAt].rowNum;
       const rowNum = occupied.has(at) ? nextRowNum++ : at;
-      existingFence.facts[existingAt] = fenceRowOf(row, rowNum, oracle.claim);
+      existingFence.facts[existingAt] = heldEntityCell(entitySlug, row.entity_slug, fenceRowOf(row, rowNum, oracle.claim));
       assignments.push({ id: row.id, row_num: rowNum, fact: oracle.claim });
       claimed.add(rowNum);
       continue;
     }
     const rowNum = nextRowNum++;
-    existingFence.facts.push(fenceRowOf(row, rowNum, oracle.claim));
+    existingFence.facts.push(heldEntityCell(entitySlug, row.entity_slug, fenceRowOf(row, rowNum, oracle.claim)));
     assignments.push({ id: row.id, row_num: rowNum, fact: oracle.claim });
     claimed.add(rowNum);
   }
@@ -418,7 +461,7 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
   if (assignments.length === 0) return { body: rendered, assignments, rejected };
   // #6650: the page is published only when every assignment reads back from
   // the whole rendered fence the way the publisher will check it.
-  const readBack = parseFactsFence(rendered);
+  const readBack = parseFactsFenceFor(rendered, { slug: entitySlug });
   const cells = new Map(readBack.facts.map(f => [f.rowNum, f]));
   const byId = new Map(group.map(row => [row.id, row]));
   if (readBack.warnings.length > 0 || assignments.some(a => fenceCellReadBackProblem(cells.get(a.row_num), byId.get(a.id)!) !== null)) {
@@ -444,6 +487,14 @@ function factsChangedSincePlanning(body: string, assignments: Array<{ id: string
   });
 }
 
+/**
+ * #8568: a typed refusal (a revision conflict, a stored fence defect, an owner or host check) or a busy source lock is a
+ * hold the next run or the owning host settles; any other throw (I/O, database) is a fence write failure.
+ */
+export function isFenceHold(err: unknown): boolean {
+  return err instanceof OperationError || err instanceof LockUnavailableError;
+}
+
 /** Keep the typed records and name the page once in `failed_pages` with the stable token; the rows stay as they are. */
 function recordUnadoptable(outcome: UnfencedFactsOutcome, slug: string, records: UnadoptableFactRecord[]): void {
   if (records.length === 0) return;
@@ -452,28 +503,42 @@ function recordUnadoptable(outcome: UnfencedFactsOutcome, slug: string, records:
 }
 
 /** One managed page, planned read-only: what the adoption would do with it right now. */
-type ManagedPagePlan =
+export type ManagedPagePlan =
   | { kind: 'no_page' }
   | { kind: 'warnings'; warnings: string[] }
   | { kind: 'unadoptable'; records: UnadoptableFactRecord[] }
   | { kind: 'submit'; snapshot: NonNullable<Awaited<ReturnType<BrainEngine['readPageSnapshot']>>>; fence: { body: string; assignments: Array<{ id: string; row_num: number }>; rejected: UnadoptableFactRecord[] };
       request: Extract<Awaited<ReturnType<typeof planFactFenceAdoption>>, { kind: 'submit' }> };
 
-async function planManagedPage(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, entitySlug: string, group: UnfencedFactRow[]): Promise<ManagedPagePlan> {
-  const snapshot = await engine.readPageSnapshot(entitySlug, { sourceId });
-  if (!snapshot) return { kind: 'no_page' };
-  const fence = await planFence(engine, sourceId, entitySlug, serializePageToMarkdown(snapshot.page, snapshot.tags), group);
+/** The page's current snapshot and its Facts table with `group` planned in (planFence), read-only; null when the page is gone. */
+export async function planPageFence(engine: BrainEngine, sourceId: string, slug: string, group: UnfencedFactRow[]) {
+  const snapshot = await engine.readPageSnapshot(slug, { sourceId });
+  return snapshot ? { snapshot, fence: await planFence(engine, sourceId, slug, serializePageToMarkdown(snapshot.page, snapshot.tags), group) } : null;
+}
+
+export async function planManagedPage(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, entitySlug: string, group: UnfencedFactRow[],
+  move?: { note: string; from_entity?: string }): Promise<ManagedPagePlan> {
+  const planned = await planPageFence(engine, sourceId, entitySlug, group);
+  if (!planned) return { kind: 'no_page' };
+  const { snapshot, fence } = planned;
   if ('warnings' in fence) return { kind: 'warnings', warnings: fence.warnings };
   if (fence.assignments.length === 0) return { kind: 'unadoptable', records: fence.rejected };
   const request = await planFactFenceAdoption(engine, authority, entitySlug, {
     content: fence.body, expectedRevision: snapshot.revision,
-    assignments: fence.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })),
+    assignments: fence.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })), ...(move ? { move } : {}),
   });
   if (request.kind === 'suppressed') {
     return { kind: 'unadoptable', records: [...fence.rejected, ...fence.assignments.map(a => ({ source_id: sourceId, slug: entitySlug,
       fact_id: Number(a.id), reason: 'fence_unrenderable' as const, class: 'prior_refusal' as const, request_id: request.prior.request_id }))] };
   }
   return { kind: 'submit', snapshot, fence, request };
+}
+
+/** Whether a managed page publishes to a canonical file (it records one, or one exists at its slug path). */
+export async function pageHasFile(engine: BrainEngine, sourceId: string, slug: string, page: { source_path?: string | null; source_uri?: string | null }): Promise<boolean> {
+  if (page.source_path || page.source_uri?.startsWith('file:')) return true;
+  const target = await resolvePageWriteTarget(engine, slug, sourceId);
+  return target.ok && existsSync(target.filePath);
 }
 
 /**
@@ -522,14 +587,13 @@ async function fenceManaged(engine: BrainEngine, plan: UnfencedFactsPlan): Promi
         continue;
       }
       recordUnadoptable(outcome, entitySlug, fence.rejected);
-      const target = await resolvePageWriteTarget(engine, entitySlug, sourceId);
-      await submitPlannedFactFenceAdoption(engine, authority, entitySlug, request,
-        Boolean(snapshot.page.source_path) || snapshot.page.source_uri?.startsWith('file:') === true || (target.ok && existsSync(target.filePath)));
+      await submitPlannedFactFenceAdoption(engine, authority, entitySlug, request, await pageHasFile(engine, sourceId, entitySlug, snapshot.page));
       outcome.fenced += fence.assignments.length;
       outcome.pages_touched += 1;
       outcome.fenced_slugs.push(entitySlug);
     } catch (err) {
       outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+      if (!isFenceHold(err)) outcome.write_errors += 1;
     }
   }
 }
@@ -561,6 +625,7 @@ async function fenceDatabaseOnlyPage(engine: BrainEngine, sourceId: string, enti
     outcome.fenced_slugs.push(entitySlug);
   } catch (err) {
     outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+    if (!isFenceHold(err)) outcome.write_errors += 1;
   }
 }
 
@@ -644,6 +709,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
     await (hasSourceFilesystemLock(writeRoot) ? write() : withSourceFilesystemLock(engine, writeRoot, write));
   } catch (err) {
     outcome.failed_pages.push(`${entitySlug} (${err instanceof Error ? err.message : String(err)})`);
+    if (!isFenceHold(err)) outcome.write_errors += 1;
   }
 }
 

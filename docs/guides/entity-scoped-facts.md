@@ -103,6 +103,31 @@ slug that has no page, still saves and still shows up in question recall, but
 it has no file to live in: its only copy is in the database
 ([where your memory lives](where-your-memory-lives.md)). Create the page first.
 
+The reply tells you when that happened. A fact that landed on a page names it
+in `page`. A fact saved for an entity with no page has no `page`, and its
+`write_through` reads `{"written": false, "skipped": "entity_page_missing"}`;
+each item of an `items` batch says the same for itself. If the brain's pages
+are in a Git repository, the reply also carries an `entity_page_missing`
+notice whose step is `ask_user`: tell the user the fact is saved in the
+database only and ask whether to create a page for the entity (its
+`user_message` says this); if they agree, its fix is the `put_page` call that
+creates the page. Once the page exists,
+the next maintenance cycle (`gbrain dream`) can move the facts saved for that
+entity into the page's Facts table and its file. On a source whose pages are
+canonical in Git (`canonical: git`), the fact is not left in the database
+alone: it is committed to Git as a row of `memory/unattributed` whose `entity`
+column names the entity, before the reply returns. The reply then names
+`page: memory/unattributed`, `persistence: {"mode": "filesystem"}` and
+`write_through: {"written": true, "held_for": "<entity>"}`. Once the entity
+has a page, the next maintenance cycle moves the row into it in one commit
+and strikes the held row (`moved to <entity>`; a restricted page's held row is
+removed instead); a page kept out of Git does not take it, and the run warns
+`HELD_FACT_UNMOVABLE`. An entity under a folder access rule is not held: its
+fact stays in the database, as on other sources. Forgetting or replacing a held fact strikes its row
+too. A brain with no Git
+repository gets no notice: there the database is the record, and the fact is
+as safe as everything else in it.
+
 ## Related
 
 - [Entity recall](entity-recall.md): how gbrain resolves a name to an entity.

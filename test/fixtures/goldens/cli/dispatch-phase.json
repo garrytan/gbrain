@@ -1198,6 +1198,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "memory-proposals": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "migrate": {
         "hasSwitchCase": true,
         "phase": "post-connect",
@@ -2276,8 +2283,18 @@
       },
       {
         "commands": [],
-        "condition": "cliOpts.as === undefined && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
+        "condition": "cliOpts.as === undefined && !enforcedClass && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
         "connectsEngine": false,
+        "refusesThinClient": false,
+        "routesThinClient": false,
+        "terminates": true,
+        "thinClientCheck": false,
+        "unconditionalFor": []
+      },
+      {
+        "commands": [],
+        "condition": "CLI_ONLY.has(command) && enforcedClass && !helpRequested && command !== 'errors' && command !== 'protocol'",
+        "connectsEngine": true,
         "refusesThinClient": false,
         "routesThinClient": false,
         "terminates": true,

@@ -38,6 +38,8 @@ import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { writeThroughConfigured } from './switches.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
+import { withStoredLabels } from './label-edit.ts';
 import { assertConfiguredSyncRoot, assertSyncEntryOrigin, readSyncFile, syncGit, syncRawHash, type SyncRename } from './sync-discovery.ts';
 import { directoryAt } from './sync-entry-fault.ts';
 import { assertSyncPageOrigin, sameSyncOrigin, syncOriginPath, syncOriginScope, type SyncOriginScope } from './sync-origin.ts';
@@ -688,6 +690,15 @@ async function syncWriteState(tx: BrainEngine, row: WriteRequest, page: Paramete
   return { ...await sizeStateField(tx, row.source_id, row.slug, page), ...segmentedOutcome(segmented, isQuarantined(frontmatter)) };
 }
 
+/**
+ * GST-2519: a file under a declared storage.db_only path imports keeping the privacy labels its live page holds and the
+ * file does not state (a label repair writes them to the database only there), so a commit to the file never widens it.
+ */
+function keepDbOnlyLabels(root: string, slug: string, base: Snapshot | undefined, text: string, incoming?: Record<string, unknown>): string {
+  if (!base || base.page.deleted_at || !isSourceDbOnlySlug(root, slug, 'not_db_only')) return text;
+  return withStoredLabels(text, base.page.frontmatter as Record<string, unknown>, incoming ?? parseMarkdown(text, `${slug}.md`).frontmatter) ?? text;
+}
+
 /** #8729: a screen (`screening`) publishes nothing, so the segmented staging its import opened is aborted (unbounded: past the screen's deadline too) as soon as the import hands it over, never left live beside the admitted write's. */
 async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _config: GBrainConfig, clock: ClaimPhaseClock | undefined,
   screening: { unsaved: true } | undefined, at: { root?: string }): Promise<SyncPreparedMutation> {
@@ -869,14 +880,14 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
     throw syncPublicationRefusal('source_changed', 'Newer working-tree bytes and the current page disagree with this pinned Git import.', row, p,
       `The working tree holds newer bytes for ${row.slug} that match neither the pinned import nor the current page; sync did not overwrite them. Preserve the local edit and commit it.`);
   }
-  let importContent = p.content;
+  let importContent = keepDbOnlyLabels(root, row.slug, base, p.content, parsedInput.frontmatter);
   if (row.authority.remote) {
     const stored = base ? fenceBody(base.page) : null;
     const compiled_truth = preserveProtectedTakes(parsedInput.compiled_truth, stored?.compiled_truth ?? '');
     const timeline = preserveProtectedTakes(parsedInput.timeline ?? '', stored?.timeline ?? '');
     if (compiled_truth !== parsedInput.compiled_truth || timeline !== (parsedInput.timeline ?? '')) {
-      importContent = serializePageToMarkdown({ ...(base ? withoutBody(base.page) : { id: 0, source_id: row.source_id, created_at: new Date(), updated_at: new Date() }),
-        ...parsedInput, compiled_truth, timeline } as Page, parsedInput.tags);
+      importContent = keepDbOnlyLabels(root, row.slug, base, serializePageToMarkdown({ ...(base ? withoutBody(base.page) : { id: 0, source_id: row.source_id,
+        created_at: new Date(), updated_at: new Date() }), ...parsedInput, compiled_truth, timeline } as Page, parsedInput.tags));
     }
   }
   let prepared: PreparedContentImport | undefined;
@@ -901,7 +912,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
     throw syncPublicationRefusal('revision_conflict', 'A different page already owns this file identity; resolve the duplicate before syncing.', row, p,
       `Page ${ready.slug} already holds the content identity of ${renamed?.slug ?? row.slug}; resolve the duplicate pages first.`);
   }
-  const parsed = parseMarkdown(p.content, `${row.slug}.md`, { activePack });
+  const parsed = parseMarkdown(keepDbOnlyLabels(root, row.slug, base, p.content, parsedInput.frontmatter), `${row.slug}.md`, { activePack });
   resolveParsedSubtype(parsed, base?.page);
   keepGrandfatherStamp(parsed.frontmatter, base?.page);
   const tags = [...new Set([...(base?.tags ?? []), ...ready.parsedPage.tags])].sort();

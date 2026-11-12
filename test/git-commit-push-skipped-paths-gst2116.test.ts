@@ -258,7 +258,8 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   git(f.brain, 'add', '--', accented, 'people/link-example.md'); git(f.brain, 'commit', '-qm', 'more'); git(f.brain, 'push', '-q', 'origin', 'main');
   git(f.brain, 'update-index', '--assume-unchanged', '--', 'people/link-example.md');
   const clean = helper(f, false, 'write pages', 'people/link-example.md');
-  expect(clean.status).toBe(0);
+  expect(clean.status).toBe(4);
+  expect(clean.stderr).not.toContain('commit_paths_skipped');
   editHidden(f, accented);
   const accentedRun = helper(f, false, 'write pages', accented);
   expect(accentedRun.status).not.toBe(0);
@@ -270,7 +271,7 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   expect(mixed.stderr).toContain('commit_paths_skipped');
   expect(mixed.stderr).toContain(nested);
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
-  expect(remoteTip(f)).toBe(head(f));
+  expect(remoteTip(f)).not.toBe(head(f));
 }, 90_000);
 
 test('write-through: commitPathsLocked fails commit_paths_skipped for a nested-repository file instead of returning the commit', () => {
@@ -307,14 +308,14 @@ test('classic: a skipped path still fails commit_paths_skipped when the push fai
   expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION: main');
 }, 60_000);
 
-test('helper without gbrain: a skipped path is still named when the push fails', () => {
+test('helper without gbrain: a skipped path is still named when nothing is pushed', () => {
   const f = fixture('helper-pushfail', 'classic');
   writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
   const nested = nestedPage(f, 'carol-example.md');
   git(f.brain, 'remote', 'set-url', 'origin', join(dir, 'missing.git'));
   const r = helper(f, false, 'write pages', 'people/bob-example.md', nested);
   expect(r.status).toBe(4);
-  expect(r.stderr).toContain('PUSH FAILED');
+  expect(r.stderr).toContain('NOT PUSHED');
   expect(r.stderr).toContain('commit_paths_skipped');
   expect(r.stderr).toContain(nested);
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
@@ -355,4 +356,19 @@ test('managed: the put_page fix names the managed source in both the CLI argv an
   expect(thrown?.code).toBe('writer_coordinator_required');
   expect(thrown?.fix?.mcp?.tool).toBe('put_page');
   expect(thrown?.fix?.mcp?.arguments.source_id).toBe('source-a');
+}, 60_000);
+
+test('classic: a file another writer adds or edits under a named directory just after the commit is not reported as skipped', async () => {
+  const f = fixture('classic-race', 'classic');
+  writeFileSync(join(f.brain, 'people', 'alice-example.md'), page('Alice', 'Second version.'));
+  // Stands in for a writer that lands between the commit and the skipped-path check: it adds a page and edits the one just committed.
+  const hook = join(f.brain, '.git', 'hooks', 'post-commit');
+  writeFileSync(hook, `#!/bin/sh\nprintf '%s\\n' '---' 'title: Dave' '---' 'Written after the commit.' > people/dave-example.md\nprintf 'A later edit.\\n' >> people/alice-example.md\n`);
+  chmodSync(hook, 0o755);
+  const r = await commitPush(f, 'people/');
+  expect({ code: r.exitCode, stdout: r.stdout }).toMatchObject({ code: 0 });
+  expect(JSON.parse(r.stdout)).toMatchObject({ outcome: 'pushed' });
+  expect(headBlob(f, 'people/alice-example.md')).toBe(page('Alice', 'Second version.').trim());
+  expect(git(f.brain, 'ls-files', '--others', '--', 'people/')).toBe('people/dave-example.md');
+  expect(remoteTip(f)).toBe(head(f));
 }, 60_000);

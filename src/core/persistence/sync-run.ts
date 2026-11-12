@@ -14,6 +14,7 @@ import { preflightSyncCapacity } from './sync-capacity-preflight.ts';
 import { preparationConfigView } from './config-snapshot.ts';
 import { retryWriteAdmission } from './admission-retry.ts';
 import { assertPersistenceAccepting, awaitWrite, foregroundWriteCompletions, startPersistenceConsumer } from './service.ts';
+import { loopYield } from './sync-yield.ts';
 import { assertSyncEntryOrigin, discoverManagedSync, readManagedSyncRows, resolveManagedSyncContext, readSyncFile, syncGit, type ManagedSyncContext, type SyncDiscovery } from './sync-discovery.ts';
 import { checkpointRevival } from './sync-slug-mode.ts';
 import { managedCursorKey, resolveManagedCursor } from './sync-cursor-key.ts';
@@ -47,7 +48,7 @@ import { laneApplyMsPerMember, lanePolicy, openLanes } from './sync-lanes.ts';
 import { SYNC_READ_BOUND, type TreeBlob } from './sync-blobs.ts';
 import { readDryRunWriterState } from './sync-dry-run-writer.ts';
 import { fileMatchesSnapshot } from './page-prepare.ts';
-import { pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
+import { pageHoldsDriftBaseline, dryRunScreen, heldImageEntry, isSyncReadBound, loadSyncScreenRun, originConflictHold, oversizeHold, pinnedBlob, pinnedContent, pinnedFilterDriver, pinnedImageBytes, preparationStalledHold, prepareTimeFenceHold, screenFrozenImport, streamedRefusalHold, unreadableFileHold, type HeldEntry, type SyncScreenRun } from './sync-screen.ts';
 import { frozenImageIntent, sameImageBytes } from './sync-image.ts';
 import { fenceReceiptLocation } from '../fence-repair/refusal.ts';
 import { managedSyncWriteDiagnostic, writeWaitOf } from './sync-write-diagnostic.ts';
@@ -56,7 +57,7 @@ import { publicFailureDetail } from './publication-failure.ts';
 import { dependentHold, fileDriftHold, sharedOriginSurvivor, fileChangedAfterAdmission, headCommittedBytes, liveRevision, idempotentDeletionProof, originFaultHold, pageChangeProof, pageChangedHold, pinnedWorktreeConflict, receiptPageFaultHold, worktreeDirtyHold } from './sync-page-fault.ts';
 import { faultPoint } from './fault-points.ts';
 import { syncReceiptWait } from './sync-receipt-wait.ts';
-import { directoryAt, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
+import { directoryAt, filterOwnedRefusal, freezeFaultHold, noteFrozen, nullBytesRefusal } from './sync-entry-fault.ts';
 import { syncCursorOptions } from './sync-slices.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { withManagedReasonNotices } from './sync-reasons.ts';
@@ -364,6 +365,9 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       if (!holdsOn) throw syncRunRefusal('page_identity_changed', 'Several pages claim the same imported origin.', retry, `Pages ${entry.originConflict.claimants.map(page => page.slug).join(', ')} of source ${cursor.sourceId} all record ${entry.path} as their origin (sync.holds=fail); ${sharedOriginExit(cursor.sourceId, entry.originConflict.claimants.map(page => page.slug))} Then sync again.`);
       return { hold: originConflictHold(entry) };
     }
+    // GBRA-133: once a stretch (from the entry's start, so its page reads count) has run its budget, the freeze takes a timer turn before and between its synchronous Git reads. A committed
+    // entry reads the pinned commit, or HEAD checked by hash against its first read (`headCommittedBytes`); a working-tree entry reads its file twice with no turn between. So work that runs at a turn changes nothing frozen, and the run is re-checked there.
+    const step = loopYield(), turn = async () => { if (!step.over()) return; await step.pause(); assertActive(); };
     const [occupant, snapshot] = await Promise.all([alreadyImportedAtOrigin(engine, cursor, entry, originScope).catch(error => {
       if (!holdsOn || !(error instanceof OperationError) || error.code !== 'page_identity_changed') throw error;
       return { originFault: error };
@@ -377,6 +381,7 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       }
       return { hold: await originFaultHold(engine, { sourceId: cursor.sourceId, incarnation: cursor.incarnation, entry, observed: snapshot, message: occupant.originFault.message }), overtaken: true };
     }
+    await turn();
     let bytes: Buffer | null = null;
     // G3: a strict source's entry reads its commit alone (a deletion has no bytes); only a blob over the read bound takes the streamed path below.
     const committed = entry.committedOnly === true && !entry.working ? entry.action === 'delete' ? null : pinnedBlob(cursor, entry.path) : undefined;
@@ -393,14 +398,16 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       if (!bodyRef && !screening) throw error;
       if (!bodyRef) oversize = { size: null };
     }
+    if (!entry.working) await turn();
     if ((screening || image) && !entry.working && !bodyRef) {
       // #5988: an over-bound pinned blob is held by its size before its content is loaded.
       blob = pinnedBlob(cursor, entry.path);
       if (blob && blob.size > SYNC_READ_BOUND) oversize = { size: blob.size };
+      await turn();
     }
     rawHash = bodyRef ? bodyRef.sha256 : bytes === null ? null : sha256(bytes);
     if (image && oversize) return { hold: oversizeHold(entry, entry.slug!, entry.pageId ?? null, oversize.size, blob) };
-    if (image) imageBytes = pinnedImageBytes(cursor, entry);
+    if (image) { imageBytes = pinnedImageBytes(cursor, entry); await turn(); }
     if (entry.action === 'import' && cursor.companyPlan) {
       const company = currentCompanyBrainSync(cursor.sourceId);
       const blob = company?.entries.get(entry.path);
@@ -410,6 +417,11 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       content = (await readCommittedBlob(cursor.companyPlan.revision!, blob, cursor.companyPlan.limits)).toString('utf8');
       assertActive();
     } else content = imageBytes ? frozenImageIntent(imageBytes).content : entry.action === 'import' && !oversize && !bodyRef ? pinnedContent(cursor, entry) : null;
+    await turn();
+    const filtered = !screening && content !== null && !image // GST-2312 (#9024) with sync.holds=fail
+      ? filterOwnedRefusal(entry.path, content, entry.working ? null : pinnedFilterDriver(cursor, entry.path), cursor.sourceId, false) : null;
+    if (filtered) throw syncRunRefusal('content_filter_owned', 'A synced file is stored through a Git filter.', retry, filtered.message);
+    await turn();
     const nul = !screening && content !== null && !image ? nullBytesRefusal(entry.path, content) : null; // GBRA-133 S-39 with sync.holds=fail
     if (nul) throw syncRunRefusal('content_null_bytes', 'A synced Markdown file holds NUL bytes.', retry, nul.message);
     // #6340: working-tree bytes that differ from the pinned blob but are committed at HEAD (a commit past the pin on a
@@ -418,6 +430,7 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
     if (entry.action === 'import' && !cursor.companyPlan && !image && !entry.working && content !== null && rawHash !== null && rawHash !== sha256(content)) {
       const head = headCommittedBytes(cursor, entry.path);
       if (head && head.rawHash === rawHash) { content = head.content; blob = { oid: head.oid, size: bytes!.length }; }
+      await turn();
     }
     lineEndingOnly = !image && bytes !== null && content !== null && bytes.equals(Buffer.from(bytes.toString('utf8'))) &&
       bytes.toString('utf8').replace(/\r\n/g, '\n') === content.replace(/\r\n/g, '\n');
@@ -476,7 +489,7 @@ async function freezeEntryOnce(engine: BrainEngine, cursor: Cursor, key: string,
       return { hold: fileDriftHold(entry, slug, pageId, frozenIntent, { sides: entry.drift, revision: snapshot.revision, proof, sharedOrigin: await sharedOriginSurvivor(engine, cursor.sourceId, entry.sourcePath), baseline: entry.driftBaseline ?? null }) };
     }
     if (screening && !image) {
-      const hold = await screenFrozenImport(engine, { cursor, entry, slug, pageId, snapshot, content, rawHash, lineEndingOnly, blob, oversize, streamed: !!bodyRef,
+      const hold = await screenFrozenImport(engine, { cursor, entry, slug, pageId, snapshot, content, rawHash, lineEndingOnly, blob, oversize, streamed: !!bodyRef, turn,
         retryCommand: checkpointRetryCommand(retry) }, screening);
       assertActive();
       if (hold) return { hold };

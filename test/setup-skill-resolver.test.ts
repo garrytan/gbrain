@@ -12,7 +12,9 @@
  * refuses with skill_resolver_config_unreadable; a brainless install stays
  * brainless (no engine inferred from the file) and a later init, a thin client
  * and removal keep the keys' engine boundary; doctor stays silent until the
- * resolver is configured.
+ * resolver is configured, and warns on an install that predates the
+ * SessionStart compaction entry; a hand-edited per_harness entry that is not
+ * an object reads as unset and is replaced on set or unset.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,6 +24,7 @@ import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { loadConfig } from '../src/core/config.ts';
 import { SKILL_RESOLVER_MARKER } from '../src/core/setup/skill-resolver-lane.ts';
+import { laneTurnSettings } from '../src/core/skills/resolver/config.ts';
 
 setDefaultTimeout(60_000);
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
@@ -117,7 +120,7 @@ for (const harness of ['claude-code', 'codex'] as H[]) {
       expect(JSON.parse(read(configPath(b))!)).toEqual({ skills: { resolver: { enabled: true, harnesses: [harness] } } });
       expect(catalogs(b)).toEqual([`${harness}-user`]);
       const hooks = read(HARNESS[harness].hookFile(b))!;
-      expect(hooks.split('GBRAIN_HOOK_LANE=skill-resolver').length - 1).toBe(harness === 'codex' ? 1 : 2);
+      expect(hooks.split('GBRAIN_HOOK_LANE=skill-resolver').length - 1).toBe(2);
       if (harness === 'claude-code') expect(hooks).toContain(SKILL_RESOLVER_MARKER);
       else expect(read(join(b.home, '.codex', 'config.toml'))).toContain('skill-resolver');
       const launcherDir = join(gb(b), 'hook-launcher');
@@ -255,4 +258,62 @@ describe('doctor', () => {
     const unreadable = (await doctor()).checks.find((c: any) => c.name === 'skill_resolver');
     expect(unreadable).toMatchObject({ status: 'warn', details: { code: 'skill_resolver_config_unreadable' } });
   });
+});
+
+describe('doctor: an install from before the SessionStart entry', () => {
+  for (const harness of ['claude-code', 'codex'] as H[]) {
+    test(`${harness}: only the UserPromptSubmit hook warns as outdated with the setup fix, and setup repairs it`, async () => {
+      const b = box();
+      skill(HARNESS[harness].skills(b), 'deploy-widget', 'Deploy the widget service.');
+      expect((await setup(b, harness, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+      const doctor = async () => JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: b.env, cwd: b.project })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
+      expect((await doctor()).status).toBe('ok');
+      const file = HARNESS[harness].hookFile(b);
+      const doc = JSON.parse(read(file)!);
+      doc.hooks.SessionStart = doc.hooks.SessionStart.filter((g: any) => !JSON.stringify(g).includes('skill-resolver'));
+      if (doc.hooks.SessionStart.length === 0) delete doc.hooks.SessionStart;
+      writeFileSync(file, JSON.stringify(doc));
+      const outdated = await doctor();
+      expect(outdated.status).toBe('warn');
+      expect(outdated.details.harnesses[0]).toMatchObject({ harness, hook: 'outdated' });
+      expect(outdated.message).toContain('SessionStart');
+      expect(outdated.message).toContain(`gbrain setup ${harness} --skill-loading resolve`);
+      expect(outdated.fix.argv).toEqual(['gbrain', 'setup', harness, '--skill-loading', 'resolve']);
+      const repair = await setup(b, harness, ['--skill-loading', 'resolve', '--json']);
+      expect(repair.exitCode, repair.stderr).toBe(0);
+      expect(repair.doc.skill_resolver.steps.find((s: any) => s.step === 'hook').action).toBe('write');
+      expect(await doctor()).toMatchObject({ status: 'ok', details: { harnesses: [{ harness, hook: 'wired' }] } });
+    });
+  }
+});
+
+describe('per_harness entries that are not objects', () => {
+  for (const bad of [null, [1], 'fast', 3]) {
+    test(`config get, set and unset treat per_harness.codex = ${JSON.stringify(bad)} as unset and replace it`, async () => {
+      const b = box();
+      const run = (...args: string[]) => runCli(['config', ...args], { env: b.env, cwd: b.project });
+      const seed = () => { mkdirSync(gb(b), { recursive: true }); writeFileSync(configPath(b), JSON.stringify({ skills: { resolver: { top_k: 3, per_harness: { codex: bad } } } })); };
+      seed();
+      const get = await run('get', 'skills.resolver.per_harness.codex.top_k');
+      expect(get.exitCode).not.toBe(0);
+      expect(get.stderr).toContain('Config key not found');
+      expect(get.stderr).not.toContain('TypeError');
+      const set = await run('set', 'skills.resolver.per_harness.codex.top_k', '2');
+      expect(set.exitCode, set.stderr).toBe(0);
+      expect(JSON.parse(read(configPath(b))!).skills.resolver.per_harness).toEqual({ codex: { top_k: 2 } });
+      seed();
+      const unset = await run('unset', 'skills.resolver.per_harness.codex.top_k');
+      expect(unset.exitCode, unset.stderr).toBe(0);
+      expect(JSON.parse(read(configPath(b))!).skills.resolver).toEqual({ top_k: 3 });
+      const inherited = await run('set', 'skills.resolver.per_harness.constructor.top_k', '2');
+      expect(inherited.exitCode).not.toBe(0);
+      expect(inherited.stderr).toContain('names no harness');
+    });
+
+    test(`laneTurnSettings falls back to the global keys for per_harness.codex = ${JSON.stringify(bad)}`, () => {
+      const section = { top_k: 3, min_match: 'description', per_harness: { codex: bad, 'claude-code': { top_k: 1 } } };
+      expect(laneTurnSettings(section, 'codex')).toEqual({ top_k: 3, min_match_strength: 'description' });
+      expect(laneTurnSettings(section, 'claude-code')).toEqual({ top_k: 1, min_match_strength: 'description' });
+    });
+  }
 });

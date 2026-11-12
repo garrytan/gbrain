@@ -13,6 +13,15 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 const store = new AsyncLocalStorage<number | undefined>();
 
+/** #8651: a read refused because its deadline passed before it had a connection; nothing was sent. */
+export class ReadDeadlineError extends Error {
+  readonly code = 'read_deadline';
+  constructor() {
+    super('The read was not sent: its deadline passed while it waited for a database connection.');
+    this.name = 'ReadDeadlineError';
+  }
+}
+
 export function withReadDeadline<T>(deadlineAt: number, fn: () => T): T {
   return store.run(deadlineAt, fn);
 }

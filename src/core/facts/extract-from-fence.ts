@@ -45,10 +45,12 @@ import { computeEffectiveDate } from '../effective-date.ts';
 
 /** #7247: the page dates that say when its content happened. A page's creation or import time is not one. */
 /**
- * The page a fact saved without an entity is a row of (GBRA-190 G4, D3). Its fence rows belong to no entity: they
- * project with `entity_slug` NULL, so their withdrawal is source-wide ('*'), as a subjectless fact's always was.
+ * The page a fact saved without an entity is a row of (GBRA-190 G4, D3). A row with no `entity` cell belongs to no
+ * entity: it projects with `entity_slug` NULL, so its withdrawal is source-wide ('*'), as a subjectless fact's always
+ * was. A held row (GST-2492: its entity has no page yet, on a strict source) projects the entity its cell names.
  */
-export const UNATTRIBUTED_MEMORY_SLUG = 'memory/unattributed';
+export { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 
 export const FACT_DATE_SOURCES: ReadonlySet<string> = new Set(['event_date', 'date', 'published', 'filename']);
 
@@ -92,7 +94,8 @@ export const FENCE_SOURCE_DEFAULT = 'fence:reconcile';
 
 /**
  * #1781: duplicate ACTIVE fence rows (same claim and source) index once.
- * Rows two different known speakers asserted are not duplicates (attribution.ts).
+ * Rows two different known speakers asserted are not duplicates (attribution.ts),
+ * nor are memory/unattributed rows held for two different entities (GST-2492).
  * Returns the row numbers of the later copies, which extract_facts leaves
  * out of the index. A struck history row never collapses with an active row
  * that carries the same text, so a claim that reverts to an earlier value
@@ -103,7 +106,7 @@ export function duplicateActiveFenceRows(facts: ParsedFact[]): Set<number> {
   const duplicates = new Set<number>();
   for (const f of facts) {
     if (!f.active) continue;
-    const key = `${f.claim}\u0000${f.source ?? FENCE_SOURCE_DEFAULT}`;
+    const key = `${f.claim}\u0000${f.source ?? FENCE_SOURCE_DEFAULT}\u0000${f.entity ?? ''}`;
     const speakers = seen.get(key) ?? [];
     if (speakers.some(s => attributionCompatible(s, f.attributedTo))) duplicates.add(f.rowNum);
     else seen.set(key, [...speakers, f.attributedTo]);
@@ -271,7 +274,7 @@ export function extractFactsFromFenceText(
     const row: FenceExtractedFact = {
       fact: f.claim,
       kind: f.kind as FactKind,
-      entity_slug: slug === UNATTRIBUTED_MEMORY_SLUG ? null : slug,
+      entity_slug: slug === UNATTRIBUTED_MEMORY_SLUG ? f.entity ?? null : slug,
       visibility: f.visibility as FactVisibility,
       notability: f.notability,
       context: f.context ?? null,

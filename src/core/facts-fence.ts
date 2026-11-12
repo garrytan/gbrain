@@ -49,6 +49,22 @@ import {
   assertFenceRewritable,
 } from './fence-shared.ts';
 import { findLineOutsideFencedCode, locateOutsideCode, protectedRegions, unclosedCodeFenceStart } from './fence-scan.ts';
+import { isOpPageSlug } from './page-slug-grammar.ts';
+
+/**
+ * The page a fact saved without an entity is a row of (GBRA-190 G4, D3). On a strict source it also holds a fact whose
+ * entity has no page yet (GST-2492): such a row names the entity in its `entity` cell, a column no other page accepts.
+ */
+export const UNATTRIBUTED_MEMORY_SLUG = 'memory/unattributed';
+
+/**
+ * Which page a fence is parsed for: only `memory/unattributed` reads the `entity` column, so on every other page an
+ * `entity` header stays an unsupported column. `reader` is for a body-only reader that decides nothing about what a page
+ * may hold (the withdrawal overlay, the remote-read strip): every write and import is parsed for its page, so only
+ * `memory/unattributed` can carry the column, and such a reader reads it wherever it finds it.
+ */
+export interface FactsFenceParseOpts { slug?: string | null; reader?: boolean }
+const readsEntity = (opts?: FactsFenceParseOpts): boolean => opts?.reader === true || opts?.slug === UNATTRIBUTED_MEMORY_SLUG;
 
 // HTML-comment fence markers — verbatim per spec. Same shape as the takes
 // fence markers so anyone who's seen one immediately recognizes the other.
@@ -130,6 +146,8 @@ export interface ParsedFact {
    * the cell on rewrite.
    */
   attributedTo?: FactAttribution;
+  /** GST-2492: on `memory/unattributed` only, the entity a held row is about (its page does not exist yet). */
+  entity?: string;
 }
 
 export interface FactsFenceParseResult {
@@ -172,9 +190,11 @@ export const FACTS_FENCE_COLUMNS = [
   '#', 'claim', 'kind', 'confidence', 'visibility', 'notability', 'valid_from', 'valid_until', 'source', 'context',
   'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to',
 ] as const;
-export type FactsFenceColumn = typeof FACTS_FENCE_COLUMNS[number];
+/** GST-2492: `memory/unattributed`'s columns, the canonical ones then `entity`; every other page keeps FACTS_FENCE_COLUMNS. */
+export const HOLDING_FACTS_COLUMNS = [...FACTS_FENCE_COLUMNS, 'entity'] as const;
+export type FactsFenceColumn = typeof HOLDING_FACTS_COLUMNS[number];
 /** Columns a header may leave out, and a row may omit at its end. */
-export const FACTS_OPTIONAL_COLUMNS: ReadonlySet<string> = new Set(['context', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to']);
+export const FACTS_OPTIONAL_COLUMNS: ReadonlySet<string> = new Set(['context', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to', 'entity']);
 
 /**
  * #6385: the column each cell of a row is read as, from the header cells, or
@@ -184,18 +204,19 @@ export const FACTS_OPTIONAL_COLUMNS: ReadonlySet<string> = new Set(['context', '
  * meaning (a 14-cell typed row under the 10-column header); any other header
  * is the whole layout.
  */
-export function factsHeaderLayout(headerCells: readonly string[]): { layout: FactsFenceColumn[]; named: number } | { problem: string } {
+export function factsHeaderLayout(headerCells: readonly string[], columns: readonly FactsFenceColumn[] = FACTS_FENCE_COLUMNS):
+  { layout: FactsFenceColumn[]; named: number } | { problem: string } {
   const names = headerCells.map(cell => cell.trim().toLowerCase());
   const seen = new Set<string>();
   for (const name of names) {
-    if (!(FACTS_FENCE_COLUMNS as readonly string[]).includes(name)) return { problem: `unsupported header column "${name}"` };
+    if (!(columns as readonly string[]).includes(name)) return { problem: `unsupported header column "${name}"` };
     if (seen.has(name)) return { problem: `duplicate header column "${name}"` };
     seen.add(name);
   }
-  const missing = FACTS_FENCE_COLUMNS.find(column => !FACTS_OPTIONAL_COLUMNS.has(column) && !seen.has(column));
+  const missing = columns.find(column => !FACTS_OPTIONAL_COLUMNS.has(column) && !seen.has(column));
   if (missing) return { problem: `header has no "${missing}" column` };
-  const canonical = names.every((name, i) => name === FACTS_FENCE_COLUMNS[i]);
-  return { layout: canonical ? [...FACTS_FENCE_COLUMNS] : names as FactsFenceColumn[], named: names.length };
+  const canonical = names.every((name, i) => name === columns[i]);
+  return { layout: canonical ? [...columns] : names as FactsFenceColumn[], named: names.length };
 }
 
 /**
@@ -231,6 +252,11 @@ function parseForgottenFromContext(context: string | undefined): boolean {
  * `FACTS_TABLE_MALFORMED` sync-failures entries.
  */
 export function parseFactsFence(body: string): FactsFenceParseResult {
+  return parseFactsFenceFor(body);
+}
+
+/** parseFactsFence for a known page: `memory/unattributed` also reads its `entity` column (GST-2492). */
+export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): FactsFenceParseResult {
   const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   const warnings: string[] = [];
 
@@ -266,7 +292,7 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       const lower = cells.map(c => c.toLowerCase());
       if (lower.includes('claim') && lower.includes('kind')) {
         sawHeader = true;
-        const header = factsHeaderLayout(cells);
+        const header = factsHeaderLayout(cells, readsEntity(opts) ? HOLDING_FACTS_COLUMNS : FACTS_FENCE_COLUMNS);
         if ('problem' in header) {
           warnings.push(`FACTS_TABLE_MALFORMED: ${header.problem}`);
           return { facts: [], warnings };
@@ -299,7 +325,7 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
     const visibilityRaw = cell('visibility'), notabilityRaw = cell('notability');
     const validFromRaw = cell('valid_from'), validUntilRaw = cell('valid_until'), sourceRaw = cell('source'), contextRaw = cell('context');
     const claimMetricRaw = cell('claim_metric'), claimValueRaw = cell('claim_value'), claimUnitRaw = cell('claim_unit');
-    const claimPeriodRaw = cell('claim_period'), attributedToRaw = cell('attributed_to');
+    const claimPeriodRaw = cell('claim_period'), attributedToRaw = cell('attributed_to'), entityRaw = cell('entity');
 
     const rowNum = parseInt(rowNumStr, 10);
     if (!Number.isFinite(rowNum) || rowNum <= 0) {
@@ -352,6 +378,13 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       continue;
     }
 
+    // GST-2492: a held row's entity is a page slug; any other cell is a fence problem, so the page is held, never misfiled.
+    const entity = entityRaw.trim();
+    if (entity && (!isOpPageSlug(entity) || entity === UNATTRIBUTED_MEMORY_SLUG)) {
+      warnings.push(`FACTS_TABLE_MALFORMED: invalid entity "${entity}" in row ${rowNumStr} (expected a page slug such as people/alice-example)`);
+      continue;
+    }
+
     const { text: claimText, struck } = stripStrikethrough(claimRaw);
     const context = parseStringCell(contextRaw);
     const supersededBy = parseSupersededByFromContext(context);
@@ -377,6 +410,7 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
       claimUnit:   parseStringCell(claimUnitRaw),
       claimPeriod: parseStringCell(claimPeriodRaw),
       ...(attributedTo ? { attributedTo: attributedTo as FactAttribution } : {}),
+      ...(entity ? { entity } : {}),
     });
   }
 
@@ -457,13 +491,15 @@ export function renderFactsTable(facts: ParsedFact[]): string {
   );
   // Speaker attribution widens the header to 15; only rows that carry it
   // are written 15 cells wide (typed cells padded), others keep their width.
-  const anyAttributed = facts.some(f => f.attributedTo !== undefined);
+  // GST-2492: a held row (memory/unattributed) names its entity in a 16th column, after attributed_to.
+  const anyEntity = facts.some(f => f.entity !== undefined);
+  const anyAttributed = anyEntity || facts.some(f => f.attributedTo !== undefined);
   const wide = anyTyped || anyAttributed;
   const header = wide
-    ? `| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period |${anyAttributed ? ' attributed_to |' : ''}`
+    ? `| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context | claim_metric | claim_value | claim_unit | claim_period |${anyAttributed ? ' attributed_to |' : ''}${anyEntity ? ' entity |' : ''}`
     : `| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |`;
   const separator = wide
-    ? `|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|${anyAttributed ? '---------------|' : ''}`
+    ? `|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|--------------|-------------|------------|--------------|${anyAttributed ? '---------------|' : ''}${anyEntity ? '--------|' : ''}`
     : `|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|`;
   const rows = facts.map(f => {
     const claimCell = f.active ? f.claim : `~~${f.claim}~~`;
@@ -471,6 +507,7 @@ export function renderFactsTable(facts: ParsedFact[]): string {
     if (!wide) return base;
     const valueCell = f.claimValue === undefined ? '' : String(f.claimValue);
     const typed = `${base} ${escapeFenceCell(f.claimMetric ?? '')} | ${escapeFenceCell(valueCell)} | ${escapeFenceCell(f.claimUnit ?? '')} | ${escapeFenceCell(f.claimPeriod ?? '')} |`;
+    if (f.entity) return `${typed} ${f.attributedTo ?? ''} | ${escapeFenceCell(f.entity)} |`;
     return f.attributedTo ? `${typed} ${f.attributedTo} |` : typed;
   });
   // #4615: the leading double-'' emits a BLANK LINE between the begin marker
@@ -609,8 +646,8 @@ export type NewFactRow = Omit<ParsedFact, 'rowNum' | 'active' | 'supersededBy' |
  * the same row. Throws `FenceRewriteRefusal` when the existing fence does
  * not parse cleanly: re-rendering it would drop the rows the parser skipped.
  */
-export function upsertFactRow(body: string, newRow: NewFactRow): { body: string; rowNum: number } {
-  const parsed = parseFactsFence(body);
+export function upsertFactRow(body: string, newRow: NewFactRow, opts?: FactsFenceParseOpts): { body: string; rowNum: number } {
+  const parsed = parseFactsFenceFor(body, opts);
   assertFenceRewritable('facts', parsed);
   const { facts } = parsed;
   const nextRowNum = newRow.rowNum
@@ -639,6 +676,7 @@ function factRow(newRow: NewFactRow, rowNum: number): ParsedFact {
     claimUnit:   newRow.claimUnit,
     claimPeriod: newRow.claimPeriod,
     ...(newRow.attributedTo ? { attributedTo: newRow.attributedTo } : {}),
+    ...(newRow.entity ? { entity: newRow.entity } : {}),
   };
 }
 
@@ -651,13 +689,14 @@ function factRow(newRow: NewFactRow, rowNum: number): ParsedFact {
  * (O(N × M): minutes on a fence of thousands of rows). The page it returns is
  * the page the one-row-at-a-time calls leave.
  */
-export function factsFenceEditor<T extends { compiled_truth: string; timeline: string }>(page: T, section: 'compiled_truth' | 'timeline') {
+export function factsFenceEditor<T extends { compiled_truth: string; timeline: string; slug?: string }>(page: T, section: 'compiled_truth' | 'timeline') {
+  const opts = { slug: page.slug };
   let current = page;
   let rows: ParsedFact[] | null = null;
   return {
     append(newRow: NewFactRow & { rowNum: number }): void {
       if (!rows) {
-        const parsed = parseFactsFence(current[section]);
+        const parsed = parseFactsFenceFor(current[section], opts);
         assertFenceRewritable('facts', parsed);
         rows = parsed.facts;
       }
@@ -672,7 +711,7 @@ export function factsFenceEditor<T extends { compiled_truth: string; timeline: s
           rows = rows.map(struck);
           return;
         }
-        const found = parseFactsFence(current[key]).facts;
+        const found = parseFactsFenceFor(current[key], opts).facts;
         if (!found.some(f => f.rowNum === rowNum)) continue;
         current = { ...current, [key]: replaceOrInsertFactsFence(current[key], renderFactsTable(found.map(struck))) };
         return;
@@ -766,8 +805,9 @@ export interface FactsFenceView {
   timelineMarker: boolean;
 }
 
-export function factsFenceView(page: { compiled_truth: string | null; timeline?: string | null }): FactsFenceView {
-  return { body: parseFactsFence(page.compiled_truth ?? ''), timeline: parseFactsFence(page.timeline ?? ''), sections: factsFenceSections(page),
+export function factsFenceView(page: { compiled_truth: string | null; timeline?: string | null; slug?: string }): FactsFenceView {
+  const opts = { slug: page.slug };
+  return { body: parseFactsFenceFor(page.compiled_truth ?? '', opts), timeline: parseFactsFenceFor(page.timeline ?? '', opts), sections: factsFenceSections(page),
     timelineMarker: timelineHasGenuineFactsFenceMarker(page.timeline ?? '') };
 }
 
@@ -807,9 +847,9 @@ export function factsFenceSection(page: { compiled_truth: string | null; timelin
  * #6686: strike fence row `rowNum` as superseded by row `by` in whichever section's fence holds it (a split page can
  * hold the old row in the other section than the one the new row went to); a page without the row is returned as is.
  */
-export function strikeFactRowInPage<T extends { compiled_truth: string; timeline: string }>(page: T, rowNum: number, by: number, validUntil?: string): T {
+export function strikeFactRowInPage<T extends { compiled_truth: string; timeline: string; slug?: string }>(page: T, rowNum: number, by: number, validUntil?: string): T {
   for (const key of ['compiled_truth', 'timeline'] as const) {
-    const rows = parseFactsFence(page[key]).facts;
+    const rows = parseFactsFenceFor(page[key], { slug: page.slug }).facts;
     if (!rows.some(f => f.rowNum === rowNum)) continue;
     return { ...page, [key]: replaceOrInsertFactsFence(page[key], renderFactsTable(rows.map(f => f.rowNum === rowNum
       ? { ...f, active: false, supersededBy: by, context: `superseded by #${by}`, ...(validUntil ? { validUntil } : {}) } : f))) };
@@ -945,7 +985,7 @@ export function stripFactsFence(body: string, opts: StripFactsFenceOpts = {}): s
     // which is the safe direction at a privacy boundary — when in doubt,
     // strip rather than leak.
     if (keep) {
-      const { facts } = parseFactsFence(body.slice(region.start, region.end));
+      const { facts } = parseFactsFenceFor(body.slice(region.start, region.end), { reader: true });
       out += renderFactsTable(facts.filter(f => keep.has(f.visibility)));
     }
   }

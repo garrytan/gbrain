@@ -1,7 +1,9 @@
 /**
  * #7702 / #8905: a managed remove or purge of a large source deletes its pages in bounded batches, each in its own
  * short topology transaction, so no statement meets the 5 s topology bound; a retry with the same request_id
- * resumes after an interrupted batch and finishes.
+ * resumes after an interrupted batch and finishes. A statement trigger records every committed page DELETE, so each
+ * test pins the batches themselves (count, SOURCE_RETIRE_BATCH_PAGES bound, one transaction each) on a source of
+ * four full batches and a partial one.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -11,14 +13,15 @@ import { tmpdir } from 'node:os';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { registerLocalWriter } from '../../src/core/persistence/identity.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
-import { runManagedSourceLifecycle } from '../../src/core/persistence/source-lifecycle.ts';
+import { runManagedSourceLifecycle, SOURCE_RETIRE_BATCH_PAGES } from '../../src/core/persistence/source-lifecycle.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
-const PAGES = 60_000;
-const STALL_AFTER = PAGES / 2;
+const PAGES = SOURCE_RETIRE_BATCH_PAGES * 4 + 17;
+const BATCHES = [...Array(4).fill(SOURCE_RETIRE_BATCH_PAGES), 17];
+const STALL_AFTER = SOURCE_RETIRE_BATCH_PAGES * 2;
 const databaseUrl = requirePostgresTestDatabase();
 let template: Awaited<ReturnType<typeof persistencePostgresTemplate>>;
 beforeAll(async () => {
@@ -26,6 +29,10 @@ beforeAll(async () => {
     for (const id of ['retire-large', 'keep-other']) await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [id]);
     await seed(engine, 'retire-large', PAGES);
     await seed(engine, 'keep-other', 50);
+    await engine.executeRaw('CREATE TABLE retire_batches(seq serial PRIMARY KEY, tx bigint NOT NULL, pages integer NOT NULL)');
+    await engine.executeRaw(`CREATE FUNCTION retire_batches_fn() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
+      INSERT INTO retire_batches(tx,pages) SELECT txid_current(),count(*) FROM gone HAVING count(*)>0; RETURN NULL; END $$`);
+    await engine.executeRaw('CREATE TRIGGER retire_batches AFTER DELETE ON pages REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION retire_batches_fn()');
   });
 }, 600_000);
 afterAll(async () => { await template?.dispose(); });
@@ -37,6 +44,10 @@ async function seed(engine: BrainEngine, source: string, pages: number) {
     SELECT p.id,c,'chunk '||c||' of '||p.slug FROM pages p CROSS JOIN generate_series(0,2) c WHERE p.source_id=$1`, [source]);
   await engine.executeRaw(`INSERT INTO links(from_page_id,to_page_id) SELECT p.id,q.id FROM pages p
     JOIN pages q ON q.source_id=p.source_id AND q.slug='notes/p-'||(split_part(p.slug,'-',2)::int % $2::int + 1) WHERE p.source_id=$1`, [source, pages]);
+}
+async function batches(engine: BrainEngine) {
+  const rows = await engine.executeRaw<{ tx: string; pages: number }>('SELECT tx::text,pages FROM retire_batches ORDER BY seq');
+  return { pages: rows.map(r => r.pages), transactions: new Set(rows.map(r => r.tx)).size };
 }
 async function counts(engine: BrainEngine, source: string) {
   const [row] = await engine.executeRaw<{ pages: number; chunks: number; links: number }>(`SELECT
@@ -66,11 +77,12 @@ describe('managed remove/purge of a large source (postgres)', () => {
     } finally { await disposePersistenceConsumer(engine); await close(); rmSync(home, { recursive: true, force: true }); }
   }
 
-  test('remove deletes every page, chunk and link of a source too large for one bounded statement', () => fixture(async (engine, source) => {
+  test('remove deletes every page, chunk and link of a source larger than one batch, in bounded batches', () => fixture(async (engine, source) => {
     const started = performance.now();
     const receipt = await runManagedSourceLifecycle(engine, { operation: 'remove', sourceId: source, confirmDestructive: true })
       .finally(() => console.log(`[retire-batched] remove of ${PAGES} pages: ${Math.round(performance.now() - started)} ms`));
     expect(receipt).toMatchObject({ state: 'committed', operation: 'remove', pages_deleted: PAGES });
+    expect(await batches(engine)).toEqual({ pages: BATCHES, transactions: BATCHES.length });
     expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [source])).toHaveLength(0);
     expect(await engine.executeRaw('SELECT source_id FROM persistence_source_bindings WHERE source_id=$1', [source])).toHaveLength(0);
     expect(await counts(engine, source)).toEqual({ pages: 0, chunks: 0, links: 0 });
@@ -80,6 +92,7 @@ describe('managed remove/purge of a large source (postgres)', () => {
     await runManagedSourceLifecycle(engine, { operation: 'archive', sourceId: source });
     const receipt = await runManagedSourceLifecycle(engine, { operation: 'purge', sourceId: source, confirmDestructive: true });
     expect(receipt).toMatchObject({ state: 'committed', operation: 'purge', pages_deleted: PAGES });
+    expect(await batches(engine)).toEqual({ pages: BATCHES, transactions: BATCHES.length });
     expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [source])).toHaveLength(0);
     expect(await counts(engine, source)).toEqual({ pages: 0, chunks: 0, links: 0 });
   }), 300_000);
@@ -96,11 +109,13 @@ describe('managed remove/purge of a large source (postgres)', () => {
     await expect(remove()).rejects.toMatchObject({ code: 'write_pending' });
     const left = (await counts(engine, source)).pages;
     expect(left).toBe(PAGES - STALL_AFTER);
+    expect(await batches(engine)).toEqual({ pages: BATCHES.slice(0, 2), transactions: 2 });
     expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [source])).toHaveLength(1);
-    expect(await engine.executeRaw('SELECT id FROM persistence_topology_changes WHERE request_id=$1::uuid', [requestId])).toHaveLength(0);
+    expect(await engine.executeRaw('SELECT state,recovery FROM persistence_topology_changes WHERE request_id=$1::uuid', [requestId])).toEqual([{ state: 'recovering', recovery: null }]);
     await engine.executeRaw('DELETE FROM retire_stall');
     const receipt = await remove();
     expect(receipt).toMatchObject({ state: 'committed', operation: 'remove', pages_deleted: left });
+    expect(await batches(engine)).toEqual({ pages: BATCHES, transactions: BATCHES.length });
     expect(await remove()).toEqual(receipt);
     expect(await counts(engine, source)).toEqual({ pages: 0, chunks: 0, links: 0 });
     expect(await engine.executeRaw('SELECT id FROM sources WHERE id=$1', [source])).toHaveLength(0);

@@ -11,7 +11,7 @@ import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { capacityWarnsAndRefusalNamesTheKey, compactionSkipsUnfinishedReceipts } from './helpers/w5-scenarios.ts';
 
 test('every journal config key is registered for `gbrain config set`', () => {
-  expect(JOURNAL_CONFIG_KEYS).toHaveLength(11);
+  expect(JOURNAL_CONFIG_KEYS).toHaveLength(12);
   for (const key of JOURNAL_CONFIG_KEYS) expect(KNOWN_CONFIG_KEYS).toContain(key);
 });
 

@@ -26,6 +26,10 @@ export interface AmbientWritebackOpts {
   transientTtl: string;
   /** Resolved write posture — see module header. */
   visibility: 'world' | 'private';
+  /** GST-2243: the caller is one team member, whose remember is private unless it passes share: true. */
+  member?: boolean;
+  /** GST-2243: the credential may name the team member a call serves (x-qm-actor); those calls write as that member. */
+  actor?: boolean;
   /** True only when `extract_facts` is actually callable on this transport's
    * allowed-op set (OV2-14) — never advertise an uncallable tool. The
    * engine-free harness block cannot probe the serve's surface, so it passes
@@ -50,7 +54,11 @@ export function buildAmbientWritebackSection(opts: AmbientWritebackOpts): string
   const transientLine = opts.extractFactsAvailable === false
     ? `pass ttl: "${opts.transientTtl}".`
     : `always save via remember with ttl: "${opts.transientTtl}" — never batch them through extract_facts (it cannot set a ttl, so they would become permanent).`;
-  const visibilityLine = opts.visibility === 'world'
+  const visibilityLine = opts.member
+    ? 'Omit visibility: your saves stay private to you. Pass share: true only for a fact about the team\'s work, never about a person; every reader of this source then recalls it, and only the brain host can withdraw it.'
+    : opts.visibility === 'world' && opts.actor
+    ? 'On a save made for a team member (x-qm-actor), omit visibility and never pass share: true (it is refused): the fact stays private to that member. Knowledge for the whole team waits for the brain owner: propose it with memory_propose when that tool is in your tool list. On any other save, pass visibility: "world" explicitly. "world" means readable by agents authorized on THIS brain — not the public internet. Never widen a private fact on your own.'
+    : opts.visibility === 'world'
     ? 'Pass visibility: "world" explicitly on every save. "world" means readable by agents authorized on THIS brain — not the public internet. Never widen a private fact on your own.'
     : 'Pass visibility: "private" explicitly on every save — this brain\'s operator keeps facts private by default (omitting visibility would silently widen: remember defaults to world). Private facts are readable by the local CLI only, not by remote sessions: you, and every other MCP or HTTP session, cannot recall or forget a fact you save as private. Never widen to world on your own.';
   const header = opts.origin === 'conversation'

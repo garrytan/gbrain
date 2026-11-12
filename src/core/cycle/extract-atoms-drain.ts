@@ -420,7 +420,11 @@ export async function runExtractAtomsDrain(
           // #2144: a zero-ATOM batch can still be progress — tombstoned
           // zero-yield pages shrink the backlog without producing atoms. Only
           // stop when the backlog count genuinely didn't move.
-          if (r.extracted === 0 && r.skipped === 0) {
+          //
+          // #8445: a skip-only batch gets the same recount. An item the phase
+          // skips but the backlog still counts re-skipped every batch, so the
+          // drain ran to max_batches holding the cycle lock.
+          if (r.extracted === 0) {
             const after = await count();
             if (hard.signal.aborted) break;
             if (after !== null) lastCount = after;

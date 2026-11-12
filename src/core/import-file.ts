@@ -67,7 +67,7 @@ import { abortSegmentedStaging, bodyStorageOf, demoteSegmentedPage, materialized
   stringWriteStorage, type SegmentedImport } from './persistence/segmented-apply.ts';
 import type { SegmentedStagingOwner } from './page-body/ingest.ts';
 import type { PageBodyPolicy } from './page-body/limits.ts';
-import { parseFactsFence, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
+import { parseFactsFenceFor, renderFactsTable, restoreHiddenFactRows, factsGapWarning, replaceOrInsertFactsFence } from './facts-fence.ts';
 import { assertOriginUnclaimed, isOriginClaimRefusal } from './persistence/origin-guard.ts';
 import { fileBodyMatchesStored, readStoredBody } from './facts/file-body-guard.ts';
 import { currentEngineScope, needsEngineScope, runInEngineScope, withEngineScope } from './engine-scope.ts';
@@ -93,8 +93,8 @@ function mergeHiddenFactRowsIntoBody(
   existingBody: string | null | undefined,
 ): string {
   if (!existingBody) return incomingBody;
-  const incomingFacts = parseFactsFence(incomingBody);
-  const existingFacts = parseFactsFence(existingBody);
+  const incomingFacts = parseFactsFenceFor(incomingBody, { slug });
+  const existingFacts = parseFactsFenceFor(existingBody, { slug });
   const merge = restoreHiddenFactRows(incomingFacts, existingFacts);
   if (merge) {
     if (merge.renumbered.length > 0) {

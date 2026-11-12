@@ -24,12 +24,13 @@ import { STATUS_TOOL_DEF, STATUS_TOOL_NAME, attemptStatusRecovery, statusHeadlin
 import { installCapabilitiesResource, mcpAdministrationGuidance } from './capabilities.ts';
 import { createSkillResources, type SkillResources } from './skill-resources.ts';
 import { readLocalWriter, verifyLocalWriter } from '../core/persistence/identity.ts';
-import { ambientOptsFrom } from '../core/facts/writeback-config.ts';
+import { ambientOptsFrom, type WritebackConfig } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
 import { isEngineDegraded, onEngineRecovered } from '../core/degraded-marker.ts';
 import { assertStdioSourceBindable } from './source-preflight.ts';
 import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts';
 import { hookSessionCwd } from '../core/session-cwd.ts';
+import { stdioMemberIdentity } from '../core/access/caller.ts';
 
 /**
  * Largest JSON-RPC message the stdio server reads (the SDK default is 10 MiB,
@@ -329,7 +330,19 @@ function stdioSurfaceSession(
  */
 const READ_ONLY_SERVE_NOTE = '[gbrain-serve] read-only: no persistence consumer, on-commit sync or sweep runs here; a read-write serve, jobs work or autopilot owns them.\n';
 
-export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess; advertise?: McpSurface } = {}) {
+/**
+ * The ambient writeback section's options for a stdio serve: what the session can call, and whether the stdio member (`--stdio-member`, else mcp.stdio_member) binds
+ * it to a member, whose writes stay private unless shared (GST-2243), so its rule never says "pass visibility: world".
+ */
+export async function stdioAmbientOpts(engine: BrainEngine, writeback: WritebackConfig, allowedOps: ReadonlySet<string> | undefined, stdioMember?: string) {
+  return ambientOptsFrom(writeback, {
+    remember: allowedOps ? allowedOps.has('remember') : true,
+    extractFacts: allowedOps ? allowedOps.has('extract_facts') : true,
+    member: (await stdioMemberIdentity(engine, stdioMember)).some(p => p.startsWith('member:')),
+  });
+}
+
+export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpSurface; surfaceSource?: SurfaceSource; invalidSurfaceEnv?: string; sourceGuard?: boolean; onBootPhase?: (phase: string) => void; access?: McpAccess; advertise?: McpSurface; stdioMember?: string } = {}) {
   const config = loadConfig();
   const bootPhase = (phase: string) => { try { opts.onBootPhase?.(phase); } catch { /* diagnostic only */ } };
   // Refuse to serve a well-formed GBRAIN_SOURCE that no active source row
@@ -365,10 +378,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   // reconnect belongs to tool calls).
   const statusMode = statusModeOf(engine);
   const writeback = statusMode ? null : (await resolveAgentWriteback(engine, config)).bundle;
-  const writebackOpts = writeback ? ambientOptsFrom(writeback, {
-    remember: session.allowedOps ? session.allowedOps.has('remember') : true,
-    extractFacts: session.allowedOps ? session.allowedOps.has('extract_facts') : true,
-  }) : null;
+  const writebackOpts = writeback ? await stdioAmbientOpts(engine, writeback, session.allowedOps, opts.stdioMember) : null;
   server = new Server(
     { name: 'gbrain', version: VERSION, description: MCP_SERVER_DESCRIPTION },
     // listChanged: a client that handshakes during DEGRADED mode receives the
@@ -417,7 +427,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
   }, bootGatedReads(createSkillResources(engine, async () => {
     const scope = await resolveMcpStdioSourceScope(engine);
     return { remote: true, transport: 'stdio', sourceId: scope.sourceId,
-      localFederatedSourceIds: scope.localFederatedSourceIds, allowedOps: session.allowedOps, surface: session.surface, config: config ?? undefined };
+      localFederatedSourceIds: scope.localFederatedSourceIds, allowedOps: session.allowedOps, surface: session.surface, config: config ?? undefined, ...(opts.stdioMember !== undefined ? { stdioMember: opts.stdioMember } : {}) };
   }), gate.awaitBoot));
 
   // FILE config plane only — stdio has no per-request list cycle, so a
@@ -507,7 +517,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // --source-guard (plugin lanes): thread the winning resolution tier so
       // dispatch can fail-close ambient-tier writes. Off (undefined) unless
       // the serve was started with the flag.
-      ...(opts.sourceGuard ? { sourceGuardTier: sourceScope.tier } : {}),
+      ...(opts.sourceGuard ? { sourceGuardTier: sourceScope.tier } : {}), ...(opts.stdioMember !== undefined ? { stdioMember: opts.stdioMember } : {}),
       // v0.31 (eD3): _meta.brain_hot_memory injection so Claude Desktop /
       // Code see the brain's relevant hot memory automatically alongside
       // every tool-call response. Best-effort; absorbs errors.

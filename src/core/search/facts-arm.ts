@@ -19,7 +19,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
-import { resolveExcludePrivatePages } from './private-visibility.ts';
+import { resolveExcludePrivatePages, worldOnlyFacts } from './private-visibility.ts';
 import { admitted, collectFactCandidates, FACTS_ARM_COSINE_MIN, queryTerms, scoreFactCandidates, type FactCandidate as PoolCandidate, type FactPoolScope } from './fact-relevance.ts';
 import { pageReadFilter } from './read-policy-sql.ts';
 import { enforceTokenBudget, resultTokens } from './token-budget.ts';
@@ -76,7 +76,7 @@ export interface FactsArmScope {
 type FactCandidate = PoolCandidate;
 
 async function poolScope(engine: BrainEngine, scope: FactsArmScope): Promise<FactPoolScope> {
-  return { ...scope, excludePrivate: await resolveExcludePrivatePages(engine, scope.remote) };
+  return { ...scope, worldOnly: worldOnlyFacts(scope.remote), excludePrivate: await resolveExcludePrivatePages(engine, scope.remote) };
 }
 
 const day = (v: Date | string | null) => (v ? new Date(v).toISOString().slice(0, 10) : null);

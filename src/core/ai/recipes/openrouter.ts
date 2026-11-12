@@ -57,10 +57,12 @@ export function openrouterRequiresExplicitPromptCache(modelId: string): boolean 
  * the same headroom on the OR route (#4758). Z.ai's GLM-4.5+/5.x think by
  * default too (zhipu recipe, gbrain#4727) and OR bills their reasoning as
  * completion tokens — same cutoff, same headroom under the `z-ai/` prefix.
+ * Particle (`particle-ai/`) reasons by default as well and OR bills it as
+ * completion tokens, so a thinking:'off' call needs the same headroom (GST-1977).
  */
 export function openrouterThinkingByDefault(modelId: string): boolean {
   const normalized = modelId.trim().toLowerCase();
-  if (normalized.startsWith('deepseek/')) return true;
+  if (normalized.startsWith('deepseek/') || normalized.startsWith('particle-ai/')) return true;
   return normalized.startsWith('z-ai/') && GLM_THINKING_BY_DEFAULT_RE.test(normalized);
 }
 

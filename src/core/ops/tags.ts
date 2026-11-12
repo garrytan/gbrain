@@ -75,14 +75,15 @@ const get_tags: Operation = {
     // (ctx.auth.allowedSources) reaches the engine, not just scalar ctx.sourceId.
     // Was `ctx.sourceId ? {sourceId} : {}` — a federated client got '{}' →
     // engine fell back to 'default' (functionality gap + cross-source leak).
-    // Untrusted callers never learn a private or soft-deleted page's tags
-    // (readPolicyOpts resolves the operator's private-pages posture).
+    // Untrusted callers never learn a private page's tags (readPolicyOpts
+    // resolves the operator's private-pages posture), and no caller reads a
+    // soft-deleted page's tags: they come back with restore_page.
     const policy = await readPolicyOpts(ctx);
     const tags = await ctx.engine.getTags(p.slug as string, {
       sourceId: policy.sourceId,
       sourceIds: policy.sourceIds,
       excludePrivate: policy.excludePrivate,
-      liveOnly: ctx.remote !== false,
+      liveOnly: true,
     });
     if (ctx.remote === false || tags.length === 0) return tags;
     // #8384: a remote reader gets a quoted page's tags quoted, as get_page and fetch return them.

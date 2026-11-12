@@ -171,7 +171,7 @@ const extract_facts: Operation = {
     // instruction would silently widen private-default extractions because
     // `remember` hard-defaults to 'world'.
     const visibilityPin = `visibility: "${visibility}"` +
-      (visibility === 'private' ? ' (remember defaults to world — omitting it would widen these facts)' : '');
+      (visibility === 'private' ? ' (remember defaults to world unless your credential is bound to a member — omitting it could widen these facts)' : '');
     if (r.skipped_reason === 'chat_unavailable') {
       return {
         inserted: 0, duplicate: 0, superseded: 0, fact_ids: [],
@@ -365,11 +365,9 @@ const recall: Operation = {
     const scalarSource = factSources.length === 1 ? factSources[0] : undefined;
 
     // Visibility filter: remote callers see world-only facts; the local CLI and (GST-2059) the brain owner see all.
-    const { resolveExcludePrivatePages, callerIsOwner } = await import('../search/private-visibility.ts');
-    const visibility =
-      ctx.remote === false || callerIsOwner()
-        ? undefined
-        : ['world'] as ('private' | 'world')[];
+    const { resolveExcludePrivatePages, worldOnlyFacts } = await import('../search/private-visibility.ts');
+    const worldOnly = worldOnlyFacts(ctx.remote);
+    const visibility = worldOnly ? ['world'] as ('private' | 'world')[] : undefined;
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote); // #4352: fact and page arms alike
     const eligibility = await resolveReadEligibility(ctx, { minTrust: p.min_trust }); // #5575 floor + quarantine/rederive hiding
 
@@ -433,7 +431,7 @@ const recall: Operation = {
 
     if (question !== null && !readsNoSource) {
       ranking = await rankFactsByQuestion(ctx, { question, params: p, factSources, limit, entity: entityParam, sessionId: sessionParam, since, grep, includeExpired,
-        scope: { sourceIds: factSources, remote: ctx.remote !== false, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged } });
+        scope: { sourceIds: factSources, worldOnly, excludePrivate, minTrust: eligibility.floor, suppressFlagged: eligibility.suppressFlagged } });
       ({ rows, ambiguousEntity } = ranking);
       for (const notice of questionRecallNotices(ranking, ctx.brainId)) ctx.emitNotice?.(notice);
     } else if (p.supersessions === true) {
@@ -796,7 +794,7 @@ const context_pack: Operation = {
     // `default` plus this source, inside the caller's grant; it packs first.
     const { loadCoreBlock } = await import('../core-memory.ts');
     const allowed = ctx.auth?.allowedSources?.length ? ctx.auth.allowedSources : null;
-    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, eligibility })
+    const core = await loadCoreBlock(ctx.engine, { sessionSourceId: sourceId, allowedSources: allowed, excludePrivate: !includePrivate, forCaller: true, eligibility })
       .catch(() => null);
     const coreText = core?.text ?? '';
     const coreTokens = estimateTokens(coreText);

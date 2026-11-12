@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 282967,
-    "stdoutSha256": "73f135de04ba7cceced4d9fd952b23aaefd7fb4cad5ebdf3dce1aca953c70f84",
+    "stdoutBytes": 287195,
+    "stdoutSha256": "0ce2ce7f78140fd56cf7bbd02098a18c5802abfb26bd5713b347d2f50e36e5f1",
     "toolNames": [
       "remember",
       "entity",
@@ -164,6 +164,7 @@
       "unpurge_page",
       "memory_recall",
       "memory_write",
+      "memory_propose",
       "get_memory_settings",
       "set_memory_writeback",
       "memory_conversation_mode",
@@ -202,7 +203,7 @@
     ],
     "tools": [
       {
-        "description": "Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
+        "description": "Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
@@ -223,6 +224,7 @@
           "provenance": "string?",
           "replaces": "string?",
           "request_id": "string?",
+          "share": "boolean?",
           "source_id": "string?",
           "ttl": "string?",
           "valid_from": "string?",
@@ -306,6 +308,10 @@
               "description": "Reuse only to retry.",
               "type": "string"
             },
+            "share": {
+              "description": "Members save privately, owner shared; true: all source readers recall it. Not for facts about a person.",
+              "type": "boolean"
+            },
             "source_id": {
               "description": "Write source.",
               "type": "string"
@@ -319,7 +325,7 @@
               "type": "string"
             },
             "visibility": {
-              "description": "world (default) or private (local CLI).",
+              "description": "world (default) or private (local CLI). Members: use share.",
               "enum": [
                 "world",
                 "private"
@@ -2956,6 +2962,8 @@
           "min_trust": "string?",
           "since": "string?",
           "slug": "string",
+          "source_id": "string?",
+          "source_ids": "array?",
           "until": "string?"
         },
         "required_scopes": [],
@@ -2992,6 +3000,17 @@
             "slug": {
               "description": "Slug of the page whose timeline entries to return.",
               "type": "string"
+            },
+            "source_id": {
+              "description": "Read only this source.",
+              "type": "string"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "until": {
               "description": "Alias for before; accepted for agent callers",
@@ -6594,6 +6613,7 @@
           "min_trust": "string?",
           "prior_context": "string?",
           "session_id": "string?",
+          "source_ids": "array?",
           "stats": "boolean?",
           "turn": "number?",
           "window": "string?"
@@ -6632,6 +6652,13 @@
             "session_id": {
               "description": "Optional caller session id, logged for attribution.",
               "type": "string"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "stats": {
               "description": "Return the volunteered-vs-used precision summary instead of volunteering. APPROXIMATE: \"used\" = pages.last_retrieved_at > volunteered_at.",
@@ -7426,6 +7453,7 @@
           "acting_user": "string?",
           "max_chars": "integer?",
           "query": "string",
+          "query_keep": "string?",
           "source_id": "string?",
           "source_ids": "array?"
         },
@@ -7442,6 +7470,14 @@
             },
             "query": {
               "description": "What the turn is about; ranks the facts.",
+              "type": "string"
+            },
+            "query_keep": {
+              "description": "Which end of a query over 2000 characters ranks the facts: head (the default) or tail. Sending it adds query_truncated.",
+              "enum": [
+                "head",
+                "tail"
+              ],
               "type": "string"
             },
             "source_id": {
@@ -7530,6 +7566,101 @@
           },
           "required": [
             "facts",
+            "idempotency_key"
+          ],
+          "type": "object"
+        },
+        "scope": "write"
+      },
+      {
+        "description": "Propose one timeline entry or link on a shared page for the person this call serves; the brain owner approves it before it is written. Needs an attested person. Poll get_write_request with the request_id; the same idempotency_key replays.",
+        "idempotent": true,
+        "local_only": false,
+        "mutating": true,
+        "name": "memory_propose",
+        "parameters": {
+          "acting_user": "string?",
+          "context": "string?",
+          "date": "string?",
+          "detail": "string?",
+          "expected_revision": "string?",
+          "idempotency_key": "string",
+          "kind": "string",
+          "link_type": "string?",
+          "source": "string?",
+          "summary": "string?",
+          "target": "string",
+          "to": "string?",
+          "valid_from": "string?",
+          "valid_until": "string?"
+        },
+        "required_scopes": [],
+        "schema": {
+          "properties": {
+            "acting_user": {
+              "description": "Set by the trusted system: equal to the x-qm-actor header, or omit.",
+              "type": "string"
+            },
+            "context": {
+              "description": "link: context.",
+              "type": "string"
+            },
+            "date": {
+              "description": "timeline: YYYY-MM-DD.",
+              "type": "string"
+            },
+            "detail": {
+              "description": "timeline: details.",
+              "type": "string"
+            },
+            "expected_revision": {
+              "description": "The revision shown to the person; refused when the page moved.",
+              "type": "string"
+            },
+            "idempotency_key": {
+              "description": "1-128 visible ASCII characters; the same key replays this proposal.",
+              "type": "string"
+            },
+            "kind": {
+              "description": "timeline (date, summary) or link (to).",
+              "enum": [
+                "timeline",
+                "link"
+              ],
+              "type": "string"
+            },
+            "link_type": {
+              "description": "link: a type the schema pack declares.",
+              "type": "string"
+            },
+            "source": {
+              "description": "timeline: where it came from.",
+              "type": "string"
+            },
+            "summary": {
+              "description": "timeline: one line.",
+              "type": "string"
+            },
+            "target": {
+              "description": "Slug the write lands on (a link's from page).",
+              "type": "string"
+            },
+            "to": {
+              "description": "link: the page it points to.",
+              "type": "string"
+            },
+            "valid_from": {
+              "description": "link: YYYY-MM-DD.",
+              "type": "string"
+            },
+            "valid_until": {
+              "description": "link: YYYY-MM-DD.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "target",
             "idempotency_key"
           ],
           "type": "object"
@@ -7675,6 +7806,7 @@
         "parameters": {
           "explain": "boolean?",
           "limit": "number?",
+          "source_ids": "array?",
           "topic": "string?"
         },
         "required_scopes": [],
@@ -7687,6 +7819,13 @@
             "limit": {
               "description": "Max results (default 5).",
               "type": "number"
+            },
+            "source_ids": {
+              "description": "Narrow to these sources (omit or [] for all you can read).",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "topic": {
               "description": "The topic to route. Free-form natural language.",

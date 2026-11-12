@@ -391,6 +391,16 @@ describe('runSlidingPool — BudgetExhausted bypass (D13)', () => {
     expect(done).toBe(1);
   });
 
+  test('a must-abort error survives a throwing failureLabel', async () => {
+    const budget = Object.assign(new Error('cap'), { tag: 'BUDGET_EXHAUSTED' as const });
+    await expect(runSlidingPool({
+      items: [1, 2],
+      workers: 1,
+      onItem: async () => { throw budget; },
+      failureLabel: () => { throw new Error('label projector failed'); },
+    })).rejects.toBe(budget);
+  });
+
   test('isMustAbortError + MUST_ABORT_ERROR_TAGS exposed and stable', () => {
     expect(MUST_ABORT_ERROR_TAGS.has('BUDGET_EXHAUSTED')).toBe(true);
     expect(isMustAbortError({ tag: 'BUDGET_EXHAUSTED' })).toBe(true);
@@ -485,4 +495,50 @@ describe('runSlidingPool — worker slot index passed to onItem', () => {
     // get exercised.
     expect(slotsSeen.size).toBe(5);
   });
+});
+
+describe('runSlidingPool — a throwing callback (#8913)', () => {
+  for (const callback of ['onError', 'failureLabel'] as const) {
+    test(`a throwing ${callback} rejects only after in-flight siblings finish, and nothing new is claimed`, async () => {
+      const callbackError = new Error(`${callback} threw`);
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => { release = resolve; });
+      const claimed: number[] = [];
+      let siblingDone = false;
+      let settled = false;
+      const outcome = runSlidingPool({
+        items: [0, 1, 2, 3],
+        workers: 2,
+        onItem: async (item: number) => {
+          claimed.push(item);
+          if (item === 0) throw new Error('item failed');
+          await held;
+          siblingDone = true;
+        },
+        [callback]: () => { throw callbackError; },
+      }).then(() => null, (err: unknown) => err).finally(() => { settled = true; });
+      await new Promise((r) => setTimeout(r, 20));
+      expect(settled).toBe(false);
+      release();
+      expect(await outcome).toBe(callbackError);
+      expect(siblingDone).toBe(true);
+      expect(claimed).toEqual([0, 1]);
+    });
+
+    test(`a throwing ${callback} stops an immediately resolving sibling from claiming the next item`, async () => {
+      const callbackError = new Error(`${callback} threw`);
+      const claimed: number[] = [];
+      const outcome = await runSlidingPool({
+        items: [0, 1, 2],
+        workers: 2,
+        onItem: async (item: number) => {
+          claimed.push(item);
+          if (item === 0) throw new Error('item failed');
+        },
+        [callback]: () => { throw callbackError; },
+      }).then(() => null, (err: unknown) => err);
+      expect(outcome).toBe(callbackError);
+      expect(claimed).toEqual([0, 1]);
+    });
+  }
 });

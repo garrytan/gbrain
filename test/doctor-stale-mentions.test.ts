@@ -97,7 +97,7 @@ describe('scanStaleMentions', () => {
     expect(res.staleLinks).toBe(1);
     expect(res.staleByKind).toEqual({ plain: 1 });
     expect(res.examples).toEqual([
-      { from: 'notes/meeting', to: 'companies/acme-example', kind: 'plain' },
+      { from: 'notes/meeting', to: 'companies/acme-example', kind: 'plain', link_type: 'mentions' },
     ]);
   });
 

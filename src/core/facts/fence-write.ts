@@ -49,6 +49,7 @@ import { gbrainPath } from '../config.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { isDurabilityHardened, commitWriteThroughFile } from '../brain-repo-durability.ts';
 import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.ts';
+import { withHeldFactsFence } from './unfenced-facts.ts';
 import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
 import type { OperationError } from '../ops/contract.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
@@ -82,6 +83,8 @@ export interface FenceTarget {
    * stub-create (DB↔file drift repair) stays allowed for them.
    */
   resolutionSource: ResolutionSource | null;
+  /** Automatic extraction (the facts backstop): a claim withdrawn at any visibility is skipped, not only at the fact's own. */
+  automatic?: boolean;
 }
 
 /** Input fact prepared by runPipelineWithBody (post-dedup). */
@@ -333,7 +336,7 @@ export async function writeFactsToFence(
     // fence rows through its fact intent instead of editing the file here.
     const kept: FenceInputFact[] = [];
     for (const f of facts) {
-      if (!await isFactWithdrawn(engine, target.sourceId, f.visibility, f.fact, target.slug)) kept.push(f);
+      if (!await isFactWithdrawn(engine, target.sourceId, target.automatic ? null : f.visibility, f.fact, target.slug)) kept.push(f);
     }
     const withdrawnSkipped = facts.length - kept.length ? { withdrawnSkipped: facts.length - kept.length } : {};
     if (!kept.length) return { inserted: 0, ids: [], ...withdrawnSkipped };
@@ -385,7 +388,7 @@ export async function writeFactsToFence(
     async () => {
       const kept: FenceInputFact[] = [];
       for (const f of facts) {
-        if (!await isFactWithdrawn(engine, target.sourceId, f.visibility, f.fact, target.slug)) kept.push(f);
+        if (!await isFactWithdrawn(engine, target.sourceId, target.automatic ? null : f.visibility, f.fact, target.slug)) kept.push(f);
       }
       const withdrawnSkipped = facts.length - kept.length ? { withdrawnSkipped: facts.length - kept.length } : {};
       facts = kept;
@@ -510,6 +513,7 @@ export async function writeFactsToFence(
       } catch (err) {
         console.warn(`[facts.fence] FACTS_ROW_NUM_HINT_UNAVAILABLE: ${target.slug} (source ${target.sourceId}): ${err instanceof Error ? err.message : String(err)}; numbering from the file alone`);
       }
+      body = (await withHeldFactsFence(engine, target.sourceId, target.slug, { compiled_truth: body })).compiled_truth;
       const fenceRefusal = refuseUnparsedFence(body, target, filePath);
       if (fenceRefusal) return { inserted: 0, ids: [], fenceWriteFailed: true, fenceRefusal, ...withdrawnSkipped };
       const { facts: existingFenceFacts } = parseFactsFence(body);

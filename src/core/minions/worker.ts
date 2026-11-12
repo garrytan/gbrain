@@ -64,6 +64,9 @@ import { isRetryableConnError } from '../retry-matcher.ts';
 import { reconnectAfterConnectionError as reconnectEngineAfterConnError } from './reconnect.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from './configuration-error.ts';
 
+/** GST-2529: how often the worker asks whether a watchdog-marked job is past its wait (never less often than the wait itself). */
+const SUSPECT_PROBE_EVERY_MS = 5_000;
+
 /**
  * Abort reasons that signal infrastructure failure (PgBouncer outage,
  * connection drop, lock reclaimed by another worker) — NOT a job
@@ -206,6 +209,9 @@ export class MinionWorker extends EventEmitter {
   private inFlight = new Map<number, InFlightJob>();
   private executions = new Map<string, OwnedExecution>();
   private pendingClaim: { lockToken: string; promise: Promise<MinionJob | null> } | null = null;
+  /** GST-2529: when the next overdue watchdog-suspect probe is due, and whether the last one found such a job. */
+  private suspectProbeDueAt = 0;
+  private suspectOverdue = false;
   private _configurationError: LocalConfigurationError | null = null;
   private configurationDeadline = 0;
   private configurationDrainFinished = false;
@@ -315,6 +321,7 @@ export class MinionWorker extends EventEmitter {
       childTiniPath: opts?.childTiniPath ?? '',
       longJobNames: opts?.longJobNames ?? DEFAULT_LONG_JOB_NAMES,
       shortJobReservedSlots: opts?.shortJobReservedSlots ?? DEFAULT_SHORT_JOB_RESERVED_SLOTS,
+      watchdogSuspectWaitMs: opts?.watchdogSuspectWaitMs ?? 60_000,
       onJobSettled: opts?.onJobSettled ?? (() => {}),
     };
     // Process isolation contract: 'process' without a resolved child CLI
@@ -379,6 +386,14 @@ export class MinionWorker extends EventEmitter {
 
   get configurationReleaseResults(): readonly ConfigurationReleaseResult[] {
     return this._configurationReleaseResults;
+  }
+
+  /** GST-2529: at most every min(wait, 5 s), ask whether a marked job is past its wait; a failed probe errs toward the drain. */
+  private async probeOverdueSuspect(): Promise<void> {
+    if (Date.now() < this.suspectProbeDueAt) return;
+    this.suspectProbeDueAt = Date.now() + Math.min(this.opts.watchdogSuspectWaitMs, SUSPECT_PROBE_EVERY_MS);
+    this.suspectOverdue = await this.queue.hasOverdueWatchdogSuspect(this.opts.queue, this.registeredNames, this.opts.watchdogSuspectWaitMs)
+      .catch(() => true);
   }
 
   private probeDatabase(): Promise<DbProbeResult> {
@@ -810,6 +825,7 @@ export class MinionWorker extends EventEmitter {
           }
         }
 
+        await this.probeOverdueSuspect();
         if (!this.running) break;
 
         // Claim jobs up to concurrency limit — unless the system-wide pause
@@ -840,7 +856,7 @@ export class MinionWorker extends EventEmitter {
               this.opts.lockDuration,
               this.opts.queue,
               this.registeredNames,
-              { excludeWatchdogSuspects: this.inFlight.size > 0, excludeNames: claimExclusions(this.opts, [...this.inFlight.values()].map(f => f.job.name)) },
+              { excludeWatchdogSuspects: this.inFlight.size > 0, suspectWaitMs: this.suspectOverdue ? this.opts.watchdogSuspectWaitMs : undefined, excludeNames: claimExclusions(this.opts, [...this.inFlight.values()].map(f => f.job.name)) },
             ).then(claimed => {
               if (claimed) {
                 this.executions.set(lockToken, { job: claimed, lockToken, stopped: true });
@@ -1013,7 +1029,7 @@ export class MinionWorker extends EventEmitter {
           await this.engine.executeRaw(
             `UPDATE minion_jobs
              SET status = 'cancelled', error_text = 'skipped_quiet_hours', updated_at = now()
-             WHERE id = $1 AND status NOT IN ('completed','failed','dead')`,
+             WHERE id = $1 AND status NOT IN ('completed','failed','dead','cancelled')`,
             [job.id],
           );
         }

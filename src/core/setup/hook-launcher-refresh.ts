@@ -76,8 +76,11 @@ async function refreshSetup(log: (line: string) => void): Promise<void> {
         // Another install's hooks or MCP entry can share these files, so the home comes only from entries this receipt owns.
         const homeEnv = claudeHookEntries(paths.settingsPath).filter((e) => owned.has(hookEntryHash(e) ?? '')).map((e) => parseClaudeHookCommand(e.command as string)?.env.GBRAIN_HOME).find((h) => h !== undefined)
           ?? (receipt.mcp_plugin ? undefined : claudeMcpHome(paths.configPath, receipt.name, receipt.project_dir, [receipt.entry_hash, receipt.pending_entry_hash]));
-        const plan: ClaudeSetupPlan = { name: receipt.name, scope: receipt.scope, ...(receipt.project_dir ? { projectDir: receipt.project_dir } : {}), launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(homeEnv ? { gbrainHomeEnv: homeEnv } : {}),
+        const recorded: ClaudeSetupPlan = { name: receipt.name, scope: receipt.scope, ...(receipt.project_dir ? { projectDir: receipt.project_dir } : {}), launcher: receipt.launcher, brainHome: receipt.gbrain_home, ...(homeEnv ? { gbrainHomeEnv: homeEnv } : {}),
           sourceId: receipt.source_id, surface: receipt.surface, advertise: receipt.advertise ?? null, events: Object.keys({ ...receipt.hooks.owned, ...receipt.hooks.pending }) as ClaudeHookEvent[] };
+        // GST-363: the rewrite carries the entry's own --stdio-member forward and never adds one.
+        const carried = receipt.mcp_plugin ? undefined : inspectClaudeSetup(recorded).mcp.stdioMember;
+        const plan: ClaudeSetupPlan = carried ? { ...recorded, stdioMember: carried } : recorded;
         // An MCP entry still exactly what setup last wrote predates the launcher (#8426): setup's own rewrite moves it.
         const mcp = receipt.mcp_plugin ? 'plugin' : inspectClaudeSetup(plan).mcp.state;
         if (!ours.some(needsLauncher) && mcp !== 'owned') continue;

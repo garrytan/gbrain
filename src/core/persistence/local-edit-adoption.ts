@@ -125,20 +125,19 @@ function fenceRows(...texts: Array<string | null | undefined>): Set<string> {
   return new Set(texts.flatMap(text => (text ?? '').split('\n')).map(line => line.trim()).filter(line => /^(- |\|)/.test(line) && !/^\|[\s:|-]*\|?$/.test(line)));
 }
 /**
- * #8755: a stale editor save: the file equals one of the last STALE_REVISIONS stored revisions' bodies (matched by hash in
- * SQL, no version body is loaded), or lacks a Facts or timeline row the last revision added (rows the page holds that its
- * newest archived version, the revision before, did not). Inline pages only: adoptionIntent refuses a segmented page first.
+ * #8755: a stale editor save: the file equals one of the last STALE_REVISIONS stored revisions' bodies (both trimmed in
+ * TypeScript, so the match holds on any database encoding), or lacks a Facts or timeline row the last revision added
+ * (rows the page holds that its newest archived version, the revision before, did not). Inline pages only: adoptionIntent
+ * refuses a segmented page first.
  */
-async function staleEditorSave(engine: BrainEngine, slug: string, text: string, snapshot: PageSnapshot, activePack: unknown): Promise<boolean> {
+export async function staleEditorSave(engine: BrainEngine, slug: string, text: string, snapshot: PageSnapshot, activePack: unknown): Promise<boolean> {
   assertInlineBody(snapshot.page, 'staleEditorSave');
   const file = parseMarkdown(text, slug, { activePack } as never);
   const [compiled, timeline] = [edgeTrim(file.compiled_truth), edgeTrim(file.timeline)];
   if (compiled !== edgeTrim(snapshot.page.compiled_truth) || timeline !== edgeTrim(snapshot.page.timeline)) {
-    const [earlier] = await engine.executeRaw<{ same: boolean }>(`SELECT EXISTS (SELECT 1 FROM (SELECT compiled_truth, timeline FROM page_versions
-        WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2) v
-      WHERE md5(btrim(v.compiled_truth, $5))=md5($3) AND md5(btrim(COALESCE(v.timeline, ''), $5))=md5($4)) AS same`,
-    [snapshot.page.id, STALE_REVISIONS, compiled, timeline, EDGE_WHITESPACE]);
-    if (earlier?.same) return true;
+    const earlier = await engine.executeRaw<{ compiled_truth: string; timeline: string | null }>(
+      'SELECT compiled_truth, timeline FROM page_versions WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2', [snapshot.page.id, STALE_REVISIONS]);
+    if (earlier.some(v => edgeTrim(v.compiled_truth) === compiled && edgeTrim(v.timeline) === timeline)) return true;
   }
   const [previous] = await engine.executeRaw<{ compiled_truth: string; timeline: string | null }>(
     'SELECT compiled_truth, timeline FROM page_versions WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT 1', [snapshot.page.id]);
@@ -257,6 +256,18 @@ export async function adoptionCommitLanded(engine: BrainEngine, row: WriteReques
   if (!bound?.local_path) return null;
   const root = join(bound.local_path, bound.relative_path);
   return landedAdoptionCommit(root, join(root, intent.path), { path: intent.path, blob: adopted.blob, replaced_revision: adopted.replaced_revision, head: adopted.head });
+}
+
+/**
+ * #8869: `adoptionCommitLanded` with the HEAD it was read at, for `recoverPublication` to read under the worktree lock
+ * before its transaction, so Git history and the whole commit ledger are never read under the recovery's row locks. Null
+ * for any other request.
+ */
+export async function adoptionRecoveryEvidence(engine: BrainEngine, row: WriteRequest, binding: WorktreeBinding): Promise<{ root: string; head: string | null; landed: string | null } | null> {
+  if (!binding.local_path || !(row.intent as { adoptLocalEdit?: unknown } | null)?.adoptLocalEdit) return null;
+  const root = join(binding.local_path, binding.relative_path);
+  const head = await headCommit(root);
+  return { root, head, landed: await adoptionCommitLanded(engine, row, binding) };
 }
 
 /** Claims, prepares and publishes the admitted adoption, retrying while another owner task holds the worktree lock. */

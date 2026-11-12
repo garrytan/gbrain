@@ -24,14 +24,14 @@ import type { DoctorContext, DoctorEntry } from '../context.ts';
 import { checkError } from '../check-fix.ts';
 
 async function runBootstrapChecks(ctx: DoctorContext): Promise<Check[]> {
-  const { engine } = ctx;
+  const { engine, entryDeadlineAt } = ctx;
   const checks: Check[] = [];
 
   // 2d. Agent-bootstrap health (plan B2/B4/ENG-4). Filesystem-first; the
   // one engine-dependent pairing check degrades gracefully when engine is
   // null. Emits NOTHING on machines with no bootstrap state, so ordinary
   // brains keep a clean doctor.
-  checks.push(...(await bootstrapDoctorChecks(engine)));
+  checks.push(...(await bootstrapDoctorChecks(engine, entryDeadlineAt)));
   return checks;
 }
 
@@ -182,9 +182,12 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
     // entry, or reset by a retry marker) that a NEWER migration already ran
     // past were skipped, not merely not reached yet. Versions above the newest
     // run are the next apply-migrations' ordinary work and stay quiet here.
+    // #8720: without an engine (--fast) the config that declines an opt-out
+    // migration is unreadable, so such a version is unknown, never pending.
     const newestRun = completedVersions.reduce<string | null>((a, v) => (a === null || compareVersions(v, a) > 0 ? v : a), null);
     const pending = completed.length === 0 ? [] : migrationLedgerSummary(VERSION, declined).pending.filter(v =>
-      (newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry');
+      (engine || !(v in MIGRATION_OPT_OUT_KEYS))
+      && ((newestRun !== null && compareVersions(v, newestRun) < 0) || history.get(v)?.at(-1)?.status === 'retry'));
 
     if (declined.size > 0) {
       const keys = [...declined].map(v => `${MIGRATION_OPT_OUT_KEYS[v]}=false`);
@@ -246,7 +249,10 @@ async function runMinionsMigration(ctx: DoctorContext): Promise<Check[]> {
   // the surface an operator actually runs on the host, never emitted it,
   // so a wedged auto-upgrade loop was invisible exactly where it would be
   // diagnosed. Sits beside the upgrade_errors trail it complements.
-  checks.push(checkSelfUpgradeHealth());
+  // #8776: with the plan the next `gbrain upgrade` makes, so a restart it would
+  // refuse (an autopilot started outside gbrain's service) shows before it fails.
+  const restart = await import('../../upgrade-restart.ts').then((m) => m.upgradeRestartReadiness()).catch(() => null);
+  checks.push(checkSelfUpgradeHealth(restart));
   checks.push(checkBunRuntime());
   return checks;
 }

@@ -2420,6 +2420,8 @@ describe('v117 — context_volunteer_events_table', () => {
 
   test('insert + 90-day purge round-trip (purgeStaleVolunteerEvents)', async () => {
     const { insertVolunteerEvents, purgeStaleVolunteerEvents } = await import('../src/core/context/volunteer-events.ts');
+    await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: '', timeline: '' });
+    await engine.putPage('projects/acme-example', { type: 'project', title: 'Acme Example', compiled_truth: '', timeline: '' });
     await insertVolunteerEvents(engine, [
       { source_id: 'default', slug: 'people/alice-example', confidence: 0.9, match_arm: 'alias', rationale: 'alias match', channel: 'op' },
       { source_id: 'default', slug: 'projects/acme-example', confidence: 0.8, match_arm: 'title', rationale: 'exact title', channel: 'reflex', session_id: 's1', turn: 3 },

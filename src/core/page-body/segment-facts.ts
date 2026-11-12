@@ -35,7 +35,7 @@ import { open } from 'node:fs/promises';
 import type { BrainEngine } from '../engine.ts';
 import { indexOfOutsideCode } from '../fence-scan.ts';
 import {
-  FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, timelineHasGenuineFactsFenceMarker, type FactsFenceParseResult, type FactsFenceView,
+  FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFenceFor, timelineHasGenuineFactsFenceMarker, type FactsFenceParseResult, type FactsFenceView,
 } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN } from '../takes-fence.ts';
 import { commitRuns, derivationScope, keyDigest, planRuns, readRuns, SegmentDerivationRaced, segmentDeriveWork, type DerivationScope, type DeriveRun } from './segment-derive.ts';
@@ -108,7 +108,7 @@ export class FactsFenceScan {
   }
 
   result(): RegionFence {
-    return regionFenceOf(this.parsedText, this.fence !== null, this.endOnly, this.marker);
+    return regionFenceOf(this.parsedText, this.fence !== null, this.endOnly, this.marker, this.page.slug);
   }
 
   /** What the blocks pushed so far hold, for a run's fences row. */
@@ -120,9 +120,10 @@ export class FactsFenceScan {
 
 interface RegionFence { parsed: FactsFenceParseResult; holds: boolean; marker: boolean; text: string | null }
 
-function regionFenceOf(parsedText: string | null, holds: boolean, endOnly: boolean, marker: boolean): RegionFence {
+function regionFenceOf(parsedText: string | null, holds: boolean, endOnly: boolean, marker: boolean, slug: string | undefined): RegionFence {
   const reduced = parsedText ?? (holds ? FACTS_FENCE_BEGIN : endOnly ? `${'\n'.repeat(FACTS_FENCE_BEGIN.length)}${FACTS_FENCE_END}` : '');
-  return { parsed: parseFactsFence(reduced), holds, marker, text: parsedText };
+  // GST-2492: a segmented memory/unattributed reads its `entity` column as the inline page does.
+  return { parsed: parseFactsFenceFor(reduced, { slug }), holds, marker, text: parsedText };
 }
 
 /** One region of the facts fence view, streamed, reading only the runs that can hold a fence marker. */
@@ -235,7 +236,7 @@ export async function openFenceRuns(engine: BrainEngine, page: FencePage, scope:
 }
 
 /** A region's facts fence from its runs' summaries, in order; null when a fence does not close in the run it begins in. */
-export function factsFromRuns(summaries: readonly FactsRunSummary[]): RegionFence | null {
+export function factsFromRuns(summaries: readonly FactsRunSummary[], slug?: string): RegionFence | null {
   let endOnly = false, marker = false, parsedText: string | null = null;
   for (const summary of summaries) {
     marker ||= summary.marker;
@@ -245,7 +246,7 @@ export function factsFromRuns(summaries: readonly FactsRunSummary[]): RegionFenc
       parsedText = summary.fence.text;
     } else endOnly ||= summary.endOnly;
   }
-  return regionFenceOf(parsedText, parsedText !== null, endOnly, marker);
+  return regionFenceOf(parsedText, parsedText !== null, endOnly, marker, slug);
 }
 
 /**
@@ -264,7 +265,7 @@ export async function incrementalFactsFence(engine: BrainEngine, page: { id?: nu
     if (error instanceof SegmentDerivationRaced) return null;
     throw error;
   });
-  const region = (name: BodyRegion) => runs && factsFromRuns(runs.filter(({ run }) => run.region === name).map(({ output }) => output.facts));
+  const region = (name: BodyRegion) => runs && factsFromRuns(runs.filter(({ run }) => run.region === name).map(({ output }) => output.facts), p.slug);
   const truth = region('truth');
   const timeline = region('timeline');
   if (!truth || !timeline) return segmentedFactsFence(engine, page);

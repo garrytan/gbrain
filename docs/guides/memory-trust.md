@@ -271,6 +271,77 @@ The marker becomes the page's stored tier (pages at "your notes" or higher
 get no marker), and the page keeps its tier. This runs on the local CLI only.
 Run the preview again to verify: repaired pages no longer show.
 
+## Label lowerings
+
+A privacy label is not content. `gbrain repair visibility` (including
+`--slug <page>` for one page and `--readers <list>` for its `readable_by`) and `gbrain repair private-labels` keep a
+page's tier, file no `lower_page` item, and change only the label lines of its
+file. A `put_page` that adds the same label is an agent edit and lowers the
+page, because a local agent with a shell is indistinguishable from you.
+
+A local agent edit can't make a page more readable on its own. When a write
+below your tier drops or widens a page's `visibility`, `access`,
+`confidentiality` or `readable_by`, gbrain publishes the rest of the edit with
+the page's earlier labels kept, in the database and in the file it commits.
+The write's receipt names the kept keys under `privacy_labels_kept`. The
+page's `lower_page` item in `gbrain trust review` shows what the edit asked
+for, for example `visibility private -> (none)`.
+
+- `gbrain trust confirm tp<id>` applies exactly those labels, if the page
+  hasn't changed since. On a page of yours it also endorses the edit, and the
+  page takes your tier. On a page whose own tier is an agent's (one you set
+  labels on, or an agent's page that kept you as a reader), it changes only the
+  labels and the page keeps the agent's tier, so saying yes to a label change
+  never vouches for the body.
+- `gbrain trust drop tp<id>` keeps the earlier labels.
+- Undoing a confirm puts the earlier labels and the edit's tier back, if the
+  page hasn't changed since the confirm.
+
+Until you decide, the page stays private to remote callers and to members
+who weren't readers; a credential bound to you still reads it. The hold also
+applies after you drop the item, after an earlier agent edit that lowered
+the page, and after an agent deletes the page and writes it again, so a later
+agent write still can't widen the labels. A maintenance job's derived page
+(a dream patterns run rewriting one of your pages) is held the same way, and a
+page with no recorded tier (`unknown`) counts as yours. It doesn't
+apply to a write that only narrows a label, to a write that leaves the labels
+alone, to a writer at or above the page's tier, or to your own edits (a file
+you edit and sync, `gbrain repair visibility`).
+
+Labels you set on an agent's page hold too. `gbrain repair visibility` (and
+its `--readers` setter, and `gbrain repair private-labels`) keeps the page's
+agent tier, but it raises the page's label guard to your tier, so a later agent
+write at the page's tier that drops or widens your labels is held the same way.
+The guard is kept in the database and set only by a label repair run after the
+upgrade, so labels you set earlier, and a managed Git brain rebuilt from a
+clone, start without it. Run the label repair again to set it: on a page that
+already has the labels, `gbrain repair visibility --slug <page>` (for a private
+page) or `--readers <list>` (with the readers the page already names) lists it
+as `... kept, label guard raised` and raises the guard without changing the
+labels or writing the page. `gbrain repair private-labels` raises it only on
+pages it writes. A repair that leaves the page with no privacy label removes the
+guard.
+
+An agent also can't take you out of a page's readers. When a write below your
+tier sets `readable_by` to a list that leaves you, the brain owner, out of a
+page you read now, gbrain publishes the rest of the change with you still in
+the list and records the readers it asked for in the page's `lower_page` item;
+`gbrain trust confirm tp<id>` applies them. An agent narrowing that keeps you
+in the list, your own readers changes, and a brain with
+`access.owner_reads_restricted` on (you read every page anyway) are unaffected.
+
+```bash
+gbrain trust backfill --label-lowerings [--source <id>] [--json]   # read-only
+```
+
+It lists every `lower_page` item and compares the version the lowering
+replaced with the page now: `label_only` when only `visibility`, `access` or
+`confidentiality` and the server's stamps (`trust_tier`, `source_kind`,
+`ingested_via`, `ingested_at`) changed, `content` otherwise, and
+`unreadable` when the replaced version is gone. Counts are grouped by proposer
+(`agent_page_edit:put_page`, `derived_page:submit_job`, ...). It changes no
+tier: raising a page back is your decision in `gbrain trust review`.
+
 ## Scan older memory (only when you agree)
 
 ```bash

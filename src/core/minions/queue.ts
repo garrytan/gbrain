@@ -15,7 +15,7 @@ import type {
   MinionQueueOpts, ChildDoneMessage, ChildOutcome, Attachment, AttachmentInput,
 } from './types.ts';
 import { rowToMinionJob, rowToInboxMessage, rowToAttachment, jobActorSql, NO_JOB_ACTOR, type JobActor } from './types.ts';
-import { WATCHDOG_SUSPECT_MARK, releaseWatchdogClaim, requeueCoRunnerStalls, unmarkedJobSql } from './watchdog-attribution.ts';
+import { WATCHDOG_SUSPECT_MARK, markedJobSql, releaseWatchdogClaim, requeueCoRunnerStalls, unmarkedJobSql } from './watchdog-attribution.ts';
 export { WATCHDOG_SUSPECT_MARK } from './watchdog-attribution.ts';
 import { coalesceOnIdempotencyKey, decideCoalesce, insertOrCoalesce } from './idempotency-coalesce.ts';
 import { withSubmitterLabel } from './job-insight.ts';
@@ -46,6 +46,7 @@ import {
   logBatchRetry as auditLogBatchRetry,
   logBatchExhausted as auditLogBatchExhausted,
 } from '../audit/batch-retry-audit.ts';
+import { retryOnStalePlan } from '../retry-matcher.ts';
 /** Trusted 4th argument, kept outside user-spread job options. */
 export interface TrustedSubmitOpts {
   submissionAuthority?: SubmissionAuthority;
@@ -185,6 +186,11 @@ async function coalesceReturn(
   return coalesced;
 }
 
+
+/** SQL true for a job with the watchdog mark (`mark`) whose last requeue is at least `waitMs` milliseconds old (GST-2529). */
+function overdueSuspectSql(mark: string, waitMs: string): string {
+  return `(${markedJobSql(mark)} AND updated_at <= now() - (${waitMs}::double precision * interval '1 millisecond'))`;
+}
 
 export class MinionQueue {
   readonly maxSpawnDepth: number;
@@ -560,6 +566,7 @@ export class MinionQueue {
         }
         const parent = rowToMinionJob(parentRows[0]);
         if (parent.submission_authority && parent.submission_authority.kind !== 'application') throw new Error('Remote jobs cannot have descendants');
+        if (!NON_TERMINAL_STATUSES.includes(parent.status)) throw new Error(`parent job ${opts.parent_job_id} is ${parent.status}; a finished job cannot get new children`);
 
         depth = parent.depth + 1;
         if (depth > maxSpawnDepth) {
@@ -773,7 +780,7 @@ export class MinionQueue {
    * Returns the *root* (the job matching id), not an arbitrary descendant.
    */
   async cancelJob(id: number, opts?: { ownerClientId?: string; ownerActor?: JobActor }): Promise<MinionJob | null> {
-    const cancelled = await this.cancelJobs([id], opts?.ownerClientId ? { ownerClientId: opts.ownerClientId, ownerActor: opts.ownerActor } : undefined);
+    const cancelled = await this.cancelJobs([id], { rootStatuses: NON_TERMINAL_STATUSES, ...(opts?.ownerClientId ? { ownerClientId: opts.ownerClientId, ownerActor: opts.ownerActor } : {}) });
     const root = cancelled.find(j => j.id === id);
     return root ?? null;
   }
@@ -1450,8 +1457,10 @@ export class MinionQueue {
    * postgres.js double-encode trap; PGLite hides it, real PG does not).
    */
   /** `excludeWatchdogSuspects`: a worker with jobs in flight never claims a job marked by a shared watchdog drain (watchdog-attribution.ts).
+   *  `suspectWaitMs` (GST-2529): once a marked job this worker could claim has waited that long since its requeue, a worker with
+   *  jobs in flight claims nothing, so it drains, and one with nothing in flight takes that job first, so it runs alone and soon.
    *  `excludeNames`: skip these job names (the worker's long-job lane reservation, lanes.ts). */
-  async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts: { excludeWatchdogSuspects?: boolean; excludeNames?: string[] } = {}): Promise<MinionJob | null> {
+  async claim(lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts: { excludeWatchdogSuspects?: boolean; suspectWaitMs?: number; excludeNames?: string[] } = {}): Promise<MinionJob | null> {
     if (registeredNames.length === 0) return null;
     await assertNoUnreviewedJobs(this.engine);
 
@@ -1471,6 +1480,13 @@ export class MinionQueue {
     // repair, foreign tooling) must not grant a ~24-day lease to a worker
     // that crashes before its first renewal (or a 1ms one that thrashes).
     const excludeNames = opts.excludeNames?.length ? opts.excludeNames : null;
+    const params: unknown[] = [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams()];
+    const param = (value: unknown) => `$${params.push(value)}`;
+    const mark = opts.excludeWatchdogSuspects || opts.suspectWaitMs !== undefined ? param(WATCHDOG_SUSPECT_MARK) : '';
+    const overdue = opts.suspectWaitMs === undefined ? null : overdueSuspectSql(mark, param(opts.suspectWaitMs));
+    const suspects = !opts.excludeWatchdogSuspects ? '' : ` AND ${unmarkedJobSql(mark)}${overdue ? ` AND NOT EXISTS (SELECT 1 FROM minion_jobs s WHERE s.queue = $3
+           AND s.status = 'waiting' AND s.submission_authority IS NOT NULL AND s.name = ANY($4) AND ${overdue})` : ''}`;
+    const names = excludeNames ? ` AND NOT (name = ANY(${param(excludeNames)}))` : '';
     const rows = await this.engine.executeRawDirect<Record<string, unknown>>(
       `UPDATE minion_jobs SET
         status = 'active',
@@ -1490,16 +1506,27 @@ export class MinionQueue {
         updated_at = now()
        WHERE id = (
          SELECT id FROM minion_jobs
-         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)${opts.excludeWatchdogSuspects ? ` AND ${unmarkedJobSql('$9')}` : ''}${excludeNames ? ` AND NOT (name = ANY($${opts.excludeWatchdogSuspects ? 10 : 9}))` : ''}
-         ORDER BY priority ASC, created_at ASC
+         WHERE queue = $3 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($4)${suspects}${names}
+         ORDER BY ${overdue && !opts.excludeWatchdogSuspects ? `${overdue} DESC, ` : ''}priority ASC, created_at ASC
          FOR UPDATE SKIP LOCKED
          LIMIT 1
        )
        RETURNING *`,
-      [lockToken, lockDurationMs, queue, registeredNames, HANDLER_DEFAULT_TIMEOUT_MS, HANDLER_DEFAULT_LOCK_DURATION_MS, ...legacyDefaultClaimParams(),
-        ...(opts.excludeWatchdogSuspects ? [WATCHDOG_SUSPECT_MARK] : []), ...(excludeNames ? [excludeNames] : [])]
+      params,
     );
     return rows.length > 0 ? rowToMinionJob(rows[0]) : null;
+  }
+
+  /** GST-2529: whether a marked job this worker could claim has waited `suspectWaitMs` since its requeue. The worker asks at most every
+   *  few seconds and passes `suspectWaitMs` to `claim` only when one has, so a claim with no such job keeps the claim index's order. */
+  async hasOverdueWatchdogSuspect(queue: string, registeredNames: string[], suspectWaitMs: number): Promise<boolean> {
+    if (registeredNames.length === 0) return false;
+    const rows = await this.engine.executeRaw<{ overdue: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM minion_jobs WHERE queue = $1 AND status = 'waiting' AND submission_authority IS NOT NULL AND name = ANY($2)
+         AND ${overdueSuspectSql('$3', '$4')}) AS overdue`,
+      [queue, registeredNames, WATCHDOG_SUSPECT_MARK, suspectWaitMs],
+    );
+    return rows[0]?.overdue === true;
   }
 
   /** A co-runner of a watchdog drain back to waiting, marked, no attempt burned (token-fenced). */
@@ -1716,7 +1743,7 @@ export class MinionQueue {
    * stranding the parent in waiting-children forever.
    */
   async completeJob(id: number, lockToken: string, result?: Record<string, unknown>): Promise<MinionJob | null> {
-    return this.engine.transaction(async (tx) => {
+    return retryOnStalePlan(() => this.engine.transaction(async (tx) => {
       // Peek at parent_job_id before the UPDATE so we can lock the parent row
       // FIRST. Without this SELECT FOR UPDATE, two siblings completing
       // concurrently each see the other as still active (pre-commit snapshot
@@ -1806,7 +1833,7 @@ export class MinionQueue {
       }
 
       return completed;
-    });
+    }));
   }
 
   /**
@@ -1831,7 +1858,7 @@ export class MinionQueue {
     backoffMs?: number,
     result?: Record<string, unknown>,
   ): Promise<MinionJob | null> {
-    return this.engine.transaction(async (tx) => {
+    return retryOnStalePlan(() => this.engine.transaction(async (tx) => {
       // Lock the parent row first so concurrent sibling completions/failures
       // serialize on the parent — same race fix as completeJob.
       const peek = await tx.executeRaw<{ parent_job_id: number | null }>(
@@ -1891,7 +1918,7 @@ export class MinionQueue {
 
         if (failed.on_child_fail === 'fail_parent') {
           await tx.executeRaw(
-            `UPDATE minion_jobs SET status = 'failed',
+            `UPDATE minion_jobs SET status = 'failed', lock_token = NULL, lock_until = NULL,
               error_text = $1, finished_at = now(), updated_at = now()
              WHERE id = $2 AND status = 'waiting-children'`,
             [`child job ${failed.id} failed: ${errorText}`, failed.parent_job_id]
@@ -1943,7 +1970,7 @@ export class MinionQueue {
       }
 
       return failed;
-    });
+    }));
   }
 
   /**
@@ -2257,7 +2284,7 @@ export class MinionQueue {
   /** Fail the parent when a child fails with fail_parent policy. */
   async failParent(parentId: number, childId: number, errorText: string): Promise<MinionJob | null> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
-      `UPDATE minion_jobs SET status = 'failed',
+      `UPDATE minion_jobs SET status = 'failed', lock_token = NULL, lock_until = NULL,
         error_text = $1, finished_at = now(), updated_at = now()
        WHERE id = $2 AND status = 'waiting-children'
        RETURNING *`,

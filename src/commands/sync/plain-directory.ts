@@ -16,6 +16,9 @@ import { syncExcludePatterns } from '../../core/persistence/sync-discovery.ts';
 import { maintenanceAttribution } from '../../core/persistence/attribution.ts';
 import { withCoordinatedWrite } from '../../core/persistence/context.ts';
 import { opError } from '../../core/ops/contract.ts';
+import { assertSourceFilesystemActive } from '../../core/minions/source-filesystem.ts';
+import { currentJobSignal } from '../../core/minions/submission-authority.ts';
+import { buildPartialResult } from '../../core/sync-lock.ts';
 import type { SyncOpts, SyncResult } from '../sync.ts';
 
 /** Whether `dir` or any directory above it has a `.git` entry (read from the filesystem, no Git process). */
@@ -68,7 +71,7 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
   const exclude = await syncExcludePatterns(engine, opts.exclude);
   const empty = { fromCommit: null, toCommit: '', modified: 0, deleted: 0, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
   serr(`[sync] ${root} is a plain directory, not a Git checkout, so sync imports its files into source ${sourceId}; a file removed from it keeps its page.`);
-  const { runImport, collectSyncableFiles } = await import('../import.ts');
+  const { runImport, collectSyncableFiles, ImportAbortError } = await import('../import.ts');
   if (opts.dryRun) {
     const files = collectSyncableFiles(root, { strategy: opts.strategy ?? 'markdown', includeHidden: opts.includeHidden, metafilePages: await readMetafilePagesMode(engine) })
       .map(abs => relative(root, abs)).filter(path => !matchesAnyGlob(path, exclude) && !(managed && isReservedSkillBundlePath(path)));
@@ -76,13 +79,25 @@ export async function performPlainDirectorySync(engine: BrainEngine, opts: SyncO
     return { ...empty, status: 'dry_run', added: files.length };
   }
   const keyless = loadConfig()?.embedding_disabled === true || (await engine.getConfig('embedding_disabled')) === 'true';
-  const result = await runImport(engine, [root, ...(opts.noEmbed || keyless ? ['--no-embed'] : [])],
-    { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, ...(managed ? { heldPaths: { has: isReservedSkillBundlePath } } : {}) });
+  let result: Awaited<ReturnType<typeof runImport>>;
+  try {
+    result = await runImport(engine, [root, ...(opts.noEmbed || keyless ? ['--no-embed'] : [])],
+      { signal: opts.signal, sourceId, strategy: opts.strategy, exclude, includeHidden: opts.includeHidden, noticeRun: 'sync', ...(managed ? { heldPaths: { has: isReservedSkillBundlePath } } : {}) });
+    if (opts.signal?.aborted) throw new ImportAbortError('interrupted', 1, result);
+  } catch (error) {
+    // #7819: a --timeout stop is a resumable partial, as in the full Git import (sync/full.ts).
+    assertSourceFilesystemActive(true);
+    if (!(error instanceof ImportAbortError) || !error.partialResult || !opts.signal?.aborted || currentJobSignal()?.aborted) throw error;
+    const partial = error.partialResult;
+    return buildPartialResult({ fromCommit: null, toCommit: '', filesImported: partial.imported, pagesAffected: [], chunksCreated: partial.chunksCreated,
+      added: partial.imported, modified: 0, deleted: 0, renamed: 0, reason: 'timeout' });
+  }
   if (result.errors > 0) return { ...empty, status: 'blocked_by_failures', added: result.imported, chunksCreated: result.chunksCreated, failedFiles: result.errors };
   // A managed brain fences source checkpoints to coordinated writers; the classic import stamps last_sync_at itself.
   if (managed) {
     const attribution = await maintenanceAttribution(engine);
     await engine.transaction(tx => withCoordinatedWrite(tx, [sourceId], () => tx.executeRaw('UPDATE sources SET last_sync_at=now() WHERE id=$1', [sourceId]), attribution));
   }
-  return { ...empty, status: 'synced', added: result.imported, chunksCreated: result.chunksCreated, ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}) };
+  return { ...empty, status: 'synced', added: result.imported, chunksCreated: result.chunksCreated, ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
+    ...(result.privacy_label_notice ? { privacy_label_notice: result.privacy_label_notice } : {}) };
 }

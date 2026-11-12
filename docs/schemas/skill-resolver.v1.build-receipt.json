@@ -64,7 +64,8 @@
               "enum": [
                 "dir",
                 "bundled",
-                "json"
+                "json",
+                "claude_plugins"
               ]
             },
             "dirs": {
@@ -85,6 +86,10 @@
             "bundled_skills": {
               "type": "integer",
               "minimum": 0
+            },
+            "claude_dir": {
+              "type": "string",
+              "description": "claude_plugins: the Claude Code config directory whose enabled user-scope plugins were indexed."
             }
           }
         },
@@ -150,6 +155,8 @@
             "codex",
             "hermes",
             "qm",
+            "pi",
+            "cursor",
             null
           ]
         },

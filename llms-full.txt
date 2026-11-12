@@ -431,8 +431,8 @@ put_pages with one request_id per batch and wait_ms 25000."*
   immediately and by meaning once its embedding effect finishes.
 - **Request size.** HTTP carries less than the 24 MiB page ceiling:
   `gbrain serve --http` reads at most 4 MiB per request (the MCP SDK
-  default), and the simpler HTTP transport caps a request at
-  `GBRAIN_HTTP_MAX_BODY_BYTES`. A batch goes in smaller `put_pages` calls; a
+  default) and the simpler HTTP transport 1 MiB; `GBRAIN_HTTP_MAX_BODY_BYTES`
+  sets either cap. A batch goes in smaller `put_pages` calls; a
   page over the transport limit goes by file on the brain host (sync,
   `gbrain import` or `gbrain put`), never split by hand. Every limit is in
   [limits per entry point](memory-boundaries.md#large-page-limits).
@@ -576,854 +576,6 @@ user service on loopback only. Local agents on the same machine use
 pre-mint before the service runs and pass `--token <value>`, or use the scoped
 `gbrain mcp grant … --url http://127.0.0.1:3131/mcp --admin-token-file …` +
 `gbrain connect … --install` path (see [PGLite brains](#pglite-brains)).
-
----
-
-## docs/guides/grok-bot.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md
-
-# GBrain for Grok Bot
-
-Give Grok Bot durable, inspectable memory. The recommended shape runs the
-brain on **your own computer**, publishes it over MCP with
-`gbrain mcp expose --funnel`, grants the Bot a `memory-writer` client, and
-installs the thin GBrain CLI inside the Bot; the Bot then saves the generated
-memory instructions as a native skill. If you have no always-on machine,
-install GBrain locally in `/workspace/gbrain` on the Bot computer instead.
-
-Durable preferences can be shared; local harness configuration cannot. Read
-[memory boundaries](memory-boundaries.md) for provider text disclosure, remote
-graph maintenance, and full-backup limits before enabling capabilities.
-
-**Say to your agent:** *"connect grok bot to my brain"* — *"use my brain over
-mcp"*. On your computer, the `remote-mcp` skill publishes and grants; inside
-the Bot, the paste-in prompt below installs the connection.
-
-This guide covers the **Grok Bot personal agent**. The `grok` coding CLI has a
-separate [Grok Build guide](../mcp/GROK.md). A Grok API key configures a model
-provider; it does not install memory in Grok Bot.
-
-## Choose your path
-
-| Your situation | Use |
-| --- | --- |
-| You have (or can run) GBrain on your own computer — recommended | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because the Bot runs in the vendor's cloud, not on your tailnet), grant the Bot a client, then install the thin CLI inside the Bot ([hosted harness access](hosted-harness-access.md), adapter `grok-bot`). Memory lives where you can back it up and inspect it. |
-| Already have a hosted GBrain elsewhere (cloud host, team brain) | Same client-side steps: [hosted harness access](hosted-harness-access.md), adapter `grok-bot`; choose the thin CLI for the complete remote command path |
-| No always-on machine; want a brain that stays online | Hosted GBrain at [gbrain.io](https://gbrain.io/?ref=grok-bot), then connect the Bot with the connection details gbrain.io gives you |
-| No always-on machine; want memory inside your Bot only | [Local setup](#alternative-install-gbrain-inside-the-bot) below; no model API key needed for the first fact/recall test |
-| Want to keep the connection tailnet-only | Joining the Bot's runtime to your tailnet (userspace `tailscaled` with an ephemeral auth key) is possible in principle; it is advanced, not automated by gbrain, and unverified against a real Bot |
-| Want a native Grok Bot MCP plugin | Native plugin authentication is unverified and release-gated; use the supported thin CLI path until an actual Bot pilot establishes the native connection |
-
-## Recommended: your brain on your computer, reached over MCP
-
-On the computer that holds the brain:
-
-```bash
-gbrain mcp expose --funnel                      # consent prompt, Tailscale install/login if needed, service, URL
-gbrain mcp grant bot-example --harness grok-bot --profile memory-writer --source default \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --admin-token-file ~/.gbrain/serve/admin-token \
-  --credentials-out /private/bot-example.json
-```
-
-Move `/private/bot-example.json` to the Bot computer through a private file
-channel (never paste it into the chat), then paste this into your Bot:
-
-```text
-Connect this Bot to my existing GBrain over MCP. Read:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md
-and its linked hosted-access guide.
-
-The brain is published at https://your-machine.your-tailnet.ts.net/mcp and my
-private credential file is at /private/bot-example.json on this computer.
-Install GBrain under /workspace/gbrain on the Grok Bot cloud computer (reuse an
-existing matching installation; do not replace existing state), then run
-gbrain connect with --harness grok-bot, that credentials file, --install and
---root /workspace/gbrain. Use the generated absolute /workspace/gbrain/bin/gbrain
-launcher for every memory command. Keep secrets out of chat and command output.
-
-Run gbrain mcp verify and show me the server checks. Save the generated
-GBRAIN-INSTRUCTIONS.md as a private native skill and enable it for this Bot;
-keep your current identity and other instructions. Then remember a harmless
-randomized test fact with provenance, recall it in a fresh conversation, and
-tell me which native steps remain unverified.
-```
-
-The Bot's memory now lives on your machine: back it up, inspect it, and
-revoke the Bot's client on the host whenever it should stop. `gbrain mcp
-expose --status` on your computer re-checks the service and the public URL.
-
-## Alternative: install GBrain inside the Bot
-
-Use this when no computer of yours can stay online. Paste this into your Bot:
-
-```text
-Set up GBrain as my durable local memory. Read:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/grok-bot.md
-and its linked in-agent setup guide.
-
-Use /workspace/gbrain on the Grok Bot cloud computer. First inspect that path
-and reuse an existing matching installation; do not replace existing state.
-Run the shipped setup helper with --harness grok-bot. Use the generated absolute
-/workspace/gbrain/bin/gbrain launcher for every memory command.
-
-Start with keyless fact memory. Show me the search-mode matrix printed by init
-and confirm my choice. Keep bulk capture and paid maintenance opt-in.
-Save the generated memory instructions as a private native skill and enable it
-for this Bot. Keep your current identity and other instructions.
-
-Save a harmless randomized test fact with provenance, recall it through a
-separate command, then help me test it in a fresh conversation. Show the actual
-GBrain result and root used. Tell me which native setup steps remain unverified.
-```
-
-The exact shell commands, generated files, first test, repair, and recovery
-procedure are in [Install GBrain inside a personal agent](in-agent-setup.md).
-The rest of this guide's local-installation sections apply to this path.
-
-## One shared brain for your Bots
-
-Grok documents one account-wide cloud computer: files, browser sessions, and
-command-line credentials are shared. It names `/workspace` for durable files
-and treats manually installed packages as replaceable. Use one root and its
-repair helper across Bots; separate Bot names or GBrain sources do not create
-a privacy boundary on that computer.
-[Grok Bot computer documentation](https://docs.x.ai/grok-bot/computer-and-apps)
-(updated August 11, 2026; checked September 9, 2026).
-
-Give each Bot the same absolute launcher. Keep memory calls finite and serialize
-them when possible. If another Bot is using PGLite, retry after it finishes;
-never remove the live database lock. Designate one Bot to own optional scheduled
-maintenance so several Bots do not create duplicate routines.
-
-## Attach the memory skill
-
-Ask the Bot to save the memory instructions as a private skill —
-`/workspace/gbrain/GBRAIN-INSTRUCTIONS.md` for a connection to your published
-brain, `/workspace/gbrain/instructions/gbrain-skill.md` for a local
-installation. Grok's
-documented controls are **Settings → Plugins → Yours** to enable a private
-skill for a Bot, and `/` in the composer to select it. Enable it for every Bot
-that should use this installation. GBrain does not assume that Grok Bot reads
-`AGENTS.md` automatically.
-[Grok Bot skills and routines](https://docs.x.ai/grok-bot/skills-routines-and-automations)
-(updated August 11, 2026; checked September 9, 2026).
-
-Test the skill explicitly first. Then start a new conversation and ask for the
-randomized phrase without supplying it. Inspect the CLI call and returned
-provenance. Also ask a second Bot to recall it after enabling the same skill.
-This establishes use of the shared GBrain database rather than relying on an
-answer the app may have retained elsewhere.
-
-## Three useful things to try
-
-- **A continuing project:** “Recall our project-example decisions, then help me
-  choose the next step. Remember today's decision and its rationale.”
-- **A preference across Bots:** “Remember that my meeting brief should start
-  with the decision needed.” Ask a different enabled Bot to prepare the next
-  brief and inspect its recall.
-- **A connected-service workflow:** “Use your existing calendar and email
-  plugins for tomorrow's meeting brief. Save only the commitments I explicitly
-  ask you to keep, with links and dates.” Use Grok's normal plugin permissions;
-  GBrain does not need those services' credentials to store the selected facts.
-
-For corrections, recall the old fact, retire its ID, save the corrected fact
-with provenance, and verify active recall. For deletion, use the returned fact
-ID with `forget`; retained history and older backups need separate consideration.
-See the [worked round trip](in-agent-setup.md#3-prove-the-first-memory-round-trip).
-
-## Local installation maintenance and recovery
-
-These steps apply when GBrain runs inside the Bot. For a hosted connection,
-use `<ROOT>/GBRAIN-INSTRUCTIONS.md` and the
-[hosted runtime repair procedure](hosted-harness-access.md#maintenance-removal-and-troubleshooting).
-
-After a successful manual run, optionally ask one Bot to turn
-`instructions/maintenance.md` into a native routine. Reuse the receipt's stable
-routine identifier, select the schedule and time zone, and inspect its test run.
-Grok documents native routines and their run history, but GBrain does not create
-one automatically.
-[Grok Bot routine controls](https://docs.x.ai/grok-bot/skills-routines-and-automations).
-
-Use [full database backups](in-agent-setup.md#6-back-up-the-complete-local-database)
-and an explicitly chosen protected off-VM copy. If packages disappear after a
-computer update, run `bash /workspace/gbrain/bin/gbrain-setup`. If durable state
-is lost, [restore into a new root](in-agent-setup.md#7-restore-into-a-new-root),
-repair its launcher, verify memory, and reattach the skill and routine. Do not
-reinitialize the old path to make an error disappear.
-
-To stop, pause the native routine and disable the skill. Preserve the root and
-backup until you deliberately choose to delete the data. For hosted access,
-also revoke that Bot installation's grant on the host.
-
-## Acceptance checklist and limits
-
-The local installer and recovery path have hermetic repository tests. **An
-actual Grok Bot account has not been used to verify this integration.** The
-Tailscale publish path (`gbrain mcp expose`) has repository tests with a fake
-Tailscale runner; a real tailnet, a real Funnel endpoint reached from a Bot,
-and the Bot's native skill activation are separate observed steps. Before
-calling your installation complete, check:
-
-- For the published-brain path: `gbrain mcp expose --status` verifies on your
-  computer and `gbrain mcp verify` passes its server checks from inside the Bot.
-- The launcher writes, recalls, corrects, and forgets the randomized test fact.
-- A fresh conversation invokes that same launcher through the native skill.
-- Every intended Bot uses the same root; concurrent calls recover from a busy
-  response without deleting locks.
-- A full backup restores into a different root and returns the saved fact.
-- If scheduling is enabled, the single native routine runs and reports a result.
-- After a platform update, the root persists or the documented repair/recovery
-  path succeeds; record the observed app version and date.
-
-If a skill is absent from `/`, check its per-Bot enablement. If the command
-disappears, follow the repair procedure for your local or hosted setup. If recall fails only in new conversations, inspect skill
-selection and the absolute launcher path before changing the database. Hosted
-network and OAuth failures belong to the
-[hosted access troubleshooting flow](hosted-harness-access.md).
-
-[Validation evidence and actual-harness acceptance](harness-validation.md).
-
----
-
-## docs/guides/muse.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
-
-# GBrain for Muse
-
-Give Muse explicit, portable memory with provenance. The recommended shape
-runs the brain on **your own computer**, publishes it over MCP with
-`gbrain mcp expose --funnel`, grants Muse a `memory-writer` client, and
-installs the thin GBrain CLI in Muse's durable user-files area as a client.
-If no computer of yours can stay online, install a small local GBrain in that
-durable area instead. Either way, establish the durable path first and start
-keyless.
-
-Durable preferences can be shared; local harness configuration cannot. Read
-[memory boundaries](memory-boundaries.md) for provider text disclosure, remote
-graph maintenance, and full-backup limits before enabling capabilities.
-
-**Say to your agent:** *"connect muse to my brain"* — *"use my brain over
-mcp"*. On your computer, the `remote-mcp` skill publishes and grants; inside
-Muse, the paste-in prompt below installs the connection.
-
-This guide covers **Meta's Muse personal agent**.
-
-## Muse Code is a different product
-
-Muse Code and third-party projects with similar names do not establish
-capabilities for the personal agent. Use the `muse` adapter for this guide;
-`muse-code` remains a separate identity in the harness registry.
-
-## What the public design establishes
-
-Meta describes a dedicated Linux VM, a Debian runtime cell, CLI-based tools,
-custom skills, and custom connectors. Built-in connector credentials are kept
-outside that cell; Sentinel controls connector actions and network egress.
-These are a good basis for a small CLI integration, but the public document
-does not specify a durable custom-tool directory, a native MCP registration
-interface, or an installation API for GBrain skills.
-[Meta's Muse technical design](https://research.meta.ai/blog/security-and-safety-for-ai-agents-our-approach-with-muse)
-(published September 8, 2026; checked September 9, 2026).
-
-**Establish the persistent path in the actual Muse environment before installing.**
-Do not copy Grok Bot's `/workspace` convention or place memory in an arbitrary
-runtime home. A Linux shell existing today does not prove its files will survive
-replacement of the runtime cell.
-
-## Choose your path
-
-| Your situation | Use |
-| --- | --- |
-| You have (or can run) GBrain on your own computer, and a confirmed durable user-files directory in Muse — recommended | [Publish it over MCP](remote-mcp.md) with `gbrain mcp expose --funnel` (Funnel, because Muse's runtime is in the vendor's cloud, not on your tailnet), grant Muse a client, then install the thin CLI at the durable root ([hosted harness access](hosted-harness-access.md), adapter `muse`) |
-| Existing hosted brain elsewhere | Same client-side steps: [hosted harness access](hosted-harness-access.md), adapter `muse`, thin CLI |
-| No always-on machine; want a brain that stays online | Hosted GBrain at [gbrain.io](https://gbrain.io/?ref=muse), then connect Muse with the connection details gbrain.io gives you |
-| No always-on machine; new brain and a confirmed durable directory | [Local setup](#alternative-install-gbrain-inside-muse) below, adapter `muse` |
-| No confirmed persistent custom-files location | Resolve that platform capability before installing either the thin CLI or durable local memory |
-| Want to keep the connection tailnet-only | Joining Muse's runtime to your tailnet (userspace `tailscaled`, ephemeral auth key) is advanced, not automated by gbrain, and unverified; Sentinel's egress policy applies either way |
-| A native MCP option appears in your account | Treat it as a new capability to verify; this guide does not claim Muse supports native MCP |
-
-## Recommended: your brain on your computer, reached over MCP
-
-On the computer that holds the brain:
-
-```bash
-gbrain mcp expose --funnel                      # consent prompt, Tailscale install/login if needed, service, URL
-gbrain mcp grant muse-example --harness muse --profile memory-writer --source default \
-  --url https://your-machine.your-tailnet.ts.net/mcp \
-  --admin-token-file ~/.gbrain/serve/admin-token \
-  --credentials-out /private/muse-example.json
-```
-
-Deliver `/private/muse-example.json` into Muse's durable user-files area
-through the product's supported secure file flow (never paste it into chat),
-then paste this into Muse:
-
-```text
-Connect this agent to my existing GBrain over MCP. Read:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
-and its linked hosted-access guide.
-
-First identify the documented or platform-confirmed durable user-files area
-available to your runtime and choose an absolute gbrain root there; tell me the
-persistence evidence, or report the blocker instead of using a temporary path.
-
-The brain is published at https://your-machine.your-tailnet.ts.net/mcp and my
-private credential file is at <durable-area>/private/muse-example.json.
-Install GBrain at that root (reuse a matching installation; preserve existing
-state), then run gbrain connect with --harness muse, that credentials file,
---install and the absolute --root. Use the generated absolute bin/gbrain
-launcher for every memory command. Keep secrets out of chat and command output.
-Use Muse's normal permission and secure credential flows for any blocked
-download or egress; a denial is a reported boundary, not something to route
-around.
-
-Run gbrain mcp verify and show me the server checks. Attach the generated
-GBRAIN-INSTRUCTIONS.md through the native custom-skill mechanism available in
-this account and report its exact location or name; keep your current identity.
-Then remember a harmless randomized test fact with provenance, recall it in a
-fresh conversation, and report each unverified platform step separately.
-```
-
-Muse's memory now lives on your machine. `gbrain mcp expose --status` on your
-computer re-checks the service and public URL; revoke Muse's client on the
-host when it should stop.
-
-## Alternative: install GBrain inside Muse
-
-Use this when no computer of yours can stay online. Paste this into Muse:
-
-```text
-Set up GBrain as my durable memory. Read:
-https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/muse.md
-and its linked in-agent setup guide.
-
-First identify the documented or platform-confirmed durable user-files area
-available to your runtime. Inspect it and choose an absolute gbrain root there.
-Tell me the persistence evidence. If you cannot establish persistence, report
-that blocker instead of treating a temporary runtime directory as durable.
-
-Use the shipped setup helper with --harness muse and that absolute --root.
-Reuse a matching installation and preserve existing state. Use its generated
-absolute bin/gbrain launcher for every memory command. Keep your current identity.
-
-Start with keyless facts and recall. Show me init's search-mode matrix and
-confirm my choice; keep paid maintenance and bulk capture opt-in. Attach the
-generated memory instructions using the native custom-skill mechanism available
-in this account, and report its exact location or name.
-
-Save and recall a harmless randomized test fact, then help me verify a fresh
-conversation actually invokes GBrain. Use Muse's normal permission and secure
-credential flows for any blocked download or later hosted connection. Report
-each unverified platform step separately from successful local CLI checks.
-```
-
-Once the durable root is established, follow the
-[shared setup commands](in-agent-setup.md#2-run-the-shipped-setup-helper), replacing
-the example root and selecting `--harness muse`. The helper works without root
-and does not create a system service or agent identity. Initial fact storage and
-recall do not require extracting credentials from a Muse connector. The rest
-of this guide's local-installation sections apply to this path.
-
-## Attach instructions and test a fresh conversation
-
-Read the memory instructions — `<ROOT>/GBRAIN-INSTRUCTIONS.md` for a
-connection to your published brain, `<ROOT>/instructions/gbrain-skill.md` for
-a local installation — and save them through Muse's available
-custom-skill or standing-instruction mechanism. Keep the exact absolute
-`<ROOT>/bin/gbrain` path in that skill. Public documentation does not establish
-an automatic `AGENTS.md` loader or hook API, so merely writing a repository file
-is not evidence that Muse will use it.
-
-Follow the [randomized round trip](in-agent-setup.md#3-prove-the-first-memory-round-trip).
-In a fresh conversation, ask for the phrase without repeating it and inspect
-the command result. Test a correction and deletion too. Record the actual
-native skill location/name and the date of the test; the installer deliberately
-leaves native integration marked unverified.
-
-## Three useful things to try
-
-- **A durable preference:** “Remember that I want a short recommendation followed
-  by the evidence.” Ask a new conversation to recall that preference before
-  preparing a recommendation.
-- **A project handoff:** “Recall the current project-example decision and open
-  questions. After we decide, remember the new decision with today's date.”
-- **Existing connected services:** “Use your connected calendar and email to
-  prepare this meeting. Save the selected commitments I ask you to retain,
-  with source links.” Let Muse use its existing connectors and permissions;
-  store the chosen facts in GBrain without duplicating service credentials.
-
-Do not request raw connector tokens or change Sentinel policy to make GBrain
-work. For a hosted brain, the allowed destination and secure credential delivery
-are part of the [hosted setup](hosted-harness-access.md); finish them through the
-actual product's supported flow. A denied request is a reported setup boundary,
-not a reason to try another route around it.
-
-## Local installation maintenance, backup, and recovery
-
-These steps apply when GBrain runs inside Muse. A hosted connection instead
-uses `<ROOT>/GBRAIN-INSTRUCTIONS.md` and the
-[hosted runtime repair procedure](hosted-harness-access.md#maintenance-removal-and-troubleshooting).
-
-After manual memory succeeds, use `<ROOT>/instructions/maintenance.md` as the
-basis of an optional native schedule, if that feature is available in your
-account. Maintain one routine for the installation and test it. Do not install
-a speculative daemon or assume a shell cron is the product's native scheduler.
-
-Create a [full private backup](in-agent-setup.md#6-back-up-the-complete-local-database)
-and choose a protected off-VM copy explicitly. The raw database can contain
-sensitive memories and authentication state. Its `0600` mode does not encrypt
-it or protect against loss of the whole VM.
-
-After a runtime replacement, use `bash <ROOT>/bin/gbrain-setup` to repair the
-recorded package without resetting memory. If data is lost, restore into an
-absent root, rerun the helper with `--harness muse`, reconnect excluded state,
-and test before reattaching the native skill. The
-[restore procedure](in-agent-setup.md#7-restore-into-a-new-root) preserves the
-original brain and starts no automation.
-
-To stop, pause the native routine and disable the skill. Keep the root and a
-protected backup until you deliberately choose to delete the memory. Revoke
-hosted grants separately if you connected to an existing brain.
-
-## Acceptance checklist and limits
-
-The local installer, CLI, and recovery path have hermetic repository tests.
-**An actual Muse account has not been used to verify this integration.** The
-Tailscale publish path (`gbrain mcp expose`) has repository tests with a fake
-Tailscale runner; a real Funnel endpoint reached from Muse and Muse's native
-skill activation are separate observed steps. The
-remaining acceptance checks are concrete:
-
-- Establish and record the durable root and its behavior across runtime replacement.
-- For the published-brain path: `gbrain mcp expose --status` verifies on your
-  computer and `gbrain mcp verify` passes its server checks from inside Muse.
-- Complete allowed package downloads and run the generated launcher.
-- Save, recall, correct, and forget the randomized fact through separate commands.
-- Make a fresh conversation select the native skill and invoke that launcher.
-- Restore a private backup into another root and verify the saved fact.
-- If used, test the account's native schedule and its failure reporting.
-- For a hosted brain, verify the real egress and secure credential flow; no
-  native MCP or privileged credential-service integration is assumed.
-
-If installation is blocked, preserve the exact platform denial. If memory works
-only in the current conversation, inspect the native skill attachment. If the
-runtime vanishes, run repair against the same durable root. If that root was not
-preserved, restore a backup rather than initializing a replacement brain at the
-old path. More errors and fixes are in the
-[shared troubleshooting table](in-agent-setup.md#troubleshooting).
-
-[Validation evidence and actual-harness acceptance](harness-validation.md).
-
----
-
-## docs/guides/in-agent-setup.md
-
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/in-agent-setup.md
-
-# Install GBrain inside a personal agent
-
-Give the agent one durable GBrain folder and one absolute command to use in
-every conversation. The setup helper installs a private Bun runtime, creates a
-local PGLite brain, and writes a small memory skill. You can start remembering
-facts without a model API key, a server, or a new agent identity.
-
-Start with the instructions for your app:
-
-- [Grok Bot](grok-bot.md): use its shared `/workspace` directory.
-- [Muse](muse.md): first establish which user-files directory survives runtime
-  replacement; its public documentation does not name that path.
-- [An existing hosted brain](hosted-harness-access.md): connect to that brain
-  instead of creating another local database.
-
-## 1. Choose the durable folder
-
-The root must be an absolute path with an existing parent, for example
-`/workspace/gbrain`. It must be empty or absent for a new installation. Do not
-use a temporary directory, a checkout that another task might delete, or a
-symlink. The same root must be available to later conversations and routines.
-
-Setup creates this layout:
-
-| Path beneath the chosen root | Purpose |
-| --- | --- |
-| `bin/gbrain` | Stable command; always selects this brain and its source |
-| `bin/gbrain-setup` | Repair the recorded runtime, or explicitly upgrade it |
-| `.gbrain/config.json` | Local configuration |
-| `.gbrain/brain.pglite` | Complete database, including facts saved only in the database |
-| `.gbrain/agent-install/receipt.json` | Ownership, pinned package/runtime versions, schema, and capability evidence |
-| `memory/` | Managed source files |
-| `instructions/gbrain-skill.md` | Memory instructions to attach using the app's native skill mechanism |
-| `instructions/maintenance.md` | Optional maintenance routine with a stable identifier |
-| `runtime/` | Replaceable private runtime and package versions |
-
-`GBRAIN_HOME` is the chosen root; GBrain places its state in the `.gbrain`
-directory underneath it. Use the generated launcher even if another `gbrain`
-is on `PATH`. It selects the root explicitly, changes to that directory, and
-removes inherited database, brain, source, and provider overrides. Put later
-provider configuration in this installation's config or private `.gbrain/.env`,
-not another project's environment.
-
-## 2. Run the shipped setup helper
-
-Run these commands **inside the agent's computer**. For Grok Bot:
-
-```bash
-curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/garrytan/gbrain/stable/scripts/setup-in-agent.sh \
-  --output /tmp/gbrain-setup.sh
-bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot
-```
-
-For Muse, use `--harness muse` and the absolute durable root established in
-[its guide](muse.md). The helper needs Bash, `curl`, `git`, `unzip`, and outbound
-access to GitHub and package downloads. It does not install system packages or
-require root. If the platform blocks a download, use its normal permission flow.
-
-The helper verifies the pinned Bun release checksum and records the exact
-GBrain commit it installs. Package installation runs with lifecycle scripts
-disabled. Initialization uses `--pglite --no-embedding`: keyless fact writes,
-entity recall, and text filtering are available; semantic embedding and paid
-extraction require separate configuration.
-
-**Relay the search-mode matrix printed by initialization and confirm the
-operator's choice**, as described in [the install protocol](../../INSTALL_FOR_AGENTS.md).
-Automatic capture and paid maintenance remain separate choices. A local
-database does not automatically capture conversations, grant connector access,
-or install a native skill.
-
-For an existing compatible local brain, review its root and config before
-adding `--adopt`. Adoption preserves the database and configuration; existing
-source trees remain external to the installer. `--adopt` does not convert a
-hosted client or repair an unreadable database by replacing it.
-
-## 3. Prove the first memory round trip
-
-Use a harmless randomized value so the answer cannot come from the model's
-general knowledge. Have the agent substitute a new random suffix and the
-current date:
-
-```bash
-/workspace/gbrain/bin/gbrain remember \
-  "My setup test phrase is amber-orbit-REPLACE-WITH-RANDOM-SUFFIX" \
-  --entity projects/gbrain-setup --provenance "explicit setup test, YYYY-MM-DD" --json
-/workspace/gbrain/bin/gbrain recall projects/gbrain-setup --json
-```
-
-Replace `/workspace/gbrain` throughout this guide if your root differs. Keep
-the returned fact ID. The write must return a successful status, and a separate
-recall process must return the exact phrase with its attribution.
-
-Now attach `instructions/gbrain-skill.md` through the app's native saved-skill
-or standing-instruction mechanism. Open a **new conversation**, ask for the
-test phrase without repeating it, and inspect the actual command result. The
-agent must invoke the same absolute launcher. Its own built-in memory is not
-evidence that it used GBrain.
-
-Finally, ask the agent to correct the test phrase. It should recall the old
-fact, retire the old ID, save the replacement with provenance, and verify that
-ordinary recall returns the current fact. To remove the test:
-
-```bash
-/workspace/gbrain/bin/gbrain forget FACT_ID --reason "setup test complete"
-/workspace/gbrain/bin/gbrain recall projects/gbrain-setup --json
-```
-
-Use the numeric ID returned by this installation's CLI. Forgetting retires a
-fact from active recall; history and earlier backups can still contain it.
-
-The installer records `native_runtime: unverified` deliberately. A successful
-database probe establishes local operation; enabling the native skill and
-testing a fresh conversation establishes app behavior. Record those results
-separately, including the date and app version when visible.
-
-## 4. Make memory useful
-
-Save durable preferences and facts with provenance; keep transient task state,
-credentials, configuration, and harness activation state local. See
-[memory boundaries](memory-boundaries.md) for the graph-maintenance, provider
-disclosure, and backup limits shared by every installation path.
-
-The generated skill is intentionally small: recall relevant context before
-personal or continuing-work questions; save requested durable facts with a
-source and date; preserve uncertainty; correct stale facts; verify the result.
-Keep personal edits in a separate native instruction or separate file so
-repair can maintain the generated file without replacing your work.
-
-Three useful first workflows:
-
-1. **Preferences:** “Remember that I want meeting briefs in three bullets, with
-   the decision first.” In a new conversation, request a meeting brief and
-   check that the agent recalled the preference.
-2. **Decisions:** “Remember that project-example chose option B today, because
-   it meets our offline requirement. Mark this as our decision, not a general
-   recommendation.” Ask for the decision and rationale next week.
-3. **Connected services:** “Use your existing calendar/email connector to
-   prepare this meeting, then save only the decisions and commitments I ask
-   you to retain, with source links.” The harness keeps using its own service
-   connection. GBrain stores the selected memory; it does not need a second
-   copy of the service credentials or the entire inbox.
-
-Capture and bulk imports are opt-in. To import chosen files or exported chats,
-follow [chat connectors and imports](chat-connectors.md). Neither this helper
-nor the product guides claim automatic transcript interception or hooks.
-
-## 5. Maintenance and concurrent agents
-
-Use finite CLI commands. PGLite allows one process to hold the database at a
-time; another command waits and can return `pglite_busy` when the wait expires.
-Let the first command finish, then retry. Do not remove a live lock. Avoid
-launching parallel memory commands against the same root, and keep longer
-maintenance work out of interactive recall periods.
-
-After the round trip succeeds, the user can choose a native schedule. Attach
-`instructions/maintenance.md` to **one** routine, using the identifier in the
-receipt. Start with `doctor --fast --json` and report its result. Missing
-embedding credentials on a keyless installation are a configuration choice;
-do not invent keys or start paid maintenance to improve a score.
-
-The helper creates no daemon, `serve` process, cron entry, or native routine.
-Native scheduling availability must be checked in the actual app. Reuse the
-same routine on repair instead of creating duplicates. If serialized local
-commands become a bottleneck, [move to a hosted brain](hosted-harness-access.md)
-with a server database suitable for concurrent clients.
-
-## 6. Back up the complete local database
-
-Choose a private backup directory outside `memory/` and `instructions/`, and
-pause other memory and file writers for the snapshot:
-
-```bash
-mkdir -p /workspace/gbrain-backups
-chmod 700 /workspace/gbrain-backups
-/workspace/gbrain/bin/gbrain backup create \
-  --output /workspace/gbrain-backups/brain-YYYYMMDD-HHMM.gbrain-backup --json
-```
-
-Each output filename must be new. The command holds the real PGLite writer
-lock, takes a full database dump, checks the managed file inventory for changes,
-and publishes a checksummed archive with POSIX mode `0600`. On Windows, built-in
-Windows PowerShell establishes and verifies access for the current owner and
-SYSTEM before writing backup payloads. It protects only newly created backup
-paths, never changes existing parent permissions, and refuses with
-`private_backup_path_unavailable` when that protection could not be established
-or verified at the destination (some locations' inherited permissions prevent
-it; a new path inside your user profile works). The destination must be on a
-local filesystem with Windows ACL support, with built-in Windows PowerShell
-permitted. When Windows PowerShell does not start within the protection step's
-15 seconds (a slow first start on a cold machine), it refuses with
-`private_backup_protection_timeout` instead; run the backup again. A busy database or a
-changing file fails the operation instead of publishing a success receipt.
-
-Before the dump, the command removes gbrain's own IPC socket files
-(`.gbrain-resolve.sock`, `.gbrain-persistence.sock`) from the data dir when
-nothing listens on them, so a `gbrain serve` that was killed does not block
-later backups; each removal is listed in the archive's `omitted` inventory.
-Any other socket, FIFO or symlink in the data dir is left alone and the
-command refuses with `backup_dump_failed` naming it: stop the process that
-uses it (or move it out of the data dir) and run the same command again.
-On Windows the runtime cannot inspect a stale AF_UNIX socket (`lstat` fails),
-so the sweep probes and claims such an entry without classifying it and removes
-it only through the native binding's tag check; an entry nothing can verify is
-kept and named in the refusal (`an entry this runtime cannot inspect`), never
-deleted blind. The Linux and macOS lanes cover the sweep; the `windows-latest`
-row of `test.yml` runs the stale-socket test natively.
-
-| Included | Excluded or inventoried for reconnection |
-| --- | --- |
-| Full PGLite database: pages, DB-only facts, jobs, settings, authentication state, and other tables | Runtime packages, Bun, caches, Git metadata, previous backups |
-| Files under the receipt's managed data paths, subject to the exclusions below; fresh setup uses `memory/` and `instructions/` | External source directories and remote object storage contents |
-| Config with recognized credential fields removed, source/path inventory, and install metadata | Known standalone credential files such as `credentials.json`, `auth.json`, `token.txt`, and `.env*`; `.gbrain/credential-deliveries`; known cache, browser-profile, and backup directories |
-| File hashes, package/schema versions, and explicit omitted-item inventory | Native app accounts, installed skills, routines, and platform state |
-
-**The archive contains sensitive full database state and may contain secrets.**
-Excluded managed paths are listed in the inventory. Ordinary memory documents,
-including files named `credentials.md`, are preserved; arbitrary files can
-contain secrets regardless of their names. Config redaction and filename
-exclusions do not make the raw database or archive secret-free. The format is
-checksummed, not encrypted. A same-computer copy does not protect against losing
-that computer. Choose a protected off-VM destination explicitly, apply its
-encryption and access controls, and verify that the copied archive can restore.
-Do not upload an archive to a public issue or chat.
-
-This recovery format currently accepts managed `.gbrain/brain.pglite` databases,
-PostgreSQL 17 PGLite clusters, and at most 8 GiB of payload. `backup status` and
-`backup check` report file coverage; neither creates this snapshot. Markdown
-exports alone cannot recover facts that exist only in the database.
-
-`backup create` checks both limits before it takes the lock or writes anything.
-A data directory that is not `<root>/.gbrain/brain.pglite`, or one reached
-through a symlink (for example a `.gbrain` alias to another volume), refuses
-with `unmanaged_database_path`. A data directory whose estimated archive size
-is over 8 GiB refuses with `backup_too_large`. Doctor's `pglite_data_dir` check
-warns once the estimate passes 6 GiB, so you can plan before the refusal. Both
-refusals point at the runbook below.
-
-### Large or non-standard brains: quiesced physical copy
-
-For a brain over the cap or in a flat or symlinked layout, the supported
-recovery artifact is a physical copy of the stopped data directory. Ask the
-user before step 1: it stops their memory service.
-
-1. **Stop every writer.** Stop `gbrain serve`, autopilot and jobs workers, and
-   any agent session using this brain. Then run `gbrain doctor --json`: doctor
-   opens the brain only when no other gbrain process holds its PGLite lock, so
-   a `pglite_data_dir` warning that names a live PID means a writer is still
-   running.
-2. **Copy.** Resolve the real data directory through any alias
-   (`realpath ~/.gbrain/brain.pglite`) and copy it whole, with `config.json`,
-   into a new isolated home, laid out as `<new-home>/.gbrain/brain.pglite` and
-   `<new-home>/.gbrain/config.json`. Do not copy while anything runs against
-   the brain, and do not start writers again until the copy finishes.
-3. **Point the copy at itself.** Set `database_path` in the copied
-   `config.json` to the copied data directory.
-4. **Verify in isolation.** Run `GBRAIN_HOME=<new-home> gbrain doctor --json`
-   and an entity recall against the copy before relying on it. The copy is the
-   managed layout, so while it is under the cap, `GBRAIN_HOME=<new-home>
-   gbrain backup create --output <new archive>` also archives it.
-
-The restore drill in `test/backup-preflight-6649.serial.test.ts` runs these steps on a
-`.gbrain` alias to another directory: it copies the stopped brain, opens the
-copy in its own home with the data intact, archives the copy and restores that
-archive into a third root. Archives over 8 GiB are not supported yet; this
-runbook is the recovery route until a streaming format ships
-([#6649](https://github.com/garrytan/gbrain/issues/6649)).
-
-## 7. Restore into a new root
-
-Use an available GBrain runtime and a destination that **does not exist**:
-
-```bash
-/workspace/gbrain/bin/gbrain backup restore \
-  /workspace/gbrain-backups/brain-YYYYMMDD-HHMM.gbrain-backup \
-  --into /workspace/gbrain-restored --json
-```
-
-Restore verifies the archive before publishing usable state. It rebases managed
-source, page, and known config paths; detaches external source/config paths; and
-cancels every unfinished background job in one transaction, preserving its
-previous status for inspection. Completed history remains. No worker, connector,
-sync, native routine, or paid operation starts.
-
-Archive paths are portable forward-slash names; traversal, reserved Windows
-names and ambiguous case or normalization collisions are rejected. Recognized
-nested paths are rebased using the recorded platform's path rules. Unrecognized
-legacy absolute page origins remain unchanged and appear in the reconnect
-inventory for review before sync. Remembered text is never rewritten to replace
-old paths, and restoration is not a promise that every historical origin is
-portable.
-
-External checkout and API sources keep their remembered pages available, but
-their live connector configuration is quarantined and sync is disabled. The
-prior configuration is retained in the private `.gbrain/restore-detached.json`
-inventory and an inert database record. Google token commands, GitHub
-materializers, and remote clone settings cannot reactivate merely because
-someone runs `sync --source ... --repo ...`. Chat connector auto-sync is switched
-off, remote storage is detached, and an `autopilot-paused` marker holds the
-daemon until an operator explicitly resumes it. Keep that pause when using
-the recommended finite CLI commands and native harness routines.
-
-A successful `restore-receipt.json` says `state: ready`, `launcher_ready: false`,
-and `setup_required: true`. Reinstall the runtime at the new root:
-
-```bash
-bash /tmp/gbrain-setup.sh --root /workspace/gbrain-restored --harness grok-bot
-```
-
-Fetch the helper again if `/tmp/gbrain-setup.sh` is gone. For a backup from the
-managed setup, **do not add `--adopt`**: restore writes the ownership receipt
-that repair needs. For a backup of a pre-existing unmanaged local brain, review
-the restored config and use `--adopt`. For Muse, retain `--harness muse`.
-
-Read the reconnect inventory, restore excluded credentials using the platform's
-secure entry mechanism, and explicitly reattach external sources. Re-run the
-randomized memory test against the new launcher before updating the native
-skill. Review quarantined jobs before explicitly resubmitting any. The original
-brain stays intact; use one chosen root for subsequent writes.
-
-Review quarantined source settings before applying any of them: they may name
-old paths, accounts, or executable credential commands. Recreate a connector
-with its normal setup flow under a new source ID if you do not need to retain
-its sync identity; the previous source's pages remain queryable. Reusing an
-existing source ID requires a deliberate configuration repair from that
-inventory, followed by a small explicit sync. Restoring credentials or changing
-a source path alone does not restore quarantined connector settings or enable
-its schedule. Treat the private inventory as sensitive, like the full backup.
-
-If restoration fails or is interrupted, keep that destination for inspection
-and retry into another absent root. An incomplete restore receipt blocks setup.
-Do not rename partial database directories into an active installation.
-
-## Repair, upgrade, and remove
-
-After runtime replacement, repair with the retained shell helper:
-
-```bash
-bash /workspace/gbrain/bin/gbrain-setup
-```
-
-If that file is missing, download the shipped helper again and pass the original
-`--root` and `--harness`. Ordinary repair reinstalls the recorded commit and Bun
-version; it preserves facts, configuration, source choice, and native routine
-identifiers. It refuses to replace edited generated files, malformed config,
-or a previously initialized database that has disappeared.
-
-Choose upgrades explicitly, after a verified backup:
-
-```bash
-bash /workspace/gbrain/bin/gbrain-setup --upgrade
-```
-
-Upgrade installs the currently stable package and applies its migrations.
-Repair is not an upgrade, and neither operation resets the brain.
-
-A helper written before v0.60.379.0 stages a Bun below 1.4.4 (1.4.3 or older),
-which current releases refuse: setup stops with `runtime_below_floor` before it
-changes anything and prints the command to run instead. It fetches the current
-helper and reruns setup with the same root, harness and flags:
-
-```bash
-curl --fail --silent --show-error --location \
-  https://raw.githubusercontent.com/garrytan/gbrain/stable/scripts/setup-in-agent.sh \
-  --output /tmp/gbrain-setup.sh
-bash /tmp/gbrain-setup.sh --root /workspace/gbrain --harness grok-bot --upgrade
-```
-
-To stop using GBrain, pause its native routine and disable its saved skill.
-Keep the root and a protected backup until you deliberately choose to remove
-the data. No daemon or system-level installation needs uninstalling. If using
-hosted access, also revoke that installation's grant on the host.
-
-## Troubleshooting
-
-<a id="in-agent-troubleshooting"></a>
-
-| Symptom | Action | Who acts | Consent | Verify |
-| --- | --- | --- | --- | --- |
-| Setup reports unowned state | Choose an empty root; use `--adopt` only after reviewing a compatible existing local brain | agent, after the user agrees | none | the setup receipt |
-| Runtime executable disappeared | Run the retained helper or fetch it again with the same root | agent | none | the setup receipt |
-| `runtime_below_floor` | The helper is older than the Bun floor; make a verified backup, then run the fetch-and-rerun command the refusal prints | agent, after the user agrees to the upgrade | none | the setup receipt |
-| Config is malformed or initialized memory is missing | Preserve the root; recover config or restore a full backup into a new root | agent, after the user agrees | `destructive` when restoring | the setup receipt |
-| Generated instructions were edited | Preserve your edited file under a different name, then rerun repair and reattach your additions separately | agent | none | the setup receipt |
-| `pglite_busy` | Wait for the active command to finish and retry; stop a long-lived server through its owning process before using finite CLI mode | agent | none | retry the read-only command |
-| Fresh conversation cannot recall the test | Inspect the native skill attachment and exact launcher invocation, then run explicit entity recall | user (reloads the native skill) | none | a `recall` from a fresh conversation |
-| Backup says files changed | Pause the writer and create a new snapshot; do not treat the failed output as a backup | agent | none | the new snapshot's verification output |
-| `unmanaged_database_path` or `backup_too_large` from `backup create` | Ask the user, then follow the [quiesced physical copy](#large-or-non-standard-brains-quiesced-physical-copy) runbook | user stops writers; agent copies and verifies | user agrees to stop writers | `GBRAIN_HOME=<new-home> gbrain doctor --json` |
-| Restore target already exists | Choose another absent root; restore never overwrites existing state | agent | none | the restore output |
-| A package or host URL is blocked | Complete the app's normal approval flow; preserve the error if access is denied | user | none | retry after approval |
-
-## What has been verified
-
-Repository tests exercise real local initialization, separate installed CLI
-processes, environment isolation, runtime repair, ownership guards, archive
-integrity, path rebasing, and unfinished-job quarantine in temporary roots.
-They do not establish persistence across an actual Grok Bot or Muse computer
-replacement, native skill selection, scheduling, or their network/credential
-policies. Those remain app-level acceptance checks in the product guides.
-
-[Validation evidence and actual-harness acceptance](harness-validation.md).
 
 ---
 
@@ -2838,6 +1990,13 @@ whenever the user gives one. Capture
 (`--capture`) and providers (`--providers`) stay off unless the user accepts
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
+When the brain will answer several people (a team bot, a shared channel), ask the
+user who they are and add `--serves several --members <id,...>`: each gets a member,
+a folder `people/<member>/` only they read and a bound key
+(`~/.gbrain/member-keys/<member>.key`; relay paths, never keys). On
+`setup_serves_several`, rerun with its fix. Add `--stdio-member <member>`
+(claude-code, codex) only for a harness one person uses. Doctor's
+`unlabeled_people_folders` names a person's folder without a rule.
 `--remove` undoes only what setup wrote. Guide:
 [docs/guides/setup.md](docs/guides/setup.md). Otherwise:
 
@@ -5055,7 +4214,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "harvest this skill into gbrain", "publish this skill to gbrain", "lift this skill upstream", "share this skill with other gbrain clients", "promote my skill to gbrain" | `skills/skillpack-harvest/SKILL.md` |
 | Post-restart health + auto-fix, "did the container restart break anything", smoke test | `skills/smoke-test/SKILL.md` |
 | `GBRAIN_DB_ACCESS`, "gbrain database error", "gbrain connection refused", "brain database is down", "cannot reach the brain database", "fix gbrain database access", "repair gbrain postgres" | `skills/db-repair/SKILL.md` |
-| Doctor `timeline_history` / `derived_visibility` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair`, apply one kind with `gbrain repair <kind> --apply` on the brain host after the user agrees. See `docs/guides/repair.md` |
+| Doctor `timeline_history` / `derived_visibility` / `atom_fence_rows` / unsealed pages, "repair timeline history", "fix atom visibility", "re-seal withheld pages" | Preview with `gbrain repair` (or `gbrain repair <kind>` for an explicit-only kind), apply one kind with the `--apply` command its preview prints, on the brain host after the user agrees. See `docs/guides/repair.md` |
 | A page write refused `owner_unavailable` with `detail: unbound_source` (classic Postgres) | Write the file, commit, `gbrain sync --source <id>` (remote: relay to the user); never claim or activate to get one write through. See `skills/conventions/agent-operator-protocol.md` |
 | A write or sync refused with `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity`, or doctor `parked_effects` | Relay the error's `suggestion` command; see `docs/guides/write-refusals.md` before running it |
 | A gbrain command or MCP tool returned an error, exited 3 (`confirmation_required`), 10 or 11, or printed `[AGENT]` / a notice block; "what does this error code mean" | Follow the agent operator protocol, `docs/protocol/AGENT_OPERATOR_v1.md` (read `code`, follow `fix.next`); look a code up offline with `gbrain errors <code>` |
@@ -5709,6 +4868,54 @@ so hybrid search falls back to keyword-only results until autovacuum
 analyzes the tables. If a refresh is skipped (a lock, or a role that does not
 own the tables), run `ANALYZE content_chunks(model, modality, page_id, body_generation)` and
 `ANALYZE pages` as the table owner.
+
+### TLS for Postgres connections
+
+Every Postgres connection gbrain opens to a host that is **not on this
+machine** requires TLS unless the database URL says otherwise. On this
+machine means `localhost`, `127.0.0.0/8`, `::1` or a Unix socket path;
+everything else needs TLS, including private addresses (`10.x`,
+`192.168.x`) and Docker service names such as `postgres-1`, because gbrain
+cannot tell a trusted network from an untrusted one by its name.
+(`src/core/pg-tls.ts` is the one resolver every connection pool uses.)
+
+| URL says | What gbrain does |
+|---|---|
+| no `sslmode`, host on this machine | plaintext, as before |
+| no `sslmode`, any other host | `sslmode=require` |
+| `?sslmode=require` | encrypts the connection; does **not** verify the server certificate |
+| `?sslmode=verify-full` | encrypts and verifies the certificate and host name against the CA store |
+| `?sslmode=disable` | plaintext; the one opt-out, for a network you trust |
+
+An sslmode (or `ssl=`, or `sslrootcert=system`) in the URL is always
+honored and never weakened, and so is the driver's own `PGSSL` variable.
+
+`require` stops anyone on the network from reading the traffic, but it would
+not notice an attacker who sits in the middle and presents their own
+certificate. For that, use `verify-full`. It checks the server certificate
+against Node's CA store, so a provider with its own CA needs that CA added:
+Supabase publishes it under **Project Settings → Database → SSL
+Configuration → Download certificate**. Put the file on the brain host and set
+`NODE_EXTRA_CA_CERTS=/path/to/prod-ca-2021.crt` in the environment gbrain
+runs in (for the installed service, `~/.gbrain/env`), then use
+`?sslmode=verify-full`. A `sslrootcert=<file>` parameter is not read by the
+driver; use `NODE_EXTRA_CA_CERTS` instead.
+
+A server that does not accept TLS fails the connection with
+[`postgres_tls_required`](guides/error-codes.md#postgres_tls_required),
+which names both choices: turn TLS on at the server, or add
+`sslmode=disable` to the URL. Nothing falls back to plaintext on its own.
+`gbrain doctor --only postgres_tls` reports whether this machine's own
+connection to a non-local server uses TLS. It judges that from the client side:
+`sslmode=require`, `verify-ca` and `verify-full` make the driver refuse a
+server without TLS. It warns on `sslmode=disable`, and on `sslmode=prefer` when
+the server does not offer TLS or reports the session unencrypted (prefer falls
+back to plaintext without saying so, so doctor never certifies a prefer
+connection as encrypted). Behind a
+pooler, the server's `pg_stat_ssl` row describes the pooler's own hop to the
+database, which can't be checked from your machine, so doctor shows it as detail
+and never warns about it. PGLite opens no network connection, so none of this
+applies to it.
 
 ### Vector index sizing
 
@@ -6490,6 +5697,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
 | `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
+| `tls_required_default` | `postgres_tls_required`: gbrain's TLS default met a non-local server without TLS — db-repair stops at manual; turn TLS on at the server or add `sslmode=disable` ([TLS](#tls-for-postgres-connections)) |
 | `unknown` | unclassified — redacted error + `gbrain doctor` |
 
 The classifier lives in `src/core/pg-access-classify.ts`; remediation copy has
@@ -7704,6 +6912,21 @@ vars — incident-time escape hatches, not everyday knobs.
    file the upstream changed refuses `refresh_dirty` before anything is pushed,
    an upstream rewritten by a force-push (or one gbrain has no earlier record
    of) still refuses `refresh_diverged`, and `--dry-run` never publishes.
+   The Git effects of page writes push the same local commits with the same
+   scan: a script's commit holding a secret holds them with `publish_secret_found`
+   and nothing is pushed until the user removes it or allowlists a false positive.
+
+   `gbrain sources git-reconcile` does this for every source checkout, and
+   autopilot runs it each tick (`autopilot.git_pull false` skips it). A
+   checkout gbrain cloned also publishes its local commits;
+   `sources.refresh_publish_diverged false` keeps them local. A level
+   checkout costs one fetch, so call it as often as you like. To leave one
+   source out of publishing and keep its sync, run
+   `gbrain config set sources.auto_reconcile.source.<id> false`. Neither
+   git-reconcile nor refresh then pushes that checkout's local commits (a
+   Git repository several sources share stays unpublished while any of
+   them is off, even one whose sync is off), but it still fast-forwards and syncs. `gbrain sources status` and
+   `gbrain sources git-reconcile --dry-run` show which sources are off.
 
    **Say to your agent:** *"Bring my notes source up to date with its remote."*
 
@@ -7948,7 +7171,8 @@ Rules for the wrapper and everything that calls it:
    Set caller timeouts of at least 10 s in the shell and in the language
    runtime that runs it (a runtime's exec timeout can override the shell's
    without saying so), and turn on the [warm CLI socket](cli-socket.md) so
-   reads skip the cold start.
+   reads skip the cold start. Give fetch or push calls (`gbrain sources
+   git-reconcile`, `refresh`) 15 minutes.
 6. **Quote the env file.** A file a shell sources is shell syntax. An unquoted
    `&` in a URL ends the assignment and backgrounds the rest, so the variable
    silently keeps its old value. Quote every value, keep Postgres URLs to
@@ -8428,7 +7652,8 @@ pins `full`, callable and advertised: in the held-out agent benchmark, listing
 only `starter` or `verbs` lowered task success and saved no tokens. A harness
 that caps its tool count can register `--surface starter` or `--surface verbs`.
 Persist a default for bare `serve` with `gbrain config set mcp_surface verbs`.
-On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface`; a
+On stdio, `GBRAIN_SURFACE` in the server's env overrides `--surface` (a
+`.env` file in the working directory cannot set it); a
 session widens itself with `request_tools {"surface":"full"}` (see
 `docs/operations/mcp-surface-runbook.md`).
 
@@ -8629,7 +7854,12 @@ Save ONE fact with mandatory attribution.
   consent line. An omitted `visibility` saves `private` when the target page is
   private (by `visibility` or a privacy alias such as `access: private`) or the
   operator set `facts.default_visibility` to private; a save never lands wider
-  than the page it is written into.
+  than the page it is written into. In gbrain, a remote credential bound to
+  one member saves `private` on its own member page unless it passes
+  `share: true`, and its `visibility: "world"` is refused; the brain owner's
+  own credential saves as above (shared by default, `private` on its member
+  page when it asks or the page or default keeps facts private). The response
+  names the `page` and `visibility` the fact got.
 
 Response: `{ id, status, status_text, entity_slug, valid_until,
 protocol_version }` (+ `degraded_dedup: true` when no embedding provider —
@@ -8650,7 +7880,10 @@ and a claim forgotten without an entity is withdrawn for every entity. To link
 a fact saved without an entity, do not forget it; remember it with `entity`
 and `replaces` set to its id. In gbrain, a fact saved without an entity is a
 row of the `memory/unattributed` page's `## Facts` table, created on first
-use; linking it strikes that row in the same write.
+use; linking it strikes that row in the same write. A remote save onto a
+member's own page is refused only when that member could read what was
+forgotten (a fact on its own page, or for the brain owner a fact it reads);
+a claim it never read saves as its own fact, with the reply a new claim gets.
 
 #### remember withdrawn refusal detail (additive)
 
@@ -8735,6 +7968,38 @@ Optional response fields; clients must ignore any they do not know.
   caller is never told about an entity it cannot read: that case is `NO_ENTITY`.
 - `hint: string` — present with `warnings`; names the `entity` input.
 
+#### remember: where the fact landed (additive)
+
+Optional response fields; clients must ignore any they do not know.
+
+- `page: string`: the page whose `## Facts` table now holds the fact. It is
+  absent when the fact is on no page: an `entity` slug that has no page, or a
+  fact with no entity on a source that cannot hold `memory/unattributed`.
+  `remember` never creates an entity page.
+- `visibility`: `world` or `private`, as saved.
+- `persistence: { mode }`: `filesystem` when the write changed a page file,
+  `database` when it changed the database alone.
+- `write_through: { written, skipped? }`: `skipped` says why no file was
+  written. `entity_page_missing`: the source has a checkout, but the entity
+  has no page to take the fact. `no_repo_configured`: the source has no
+  checkout, so the database is its record. `disabled_by_config` and
+  `subagent_sandbox`: write-through is off for the brain or for this caller.
+  `held_for: string`: on a source whose pages are canonical in Git, the
+  entity a fact was saved for while it has no page; the fact is a row of
+  `memory/unattributed` (`page`) whose `entity` column names it, until
+  maintenance moves it into the entity's page.
+
+A fact saved for an entity with no page is stored and recalled like any
+other. Where the source's pages are in Git, the reply also carries one
+`entity_page_missing` notice per entity per session. While the fact is in the
+database only, the notice's step is `next: ask_user`: its `user_message` says
+the fact is saved in the database only and asks whether to create a page for
+the entity, and its fix is the `put_page` call to make once the user agrees.
+When the fact is held in Git (`write_through.held_for`), the notice only says
+where it is and that it moves once the page exists; it has no fix. Once the
+page exists, the next maintenance cycle can move the entity's facts into its
+Facts table and file. A brain with no Git repository gets no such notice.
+
 #### remember items: several facts in one call (additive)
 
 `items` (1 to 20) replaces `fact` for a batch, typically right before
@@ -8753,7 +8018,7 @@ writes nothing twice.
 
 Response: `{ protocol_version, request_id, client_request_id?, items[], saved, failed, partial,
 hints?, next? }`. Each `items[]` entry is a compact receipt `{ index,
-request_id, status, id?, entity_slug?, superseded_fact_id?, warnings?, valid_until?, state? }`
+request_id, status, id?, entity_slug?, page?, visibility?, persistence?, write_through?, superseded_fact_id?, warnings?, valid_until?, state? }`
 (`state` and `retry_after_ms` only when the write is not yet committed), or
 `{ index, request_id, status: "failed", error: { code, message, suggestion? } }`. Per-item hints
 appear once in `hints`. `partial: true`: some saved; resend
@@ -9069,6 +8334,11 @@ forgetting the unlinked fact is refused with `invalid_params`, message prefix
 says to keep them, or to forget them first to withdraw the claim everywhere.
 A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
+In gbrain, a credential bound to one member withdraws only facts on its own
+member page (another fact it reads is refused naming the brain host); the
+brain owner's own credential also withdraws a shared fact it reads, and any
+other fact it reads on a page that credential can write, such as a page whose
+`readable_by` names the owner.
 
 #### forget publishes like a page write (additive note)
 
@@ -10044,12 +9314,13 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | Doctor `links_extraction_lag` or sync says "N page(s) have un-extracted edges" | `gbrain extract --stale --dry-run --json`, then on the host `gbrain extract --stale --catch-up [--source-id <id>]` | user above 120 s, else agent | none | dry run: `actionable: 0` |
 | Doctor `links_extraction_lag` says "N page(s) failed link extraction 3 runs in a row and are held", or `extract --stale` lists failed pages | Read each page's code (`unknown_source`: the page's source row is gone; restore the source or delete the page), fix the cause, then `gbrain extract --stale [--source-id <id>] --retry-held` | agent | none | `gbrain extract --stale --dry-run --json`: `held: 0` |
 | `gbrain apply-migrations --yes` or `gbrain upgrade` stops with `Migration <N> … exhausted retries` / SQLSTATE 57014 and the schema stays behind (`migrations_pending`, reason `still_behind`) | upgrade first (#7108: long backfills run in committed batches), then follow the error's or doctor `schema_version`'s `fix` ([migration statement timeout](#migration-statement-timeout)) | agent; a longer `--statement-timeout` or ending a session only after the user agrees | none for a rerun | `gbrain doctor --only schema_version --json` |
+| `gbrain apply-migrations`, `gbrain upgrade` or `gbrain init` stops with `foreign_table` ("`<schema>.<table>.<column>` is `<type>`, but gbrain's `<table>` needs `<type>`"), or an older release stopped at v210 with `operator does not exist: timestamp with time zone > bigint` | a table another application created under one of gbrain's names (`oauth_tokens`, `oauth_clients`, `oauth_codes`) is in the same schema; nothing was changed. Ask the user, then move that table or give gbrain its own database ([foreign table](#foreign-table)) and run `gbrain apply-migrations --force-schema --yes` | user (the other application's table); agent for the rerun | none for the rerun | `gbrain doctor --only schema_version --json` |
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
 | A graph read omits a relationship you know existed, or says someone still works somewhere they left | the default read returns relationships true today: repeat with `status: "all"` or `as_of`; to record an end, add a dated timeline line (`Ended works_at [[companies/x]]`) or `add_link ... valid_until` ([temporal edges](temporal-edges.md)) | agent | none | `gbrain doctor --only edge_validity --json` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
 | A scheduled job, workspace script or hook finds nothing in the brain (every lookup empty), or its log shows `no_brain` or `GBRAIN_DB_ACCESS no_url`, while the same command works by hand | the job runs without the brain's config: call gbrain through one wrapper that sets `GBRAIN_HOME` and loads the brain's env file, and stop discarding its stderr ([the wrapper](cron-schedule.md#calling-gbrain-unattended)); `gbrain doctor --only cron_gbrain_home --json` names crontab lines that skip it | agent | none | the job's log shows results, and `gbrain engine status --json` run through the wrapper names the expected `db_url_source` |
 | `gbrain sources refresh` refuses `refresh_not_owner` from cron or a script but works by hand | the caller resolves another gbrain home, so it is another host; the refusal names the identity file, `HOME` and `GBRAIN_HOME` it read. Set the owner's `GBRAIN_HOME` in the wrapper (not `HOME`, which also swaps git credentials); never copy or delete a `host.json` | agent | none | `gbrain sources refresh <id> --dry-run` through the wrapper |
-| `gbrain sources refresh` refuses `refresh_diverged` on every run | something commits into the managed checkout outside gbrain, usually a script that writes files and runs `git commit` without pushing. `git log @{upstream}..HEAD` names the commits; move that writer to `gbrain git commit-push -- <paths>`, then publish the stray commits merged with the upstream (`gbrain git commit-push --push-only --keep-checkout --path <checkout>`) and retry, as the [refusal](write-refusals.md#refresh_diverged) says; never force ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)). With the worktree's Git durability on, each refresh publishes them itself unless `sources.refresh_publish_diverged` is `false` (the refusal names a durability that is not on, or a value that looks like a secret in the local commits) ([live sync](live-sync.md)) | agent; reconciling after the user agrees | `destructive` when reconciling drops local commits | `gbrain sources refresh <id> --dry-run` |
+| `gbrain sources refresh` refuses `refresh_diverged` on every run | something commits into the managed checkout outside gbrain, usually a script that writes files and runs `git commit` without pushing. `git log @{upstream}..HEAD` names the commits; move that writer to `gbrain git commit-push -- <paths>`, then publish the stray commits merged with the upstream (`gbrain git commit-push --push-only --keep-checkout --scan-secrets --path <checkout>`) and retry, as the [refusal](write-refusals.md#refresh_diverged) says; never force ([scripts and the managed checkout](shared-checkout-git.md#scripts-and-the-managed-checkout)). With the worktree's Git durability on, each refresh publishes them itself unless `sources.refresh_publish_diverged` is `false` (the refusal names a durability that is not on, or a value that looks like a secret in the local commits) ([live sync](live-sync.md)) | agent; reconciling after the user agrees | `destructive` when reconciling drops local commits | `gbrain sources refresh <id> --dry-run` |
 | A `--json` caller fails to parse gbrain's output | something other than gbrain wrote to stdout, usually a wrapper or a hook it runs; send that output to a log file or stderr (gbrain's own notices already go to stderr) | agent | none | the same call piped to `jq .` parses |
 | gbrain calls time out from a script or language runtime but finish by hand, or each search takes several seconds | a cold CLI start takes 3–6 s on a pooled Postgres brain: set caller timeouts of at least 10 s in both the shell and the runtime (a runtime exec timeout can override the shell's), and turn on the [warm CLI socket](cli-socket.md). If warm searches stay slow, measure the round trip to the database; one in another region dominates search time | agent; moving the database after the user agrees | none | `GBRAIN_DEBUG=1 gbrain search <query>` prints a `[cli-socket] warm:` line |
 | After a database change some processes still use the old server, or a URL variable silently keeps its old value | a shell-sourced env file has an unquoted `&` (the assignment ends there), or a process kept the environment it started with. Quote every value, keep Postgres URLs to `?sslmode=require` (driver options as variables, such as `GBRAIN_PREPARE=false`), update every URL variable the tooling reads, restart every gbrain process, and prove the switch from the database side ([switching a database](../../INSTALL_FOR_AGENTS.md#switching-a-database)). Never paste `env` output into a transcript while debugging | agent, after the user agrees | none | a row written after the restart appears on the new server |
@@ -10060,6 +9331,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | [`expected N dimensions, not M` on import](#embedding-dimensions) | `gbrain doctor` prints the exact `gbrain config set …` or `gbrain migrate embeddings --to <provider:model>` command | agent, after the user agrees | `migrate embeddings`: `paid`, needs the brain's writer lock | `gbrain doctor --only embeddings,embedding_width_consistency --json` |
 | [Keyword-only recall; the user wants semantic search](#embedding-dimensions) | the readiness fix: `gbrain init --force --embedding-model <provider:model> --path <brain path>` (keeps pages and facts) | agent, after the user agrees | `credentials`, `paid`; needs the brain's writer lock | `gbrain doctor --only embeddings --json` |
 | [Doctor residue (`timeline_history`, `derived_visibility`, `safe_index_pending`)](#doctor-residue) | preview `gbrain doctor --remediation-plan --json` or `gbrain repair`; then `gbrain repair <kind> --apply` | brain host, after the user agrees | `destructive` (rewrites derived rows) | `gbrain doctor --only timeline_history,derived_visibility,safe_index_pending --json` |
+| [Doctor `privacy_label_ignored`, or a write's `privacy_label_ignored` notice](#privacy-label-ignored) | `gbrain list --where <key>=<value> --json` (read-only), then add `visibility: private` to each page that should stay private | the agent, after the user agrees | none for the listing; the edit narrows who reads the page | `gbrain doctor --only privacy_label_ignored --json` |
 | Low health score | preview `gbrain doctor --remediation-plan --json`; then `gbrain doctor --remediate --yes --target-score 90 --max-usd 5` | agent, after the user agrees | `paid`; `destructive` with `--include-repairs` (approve with `--expect <plan_hash>` from the preview) | `gbrain doctor --json` |
 | [Sync held a file (`Held <path>: invalid_frontmatter …`, `git_held_files`)](#held-files) | `gbrain sources status <id>`, then preview `gbrain repair frontmatter --source <id>` and apply the printed `--apply --expect <hash> --yes` | agent; the apply after the user agrees | `destructive` (rewrites the previewed lines of the files) | `gbrain doctor --only git_held_files --json` |
 | [Sync held a file for its facts or takes fence (`Held <path>: invalid_fence …`)](#held-fence-files) | nothing for most holds: the next maintenance run repairs and commits the fence. To see or do it now, preview `gbrain repair fences --source <id>` and run its printed `--apply --expect <hash>`; to pause automatic repair, `gbrain config set fences.repair.enabled false` (ask the user first). A `manual` reason needs the edit the hold names | agent; the apply needs no extra consent | none (model repair spends within the `fences.repair.*` caps; raising them is `paid`, the user's call) | `gbrain doctor --only fence_integrity --json` |
@@ -10165,6 +9437,8 @@ Turning the `preparation_deadlines` switch off (`gbrain config set persistence.p
 <a id="write-refused"></a>**A save, sync or background effect was refused with a named reason?** Reasons such as `file_database_drift`, `ambiguous_source_path`, `physical_root_device_changed`, `cursor_processing_options_conflict`, `take_row_collision`, `invalid_source_uri`, `queue_capacity` and parked effects (`targets_parked`, doctor `parked_effects`) each come with a recovery step in the error's `suggestion`. [Write refusal reasons](write-refusals.md) explains each one and its recovery. **Say to your agent:** *"My save was refused. Explain the reason and show me the fix before you run it."*
 
 <a id="doctor-residue"></a>**`gbrain doctor` warns `timeline_history`, `derived_visibility`, or unsealed pages under `contextual_retrieval_coverage`?** Preview the fix with `gbrain repair`, then apply one kind at a time with `gbrain repair <kind> --apply` on the brain host. See [repair residual damage](repair.md).
+
+<a id="privacy-label-ignored"></a>**`gbrain doctor` reports `privacy_label_ignored`, or a write carried that notice?** Pages carry an `access` or `confidentiality` value gbrain does not read as private (only `access: private|restricted|confidential` and `confidentiality: confidential|secret|private|restricted` count) and no `visibility`, so the label is ignored: remote callers read them like unlabelled pages and, on a source with a git checkout, the label does not keep them out of git. The check counts pages by value, warns when a value plainly means private and reports the rest as information; it reads at most 100,000 labelled pages and 50 values, under a 15 s statement bound, through the frontmatter index. Its fix lists one value's pages read-only; for each page that should stay private, ask the user, then add `visibility: private`. Nothing is rewritten for you. See [unrecognized label values](access-designations.md#unrecognized-label-values).
 
 <a id="extract-health-halts"></a>**Doctor warns `extract_health` with "kind(s) with halt rate > 10%" after the cause was already fixed?** The check is a rate over the last 7 days, not a list of open faults: `halt_count` and `round_completed_count` are 7-day sums from the extraction rollup (one row per kind per day), so halts recorded before a fix keep the rate up until their days leave the window. Read each kind's age before acting: `last halt today` (or `1d ago`) means the extractor is still halting, while `last halt 5d ago` on a kind that has run since means the halts are history. `gbrain doctor --only extract_health --json` gives the same per kind in `details.kinds[]`: `halt_rate`, `last_halt_age_days`, `top_halt_reason` and every reason with its count in `halt_reasons`; runs that stopped at an expected budget or deadline cap count in `expected_limit_count`, not as halts. Fix the reason that is still current, then let the window age out: expiry is how a repaired cause clears, and there is no acknowledgement or reset command. A halt with `last_halt_age_days` at 0 after the fix means the cause is not fixed. **Say to your agent:** *"Is extract_health warning about current halts or old ones?"*
 
@@ -10451,7 +9725,7 @@ derived from the rows against the active embedding column (no stored status):
 | `pending` | The embed job will embed it (no vector, page live, no `embed_skip`). Doctor `embeddings` ages this backlog and owns its warning. | `gbrain embed --stale --catch-up --source <id> --yes` (paid; preview with `--dry-run`). On a brain keyless by choice keyword search reads these chunks and they do not count as unsearchable. |
 | `keyword_only` | The page carries `embed_skip`: the import gate found its body over `content_sanity.bytes_block` (info, by design; its chunks still feed keyword search and are never purged). Removing the marker alone is undone on the next import. | A marker under the current `bytes_block` (written by an older release under its 500 KB default): `gbrain reindex --oversized --source <id>` clears it for free. Otherwise split the page, or, after the operator approves, `gbrain config set content_sanity.bytes_block <bytes>` then `gbrain sync --source <id> --full`, which re-imports and embeds it. |
 | `quarantined` | The content-quality gate hid the page as junk; it has no searchable chunks. Doctor `quarantined_pages` owns its warning. | Review with `gbrain quarantine list --json`; clear a false positive with `gbrain quarantine clear <slug> --source-id <id> --force` (the owner's call). |
-| `empty` | A live page with no body text: nothing to index. | Write content to it, or delete the stub (`gbrain delete <slug> --source <id> --force`, restorable) after the user agrees. |
+| `empty` | A live page with nothing to index: no body text, or a body its writer chunked to nothing at the current revision (for example one holding only a protected takes fence). | Nothing for a page whose content is kept out of search on purpose. For a blank stub: write content to it, or delete it (`gbrain delete <slug> --source <id> --force`, restorable) after the user agrees. |
 | `deleted_page_chunks` | Chunks of a soft-deleted page. Search never reads them; the purge lifecycle removes them after 72 h (info until then, a warning past it, code `deleted_page_chunks_overdue`). | `gbrain pages purge-deleted --dry-run --json`, then `gbrain pages purge-deleted --yes` once the user agrees (brain-wide, irreversible). |
 | `chunkless_healable` | A live page with body text but no chunk rows (written without the chunking step, or an `embed_skip` page an older gbrain stored without chunks or whose `reindex --oversized` rewrite failed). Keyword search cannot find it. Doctor warns on a keyed brain (code `chunkless_pages_healable`). | `gbrain embed --stale --catch-up --source <id> --yes` chunks and embeds it (paid); an `embed_skip` page gets chunks and no vectors. The cycle's embed phase runs the same safety net. |
 
@@ -10662,6 +9936,43 @@ and doctor then name it and give the fix for the case:
 the budget for migration SQL and for the batches above. It doesn't lift the
 30-second caps that v160, v200 and v234 set on themselves, or the timeouts of
 migration handlers.
+
+## A table gbrain did not create is in the way
+
+<a id="foreign-table"></a>
+
+gbrain creates its tables with `CREATE TABLE IF NOT EXISTS` in the brain's schema
+(usually `public`). When another application shares the database and already has a
+table with one of gbrain's generic names (`oauth_tokens`, `oauth_clients`,
+`oauth_codes`), older releases adopted it, added their own columns to it and then
+stopped partway through an upgrade on the first statement that compared the wrong
+type, for example v210 with `operator does not exist: timestamp with time zone > bigint`
+(#9190). Schema setup now checks those tables before the schema replay and before any
+migration, and stops with `foreign_table`, naming the table, the column, the type it
+found and the type gbrain needs. Nothing was changed.
+
+The table holds the other application's data, so ask the user before touching it:
+
+1. Give gbrain a database of its own, or move the other table to a schema of its own.
+   Moving takes its indexes and constraints along:
+   ```sql
+   CREATE SCHEMA other_app_example;
+   ALTER TABLE public.oauth_tokens SET SCHEMA other_app_example;
+   ```
+   Then point that application at the new schema (for example
+   `ALTER ROLE other_app_role SET search_path = other_app_example, public`).
+2. Run `gbrain apply-migrations --force-schema --yes`. It replays the schema, which
+   creates gbrain's own table, and then applies the pending migrations. Since #9191
+   this works on a rerun too: the rerun used to skip the replay, so a table the replay
+   creates stayed missing (`relation "oauth_tokens" does not exist`).
+   `gbrain init --migrate-only --non-interactive` does the same.
+3. Verify with `gbrain doctor --only schema_version --json`.
+
+A brain an older release stopped at v210 recovers with the same steps after
+`gbrain upgrade`. That release had already added gbrain's columns (`token_type`,
+`scopes`, `resource`) to the other table and may have turned on row-level security
+for it. Tell the user, so the other application's owner can check: a role that does
+not own the table sees no rows while row-level security is on and no policy admits it.
 
 ## Global maintenance timeouts
 

@@ -2,8 +2,11 @@ import type { BrainEngine } from './engine.ts';
 import type { Migration } from './schema-migrations/types.ts';
 import { isLockTimeoutError } from './retry-matcher.ts';
 import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-engine/schema-lock-timeout.ts';
+import { SCHEMA_MIGRATION_LOCK_APPLICATION_NAME } from './postgres-engine/init-schema-lock.ts';
+import { assertSchemaMigrationLockHeld, withSchemaMigrationLock } from './schema-migration-lock.ts';
 import { MIGRATIONS } from './schema-migrations/registry.generated.ts';
 import { hasPendingMigrations } from './migrate-pending.ts';
+import { assertOwnedTableShapes } from './owned-table-shapes.ts';
 import { runMigrationStatement, setQuietMigrationNotices } from './schema-migrations/helpers.ts';
 import { MIGRATION_PRELUDES, runMigrationPrelude } from './migration-preludes.ts';
 import { clearMigrationTimeout, migrationStatementTimeoutMs, recordMigrationTimeout } from './migration-timeout.ts';
@@ -113,7 +116,8 @@ export async function getIdleBlockers(engine: BrainEngine): Promise<IdleBlocker[
        FROM pg_stat_activity
        WHERE state = 'idle in transaction'
          AND query_start < NOW() - INTERVAL '5 minutes'
-         AND pid != pg_backend_pid()`
+         AND pid != pg_backend_pid()
+         AND application_name IS DISTINCT FROM '${SCHEMA_MIGRATION_LOCK_APPLICATION_NAME}'`
     );
   } catch {
     return [];
@@ -364,7 +368,14 @@ export function isDeadlockError(err: unknown): boolean {
   return /40P01|deadlock detected/i.test(msg);
 }
 
+export { withSchemaMigrationLock };
+
+/** GBRA-467: under the schema migration lock (schema-migration-lock.ts); the version is read once it is held. */
 export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
+  return withSchemaMigrationLock(engine, () => runMigrationsLocked(engine));
+}
+
+async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: number; current: number }> {
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
 
@@ -375,6 +386,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
   const pending = sorted.filter(m => m.version > current);
+  if (pending.length > 0) await assertOwnedTableShapes(async sql => (await engine.executeRaw(sql))[0]); // #9190: before any repair or migration
 
   // #2038: schema-drift self-heal. A migration renumbered during a master
   // merge (v102 timeline dedup, originally v99) can be recorded-as-applied
@@ -475,6 +487,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
     await checkForBlockingConnections(engine);
 
     for (const m of pending) {
+      await assertSchemaMigrationLockHeld();
       if (!quietReplay) process.stderr.write(`  [${m.version}] ${m.name}...\n`);
       try {
         await applyOneMigration(engine, m);

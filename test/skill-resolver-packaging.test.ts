@@ -9,8 +9,9 @@
  *    Node with no node_modules. In CI a missing node fails instead of skipping.
  * 2. Fails when: the export path moves, the bundle stops building or running
  *    under Node (a Bun-only API, an unbundled dependency, a JSON import
- *    without its attribute), the CLI and the release build differ, or the
- *    release stops attaching or checking the sha256.
+ *    without its attribute), the CLI and the release build differ, the build
+ *    depends on the working directory, or the release stops attaching or
+ *    checking the sha256.
  */
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -41,8 +42,9 @@ describe('skill resolver packaging', () => {
       const out = join(dir, 'gbrain-skill-resolver.mjs');
       const run = Bun.spawnSync([process.execPath, 'scripts/build-skill-resolver-bundle.ts', '--out', out, '--smoke'], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
       expect(run.exitCode, run.stderr.toString()).toBe(0);
-      const smoke = JSON.parse(run.stdout.toString().trim().split('\n').at(-1)!) as { node: string; gbrain_version: string; bundled_skills: number; top: string };
+      const smoke = JSON.parse(run.stdout.toString().trim().split('\n').at(-1)!) as { node: string; gbrain_version: string; bundled_skills: number; top: string; off_thread: string; warm_top: string };
       expect(smoke.top).toBe('x:deploy');
+      expect([smoke.off_thread, smoke.warm_top]).toEqual(['w', 'x:invoice']);
       expect(smoke.gbrain_version).toBe(VERSION);
       expect(smoke.bundled_skills).toBeGreaterThan(20);
       const sum = createHash('sha256').update(readFileSync(out)).digest('hex');
@@ -62,6 +64,21 @@ describe('skill resolver packaging', () => {
     }
   }, 120_000);
 
+  test('the bundle is byte-identical whatever directory it is built from', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skres-repro-'));
+    try {
+      const sums = [ROOT, dir].map((cwd, i) => {
+        const out = join(dir, `b${i}.mjs`);
+        const run = Bun.spawnSync([process.execPath, join(ROOT, 'scripts/build-skill-resolver-bundle.ts'), '--out', out], { cwd, stdout: 'pipe', stderr: 'pipe' });
+        expect(run.exitCode, run.stderr.toString()).toBe(0);
+        return createHash('sha256').update(readFileSync(out)).digest('hex');
+      });
+      expect(sums[1]).toBe(sums[0]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+
   test.skipIf(needNode)('the version module imports under node (JSON import attribute)', () => {
     const run = Bun.spawnSync([NODE!, '--input-type=module', '-e', `const m = await import(${JSON.stringify(join(ROOT, 'src/version.ts'))}); console.log(m.VERSION);`], { cwd: ROOT, stdout: 'pipe', stderr: 'pipe' });
     expect(run.exitCode, run.stderr.toString()).toBe(0);
@@ -76,5 +93,19 @@ describe('skill resolver packaging', () => {
     const check = wf.indexOf('sha256sum -c gbrain-skill-resolver.mjs.sha256');
     expect(check).toBeGreaterThan(0);
     expect(check).toBeLessThan(wf.indexOf('uses: softprops/action-gh-release'));
+  });
+  test('a compiled build records its commit in the build receipt: GBRAIN_BUILD_COMMIT is defined at compile time (HARN-52)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'skres-commit-'));
+    try {
+      const sha = 'a'.repeat(40);
+      const built = Bun.spawnSync(['bun', 'build', '--target=bun', '--outfile', join(dir, 'lib.js'), '--define', `GBRAIN_BUILD_COMMIT="${sha}"`, join(ROOT, 'src/core/skills/resolver/index.ts')], { stderr: 'pipe' });
+      expect(built.exitCode, built.stderr.toString()).toBe(0);
+      const run = Bun.spawnSync(['bun', '-e', `const m = await import(${JSON.stringify(join(dir, 'lib.js'))}); const r = await m.buildSkillIndex({ catalog: 'c', fromJson: '[{"id":"a","name":"a"}]', fromJsonStdin: true }, { home: ${JSON.stringify(dir)} }); console.log(r.gbrain_commit);`], { cwd: dir, stderr: 'pipe' });
+      expect(run.stdout.toString().trim(), run.stderr.toString()).toBe(sha);
+      const pkg = await Bun.file(join(ROOT, 'package.json')).json() as { scripts: Record<string, string> };
+      for (const s of ['build', 'build:all']) for (const cmd of pkg.scripts[s]!.split('&&')) expect(cmd).toContain('--define GBRAIN_BUILD_COMMIT=');
+      const release = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');
+      for (const line of release.split('\n').filter(l => l.includes('bun build --compile'))) expect(line).toContain("--define GBRAIN_BUILD_COMMIT='\"${{ github.sha }}\"'");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

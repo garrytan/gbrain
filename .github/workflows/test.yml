@@ -91,6 +91,7 @@ jobs:
       native-locks: ${{ steps.dynamic-ci.outputs.native-locks }}
       persistence-validation: ${{ steps.dynamic-ci.outputs.persistence-validation }}
       stress-changed-tests: ${{ steps.dynamic-ci.outputs.stress-changed-tests }}
+      enumeration-census-tests: ${{ steps.dynamic-ci.outputs.enumeration-census-tests }}
     steps:
       - id: dynamic-ci
         uses: trunk-io/dynamic-ci@5bcddbf3615c2b032c21eed1b514c91164bda4a8  # v1 (v0.1.7)
@@ -98,7 +99,7 @@ jobs:
         timeout-minutes: 3
         with:
           token: ${{ secrets.TRUNK_API_TOKEN }}
-          job-keys: security-regressions,native-locks,persistence-validation,stress-changed-tests
+          job-keys: security-regressions,native-locks,persistence-validation,stress-changed-tests,enumeration-census-tests
           enable-annotation: 'true'
 
   # Planning gate for the native platform matrix. Pull requests that touch
@@ -119,6 +120,7 @@ jobs:
     outputs:
       native-scope: ${{ steps.scope.outputs.native }}
       convergence: ${{ steps.convergence.outputs.convergence }}
+      census: ${{ steps.census.outputs.census }}
       reuse: ${{ steps.reuse.outputs.reuse }}
       reuse-source-run-id: ${{ steps.reuse.outputs.source_run_id }}
     steps:
@@ -128,10 +130,11 @@ jobs:
             scripts/ci-native-scope.sh
             scripts/ci-manifest-diff.sh
             scripts/ci-convergence-scope.sh
+            scripts/select-e2e.ts
             scripts/ci-reuse.ts
             scripts/lib/gh-issue.ts
           sparse-checkout-cone-mode: false
-      - if: github.event_name == 'push'
+      - if: github.event_name == 'push' || github.event_name == 'pull_request'
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.4
@@ -213,6 +216,27 @@ jobs:
           fi
           echo "convergence gate: $convergence"
           echo "convergence=$convergence" >> "$GITHUB_OUTPUT"
+      # A pull request runs enumeration-census-tests unless every changed file is
+      # a doc (scripts/select-e2e.ts --classify-only says DOC_ONLY); an unknown or
+      # unreadable diff runs it.
+      - id: census
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          census=run
+          if [[ "$CHANGED_FILES" =~ ^[0-9]{1,4}$ ]] && [ "$CHANGED_FILES" -lt 3000 ] \
+            && files=$(gh api --paginate "repos/$REPO/pulls/$PR/files?per_page=100" --jq '.[].filename') \
+            && [ "$(printf '%s\n' "$files" | awk 'NF { count++ } END { print count+0 }')" -eq "$CHANGED_FILES" ] \
+            && [ "$(printf '%s\n' "$files" | bun scripts/select-e2e.ts --classify-only --changed-files -)" = DOC_ONLY ]; then
+            census=skip
+          fi
+          echo "enumeration and census tests: $census"
+          echo "census=$census" >> "$GITHUB_OUTPUT"
 
   # Re-run checks for every event, except a master push reusing a passed full-suite run of its exact tree (scripts/ci-reuse.ts). Only dependencies and PGLite snapshots are cached.
   gitleaks:
@@ -501,10 +525,15 @@ jobs:
     # 121 s in verify's pool and timed out at the cap. A timed-out tsc also
     # writes no tsbuildinfo, so every rerun restored the same stale state.
     # Step timeout from measurement: 3 x the worst cold CI time (121 s) is
-    # about 6 minutes. tsc is single-threaded, so 4 vCPUs (16 GB; peak heap
-    # is about 5.3 GB) do the work of verify's 8.
+    # about 6 minutes per attempt. tsc is single-threaded, so 4 vCPUs (16 GB)
+    # do the work of verify's 8. A cold tsc of the tree peaks at about 6.5 GB
+    # RSS (6.51 GB on gbrain#9184's head, 2026-11-11), close to the heap cap
+    # in package.json's typecheck script; an incremental run seeded from a
+    # distant head's tsbuildinfo goes past it and aborts (exit 134).
+    # scripts/ci-typecheck.sh then runs it once more from cold, so the step
+    # and job allow two attempts.
     runs-on: ubicloud-standard-4-ubuntu-2404
-    timeout-minutes: 15
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -530,18 +559,65 @@ jobs:
           key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
           restore-keys: |
             tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-
-      - name: Typecheck (tsc, incremental)
-        timeout-minutes: 6
-        run: bun run typecheck
+      - name: Typecheck (tsc, incremental; cold once more on an abort)
+        id: tsc
+        timeout-minutes: 12
+        run: bash scripts/ci-typecheck.sh bun run typecheck
       # Saved even when this check finds type errors, and whatever the other
       # jobs do: tsc writes its state on an error too, so the next master run
-      # starts from this commit instead of an older, colder state.
+      # starts from this commit instead of an older, colder state. Not saved
+      # when tsc's last attempt aborted or timed out, or the step never
+      # reported (cancelled): tsc wrote no state, and saving the restored file
+      # under this head's key would make every rerun restore it again.
       - name: Save the typecheck state
-        if: always()
+        if: always() && steps.tsc.outputs.state_written == 'true'
         uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: node_modules/.cache/gbrain-typecheck.tsbuildinfo
           key: tsbuildinfo-${{ runner.os }}-${{ hashFiles('bun.lock', 'tsconfig.json') }}-${{ github.sha }}
+
+  # Enumeration and census tests: the unit files that fail when a change adds an
+  # operation, command, flag, error code, doctor check, caller or route without its
+  # reviewed entry, or changes a golden (scripts/ci-census-tests.sh prints them; the
+  # crew runs the same command by hand). No aggregate, merge rule or reuse check
+  # reads it. Two shards of about 175 s of mined weight each on 2 vCPUs, like one
+  # of the two unit shards a 4-vCPU test runner packs.
+  # Event parity (docs/ci-event-parity.md#enumeration-and-census-tests): pull
+  # requests only, and not on a doc-only diff. Every full run (the full-ci
+  # dispatch, every push to master, the nightly schedule) runs these files in the
+  # unit shards.
+  enumeration-census-tests:
+    name: enumeration and census tests (${{ matrix.shard }}/2)
+    needs: [changes, dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.enumeration-census-tests != 'false' && needs.changes.result == 'success' && (github.event_name == 'pull_request' && needs.changes.outputs.census != 'skip') }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: ~/.bun/install/cache
+          key: bun-cache-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-cache-${{ runner.os }}-
+      - uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            test/fixtures/pglite-snapshot.tar
+            test/fixtures/pglite-snapshot.version
+          key: pglite-snapshot-${{ runner.os }}-${{ hashFiles('src/core/**/*.ts', 'test/helpers/legacy-embedding-config.ts', 'scripts/build-pglite-snapshot.ts') }}
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile
+      - name: Run shard ${{ matrix.shard }} of 2
+        timeout-minutes: 10
+        run: bash scripts/ci-census-tests.sh --run ${{ matrix.shard }} 2
 
   # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only. A
   # pull request runs the cheap tier; this job runs in the full-ci dispatch on its
@@ -879,10 +955,12 @@ jobs:
     # 568 for 18 solo jobs) mined ~12,640s of file time, ~1.4x the solo
     # weights.
     #
-    # 28 shards (UNIT_SHARDS in scripts/sharding.ts): run 40468581224
-    # (2026-10-27) mined ~14,950s of file time, ~534s per shard; at 22 that
-    # was ~680s. A shard's mined weight must fit this job's 22 minutes twice
-    # over, after a minute of setup, with a minute to spare
+    # 30 shards (UNIT_SHARDS in scripts/sharding.ts): the median of five Test
+    # nightlies (runs 42180931870 to 42979455461, 2026-11) mined ~16,830s of
+    # file time, ~561s per shard; at 28 that was ~601s, over the budget. Run
+    # 40468581224 (2026-10-27) mined ~14,950s, ~534s per shard at 28. A
+    # shard's mined weight must fit this job's 22 minutes twice over, after a
+    # minute of setup, with a minute to spare
     # (UNIT_SHARD_BUDGET_MS, 600s; test/scripts/unit-shard-budget.test.ts).
     # At 18 the packed weights put every shard at ~702s; at 10 (~950s per
     # shard) shards ran 0.8-1.4x their prediction and shard 5 was cancelled
@@ -904,7 +982,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shards: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22], [23, 24], [25, 26], [27, 28]]
+        shards: [[1, 2], [3, 4], [5, 6], [7, 8], [9, 10], [11, 12], [13, 14], [15, 16], [17, 18], [19, 20], [21, 22], [23, 24], [25, 26], [27, 28], [29, 30]]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
@@ -940,9 +1018,9 @@ jobs:
           awk '/^cpu /{print "steal_jiffies", $9}' /proc/stat
           lscpu | grep -m1 'Model name'
           (while true; do free -m | awk '/^Mem:/{print $3, $7}' >> "$RUNNER_TEMP/mem.log"; sleep 5; done) > /dev/null 2>&1 &
-      - name: Run test shards ${{ join(matrix.shards, ' and ') }} of 28
+      - name: Run test shards ${{ join(matrix.shards, ' and ') }} of 30
         shell: bash
-        run: bash scripts/test-shard-pack.sh 28 ${{ join(matrix.shards, ' ') }}
+        run: bash scripts/test-shard-pack.sh 30 ${{ join(matrix.shards, ' ') }}
         env:
           GBRAIN_SHARD_PACK_DIR: ${{ runner.temp }}/shards
       - name: Runner diagnostics (after shard)
@@ -1009,7 +1087,7 @@ jobs:
 
 
   # ──────────────────────────────────────────────────────────────────────
-  # coverage-report: merges the PR corpus (28 unit + 4 serial + 2 slow
+  # coverage-report: merges the PR corpus (30 unit + 4 serial + 2 slow
   # lanes) into one honest number, renders it to the step summary, and runs
   # the diff + baseline gates in report-only mode (COVERAGE_GATE_ENFORCE=0).
   # ADVISORY during the report-only window: deliberately NOT in test-status's
@@ -1053,7 +1131,7 @@ jobs:
           bun scripts/merge-lcov.ts \
             --out-lcov "$RUNNER_TEMP/coverage-merged/lcov.info" \
             --out-json "$RUNNER_TEMP/coverage-merged/summary.json" \
-            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,shard-23,shard-24,shard-25,shard-26,shard-27,shard-28,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
+            --manifest-expect shard-1,shard-2,shard-3,shard-4,shard-5,shard-6,shard-7,shard-8,shard-9,shard-10,shard-11,shard-12,shard-13,shard-14,shard-15,shard-16,shard-17,shard-18,shard-19,shard-20,shard-21,shard-22,shard-23,shard-24,shard-25,shard-26,shard-27,shard-28,shard-29,shard-30,serial-1,serial-2,serial-3,serial-4,slowperf,slowbrainbench \
             "$RUNNER_TEMP/coverage-artifacts"
       - name: Coverage summary → step summary
         run: bun scripts/render-coverage-summary.ts --summary "$RUNNER_TEMP/coverage-merged/summary.json" --structural scripts/structural-suites.tsv >> "$GITHUB_STEP_SUMMARY"

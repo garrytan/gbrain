@@ -11,20 +11,27 @@
  * recorded blocks follow the same rules without touching real state.
  * Commits are serialized per file under a short lease with a bounded wait;
  * a lost commit only means a skill may be suggested again.
+ *
+ * Every commit (either kind) then starts a session GC pass, at most once per
+ * GC_INTERVAL_MS per home (the mtime of logs/session-gc.stamp), after the commit
+ * has settled and with async I/O only, so it never costs a turn's deadline;
+ * without it, past MAX_SESSION_FILES new sessions would never dedupe.
  */
 import { createHash } from 'node:crypto';
 import { promises, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
-const { mkdir, open, readdir, readFile, rename, stat, unlink } = promises;
+const { mkdir, open, readdir, readFile, rename, stat, unlink, writeFile } = promises;
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { ensureDir, writeFileDurable } from './fsutil.ts';
-import { acquireLease, releaseLease, releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
-import { sessionsDir } from './paths.ts';
+import { acquireLease, type Lease, releaseLease, releaseLeaseAsync, tryAcquireLeaseAsync } from './lock.ts';
+import { logsDir, sessionsDir } from './paths.ts';
 
 export const MAX_SESSION_FILES = 10_000;
 export const MAX_SESSION_IDS = 10_000;
 export const SESSION_TTL_MS = 7 * 24 * 3600 * 1000;
 export const GC_WORK_BOUND = 1000;
+export const GC_INTERVAL_MS = 10 * 60 * 1000;
+const gcStamp = (home: string) => join(logsDir(home), 'session-gc.stamp');
 const STATE_CAP_BYTES = 2 * 1024 * 1024;
 
 export interface SessionState {
@@ -63,6 +70,10 @@ export interface TurnDelta { tokens: number; suggested: string[]; resuggested: s
 
 /** Apply one delivered turn. False when the commit was skipped (busy lock, file cap). */
 export async function commitSession(home: string, key: string, delta: TurnDelta): Promise<boolean> {
+  try { return await commitSync(home, key, delta); } finally { scheduleSessionGc(home); }
+}
+
+async function commitSync(home: string, key: string, delta: TurnDelta): Promise<boolean> {
   const dir = sessionsDir(home);
   ensureDir(dir);
   const p = statePath(home, key);
@@ -93,7 +104,13 @@ function applyDelta(s: SessionState, delta: TurnDelta): SessionState {
  * lease is retried a few times over at most ~15 ms, then the commit is
  * skipped (a skipped commit only means a repeat).
  */
-export async function commitSessionAsync(home: string, key: string, delta: TurnDelta): Promise<boolean> {
+export interface CommitHold { lease?: Lease | null; tmp?: string | null; at?: (stage: 'held' | 'written') => Promise<void> }
+
+export async function commitSessionAsync(home: string, key: string, delta: TurnDelta, hold: CommitHold = {}): Promise<boolean> {
+  try { return await commitAsync(home, key, delta, hold); } finally { scheduleSessionGc(home); }
+}
+
+async function commitAsync(home: string, key: string, delta: TurnDelta, hold: CommitHold): Promise<boolean> {
   const dir = sessionsDir(home);
   const p = statePath(home, key);
   try {
@@ -107,7 +124,9 @@ export async function commitSessionAsync(home: string, key: string, delta: TurnD
       if (!lease && attempt < 3) await new Promise(r => setTimeout(r, 2 ** attempt * 2));
     }
     if (!lease) return false;
+    hold.lease = lease;
     try {
+      await hold.at?.('held');
       let s = freshState();
       if (!delta.reset) {
         try {
@@ -118,12 +137,15 @@ export async function commitSessionAsync(home: string, key: string, delta: TurnD
         } catch { /* none or unreadable: fresh */ }
       }
       const tmp = join(dir, `.${key}.json.tmp-${randomBytes(6).toString('hex')}`);
+      hold.tmp = tmp;
       const fh = await open(tmp, 'wx', 0o600);
       try { await fh.writeFile(JSON.stringify(applyDelta(s, delta))); await fh.sync(); } finally { await fh.close(); }
-      try { await rename(tmp, p); } catch (e) { await unlink(tmp).catch(() => {}); throw e; }
+      await hold.at?.('written');
+      try { await rename(tmp, p); } catch (e) { await unlink(tmp).catch(() => {}); throw e; } finally { hold.tmp = null; }
       return true;
     } finally {
       await releaseLeaseAsync(lease);
+      hold.lease = null;
     }
   } catch {
     return false;
@@ -134,15 +156,64 @@ export async function resetSession(home: string, key: string): Promise<void> {
   try { await unlink(statePath(home, key)); } catch { /* none */ }
 }
 
+/** At most GC_WORK_BOUND of a directory's names, from a random start once there are more. */
+function gcSlice(names: string[]): string[] {
+  const start = names.length > GC_WORK_BOUND ? Math.floor(Math.random() * names.length) : 0;
+  return Array.from({ length: Math.min(names.length, GC_WORK_BOUND) }, (_, i) => names[(start + i) % names.length]!);
+}
+
 /** Delete session files idle for 7 days, examining at most GC_WORK_BOUND files per run. */
 export function gcSessions(home: string, now: number = Date.now()): number {
   let removed = 0;
   let names: string[];
   try { names = readdirSync(sessionsDir(home)); } catch { return 0; }
-  const start = names.length > GC_WORK_BOUND ? Math.floor(Math.random() * names.length) : 0;
-  for (let i = 0; i < Math.min(names.length, GC_WORK_BOUND); i++) {
-    const p = join(sessionsDir(home), names[(start + i) % names.length]!);
+  for (const name of gcSlice(names)) {
+    const p = join(sessionsDir(home), name);
     try { if (now - statSync(p).mtimeMs > SESSION_TTL_MS) { unlinkSync(p); removed++; } } catch { /* raced */ }
   }
   return removed;
 }
+
+/**
+ * gcSessions with async I/O only; it touches the GC stamp first, so the
+ * commit-path pass skips the next interval. An idle session file is deleted
+ * only under its commit lease and after a second stat, so a commit landing
+ * between the first stat and the unlink keeps its file; a held lease skips it.
+ */
+export async function gcSessionsAsync(home: string, now: number = Date.now()): Promise<number> {
+  const dir = sessionsDir(home);
+  let names: string[];
+  try {
+    names = await readdir(dir);
+    await mkdir(logsDir(home), { recursive: true, mode: 0o700 });
+    await writeFile(gcStamp(home), '', { mode: 0o600 });
+  } catch { return 0; }
+  let removed = 0;
+  const idle = async (p: string) => now - (await stat(p)).mtimeMs > SESSION_TTL_MS;
+  for (const name of gcSlice(names)) {
+    const p = join(dir, name);
+    try {
+      if (!(await idle(p))) continue;
+      if (!name.endsWith('.json')) { await unlink(p); removed++; continue; }
+      const lease = await tryAcquireLeaseAsync(`${p}.lock`, { purpose: 'session-gc', leaseMs: 2000 });
+      if (!lease) continue;
+      try { if (await idle(p)) { await unlink(p); removed++; } } finally { await releaseLeaseAsync(lease); }
+    } catch { /* raced */ }
+  }
+  return removed;
+}
+
+let gcPass: Promise<number> | null = null;
+
+/** Start a GC pass once the current task ends, unless one ran in this home within GC_INTERVAL_MS. Never throws, never waited on. */
+export function scheduleSessionGc(home: string): void {
+  const prev = gcPass;
+  gcPass = new Promise<void>(r => setImmediate(r)).then(async () => {
+    await prev;
+    try { if (Date.now() - (await stat(gcStamp(home))).mtimeMs < GC_INTERVAL_MS) return 0; } catch { /* none yet */ }
+    return gcSessionsAsync(home);
+  }).catch(() => 0);
+}
+
+/** Resolves once the GC passes started so far have finished (tests). */
+export const sessionGcSettled = async (): Promise<void> => { await gcPass; };

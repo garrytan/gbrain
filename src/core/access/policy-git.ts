@@ -24,7 +24,8 @@ import { serr } from '../console-prefix.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readSyncAnchor } from '../sync-anchor.ts';
 import { gitChildEnv } from '../git-env.ts';
-import { gitAsync } from '../sync-git.ts';
+import { execFileBounded } from '../bounded-child-exec.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { acquireCommitLock, checkoutRoot, commitAndPush, COMMIT_LOCK_ENV, type CommitPushResult } from '../git/commit-push.ts';
 import { parsePolicyYaml, rulebookDigest, serializePolicyYaml, type FolderRule, type PolicyProblem } from './folder-rules.ts';
 import { clearPolicyInvalid, coverageRows, getRevision, listRevisions, markPolicyInvalid, proposeRevision, readAccessStore, writeAccessStore, type ProposalResult, type RestampProgress } from './policy.ts';
@@ -53,19 +54,45 @@ function gitShow(root: string, rev: string, path: string): string | null {
   return r.status === 0 ? r.stdout : null;
 }
 
-/** isGitWorkTree without blocking the event loop, for sync (a resident runs it in-process on a commit). */
-async function isGitWorkTreeAsync(root: string): Promise<boolean> {
-  return gitAsync(root, ['rev-parse', '--is-inside-work-tree'], { silenceStderr: true }).then(out => out === 'true', () => false);
+/**
+ * GST-2331: a Git read for sync (a resident runs it in-process on a commit) under `HARDENED_GIT_ARGS` and
+ * `GIT_NO_LAZY_FETCH`, so a partial clone fetches nothing; rejects on a nonzero exit, and `raw` keeps the output untrimmed.
+ */
+async function policyGit(root: string, args: string[], raw = false): Promise<string> {
+  const r = await execFileBounded('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args],
+    { env: gitChildEnv(NO_LAZY_FETCH_ENV), timeout: 30_000, maxBuffer: 100 * 1024 * 1024 });
+  if (r.error) throw r.error;
+  return raw ? r.stdout : r.stdout.trim();
 }
 
-export interface CommittedPolicy { yml: string | null; approved: string | null; commit: string | null }
+/** isGitWorkTree without blocking the event loop, for sync. */
+async function isGitWorkTreeAsync(root: string): Promise<boolean> {
+  return policyGit(root, ['rev-parse', '--is-inside-work-tree']).then(out => out === 'true', () => false);
+}
 
-/** The policy files as committed at `rev` (never the working tree), and the last commit that touched access.yml. */
+/**
+ * GST-2331: `path` as committed at `rev`: null when there is no such commit or the commit has no such file, undefined when
+ * the commit names the file and the repository cannot read it (a partial clone never fetched its object or a tree on the
+ * way, and sync fetches nothing).
+ */
+async function committedFile(root: string, rev: string, path: string): Promise<string | null | undefined> {
+  const text = await policyGit(root, ['show', `${rev}:./${path}`], true).catch(() => null);
+  if (text !== null) return text;
+  if (!await policyGit(root, ['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]).then(() => true, () => false)) return null;
+  return await policyGit(root, ['ls-tree', '-z', rev, '--', path], true).catch(() => undefined) === '' ? null : undefined;
+}
+
+export interface CommittedPolicy { yml: string | null; approved: string | null; commit: string | null; unreadable: string[] }
+
+/**
+ * The policy files as committed at `rev` (never the working tree), the last commit that touched access.yml, and the policy
+ * files the commit names that the repository cannot read (GST-2331: a partial clone that never fetched them).
+ */
 export async function readCommittedPolicy(root: string, rev = 'HEAD'): Promise<CommittedPolicy> {
-  const show = (path: string) => gitAsync(root, ['show', `${rev}:./${path}`], { silenceStderr: true, raw: true }).catch(() => null);
-  const [yml, approved, log] = await Promise.all([show(POLICY_FILE), show(APPROVED_FILE),
-    gitAsync(root, ['log', '-1', '--format=%h %an', rev, '--', POLICY_FILE], { silenceStderr: true }).catch(() => '')]);
-  return { yml, approved, commit: log || null };
+  const [yml, approved, log] = await Promise.all([committedFile(root, rev, POLICY_FILE), committedFile(root, rev, APPROVED_FILE),
+    policyGit(root, ['log', '-1', '--format=%h %an', rev, '--', POLICY_FILE]).catch(() => '')]);
+  return { yml: yml ?? null, approved: approved ?? null, commit: log || null,
+    unreadable: [...(yml === undefined ? [POLICY_FILE] : []), ...(approved === undefined ? [APPROVED_FILE] : [])] };
 }
 
 export interface GitPolicySyncResult {
@@ -85,13 +112,20 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
   if (store === 'database') return { source_id: sourceId, state: 'skipped', reason: 'database_store' };
   const files = await readCommittedPolicy(root, opts.rev ?? 'HEAD');
   const rev = opts.rev ?? 'HEAD';
-  if (files.yml === null && files.approved === null && store !== 'git'
-    && !(await gitAsync(root, ['log', '-1', '--first-parent', '--format=%H', rev, '--', POLICY_FILE], { silenceStderr: true }))) {
+  if (files.yml === null && files.approved === null && !files.unreadable.length && store !== 'git'
+    && !(await policyGit(root, ['log', '-1', '--first-parent', '--format=%H', rev, '--', POLICY_FILE]).catch(() => 'unknown'))
+    && !(await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid')) {
     return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
   }
   const rebuild = !(await getRevision(engine, sourceId))
     || (await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid' && (c.detail as { file?: string } | null)?.file === REBUILD_MARK);
   if (rebuild) await markPolicyInvalid(engine, sourceId, null, { problems: [{ line: null, message: 'The folder rules are being rebuilt from git history; the source reads as nobody until the rebuild finishes.' }], commit: files.commit, file: REBUILD_MARK });
+  if (files.unreadable.length) {
+    const problems = [{ line: null, message: `${files.unreadable.join(' and ')} of source ${sourceId} at ${rev} cannot be read: the repository lacks its Git object (a partial clone, git clone --filter, never fetched it) and sync fetches nothing, so the source reads as nobody. `
+      + `Fetch it in the checkout (${files.unreadable.map(path => `git -C ${root} cat-file -p ${rev}:./${path}`).join('; ')} fetches it from the partial clone's remote) or use a clone without --filter, then sync again.` }];
+    await markPolicyInvalid(engine, sourceId, null, { problems, commit: files.commit, file: rebuild ? REBUILD_MARK : POLICY_FILE });
+    return { source_id: sourceId, state: 'invalid', problems, commit: files.commit };
+  }
   let approvedFile: GitPolicySyncResult['approved_file'] = 'absent';
   if (files.approved !== null) {
     const approved = parsePolicyYaml(files.approved);
@@ -127,17 +161,26 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
  * A rebuild replays every committed access.yml from the approved baseline's commit on (first-parent order), so a narrowing
  * that a later plain commit removed or deleted the file over is applied again and its removal held, as on the database that
  * saw each commit. The whole source reads as nobody from the start of a rebuild until it finishes (an interrupted one is
- * resumed by the next sync), and a shallow checkout leaves it so.
+ * resumed by the next sync), and a shallow checkout leaves it so, as does a partial clone that lacks a tree or a version of
+ * access.yml the replay reads (GST-2331: sync fetches nothing).
  */
 async function replayPolicyHistory(engine: BrainEngine, sourceId: string, root: string, rev: string, fromApproved: boolean, onProgress?: (p: RestampProgress) => void): Promise<string | null> {
-  if (await gitAsync(root, ['rev-parse', '--is-shallow-repository'], { silenceStderr: true }) === 'true') {
+  if (await policyGit(root, ['rev-parse', '--is-shallow-repository']) === 'true') {
     return `The checkout of source ${sourceId} is shallow, so its folder-rule history cannot be replayed; the source reads as nobody. Fetch the full history (git -C ${root} fetch --unshallow) and sync again.`;
   }
-  const log = (args: string[]) => gitAsync(root, ['log', '--first-parent', '--format=%H', ...args], { silenceStderr: true });
-  const anchor = fromApproved ? await log(['-1', rev, '--', APPROVED_FILE]) : '';
-  const commits = [...(anchor ? [anchor] : []), ...(await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean)];
+  const partial = `The folder-rule history of source ${sourceId} cannot be read: the repository lacks Git objects it needs (a partial clone, git clone --filter, never fetched them) and sync fetches nothing, so the source reads as nobody. `
+    + `Fetch them in the checkout (git -C ${root} log --first-parent -p ${rev} -- ${POLICY_FILE} reads every version, fetching what is missing from the partial clone's remote) or use a clone without --filter, then sync again.`;
+  const log = (args: string[]) => policyGit(root, ['log', '--first-parent', '--format=%H', ...args]);
+  let commits: string[];
+  try {
+    const anchor = fromApproved ? await log(['-1', rev, '--', APPROVED_FILE]) : '';
+    commits = [...(anchor ? [anchor] : []), ...(await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean)];
+  } catch {
+    return partial;
+  }
   for (const commit of commits.slice(0, -1)) {
-    const yml = await gitAsync(root, ['show', `${commit}:./${POLICY_FILE}`], { silenceStderr: true, raw: true }).catch(() => null);
+    const yml = await committedFile(root, commit, POLICY_FILE);
+    if (yml === undefined) return partial;
     const parsed = yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(yml);
     if (parsed.ok) await proposeRevision(engine, sourceId, parsed.rules, { origin: 'git', store: 'git', proposedBy: `git:${commit.slice(0, 7)}`, onProgress });
   }
@@ -154,8 +197,8 @@ export interface GitPolicyReceipt {
 /**
  * Writes one policy file under the checkout's commit lock (held across the read, the edit and the commit) and commits it
  * through the door. commit_lock_busy is retried once; integrate_conflict and writer_coordinator_required propagate (the
- * first needs the user's choice, the second a managed write on the brain host); a commit whose push is unconfirmed is a
- * success with a note.
+ * first needs the user's choice, the second a managed write on the brain host); a commit whose push is unconfirmed, or
+ * whose push the secret scan refused (publish_secret_found / publish_scan_unreadable), is committed_not_pushed with a note.
  */
 export async function commitPolicyFile(root: string, relPath: string, edit: (current: string | null) => string, message: string): Promise<GitPolicyReceipt> {
   const file = join(root, relPath);
@@ -169,12 +212,17 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
       const next = edit(current);
       writeFileSync(file, next);
       try {
-        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message });
+        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message, scanSecrets: true });
         return { outcome: r.outcome, commit: r.committed ?? r.sha, path: relPath,
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {
         if (e instanceof OperationError && (e.code === 'push_unconfirmed' || (e as { canonical?: string }).canonical === 'push_unconfirmed') && e.detail) {
-          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only to publish it.' };
+          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only --scan-secrets to publish it.' };
+        }
+        if (e instanceof OperationError && (e.code === 'publish_secret_found' || e.code === 'publish_scan_unreadable') && gitShow(root, 'HEAD', relPath) === next) {
+          const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: gitChildEnv() }).stdout.trim();
+          return { outcome: 'committed_not_pushed', commit: head || null, path: relPath,
+            note: `Committed locally; nothing was pushed. ${e.code}: ${e.message} Fix: ${e.suggestion}` };
         }
         if (gitShow(root, 'HEAD', relPath) !== next) {
           if (current === null) rmSync(file, { force: true }); else writeFileSync(file, current);

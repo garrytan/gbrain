@@ -24,7 +24,7 @@ import { getWriteRequestById } from './journal.ts';
 import type { WriteRequest } from './model.ts';
 import { managedSyncWriteDiagnostic } from './sync-write-diagnostic.ts';
 import { recordedStop, replaysUnchangedRefusal, resumableRowStop } from './sync-stop-class.ts';
-import { adoptLegacyPage, incomingId, syncExcludePatterns, syncGit, type LegacyIdentity, type ManagedSyncContext, type SyncDiscovery, type SyncEntry, type SyncFileRefusal, type SyncSlugCollision } from './sync-discovery.ts';
+import { adoptLegacyPage, incomingId, partialCloneTreeRefusal, syncExcludePatterns, syncGit, type LegacyIdentity, type ManagedSyncContext, type SyncDiscovery, type SyncEntry, type SyncFileRefusal, type SyncSlugCollision } from './sync-discovery.ts';
 import { assertSyncDispatchActive, type SyncAuthority, type SyncProcessingOptions } from './sync-authority.ts';
 import { recordPassFenceTrend, type PassStamp, type SyncCursorOptions, type SyncIntent } from './sync-prepare.ts';
 import { OPEN_AT_STAMP_CAP, passFingerprint, readPassRow, SYNC_ORIGIN_DELETED_OP, transientEnding, writePassRow, type ManagedSyncPassValue, type PassEpisode,
@@ -35,7 +35,7 @@ import { passFoldBase, passIdleProbe, readShadowLevel, workingIdleChange, type P
 import { ownWritebackCommit, type PassFold } from './sync-pass-fold.ts';
 import { openPassRequests, settleCarried } from './sync-pass-carried.ts';
 import { loopYield } from './sync-yield.ts';
-import { pathBlobHistory, recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
+import { pathBlobHistories, recallWorkingStatCache, rememberWorkingStatCache, SyncTreeReadIncomplete } from './sync-git-stream.ts';
 import { syncPassKind } from './sync-classify.ts';
 import { PASS_BATCH_KEY_PREFIX, readConvergedWatermark, SyncAdmissionPaused, type PassEntry } from './sync-pass-batch.ts';
 import { assertDrainLease, currentDrainLease } from './sync-lease.ts';
@@ -151,7 +151,7 @@ function entryPaths(level: ShadowLevel, gitPath: string): { path: string; source
  * stays; one new origin whose bytes equal a page leaving at another origin is that page's Git rename (`renameFrom`, the
  * page moves to the new slug). Deletes first, then imports.
  */
-async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: ShadowPath[], imports: ShadowPath[]):
+async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: ShadowPath[], imports: ShadowPath[], onHistoryRead?: (path: string) => void):
   Promise<{ entries: PassEntry[]; collisions: SyncSlugCollision[]; skipped: ShadowPath[]; downgrades: DowngradedRename[];
     identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }> }> {
   await faultPoint('sync:batch_entries', { sourceId: level.sourceId });
@@ -206,11 +206,11 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     : entry.result.side === 'unknown' ? entry.state.baseline ?? undefined : undefined;
   // #7199: a side-`unknown` hold an older gbrain wrote after the pass that held it moved the source's last commit past the one
   // the classic sync read; its re-screen also compares the page with the file's last few committed versions before the held one.
-  const history = new Map<string, string[]>();
-  for (const entry of imports) if (entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened) {
-    const earlier = await pathBlobHistory(level.gitRoot, level.baselineCommit ?? level.head, entry.path, DRIFT_HISTORY_DEPTH).catch(() => []);
-    history.set(entry.path, [...new Set(earlier)].filter(oid => oid !== entry.state.level && oid !== entry.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS));
-  }
+  // GST-2515: one batched read for all of them, reporting each path it finished, so thousands of such holds neither start a Git
+  // process each nor read as a stalled pass.
+  const unscreened = imports.filter(entry => entry.result.side === 'unknown' && entry.pageId !== null && entry.state.hold?.unscreened);
+  const read = unscreened.length ? await pathBlobHistories(level.gitRoot, level.baselineCommit ?? level.head, unscreened.map(entry => entry.path), DRIFT_HISTORY_DEPTH, onHistoryRead) : null;
+  const history = new Map(unscreened.map(entry => [entry.path, [...new Set(read?.get(entry.path) ?? [])].filter(oid => oid !== entry.state.level && oid !== entry.state.baseline).slice(0, DRIFT_HISTORY_VERSIONS)]));
   const entries: PassEntry[] = [], collisions: SyncSlugCollision[] = [], skipped: ShadowPath[] = [], identity: Array<{ entry: ShadowPath; origin: ShadowPath | null; slug: string; ids: { page: string; file: string } }> = [];
   const claims = new Map<string, ShadowPath[]>();
   for (const entry of imports) {
@@ -409,7 +409,10 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
   // GBRA-133: so does `sync.apply_held_deletions` when on (sync-held-deletions.ts): turning it on reads the level, and its held deletions, once.
   // `sync.level_reuse` rides the same read (sync-tree-reuse.ts); it changes how the level is read, not what it is.
   const { heldDeletions, levelReuse } = await readPassSwitches(engine, sourceId);
-  const selectionFp = digest({ ...selection, ...(metafilePages === 'off' ? {} : { metafile_pages: metafilePages }), ...(heldDeletions ? { apply_held_deletions: true } : {}), ...(strict ? { canonical: 'git' } : {}) }), parserFp = parserFingerprint();
+  // GST-2201: `sync_deleted_restore` marks the classifier that imports a file restored over its sync-made tombstone, so the first
+  // pass after the upgrade reads the whole level once and brings back pages an older pass left deleted beside their file.
+  const selectionFp = digest({ ...selection, ...(metafilePages === 'off' ? {} : { metafile_pages: metafilePages }), ...(heldDeletions ? { apply_held_deletions: true } : {}), ...(strict ? { canonical: 'git' } : {}),
+    sync_deleted_restore: 1 }), parserFp = parserFingerprint();
   const obligations: ManagedSyncPassValue['obligations'] = prior ? structuredClone(prior.value.obligations)
     : { baseline_commit: context.source.last_commit, mismatch: {}, not_converged_streak: 0, faults: {} };
   obligations.mismatch ??= {}; obligations.faults ??= {}; obligations.not_converged_streak ??= 0;
@@ -956,7 +959,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
         return synced(false);
       }
       opts.onProgress?.({ phase: 'managed_sync.round_admit', round: { round, target: head, paths: level.paths.length, imports: imports.length, deletes: deletes.length, in_flight: inFlight.length } });
-      const built = await batchEntries(engine, level, deletes, imports).catch(async (error: unknown) => {
+      const built = await batchEntries(engine, level, deletes, imports, () => { assertActive(); beat.report(); }).catch(async (error: unknown) => {
         if ((error as { code?: string } | null | undefined)?.code === 'page_identity_changed') await save('blocked', 'page_identity_changed');
         throw error;
       });
@@ -1010,7 +1013,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
       await save('resumable', 'timeout', false, true, true).catch(() => undefined); return result('partial', 'timeout');
     }
     // A Git listing that did not finish cleanly classifies nothing (design v3.2 §9): the pass stops blocked, having written nothing for that round.
-    if (error instanceof SyncTreeReadIncomplete) { await save('blocked', 'reconcile_read_incomplete').catch(() => undefined); return result('blocked_by_failures', 'reconcile_read_incomplete'); }
+    if (error instanceof SyncTreeReadIncomplete) { await save('blocked', 'reconcile_read_incomplete').catch(() => undefined); const refusal = partialCloneTreeRefusal(context.gitRoot, sourceId, head); if (refusal) throw refusal; return result('blocked_by_failures', 'reconcile_read_incomplete'); }
     const stop = resumableRowStop(error); if (stop) await save('resumable', stop, false, stop !== 'lease_lost', true).catch(() => undefined); throw error;
   } finally {
     unregisterPassCost(passId);

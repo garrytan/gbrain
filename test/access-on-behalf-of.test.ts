@@ -7,12 +7,13 @@
  *    channel audience never sees a visibility: private page, whatever the agent's grant or an operator hatch says. The
  *    audience is re-read on every call, bounded by the credential's live may_act_for (stdio: mcp.stdio_may_act_for),
  *    and refused before work when it sits in tool arguments, is malformed, names someone outside may_act_for or names
- *    no enabled member. Queued writes and agent jobs keep the audience they were accepted for.
+ *    no enabled member. Queued writes and agent jobs keep the audience they were accepted for, and their receipts and
+ *    job reads answer only a caller under that same audience.
  * 2. Fails when: an audience reads a page one of its entries may not read (on any read path), the agent's own member
  *    leaks into an audience view (a guest turn sees the bot's pages), a prompt-injected argument picks the audience,
  *    a refusal carries page content, a channel sees a private page, a later call keeps an earlier audience, the
- *    semantic cache key ignores the audience, or a stored write or job reads as the credential's member instead of
- *    its audience.
+ *    semantic cache key ignores the audience, a stored write or job reads as the credential's member instead of
+ *    its audience, or a receipt or job answers another audience of the same credential.
  * 3. Existing coverage (member-read-access, access-writes) pins single-member credentials only.
  * 4. Real seams: legacy tokens minted by the token service, bound by the member CLI functions, verified by the
  *    serve --http verifier and by the legacy bearer transport over a real socket, dispatched through MCP dispatch on
@@ -29,6 +30,7 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
+import { operationsByName, OperationError } from '../src/core/operations.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
@@ -373,6 +375,96 @@ for (const kind of testBackends()) {
       expect(await read(PAGES.alice.slug, ['member:alice-example'])).not.toContain(PAGES.alice.canary);
       expect(parseSubmissionAuthority({ version: 1, kind: 'remote_agent', principal: { kind: 'oauth_client', id: clientId },
         grant: { scopes: ['agent'], sourceId: SRC, sourceCreatedAt: 'x', allowedTools: ['get_page'], allowedSlugPrefixes: [], actingFor: [] }, payloadHash: '0'.repeat(64) })).toBeNull();
+    }, 120_000);
+
+    test('an agent job stays with the audience it was submitted for on every owner-fenced job read and cancel', async () => {
+      const { clientId } = await provider().registerClientManual('obo-jobs', ['client_credentials'], 'read', [], SRC);
+      await bindCredential(engine, { kind: 'client', id: clientId }, { mayActFor: ['guest', 'member:alice-example', 'member:bob-example'] });
+      await engine.executeRaw("UPDATE oauth_clients SET scope = 'read agent', bound_tools = ARRAY['get_page'], bound_source_id = source_id, federated_read = ARRAY[source_id], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 1 WHERE client_id = $1", [clientId]);
+      const agentAuth = { token: 'x', clientId, scopes: ['read', 'agent'], sourceId: SRC, principal: { kind: 'oauth_client', id: clientId } } as unknown as AuthInfo;
+      const ctx = { engine, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, transport: 'http', sourceId: SRC, auth: agentAuth } as unknown as OperationContext;
+      const as = async <T>(audience: AudiencePrincipal[] | null, fn: () => Promise<T>) =>
+        withCallerAccess(await remoteCallerAccess(engine, agentAuth, undefined, 'http', audience), fn);
+      const seed = async (audience: AudiencePrincipal[] | null, status: 'completed' | 'waiting') => {
+        const authority = await as(audience, () => prepareRemoteAgent(ctx, { source_id: SRC, allowed_tools: ['get_page'], allowed_slug_prefixes: [] }));
+        const marker = 'canaryobojob' + randomUUID().slice(0, 8);
+        const [row] = await engine.executeRaw<{ id: number }>(
+          `INSERT INTO minion_jobs (submission_authority, name, status, data, result, finished_at)
+           VALUES ($1::text::jsonb, 'subagent', $2, $3::text::jsonb, $4::text::jsonb, ${status === 'completed' ? 'now()' : 'NULL'}) RETURNING id`,
+          [JSON.stringify(authority), status, JSON.stringify({ prompt: 'seeded', __owner_client_id: clientId }), JSON.stringify({ marker })]);
+        return { id: Number(row!.id), marker };
+      };
+      const op = (name: string) => operationsByName[name]!;
+      const outcome = async (audience: AudiencePrincipal[] | null, fn: () => Promise<unknown>, seen: (out: unknown) => boolean) => {
+        try { return seen(await as(audience, fn)) ? 'visible' : 'absent'; }
+        catch (e) { if (e instanceof OperationError) return e.canonical ?? e.code; throw e; }
+      };
+      const reads = async (audience: AudiencePrincipal[] | null, job: { id: number; marker: string }) => {
+        const has = (out: unknown) => (out as { id?: number }).id === job.id;
+        const listed = (out: unknown) => ((Array.isArray(out) ? out : (out as { jobs: unknown[] }).jobs) as Array<{ id: number }>).some(j => j.id === job.id);
+        return {
+          get_agent_job: await outcome(audience, () => op('get_agent_job').handler(ctx, { id: job.id }), out => JSON.stringify(out).includes(job.marker)),
+          get_job: await outcome(audience, () => op('get_job').handler(ctx, { id: job.id }), has),
+          wait_job: await outcome(audience, () => op('wait_job').handler(ctx, { id: job.id, timeout_s: 0 }), has),
+          get_job_progress: await outcome(audience, () => op('get_job_progress').handler(ctx, { id: job.id }), has),
+          list_jobs: await outcome(audience, () => op('list_jobs').handler(ctx, {}), listed),
+          list_jobs_finished_since: await outcome(audience, () => op('list_jobs').handler(ctx, { finished_since: '2000-01-01T00:00:00Z' }), listed),
+        };
+      };
+      const VISIBLE = { get_agent_job: 'visible', get_job: 'visible', wait_job: 'visible', get_job_progress: 'visible', list_jobs: 'visible', list_jobs_finished_since: 'visible' };
+      const HIDDEN = { get_agent_job: 'not_found', get_job: 'not_found', wait_job: 'not_found', get_job_progress: 'not_found', list_jobs: 'absent', list_jobs_finished_since: 'absent' };
+      const ALICE: AudiencePrincipal[] = ['member:alice-example'];
+      const BOB: AudiencePrincipal[] = ['member:bob-example'];
+      const GUEST: AudiencePrincipal[] = ['guest'];
+      const PAIR: AudiencePrincipal[] = ['member:alice-example', 'member:bob-example'];
+
+      const aliceJob = await seed(ALICE, 'completed');
+      const plainJob = await seed(null, 'completed');
+      const pairJob = await seed(PAIR, 'completed');
+      const cases: Array<[string, { id: number; marker: string }, AudiencePrincipal[] | null, typeof VISIBLE]> = [
+        ['alice on her job', aliceJob, ALICE, VISIBLE],
+        ['bob on alice\'s job', aliceJob, BOB, HIDDEN],
+        ['guest on alice\'s job', aliceJob, GUEST, HIDDEN],
+        ['no audience on alice\'s job', aliceJob, null, HIDDEN],
+        ['alice and bob on alice\'s job', aliceJob, PAIR, HIDDEN],
+        ['no audience on the unaudienced job', plainJob, null, VISIBLE],
+        ['alice on the unaudienced job', plainJob, ALICE, HIDDEN],
+        ['guest on the unaudienced job', plainJob, GUEST, HIDDEN],
+        ['the same pair in another order', pairJob, ['member:bob-example', 'member:alice-example'], VISIBLE],
+        ['alice alone on the pair job', pairJob, ALICE, HIDDEN],
+      ];
+      for (const [label, job, audience, want] of cases) expect({ label, got: await reads(audience, job) }).toEqual({ label, got: want });
+
+      const cancel = async (audience: AudiencePrincipal[] | null, id: number) =>
+        outcome(audience, () => op('cancel_job').handler(ctx, { id }), out => (out as { status?: string }).status === 'cancelled');
+      const waiting = await seed(ALICE, 'waiting');
+      for (const audience of [BOB, GUEST, null, PAIR]) expect({ audience, got: await cancel(audience, waiting.id) }).toEqual({ audience, got: 'invalid_params' });
+      const [still] = await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = $1', [waiting.id]);
+      expect(still!.status).toBe('waiting');
+      expect(await cancel(ALICE, waiting.id)).toBe('visible');
+      const plainWaiting = await seed(null, 'waiting');
+      expect(await cancel(ALICE, plainWaiting.id)).toBe('invalid_params');
+      expect(await cancel(null, plainWaiting.id)).toBe('visible');
+    }, 120_000);
+
+    test('a write receipt stays with the audience it was written for: get, list, cancel and request_id replay', async () => {
+      const requestId = 'obo-receipt-' + randomUUID().slice(0, 6);
+      const content = '---\ntype: note\ntitle: Receipt plan\n---\n# Receipt plan\n\nReceipt plan ' + requestId + '.';
+      const write = (ch: Channels) => call('bot-dan', 'put_page', { slug: 'notes/' + requestId, content, request_id: requestId }, ch);
+      const alice = { header: 'alice-example' };
+      expect((await write(alice)).isError).toBe(false);
+      expect((await call('bot-dan', 'get_write_request', { request_id: requestId }, alice)).isError).toBe(false);
+      expect((await call('bot-dan', 'list_write_requests', {}, alice)).text).toContain(requestId);
+      for (const ch of [{ header: 'bob-example' }, { header: 'guest' }, { header: 'alice-example, bob-example' }, {}]) {
+        const got = await call('bot-dan', 'get_write_request', { request_id: requestId }, ch);
+        expect({ ch, isError: got.isError, code: got.json.code ?? got.json.error }).toEqual({ ch, isError: true, code: 'not_found' });
+        expect({ ch, listed: (await call('bot-dan', 'list_write_requests', {}, ch)).text.includes(requestId) }).toEqual({ ch, listed: false });
+        const cancelled = await call('bot-dan', 'cancel_write_request', { request_id: requestId }, ch);
+        expect({ ch, isError: cancelled.isError, code: cancelled.json.code ?? cancelled.json.error }).toEqual({ ch, isError: true, code: 'not_found' });
+        const replay = await write(ch);
+        expect({ ch, code: replay.json.code ?? replay.json.error }).toEqual({ ch, code: 'idempotency_conflict' });
+      }
+      expect((await write(alice)).isError).toBe(false);
     }, 120_000);
 
     test('a stdio server refuses every audience until mcp.stdio_may_act_for lists it', async () => {

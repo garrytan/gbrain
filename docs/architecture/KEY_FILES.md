@@ -17,8 +17,8 @@ phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
 A branch from before refactor wave 1 follows the generated
 [porting guide](wave-1-porting.md) ([JSON map](wave-1-moves.json)).
 `scripts/check-key-files-current-state.sh` guards each subsystem against
-history, duplicate entries and size growth. Split a growing subsystem and
-link it here; never raise the cap.
+history, duplicate entries and size growth. A full page links its next page
+from its last line; never raise the cap.
 
 | Subsystem | Entry range / scope |
 |---|---|

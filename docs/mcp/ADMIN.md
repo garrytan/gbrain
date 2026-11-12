@@ -256,21 +256,66 @@ access member link <member> --qm <id>` (`unlink`, `links`). Its `x-qm-actor`
 header then runs each attested operation as that member, never reading private
 pages; see [attested-actor refusals](../guides/write-refusals.md#attested-actor-refusals).
 `remember` saves to the person's own page `memory/members/<member>` (private,
-read back only by that member, written remotely by no one else), and `delta` cursors, write receipts
+read back only by that member, written remotely by no one else); an attested call's
+`share: true` or `visibility: "world"` is refused (`attested_share_refused`), while a credential
+bound to a member may pass `share: true` to save on the subject's page for everyone who reads
+the source (refused with `share_target_restricted` on a page whose facts are kept private;
+only the brain host withdraws a shared fact); the reply names the `page` and `visibility`. `delta` cursors, write receipts
 (`get_write_request`, `list_write_requests`, `cancel_write_request`) and agent
 jobs (`submit_agent`, `get_agent_job`) belong to the person they were made for.
 QM's memory pair, `memory_recall` and `memory_write`, reads and saves that
-person's facts ([QM guide](../guides/qm.md)); `forget` and `forget_fact` withdraw
+person's facts ([QM guide](../guides/qm.md)); the personal tools of its contract v3
+(`query`, `get_page`, `whois`, `context_pack` and the rest) stay out of the default
+list, so add each to `--attest-ops` only for the client serving the person's own DM; `forget` and `forget_fact` withdraw
 only a fact on the person's own page (also for a credential bound to a member).
 A request carrying `x-qm-audience` is refused (`audience_not_supported`). Not attestable yet, because what they
 read or write is not yet kept to the person: `list_write_conflicts`, `capture`,
-`extract_facts` and `takes_add|update|resolve|supersede`.
+`extract_facts`, `takes_add|update|resolve|supersede`, and every page write (`add_timeline_entry`,
+`add_link`, `put_page`, `edit_page`, tags, deletes, uploads and the rest: the contract's `deferred_ops`); an attested timeline entry or link goes
+through `memory_propose` and waits for your `gbrain memory-proposals approve` ([QM guide](../guides/qm.md#proposed-writes)). An `--attest-ops` list that already names one of these is refused for it
+(`actor_not_attested`, reason `op_not_attested`), and a queued attested write of one fails when it publishes.
 An attested read sees what that person sees, private facts included, and gbrain
 cannot tell who else reads the answer. Use the attest client only for QM's
 personal-scope memory route: never register it as a model-callable MCP connector
 or route it to shared scopes ([QM guide](../guides/qm.md#set-up-on-the-brain-host)).
+An attested read that names `source_id` or `source_ids` (`get_page`, `entity`, `whois`, `get_backlinks`,
+`get_timeline`, `find_experts`, `volunteer_context`, `query`, `memory_recall`) reads those sources as their
+audience, never as the person; `--attest-read person` makes such reads run as the person, and `--attest-read scope`
+also refuses every call that names no person (`actor_required`) ([QM guide](../guides/qm.md#reads-that-name-sources)).
+A source bound to a member (`gbrain access member source add <member> <source>`, trusted local CLI only) is personal:
+an attested call reads its grant minus personal sources bound to anyone else, a read that names sources as their
+audience reads none, and a hidden source is refused like one outside the grant. Binding never widens a grant
+([QM guide](../guides/qm.md#each-persons-own-sources)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
+
+From another machine, the owner manages the attest right, members, links and
+QM's memory proposals over the running server:
+
+```bash
+gbrain mcp admin attest CLIENT_ID --attest-actor qm [--attest-ops <op,...>] --dry-run \
+  --url https://brain.example.com/mcp --admin-token-file /absolute/private/admin-token
+gbrain mcp admin member-add alice-example --email alice@example.com --url … --admin-token-file …
+gbrain mcp admin link alice-example --qm U0ALICE --dry-run --url … --admin-token-file …
+gbrain mcp admin link --email alice@example.com --qm U0ALICE --dry-run --url … --admin-token-file …
+gbrain mcp admin memory-proposals approve <request_id> --dry-run --url … --admin-token-file …
+```
+
+The other commands are `--attest-actor none` (clear the right),
+`member-set ID --email ADDR|none`, `member-disable|member-enable ID`, `members [--all]`,
+`unlink --qm ID` and `links [--member ID]`. A member's email is optional,
+stored lower-case and unique per brain; `link --email` finds the one member that
+declares it and makes the same link `link ID` makes, and an unknown email is
+`not_found` and creates nothing. `memory-proposals list [--source ID] [--cursor C]`, `show ID`,
+`approve ID` and `deny ID --reason TEXT` review proposals as `gbrain memory-proposals` does
+(text fenced, one request id per decision, `decided_by: admin-api`; an approve whose write did
+not commit reports `outcome: failed` and exits 1). They call `/admin/api/access/attest`,
+`/admin/api/access/members`, `/admin/api/access/member-links` and
+`/admin/api/memory-proposals`. These routes accept only the owner session:
+no OAuth token and no MCP tool reaches them. They refuse exactly what the
+local commands refuse, and each applied change is logged as `access_admin` in
+the request log. Removing a member stays a brain-host command
+(`gbrain access member rm`).
 
 New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
 the full surface and list the seven memory verbs plus `request_tools`, which

@@ -157,6 +157,7 @@ Every hold and error has three fields, from one table
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |
+| `content_filter_owned` | page | none | yes | always: sync never runs the filter that would turn the file into text |
 | `git_object_missing` | page | none | yes | always: only restoring the Git object clears it |
 | `path_not_utf8` | page | none | yes | always: only renaming the file clears it |
 | `origin_conflict` | page | repair | no | the hold carries a reason (the pages differ, ids conflict or none is the page the path names), or the heal is off |
@@ -389,6 +390,7 @@ run converges on the next plain sync with no flag.
 | `deletes_withheld` | blocked | The pass's deletes crossed the mass-delete threshold (#2828) or an absolute cap (#7130: `sync.max_deletes`, default 500; `sync.max_delete_ratio`, default 0.01 above 50 deletes; per source `<key>.source.<id>`). The record's `trip` names which. It wrote one withheld record and synced everything else; no per-page hold is written. | Ask the user: restore the checkout if it is wrong; when the deletion is intended, raise the cap for that source (`gbrain config set sync.max_deletes.source.<id> <n>`) or run `GBRAIN_ALLOW_MASS_RECONCILE=1 gbrain sync --source <id>` on the brain host. `gbrain sync --source <id> --dry-run --json` lists the set and its hash. |
 | `admission_paused` | resumable | `sync.admission` is `imports_only` or `classify_only`. | Ask the user to run `gbrain config set sync.admission normal` when the pause is over; it is never lifted automatically. |
 | `selection_scoped` | synced | The pass converged at a selection other than the source's configured one (a CLI `--exclude`, say) and did not advance `last_commit`. | None; the next plain sync runs the configured selection. |
+| `commits_waiting` | resumable | Nothing else is pending (or only holds that need no person), but the checkout's `HEAD` is past `last_commit`: commits landed that no sync has imported yet. A company-brain source never reads it, because it syncs to its approved revision. | Run `next.argv`, the plain sync, which imports them; status reads `synced` once it lands, and it is safe to loop. A script waiting for `state: synced` keeps waiting until a sync runs, so run `next` rather than wait when nothing watches the source (`sync.on_commit` off). |
 
 The run's own JSON (`outcome`, `drain.stop_reason`) adds three stops a status
 read never shows as its reason: `grant_scope` (a grant that covers only part of
@@ -429,8 +431,8 @@ it, and a `--full` continues until every path it covers is settled.
   `adopt` (the import record is updated to the file without a page write),
   `kept` (the commit no longer has a file that is still on disk, or the page
   is under a declared `storage.db_only` dir, so its page stays), `untracked` (a file on disk the commit does not have, with no
-  page), `gone` (no file and no live page), `deleted_same` and `legacy_same` (a deleted page whose file is
-  unchanged), and `db_ahead` (the page changed in the database and the file
+  page), `gone` (no file and no live page), `deleted_same` and `legacy_same` (a page a person deleted whose
+  file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back), and `db_ahead` (the page changed in the database and the file
   did not; the sub-labels `pending`, `db_only` and `unproven` are
   informational, and `gbrain repair file-drift --prefer database` writes one
   back to its file if the owner wants it).

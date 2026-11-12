@@ -99,15 +99,21 @@ export async function readWriteWatermark(engine: Pick<BrainEngine, 'executeRaw'>
   };
 }
 
+/** The source's incarnation and its checkout on this host (the host binding's path, else the source's), or nulls. */
+export async function readCheckoutRoot(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<{ incarnation: string | null; root: string | null } | undefined> {
+  const [source] = await engine.executeRaw<{ incarnation: string | null; root: string | null }>(`SELECT s.incarnation::text AS incarnation,
+      COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
+        WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`,
+    [sourceId, (await import('./identity.ts')).existingHostIdFor(engine as BrainEngine)]);
+  return source;
+}
+
 /** The full watermark of one source for `gbrain sources status --json` and MCP `sources_status`. */
 export async function readAppliedWatermark(engine: BrainEngine, sourceId: string,
   opts: { remote?: boolean; now?: number; behind?: BehindReader; filesBehind?: FilesBehindReader } = {}): Promise<AppliedWatermark> {
   const now = opts.now ?? Date.now();
   const write = await readWriteWatermark(engine, sourceId, now);
-  const [source] = await engine.executeRaw<{ incarnation: string | null; root: string | null }>(`SELECT s.incarnation::text AS incarnation,
-      COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
-        WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`,
-    [sourceId, (await import('./identity.ts')).existingHostIdFor(engine)]);
+  const source = await readCheckoutRoot(engine, sourceId);
   const commit = write.indexed_through.commit;
   const root = !opts.remote && source?.root && commit ? source.root : null;
   const lag = root ? await (opts.behind ?? readGitBehind)(root, commit!).catch(() => null) : null;

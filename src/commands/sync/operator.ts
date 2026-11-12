@@ -305,6 +305,7 @@ export function syncStatusHeadline(status: Pick<SyncStatus, 'source_id' | 'state
     case 'deletes_withheld': return `Source ${status.source_id} is blocked: sync withheld a mass delete; the rest of the source is synced.`;
     case 'selection_scoped': return `Source ${status.source_id} is synced at a narrower selection; the plain sync runs the configured one.`;
     case 'admission_paused': return `Source ${status.source_id} is resumable: sync.admission pauses what sync admits.`;
+    case 'commits_waiting': return `Source ${status.source_id} is resumable: its checkout has commits past the last synced commit; the next sync imports them.`;
     case 'writeback_failed': return `Source ${status.source_id} is blocked: the Git effect of a file sync rewrote failed and is parked; the checkout lags the brain.`;
   }
 }

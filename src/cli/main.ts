@@ -148,6 +148,7 @@ const SELF_HELP_WITHOUT_ENGINE: Record<string, true | (() => Promise<(engine: ne
   loops: async () => (await import('../commands/loops.ts')).runLoops as never,
   beliefs: async () => (await import('../commands/beliefs.ts')).runBeliefs as never,
   'edge-proposals': async () => (await import('../commands/edge-proposals.ts')).runEdgeProposals as never,
+  'memory-proposals': async () => (await import('../commands/memory-proposals.ts')).runMemoryProposals as never,
   questions: async () => (await import('../commands/questions.ts')).runQuestions as never, // --help before the engine
   waiting: async () => (await import('../commands/loops.ts')).runWaiting as never,
   access: async () => (await import('../commands/access.ts')).runAccess as never, // GBRA-218: usage prints before the engine
@@ -336,6 +337,16 @@ async function main() {
     return;
   }
 
+  // GST-2476 G2: enforced member mode decides first; nothing below runs for a refused command (cli/enforced-member.ts).
+  if (process.env.GBRAIN_ENFORCED_MEMBER !== undefined) {
+    const routedForGate = routeCommand(command === 'ask' ? 'query' : command, args.slice(1));
+    const gateMeta = CLI_ONLY.has(routedForGate.command) ? undefined : cliOps.get(routedForGate.command) ?? cliAliases.get(routedForGate.command);
+    enforcedClass = await (await import('./enforced-member.ts')).enforcedGate({
+      command: routedForGate.command, args: routedForGate.subArgs, opName: gateMeta?.name,
+      helpRequested: cliHelpRequested(command, args.slice(1)), asFlag: cliOpts.as !== undefined, thinClient: isThinClient(loadConfig()),
+    });
+  }
+
   if (command === '--tools-json') {
     const { printToolsJson } = await import('../commands/tools-json.ts');
     await printToolsJson();
@@ -406,6 +417,7 @@ async function main() {
       printOpHelp(op, command);
       return;
     }
+    if (enforcedClass) { printCliOnlyHelp(command); return; } // GST-2476 G2: static help only; a handler never runs under the mode
     if (!selfHelpSub && CLI_ONLY.has(command) && !CLI_ONLY_SELF_HELP.has(command)) {
       printCliOnlyHelp(command);
       return;
@@ -528,8 +540,12 @@ async function main() {
     return;
   }
 
-  if (cliOpts.as === undefined && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
+  if (cliOpts.as === undefined && !enforcedClass && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
   // CLI-only commands
+  if (CLI_ONLY.has(command) && enforcedClass && !helpRequested && command !== 'errors' && command !== 'protocol') {
+    await (await import('./enforced-member.ts')).runEnforcedCliOnly(command, subArgs, { handleCliOnly, connectEngine });
+    return;
+  }
   if (CLI_ONLY.has(command)) {
     const endRead = (await import('./slow-read.ts')).beginCommandRead(command, subArgs); try { await handleCliOnly(command, subArgs); } finally { endRead(); }
     return;
@@ -537,6 +553,9 @@ async function main() {
 
   await runSharedOperation(command, subArgs, cliOpts);
 }
+
+/** GST-2476 G2: the gate's class for this invocation; undefined when GBRAIN_ENFORCED_MEMBER is unset. */
+let enforcedClass: import('./enforced-member-classes.ts').EnforcedClass | undefined;
 
 /**
  * Shared-operation dispatch (every non-CLI_ONLY command and alias): parse the
@@ -636,7 +655,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
 
   // The live PGLite owner exposes canonical operations over a dedicated
   // local socket. Delegate before opening a competing engine connection.
-  if (cliOpts.as === undefined) { // GBRA-218: a --as preview runs in this process (the owner socket carries no member identity)
+  if (cliOpts.as === undefined && !enforcedClass) { // GBRA-218: a --as preview runs in this process (the owner socket carries no member identity); G2: so does an enforced member
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
       brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined,
@@ -666,7 +685,10 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   // because the import.meta.main seam exits explicitly on every one-shot path.
   const READ_OP_TIMEOUT_MS = 180_000;
   const configSnapshot = op.scope === 'read' ? takeStartupConfigSnapshot(engine) ?? openRequestConfigSnapshot(engine) : null;
-  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command); // GBRA-218 local --as <member>
+  const asPreview = await (await import('./as-preview.ts')).openAsPreview(engine, cliOpts.as, command, op.mutating === false); // GBRA-218 local --as <member>; GST-2490: owner lineage on reads only
+  // GST-2476 G2: an enforced read runs as the member's stdio server would answer it; an enforced write is checked first.
+  const enforced = enforcedClass ? await import('./enforced-member.ts') : null;
+  if (enforced) await enforced.checkEnforcedOpArgs(engine, command, op, params);
 
   try {
     const { withTimeout, OperationTimeoutError } = await import('../core/timeout.ts');
@@ -702,7 +724,21 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     }
 
     let rawResult: unknown;
-    if (op.scope === 'read') {
+    const enforcedReadOf = enforced && enforcedClass === 'read'
+      ? (p: Record<string, unknown>) => enforced.enforcedRead(engine, command, op.name, p, { sourceId: ctx.sourceId, localFederatedSourceIds: ctx.localFederatedSourceIds, config: ctx.config })
+      : null;
+    if (enforced && enforcedClass === 'write') await enforced.checkEnforcedWrite(engine, command, op.name, params, ctx.sourceId);
+    if (enforcedReadOf) {
+      try {
+        rawResult = await withTimeout(enforcedReadOf(params), wallclockMs, `gbrain ${command}`);
+      } catch (e: unknown) {
+        if (e instanceof OperationTimeoutError) {
+          onWallclockTimeout(e);
+          return;
+        }
+        throw e;
+      }
+    } else if (op.scope === 'read') {
       try {
         rawResult = await withTimeout(
           configSnapshot!.run(() => withRequestIdentityMemo(() => asPreview.run(() => op.handler(ctx, params)))).catch(async (e: unknown) => { // large pages: a segmented page streams to stdout
@@ -724,6 +760,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     } else {
       rawResult = await withRequestIdentityMemo(() => asPreview.run(() => op.handler(ctx, params)));
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
+      if (enforced && enforcedClass === 'write') await enforced.recordEnforcedReceipts(op.name, rawResult, params);
     }
     if (op.name === 'get_page' && rawResult === (await import('./page-render.ts')).SEGMENTED_STREAMED) return;
     captureRetrievalNotices(op.name, rawResult, lastRetrievalMeta, params, ctx.config);
@@ -732,7 +769,11 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
     const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta });
-    const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
+    if (enforced && await enforced.namesHiddenPage(engine, command, result)) {
+      process.stderr.write(enforced.WITHHELD_LINE(command));
+      return;
+    }
+    const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(enforcedReadOf ? await enforcedReadOf(p) : await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
     const output = paged ? '' : formatResult(op.name, result, params);
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
@@ -751,6 +792,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // bounds a hung one.
     // #5232: the reporter owns the write verdict; never overwrite it.
     const { reportPersistenceCliError } = await import('../commands/persistence-delegate.ts');
+    if (enforced && enforcedClass === 'write' && e instanceof OperationError && e.writeRequest) await enforced.recordEnforcedReceipts(op.name, e.writeRequest, params);
     const receipt = !(e instanceof OperationError) || !!e.writeRequest;
     if (!receipt || !await reportPersistenceCliError(e, params.json === true || !!(e as OperationError)?.writeRequest)) {
       setCliExitVerdict(writeCliError(e, command));

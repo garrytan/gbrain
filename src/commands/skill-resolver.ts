@@ -18,18 +18,23 @@ import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
 import { readStdinBounded } from '../core/interaction.ts';
 import { opError } from '../core/ops/contract.ts';
 import type { RegistryCode } from '../core/error-registry.ts';
+import { JSON_INPUT_CAP_BYTES } from '../core/skills/resolver/sources.ts';
 import {
   buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex, resolveSkills, resolverHome, sessionStatus,
   ResolverError, HARNESSES, errorTurnOutput, GBRAIN_VERSION, type BuildInput, type TurnInput,
 } from '../core/skills/resolver/index.ts';
+import { validCatalogName } from '../core/skills/resolver/paths.ts';
+import { readResolverConfig } from '../core/setup/skill-resolver-config.ts';
+import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
+import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
 
 const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
 
 Build, inspect or remove a skill catalog's index (under GBRAIN_HOME/skill-index/).
 No brain connection is needed.
 
-  gbrain skills index build --catalog <name> (--dir <d>... | --bundled | --from-json <file|->)
-        [--routing <file>] [--harness <h>] [--scope user|project] [--json]
+  gbrain skills index build --catalog <name> (--dir <d>... | --bundled | --from-json <file|-> [--dir <d>...]
+        | --claude-plugins <dir>) [--routing <file>] [--harness <h>] [--scope user|project] [--json]
   gbrain skills index status [--catalog <name>] [--session <id> [--harness <h>] [--shadow]] [--json]
   gbrain skills index remove --catalog <name> [--json]
 
@@ -37,8 +42,12 @@ No brain connection is needed.
   --dir <d>          a SKILL.md directory (repeatable; earlier wins on duplicate ids)
   --bundled          gbrain's own bundled skills
   --from-json <f|->  an adapter's skill list ([{id, name, description, triggers?, path?, eligible?}])
+                     or OpenClaw's skills list --json output as is; with --dir, each listed skill
+                     takes its body, path and triggers from the folder skill of the same name
+  --claude-plugins <dir>  the skills of the enabled user-scope Claude Code plugins under
+                     <dir> (~/.claude), named <plugin>:<skill>
   --routing <file>   one RESOLVER-style routing table; rows add trigger text to skills
-  --harness <h>      openclaw, claude-code, codex, hermes or qm (recorded in the receipt)
+  --harness <h>      openclaw, claude-code, codex, hermes, qm, pi or cursor (recorded in the receipt)
   --scope project    a cloned repository's skills: blocks show ids and names only
   --session <id>     status: that session's turn count and token budget
 
@@ -46,7 +55,7 @@ Guide: docs/guides/skill-resolver.md
 `;
 
 const HELP_RESOLVE = `Usage: gbrain skills resolve [--catalog <name>]... (--text <t> [--previous <t>] | --input-json -)
-        [--session <id>] [--harness <h>] [--exclude a,b] [--top-k n] [--shadow [--shadow-log <file>]]
+        [--session <id>] [--harness <h>] [--exclude a,b] [--top-k n] [--min-match <strength>] [--shadow [--shadow-log <file>]]
         [--expect-catalog <hash>] [--reset-session] [--names-only] [--load-hint <text>]
         [--explain-target <id>] [--fail-open] [--json]
 
@@ -58,9 +67,11 @@ and no brain connection is needed.
   --text <t>           the user message (or send turn JSON with --input-json -)
   --session <id>       the harness session: suggestions are not repeated within it, and its
                        block tokens are capped by skills.resolver.session_token_budget (2000)
-  --harness <h>        picks the load line: openclaw, claude-code, codex, hermes or qm
+  --harness <h>        picks the load line: openclaw, claude-code, codex, hermes, qm, pi or cursor
   --top-k <n>          at most n suggestions (1-8, default 5)
   --exclude <ids>      comma-separated skill ids to leave out
+  --min-match <s>      the weakest match to suggest: named, name, triggers, routing,
+                       description or body (default: every match)
   --shadow             compute the block without injecting it (block "" on stdout);
                        --shadow-log <file> appends what would have been injected
   --expect-catalog <h> refuse with skill_catalog_mismatch unless the catalog hash is h
@@ -70,6 +81,24 @@ and no brain connection is needed.
   --json               the turn output document (docs/schemas/skill-resolver.v1.turn-output.json)
 
 Guide: docs/guides/skill-resolver.md
+`;
+
+const HELP_PIN = `Usage: gbrain skills pin <add|remove|list> --catalog <name> [options]
+
+The operator's always-on skills for one catalog: rendered as a pinned block the harness
+shows on every turn, and never suggested twice. gbrain ships no pins; a catalog with
+none gets no pinned block. Pins live in config.json (skills.resolver.pins.<catalog>),
+so turning the resolver off keeps them.
+
+  gbrain skills pin add <skill-id> --catalog <name> [--line "<when to use it, 100 chars>"] [--json]
+  gbrain skills pin remove <skill-id> --catalog <name> [--json]
+  gbrain skills pin list --catalog <name> [--json]
+
+  --catalog <name>  the catalog the skill must be in (openclaw-<agent>, claude-code-user, ...)
+  --line <text>     one trigger-first line shown beside the id (no < or >)
+
+An OpenClaw agent picks up a pin change on its next turn, with no reload.
+Guide: docs/guides/skill-resolver.md#pinned-skills
 `;
 
 const HELP_LIBRARY = `Usage: gbrain skills library [--out <file.mjs>] [--json]
@@ -123,7 +152,7 @@ async function readStdinCapped(max: number): Promise<string | null> {
   const r = await readStdinBounded({ maxBytes: max });
   if (r.kind === 'data') return r.text;
   if (r.kind === 'empty') return '';
-  usage(r.kind === 'timeout' ? 'stdin sent no data before the read timed out.' : 'stdin could not be read: ' + (r.kind === 'error' ? r.error.message : 'cancelled') + '.', 'Send one turn (or one catalog of at most 8 MB) on stdin and close it.');
+  usage(r.kind === 'timeout' ? 'stdin sent no data before the read timed out.' : 'stdin could not be read: ' + (r.kind === 'error' ? r.error.message : 'cancelled') + '.', 'Send one turn (or one catalog of at most 64 MB) on stdin and close it.');
 }
 
 function write(text: string): Promise<boolean> {
@@ -145,7 +174,7 @@ async function runIndex(args: string[]): Promise<void> {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_INDEX); return; }
     usage(`Unknown subcommand "skills index ${sub}".`, 'Use gbrain skills index build, status or remove.');
   }
-  const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
+  const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
   const json = p.bools.has('--json');
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass options as flags; see gbrain skills index --help.');
   try {
@@ -154,10 +183,11 @@ async function runIndex(args: string[]): Promise<void> {
       if (!catalog) usage('skills index build needs --catalog <name>.', 'Example: gbrain skills index build --catalog claude-user --dir ~/.claude/skills');
       const fromJson = one(p, '--from-json');
       const input: BuildInput = { catalog: catalog!, ...(p.flags.get('--dir') ? { dirs: p.flags.get('--dir') } : {}), ...(p.bools.has('--bundled') ? { bundled: true } : {}),
+        ...(one(p, '--claude-plugins') !== undefined ? { claudePlugins: one(p, '--claude-plugins') } : {}),
         ...(one(p, '--routing') ? { routing: one(p, '--routing') } : {}), ...(one(p, '--harness') ? { harness: one(p, '--harness') } : {}),
         ...(one(p, '--scope') ? { scope: one(p, '--scope') as 'user' | 'project' } : {}) };
       if (fromJson === '-') {
-        const text = await readStdinCapped(8 * 1024 * 1024);
+        const text = await readStdinCapped(JSON_INPUT_CAP_BYTES);
         if (!text) exitCliError(toOpError(new ResolverError('skill_resolve_no_input', 'No catalog JSON arrived on stdin.', { suggestion: 'Pipe the skill list: <adapter> | gbrain skills index build --catalog <name> --from-json -' })), CMD);
         input.fromJson = text!;
         input.fromJsonStdin = true;
@@ -195,7 +225,7 @@ async function runIndex(args: string[]): Promise<void> {
 }
 
 async function runResolve(args: string[]): Promise<void> {
-  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
+  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
     ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'], HELP_RESOLVE);
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the message with --text "<message>" or turn JSON with --input-json -.');
   const json = p.bools.has('--json');
@@ -220,6 +250,7 @@ async function runResolve(args: string[]): Promise<void> {
     const exclude = one(p, '--exclude'); if (exclude !== undefined) input.exclude = exclude.split(',').map(s => s.trim()).filter(Boolean);
     const topK = one(p, '--top-k');
     if (topK !== undefined) { if (!/^\d+$/.test(topK)) throw new ResolverError('skill_resolve_invalid_input', '--top-k takes an integer from 1 to 8.', { suggestion: 'Example: --top-k 3' }); input.top_k = Number(topK); }
+    const minMatch = one(p, '--min-match'); if (minMatch !== undefined) input.min_match_strength = minMatch;
     if (p.bools.has('--shadow')) input.shadow = true;
     if (p.bools.has('--reset-session')) input.reset_session = true;
     const expect = one(p, '--expect-catalog'); if (expect !== undefined) input.expected_catalog_hash = expect;
@@ -281,10 +312,55 @@ async function runLibrary(args: string[]): Promise<void> {
   }
 }
 
+async function runPin(args: string[]): Promise<void> {
+  const sub = args[0];
+  if (sub !== 'add' && sub !== 'remove' && sub !== 'list') {
+    if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_PIN); return; }
+    usage(`Unknown subcommand "skills pin ${sub}".`, 'Use gbrain skills pin add, remove or list.');
+  }
+  const p = parseFlags(args.slice(1), ['--catalog', '--line'], ['--json'], HELP_PIN);
+  const json = p.bools.has('--json');
+  const catalog = one(p, '--catalog');
+  if (!catalog || !validCatalogName(catalog)) usage('--catalog <name> is required (a-z, 0-9, _ and -).', 'Pass the catalog the pin belongs to, e.g. --catalog openclaw-main.');
+  const home = resolverHome();
+  const read = readResolverConfig(home);
+  if (read.state === 'unreadable') exitCliError(opError('skill_resolver_config_unreadable', `${read.path} cannot be read (${read.why}); nothing was written.`, 'Fix or move the config file, then retry.', { docs: 'docs/guides/skill-resolver.md#skill_resolver_config_unreadable' }), CMD, { json });
+  let pins = readPins(read, catalog);
+  if (sub !== 'list') {
+    const name = p.positionals[0];
+    if (!name || p.positionals.length > 1) usage(`gbrain skills pin ${sub} takes one skill id.`, `Example: gbrain skills pin ${sub} <skill-id> --catalog ${catalog}`);
+    const line = one(p, '--line');
+    if (sub === 'add') {
+      const problem = pinProblem({ name, ...(line !== undefined ? { line } : {}) });
+      if (problem) usage(problem, 'Fix the value and retry.');
+      const known = catalogSkillIds(home, catalog);
+      if (!known) runtimeFailure(new ResolverError('skill_index_missing', `The catalog "${catalog}" has not been built, so the pin cannot be checked; nothing was written.`, { suggestion: `Build it first with gbrain skills index build --catalog ${catalog} ...; or run gbrain setup <harness> --skill-loading resolve.` }), json);
+      if (!known.has(name)) exitCliError(opError('skill_resolver_pin_unknown', `"${name}" is not a skill in ${catalog}; nothing was written.`, `Check the id with gbrain skills index status --catalog ${catalog}, then retry.`, { docs: 'docs/guides/skill-resolver.md#skill_resolver_pin_unknown' }), CMD, { json });
+      const others = pins.filter((x) => x.name !== name);
+      if (others.length >= PINS_MAX) usage(`${catalog} already has ${PINS_MAX} pins.`, 'Remove one first.');
+      pins = [...others, { name, ...(line !== undefined ? { line } : {}) }];
+    } else {
+      if (line !== undefined) usage('--line is for pin add.', 'Drop --line.');
+      pins = pins.filter((x) => x.name !== name);
+    }
+    writePins(read, catalog, pins);
+  }
+  const rendered = renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : undefined, known: catalogSkillIds(home, catalog) });
+  const agents = sub === 'list' ? [] : refreshOpenclawPins(home);
+  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}) };
+  if (json) { await write(`${JSON.stringify(doc)}\n`); return; }
+  await write([
+    pins.length ? `${catalog}: ${pins.length} pin(s)` : `${catalog}: no pins`,
+    ...pins.map((x) => `  ${x.name}${x.line ? ` — ${x.line}` : ''}${rendered.unknown.includes(x.name) ? ' (not in the catalog: left out, skill_resolver_pin_unknown)' : rendered.cut.includes(x.name) ? ' (over the token cap: left out)' : ''}`),
+    agents.length ? `OpenClaw agent(s) ${agents.join(', ')} use the new pins from their next turn.` : '',
+  ].filter(Boolean).join('\n') + '\n');
+}
+
 export async function runSkillResolver(args: string[]): Promise<void> {
   const [sub, ...rest] = args;
   if (sub === 'index') return runIndex(rest);
   if (sub === 'resolve') return runResolve(rest);
   if (sub === 'library') return runLibrary(rest);
-  process.stdout.write(`${HELP_RESOLVE}\n${HELP_INDEX}\n${HELP_LIBRARY}`);
+  if (sub === 'pin') return runPin(rest);
+  process.stdout.write(`${HELP_RESOLVE}\n${HELP_INDEX}\n${HELP_PIN}\n${HELP_LIBRARY}`);
 }

@@ -80,6 +80,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   privateTimelineEventFilterFragment: 'src/core/search/private-visibility.ts: constant timeline-event visibility predicate over a caller alias',
   privateSnapshotFilterFragment: 'src/core/search/private-visibility.ts: constant snapshot visibility predicate over a caller alias',
   rederiveHiddenSql: 'src/core/eligibility/sql.ts: constant needs_rederive NOT EXISTS predicate over a literal table name and caller alias; no values',
+  deletedPageProjectionHiddenSql: 'src/core/eligibility/sql.ts: constant soft-deleted-page NOT EXISTS predicate over a literal table name and caller alias; no values',
+  privateFactFilterForCaller: 'src/core/search/private-visibility.ts: privateProvenanceFilterFragment ANDed with privateEntityFilterForCaller (the caller page policy over a constant entity-page alias); no values',
   privateProvenanceFilterFragment: 'src/core/search/private-visibility.ts: constant fact-provenance visibility predicate over a caller alias',
   readersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-218 readers predicate over a caller alias; splices only identities that pass validIdentity (member:/group: plus [a-z0-9._-]), else none',
   callerReadersAllowedSql: 'src/core/search/private-visibility.ts: GBRA-231 readersAllowedSql for the current caller, one conjunct per audience identity; each identity passes validIdentity',

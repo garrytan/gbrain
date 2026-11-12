@@ -11,8 +11,11 @@
  *    SessionStart (`hook session-start`, which only resets a session's
  *    dedupe state after a compaction).
  *  - Codex: its own UserPromptSubmit group in CODEX_HOME/hooks.json
- *    (`hook user-prompt --harness codex`), trusted by its hash in
- *    config.toml beside it, like the turn-rule lane.
+ *    (`hook user-prompt --harness codex`) and its own SessionStart group
+ *    (`hook session-start --harness codex`, the same compaction reset:
+ *    Codex sends SessionStart with source "compact" after it compacts),
+ *    each trusted by its hash in config.toml beside it, like the turn-rule
+ *    lane.
  *
  * Both run gbrain through the existing hook launcher (hook-launcher.ts); this
  * module writes nothing else into the launcher's directory. Ownership: the
@@ -22,7 +25,7 @@
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
-import { codexHookCensus, codexHookTrustHash, codexSetupHookGroup, codexSetupTrustEntry, writeCodexSetupHooks, type CodexHookGroup } from '../bootstrap/codex-hooks.ts';
+import { codexHookCensus, codexHookGroupRuns, codexSetupHookGroup, codexSetupTrustEntry, writeCodexSetupHooks, type CodexHookGroup } from '../bootstrap/codex-hooks.ts';
 import { appendCodexTomlTable, readCodexTomlTable, removeCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { buildClaudeHookCommand, hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../bootstrap/hooks.ts';
 import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, claudeUserSettingsPath, codexConfigPath, codexHooksPath, type ClaudeHookEvent } from '../bootstrap/host-specs.ts';
@@ -32,7 +35,9 @@ import { isSkillResolverCommand, isSkillResolverEntry, SKILL_RESOLVER_LANE, SKIL
 
 export type ResolverHarness = 'claude-code' | 'codex';
 const CLAUDE_EVENTS: ClaudeHookEvent[] = ['UserPromptSubmit', 'SessionStart'];
-const TRUST_STATE = 'user_prompt_submit';
+const CODEX_EVENTS = ['UserPromptSubmit', 'SessionStart'] as const;
+type CodexEvent = (typeof CODEX_EVENTS)[number];
+const CODEX_TIMEOUT_SECS = 15;
 
 export interface ResolverHookPaths { claudeSettings?: string; codexHooks?: string; codexConfig?: string; hookLauncher?: string }
 export interface ResolverHookOutcome { action: 'write' | 'keep' | 'remove' | 'skip' | 'refuse'; path: string; detail: string }
@@ -51,34 +56,41 @@ function claudeOurs(path: string): Array<{ event: string; entry: Record<string, 
 }
 
 function codexOurs(p: { hooks: string }) {
-  return codexHookCensus(p.hooks).filter((g) => g.event === 'UserPromptSubmit' && g.commands.some(isSkillResolverCommand));
+  return codexHookCensus(p.hooks).filter((g) => (CODEX_EVENTS as readonly string[]).includes(g.event) && g.commands.some(isSkillResolverCommand)) as Array<ReturnType<typeof codexHookCensus>[number] & { event: CodexEvent }>;
 }
 
-export function codexResolverGroup(bin: string, home: string | undefined, launcher: string): CodexHookGroup {
-  return codexSetupHookGroup(bin, 'UserPromptSubmit', home ? { GBRAIN_HOME: home } : {}, SKILL_RESOLVER_LANE, launcher);
+export function codexResolverGroup(bin: string, home: string | undefined, launcher: string, event: CodexEvent = 'UserPromptSubmit'): CodexHookGroup {
+  return codexSetupHookGroup(bin, event, home ? { GBRAIN_HOME: home } : {}, SKILL_RESOLVER_LANE, launcher);
 }
+
+const codexTrusted = (p: { hooks: string; config: string }, g: { event: CodexEvent; index: number }) => codexHookGroupRuns(p.hooks, p.config, g);
 
 /** The commands this install's lane runs (what the hook entries would hold). */
 export function skillResolverCommands(harness: ResolverHarness, bin: string, home: string | undefined, launcher: string): string[] {
-  if (harness === 'codex') return codexResolverGroup(bin, home, launcher).hooks.map((h) => h.command);
+  if (harness === 'codex') return CODEX_EVENTS.flatMap((e) => codexResolverGroup(bin, home, launcher, e).hooks.map((h) => h.command));
   return CLAUDE_EVENTS.map((e) => buildClaudeHookCommand(bin, e, laneEnv(home), launcher));
 }
 
-/** Whether this lane's hook is present: absent, wired (and, on Codex, trusted) or untrusted. */
-export function inspectSkillResolverHook(harness: ResolverHarness, paths: ResolverHookPaths = {}): { state: 'absent' | 'wired' | 'untrusted'; path: string; commands: string[] } {
+/**
+ * Whether this lane's hook is present: absent, wired (and, on Codex,
+ * trusted), untrusted, or outdated (the UserPromptSubmit hook without the
+ * SessionStart compaction reset, an install from before it; setup adds it).
+ */
+export type ResolverHookState = 'absent' | 'wired' | 'untrusted' | 'outdated';
+export function inspectSkillResolverHook(harness: ResolverHarness, paths: ResolverHookPaths = {}): { state: ResolverHookState; path: string; commands: string[] } {
   try {
     if (harness === 'codex') {
       const p = codexPaths(paths);
       const ours = codexOurs(p);
-      if (ours.length === 0) return { state: 'absent', path: p.hooks, commands: [] };
-      const g = ours[0]!;
-      const table = readCodexTomlTable(p.config, ['hooks', 'state', `${p.hooks}:${TRUST_STATE}:${g.index}:0`]) as { trusted_hash?: unknown; enabled?: unknown } | undefined;
-      const trusted = table?.enabled !== false && table?.trusted_hash === codexHookTrustHash(TRUST_STATE, g.commands[0]!, 15);
-      return { state: trusted ? 'wired' : 'untrusted', path: p.hooks, commands: g.commands };
+      const commands = ours.flatMap((g) => g.commands);
+      if (!ours.some((g) => g.event === 'UserPromptSubmit')) return { state: 'absent', path: p.hooks, commands: [] };
+      if (!ours.some((g) => g.event === 'SessionStart')) return { state: 'outdated', path: p.hooks, commands };
+      return { state: ours.every((g) => codexTrusted(p, g)) ? 'wired' : 'untrusted', path: p.hooks, commands };
     }
     const path = claudePath(paths);
     const ours = claudeOurs(path);
-    return { state: ours.some((o) => o.event === 'UserPromptSubmit') ? 'wired' : 'absent', path, commands: ours.map((o) => String(o.entry.command)) };
+    const has = (event: string) => ours.some((o) => o.event === event);
+    return { state: !has('UserPromptSubmit') ? 'absent' : has('SessionStart') ? 'wired' : 'outdated', path, commands: ours.map((o) => String(o.entry.command)) };
   } catch {
     return { state: 'absent', path: harness === 'codex' ? codexPaths(paths).hooks : claudePath(paths), commands: [] };
   }
@@ -110,33 +122,34 @@ function syncClaude(bin: string, home: string | undefined, launcher: string, pat
 
 const trustPath = (key: string) => ['hooks', 'state', key];
 
+/** Drop the trust entries of our groups, each only while it still trusts one of our commands. */
 function dropOurTrust(config: string, hooks: string, ours: ReturnType<typeof codexOurs>): void {
   const commands = ours.flatMap((g) => g.commands);
   for (const g of ours) {
-    const key = `${hooks}:${TRUST_STATE}:${g.index}:0`;
-    const table = readCodexTomlTable(config, trustPath(key)) as { trusted_hash?: unknown } | undefined;
-    if (table && commands.some((c) => codexHookTrustHash(TRUST_STATE, c, 15) === table.trusted_hash)) removeCodexTomlTable(config, trustPath(key));
+    const entries = commands.map((command) => codexSetupTrustEntry(hooks, g.event, g.index, { hooks: [{ type: 'command', command, timeout: CODEX_TIMEOUT_SECS }] }));
+    const table = readCodexTomlTable(config, trustPath(entries[0]!.key)) as { trusted_hash?: unknown } | undefined;
+    if (table && entries.some((t) => t.trusted_hash === table.trusted_hash)) removeCodexTomlTable(config, trustPath(entries[0]!.key));
   }
 }
 
 function syncCodex(bin: string, home: string | undefined, launcher: string, p: { hooks: string; config: string }, dryRun: boolean): ResolverHookOutcome {
-  const group = codexResolverGroup(bin, home, launcher);
-  const hash = ownedEntryFingerprint(group);
+  const groups = Object.fromEntries(CODEX_EVENTS.map((e) => [e, codexResolverGroup(bin, home, launcher, e)])) as Record<CodexEvent, CodexHookGroup>;
   const ours = codexOurs(p);
-  const detail = `skill-resolver lane hook (UserPromptSubmit) in ${p.hooks}, trusted in ${p.config}`;
-  const current = ours.length === 1 && ours[0]!.hash === hash;
-  const entry = codexSetupTrustEntry(p.hooks, 'UserPromptSubmit', current ? ours[0]!.index : 0, group);
-  if (current && (readCodexTomlTable(p.config, trustPath(entry.key)) as { trusted_hash?: unknown } | undefined)?.trusted_hash === entry.trusted_hash) return { action: 'keep', path: p.hooks, detail };
+  const detail = `skill-resolver lane hooks (UserPromptSubmit, SessionStart) in ${p.hooks}, trusted in ${p.config}`;
+  const current = ours.length === CODEX_EVENTS.length && CODEX_EVENTS.every((e) => ours.some((g) => g.event === e && g.hash === ownedEntryFingerprint(groups[e]) && codexTrusted(p, g)));
+  if (current) return { action: 'keep', path: p.hooks, detail };
   if (dryRun) return { action: 'write', path: p.hooks, detail };
   mkdirSync(dirname(p.hooks), { recursive: true, mode: 0o700 });
   dropOurTrust(p.config, p.hooks, ours);
-  const w = writeCodexSetupHooks(p.hooks, { want: { UserPromptSubmit: group }, owned: new Set(ours.map((g) => g.hash)), preserve: new Set() });
-  const index = w.indexes.UserPromptSubmit;
-  if (index === undefined) return { action: 'refuse', path: p.hooks, detail: `${p.hooks} did not take the skill-resolver hook` };
-  const trust = codexSetupTrustEntry(p.hooks, 'UserPromptSubmit', index, group);
-  const existing = readCodexTomlTable(p.config, trustPath(trust.key)) as { trusted_hash?: unknown } | undefined;
-  if (existing === undefined) appendCodexTomlTable(p.config, trustPath(trust.key), { trusted_hash: trust.trusted_hash }, 'gbrain setup (skill-resolver): trusts the skill-resolver lane hook; owned by its hash');
-  else if (existing.trusted_hash !== trust.trusted_hash) return { action: 'refuse', path: p.hooks, detail: `${p.config} already has a different [hooks.state."${trust.key}"]; trust gbrain's skill-resolver hook in Codex's /hooks` };
+  const w = writeCodexSetupHooks(p.hooks, { want: groups, owned: new Set(ours.map((g) => g.hash)), preserve: new Set() });
+  for (const event of CODEX_EVENTS) {
+    const index = w.indexes[event];
+    if (index === undefined) return { action: 'refuse', path: p.hooks, detail: `${p.hooks} did not take the skill-resolver ${event} hook` };
+    const trust = codexSetupTrustEntry(p.hooks, event, index, groups[event]);
+    const existing = readCodexTomlTable(p.config, trustPath(trust.key)) as { trusted_hash?: unknown } | undefined;
+    if (existing === undefined) appendCodexTomlTable(p.config, trustPath(trust.key), { trusted_hash: trust.trusted_hash }, `gbrain setup (skill-resolver): trusts the skill-resolver lane ${event} hook; owned by its hash`);
+    else if (existing.trusted_hash !== trust.trusted_hash) return { action: 'refuse', path: p.hooks, detail: `${p.config} already has a different [hooks.state."${trust.key}"]; trust gbrain's skill-resolver hook in Codex's /hooks` };
+  }
   return { action: 'write', path: p.hooks, detail };
 }
 
@@ -151,7 +164,7 @@ export function removeSkillResolverHook(opts: { harness: ResolverHarness; paths?
       dropOurTrust(p.config, p.hooks, ours);
       writeCodexSetupHooks(p.hooks, { want: {}, owned: new Set(ours.map((g) => g.hash)), preserve: new Set() });
     }
-    return { action: 'remove', path: p.hooks, detail: `skill-resolver lane hook from ${p.hooks} and its trust entry from ${p.config}` };
+    return { action: 'remove', path: p.hooks, detail: `skill-resolver lane hooks from ${p.hooks} and their trust entries from ${p.config}` };
   }
   const path = claudePath(paths);
   const ours = claudeOurs(path);

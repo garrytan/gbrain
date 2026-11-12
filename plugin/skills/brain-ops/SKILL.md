@@ -96,7 +96,9 @@ suppresses writes for that turn, including when standing capture is enabled.
 > | commitment | belief | fact — those five are the frozen protocol enum; the
 > `idea` kind the extractor and DB carry is NOT one of them) and the
 > visibility the envelope's `agent_action` names
-> (default private — pin it; `remember` defaults to world), or author a
+> (default private — pin it; `remember` defaults to world, or to your own
+> member page when your credential is bound to a member other than the
+> brain owner), or author a
 > `## Facts` fence on the entity page. A `skipped: extraction_failed` envelope
 > (server-side extractor errored on this turn; `reason` names why) invites the
 > same manual `remember` fallback for that turn — automatic extraction stays

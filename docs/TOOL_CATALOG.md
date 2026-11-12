@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 171 tools across 26 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 172 tools across 26 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -147,6 +147,7 @@ Every non-localOnly operation on the MCP surface: 171 tools across 26 areas. **S
 | `confirm_memory` | Owner only: mark a fact, take or page as confirmed by the user (trust tier user_confirmed). | write |  |  |
 | `extract_facts` | Extract personal-knowledge facts (events, preferences, commitments, beliefs, ideas, and plain facts) from a conversation turn into the per-source hot memory. | write |  |  |
 | `forget_fact` | Forget a fact by recording a durable withdrawal in its source and visibility. | write |  |  |
+| `memory_propose` | Propose one timeline entry or link on a shared page for the person this call serves; the brain owner approves it before it is written. | write |  |  |
 | `memory_recall` | Facts for the person this call serves, one per line: their own recent facts first, then facts matching query. | read |  |  |
 | `memory_write` | Save facts for the person this call serves, readable by them alone. | write |  |  |
 
@@ -167,7 +168,7 @@ Every non-localOnly operation on the MCP surface: 171 tools across 26 areas. **S
 | `entity` | Person/company/account card, zero LLM. | read | yes |  |
 | `forget` | Expire a remembered fact by its fact_id (never a page slug). | write | yes |  |
 | `recall` | Read facts by entity, since or session_id; `query` also searches pages. | read | yes |  |
-| `remember` | Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. | write | yes |  |
+| `remember` | Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. | write | yes |  |
 | `synthesize` | [EXPENSIVE / SLOW: LLM calls] Cited answer to a broad question across pages. | read | yes |  |
 
 ## ontology
