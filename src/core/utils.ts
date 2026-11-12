@@ -658,6 +658,9 @@ export function takeHitRowToHit(row: Record<string, unknown>): TakeHit {
     kind: row.kind as TakeKind,
     holder: String(row.holder),
     weight: Number(row.weight),
+    since_date: row.since_date == null ? null : String(row.since_date),
+    until_date: row.until_date == null ? null : String(row.until_date),
+    source: row.source == null ? null : String(row.source),
     score: Number(row.score),
   };
 }
