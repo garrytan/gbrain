@@ -13,7 +13,7 @@
  * versioned `error_detail.fence` that survives receipt compaction, is read back
  * into the same location by `fenceReceiptLocation`.
  */
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, type ParsedFact } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFenceFor, type ParsedFact } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence, type ParsedTake } from '../takes-fence.ts';
 import { codeEndAt, indexOfOutsideCode, scanMarkdownCode, type MarkdownCodeMap } from '../fence-scan.ts';
 import { FenceRewriteRefusal } from '../fence-shared.ts';
@@ -147,7 +147,7 @@ export interface CanonicalFenceScan {
 }
 
 /** Parse both canonical sections once and list every reason the projection would refuse them. */
-export function scanCanonicalFences(page: { compiled_truth: string; timeline?: string | null }): CanonicalFenceScan {
+export function scanCanonicalFences(page: { compiled_truth: string; timeline?: string | null; slug?: string }): CanonicalFenceScan {
   const fields: Array<[FenceSection, string]> = [['body', page.compiled_truth ?? ''], ['timeline', page.timeline ?? '']];
   const empty: CanonicalFenceScan = { defects: [], facts: [], takes: [], quoting: false, sections: { facts: new Map(), takes: new Map() } };
   // No marker text at all: nothing to parse or refuse (the parsers return nothing either).
@@ -167,7 +167,7 @@ export function scanCanonicalFences(page: { compiled_truth: string; timeline?: s
     }
     quoting ||= quotesMarker(field, code);
   }
-  const parsed = fields.map(([section, field]) => ({ section, field, facts: parseFactsFence(field), takes: parseTakesFence(field) }));
+  const parsed = fields.map(([section, field]) => ({ section, field, facts: parseFactsFenceFor(field, page), takes: parseTakesFence(field) }));
   for (const { section, field, facts, takes } of parsed) {
     for (const [fence, warnings] of [['facts', facts.warnings], ['takes', takes.warnings]] as const) {
       if (warnings.length) defects.push(warningLocation(rawOf(section, field), fence, section, warnings));

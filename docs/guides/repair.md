@@ -78,7 +78,65 @@ concept-provenance links), reports progress on stderr, lists one window
 ```bash
 gbrain repair visibility --class facts        # one class: facts, events, aliases or lineage
 gbrain repair visibility --class facts --apply --expect <hash>   # exactly that window
+gbrain repair visibility --slug notes/a-example                  # make named pages private (repeatable)
+gbrain repair visibility --slug notes/a-example --apply --expect <hash>
+gbrain repair visibility --slug notes/a-example --readers alice-example,group:team-a   # set who reads it
+gbrain repair visibility --slugs-file pages.txt --readers alice-example --apply --expect <hash>
+gbrain repair visibility --slug notes/a-example --readers none   # remove readable_by
 ```
+
+Every visibility write is label-only: the page keeps its trust tier, files no
+`lower_page` proposal, and its file changes only on the `visibility` line (a fact
+item: its fence row). A file that cannot take the change without being
+re-rendered (a label with a block value or a duplicate key, no frontmatter
+block) is refused with nothing written; make that edit by hand. `--slug` is the operator's way to make one page private;
+a `put_page` that adds the label is an agent edit and lowers the page. On a brain
+without managed persistence, a page whose file sits in its source's checkout gets
+the same edit in that file and in the database together, so the next sync reads
+the same page. A file holding an edit the database lacks refuses with nothing
+written (run `gbrain sync` first). A file the repair cannot write
+(`sync.write_through` is off, a clone gbrain pulls, a write error) is held
+`file_backed` with nothing written, because the next sync would put the old
+label back from the file; make that edit in the file by hand.
+
+`--readers <list>` sets the named pages' `readable_by` (members by id, groups as
+`group:<id>`, `none` removes it) through the same label-only write: the page
+keeps its trust tier and provenance, files no `lower_page` proposal, and its
+file changes only on the `readable_by` line (written `readable_by: [a, b]`).
+Name the pages with `--slug` (repeatable) or `--slugs-file <file>` (one slug per
+line; blank lines and `#` comments are skipped; up to 10,000 pages, all in one
+preview). An unknown or disabled member, or an unknown group, refuses
+`access_member_invalid` with nothing written. A list that leaves out the brain
+owner (`gbrain access owner`) refuses too, because `readable_by` binds the owner
+and its own keys would stop reading the page; a group the owner belongs to does
+not count. Pass `--allow-without-owner` when that is what you want. A page whose
+readers changed after the preview is skipped.
+
+No lock or transaction spans the run, so a long list does not hold up other
+writers. On a managed brain the apply admits a source's pages together, one
+admission window at a time; on Postgres the owner publishes them in groups of
+up to 8 pages (PGLite publishes one at a time). The Git effect then commits the
+files that are ready together, up to 100 per commit, and waits briefly while
+more of the run's writes are still publishing, so a long list lands in a few
+large commits rather than one per page. Each page still succeeds or fails on
+its own. `--json` reports
+`details.git`, the run's files by effect state (`committed`, `pending`,
+`failed`, and `skipped` for a `storage.db_only` page, which has no file). A
+managed page with no file, outside any declared `storage.db_only` path, is held
+`canonical_file_missing` with nothing written, because the write would put the
+database ahead of Git: declare its folder under `storage.db_only` in `gbrain.yml`
+and preview again, or restore the file (`gbrain repair ghost-pages` lists pages
+whose file is gone). On a repo-less brain the database is the record, and every
+page is written there.
+
+A fenced fact row the apply could not make private is counted in the outcomes
+(`--json`: `outcomes`, each row in `outcome_items`), and the text output says
+`NOT CLOSED`: `fact_left_readable` when remote callers can still read the row,
+`fact_left_world` when the row is still world and only its page's privacy hides
+it from them. Today that happens when
+the original row is more trusted than the repair (it is kept beside the new
+private row), when the page is stored in segments, or when the row is not found
+in the page's facts fence.
 
 The apply touches only the listed items and resumes after its last applied
 item if it stops. Apply the window (or decide not to), then preview again for
@@ -2175,7 +2233,10 @@ refused. On a brain without managed persistence the repair writes only the
 database, so a page whose file sits in its source's checkout is held with
 outcome `file_backed`. The next sync or re-import would put the label back from
 the file, so edit the file's frontmatter, commit it, and run
-`gbrain sync --source <id>`. Repo-less pages clear as usual.
+`gbrain sync --source <id>`. Repo-less pages clear as usual. A clear or restore
+changes only the label lines of the page's file and keeps its trust tier; a
+restore whose label value isn't a plain word is held as `label_not_plain`, so
+add that label to the file by hand.
 
 **Windows and resume.** `--limit <n>` sets the window size (default 1000, at
 most 10000). When more pages remain past the window, the preview says so: apply

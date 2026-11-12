@@ -39,6 +39,10 @@ Usage: gbrain trust backfill --repair-unknown-markers [--source ID] [--slug SLUG
   preview whose hash you pass to --expect. The marker becomes the stored tier (none at owner tiers); the tier
   stays. Local CLI only. Docs: docs/guides/memory-trust.md#repair-unknown-markers
 
+Usage: gbrain trust backfill --label-lowerings [--source ID] [--json]
+  Read-only. Lists every lower_page proposal with whether its lowering write changed only privacy labels (visibility,
+  access, confidentiality) and server stamps, counted by proposer. Changes no tier. Docs: docs/guides/memory-trust.md#label-lowerings
+
 Usage: gbrain trust scan [--batch-size N] [--json]
   Runs the write gate's deterministic detector over agent-written and lower rows written before the gate,
   recording a receipt for each instruction-like row, so it reads as flagged (and, under trust.agent_activation

@@ -154,7 +154,7 @@ export async function readFenceTarget(engine: BrainEngine, src: FenceSource, can
       if (!dbOnly) {
         const parsed = parseMarkdown(content, cand.path, src.activePack ? { activePack: src.activePack } : undefined);
         return { ok: true, target: { mode: src.mirror ? 'mirror' : src.managed ? 'managed' : 'legacy', sourceId: src.id, key: cand.key, slug, path: cand.path, sourcePath,
-          page: { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '' }, content, before: sha256(bytes),
+          page: { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '', slug }, content, before: sha256(bytes),
           snapshot: await engine.readPageSnapshot(slug, { sourceId: src.id, includeDeleted: true }), hold,
           ctx: screenFenceCtx({ ...parsed, folder_restricted: await folderRestricted(engine, src.id, slug) }, src.activePack) } };
       }
@@ -163,7 +163,7 @@ export async function readFenceTarget(engine: BrainEngine, src: FenceSource, can
   const slug = holdSlug;
   const snapshot = slug ? await engine.readPageSnapshot(slug, { sourceId: src.id }) : null;
   if (!snapshot || snapshot.page.deleted_at) return { ok: false, reason: 'gone' };
-  const page = { compiled_truth: snapshot.page.compiled_truth ?? '', timeline: snapshot.page.timeline ?? '' };
+  const page = { compiled_truth: snapshot.page.compiled_truth ?? '', timeline: snapshot.page.timeline ?? '', slug: snapshot.page.slug };
   return { ok: true, target: { mode: src.mirror ? 'mirror' : 'db', sourceId: src.id, key: cand.key, slug: snapshot.page.slug, path: null,
     sourcePath: snapshot.page.source_path ?? null, page, content: null, before: pageSha(page), snapshot, hold,
     ctx: screenFenceCtx({ type: snapshot.page.type as never, frontmatter: (snapshot.page.frontmatter ?? {}) as Record<string, unknown>,

@@ -91,6 +91,7 @@ import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { fenceRepairCommit } from './effect-model.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { POLICY_KEYS } from './reconcile-additive.ts';
+import { readLabelEdit, spliceLabelLines, type LabelEdit } from './label-edit.ts';
 import { protectedReconcileKey } from './reconcile-merge.ts';
 import { PROTECTED_FRONTMATTER_KEYS } from '../frontmatter-recovery.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
@@ -270,6 +271,26 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
     && check.compiled_truth === incoming.compiled_truth && (check.timeline ?? '') === (incoming.timeline ?? '') ? spliced : null;
 }
 /**
+ * GST-2468: the file a label-only maintenance write publishes over a canonical file that holds the page (fileMatchesSnapshot):
+ * the file's own bytes with only its label lines edited (label-edit.ts spliceLabelLines), keeping its body when it reads as
+ * the write's body, else its head over the write's body (a fact row's visibility cell in the fence). Either must read back
+ * as `content`, the file the write would otherwise render; a label line that cannot be edited as a line refuses, so the
+ * file is never re-rendered under a label edit.
+ */
+export function labelEditFile(slug: string, before: Buffer | FileBytes, content: string, edit: LabelEdit, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): string {
+  const read = (text: string, file: boolean) => {
+    const parsed = parseMarkdown(text, slug, { activePack });
+    return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type: file ? importedFileType(parsed, snapshot.page, false) : parsed.type }, parsed.tags));
+  };
+  const spliced = before instanceof Buffer ? spliceLabelLines(before.toString('utf8'), edit) : null;
+  const contentHead = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/.exec(content);
+  const expected = read(content, false);
+  const fits = spliced ? [spliced.text, ...(contentHead ? [spliced.head + content.slice(contentHead[0].length)] : [])].find(text => read(text, true) === expected) : undefined;
+  if (fits !== undefined) return fits;
+  throw opError('invalid_params', 'The label edit cannot be made to the page\'s file line by line.',
+    `Nothing was written for ${slug}: its file cannot take the change without being re-rendered (a label key with a block or multi-line value or a duplicate key, no frontmatter block, a body that no longer reads as the page once its facts row is changed, or a file too large to edit in memory), so the label-only write refuses. Make the change in the file by hand, commit it, and run gbrain sync for the source.`);
+}
+/**
  * GST-1601: whether a local edit changes what an adoption must never take without a person: the title, the type, or a
  * policy, protected, access, lineage or trust-lowering frontmatter key (the keys frontmatterDriftWrite never splices).
  */
@@ -341,7 +362,9 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     /** Runs between the pieces of a segmented page's file comparison (an effect's claim renewal). */
     between?: () => Promise<void>;
     /** #7436: the preparation's clock, so its stamp says `waiting_on=git` while a Git check runs. */
-    clock?: ClaimPhaseClock } = {}): Promise<PreparedMutation['file']> {
+    clock?: ClaimPhaseClock;
+    /** GST-2468: a label-only maintenance write edits only the label lines of the file it matches (labelEditFile). */
+    labelEdit?: LabelEdit } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
   // An in-memory canonical file over the 25 MiB push-scan cap is refused (only a page over the 24 MiB single-string
   // ceiling renders one). That page's file is streamed instead (restore_page of a page whose body was not read back,
@@ -499,6 +522,9 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
         { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
           { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) }),
         adopt.length || options.deleting === true ? {} : { localEdit: { root, path } });
+    }
+    if (matches && options.labelEdit && typeof content === 'string') {
+      return { path, root, content: labelEditFile(row.slug, before, content, options.labelEdit, snapshot, options.activePack), expectedBeforeHash: beforeHash() };
     }
   } else if (before && !snapshot && content !== null && beforeHash() !== fileContentHash(content)
     && !(options.capture && beforeHash() === options.capture.hash)) {
@@ -1085,7 +1111,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
     async () => !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
       ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,
-    () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock }),
+    () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock, labelEdit: row.operation === 'submit_job' && p.kind === 'managed_maintenance_page' ? readLabelEdit(p.label_edit) : undefined }),
     // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
     async () => noop ? null : prepareCoreGuard(engine, { row, snapshot, incoming: targetDeleted ? null : ready.parsedPage }),
   ]) as [Awaited<ReturnType<typeof prepareCanonicalProjections>> | undefined, Record<string, unknown>,

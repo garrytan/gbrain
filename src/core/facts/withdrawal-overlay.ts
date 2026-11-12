@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, parseFactsFenceFor, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
 import type { PageWithdrawal } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
 import { normalizeLoweredClaim } from './withdrawal-schema.ts';
 
 export const WITHDRAWAL_MARKER_LIMIT = 16_384;
+/** A withdrawal reads a held row's `entity` cell wherever writes let it be (memory/unattributed, GST-2492). */
+const READER = { reader: true } as const;
 
 /** Preserve historical expiry and context while emitting the parser's explicit withdrawal marker. */
 export function withdrawnFact(fact: ParsedFact, date: string, reason = 'memory withdrawn'): ParsedFact {
@@ -27,7 +29,7 @@ export function withdrawalFenceBlocks(body: string): Array<{ start: number; end:
       continue;
     }
     if (!open) continue;
-    blocks.push({ start: open.start, end: marker.end, parsed: parseFactsFence(body.slice(open.start, marker.end)) });
+    blocks.push({ start: open.start, end: marker.end, parsed: parseFactsFenceFor(body.slice(open.start, marker.end), READER) });
     open = undefined;
   }
   const inline: typeof blocks = [];
@@ -67,7 +69,7 @@ function inlineCodeFenceBlocks(body: string, markers: FenceMarker[]): Array<{ st
   for (let i = 0; i < markers.length; i++) {
     const begin = markers[i], end = markers[i + 1];
     if (begin.kind !== 'begin' || end?.kind !== 'end' || !(begin.inlineCode || end.inlineCode)) continue;
-    const parsed = parseFactsFence(body.slice(begin.start, end.end));
+    const parsed = parseFactsFenceFor(body.slice(begin.start, end.end), READER);
     if (parsed.facts.length || parsed.warnings.length) blocks.push({ start: begin.start, end: end.end, parsed });
   }
   return blocks;
@@ -94,7 +96,7 @@ export function ambiguousWithdrawalFenceSegments(body: string): string[] {
       continue;
     }
     const segment = body.slice(open.start, marker.end);
-    if (parseFactsFence(segment).warnings.length) segments.push(segment);
+    if (parseFactsFenceFor(segment, READER).warnings.length) segments.push(segment);
     boundary = marker.end;
     open = undefined;
   }

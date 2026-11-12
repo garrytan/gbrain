@@ -106,7 +106,7 @@ const remember: Operation = {
     },
     share: {
       type: 'boolean',
-      description: 'Members save privately; true: all source readers recall it. Share team work, not facts about a person.',
+      description: 'Members save privately, owner shared; true: all source readers recall it. Not for facts about a person.',
     },
     visibility: {
       type: 'string',
@@ -193,7 +193,8 @@ const remember: Operation = {
     const attested = ctx.attestedOp !== 'memory_write' && (await import('./search/private-visibility.ts')).currentCallerAccess().actor != null;
     if (attested && p.share === true) throw memberFacts.attestedShareRefused(verbError);
     // GST-2243: a member shares only with share: true, so its explicit visibility "world" is refused, never quietly made private.
-    if (p.share !== true && p.visibility === 'world' && ctx.attestedOp !== 'memory_write' && memberFacts.memberFactPage(ctx)) {
+    // GST-2346 D1: the brain owner speaking for itself is not refused; its "world" is saved shared.
+    if (p.share !== true && p.visibility === 'world' && ctx.attestedOp !== 'memory_write' && memberFacts.memberFactPage(ctx) && !memberFacts.ownerSpeaksForItself(ctx)) {
       if (attested) throw memberFacts.attestedShareRefused(verbError);
       throw Object.assign(verbError('invalid_params', 'remember: a member credential shares a fact with share: true, not visibility "world"; nothing was saved.',
         'Retry the same call with share: true in place of visibility "world" to share a fact about the team\'s work with everyone who reads this source, or with no visibility to keep a fact about a person on your own member page. A member shares only this way: pass share: true, never visibility "world".'),

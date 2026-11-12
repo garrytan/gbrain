@@ -226,6 +226,7 @@
         "./commands/trust-claim.ts",
         "./core/eligibility/explain.ts",
         "./core/eligibility/scan.ts",
+        "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
       ],
       "waiting": [

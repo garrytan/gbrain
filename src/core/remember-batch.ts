@@ -110,6 +110,8 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
         ...(out?.id !== undefined ? { id: out.id } : {}),
         ...(out?.entity_slug !== undefined ? { entity_slug: out.entity_slug } : {}),
         ...(out?.page !== undefined ? { page: out.page } : {}), ...(out?.visibility !== undefined ? { visibility: out.visibility } : {}),
+        // GST-2446: where the item landed (a page file, or the database alone and why), as the single form reports it.
+        ...(out?.persistence !== undefined ? { persistence: out.persistence } : {}), ...(out?.write_through !== undefined ? { write_through: out.write_through } : {}),
         ...(out?.superseded_fact_id !== undefined ? { superseded_fact_id: out.superseded_fact_id } : {}), ...claimColumns(out),
         ...(Array.isArray(out?.warnings) && out.warnings.length ? { warnings: out.warnings } : {}),
         ...(out?.valid_until ? { valid_until: out.valid_until } : {}),
