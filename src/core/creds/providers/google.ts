@@ -368,7 +368,7 @@ export class GoogleTokenProvider {
       if (!base) throw new CredentialError('relay_disabled');
       token = await refreshViaRelay(base, e, this.fetchImpl);
     } else {
-      const client = await this.vault.getClient(GOOGLE_PROVIDER);
+      const client = await this.vault.getClient(GOOGLE_PROVIDER, e.meta.client_id);
       if (!client) throw new CredentialError('not_connected', ` (no OAuth client on file)`);
       token = await refreshAccessToken(e, client, this.fetchImpl);
     }
