@@ -43,7 +43,7 @@ import { clearRepoPathWedge } from './migrations/v0_11_0-install.ts';
 import { shellQuote, type Effect } from '../core/agent-output.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { consentGate } from '../core/consent-cli.ts';
-import { opError, type OperationError } from '../core/ops/contract.ts';
+import { opError, OperationError } from '../core/ops/contract.ts';
 import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
 import {
   checkSchemaAfterOrchestrators,
@@ -641,14 +641,8 @@ async function runLockedMigrations(
 ): Promise<number | undefined> {
   const { doc } = report;
   const fail = (status: string, failure: OperationError): void => { doc.status = status; report.failure = failure; };
-  // Without the orchestration lease (a schema too old for it), schema work goes
-  // through initSchema(), which serializes on the schema lock.
-  const migrateSchema = async (eng: BrainEngine, from: number): Promise<{ applied: number; current: number }> => {
-    if (heldLock()) { const { runMigrations } = await import('../core/migrate.ts'); return runMigrations(eng); }
-    await eng.initSchema();
-    const current = parseInt(await eng.getConfig('version') || String(from), 10);
-    return { applied: Math.max(0, current - from), current };
-  };
+  const refusal: SchemaRefusal = {};
+  const migrateSchema = (eng: BrainEngine, from: number) => migrateSchemaThroughInit(eng, from, refusal);
   // Bug 3 — --force-retry: write an explicit reset marker for a wedged
   // migration, then return. User re-runs `gbrain apply-migrations --yes`
   // to actually re-attempt.
@@ -710,7 +704,7 @@ async function runLockedMigrations(
       await eng.disconnect();
     } catch (err) {
       console.error(`--force-schema failed: ${(err as Error).message}`);
-      fail('failed', opError('migration_failed', `--force-schema failed: ${(err as Error).message}`,
+      fail('failed', err instanceof OperationError && err.code === 'foreign_table' ? err : opError('migration_failed', `--force-schema failed: ${(err as Error).message}`,
         'Fix the database error above, then run `gbrain apply-migrations --force-schema` again.', { reason: 'schema_failed' }));
       return 1;
     }
@@ -788,7 +782,7 @@ async function runLockedMigrations(
   const pendingWork = [...plan.partial, ...plan.pending, ...plan.pending_fresh_install];
   const authorized = cli.yes || cli.nonInteractive;
   if (schemaBehind && pendingWork.length === 0 && dbProbe.status === 'connected') {
-    return failSchemaBehind(report, args, await schemaBehindAtPreflight(dbProbe.schemaVer, authorized, schemaTimeout));
+    return failSchemaBehind(report, args, await schemaBehindAtPreflight(dbProbe.schemaVer, authorized, schemaTimeout), refusal.foreignTable);
   }
   const toRun: Migration[] = [...pendingWork, ...plan.applied.filter(migration => migration.reconcile)]
     .sort((left, right) => compareVersions(left.version, right.version));
@@ -929,16 +923,37 @@ async function runLockedMigrations(
   // #6089: an orchestrator may migrate the schema itself, so read it again.
   return failSchemaBehind(report, args, await checkSchemaAfterOrchestrators({
     cfg: loadConfig()!, authorized, preflightVersion: dbProbe.status === 'connected' ? dbProbe.schemaVer : null, apply: migrateSchema,
-  }));
+  }), refusal.foreignTable);
 }
 
 /** #6089: the run leaves the schema behind → `migrations_pending`, exit 1; undefined (success) when it does not. */
-function failSchemaBehind(report: RunReport, args: readonly string[], pending: SchemaPending | null): number | undefined {
+/** #9190: a foreign_table refusal replaces the generic still_behind error, so its fix reaches the caller. */
+function failSchemaBehind(report: RunReport, args: readonly string[], pending: SchemaPending | null, foreignTable?: OperationError): number | undefined {
   if (!pending) return failWedged(report);
   report.doc.status = 'schema_behind';
   report.doc.schema_pending = pending;
-  report.failure = schemaPendingError(pending, rerunFix(args, 'Applies the pending schema migrations (no consent effect; it migrates the brain\'s own schema).', true));
+  report.failure = pending.reason === 'still_behind' && foreignTable ? foreignTable
+    : schemaPendingError(pending, rerunFix(args, 'Applies the pending schema migrations (no consent effect; it migrates the brain\'s own schema).', true));
   return 1;
+}
+
+interface SchemaRefusal { foreignTable?: OperationError }
+
+/**
+ * Schema work goes through initSchema(), lease or not: it takes the schema migration lock and replays the idempotent
+ * schema blob before the pending migrations, so a blob-owned table that is missing is back first (#9191). A
+ * `foreign_table` refusal (#9190) is kept for the run's failure.
+ */
+async function migrateSchemaThroughInit(eng: BrainEngine, from: number, refusal: SchemaRefusal): Promise<{ applied: number; current: number }> {
+  try {
+    await eng.initSchema();
+  } catch (err) {
+    if (err instanceof OperationError && err.code === 'foreign_table') refusal.foreignTable = err;
+    throw err;
+  }
+  const current = parseInt(await eng.getConfig('version') || String(from), 10);
+  const { MIGRATIONS } = await import('../core/migrate.ts');
+  return { applied: MIGRATIONS.filter(m => m.version > from && m.version <= current).length, current };
 }
 
 /**

@@ -413,6 +413,7 @@
   "test/trust-owner-actions.test.ts": 13580,
   "test/unbound-source-6536.test.ts": 1896,
   "test/unindexed-files.test.ts": 5892,
+  "test/upgrade-foreign-oauth-table.test.ts": 5660,
   "test/vector-manifest-probe-bound.test.ts": 23971,
   "test/withdrawal-overlay-concurrency.test.ts": 4425,
   "test/withdrawal-publication-file.test.ts": 9435,

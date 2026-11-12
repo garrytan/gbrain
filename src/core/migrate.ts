@@ -6,6 +6,7 @@ import { SCHEMA_MIGRATION_LOCK_APPLICATION_NAME } from './postgres-engine/init-s
 import { assertSchemaMigrationLockHeld, withSchemaMigrationLock } from './schema-migration-lock.ts';
 import { MIGRATIONS } from './schema-migrations/registry.generated.ts';
 import { hasPendingMigrations } from './migrate-pending.ts';
+import { assertOwnedTableShapes } from './owned-table-shapes.ts';
 import { runMigrationStatement, setQuietMigrationNotices } from './schema-migrations/helpers.ts';
 import { MIGRATION_PRELUDES, runMigrationPrelude } from './migration-preludes.ts';
 import { clearMigrationTimeout, migrationStatementTimeoutMs, recordMigrationTimeout } from './migration-timeout.ts';
@@ -385,6 +386,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
   const sorted = [...MIGRATIONS].sort((a, b) => a.version - b.version);
 
   const pending = sorted.filter(m => m.version > current);
+  if (pending.length > 0) await assertOwnedTableShapes(async sql => (await engine.executeRaw(sql))[0]); // #9190: before any repair or migration
 
   // #2038: schema-drift self-heal. A migration renumbered during a master
   // merge (v102 timeline dedup, originally v99) can be recorded-as-applied
