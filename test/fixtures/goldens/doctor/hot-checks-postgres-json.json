@@ -4513,7 +4513,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/search/mode.ts, src/core/search/private-visibility.ts. Re-run `gbrain eval run-all` after committing these changes.",
+            "message": "No retrieval-affecting files changed in working tree.",
             "name": "eval_drift",
             "status": "ok"
           },
@@ -9645,7 +9645,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "2 retrieval-affecting file(s) changed since HEAD: src/core/search/mode.ts, src/core/search/private-visibility.ts. Re-run `gbrain eval run-all` after committing these changes.",
+            "message": "No retrieval-affecting files changed in working tree.",
             "name": "eval_drift",
             "status": "ok"
           },
