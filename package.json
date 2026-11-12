@@ -262,7 +262,7 @@
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",
-    "@hono/node-server": "^2.0.5",
+    "@hono/node-server": "^2.1.6",
     "fast-uri": "^3.1.9",
     "body-parser": "^2.4.0",
     "fast-xml-builder": "^1.1.7",
