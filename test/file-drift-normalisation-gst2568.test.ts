@@ -13,17 +13,23 @@
  *   `holds_released`; a real difference is screened again and stays held;
  * - a later deliberate commit over a page that changed only by derived keys (a retype's stamp, a stored reserved key, the
  *   grandfather `validate: false`) imports; a page whose body also changed in the database stays held;
+ * - the retired grandfather's database-only `validate: false` and a stored `type` key (stated or path-inferred) are derived: an
+ *   older hold over them releases and a later commit imports, while a database label still holds;
  * - a live page whose file is gone under a gbrain.yml `db_only` folder or a `sync.exclude` path is no drift: no hold, an
  *   existing hold releases, and the page stays;
  * - item 3: `repair file-drift --held` without `--prefer` compares each hold (what differs, which side is newer, what a
  *   repair would do) and writes nothing; an apply without `--prefer` refuses with a `fix` naming that comparison;
  * - item 4: `--prefer file` never drops a page edited after its file's last commit in bulk (`kept_newer_page`, the hold
  *   stays), names the drop in a warning when one `--slug` asks for it, and the comparison never proposes deleting a page
- *   whose file is gone.
+ *   whose file is gone;
+ * - a caller's write (put_page, import) that names the type a retype replaced still takes that type: only a file reading keeps
+ *   the retype's stamp.
  * PGLite always; Postgres too when DATABASE_URL is set. Holds exist only where sync imports a Git checkout, so there is no
  * repo-less arm.
  */
-import { expect, test } from 'bun:test';
+import { afterAll, beforeAll, expect, test } from 'bun:test';
+import { importFromContent } from '../src/core/import-file.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -46,6 +52,7 @@ const OPTS = { sourceId: 'default', noPull: true, noEmbed: true, noExtract: true
 const logger = { info() {}, warn() {}, error() {} };
 const commitAll = (root: string, message: string) => { git(root, 'add', '-A'); git(root, 'commit', '-qm', message); };
 const doc = (type: string, title: string, body: string, extra = '') => `---\ntype: ${type}\ntitle: ${title}\n${extra}---\n\n${body}\n`;
+const untyped = (title: string, body: string) => `---\ntitle: ${title}\n---\n\n${body}\n`;
 const coordinated = (engine: BrainEngine, sql: string, params: unknown[] = []) =>
   engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => tx.executeRaw(sql, params), TEST_WRITE_ATTRIBUTION));
 const holds = async (engine: BrainEngine) => (await engine.executeRaw<{ r: { path: string; code: string; meta: { side?: string; drift_version?: number } } }>(
@@ -163,6 +170,29 @@ for (const backend of testBackends()) {
     for (const slug of ['private/kept', 'excluded/kept']) expect((await row(engine, slug)).deleted).toBe(false);
   }, { databaseUrl, setup: setupWith({ 'private/kept': doc('concept', 'private/kept', 'A private body.'), 'excluded/kept': doc('concept', 'excluded/kept', 'An excluded body.') }) }), 180_000);
 
+  test(`GST-2568 [${backend}]: a retired grandfather stamp and a stored type key are derived, not drift: an old hold releases, a later commit imports, a label still holds`, () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    // The retired v0.13.1 grandfather wrote `validate: false` to the database only, with no version row; older imports also kept
+    // the page's type (stated, or inferred from the path for a file with no `type:`) as a frontmatter key the file never had.
+    await coordinated(engine, "UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('validate', false, 'type', type) WHERE source_id='default'");
+    await coordinated(engine, "UPDATE pages SET frontmatter = frontmatter || '{\"label\": \"x\"}'::jsonb WHERE source_id='default' AND slug='notes/labelled'");
+    await legacy(engine);
+    await seedHold(engine, 'notes/stamped', { sides: 'unknown', side: 'unknown', drift_version: 2 });
+    files(root, { 'notes/inferred': untyped('notes/inferred', 'An edited body.'), 'notes/labelled': untyped('notes/labelled', 'An edited body.') });
+    commitAll(root, 'edit two bodies');
+    const head = git(root, 'rev-parse', 'HEAD');
+    const result = await performManagedSync(engine, OPTS);
+    expect([await holds(engine), result.holds_released]).toEqual([['notes/labelled.md file_drift unknown'], 1]);
+    // The release may normalise the stored copy of the reserved key away; the body, type and stamp stay.
+    const stamped = await row(engine, 'notes/stamped');
+    expect([stamped.type, stamped.body, stamped.frontmatter.validate]).toEqual(['concept', 'The first body.', false]);
+    const inferred = await row(engine, 'notes/inferred');
+    expect([inferred.body, inferred.frontmatter.validate]).toEqual(['An edited body.', false]);
+    expect((await row(engine, 'notes/labelled')).body).toBe('The first body.');
+    expect([git(root, 'rev-parse', 'HEAD'), git(root, 'status', '--porcelain')]).toEqual([head, '']);
+  }, { databaseUrl, setup: setupWith({ 'notes/stamped': doc('concept', 'notes/stamped', 'The first body.'),
+    'notes/inferred': untyped('notes/inferred', 'The first body.'), 'notes/labelled': untyped('notes/labelled', 'The first body.') }) }), 180_000);
+
   /** Four held pages: same (a retype's stamp only), newer-file, newer-page (each differs in body), gone (its file left Git). */
   async function heldPages(engine: BrainEngine, root: string): Promise<void> {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
@@ -213,3 +243,18 @@ for (const backend of testBackends()) {
     expect(single.warnings?.join(' ')).toContain('drops a database edit newer than its file');
   }, { databaseUrl, setup: heldSetup }), 240_000);
 }
+
+let engine: PGLiteEngine;
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+});
+afterAll(async () => { await engine.disconnect(); });
+
+test('GST-2568: a caller that writes the type a retype replaced takes it; the retype stamp is kept only for a file reading', async () => {
+  await importFromContent(engine, 'notes/caller', doc('civic', 'notes/caller', 'A body.'), { noEmbed: true });
+  await engine.executeRaw("UPDATE pages SET type='note', frontmatter = frontmatter || '{\"legacy_type\": \"civic\"}'::jsonb WHERE slug='notes/caller'");
+  await importFromContent(engine, 'notes/caller', doc('civic', 'notes/caller', 'A body, edited.'), { noEmbed: true });
+  expect((await row(engine, 'notes/caller')).type).toBe('civic');
+}, 60_000);

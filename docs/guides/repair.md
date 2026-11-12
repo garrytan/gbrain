@@ -3417,8 +3417,9 @@ as sync imports it (`README.md` for slug `readme`); the apply records that
 path. A sync re-screens a held page that changed since it was held even when
 Git did not move. A gbrain that compares file drift differently (GST-2568) has
 the next sync re-screen every held `file_drift` page that is not a deletion
-once: a page that now agrees with its file is released with no write and no
-commit, and the sync prints `Released N held file(s) that no longer need a
+once: a page that now agrees with its file is released with no commit and no
+change to its body, type or stamps (a stale stored copy of the `type` key is
+normalised away), and the sync prints `Released N held file(s) that no longer need a
 decision.` (JSON `holds_released`). A page a read-only mirror stored database-only (`mirror_read_only`)
 is compared with the file at its slug path once its source is writable again;
 the apply records that path and clears the stamp.

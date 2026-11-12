@@ -1309,7 +1309,7 @@ async function performManagedPass(engine: BrainEngine, opts: SyncOpts, slice?: {
     const fences = fencesNormalizedReport(state.sourceId, cursor?.counts.fences, state.remote === true);
     // #7199: a pass that synced but held files a person must decide does not read as plain synced.
     const humanHeld = report.held_needs_human && !synced.reason && ['synced', 'first_sync', 'up_to_date'].includes(synced.status);
-    const released = await releasedHoldCount(engine, state.sourceId, holdsBefore);
+    const released = await releasedHoldCount(engine, state.sourceId, holdsBefore).catch(() => 0);
     return { ...synced, ...report, ...(released ? { holds_released: released } : {}), ...(humanHeld ? { reason: 'held_needs_human' as const } : {}), ...(!state.remote && cursor?.convertedFromFailed?.length ? { converted_from_failed: cursor.convertedFromFailed } : {}),
       ...(recovered ? { recovered_frontmatter: recovered } : {}), ...(fences ? { fences_normalized: fences } : {}) };
   } catch {

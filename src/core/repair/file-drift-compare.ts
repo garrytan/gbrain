@@ -10,7 +10,7 @@
  * here either; both are `needs_human` with the reason.
  */
 import { execFileSync } from '../spawn.ts';
-import { gitChildEnv } from '../git-env.ts';
+import { GIT_READ_ENV, gitChildEnv } from '../git-env.ts';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { ParsedPage } from '../import-file.ts';
@@ -43,7 +43,7 @@ export function driftDifference(file: ParsedPage, database: ParsedPage): { diffe
 
 /** The file's last commit time at HEAD and whether its working-tree bytes differ from HEAD; a Git failure reads as no evidence. */
 export function fileCommitEvidence(root: string, path: string): { committed_at: string | null; uncommitted: boolean } {
-  const git = (args: string[]) => execFileSync('git', ['-C', root, ...args], { env: gitChildEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  const git = (args: string[]) => execFileSync('git', ['-C', root, ...args], { env: gitChildEnv(GIT_READ_ENV), encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
   try {
     return { committed_at: git(['log', '-1', '--format=%cI', 'HEAD', '--', path]) || null, uncommitted: git(['status', '--porcelain', '--', path]) !== '' };
   } catch { return { committed_at: null, uncommitted: false }; }
@@ -75,8 +75,8 @@ export async function readDriftEvidence(engine: BrainEngine, sourceId: string, s
 export function newerPageParagraph(sourceId: string, slug: string, evidence: DriftEvidence): string {
   const what = evidence.differs === 'both' ? 'body and frontmatter' : evidence.differs === 'body' ? 'body' : `frontmatter (${evidence.keys.join(', ')})`;
   return `page ${slug} changed after its file was last committed (page updated ${evidence.page_updated_at}, ${evidence.path} committed ${evidence.file_committed_at}) and its ${what} differs, `
-    + `so letting the file win would drop that database edit; it stays held for a person. Keep the page with gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer database `
-    + `(rewrites the file from the page), or carry the edit into the file, commit it and run gbrain sync --source ${sourceId}.`;
+    + `so letting the file win may drop a database edit; it stays held for a person. updated_at also moves on gbrain's own writes (a retype), so read both sides first. `
+    + `To keep the file, run gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file; to keep the page, run it with --prefer database (rewrites the file from the page) or carry the edit into the file, commit it and run gbrain sync --source ${sourceId}.`;
 }
 
 /** One selected page, compared: a held page by its hold, any other by its slug. Never writes. */
