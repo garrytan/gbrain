@@ -28,6 +28,19 @@ const FOREIGN_TOKENS = `CREATE TABLE oauth_tokens (
 const FOREIGN_ROW = `INSERT INTO oauth_tokens (id, token_hash, token_type, client_id, expires_at)
   VALUES ('00000000-0000-4000-8000-000000000001', 'hash-example', 'Bearer', 'other-app-example', now() + interval '1 hour')`;
 const FORCE_SCHEMA = ['--force-schema', '--yes', '--non-interactive', '--no-autopilot-install'];
+/** The columns gbrain's first OAuth release (v32) gave each table, and those later migrations added after v209. */
+const V32_COLUMNS: Record<string, readonly string[]> = {
+  oauth_clients: ['client_id', 'client_secret_hash', 'client_name', 'redirect_uris', 'grant_types', 'scope', 'token_endpoint_auth_method',
+    'client_id_issued_at', 'client_secret_expires_at', 'created_at'],
+  oauth_tokens: ['token_hash', 'token_type', 'client_id', 'scopes', 'expires_at', 'resource', 'created_at'],
+  oauth_codes: ['code_hash', 'client_id', 'scopes', 'code_challenge', 'code_challenge_method', 'redirect_uri', 'state', 'resource',
+    'expires_at', 'created_at'],
+};
+const ADDED_AFTER_V209: Record<string, readonly string[]> = {
+  oauth_clients: ['registered_via', 'private_pages', 'member_id', 'may_act_for', 'attest_actor', 'attest_ops', 'attest_sources', 'attest_read'],
+  oauth_tokens: ['grant_type'],
+  oauth_codes: [],
+};
 
 interface Brain { config: Record<string, string>; open: () => Promise<BrainEngine> }
 
@@ -140,6 +153,34 @@ for (const kind of testBackends()) {
       expect(await shapeOf(after, 'oauth_tokens')).toBe('bigint');
       expect(await after.getConfig('version')).toBe(String(LATEST_VERSION));
     }, 300_000);
+
+    test('gbrain\'s own OAuth tables in an older release\'s shape pass the check and upgrade to head', async () => {
+      for (const [from, keep] of [[32, V32_COLUMNS], [209, null]] as const) {
+        const b = await brain(true);
+        const engine = await b.open();
+        for (const table of ['oauth_clients', 'oauth_tokens', 'oauth_codes'] as const) {
+          const later = keep ? (await engine.executeRaw<{ c: string }>(
+            `SELECT attname AS c FROM pg_attribute WHERE attrelid = to_regclass($1) AND attnum > 0 AND NOT attisdropped`, [table]))
+            .map(r => r.c).filter(c => !keep[table].includes(c)) : ADDED_AFTER_V209[table];
+          for (const column of later) await engine.executeRaw(`ALTER TABLE ${table} DROP COLUMN ${column} CASCADE`);
+        }
+        await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-example', 'Example client')`);
+        await engine.executeRaw(`INSERT INTO oauth_tokens (token_hash, token_type, client_id, expires_at) VALUES ('token-example', 'access', 'client-example', 4102444800)`);
+        await engine.executeRaw(`INSERT INTO oauth_codes (code_hash, client_id, code_challenge, redirect_uri, expires_at) VALUES ('code-example', 'client-example', 'challenge', 'http://localhost/cb', 4102444800)`);
+        await engine.setConfig('version', String(from));
+        await close(engine);
+        const run = await applyMigrations(b, ['--yes', '--non-interactive', '--no-autopilot-install']);
+        expect(run.code, `from v${from}: ${run.out}`).toBe(0);
+        expect(run.out).not.toContain('foreign_table');
+        const after = await b.open();
+        expect(await after.getConfig('version')).toBe(String(LATEST_VERSION));
+        expect(await after.executeRaw('SELECT token_type FROM oauth_tokens')).toEqual([{ token_type: 'access' }]);
+        expect(await after.executeRaw('SELECT code_hash FROM oauth_codes')).toEqual([{ code_hash: 'code-example' }]);
+        expect(await after.executeRaw(`SELECT to_regclass('oauth_tokens') IS NOT NULL AS t, (SELECT count(*)::int FROM pg_attribute WHERE attrelid = 'oauth_tokens'::regclass AND attname = 'grant_type') AS g, (SELECT count(*)::int FROM pg_attribute WHERE attrelid = 'oauth_clients'::regclass AND attname = 'attest_read') AS a`))
+          .toEqual([{ t: true, g: 1, a: 1 }]);
+        await close(after);
+      }
+    }, 600_000);
 
     test('a brain stopped at v210 by a foreign table recovers with the steps the refusal names', async () => {
       const b = await brain(true);
