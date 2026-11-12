@@ -45,8 +45,9 @@ const settled = (results: PromiseSettledResult<unknown>[]) => results.map(r => r
 const twoRunners = (a: BrainEngine, b: BrainEngine) => withEnv({ GBRAIN_INITSCHEMA_LOCK_TIMEOUT_SECONDS: '90' }, () =>
   bounded('both runners', 60_000, Promise.allSettled([runMigrations(a), runMigrations(b)])));
 
-test('the migration is the latest one and is idempotent', () => {
-  expect(migration.version).toBe(LATEST_VERSION);
+test('the migration is registered at 306, no later than the latest, and is idempotent', () => {
+  expect(migration.version).toBe(306);
+  expect(migration.version).toBeLessThanOrEqual(LATEST_VERSION);
   expect(migration.idempotent).toBe(true);
 });
 
