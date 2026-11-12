@@ -10,10 +10,9 @@ import type { Migration } from './types.ts';
 // row per page, removed with the page. A separate table, not a pages column, so writing it fires none of the page
 // triggers (trust stamp, revision, generation). Database only, so a repo-less brain gets it unchanged; on a managed Git
 // brain it is not in the files, so a brain rebuilt from a clone starts with no rows (the owner's label door sets them
-// again). No schema.sql mirror: like v282, v283 and v300, it exists only through migrations. Provisional number:
-// renumbered at the merge slot.
-export const v306: Migration = {
-  version: 306,
+// again). No schema.sql mirror: like v282, v283 and v300, it exists only through migrations.
+export const v307: Migration = {
+  version: 307,
   name: 'page_label_guards',
   idempotent: true,
   sql: `

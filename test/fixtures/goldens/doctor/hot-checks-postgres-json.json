@@ -4145,6 +4145,17 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/repair.md#facts-home",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+            "name": "strict_facts_outside_git",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -4513,7 +4524,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No retrieval-affecting files changed in working tree.",
+            "message": "1 retrieval-affecting file(s) changed since HEAD: src/core/search/private-visibility.ts. Re-run `gbrain eval run-all` after committing these changes.",
             "name": "eval_drift",
             "status": "ok"
           },
@@ -9277,6 +9288,17 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/repair.md#facts-home",
+              "sources": []
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+            "name": "strict_facts_outside_git",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "docs": "docs/guides/write-refusals.md#file_database_drift",
               "sources": []
             },
@@ -9645,7 +9667,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "No retrieval-affecting files changed in working tree.",
+            "message": "1 retrieval-affecting file(s) changed since HEAD: src/core/search/private-visibility.ts. Re-run `gbrain eval run-all` after committing these changes.",
             "name": "eval_drift",
             "status": "ok"
           },

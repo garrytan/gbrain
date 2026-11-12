@@ -58,7 +58,7 @@ export interface SyncResult {
    * QUOTA — retry after fixing the provider) from genuine file poison
    * (--skip-failed territory).
    */
-  failureCodes?: Array<{ code: string; count: number }>;
+  failureCodes?: Array<{ code: string; count: number }>; /** GST-2492 PR 2: advice for a cause in the source's mode, not the files (`strict_requires_managed`). */ failureAdvice?: string;
   /**
    * Files skipped because their FILENAME contains bracket/control characters
    * (SyncableReason 'malformed-path'). Informational — these never gate

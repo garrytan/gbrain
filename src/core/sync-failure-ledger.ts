@@ -243,6 +243,21 @@ export function syncFailureCode(error: unknown, path?: string): string {
   return classifyErrorCode(error instanceof Error ? error.message : String(error), path);
 }
 
+/** The failure code for a file a git-canonical source refused because the brain is not managed (the error registry's code). */
+export const STRICT_REQUIRES_MANAGED = 'strict_requires_managed';
+
+/**
+ * The advice for a blocked sync whose failures are `strict_requires_managed`: the files are fine and the source's mode is the
+ * cause, so neither fixing YAML nor `--skip-failed` (which would move the checkpoint past content the database lacks) applies.
+ */
+export function strictRequiresManagedAdvice(sourceId: string | undefined): string {
+  const source = sourceId ?? 'default';
+  return `Source ${source} is git-canonical (canonical: git) and this brain does not have managed persistence, so gbrain imported none of these files; `
+    + 'the files themselves are fine. Ask the user whether to turn managed persistence on for this brain (docs/guides/concurrent-writes.md#local-registrations-and-canonical-ownership) and sync again, '
+    + `or, to rebuild a strict source's database from a clone, to follow docs/guides/git-canonical.md#rebuilding-a-strict-sources-database-from-a-clone. `
+    + 'Do not use --skip-failed: it would move the checkpoint past files whose content is not in the database.';
+}
+
 export function classifyErrorCode(errorMsg: string, path?: string): string {
   // GBRA-130 A-18: a Node errno message (`EACCES: permission denied, open
   // '<path>'`) is the file's own failure; its path text must never reach the
@@ -260,6 +275,9 @@ export function classifyErrorCode(errorMsg: string, path?: string): string {
 
   // #5032: a ':' file name on Windows (src/commands/sync/imports.ts).
   if (/^colon_slug_windows_write_through:/.test(errorMsg)) return 'COLON_SLUG_WINDOWS_WRITE_THROUGH';
+
+  // A direct import into a git-canonical source on an unmanaged brain (assertNotStrictSource): the source's mode, not the file.
+  if (/cannot write git-canonical source .+ on an unmanaged brain|\bstrict_requires_managed\b/i.test(errorMsg)) return STRICT_REQUIRES_MANAGED;
 
   // SLUG_MISMATCH: thrown by importFromFile() at src/core/import-file.ts.
   if (/slug.*does not match|SLUG_MISMATCH/i.test(errorMsg)) return 'SLUG_MISMATCH';

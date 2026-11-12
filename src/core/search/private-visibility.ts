@@ -259,6 +259,17 @@ function lineageAccessSql(pageAlias: string, access: CallerAccess, ownPage: stri
 }
 
 /**
+ * GST-2346: GST-2490's owner read rule (lineageAccessSql, the opt-in off) and the privacy part, for the owner's explicit
+ * identity and satisfied folder rules outside its read record, so a stored write can judge what its owner writer reads.
+ * access.owner_reads_restricted and audience members never apply here: a page kept to other members stays closed.
+ */
+export function ownerReadPolicyFragment(pageAlias: string, identity: readonly string[], satisfied: readonly string[]): string {
+  const access: CallerAccess = { ...currentCallerAccess(), identity, satisfiedRuleIds: satisfied, lineage: true, ownerReadsRestricted: false, audienceKindMembers: [], restricted: true };
+  const ownPage = lineageReadPage(access);
+  return ownPage ? `(${lineageAccessSql(pageAlias, access, ownPage)} AND ${privacyPartSql(pageAlias)})` : 'FALSE';
+}
+
+/**
  * `privatePagesFilterFragment` with a cheap first test: a page with no
  * `visibility` or `derived_from` key (nor, unless the operator turned
  * `visibility.honor_aliases` off, a privacy-alias key, nor `readable_by` or `pinned_question`) whose type is not atom, concept,
