@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.700.0] - 2026-11-12
+
+### A gbrain commit no longer reverts someone else's commit of the same file
+
+**When a script, an agent or a person commits their edit of a page file while gbrain is committing the same file, their commit now stays.** If that commit landed between gbrain reading HEAD and moving the branch, gbrain's one retry used to rebuild its commit on top of it with the bytes gbrain had staged earlier. HEAD silently went back to gbrain's version, the next sync reported success with nothing imported, the index kept the other version staged, and later edits to the page could be refused as an uncoordinated local edit. The other writer's bytes survived only in their own commit.
+
+- A managed brain's Git effect now checks, before each commit attempt, that no commit since it staged its files changed any of them and that the index still holds what it staged. When one did, it commits nothing over it. A file whose edit the other writer committed completes `superseded` (reason `committed_by_another_writer`), the next sync imports the other version, and gbrain's write stays in the page's history. Every other file in the group is put back and retried on the new HEAD, so a file that still holds gbrain's bytes is committed on top.
+- A strict (`canonical: git`) source's write refuses `git_target_changed` in the same case instead of rebuilding over the other commit, so recovery handles it the way it handles an edit made during the write.
+- To find edits a brain already lost this way, [docs/guides/shared-checkout-git.md](docs/guides/shared-checkout-git.md#effect-reverted-edits) has a read-only loop over the history.
+
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git
