@@ -180,9 +180,11 @@ interface AmbientOptsShape {
 /**
  * GST-2243: who an HTTP credential writes as, for its instructions: a member-bound credential is one member; a credential
  * that may name a member per call (x-qm-actor on remember) writes as that member on those calls and as itself otherwise.
+ * GST-2346 D1: a credential bound to the brain owner (`ownerMember`, config access.owner_member) and fenced to no slug
+ * prefixes saves shared by default, so it is told what a credential bound to no member is told.
  */
-export function writebackCaller(auth: Pick<AuthInfo, 'member' | 'attest'> | undefined): { member?: true; actor?: true } {
-  if (auth?.member) return { member: true };
+export function writebackCaller(auth: Pick<AuthInfo, 'member' | 'attest' | 'boundSlugPrefixes'> | undefined, ownerMember?: string | null): { member?: true; actor?: true } {
+  if (auth?.member && !(ownerMember && auth.member.id === ownerMember.trim() && !auth.boundSlugPrefixes)) return { member: true };
   return auth?.attest?.ops.includes('remember') ? { actor: true } : {};
 }
 

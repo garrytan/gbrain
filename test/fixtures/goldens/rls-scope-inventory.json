@@ -3739,6 +3739,7 @@
         "getTimelineForDate": "none",
         "getUnverifiedExtractionPageIds": "none",
         "getVersions": "none",
+        "holdSchemaMigrationLock": "none",
         "initSchema": "none",
         "insertFact": "none",
         "insertFacts": "none",
