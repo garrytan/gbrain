@@ -205,6 +205,10 @@ describe('dispatch source-scope guard — remote callers must carry a resolved s
 
 describe('ingest log source scoping — log_ingest threads ctx.sourceId, get_ingest_log honors the grant', () => {
   beforeAll(async () => {
+    for (const [sourceId, slug] of [['u-alice', 'people/carol'], ['u-bob', 'people/dave']] as const) {
+      await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', [sourceId]);
+      await engine.putPage(slug, { type: 'person', title: slug, compiled_truth: 'Ingested page.', timeline: '', frontmatter: {} }, { sourceId });
+    }
     await dispatchToolCall(engine, 'log_ingest', {
       source_type: 'chat', source_ref: 'alice-conv-1', pages_updated: ['people/carol'], summary: 'alice private context',
     }, { remote: true, sourceId: 'u-alice' });

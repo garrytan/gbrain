@@ -103,13 +103,17 @@ const describe = (row: CapacityAttention) => `${row.scope} ${row.resource} ${row
   + `${row.days_to_exhaustion !== null ? `, about ${row.days_to_exhaustion} day(s) left` : ''})`;
 const VERIFY = CAPACITY_VERIFY;
 
+/**
+ * GST-2107: this notice rides receipts, sync status and cycle output whatever the call did, so it says first that it is not a
+ * refusal and its fix is the read-only forecast; the cap raise stays in doctor's finding for the brain host's operator, never in
+ * the tail of a write an agent may read as a refusal.
+ */
 function lowNotice(rows: CapacityAttention[]): Notice {
-  const [first] = rows;
   return { code: 'write_capacity_low', kind: 'info',
-    why: `Write capacity is running low: ${rows.map(describe).join('; ')}. Writes still work; admission refuses at the cap. `
-      + `The brain host raises it with ${rows.map(row => row.command).join('; ')} (each covers about one more year; reversible).`,
-    fix: { argv: ['gbrain', 'config', 'set', first!.config_key, String(first!.recommended_limit)], consent: [], actor: 'host_admin', requires_exclusive: false,
-      why: 'Raises the cap that runs out first to a value that covers about one more year; undo with gbrain config unset.', verify: VERIFY,
+    why: `This notice is not a refusal: writes still work, and this call's own result says what it did. Write capacity is running low: ${rows.map(describe).join('; ')}; admission refuses only at the cap. `
+      + 'gbrain doctor --only persistence_capacity --json reads the forecast and the remedy for the brain host.',
+    fix: { argv: [...VERIFY.argv], mcp: VERIFY.mcp, consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Reads which cap is running low, its forecast and the remedy, read-only; nothing needs to change for this call.', verify: VERIFY,
       docs: 'docs/guides/concurrent-writes.md#quota-near-exhaustion' } };
 }
 

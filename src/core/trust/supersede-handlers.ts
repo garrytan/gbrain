@@ -73,10 +73,12 @@ export async function lexicalContestCandidate(engine: BrainEngine, sourceId: str
 }
 
 /** The pending supersede_fact proposal for a contested write, inside its publication transaction. */
-export async function recordContestedFact(tx: BrainEngine, input: { sourceId: string; oldId: number; oldTier: TrustTier; newId: number; newTier: TrustTier; guard: string }): Promise<{ proposal_ref: string }> {
+export async function recordContestedFact(tx: BrainEngine, input: { sourceId: string; oldId: number; oldTier: TrustTier; newId: number; newTier: TrustTier; guard: string;
+  /** GST-2511: the widening the writer asked for; the new row is stored at `from` and the owner's accept sets `to`. */ visibility?: { from: string; to: string } }): Promise<{ proposal_ref: string }> {
   const { id } = await insertTrustProposal(tx, {
     action: 'supersede_fact', sourceId: input.sourceId, target: { table: 'facts', id: input.oldId }, related: { table: 'facts', id: input.newId },
-    proposer: input.guard, before: { guard: input.guard, old: { id: input.oldId, tier: input.oldTier }, new: { id: input.newId, tier: input.newTier } },
+    proposer: input.guard, before: { guard: input.guard, old: { id: input.oldId, tier: input.oldTier }, new: { id: input.newId, tier: input.newTier },
+      ...(input.visibility ? { visibility: input.visibility } : {}) },
   });
   return { proposal_ref: trustProposalRef(id) };
 }
@@ -172,6 +174,27 @@ function pairOf(row: TrustProposalRow): PairProposal | null {
   };
 }
 
+/**
+ * The visibility change a contested fence widening asked for (GST-2511), from the proposal's before_state; null unless
+ * `newId` is the contested row (the reversed view confirms the old row and widens nothing).
+ */
+async function requestedVisibility(engine: BrainEngine, id: number, newId: number): Promise<{ from: string; to: string } | null> {
+  const row = await getTrustProposal(engine, id);
+  const visibility = row?.before_state.visibility as { from?: unknown; to?: unknown } | undefined;
+  return row?.related_id === newId && typeof visibility?.from === 'string' && typeof visibility.to === 'string' ? { from: visibility.from, to: visibility.to } : null;
+}
+
+/** GST-2511: the page's fence still asks for `visibility` at the fact's row (same number and claim); a later write that narrowed it withdrew the widening. */
+async function fenceAsks(engine: BrainEngine, factId: number, visibility: string): Promise<boolean> {
+  const [fact] = await engine.executeRaw<{ fact: string; row_num: number | null; slug: string | null; source_id: string }>(
+    'SELECT fact, row_num, source_markdown_slug AS slug, source_id FROM facts WHERE id = $1', [factId]);
+  if (!fact?.slug || fact.row_num === null) return false;
+  const snapshot = await engine.readPageSnapshot(fact.slug, { sourceId: fact.source_id });
+  if (!snapshot) return false;
+  const { pageFenceRowKeys } = await import('../generations/fence-evidence.ts');
+  return (await pageFenceRowKeys(engine, snapshot.page, fact.slug, fact.source_id)).has(`${Number(fact.row_num)}\u0000${fact.fact}\u0000${visibility}`);
+}
+
 export const TRUST_PAIR_STORE: PairProposalStore = {
   name: 'trust',
   async get(engine, id, lock) {
@@ -186,17 +209,22 @@ export const TRUST_PAIR_STORE: PairProposalStore = {
       : undefined;
     return transitionTrustProposal(engine, id, fromPair(from) as TrustProposalRow['status'], fromPair(to) as TrustProposalRow['status'], after ? { after } : {});
   },
-  /** CEO-9: the owner's accept also confirms the new fact. */
+  /** CEO-9: the owner's accept also confirms the new fact, and applies the widening its writer asked for (GST-2511). */
   async onAccept(tx, proposal) {
+    const requested = await requestedVisibility(tx, proposal.id, proposal.new_fact_id);
+    const widen = requested && await fenceAsks(tx, proposal.new_fact_id, requested.to) ? requested : null;
     await withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw(
-      `UPDATE facts SET trust_tier = 'user_confirmed' WHERE id = $1 AND source_id = $2`, [proposal.new_fact_id, proposal.source_id]));
+      `UPDATE facts SET trust_tier = 'user_confirmed'${widen ? ', visibility = $3' : ''} WHERE id = $1 AND source_id = $2`,
+      [proposal.new_fact_id, proposal.source_id, ...(widen ? [widen.to] : [])]));
     for (const id of [proposal.old_fact_id, proposal.new_fact_id]) await queueTierProjection(tx, 'facts', id);
   },
   /** Undo returns the new fact to the tier it had before the accept confirmed it (lowering needs no promotion). */
   async onUndo(tx, proposal) {
     const row = await getTrustProposal(tx, proposal.id);
     const prior = storedTrustTier((row?.before_state.new as { tier?: unknown } | undefined)?.tier);
-    await tx.executeRaw(`UPDATE facts SET trust_tier = $3 WHERE id = $1 AND source_id = $2`, [proposal.new_fact_id, proposal.source_id, prior]);
+    const widen = await requestedVisibility(tx, proposal.id, proposal.new_fact_id);
+    await tx.executeRaw(`UPDATE facts SET trust_tier = $3${widen ? ', visibility = $4' : ''} WHERE id = $1 AND source_id = $2`,
+      [proposal.new_fact_id, proposal.source_id, prior, ...(widen ? [widen.from] : [])]);
     for (const id of [proposal.old_fact_id, proposal.new_fact_id]) await queueTierProjection(tx, 'facts', id);
     // W1 #6783 §12 (b): what was derived from the confirmed row while it was confirmed follows it back down.
     await propagateTierLowering(tx, [{ table: 'facts', id: proposal.new_fact_id }]);

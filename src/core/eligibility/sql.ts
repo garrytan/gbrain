@@ -47,6 +47,20 @@ export function quarantinedProjectionHiddenSql(table: Exclude<EligibilityTable, 
 }
 
 /**
+ * A deleted page takes its projections with it: a fact held on or about a soft-deleted page (its provenance page
+ * `source_markdown_slug` or its entity page `entity_slug`, in the fact's own source), and a take or timeline entry of
+ * a soft-deleted page, is hidden from every reader until the page is restored. Nothing is changed, so a restore brings
+ * every row back as it was.
+ */
+export function deletedPageProjectionHiddenSql(table: Exclude<EligibilityTable, 'pages'>, alias: string): string {
+  if (table === 'facts') {
+    return `NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.source_id = ${alias}.source_id
+      AND elig_dp.slug = ANY(ARRAY[${alias}.source_markdown_slug, ${alias}.entity_slug]) AND elig_dp.deleted_at IS NOT NULL)`;
+  }
+  return `NOT EXISTS (SELECT 1 FROM pages elig_dp WHERE elig_dp.id = ${alias}.page_id AND elig_dp.deleted_at IS NOT NULL)`;
+}
+
+/**
  * CEO-20: true for rows a proactive surface must not inject: tier at or below
  * agent_written and a write-gate flag receipt in an instruction family. The
  * receipt contract is the write gate's `write_gate_receipts (target_table,
@@ -71,12 +85,12 @@ export function rederiveHiddenSql(table: EligibilityTable, alias: string): strin
 
 /**
  * The whole row predicate for one projection table under a policy. Always
- * hides quarantined-page projections and rows awaiting re-derivation.
+ * hides deleted-page and quarantined-page projections and rows awaiting re-derivation.
  * Gate holds never reach these tables (write_gate_holds) and purged rows are
  * deleted, so neither needs a clause here.
  */
 export function projectionEligibleSql(table: Exclude<EligibilityTable, 'pages'>, alias: string, policy: ReadEligibility | undefined): string {
-  const clauses = [quarantinedProjectionHiddenSql(table, alias), rederiveHiddenSql(table, alias)];
+  const clauses = [deletedPageProjectionHiddenSql(table, alias), quarantinedProjectionHiddenSql(table, alias), rederiveHiddenSql(table, alias)];
   if (policy?.floor) clauses.push(trustFloorSql(alias, policy.floor));
   if (policy?.suppressFlagged) clauses.push(`NOT ${activationSuppressedSql(table, alias)}`);
   return clauses.join(' AND ');

@@ -28,6 +28,8 @@ import {
 import type { Check } from '../../doctor.ts';
 import { withSkippedSegmented } from '../check-fix.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { scanDeadline } from '../budget.ts';
+import { localProbe } from '../local-probe.ts';
 
 async function runStubGuard(ctx: DoctorContext): Promise<Check[]> {
   const { engine, orphanRatioSourceId } = ctx;
@@ -380,6 +382,7 @@ export const extractionBacklogsEntry: DoctorEntry = {
 
 async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
+  const { entryDeadlineAt } = ctx;
 
   // 3e. home_dir_in_worktree (v0.35.8.0; peeled to doctor/checks/home-worktree.ts).
   // Walks up from `gbrainPath()` toward $HOME looking for a VALIDATED `.git`
@@ -406,35 +409,19 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // whose bin is not on PATH still warns when no real gbrain is. Skips
   // silently when neither finds anything (e.g. running via `bun src/cli.ts`).
   try {
-    const { execSync, execFileSync } = await import('../../../core/spawn.ts');
     const { homedir } = await import('node:os');
     const bunGlobalRoot = join(process.env.BUN_INSTALL || join(homedir(), '.bun'), 'install', 'global');
     const globalPackages = [join(bunGlobalRoot, 'node_modules', 'gbrain')];
-    let npmRoot: string | undefined;
-    try {
-      npmRoot = execFileSync('npm', ['root', '-g'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 5000,
-        shell: process.platform === 'win32',
-      }).trim();
-      if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
-    } catch {
-      // No npm (or it failed): only Bun's global dir is checked.
-    }
-    let candidates: string[] = [];
-    try {
-      candidates = execSync('which -a gbrain', {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      })
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean);
-    } catch {
-      // `which` exits non-zero when gbrain isn't on PATH (or is missing
-      // entirely on this platform) — nothing to check.
-    }
+    // No npm (or it failed): only Bun's global dir is checked.
+    const npmRoot = (await localProbe(entryDeadlineAt, 'npm', ['root', '-g']))?.trim() || undefined;
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- npmRoot is the local operator's own `npm root -g` output, joined only to look for an installed gbrain package; trusted local CLI only
+    if (npmRoot) globalPackages.push(join(npmRoot, 'gbrain'));
+    // `which` exits non-zero when gbrain isn't on PATH (or is missing
+    // entirely on this platform) — nothing to check.
+    const candidates = ((await localProbe(entryDeadlineAt, 'which', ['-a', 'gbrain'])) ?? '')
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean);
     const { assessGbrainBinaries } = await import('../../../core/npm-squat-check.ts');
     const { fileURLToPath } = await import('node:url');
     const assessment = assessGbrainBinaries(candidates, {
@@ -517,8 +504,8 @@ async function runHomeDirInWorktree(ctx: DoctorContext): Promise<Check[]> {
   // GBRA-108: cron lines (and scripts they run) that call gbrain without GBRAIN_HOME (doctor/checks/cron-gbrain-home.ts).
   // No environment gate: a container can run cron too; without a crontab the check emits nothing.
   try {
-    const { cronGbrainHomeCheck, readCrontab } = await import('./cron-gbrain-home.ts');
-    const cron = cronGbrainHomeCheck(readCrontab(), process.env.GBRAIN_HOME || undefined);
+    const { cronGbrainHomeCheck } = await import('./cron-gbrain-home.ts');
+    const cron = cronGbrainHomeCheck(await localProbe(entryDeadlineAt, 'crontab', ['-l']), process.env.GBRAIN_HOME || undefined);
     if (cron) checks.push(cron);
   } catch {
     // Best-effort: an unreadable crontab never blocks doctor.

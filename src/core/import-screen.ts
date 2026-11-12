@@ -448,7 +448,7 @@ export function screenImportContent(input: ImportScreenInput): ImportScreenResul
   let fences: FenceScreen | undefined;
   if (input.fences) {
     const before = { compiled_truth: parsed.compiled_truth, timeline: parsed.timeline ?? '' };
-    const step = fenceStep(before, screenFenceCtx(parsed, input.activePack), { normalize: input.normalize !== false });
+    const step = fenceStep({ ...before, slug: parsed.slug }, screenFenceCtx(parsed, input.activePack), { normalize: input.normalize !== false });
     if (step.status === 'residual') {
       const issues = fenceIssuesWire([...step.issues, ...step.fixable]);
       if (input.fences === 'coordinated') return { status: 'refused', refusal: { ...fenceRefusal(step.location), fence_issues: issues } };

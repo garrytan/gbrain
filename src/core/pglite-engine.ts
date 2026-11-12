@@ -126,7 +126,8 @@ import { resolveBoostMap, resolveHardExcludes } from './search/source-boost.ts';
 import { buildSourceFactorCase, buildHardExcludeClause, buildVisibilityClause, buildBestPerPagePoolCte, buildOrFallbackWebsearchQuery, boundWebsearchQuery, collapseWebsearchDashRuns, keywordPhraseFactorSql } from './search/sql-ranking.ts';
 import { RARE_TERM_CHUNK_CAP, rankOrFallbackByRarity, rareTermPagesSql, type RareTermPages } from './search/keyword-or-rarity.ts';
 import { keywordArmRows } from './search/keyword-identifier-probe.ts';
-import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateProvenanceFilterFragment, privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { privatePagesFilterFragment, privateSnapshotFilterFragment, privateLinkOriginFilterFragment, privateTimelineEventFilterFragment, privateFactFilterForCaller, privatePagesFilterForCaller } from './search/private-visibility.ts';
+import { deletedPageProjectionHiddenSql } from './eligibility/sql.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import {
   vectorCastSuffix,
@@ -172,6 +173,7 @@ import * as keywordPagesImpl from './engine-sql/keyword-pages.ts';
 import { applyForwardReferenceBootstrap, pgliteBootstrapTarget } from './engine-sql/bootstrap.ts';
 import { wellFormedJson } from './text-safe.ts';
 import { ENGINE_ROOT } from './engine-root.ts';
+import { insertEvalCandidate } from './feedback/store.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -1163,13 +1165,16 @@ export class PGLiteEngine implements BrainEngine {
       dims = storedIdentity.dimensions;
       model = storedIdentity.model;
     }
-    await this.applyForwardReferenceBootstrap();
-    await this.db.exec(getPGLiteSchema(dims, model));
+    const { runMigrations, withSchemaMigrationLock } = await import('./migrate.ts'); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
+    await withSchemaMigrationLock(this, async () => {
+      await this.applyForwardReferenceBootstrap();
+      await this.db.exec(getPGLiteSchema(dims, model));
 
-    const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
-    if (applied > 0) {
-      process.stderr.write(`  ${applied} migration(s) applied\n`);
-    }
+      const { applied } = await runMigrations(this);
+      if (applied > 0) {
+        process.stderr.write(`  ${applied} migration(s) applied\n`);
+      }
+    });
     await registerManagedFilesystemEngine(this, this._savedConfig?.database_path);
   }
 
@@ -2059,7 +2064,7 @@ export class PGLiteEngine implements BrainEngine {
     sourceId?: string;
     sourceIds?: string[];
     excludePrivate?: boolean;
-    mode?: 'inbound' | 'islanded';
+    mode?: 'inbound' | 'islanded'; scopeInbound?: boolean;
   }): Promise<Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; source_id?: string }>> {
     return plannerRead(this, this._pageTransaction, () => linksImpl.findOrphanPages(unscopedExecutor(this.engineSql, 'links: unscoped on master (EO4 inventory)'), opts));
   }
@@ -2192,9 +2197,9 @@ export class PGLiteEngine implements BrainEngine {
     let scope: string;
     if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
-    // Page-visibility gate on the provenance page, applied BEFORE DISTINCT ON
-    // so the untrusted caller resolves the newest value they may see.
-    const privacy = opts?.excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
+    // Page-visibility gate on the provenance and entity pages, applied BEFORE DISTINCT ON
+    // so the untrusted caller resolves the newest value they may see; a deleted page's observations are hidden for everyone.
+    const privacy = `AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`;
     params.push(opts?.visibility ?? null);
     const visibility = `AND ($${params.length}::text[] IS NULL OR visibility = ANY($${params.length}::text[]))`;
     const r = await this.db.query(
@@ -2236,9 +2241,9 @@ export class PGLiteEngine implements BrainEngine {
     let scope: string;
     if (opts?.sourceIds && opts.sourceIds.length) { params.push(opts.sourceIds); scope = `AND source_id = ANY($${params.length})`; }
     else { params.push(opts?.sourceId ?? null); scope = `AND ($${params.length}::text IS NULL OR source_id = $${params.length})`; }
-    // Same provenance-page gate as getOntology, inside the CTE so a conflict
+    // Same page gates as getOntology, inside the CTE so a conflict
     // that only exists because of a hidden provenance is never reported.
-    const privacy = opts?.excludePrivate ? `AND ${privateProvenanceFilterFragment('facts')}` : '';
+    const privacy = `AND ${deletedPageProjectionHiddenSql('facts', 'facts')}${opts?.excludePrivate ? ` AND ${privateFactFilterForCaller('facts')}` : ''}`;
     params.push(opts?.visibility ?? null);
     const visibility = `AND ($${params.length}::text[] IS NULL OR visibility = ANY($${params.length}::text[]))`;
     const r = await this.db.query(
@@ -2995,32 +3000,7 @@ export class PGLiteEngine implements BrainEngine {
 
   // Eval capture (v0.25.0). See BrainEngine interface docs.
   async logEvalCandidate(input: EvalCandidateInput): Promise<number> {
-    const { rows } = await this.db.query<{ id: number }>(
-      `INSERT INTO eval_candidates (
-         tool_name, query, retrieved_slugs, retrieved_chunk_ids, source_ids,
-         expand_enabled, detail, detail_resolved, vector_enabled, expansion_applied,
-         latency_ms, remote, job_id, subagent_id, embedding_column
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-       RETURNING id`,
-      [
-        input.tool_name,
-        input.query,
-        input.retrieved_slugs,
-        input.retrieved_chunk_ids,
-        input.source_ids,
-        input.expand_enabled,
-        input.detail,
-        input.detail_resolved,
-        input.vector_enabled,
-        input.expansion_applied,
-        input.latency_ms,
-        input.remote,
-        input.job_id,
-        input.subagent_id,
-        input.embedding_column ?? null,
-      ]
-    );
-    return rows[0]!.id;
+    return insertEvalCandidate(this, input);
   }
 
   async listEvalCandidates(filter?: { since?: Date; limit?: number; tool?: 'query' | 'search' }): Promise<EvalCandidate[]> {

@@ -11,14 +11,16 @@ import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
-import type { OperationMeta } from '../core/ops/contract.ts';
+import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
-import { appliedAccessSummary, remoteCallerAccess } from '../core/access/caller.ts';
+import { appliedAccessSummary, folderAccessFor, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
-import { qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
+import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
+import { attestedReadScope } from '../core/access/member-sources.ts';
+import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
@@ -48,6 +50,7 @@ import {
   findInvalidParam,
   schemaInvalidParams,
   findUnknownParams,
+  narrowingUnknownParams,
   resolveStrictParamsMode,
 } from './validate-params.ts';
 import { backupCheckDisabled, backupNagGate, backupNoticeText, loadBackupStatus } from '../core/backup/status-file.ts';
@@ -307,6 +310,10 @@ export interface DispatchOpts {
   surfaceCeiling?: 'verbs' | 'starter' | 'full';
   /** The stdio session surface (OperationContext.stdioSurface); its allow-set is the one `allowedOps` mirrors. */
   stdioSurface?: OperationContext['stdioSurface'];
+  /** GST-363: OperationContext.stdioMember, from the stdio server's own argv (serve --stdio-member); no other transport sets it. */
+  stdioMember?: string;
+  /** GST-2476 G2: an enforced member CLI read (cli/enforced-member.ts): privacy stays hidden whatever the hatches say, and no owner relaxation. */
+  enforcedMember?: true;
   /** Threaded into OperationContext.revealTools (stdio session tool reveal). */
   revealTools?: (names: string[]) => void;
   /**
@@ -740,6 +747,17 @@ async function hiddenContentNotices(engine: BrainEngine, name: string, result: u
   }
 }
 
+/**
+ * GST-2353: a refusal safe to retry carries the call to repeat (next: wait) in the id parameter the tool takes: its
+ * request_id with the id it was refused under, or the same arguments when the tool replays by its idempotency_key.
+ */
+function attachRetryCall(op: Pick<Operation, 'mutating' | 'params'>, name: string, params: Record<string, unknown>, e: unknown): void {
+  if (!op.mutating || !(e instanceof OperationError) || e.retryable !== true || !e.fix || e.fix.mcp) return;
+  const retry = op.params.request_id ? (e.requestId ? { ...params, request_id: e.requestId } : null)
+    : op.params.idempotency_key && typeof params.idempotency_key === 'string' ? params : null;
+  if (retry) e.fix = { ...e.fix, mcp: { tool: name, arguments: retry } };
+}
+
 /** A refusal a grant explains: a missing scope or an operation outside the grant's snapshot or fence. */
 function refusedByGrant(e: unknown): boolean {
   return e instanceof OperationError && (e.code === 'insufficient_scope' || e.code === 'permission_denied');
@@ -949,6 +967,7 @@ export function buildOperationContext(
     ...(opts.explicitReadBinding ? { explicitReadBinding: opts.explicitReadBinding } : {}),
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
+    ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),
@@ -994,6 +1013,8 @@ export async function dispatchToolCall(
     let audience: AudiencePrincipal[] | null = null;
     let attested: Awaited<ReturnType<typeof resolveAttestedActor>> = null;
     let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
+    let readMode: ReadMode | null = null;
+    let scoped = resolved;
     const header = opts.actor?.header ?? undefined;
     const actorNamed = header !== undefined || opts.actor?.audience != null || (!!args && Object.prototype.hasOwnProperty.call(args, ACTOR_ARGUMENT));
     const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
@@ -1005,7 +1026,12 @@ export async function dispatchToolCall(
       audience = parseAudience(opts.onBehalfOf);
       attested = await resolveAttestedActor(engine, { channels: opts.actor, params: args, op: name, opShape: op,
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
-      access = attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience);
+      // GST-1158 E1: an attested read that names sources reads as the scope (access/scope-read.ts), or as the person on an attest_read person credential.
+      readMode = attested?.actor ? attestedReadMode(name, attested.params, attested.read) : null;
+      access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined, readOnly);
+      // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
+      if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
+      if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
       // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
@@ -1019,10 +1045,15 @@ export async function dispatchToolCall(
     if (audience || attested?.actor) assertion('accepted');
     const callParams = attested ? attested.params : args;
     return withCallerAccess(access, async () => {
-      const out = await withRequestIdentityMemo(() => dispatchResolvedCall(engine, name, callParams, resolved));
+      const out = await withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped)));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
-      try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, opts.auth, [opts.sourceId, ...(opts.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
-      return qmMemoryToolResult(name, out);
+      try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, scoped.auth, [scoped.sourceId, ...(scoped.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
+      const personal = !!attested?.actor;
+      const shaped = qmMemoryToolResult(name, out, personal);
+      // GST-1158 F2: a personal read's structuredContent repeats its JSON, so the final frame is measured again.
+      if (!personal || shaped === out || shaped.isError || !QM_PERSONAL_OPS.has(name) || op?.mutating !== false) return shaped;
+      const over = await frameOverCap(shaped, { remote: true, transport: opts.transport === 'stdio' ? 'stdio' : 'http', engine, config: opts.config ?? loadConfig() });
+      return over ? qmMemoryToolResult(name, errorResult(resultTooLargeError(name, callParams ?? {}, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true }), true) : shaped;
     });
   };
   if (name === 'search' || name === 'query') return withSearchConnectionBudget(() => withRequestConfigSnapshot(engine, run));
@@ -1179,7 +1210,9 @@ async function dispatchResolvedCall(
   const unknownParamWarnings = findUnknownParams(op, safeParams);
   if (unknownParamWarnings.length > 0) {
     const strictMode = op.mutating === true ? 'reject' : await resolveStrictParamsMode(engine, opts.config ?? loadConfig());
-    if (strictMode === 'reject') {
+    // GBRA-431: a misspelled scope or filter on a read would answer unnarrowed, so it rejects in every mode.
+    const narrowing = strictMode === 'reject' ? [] : narrowingUnknownParams(unknownParamWarnings, Object.keys(op.params));
+    if (strictMode === 'reject' || narrowing.length > 0) {
       logVerb(false);
       // Privacy (amendment 11): the raw unknown key rides `suggestion` ONLY.
       // serve-http persists the envelope's `message` into
@@ -1192,7 +1225,7 @@ async function dispatchResolvedCall(
           : `Unknown parameter "${w.param}".`)
         .join(' ') + (op.callShape ? ` ${op.callShape}` : '');
       const strict = new OperationError('invalid_params',
-        `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (${op.mutating === true ? 'write operations always reject unknown parameters; nothing was written' : 'mcp.strict_params=reject'}). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
+        `${n} unknown parameter${n === 1 ? '' : 's'} not declared in the ${name} tool schema (${op.mutating === true ? 'write operations always reject unknown parameters; nothing was written' : narrowing.length > 0 ? 'a read rejects an unknown scope or filter parameter, which would otherwise return unnarrowed results; nothing was read' : 'mcp.strict_params=reject'}). See suggestion for the submitted name${n === 1 ? '' : 's'}.`,
         suggestion);
       if (isVerb) strict.protocolVersion = MEMORY_VERBS_VERSION;
       return errorResult(strict, opts, { op: name });
@@ -1369,6 +1402,7 @@ async function dispatchResolvedCall(
     // never tells a mutating op with an unknown outcome to retry.
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
+    attachRetryCall(op, name, safeParams, e);
     return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

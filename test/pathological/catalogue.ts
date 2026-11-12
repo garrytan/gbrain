@@ -82,4 +82,7 @@ export const CATALOGUE: Record<IsolateSite, SiteCases> = {
     item: 'A-25 item: the 5 newest pages fail every run', run: 'A-25 run: a run-scoped' },
   'extract_facts.phantom_redirect': { file: 'test/pathological/a24-phantom-redirect-cursor.test.ts',
     item: 'A-24 item: a phantom whose redirect throws is reported with its code and fix', run: 'A-24 run: a run-scoped' },
+  'memory_proposals.upkeep_authority': { file: 'test/pathological/a68-memory-proposal-upkeep.test.ts',
+    item: 'item: a proposal whose authority check throws is counted and left awaiting; the rest still close, expire and purge',
+    run: 'run: a run-scoped failure (' },
 };

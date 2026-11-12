@@ -1,7 +1,7 @@
 /** Post-sync human reporting and best-effort nudges for the sync CLI. */
 import { formatManagedSyncFailure, managedSyncRetryCommand } from '../../core/persistence/sync-failures.ts';
 import type { BrainEngine } from '../../core/engine.ts';
-import { isEmbeddingInfraCode } from '../../core/sync.ts';
+import { isEmbeddingInfraCode, STRICT_REQUIRES_MANAGED } from '../../core/sync.ts';
 import { serr } from '../../core/console-prefix.ts';
 import { printManagedSyncDiagnostic, printManagedSyncNotes } from '../sync-diagnostics.ts';
 import type { SyncResult } from '../sync.ts';
@@ -132,7 +132,9 @@ export function printSyncResult(result: SyncResult, sink: NodeJS.WriteStream = p
       // #3875: code-aware recovery hint — provider-infra failures are not
       // fixed by --skip-failed (that would silently unindex good files).
       const infraCodes = (result.failureCodes ?? []).filter(c => isEmbeddingInfraCode(c.code));
-      if (infraCodes.length > 0) {
+      if ((result.failureCodes ?? []).some(c => c.code === STRICT_REQUIRES_MANAGED)) {
+        write(`  ${STRICT_REQUIRES_MANAGED}: ${result.failureAdvice ?? 'the source is git-canonical and this brain does not have managed persistence. Do not use --skip-failed.'}`);
+      } else if (infraCodes.length > 0) {
         write(
           `  Embedding provider errors (${infraCodes.map(c => `${c.code} x${c.count}`).join(', ')}): ` +
           `check provider health, then re-run 'gbrain sync' (or 'gbrain sync --full'). ` +

@@ -326,6 +326,31 @@ export function privateFactNotice(factId?: string | number): Notice {
   };
 }
 
+/**
+ * GST-2446: remember saved a fact for an entity that has no page, on a source whose pages are in Git. Once per entity
+ * per session. GST-2492: a fact held in Git (on memory/unattributed) needs nothing, so the notice only says where it is
+ * and when it moves; a fact in the database alone needs the user's word, so the step asks before creating the page.
+ */
+export function entityPageMissingNotice(sourceId: string, entitySlug: string, held = false): Notice {
+  const base = { code: 'entity_page_missing', kind: 'info' as const, dedupe_key: `${sourceId}\0${entitySlug}` };
+  if (held) return { ...base,
+    why: `Saved and committed to Git; held on memory/unattributed until ${entitySlug} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table, in its file.` };
+  const userMessage = `The fact is saved in the database only: ${entitySlug} has no page, so it is in no file in Git. Should I create a page for ${entitySlug}?`;
+  return { ...base,
+    why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save, and ask the user whether to create the page; once it exists, the next maintenance cycle (gbrain dream) can move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,
+    user_message: userMessage,
+    fix: {
+      ask_user: true,
+      argv: ['gbrain', 'put', entitySlug],
+      mcp: { tool: 'put_page', arguments: { slug: entitySlug, content: '<content>' } },
+      inputs: [{ name: 'content', how: `The page as Markdown: frontmatter with type and title, then what is known about ${entitySlug}. On the CLI, pass it on stdin.` }],
+      consent: [], actor: 'agent', requires_exclusive: false,
+      why: `Creates the page ${entitySlug}, so its facts have a file. Run it only after the user agrees.`,
+      verify: { argv: ['gbrain', 'get', entitySlug], mcp: { tool: 'get_page', arguments: { slug: entitySlug } } },
+    },
+  };
+}
+
 // ── dispatch producer ──────────────────────────────────────────────────────
 
 /** think's warning when the brain opted out of embedding and the question was never embedded. */

@@ -137,8 +137,9 @@ With the operator's go-ahead, upgrade in this order:
    lists the installs on PATH; a harness, cron wrapper or service may run
    another by absolute path). It restarts serve, autopilot and the jobs
    supervisor onto the new build and verifies one build runs. A process it
-   cannot restart (one started by hand, a running `gbrain sync`, an MCP server
-   a harness started) refuses with `restart_refused` (exit 3) before anything
+   cannot restart (one started by hand, an autopilot a cron entry or wrapper
+   starts unless `self_upgrade.autopilot_launcher external` declares it, a
+   running `gbrain sync`, an MCP server a harness started) refuses with `restart_refused` (exit 3) before anything
    installs: relay the step it names; `--stop-mcp` only after the user agrees.
 5. Verify: `gbrain --version` per install, and
    `gbrain doctor --only runtime_build_skew,serve_build_drift --json` ok. On a

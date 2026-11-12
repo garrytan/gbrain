@@ -47,6 +47,34 @@ export const FACT_FINGERPRINT_FUNCTION_STATEMENTS = [
  * ledger rows written earlier carry the exact v1 fingerprint and keep
  * matching through gbrain_fact_fingerprint_v1.
  */
+/**
+ * The insert and update guard that stamps a row matching a withdrawal as withdrawn. GST-2346: a row on a member page
+ * (memory/members/<id>) matches only that page's own withdrawals: it is its member's own, a withdrawal made later still expires it, and the member's
+ * save checks the withdrawals of claims that member reads (facts/single-prepare.ts), so a claim it never read cannot
+ * expire the row it saves. Re-created alone by the member_page_withdrawal_scope migration.
+ */
+export const FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_preserve_fact_withdrawal() RETURNS trigger
+    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+    DECLARE withdrawn TIMESTAMPTZ;
+    BEGIN
+      IF NEW.expired_at IS NULL THEN
+        -- Serializes insertion with source-locked withdrawal, including a
+        -- concurrent reimport. Ordinary row locks work on both engines.
+        PERFORM id FROM sources WHERE id = NEW.source_id FOR SHARE;
+        SELECT min(withdrawn_at) INTO withdrawn FROM fact_withdrawals
+          WHERE source_id = NEW.source_id AND visibility = NEW.visibility
+            AND (CASE WHEN starts_with(COALESCE(NEW.source_markdown_slug, ''), 'memory/members/') THEN subject = NEW.source_markdown_slug
+              ELSE subject = '*' OR subject = NEW.entity_slug END)
+            AND fact_hash IN (gbrain_fact_fingerprint(NEW.fact), gbrain_fact_fingerprint_v1(NEW.fact));
+        IF withdrawn IS NOT NULL THEN
+          NEW.expired_at := withdrawn;
+          NEW.valid_until := LEAST(COALESCE(NEW.valid_until, withdrawn), withdrawn);
+        END IF;
+      END IF;
+      RETURN NEW;
+    END
+    $fn$`;
+
 export const FACT_WITHDRAWAL_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS fact_withdrawals (
     source_id TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
@@ -57,26 +85,7 @@ export const FACT_WITHDRAWAL_SCHEMA_STATEMENTS = [
     PRIMARY KEY (source_id, visibility, subject, fact_hash)
   )`,
   ...FACT_FINGERPRINT_FUNCTION_STATEMENTS,
-  `CREATE OR REPLACE FUNCTION gbrain_preserve_fact_withdrawal() RETURNS trigger
-    LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
-    DECLARE withdrawn TIMESTAMPTZ;
-    BEGIN
-      IF NEW.expired_at IS NULL THEN
-        -- Serializes insertion with source-locked withdrawal, including a
-        -- concurrent reimport. Ordinary row locks work on both engines.
-        PERFORM id FROM sources WHERE id = NEW.source_id FOR SHARE;
-        SELECT min(withdrawn_at) INTO withdrawn FROM fact_withdrawals
-          WHERE source_id = NEW.source_id AND visibility = NEW.visibility
-            AND (subject = '*' OR subject = NEW.entity_slug)
-            AND fact_hash IN (gbrain_fact_fingerprint(NEW.fact), gbrain_fact_fingerprint_v1(NEW.fact));
-        IF withdrawn IS NOT NULL THEN
-          NEW.expired_at := withdrawn;
-          NEW.valid_until := LEAST(COALESCE(NEW.valid_until, withdrawn), withdrawn);
-        END IF;
-      END IF;
-      RETURN NEW;
-    END
-    $fn$`,
+  FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL,
   `DROP TRIGGER IF EXISTS facts_preserve_withdrawal ON facts`,
   `CREATE TRIGGER facts_preserve_withdrawal BEFORE INSERT OR UPDATE OF fact, source_id, visibility, entity_slug, expired_at ON facts
     FOR EACH ROW EXECUTE FUNCTION gbrain_preserve_fact_withdrawal()`,

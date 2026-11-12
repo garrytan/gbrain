@@ -5,7 +5,8 @@
 > [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the README covers the
 > bootstrap and connect paths.
 
-Two supported shapes, both stdio.
+Two supported shapes, both stdio. A bot that several people DM connects over
+HTTP instead: see [One bot for several people, in DMs](#one-bot-for-several-people-in-dms).
 
 ## Option 1: ClawHub bundle plugin
 
@@ -71,6 +72,195 @@ plus `request_tools`, which reaches every other tool; drop the
 Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`
 counts, …) to that one source, and nothing warns on reads.
+
+## One bot for several people, in DMs
+
+When one OpenClaw bot answers several people, each in their own DM, each DM can
+read only the pages that person may read. The bot speaks to the brain as a
+[shared agent](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape):
+every call carries an `X-Gbrain-On-Behalf-Of` header naming the person, and the
+brain answers with that person's view, within the bot's own source grant. On
+OpenClaw a small plugin sets the header from the DM's sender through the
+[requester-scoped MCP connection resolver](https://docs.openclaw.ai/plugins/sdk-overview/infrastructure)
+(`api.registerMcpServerConnectionResolver`). OpenClaw supplies the sender, not
+the model, and the header rides on the transport; an audience put in tool
+arguments is refused (`on_behalf_of_in_arguments`).
+
+**Say to your agent:** *"Set up my OpenClaw bot so each DM reads only what that
+person may read"*, then *"Show what alice-example's DMs can read"* (it runs
+`gbrain access check --token openclaw-dm-bot --as alice-example` on the brain host).
+
+**DMs only.** The resolver learns who sent the turn (`requesterSenderId`, with
+`messageChannel` and `agentAccountId`), not whether the turn came from a group
+or who else is in it. On a group turn the sender's view would be shown to the
+whole group. Use this recipe only on a gateway where every conversation has one
+person in it: set [`groupPolicy: "disabled"`](https://docs.openclaw.ai/channels/groups)
+on each channel and turn `dm.groupEnabled` off on Discord and Slack. Group
+audiences are tracked in #8534.
+
+### Before you share a personal brain through the bot
+
+Each DM reads as one member, so anything that relaxes privacy for a single
+member relaxes it for every person the bot serves:
+
+- **No private-pages grant on the bot.** Never give its token
+  `--private-pages granted-sources`. With it, every mapped person reads every
+  `visibility: private` page in the bot's sources, which on a personal brain are
+  your own private pages.
+- **Host hatches off.** `GBRAIN_REMOTE_PRIVATE_PAGES` and
+  `search.remote_private_pages` apply to every remote caller on the host, this
+  bot included. Leave both unset while the bot runs.
+- **A dedicated token bound to no member.** Make a new token for the bot. Don't
+  reuse your own agent's token or bind the bot's token to your member: your DMs
+  through the bot then read like anyone else's, and your own agent keeps your
+  full view.
+- **Pages only you should read name you as their reader.** Today `access:
+  private` and `visibility: private` hide a page from this bot. Clearing those
+  labels, by hand or in bulk with `gbrain repair private-labels`, makes the
+  pages readable in every DM and by `guest`. Before you clear them, give the
+  pages you want to keep to yourself `readable_by: [<your member>]` or a folder
+  rule (`gbrain access rule add --prefix <folder>/ --readers <your member>`).
+
+`gbrain access check --token openclaw-dm-bot --as <member>` must show
+`Private pages: none` for the bot.
+
+### Keep the gateway's people apart too
+
+The header separates the brain's answers. The rest of the gateway has to keep
+people apart as well
+([OpenClaw's trust model](https://docs.openclaw.ai/gateway/security/trust-model)
+treats one gateway as one trust boundary, so people who must not trust each
+other need separate gateways):
+
+- [`session.dmScope: "per-channel-peer"`](https://docs.openclaw.ai/concepts/session)
+  (`per-account-channel-peer` with several accounts on one channel). The default,
+  `main`, puts every DM in one session, so one person's brain results land in
+  the next person's context.
+- `tools.sessions.visibility: "self"`, so session tools can't read another
+  person's DM transcript.
+- No shell or file tools for this agent on the gateway host: commands there
+  inherit the gateway's environment, which holds the bot's token, and a local
+  `gbrain` or database URL reads every page.
+- Leave the `gbrain-context-engine` slot unset for this bot. It reads through
+  the host's own brain connection, not the bot's token.
+
+### On the brain host
+
+Run `gbrain serve --http` ([deploy guide](DEPLOY.md)). Add each person as a
+member, make a read-only token for the bot, and list whom it may act for: each
+person's member id, plus `guest` for senders who have none. Never `*`.
+
+```bash
+gbrain access member add alice-example
+gbrain access member add bob-example
+gbrain auth create openclaw-dm-bot --scopes read     # prints the token once
+gbrain auth rescope --token openclaw-dm-bot --sources <source-id> --may-act-for alice-example,bob-example,guest
+gbrain access check --token openclaw-dm-bot --as alice-example
+```
+
+**Keep the token read-only.** An audience limits which existing pages a write
+can reach, not where a new page lands. A write-capable token keeps its own
+write grant whatever the header says, so a page made in one DM outside a ruled
+folder (a new top-level page, a `capture` into `inbox/`) is read by everyone
+the source admits, `guest` included, unless the write names `readable_by`,
+which is the model's choice and not a fence. If the bot has to write for people
+who must not affect each other's data, register one client per person with
+`--bound-slug-prefixes <their folder>/`
+([Model B](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape));
+the resolver can return each sender's own credential.
+
+### On the OpenClaw host
+
+Put the token in the gateway's environment as `GBRAIN_DM_BOT_TOKEN`, never in
+`openclaw.json`. Declare the server by URL alone. This replaces Option 2's stdio
+entry, and an `mcp.servers` entry also takes the place of the bundle plugin's
+server of the same name:
+
+```bash
+openclaw mcp set gbrain '{"url":"https://brain.example.com/mcp","transport":"streamable-http"}'
+```
+
+Then write the plugin, a directory `gbrain-dm-audience` with three files.
+
+`package.json`:
+
+```json
+{ "name": "gbrain-dm-audience", "version": "1.0.0", "private": true, "type": "module", "openclaw": { "extensions": ["./index.js"] } }
+```
+
+`openclaw.plugin.json`:
+
+```json
+{
+  "id": "gbrain-dm-audience",
+  "name": "GBrain DM audience",
+  "description": "Names each DM's sender to gbrain as X-Gbrain-On-Behalf-Of",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "url": { "type": "string" },
+      "members": { "type": "object", "additionalProperties": { "type": "string" } }
+    }
+  }
+}
+```
+
+`index.js`:
+
+```js
+export default {
+  id: 'gbrain-dm-audience',
+  name: 'GBrain DM audience',
+  description: "Names each DM's sender to gbrain as X-Gbrain-On-Behalf-Of",
+  register(api) {
+    const { url, members = {} } = api.pluginConfig ?? {};
+    api.registerMcpServerConnectionResolver({
+      serverName: 'gbrain',
+      resolve(ctx) {
+        const token = process.env.GBRAIN_DM_BOT_TOKEN;
+        if (!url || !token || !ctx.requesterSenderId) return null;
+        const sender = `${ctx.messageChannel ?? ''}:${ctx.requesterSenderId}`;
+        const audience = Object.hasOwn(members, sender) ? members[sender] : 'guest';
+        return { url, headers: { Authorization: `Bearer ${token}`, 'X-Gbrain-On-Behalf-Of': audience } };
+      },
+    });
+  },
+};
+```
+
+Install and enable it, map each sender to a member, and restart the gateway.
+A sender key is `<messageChannel>:<requesterSenderId>` as OpenClaw passes them.
+Map only ids the channel authenticates, such as numeric user ids, never display
+names or nicknames.
+
+```bash
+openclaw plugins install --link ./gbrain-dm-audience --force --accept-capabilities
+openclaw plugins enable gbrain-dm-audience
+openclaw config set plugins.entries.gbrain-dm-audience.config '{"url":"https://brain.example.com/mcp","members":{"telegram:<sender id>":"alice-example"}}' --strict-json
+```
+
+### What each DM gets
+
+- A mapped sender reads as their member: the pages every member may read, plus
+  pages whose `readable_by` or folder rule lists them, within the bot's sources.
+- An unmapped sender reads as `guest`: no restricted page and no private page.
+  To give unmapped senders no brain at all, return `null` from `resolve` when
+  `members` has no entry for the sender.
+- A mapped member outside `--may-act-for` is refused
+  (`on_behalf_of_not_permitted`), and one that names no enabled member is refused
+  (`on_behalf_of_unknown_member`); nothing is read either way
+  ([shared-agent refusals](../guides/write-refusals.md#shared-agent-refusals)).
+- Runs without a trusted sender (cron, heartbeat, subagents) get no gbrain
+  server from the resolver. Scheduled jobs that use the
+  [wrapper below](#scheduled-jobs-and-workspace-scripts) read as the brain
+  owner, so never send their output to someone's DM.
+
+To stop the bot reading for someone, take them out of `--may-act-for`. gbrain
+reads that list on every call; OpenClaw may keep a resolved connection for a
+few minutes. To check from a DM, ask the bot to call `whoami`: its
+`access.applied` names the audience the call read as, and `relaxation` must
+read `none`.
 
 ## Brain-first instructions
 

@@ -24,8 +24,9 @@ import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolder
 import { tightenToPage } from '../facts/visibility.ts';
 import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
 import { noteBelief } from '../belief/ledger.ts';
-import { MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
+import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
+import { parseStoredActor } from '../access/actor-model.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -73,6 +74,9 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       { fix: requestReceiptFix(row) });
   }
   const p = row.intent;
+  // GST-2249 W1: a stored save made for an attested person never publishes shared, whenever it was admitted. An audience
+  // (on_behalf_of) is not an attested person, so a shared agent's share: true still publishes.
+  if (p.share === true && parseStoredActor(row.authority?.actingFor)) throw attestedShareRefused(opError);
   const claim = storedClaim(p);
   const input: SingleFactIntent = { fact: String(p.fact).trim(), kind: (p.kind ?? 'fact') as SingleFactIntent['kind'],
     visibility: (p.visibility ?? 'world') as SingleFactIntent['visibility'], entity_slug: p.entity_slug as string | null,
@@ -84,10 +88,15 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...snapshot.page, source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
+  // GST-2243: a shared fact whose page turned restricted after admission is refused, never saved private under a world receipt.
+  if (p.share === true && input.visibility !== 'world') {
+    throw Object.assign(opError('invalid_params', `remember: share: true cannot share a fact on ${row.slug}, whose facts are now kept private; nothing was saved.`,
+      'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'), { reason: 'share_target_restricted' });
+  }
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
-  await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate });
+  await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
   signal?.throwIfAborted();
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
@@ -125,7 +134,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const lexicalOld = await lexical(engine);
   const contestedOld = contested ? decision.candidate! : lexicalOld;
   const validate = async (tx: BrainEngine) => {
-    await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
+    await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
@@ -148,7 +157,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
   if (gate.action === 'reject') throw writeGateRejectedError(gate.assessment);
-  if (gate.action === 'hold') return { observedRevision, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
+  if (gate.action === 'hold') return { observedRevision, noop: true, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
   // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
   let fence: FenceFactAppend | undefined;

@@ -232,7 +232,8 @@ function notifierKit(opts: CommitNotifierOptions) {
 const closeWatch = (rt: Rt) => { if (rt.watchClose) { try { rt.watchClose(); } catch { /* best effort */ } rt.watchClose = null; } };
 const mode = (rt: Rt): DetectionMode => rt.watchClose ? 'watch' : 'poll';
 const markerKey = (rt: Rt) => `${rt.head ?? ''}|${rt.markers.map(m => `${m.intent}:${m.generation}`).join(',')}`;
-const due = (rt: Rt) => (rt.watched && !!rt.head && rt.head !== rt.lastCommit) || rt.markers.length > 0;
+// GST-2515: an unwatched source (sync.on_commit off) has no HEAD to compare, so a run it owes (retry, or due after a resume or restart) keeps it due after its marker is gone.
+const due = (rt: Rt) => (rt.watched && !!rt.head && rt.head !== rt.lastCommit) || rt.markers.length > 0 || (!rt.watched && (rt.state === 'retry' || rt.state === 'due'));
 
 /** Merges a fresh source listing into the runtime map (a moved root starts over); returns the sources new to it. */
 function mergeListed(sources: Map<string, Rt>, rows: NotifierSource[]): Rt[] {
@@ -255,12 +256,13 @@ function mergeListed(sources: Map<string, Rt>, rows: NotifierSource[]): Rt[] {
 /** The intent a start asks for (full over pull over freshness) and its time slice. */
 function startPlan(rt: Rt, candidates: number, opts: Pick<CommitNotifierOptions, 'firstSliceSeconds' | 'sliceSeconds'>): { intent: MarkerIntent; first: boolean; slice: number | null } {
   const intent: MarkerIntent = rt.markers.some(m => m.intent === 'full') ? 'full' : rt.markers.some(m => m.intent === 'pull') ? 'pull' : 'freshness';
-  const first = !rt.started;
+  // GST-2515: the durable attempt count, not this process's memory, says whether an earlier attempt advanced nothing.
+  const first = !rt.started && rt.attempts === 0;
   const slice = first && opts.firstSliceSeconds !== undefined && rt.kind !== 'classic' ? opts.firstSliceSeconds : candidates > 1 ? (opts.sliceSeconds ?? null) : null;
   return { intent, first, slice };
 }
 
-/** The durable state survives the resident: a restart resumes attempts, the next retry and a blocked run. */
+/** The durable state survives the resident: a restart resumes attempts, the next retry and a blocked run; so does a standby that becomes the owner (GST-2515: its own states date from its start). */
 function restoreStates(sources: Map<string, Rt>, states: NotifierSourceRow[], nowMs: number): void {
   for (const row of states) {
     const rt = sources.get(row.source_id);
@@ -364,7 +366,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
       const states = await guard('reading the notifier states', () => opts.store.readStates(fresh.map(r => r.sourceId)), [] as NotifierSourceRow[]);
       restoreStates(sources, states, now());
     }
-    for (const rt of sources.values()) rt.watched = enabled && !excluded.has(rt.sourceId);
+    for (const rt of fresh) rt.watched = enabled && !excluded.has(rt.sourceId);
     for (const rt of sources.values()) {
       if (stopped) return;
       if (!rt.watched || forcePoll || !opts.watch) { if (!rt.watched) closeWatch(rt); continue; }
@@ -501,7 +503,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
       running.set(rt.sourceId, { id: start.jobId, sourceId: rt.sourceId, head: rt.head, lastCommit: rt.lastCommit, intent, markers });
       await transition(rt, { state: 'running', firstDue: 'keep' });
       decide(rt.sourceId, 'start', { detail: `${intent}${slice ? ` slice ${slice}s` : ''}` });
-      log(`${rt.sourceId}: ${intent === 'freshness' ? `HEAD moved to ${short(rt.head)} (last synced ${short(rt.lastCommit)})` : `a ${intent} request is pending`}; started ${rt.kind === 'classic' ? 'classic' : 'managed'} sync job ${start.jobId}`);
+      log(`${rt.sourceId}: ${intent === 'freshness' && rt.head ? `HEAD moved to ${short(rt.head)} (last synced ${short(rt.lastCommit)})` : rt.markers.length ? `a ${intent} request is pending` : 'retrying an unfinished run'}; started ${rt.kind === 'classic' ? 'classic' : 'managed'} sync job ${start.jobId}`);
     }
   };
 
@@ -520,12 +522,12 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
       }
     }
     if (stopped) return;
-    if (t - leaseAt >= heartbeatMs) { leaseAt = t; await ownership(); }
+    if (t - leaseAt >= heartbeatMs) { leaseAt = t; const was = owner; await ownership(); if (owner && !was && sources.size) restoreStates(sources, await guard('reading the notifier states', () => opts.store.readStates([...sources.keys()]), []), now()); }
     if (t - listedAt >= LIST_EVERY_MS) { listedAt = t; await refreshSources(); }
     if (stopped) return;
     for (const rt of sources.values()) {
       const w = enabled && !excluded.has(rt.sourceId);
-      if (w !== rt.watched) { rt.watched = w; if (!w) closeWatch(rt); else listedAt = -Infinity; }
+      if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else { closeWatch(rt); if ((rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null }); } }
     }
     const wasNudged = nudged;
     nudged = false;

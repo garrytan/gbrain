@@ -22,7 +22,7 @@ import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { WakeshiftError, type WakeshiftCall } from '../wakeshift/client.ts';
 import { wakeshiftBrainKey, wakeshiftRuntime, wakeshiftSecret, wakeshiftUserId, type WakeshiftRuntime } from '../wakeshift/config.ts';
 import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED, cronName } from '../wakeshift/events.ts';
-import { drainWakes, endAtWakeshift, liveAccessMembers } from '../wakeshift/drain.ts';
+import { drainWakes, endAtWakeshift, liveAccessMembers, STDIO_REGISTRATION_PRINCIPAL } from '../wakeshift/drain.ts';
 import { agreementStep, operatorTerms, recordAcceptance, termsAccepted, wakePrincipalKey, type WakePrincipalRef } from '../wakeshift/terms.ts';
 
 const WATCH_TTL = '7d';
@@ -63,13 +63,17 @@ function termsUnset(): OperationError {
 
 export interface WatchPrincipal { kind: 'oauth_client' | 'legacy_token' | 'local_stdio'; id: string; member: string | null }
 
-/** Who is watching: the verified credential (bound member when it has one), else the local stdio pipe. */
+/**
+ * Who is watching: the verified credential (bound member when it has one), else the local stdio pipe. A stdio server
+ * started with --stdio-member watches as principal id 'registration', so the drain re-checks that member, never config.
+ */
 export async function watchPrincipal(ctx: OperationContext): Promise<WatchPrincipal | null> {
+  const registered = !ctx.auth && ctx.transport === 'stdio' ? ctx.stdioMember : undefined;
   const base = ctx.auth
     ? (ctx.auth.principal ?? (ctx.auth.clientId ? { kind: 'oauth_client' as const, id: ctx.auth.clientId } : null))
-    : ctx.transport === 'stdio' ? { kind: 'local_stdio' as const, id: 'local' } : null;
+    : ctx.transport === 'stdio' ? { kind: 'local_stdio' as const, id: registered !== undefined ? STDIO_REGISTRATION_PRINCIPAL : 'local' } : null;
   if (!base) return null;
-  const identity = await memberIdentityFor(ctx.engine, { ...(ctx.auth ? { member: ctx.auth.member } : {}), principal: base });
+  const identity = await memberIdentityFor(ctx.engine, { ...(ctx.auth ? { member: ctx.auth.member } : {}), principal: base, ...(registered !== undefined ? { stdioMember: registered } : {}) });
   return { ...base, member: identity.find(i => i.startsWith('member:'))?.slice('member:'.length) ?? null };
 }
 

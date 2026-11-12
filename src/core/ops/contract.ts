@@ -306,10 +306,10 @@ export interface AuthInfo {
   mayActFor?: string[] | null;
   /**
    * GST-359 C1: the live right to name the person a call serves (x-qm-actor), joined by the verifier: the system and
-   * the operations an attested call may run. Null when the credential holds none, is bound to a member, or (an OAuth
+   * the operations an attested call may run, and (GST-1158 F3) how it reads named sources. Null when the credential holds none, is bound to a member, or (an OAuth
    * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.
    */
-  attest?: { system: string; ops: string[]; sources: string[] | null } | null;
+  attest?: { system: string; ops: string[]; sources: string[] | null; read?: 'person' | 'scope' } | null;
   /**
    * Human-readable agent name resolved at token-verification time.
    * For OAuth clients this is `oauth_clients.client_name`; for legacy
@@ -559,6 +559,12 @@ export interface OperationContext {
   applyRemoteReadPolicy?: boolean;
   /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
   stdioSurface?: StdioSurfaceState;
+  /**
+   * GST-363: the member this stdio server was started with (`gbrain serve --stdio-member <id>`, written into one
+   * harness's own MCP entry). Set only by the stdio server from its process argv, never from a request; it wins over
+   * config mcp.stdio_member, and a named member that is not enabled reads as nobody.
+   */
+  stdioMember?: string;
   /**
    * Set by transports that can widen a session's listed tools (stdio): when
    * `request_tools` returns schemas, the named tools join this session's

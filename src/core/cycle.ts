@@ -2622,7 +2622,7 @@ async function runCycleUnscoped(
         phaseResults.push(scSkip);
       } else {
         progress.start('cycle.synthesize_concepts');
-        const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts');
+        const { runPhaseSynthesizeConcepts } = await import('./cycle/synthesize-concepts.ts'), scSignal = cycleSignal ? anyAbortSignal([cycleSignal]) : null; // #7986: as extract_atoms
         const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesizeConcepts(engine, {
           brainDir: brainDir ?? undefined,
           // #4416: thread the cycle's resolved source into the phase's page/
@@ -2634,8 +2634,8 @@ async function runCycleUnscoped(
           // v0.41.19.0 (T3): closure refreshes cycle lock + fires outer hook.
           yieldDuringPhase: buildYieldDuringPhase(lock, opts.yieldDuringPhase, onStolen),
           // v0.41.19.0 (T4): pass same reporter (not a child).
-          progress,
-        }), 'synthesize_concepts');
+          progress, signal: scSignal?.signal,
+        }), 'synthesize_concepts').finally(() => scSignal?.dispose());
         result.duration_ms = duration_ms;
         phaseResults.push(result);
         progress.finish();

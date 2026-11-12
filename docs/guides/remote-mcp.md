@@ -418,8 +418,8 @@ put_pages with one request_id per batch and wait_ms 25000."*
   immediately and by meaning once its embedding effect finishes.
 - **Request size.** HTTP carries less than the 24 MiB page ceiling:
   `gbrain serve --http` reads at most 4 MiB per request (the MCP SDK
-  default), and the simpler HTTP transport caps a request at
-  `GBRAIN_HTTP_MAX_BODY_BYTES`. A batch goes in smaller `put_pages` calls; a
+  default) and the simpler HTTP transport 1 MiB; `GBRAIN_HTTP_MAX_BODY_BYTES`
+  sets either cap. A batch goes in smaller `put_pages` calls; a
   page over the transport limit goes by file on the brain host (sync,
   `gbrain import` or `gbrain put`), never split by hand. Every limit is in
   [limits per entry point](memory-boundaries.md#large-page-limits).

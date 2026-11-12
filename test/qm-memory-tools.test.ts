@@ -32,7 +32,7 @@ import { __resetHotMemoryCacheForTests, getBrainHotMemoryMeta } from '../src/cor
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { attestRightOf, linkedMember, linkMember } from '../src/core/access/actor.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { boundFactLines, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
+import { boundFactLines, boundRecallChars, isoDate, memoryWriteRequestId, plainFactText, MEMORY_RECALL_MAX_CHARS } from '../src/core/ops/qm-memory.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { operations } from '../src/core/operations.ts';
 import { startHttpTransport } from '../src/mcp/http-transport.ts';
@@ -72,6 +72,24 @@ describe('memory_recall text bounds (pure)', () => {
       expect(text.split('\n')).toEqual(lines.slice(0, kept));
       expect(lines.slice(0, kept + 1).join('\n').length).toBeGreaterThan(max);
     }
+  });
+
+  test('a max_chars cut drops the cut facts from facts_groups and entity_unspecified, never naming a fact it left out (#8465 note)', () => {
+    const fact = (id: number, entity: string) => ({ id, fact: 'Fact ' + id + ' about ' + entity + ' ' + 'ledger detail '.repeat(10) });
+    const facts = [fact(1, 'acme-example'), fact(2, 'beta-example'), fact(3, 'gamma-example')];
+    const group = (id: number, entity: string) => ({ source_id: 'source-a', entity_slug: 'companies/' + entity, fact_ids: [String(id)], top_relevance: 1 / id });
+    const out = { facts, total: 3, facts_groups: [group(1, 'acme-example'), group(2, 'beta-example'), group(3, 'gamma-example')],
+      entity_unspecified: { candidates: ['acme-example', 'beta-example', 'gamma-example'].map(e => ({ source_id: 'source-a', entity_slug: 'companies/' + e })), suggestion: 'Ask which one.' } };
+    const two = boundRecallChars(out, facts[0]!.fact.length + 1 + facts[1]!.fact.length);
+    expect(two.facts.map(f => f.id)).toEqual([1, 2]);
+    expect(two.facts_groups.map(g => g.fact_ids)).toEqual([['1'], ['2']]);
+    expect(two.entity_unspecified?.candidates.map(c => c.entity_slug)).toEqual(['companies/acme-example', 'companies/beta-example']);
+    const one = boundRecallChars(out, facts[0]!.fact.length + 1);
+    expect(one.facts.map(f => f.id)).toEqual([1]);
+    expect(one.facts_groups.map(g => g.fact_ids)).toEqual([['1']]);
+    expect('entity_unspecified' in one).toBe(false);
+    const whole = boundRecallChars(out, 12_000);
+    expect({ groups: whole.facts_groups, unspecified: whole.entity_unspecified, truncated: whole.truncated }).toEqual({ groups: out.facts_groups, unspecified: out.entity_unspecified, truncated: false });
   });
 
   test('a list that fits is returned whole with no tail; an empty list is empty text', () => {
@@ -293,6 +311,18 @@ for (const kind of testBackends()) {
       expect(await factRows('canaryemptyrefused')).toHaveLength(0);
     }, 120_000);
 
+    test('source_id "" or null, as a model fills an optional argument, reads as omitted on recall and write (#8465 note)', async () => {
+      for (const empty of ['', null]) {
+        const filled = await recall(alice, 'budget ledger', { source_id: empty });
+        const omitted = await recall(alice, 'budget ledger');
+        expect({ isError: filled.isError, code: filled.json.code, text: filled.text }).toEqual({ isError: omitted.isError, code: omitted.json.code, text: omitted.text });
+        const saved = await call(alice, 'memory_write', { facts: [{ fact: 'Empty source id write canaryemptysource' + (empty === null ? 'null' : 'blank'), provenance: 'x' }], idempotency_key: randomUUID(), source_id: empty }, { writeWaitMs: 30_000 });
+        expect(saved.structured?.status ?? saved.text).toBe('committed');
+      }
+      const rows = await factRows('canaryemptysource');
+      expect(rows.map(r => r.source_markdown_slug)).toEqual(['memory/members/alice-example', 'memory/members/alice-example']);
+    }, 120_000);
+
     test('a squatted member page (readers beyond its member) takes no memory_write, and its receipt is not left behind', async () => {
       const dave: Who = { token: 'qm', actor: DAVE_ID };
       const squat = '---\ntype: note\ntitle: Memory of dave-example\nreadable_by:\n  - member:bob-example\n  - member:dave-example\n---\n# Memory of dave-example\n';
@@ -361,7 +391,7 @@ for (const kind of testBackends()) {
       expect(new Set(ids).size).toBe(ids.length);
       expect(Object.keys(out.structured!).sort()).toEqual(['facts', 'truncated']);
       expect(out.structured!.truncated).toBe(false);
-      expect(out.structured!.facts[at('canaryownrecent')]).toEqual({ id: expect.any(String), text: 'Alice moved standup to Tuesdays canaryownrecent', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), kind: 'fact' });
+      expect(out.structured!.facts[at('canaryownrecent')]).toEqual({ id: expect.any(String), text: 'Alice moved standup to Tuesdays canaryownrecent', date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), kind: 'fact', arm: 'own', own_page: true });
       expect(out.out._meta?.brain_hot_memory).toBeUndefined();
       for (const as of [bob, { token: 'bob' }, { token: 'qm' }, { token: 'plain' }]) {
         const other = await recall(as, 'budget ledger standup Tuesdays');
@@ -431,6 +461,25 @@ for (const kind of testBackends()) {
       expect({ isError: none.isError, text: none.text, facts: none.structured?.facts }).toEqual({ isError: false, text: '', facts: [] });
       const unlinked = await recall({ token: 'scoped', actor: 'U0NOBODY' }, 'budget ledger', { source_ids: [SCOPE] });
       expect(unlinked.structured).toEqual({ facts: [], truncated: false, code: 'actor_unlinked' });
+    }, 120_000);
+
+    test('each recalled fact names its arm: own for the person\'s recent facts, ranked for query matches, ranked only under a scope read (GST-1158 F5)', async () => {
+      for (const [fact, provenance] of [['Alice charts the harbor tide canaryarmown', 'turn 50'], ['Alice charted the harbor tide last year canaryarmold', 'turn 49']]) {
+        expect((await write(alice, [{ fact, provenance }])).structured?.status).toBe('committed');
+      }
+      await engine.executeRaw("UPDATE facts SET created_at = now() - interval '3 days', valid_from = now() - interval '3 days' WHERE source_id = $1 AND fact LIKE '%canaryarmold%'", [SRC]);
+      await engine.insertFact({ fact: 'Acme harbor tide tables canaryarmranked', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      const out = await recall(alice, 'harbor tide', { max_chars: 12_000 });
+      expect(out.isError).toBe(false);
+      const arm = (needle: string) => out.structured!.facts.find((f: { text: string }) => f.text.includes(needle))?.arm;
+      expect({ own: arm('canaryarmown'), old: arm('canaryarmold'), world: arm('canaryarmranked') }).toEqual({ own: 'own', old: 'ranked', world: 'ranked' });
+      for (const f of out.structured!.facts) expect(Object.keys(f).sort()).toEqual(['arm', 'date', 'id', 'kind', 'own_page', 'text']);
+      const firstRanked = out.structured!.facts.findIndex((f: { arm: string }) => f.arm === 'ranked');
+      expect(out.structured!.facts.slice(firstRanked).every((f: { arm: string }) => f.arm === 'ranked')).toBe(true);
+      const asScope = await recall(alice, 'harbor tide', { max_chars: 12_000, source_id: SRC });
+      expect(asScope.structured!.facts.length).toBeGreaterThan(0);
+      expect(asScope.structured!.facts.every((f: { arm: string; own_page: boolean }) => f.arm === 'ranked' && f.own_page === false)).toBe(true);
+      expect(asScope.all).not.toContain('canaryarmown');
     }, 120_000);
 
     test('a recall that names sources keeps folder fail-closed coverage: facts under a pending prefix stay hidden', async () => {
@@ -597,6 +646,33 @@ for (const kind of testBackends()) {
       expect(await active(second.structured!.fact_ids[0])).toBe(false);
     }, 120_000);
 
+    test('own_page agrees with forget_fact on ownership: every own_page row is withdrawn, every other row is refused (fact_not_found for an attested person), whichever arm found it (GST-2407)', async () => {
+      for (const [fact, provenance] of [['Alice logs the harbor buoy canaryownpagerecent', 'turn 60'], ['Alice logged the harbor buoy last spring canaryownpageold', 'turn 59']]) {
+        expect((await write(alice, [{ fact, provenance }])).structured?.status).toBe('committed');
+      }
+      await engine.executeRaw("UPDATE facts SET created_at = now() - interval '3 days', valid_from = now() - interval '3 days' WHERE source_id = $1 AND fact LIKE '%canaryownpageold%'", [SRC]);
+      await engine.insertFact({ fact: 'Acme harbor buoy inspection canaryownpageworld', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.insertFact({ fact: 'Harbor buoy note on her page path canaryownpagepath', kind: 'fact', entity_slug: null, source: 'test', visibility: 'world' }, { source_id: SRC });
+      await engine.executeRaw("UPDATE facts SET source_markdown_slug = 'memory/members/alice-example' WHERE source_id = $1 AND fact LIKE '%canaryownpagepath%'", [SRC]);
+      expect((await write(bob, [{ fact: 'Bob logs the harbor buoy canaryownpagebob', provenance: 'turn 61' }])).structured?.status).toBe('committed');
+      __resetPrivateVisibilityCacheForTests();
+      for (const [as, mine, others] of [[alice, ['canaryownpagerecent', 'canaryownpageold'], ['canaryownpageworld', 'canaryownpagepath']], [{ token: 'bob' }, ['canaryownpagebob'], ['canaryownpageworld']]] as const) {
+        const out = await recall(as, 'harbor buoy', { max_chars: 12_000 });
+        expect(out.isError).toBe(false);
+        const rows = out.structured!.facts as Array<{ id: string; text: string; arm: string; own_page: boolean }>;
+        const row = (needle: string) => rows.find(f => f.text.includes(needle));
+        for (const needle of [...mine, ...others]) expect(row(needle)).toBeDefined();
+        expect(mine.map(n => row(n)!.own_page)).toEqual(mine.map(() => true));
+        expect(others.map(n => row(n)!.own_page)).toEqual(others.map(() => false));
+        if (as === alice) expect({ recent: row('canaryownpagerecent')!.arm, old: row('canaryownpageold')!.arm }).toEqual({ recent: 'own', old: 'ranked' });
+        for (const f of rows.filter(r => r.text.includes('canaryownpage'))) {
+          const out = await call(as, 'forget_fact', { id: Number(f.id) });
+          expect({ text: f.text, own_page: f.own_page, refused: out.isError }).toEqual({ text: f.text, own_page: f.own_page, refused: !f.own_page });
+          if (as === alice && !f.own_page) expect(out.json.code).toBe('fact_not_found');
+        }
+      }
+    }, 120_000);
+
     test('a request carrying x-qm-audience is refused before any work, with or without the actor header (wave 2 is not served yet)', async () => {
       const before = await factRows('canaryaudience');
       for (const as of [{ ...alice, audience: 'WyJVMEJPQiJd' }, { token: 'qm', audience: 'WyJVMEJPQiJd' }, { token: 'bob', audience: '' }, { token: 'plain', audience: 'x' }] as Who[]) {
@@ -645,7 +721,7 @@ for (const kind of testBackends()) {
       }
     }, 60_000);
 
-    test('attested and member-bound forget judge ownership first: a fact off the caller\'s own member page is not_found and files no owner proposal', async () => {
+    test('attested and member-bound forget judge ownership first: a fact off the caller\'s own member page is not_found to the attested person, refused by name to a member credential that reads it (#9101), and files no owner proposal', async () => {
       await engine.insertFact({ fact: 'Acme harbor charter is confirmed canaryconfirmed', kind: 'fact', entity_slug: ACME, source: 'test', visibility: 'world' }, { source_id: SRC });
       const [confirmed] = await factRows('canaryconfirmed');
       await engine.transaction(tx => withTrustPromotion(tx, 'user_confirmed', () => tx.executeRaw("UPDATE facts SET trust_tier = 'user_confirmed' WHERE id = $1", [confirmed!.id])));
@@ -659,7 +735,8 @@ for (const kind of testBackends()) {
       for (const as of [alice, { token: 'bob' }] as Who[]) {
         for (const [op, id] of [['forget', String(confirmed!.id)], ['forget_fact', Number(confirmed!.id)]] as const) {
           const out = await call(as, op, { id });
-          expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code: op === 'forget' ? 'not_found' : 'fact_not_found' });
+          const code = as === alice ? (op === 'forget' ? 'not_found' : 'fact_not_found') : (op === 'forget' ? 'scope_denied' : 'permission_denied');
+          expect({ isError: out.isError, code: out.json.code }).toEqual({ isError: true, code });
         }
       }
       expect(await proposals()).toBe(start);
@@ -767,6 +844,30 @@ for (const kind of testBackends()) {
       expect(out.text).toContain('canarylongquery');
       const tailOnly = await recall(alice, 'filler words that pad the question '.repeat(60) + ' harbor ledger budget');
       expect(tailOnly.isError).toBe(false);
+    }, 60_000);
+
+    test('query_keep "tail" ranks a long query on its last 2,000 characters and reports the cut in query_truncated; without it the v1 head cut is unchanged (#8694, v3)', async () => {
+      await engine.insertFact({ fact: 'The harbor tea supplier is canarytailquery', kind: 'fact', entity_slug: null, source: 'test', visibility: 'world' }, { source_id: SRC });
+      const preamble = 'You are the provider preamble for this turn and you follow the house style. '.repeat(30);
+      const turn = ' which harbor tea supplier canarytailquery';
+      try {
+        resetGateway();
+        configureGateway({ embedding_model: 'openai:text-embedding-3-small', embedding_dimensions: DIMS, env: {} });
+        const tail = await recall(bob, preamble + turn, { query_keep: 'tail' });
+        expect(tail.isError).toBe(false);
+        expect(tail.text).toContain('canarytailquery');
+        expect(tail.structured?.query_truncated).toBe(true);
+        const head = await recall(bob, preamble + turn);
+        expect(head.text).not.toContain('canarytailquery');
+        expect('query_truncated' in (head.structured ?? {})).toBe(false);
+        expect((await recall(bob, preamble + turn, { query_keep: 'head' })).structured?.query_truncated).toBe(true);
+        expect((await recall(bob, turn, { query_keep: 'tail' })).structured?.query_truncated).toBe(false);
+        const bad = await recall(bob, turn, { query_keep: 'middle' });
+        expect({ isError: bad.isError, code: bad.json.code }).toEqual({ isError: true, code: 'invalid_params' });
+      } finally {
+        resetGateway();
+        keyedEmbeddings();
+      }
     }, 60_000);
 
     test('a keyless brain ranks by keyword and makes no embedding call', async () => {

@@ -48,7 +48,9 @@ export interface SyncPathState {
   /** The blob id of the bytes on disk, when read. */
   diskOid: string | null;
   /** The page whose origin is `p`: live, a soft-deleted tombstone, or none. */
-  page: { live: boolean; revision: string; originMatches: boolean } | null;
+  page: { live: boolean; revision: string; originMatches: boolean;
+    /** A tombstone a managed sync deletion made from the file's absence (sync-delete-tombstones.ts), not a person's delete. */
+    syncDeleted?: boolean } | null;
   /** The page's import record (none, or one written before PR 0 without a revision). */
   record: { blobOids: readonly string[]; revision: string | null; parserSame: boolean } | null;
   /** `att(R)`: the page's current revision is file-backed; `hash` is the attested bytes' sha256 when an effect recorded one; `arm1` a committed sync request wrote it. */
@@ -60,8 +62,9 @@ export interface SyncPathState {
   /**
    * An active hold at `p`: whether it is at level `L` in its own domain, re-screen due, or in the retry set. #7199 `unscreened`:
    * a side-`unknown` drift hold an older gbrain wrote before the drift screen compared the page with the file at the baseline commit.
+   * GST-2201 `deletionSide`: a `file_drift` hold on the deletion side (`tombstone_edited`, `purged_differs`, `file_gone`).
    */
-  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean } | null;
+  hold: { atLevel: boolean; rescreenDue: boolean; retried: boolean; unscreened?: boolean; deletionSide?: boolean } | null;
   /**
    * A deletion marker at the origin: `deleted` (with the blob ids it held) or `legacy` (the baseline blob of a page deleted
    * before PR 4; `deletion` is the committed deleting request that proves it, and a legacy marker without one settles nothing).
@@ -157,7 +160,10 @@ type Matched = Omit<SyncClassified, 'inFlight' | 'classAction'>;
  * is at its level and not re-screen due, the pass re-runs it (`held`, `rescreenDue`).
  */
 function firstMatch(s: SyncPathState, strict = false): Matched {
-  if (s.hold && s.hold.atLevel && !s.hold.rescreenDue && !s.hold.retried) return { cls: 'held', settled: true, action: 'none' };
+  // GST-2201: a deletion-side hold an older version raised over a sync-made tombstone whose file came back (tombstone_edited)
+  // is re-run; a hold the import itself raised (invalid frontmatter, a slug conflict) stands.
+  const syncRestored = s.page?.live === false && s.page.syncDeleted === true && s.level !== null && s.hold?.deletionSide === true;
+  if (s.hold && s.hold.atLevel && !s.hold.rescreenDue && !s.hold.retried && !syncRestored) return { cls: 'held', settled: true, action: 'none' };
   const rest = strict ? gitWins(s) : afterHold(s);
   // The re-run is the import the hold refused, where an import is what the level would get anyway (`import`) or changes
   // nothing (`matched`). A level that needs another action (a drift side, a delete proof, a reparse) keeps that class, so
@@ -190,10 +196,15 @@ function afterHold(s: SyncPathState): Matched {
   }
   if (!live && s.level === null) return { cls: 'gone', settled: true, action: 'none' };
   if (!live) {
+    // GST-2201: sync deleted this page because its file was absent; the file is back (a revert, a branch switch, a restore),
+    // so Git is the parent and the file imports over the tombstone, once its committed bytes are clean (uncommitted bytes
+    // take the dirty row). A person's delete keeps the deleted_same and deleted_edited rows.
+    const syncRestored = tombstone && s.page!.syncDeleted === true && s.level !== null;
+    if (syncRestored && (s.mode !== 'committed' || CLEAN.has(s.dirty) || s.dirty === 'deleted')) return { cls: 'import', settled: false, action: 'import' };
     const deletedMarker = s.marker?.kind === 'deleted' ? s.marker : null;
-    if ((tombstone && fileSame) || (deletedMarker && s.level !== null && deletedMarker.blobOids.includes(s.level))) return { cls: 'deleted_same', settled: true, action: 'none' };
-    if ((tombstone || deletedMarker) && !s.published) return { cls: 'deleted_edited', settled: false, action: 'hold', side: 'deleted', state: tombstone ? 'tombstone_edited' : 'purged_differs' };
-    if (s.marker?.kind === 'legacy' && s.marker.deletion && !s.fullObligation && s.level !== null && s.marker.blobOids.includes(s.level)) return { cls: 'legacy_same', settled: true, action: 'none' };
+    if (!syncRestored && ((tombstone && fileSame) || (deletedMarker && s.level !== null && deletedMarker.blobOids.includes(s.level)))) return { cls: 'deleted_same', settled: true, action: 'none' };
+    if (!syncRestored && (tombstone || deletedMarker) && !s.published) return { cls: 'deleted_edited', settled: false, action: 'hold', side: 'deleted', state: tombstone ? 'tombstone_edited' : 'purged_differs' };
+    if (!syncRestored && s.marker?.kind === 'legacy' && s.marker.deletion && !s.fullObligation && s.level !== null && s.marker.blobOids.includes(s.level)) return { cls: 'legacy_same', settled: true, action: 'none' };
   }
   if (s.mode === 'committed' && s.tree !== null && !CLEAN.has(s.dirty) && s.dirty !== 'deleted') {
     const absorbed = (s.tree !== null && !!s.record && s.record.blobOids.includes(s.tree)) || (s.diskOid !== null && !!s.record && s.record.blobOids.includes(s.diskOid));
@@ -248,7 +259,9 @@ function gitVerdict(state: SyncPathState): Matched {
   switch (rest.cls) {
     // G8a: a page no import record proves (legacy_unverified, typically the unknown side of a held drift) takes the commit too.
     case 'drift': case 'keep_db': case 'deleted_edited': case 'legacy_unverified': return wins({ cls: 'import', settled: false, action: 'import' });
-    case 'db_ahead': return rest.sub === 'pending' ? rest : wins({ cls: 'import', settled: false, action: 'import' });
+    // GST-2519: a page under a declared storage.db_only dir is canonical in the database, so a version the database moved to
+    // while Git did not move stays, as on a source that is not strict.
+    case 'db_ahead': return rest.sub === 'pending' || state.dbOnly === true ? rest : wins({ cls: 'import', settled: false, action: 'import' });
     case 'delete': case 'delete_drift':
       if (state.originEvidence === undefined || rest.uncommitted === 'storage_invalid') return rest;
       if (state.originEvidence !== 'committed') return wins({ cls: 'kept', settled: true, action: 'none' });

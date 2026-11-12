@@ -85,8 +85,8 @@ import { slugifySegment } from '../sync.ts';
 import { resolveAlias, resolveTierDefault } from '../model-config.ts';
 import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
-import { atomSourceDate } from './atom-source-date.ts';
-import { normalizeForGrounding } from './synthesize-verify.ts';
+import { atomSourceDate, transcriptAtomSourceDate } from './atom-source-date.ts';
+import { normalizeForGrounding, isGroundingQuoteMark } from './synthesize-verify.ts';
 import type { TranscriptPageIndex } from '../transcripts/discover.ts';
 import { atomOriginPin, atomWriteFailure, type AtomWriteFailure, managedAtomSession, readAtomOrigin, resumeManagedAtoms, publishManagedAtoms, publishManagedAtomGeneration, resumeManagedGenerationMembers,
   MANAGED_ATOM_DISCOVERY_SQL, managedAtomDiscoverySql, type AtomOrigin } from '../persistence/atom-maintenance.ts';
@@ -269,7 +269,9 @@ export interface ExtractAtomsOpts {
  *
  * Folding rides `normalizeForGrounding` — the v0.47.8.0 quote-repair core in
  * synthesize-verify.ts (the "ONE folding core" invariant: this module must
- * mean the same thing by "normalized substring" as the repair ladder does).
+ * mean the same thing by "normalized substring" as the repair ladder does),
+ * plus its markup fold (#8371): a quote that drops the source's line markers,
+ * quotation marks or a spaced dash still says the source's exact words.
  * Everything is decided in FOLDED space, including uniqueness: a typographic
  * twin ('“go now”' vs '"go now"') is only visible there, and returning an
  * offset that might name the wrong passage is worse than returning none.
@@ -287,9 +289,10 @@ export function locateQuote(
   quote: string,
 ): { start: number; end: number } | null {
   if (!quote || !content) return null;
-  const c = normalizeForGrounding(content);
-  const q = normalizeForGrounding(quote);
+  const c = normalizeForGrounding(content, { markup: true });
+  const q = normalizeForGrounding(quote, { markup: true });
   if (!q.norm) return null;
+  const quoted = quote.trim();
 
   // Enumerate every folded hit, keep those that survive the round-trip
   // boundary check, THEN judge ambiguity. Order matters: rejecting on raw
@@ -302,16 +305,18 @@ export function locateQuote(
   let seen = 0;
   while (at !== -1 && seen < MAX_CANDIDATES) {
     seen++;
-    const start = c.map[at]!;
+    let start = c.map[at]!;
     // map[] names the FIRST code unit of the original character; advance the
     // end by the whole code point, not +1 — a bare +1 splits the surrogate
     // pair when the quote ends with a non-BMP char ('ship it 🚀'), and the
     // half-pair slice then fails the round-trip re-fold below.
     const lastOrig = c.map[at + q.norm.length - 1]!;
     const lastCp = content.codePointAt(lastOrig);
-    const end = lastOrig + (lastCp !== undefined && lastCp > 0xffff ? 2 : 1);
+    let end = lastOrig + (lastCp !== undefined && lastCp > 0xffff ? 2 : 1);
+    if (isGroundingQuoteMark(quoted[0]) && isGroundingQuoteMark(content[start - 1])) start--;
+    if (isGroundingQuoteMark(quoted.at(-1)) && isGroundingQuoteMark(content[end])) end++;
     if (
-      normalizeForGrounding(content.slice(start, end)).norm === q.norm &&
+      normalizeForGrounding(content.slice(start, end), { markup: true }).norm === q.norm &&
       !valid.some(v => v.start === start && v.end === end)
     ) {
       valid.push({ start, end });
@@ -1108,7 +1113,7 @@ export async function runPhaseExtractAtoms(
     try {
       origin = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
-      const contentDate = await atomSourceDate(engine, sourcePage); // #6720: captured with the input, before inference
+      const contentDate = await (item.kind === 'page' ? atomSourceDate(engine, sourcePage) : transcriptAtomSourceDate(engine, item.content, sourceDate(item.filePath, ''))); // #6720, #7268: captured with the input, before inference
       const visibility = origin?.visibility ?? effectiveVisibility(item.kind === 'transcript' ? { kind: 'transcript' } // #5525
         : { kind: 'page', page: sourcePage && { ...sourcePage, folder_restricted: await folderRestricted(engine, sourceId, item.slug) } });
       throwIfAborted(opts.signal, 'extract_atoms');
@@ -1219,8 +1224,8 @@ export async function runPhaseExtractAtoms(
           // #4706: pin the quote to its origin, or don't claim one. Located:
           // store the ORIGINAL characters (not the model's rendering, so
           // typographic drift can't accumulate) + [start, end) offsets into
-          // promptContent — valid against the full item too, because the cut
-          // is a prefix. Not located: the model paraphrased; drop the quote
+          // promptContent, the item's extraction input (extract-atoms-input.ts:
+          // a page as a world reader sees it). Not located: the model paraphrased; drop the quote
           // rather than persist an unverifiable one (an atom without a
           // quotation is honest; one with a fabricated quote is not, and
           // body/lesson/concepts stay useful either way). Verified against

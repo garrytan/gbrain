@@ -99,7 +99,7 @@ git-durability --pat-file retries every parked push of the worktree; requests re
 on their own are listed in parked_pushes.refused, the result is status partial, and it exits 1.
 retry-effects <source> --parked-pushes does the same without a credential change: one more
 attempt per Git effect of the source's worktree parked on a push (git_push_unavailable,
-push_unconfirmed, integrate_conflict); a push the remote rejected because it moved publishes
+push_unconfirmed, integrate_conflict, publish_secret_found); a push the remote rejected because it moved publishes
 over the remote without moving the checkout (gbrain sources refresh brings remote files in).
 retry-effects <source> --parked-code <code> gives one more attempt to every Git effect of the
 source's worktree with a target parked on that code; doctor parked_effects and writer status list

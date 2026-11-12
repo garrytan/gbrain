@@ -147,6 +147,13 @@ whenever the user gives one. Capture
 (`--capture`) and providers (`--providers`) stay off unless the user accepts
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
+When the brain will answer several people (a team bot, a shared channel), ask the
+user who they are and add `--serves several --members <id,...>`: each gets a member,
+a folder `people/<member>/` only they read and a bound key
+(`~/.gbrain/member-keys/<member>.key`; relay paths, never keys). On
+`setup_serves_several`, rerun with its fix. Add `--stdio-member <member>`
+(claude-code, codex) only for a harness one person uses. Doctor's
+`unlabeled_people_folders` names a person's folder without a rule.
 `--remove` undoes only what setup wrote. Guide:
 [docs/guides/setup.md](docs/guides/setup.md). Otherwise:
 
@@ -393,6 +400,7 @@ instead of the CLI (one connection, no per-call startup).
 | Links, dated events, every page of a type | `gbrain backlinks <slug>`, `gbrain timeline <slug>`, `gbrain list --type T` | `get_backlinks`, `get_timeline`, `list_pages` |
 | Save a fact the user stated | `gbrain remember "<fact>" --entity <slug> --content-origin user_said --provenance "<where>"` | `remember` |
 | Why a page didn't rank | `gbrain query "<q>" --explain-target <slug>` | `query` |
+| Which installed skill fits a request | `gbrain skills resolve --text "<request>" --json` (after `gbrain skills index build`) | none (CLI only) |
 
 Parse `--json` output instead of matching the text; notices go to stderr. Never
 send stderr to `/dev/null`: a refusal there (`no_brain`, `GBRAIN_DB_ACCESS`)

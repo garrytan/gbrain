@@ -31,8 +31,8 @@ import { startHttpTransport } from '../src/mcp/http-transport.ts';
 import { RateLimiter } from '../src/mcp/rate-limit.ts';
 import { GBRAIN_MCP_INSTRUCTIONS, MCP_SERVER_DESCRIPTION } from '../src/mcp/instructions.ts';
 import { __resetPrivateVisibilityCacheForTests, withCallerAccess } from '../src/core/search/private-visibility.ts';
-import { addMember, bindCredential, disableMember, enableMember } from '../src/core/access/members.ts';
-import { ACTOR_DEFERRED_OPS, attestedCallerAccess, linkMember, listMemberLinks, parseAttestOps, unlinkMember } from '../src/core/access/actor.ts';
+import { addMember, bindCredential, disableMember, enableMember, setMemberEmail } from '../src/core/access/members.ts';
+import { ACTOR_DEFERRED_OPS, attestedCallerAccess, linkMember, linkMemberByEmail, listMemberLinks, parseAttestOps, unlinkMember } from '../src/core/access/actor.ts';
 import { readAudienceAssertions } from '../src/core/access/audience.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { submissionAuthority, authorizeStoredRequest } from '../src/core/persistence/authority.ts';
@@ -72,7 +72,7 @@ const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'bob-example@acme.test';
 const OIDC_ID = 'oidc:3f2a9c:alice-example';
 const LONG_ID = 'L'.repeat(256);
-const ATTEST_OPS = ['add_tag', 'get_page', 'list_pages', 'search', 'whoami'];
+const ATTEST_OPS = ['get_page', 'list_pages', 'remember', 'search', 'whoami'];
 
 for (const kind of testBackends()) {
   describe('attested actor x-qm-actor (' + kind + ', repo-less)', () => {
@@ -334,6 +334,43 @@ for (const kind of testBackends()) {
       expect((await listMemberLinks(engine, { member: 'alice-example' })).map(l => l.external_id).sort()).toEqual([ALICE_ID, LONG_ID, OIDC_ID].sort());
     }, 60_000);
 
+    test('GST-1158: link by declared email links exactly as link by member id; it never creates a member or picks among several', async () => {
+      await setMemberEmail(engine, 'dan-example', 'Dan@Example.com');
+      try {
+        const preview = await linkMemberByEmail(engine, 'DAN@example.com', 'qm', 'U0DAN-EMAIL', { dryRun: true });
+        expect(preview).toEqual({ applied: false, link: { system: 'qm', external_id: 'U0DAN-EMAIL', member_id: 'dan-example', created_at: null } });
+        expect(await listMemberLinks(engine, { member: 'dan-example' })).toEqual([]);
+        expect(await linkMemberByEmail(engine, 'dan@example.com', 'qm', 'U0DAN-EMAIL')).toMatchObject({ applied: true, link: { system: 'qm', external_id: 'U0DAN-EMAIL', member_id: 'dan-example' } });
+        await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', 'U0DAN-EMAIL')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'link_exists' });
+        await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', ALICE_ID)).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'link_exists' });
+        await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', 'has space')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'invalid_external_id' });
+        const count = async () => (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_members'))[0]!.n;
+        const members = await count();
+        await expect(linkMemberByEmail(engine, 'nobody@example.com', 'qm', 'U0NOBODY')).rejects.toMatchObject({ code: 'not_found' });
+        expect(await count()).toBe(members);
+        expect(await engine.executeRaw("SELECT 1 FROM access_member_links WHERE external_id = 'U0NOBODY'")).toEqual([]);
+        await disableMember(engine, 'dan-example');
+        try {
+          await expect(linkMemberByEmail(engine, 'dan@example.com', 'qm', 'U0DAN-2')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'disabled' });
+        } finally {
+          await enableMember(engine, 'dan-example');
+        }
+        const rollback = new Error('rollback');
+        await expect(engine.transaction(async tx => {
+          await tx.executeRaw('DROP INDEX access_members_email_key');
+          await tx.executeRaw("UPDATE access_members SET email = 'dan@example.com' WHERE id = 'bob-example'");
+          await expect(linkMemberByEmail(tx, 'dan@example.com', 'qm', 'U0AMBIG')).rejects.toMatchObject({ code: 'access_member_invalid', reason: 'email_ambiguous' });
+          expect(await tx.executeRaw("SELECT 1 FROM access_member_links WHERE external_id = 'U0AMBIG'")).toEqual([]);
+          throw rollback;
+        })).rejects.toBe(rollback);
+        expect((await engine.executeRaw<{ email: string | null }>("SELECT email FROM access_members WHERE id = 'bob-example'"))[0]!.email).toBeNull();
+        await expect(engine.executeRaw("UPDATE access_members SET email = 'dan@example.com' WHERE id = 'bob-example'")).rejects.toThrow();
+      } finally {
+        await unlinkMember(engine, 'qm', 'U0DAN-EMAIL').catch(() => undefined);
+        await setMemberEmail(engine, 'dan-example', null);
+      }
+    }, 60_000);
+
     test('the attest right is granted only to a member-less client-credentials client or legacy token, for attestable ops', async () => {
       await expect(bindCredential(engine, { kind: 'client', id: clients.code!.id }, { attestActor: 'qm' })).rejects.toMatchObject({ code: 'invalid_params' });
       await expect(bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { member: 'dan-example' })).rejects.toMatchObject({ code: 'invalid_params' });
@@ -355,11 +392,15 @@ for (const kind of testBackends()) {
       const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [SRC]);
       const actor = { system: 'qm', external_id: ALICE_ID, member: 'alice-example' };
       const authority = await withCallerAccess(await attestedCallerAccess(engine, actor, ['member:alice-example']),
-        () => submissionAuthority(ctx, 'add_tag', SRC, source!.incarnation, PAGES.alice.slug));
+        () => submissionAuthority(ctx, 'remember', SRC, source!.incarnation, PAGES.alice.slug));
       expect({ actingFor: authority.actingFor, excludePrivate: authority.excludePrivate }).toEqual({ actingFor: actor, excludePrivate: true });
-      const row = await admitWrite(engine, { principal: authority.principal, authority, operation: 'add_tag', sourceId: SRC,
+      const row = await admitWrite(engine, { principal: authority.principal, authority, operation: 'remember', sourceId: SRC,
         sourceIncarnation: source!.incarnation, slug: PAGES.alice.slug, requestId: randomUUID(), callerIntent: {}, intent: {} });
       await authorizeStoredRequest(engine, row);
+      // GST-2249 W1: an attested page write is refused at admission, and one queued before the boundary widened fails when re-resolved.
+      await expect(admitWrite(engine, { principal: authority.principal, authority, operation: 'add_tag', sourceId: SRC,
+        sourceIncarnation: source!.incarnation, slug: PAGES.alice.slug, requestId: randomUUID(), callerIntent: {}, intent: {} })).rejects.toMatchObject({ code: 'actor_not_attested', reason: 'op_not_attested' });
+      await expect(authorizeStoredRequest(engine, { ...row, operation: 'add_tag' })).rejects.toMatchObject({ code: 'actor_not_attested', reason: 'op_not_attested' });
       await unlinkMember(engine, 'qm', ALICE_ID);
       try {
         await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'actor_unlinked' });
@@ -382,17 +423,16 @@ for (const kind of testBackends()) {
       } finally {
         await bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
       }
-      await bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ATTEST_OPS.filter(op => op !== 'add_tag') });
+      await bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ATTEST_OPS.filter(op => op !== 'remember') });
       try {
         await expect(authorizeStoredRequest(engine, row)).rejects.toMatchObject({ code: 'actor_not_attested', reason: 'op_not_attested' });
       } finally {
         await bindCredential(engine, { kind: 'client', id: clients.qm!.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
       }
       await authorizeStoredRequest(engine, row);
-      const live = await call(qm(), 'add_tag', { slug: PAGES.alice.slug, tag: 'qm-tag' }, { actor: ALICE_ID });
-      expect(live.isError).toBe(false);
-      const hidden = await call(qm(), 'add_tag', { slug: PAGES.bob.slug, tag: 'qm-tag' }, { actor: ALICE_ID });
-      expect(hidden.json.code).toBe('page_not_found');
+      const live = await call(qm(), 'remember', { fact: 'Alice keeps the harbor key', provenance: 'qm test' }, { actor: ALICE_ID });
+      expect([live.isError, live.json.page]).toEqual([false, 'memory/members/alice-example']);
+      await refused(call(qm(), 'add_tag', { slug: PAGES.alice.slug, tag: 'qm-tag' }, { actor: ALICE_ID }), 'actor_not_attested', 'op_not_attested');
     }, 120_000);
 
     test('an agent job submitted for an attested actor reads as the member until the link is gone', async () => {
@@ -445,7 +485,7 @@ for (const kind of testBackends()) {
       }
       // GST-359 C2 keyed remember, delta, the write receipts and agent jobs to the person (test/access-member-facts.test.ts);
       // D keyed forget and forget_fact to the person's own member page (test/qm-memory-tools.test.ts).
-      for (const op of ['capture', 'extract_facts', 'takes_add', 'list_write_conflicts']) {
+      for (const op of ['capture', 'extract_facts', 'takes_add', 'list_write_conflicts', 'add_timeline_entry', 'add_link', 'put_page', 'edit_page', 'delete_page', 'add_tag', 'append_page']) {
         expect(ACTOR_DEFERRED_OPS.has(op)).toBe(true);
       }
       for (const op of ['get_agent_job', 'submit_agent', 'get_write_request', 'list_write_requests', 'cancel_write_request', 'delta', 'remember', 'forget', 'forget_fact']) {
@@ -458,8 +498,28 @@ for (const kind of testBackends()) {
       const bearer = (await provider().exchangeClientCredentials(clientId, clientSecret!)).access_token;
       const deferredCalls: Array<[string, Record<string, unknown>]> = [
         ['list_write_conflicts', {}], ['capture', { content: 'note' }], ['extract_facts', { text: 'x' }],
-        ['takes_add', { page_slug: PAGES.alice.slug, claim: 'x' }],
+        ['takes_add', { page_slug: PAGES.alice.slug, claim: 'x' }], ['takes_update', { page_slug: PAGES.alice.slug, row: 1, weight: 0.5 }],
+        ['takes_resolve', { page_slug: PAGES.alice.slug, row: 1, quality: 'correct' }], ['takes_supersede', { page_slug: PAGES.alice.slug, row: 1, claim: 'y' }],
+        // GST-1158 F9: direct page writes wait for owner-approved proposals.
+        ['add_timeline_entry', { slug: PAGES.alice.slug, date: '2026-11-03', summary: 'x' }], ['add_link', { from: PAGES.alice.slug, to: PAGES.bob.slug }],
+        ['put_page', { slug: PAGES.alice.slug, content: '# x\n' }], ['edit_page', { slug: PAGES.alice.slug, expected_revision: '00000000-0000-0000-0000-000000000000', edits: [{ old_text: 'a', new_text: 'b' }] }],
+        // GST-2249 W1: every other page write waits for owner approval too.
+        ['append_page', { slug: PAGES.alice.slug, content: 'x' }], ['put_pages', { pages: [{ slug: PAGES.alice.slug, content: '# x\n' }] }],
+        ['delete_page', { slug: PAGES.alice.slug }], ['restore_page', { slug: PAGES.alice.slug }],
+        ['revert_version', { slug: PAGES.alice.slug, version_id: 1 }],
+        ['add_tag', { slug: PAGES.alice.slug, tag: 'x' }], ['remove_tag', { slug: PAGES.alice.slug, tag: 'x' }],
+        ['remove_link', { from: PAGES.alice.slug, to: PAGES.bob.slug }],
+        ['begin_page_upload', { slug: PAGES.alice.slug, total_bytes: 1 }], ['upload_page_part', { upload_id: 'x', part: 1, content: 'x' }],
+        ['commit_page_upload', { upload_id: 'x' }], ['abort_page_upload', { upload_id: 'x' }],
+        ['put_raw_data', { slug: PAGES.alice.slug, source: 'crm-example', data: {} }],
+        ['extract_entities', { text: 'Alice met Bob.' }], ['ontology_propose', { subject: PAGES.alice.slug, fact: 'x' }],
+        ['confirm_memory', { ref: 'p:' + SRC + '/' + PAGES.alice.slug }], ['loops_close', { id: 1 }],
+        ['questions_pin', { question: 'x?' }], ['questions_refresh', { id: 1 }], ['questions_unpin', { id: 1 }],
+        // Shared rows with no page: answer feedback, the ingest log and loop suppression.
+        ['rate_answer', { answer_id: 'x', rating: 'up' }], ['log_ingest', { source_type: 'note', source_ref: 'x', pages_updated: [], summary: 'x' }],
+        ['loops_mute', { sender: 'x@example.com' }], ['loops_unmute', { sender: 'x@example.com' }],
       ];
+      expect(new Set(deferredCalls.map(([op]) => op))).toEqual(new Set(ACTOR_DEFERRED_OPS));
       for (const [op, params] of deferredCalls) {
         const out = await refused(call(bearer, op, params, { actor: ALICE_ID }), 'actor_not_attested', 'op_not_attested');
         expect(out.structured!.error!.fix).toBeUndefined();

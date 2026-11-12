@@ -5,7 +5,13 @@
 #
 # Provides what the ci:local runner container provides, per VM:
 #   - bun (pinned; BUN_VERSION, matching docker-compose.ci.yml's runner tag)
-#   - git, python3, procps, psql, jq, node, cc, timeout (test prerequisites)
+#   - node (pinned; NODE_VERSION, matching native-locks.yml's setup-node, from
+#     nodejs.org and checksum-verified: apt's Node 18 cannot import a .ts file,
+#     which test/skill-resolver-packaging.test.ts does)
+#   - git, python3, procps, psql, jq, cc, timeout (test prerequisites); git
+#     comes from the git-core PPA, as on GitHub's runners, because stock
+#     Ubuntu 24.04 ships 2.43 and the suite needs GIT_MIN (maintenance
+#     run --detach, partial-clone lazy-fetch behaviour)
 #   - SLOTS isolated pgvector/pgvector:pg16 servers, each fronted by a
 #     transaction-mode PgBouncer, so every E2E slot owns its whole server just
 #     as each ci:local shard owns postgres-N (slot i: postgres on
@@ -24,7 +30,8 @@
 # the packages are already installed, so apt is skipped and the image pulls
 # only confirm the baked images are current.
 #
-# Knobs: SLOTS (default nproc), BUN_VERSION (default 1.4.4), GITLEAKS=0|1,
+# Knobs: SLOTS (default nproc), BUN_VERSION (default 1.4.4), NODE_VERSION
+# (default 24.18.0), GITLEAKS=0|1,
 # CHECKOUT (default .), CHECKOUT_MARKER (default: none, checkout present),
 # PG_IMAGE (default pgvector/pgvector:pg16; ci-ubicloud.ts --pg-image, e.g.
 # pgvector/pgvector:pg15 for the #7112 compatibility audit),
@@ -34,11 +41,14 @@ set -euo pipefail
 
 SLOTS="${SLOTS:-$(nproc)}"
 BUN_VERSION="${BUN_VERSION:-1.4.4}"
+NODE_VERSION="${NODE_VERSION:-24.18.0}"
 GITLEAKS="${GITLEAKS:-0}"
 CHECKOUT="${CHECKOUT:-.}"
 CHECKOUT_MARKER="${CHECKOUT_MARKER:-}"
 GITLEAKS_VERSION=8.30.1
-APT_PACKAGES=(git ca-certificates python3 procps postgresql-client jq nodejs gcc libc6-dev)
+APT_PACKAGES=(git ca-certificates python3 procps postgresql-client jq gcc libc6-dev)
+GIT_PPA=ppa:git-core/ppa
+GIT_MIN=2.47.0
 PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg16}"
 PGBOUNCER_IMAGE=edoburu/pgbouncer:latest
 # Throwaway password of the loopback-only test servers (docker-compose.ci.yml uses the same).
@@ -66,18 +76,30 @@ apt_get() {
     -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false "$@" >/dev/null
 }
 
+git_current() {
+  local have
+  have=$(git --version 2>/dev/null | awk '{print $3}')
+  [ -n "$have" ] && [ "$(printf '%s\n' "$GIT_MIN" "$have" | sort -V | head -1)" = "$GIT_MIN" ]
+}
+
 # Docker first so the image pulls overlap the rest of apt. Containers start
 # only once apt is done: a package's systemd reload while Docker creates a
 # container's scope unit fails the `docker run` ("Message recipient
 # disconnected from message bus").
 install_system() {
   local pg_pull pgb_pull bin baked=1
-  for bin in docker psql node cc jq git; do command -v "$bin" >/dev/null || baked=0; done
+  for bin in docker psql cc jq git; do command -v "$bin" >/dev/null || baked=0; done
+  git_current || baked=0
   if [ "$baked" = 1 ]; then
     sudo docker pull -q "$PG_IMAGE" >/dev/null
     sudo docker pull -q "$PGBOUNCER_IMAGE" >/dev/null
     return
   fi
+  command -v add-apt-repository >/dev/null || {
+    apt_get update
+    apt_get install -y --no-install-recommends software-properties-common
+  }
+  sudo add-apt-repository -y -n "$GIT_PPA" >/dev/null
   apt_get update
   apt_get install -y --no-install-recommends docker.io
   sudo docker pull -q "$PG_IMAGE" >/dev/null &
@@ -87,6 +109,7 @@ install_system() {
   apt_get install -y --no-install-recommends "${APT_PACKAGES[@]}"
   wait "$pg_pull"
   wait "$pgb_pull"
+  git_current || fail "$(git --version) is older than git $GIT_MIN after installing from $GIT_PPA"
 }
 
 if [ "${PREPARE_IMAGE:-0}" = "1" ]; then
@@ -132,6 +155,22 @@ system_pid=$!
 ) &
 bun_pid=$!
 
+# Node from nodejs.org into /usr/local (ahead of any apt or baked /usr/bin/node on PATH).
+(
+  arch=x64
+  [ "$(uname -m)" = aarch64 ] && arch=arm64
+  base="node-v${NODE_VERSION}-linux-${arch}.tar.gz"
+  url="https://nodejs.org/dist/v${NODE_VERSION}"
+  tmp=$(mktemp -d)
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 1 -o "$tmp/$base" "$url/$base"
+  curl -fsSL --retry 5 --retry-all-errors --retry-delay 1 -o "$tmp/SHASUMS256.txt" "$url/SHASUMS256.txt"
+  ( cd "$tmp" && grep "  ${base}\$" SHASUMS256.txt | sha256sum -c - >/dev/null )
+  sudo tar -xzf "$tmp/$base" -C /usr/local --strip-components=1 --no-same-owner "node-v${NODE_VERSION}-linux-${arch}/bin" "node-v${NODE_VERSION}-linux-${arch}/lib" "node-v${NODE_VERSION}-linux-${arch}/include"
+  rm -rf "$tmp"
+  [ "$(/usr/local/bin/node --version)" = "v${NODE_VERSION}" ] || exit 1
+) >/tmp/gbrain-node.log 2>&1 &
+node_pid=$!
+
 if [ "$GITLEAKS" = "1" ]; then
   (
     base="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
@@ -150,6 +189,8 @@ fi
 wait "$bun_pid"
 export PATH="$HOME/.bun/bin:$PATH"
 step "bun $(bun --version)"
+wait "$node_pid" || { tail -20 /tmp/gbrain-node.log >&2; fail "node ${NODE_VERSION} did not install"; }
+step "node $(node --version)"
 
 if [ -n "$CHECKOUT_MARKER" ]; then
   for _ in $(seq 1 1200); do [ -e "$CHECKOUT_MARKER" ] && break; sleep 0.25; done

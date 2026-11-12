@@ -11,7 +11,7 @@
 # runs never call this; they always run the gate.
 set -euo pipefail
 
-CONVERGENCE_PATHS='^(bun\.lock$|vendor/postgres/|src/core/persistence/|src/commands/sync/|src/core/page-state/|src/core/engine-sql/|src/core/storage/|test/fixtures/convergence-fault-kill\.ts$|test/sync-convergence\.serial\.test\.ts$|scripts/ci-convergence-scope\.sh$|\.github/workflows/(persistence-validation|convergence-nightly)\.yml$)|^src/commands/sync[^/]*\.ts$|^src/core/(sync[^/]*|import-file|markdown|write-through|timeline-write-through|storage|storage-config|page-lock|ghost-pages|postgres-engine)\.ts$'
+CONVERGENCE_PATHS='^(bun\.lock$|vendor/postgres/|src/core/persistence/|src/commands/sync/|src/core/page-state/|src/core/engine-sql/|src/core/storage/|test/fixtures/convergence-fault-kill\.ts$|test/helpers/convergence-brain\.ts$|test/sync-convergence\.serial\.test\.ts$|scripts/ci-convergence-scope\.sh$|\.github/workflows/(persistence-validation|convergence-nightly)\.yml$)|^src/commands/sync[^/]*\.ts$|^src/core/(sync[^/]*|import-file|markdown|write-through|timeline-write-through|storage|storage-config|page-lock|ghost-pages|postgres-engine)\.ts$'
 
 files=$(cat) || { echo run; exit 0; }
 # Consume the full input: grep -q closes an early match's pipe and printf

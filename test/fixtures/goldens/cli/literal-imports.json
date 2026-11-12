@@ -100,7 +100,10 @@
         "./commands/graph-query.ts"
       ],
       "import": [
-        "./commands/import.ts"
+        "./commands/import.ts",
+        "./core/agent-output.ts",
+        "./core/agent-markers.ts",
+        "./core/interaction.ts"
       ],
       "jobs": [
         "./commands/jobs.ts"
@@ -116,6 +119,9 @@
       ],
       "mcp": [
         "./commands/mcp.ts"
+      ],
+      "memory-proposals": [
+        "./commands/memory-proposals.ts"
       ],
       "migrate": [
         "./commands/migrate-embeddings.ts",
@@ -220,6 +226,7 @@
         "./commands/trust-claim.ts",
         "./core/eligibility/explain.ts",
         "./core/eligibility/scan.ts",
+        "./core/trust/label-lowerings.ts",
         "./core/trust/backfill.ts"
       ],
       "waiting": [

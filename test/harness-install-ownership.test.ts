@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { CODEX_TOML_BLOCK_END } from '../src/core/bootstrap/host-specs.ts';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -9,10 +9,17 @@ import { readCredentials, validateCredentials, type HarnessCredentials } from '.
 import { sha256 } from '../src/core/agent-install/state.ts';
 import { parseMcpGrant } from '../src/commands/mcp.ts';
 import { validateHarnessArguments } from '../src/core/harness/arguments.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { guardInheritedInstructionLedger } from './helpers/inherited-ledger-guard.ts';
+
+guardInheritedInstructionLedger();
 
 const roots: string[] = [];
 const temp = () => { const root = mkdtempSync(join(tmpdir(), 'gbrain-owned-client-')); roots.push(root); return root; };
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+let ledgerHome = '';
+beforeEach(() => { ledgerHome = temp(); });
+const install: typeof installHarnessConnection = (c, opts) => withEnv({ GBRAIN_HOME: ledgerHome }, () => installHarnessConnection(c, opts));
 const credentials: HarnessCredentials = { version: 1, mcp_url: 'https://brain.example.com/mcp', issuer_url: 'https://brain.example.com', client_id: 'gbrain_cl_owned_fixture', client_secret: 'fixture-secret-not-real', access_token: 'fixture-token-not-real', profile: 'memory-writer' };
 
 test('provisioning refuses misspelled restrictions and duplicate aliases before creating authority', () => {
@@ -26,17 +33,17 @@ test('provisioning refuses misspelled restrictions and duplicate aliases before 
 
 test('thin install preserves edited files before any rewrite, then removes only owned artifacts idempotently', async () => {
   const root = temp();
-  await installHarnessConnection(credentials, { harness: 'muse', root });
+  await install(credentials, { harness: 'muse', root });
   const path = join(root, 'GBRAIN-INSTRUCTIONS.md'); const generated = readFileSync(path, 'utf8');
   const configPath = join(root, '.gbrain', 'config.json'); const before = readFileSync(configPath, 'utf8');
   writeFileSync(path, 'my personal instructions');
-  await expect(installHarnessConnection({ ...credentials, client_secret: 'new-fixture-secret' }, { harness: 'muse', root })).rejects.toThrow('edited');
-  await expect(installHarnessConnection(credentials, { harness: 'muse', root, remove: true })).rejects.toThrow('edited');
+  await expect(install({ ...credentials, client_secret: 'new-fixture-secret' }, { harness: 'muse', root })).rejects.toThrow('edited');
+  await expect(install(credentials, { harness: 'muse', root, remove: true })).rejects.toThrow('edited');
   expect(readFileSync(configPath, 'utf8')).toBe(before);
   expect(readFileSync(path, 'utf8')).toBe('my personal instructions');
   writeFileSync(path, generated);
   writeFileSync(join(root, 'personal-note.md'), 'keep this');
-  for (let i = 0; i < 2; i++) expect((await installHarnessConnection(credentials, { harness: 'muse', root, remove: true })).status).toBe('removed');
+  for (let i = 0; i < 2; i++) expect((await install(credentials, { harness: 'muse', root, remove: true })).status).toBe('removed');
   expect(existsSync(configPath)).toBe(false);
   expect(existsSync(join(root, 'bin', 'gbrain'))).toBe(false);
   expect(readFileSync(join(root, 'personal-note.md'), 'utf8')).toBe('keep this');
@@ -45,7 +52,7 @@ test('thin install preserves edited files before any rewrite, then removes only 
 
 test('thin setup resumes a recorded interrupted file write without claiming arbitrary edits', async () => {
   const root = temp();
-  await installHarnessConnection(credentials, { harness: 'grok-bot', root });
+  await install(credentials, { harness: 'grok-bot', root });
   const path = 'GBRAIN-INSTRUCTIONS.md'; const target = join(root, path);
   const generated = readFileSync(target, 'utf8');
   const receiptPath = join(root, '.gbrain', 'harness-connection.json');
@@ -53,21 +60,21 @@ test('thin setup resumes a recorded interrupted file write without claiming arbi
   const staged = generated + '\ninterrupted generated revision\n';
   receipt.pending_files = { [path]: { before: sha256(generated), after: sha256(staged) } };
   writeFileSync(receiptPath, JSON.stringify(receipt)); writeFileSync(target, staged);
-  await installHarnessConnection(credentials, { harness: 'grok-bot', root });
+  await install(credentials, { harness: 'grok-bot', root });
   expect(readFileSync(target, 'utf8')).toBe(generated);
   expect(JSON.parse(readFileSync(receiptPath, 'utf8')).pending_files).toEqual({});
 });
 
 for (const harness of ['codex', 'opencode']) test(`${harness} refuses edited and same-URL unowned entries`, async () => {
   const root = temp(); const configPath = join(root, harness === 'codex' ? 'config.toml' : 'config.jsonc');
-  await installHarnessConnection(credentials, { harness, configPath });
+  await install(credentials, { harness, configPath });
   const original = readFileSync(configPath, 'utf8');
   writeFileSync(configPath, original.replace('fixture-token-not-real', 'edited-token'));
-  await expect(installHarnessConnection(credentials, { harness, configPath })).rejects.toThrow('edited');
-  await expect(installHarnessConnection(credentials, { harness, configPath, remove: true })).rejects.toThrow('edited');
+  await expect(install(credentials, { harness, configPath })).rejects.toThrow('edited');
+  await expect(install(credentials, { harness, configPath, remove: true })).rejects.toThrow('edited');
   writeFileSync(configPath, original);
   rmSync(join(root, `.gbrain-connection-${harness}-gbrain.json`));
-  await expect(installHarnessConnection(credentials, { harness, configPath })).rejects.toThrow('unowned');
+  await expect(install(credentials, { harness, configPath })).rejects.toThrow('unowned');
   expect(readFileSync(configPath, 'utf8')).toBe(original);
 });
 
@@ -80,36 +87,36 @@ describe('#6799 Codex tool approvals ("always allow")', () => {
 
   test('an install keyed by the legacy whole-entry hash renews with approvals inside the block and keeps them', async () => {
     const root = temp(); const configPath = join(root, 'config.toml');
-    await installHarnessConnection(credentials, { harness: 'codex', configPath });
+    await install(credentials, { harness: 'codex', configPath });
     expect(JSON.parse(readFileSync(receiptPath(root), 'utf8')).entry_hash).toBe(wholeHash(entryOf(configPath)));
     writeFileSync(configPath, readFileSync(configPath, 'utf8').replace(CODEX_TOML_BLOCK_END, `${approval('search')}${CODEX_TOML_BLOCK_END}`));
-    expect((await installHarnessConnection(renewed, { harness: 'codex', configPath })).status).toBe('installed');
+    expect((await install(renewed, { harness: 'codex', configPath })).status).toBe('installed');
     const entry = entryOf(configPath);
     expect(entry.http_headers.Authorization).toBe('Bearer renewed-token-not-real');
     expect(entry.tools).toEqual({ search: { approval_mode: 'approve' } });
-    expect((await installHarnessConnection(credentials, { harness: 'codex', configPath })).status).toBe('installed');
+    expect((await install(credentials, { harness: 'codex', configPath })).status).toBe('installed');
     expect(entryOf(configPath).tools).toEqual({ search: { approval_mode: 'approve' } });
   });
 
   test('approvals after the block renew in place; removal refuses rather than orphan them', async () => {
     const root = temp(); const configPath = join(root, 'config.toml');
-    await installHarnessConnection(credentials, { harness: 'codex', configPath });
+    await install(credentials, { harness: 'codex', configPath });
     writeFileSync(configPath, `${readFileSync(configPath, 'utf8')}\n${approval('get_page')}`);
-    expect((await installHarnessConnection(renewed, { harness: 'codex', configPath })).status).toBe('installed');
+    expect((await install(renewed, { harness: 'codex', configPath })).status).toBe('installed');
     expect(entryOf(configPath).tools).toEqual({ get_page: { approval_mode: 'approve' } });
     expect(entryOf(configPath).http_headers.Authorization).toBe('Bearer renewed-token-not-real');
     const before = readFileSync(configPath, 'utf8');
-    await expect(installHarnessConnection(renewed, { harness: 'codex', configPath, remove: true })).rejects.toThrow('outside the gbrain-managed block');
+    await expect(install(renewed, { harness: 'codex', configPath, remove: true })).rejects.toThrow('outside the gbrain-managed block');
     expect(readFileSync(configPath, 'utf8')).toBe(before);
   });
 
   test('a receipt that recorded the whole entry with its approvals still owns it', async () => {
     const root = temp(); const configPath = join(root, 'config.toml');
-    await installHarnessConnection(credentials, { harness: 'codex', configPath });
+    await install(credentials, { harness: 'codex', configPath });
     writeFileSync(configPath, readFileSync(configPath, 'utf8').replace(CODEX_TOML_BLOCK_END, `${approval('search')}${CODEX_TOML_BLOCK_END}`));
     const receipt = JSON.parse(readFileSync(receiptPath(root), 'utf8'));
     writeFileSync(receiptPath(root), JSON.stringify({ ...receipt, entry_hash: wholeHash(entryOf(configPath)) }));
-    expect((await installHarnessConnection(renewed, { harness: 'codex', configPath })).status).toBe('installed');
+    expect((await install(renewed, { harness: 'codex', configPath })).status).toBe('installed');
   });
 
   test('approvals never bless other edits: a changed URL, header or execution key still refuses', async () => {
@@ -120,10 +127,10 @@ describe('#6799 Codex tool approvals ("always allow")', () => {
       (t: string) => t.replace(CODEX_TOML_BLOCK_END, `[mcp_servers.gbrain.tools.search]\napproval_mode = { nested = "x" }\n${CODEX_TOML_BLOCK_END}`),
     ]) {
       const root = temp(); const configPath = join(root, 'config.toml');
-      await installHarnessConnection(credentials, { harness: 'codex', configPath });
+      await install(credentials, { harness: 'codex', configPath });
       const edited = edit(readFileSync(configPath, 'utf8'));
       writeFileSync(configPath, edited);
-      await expect(installHarnessConnection(renewed, { harness: 'codex', configPath })).rejects.toThrow('edited');
+      await expect(install(renewed, { harness: 'codex', configPath })).rejects.toThrow('edited');
       expect(readFileSync(configPath, 'utf8')).toBe(edited);
     }
   });
@@ -134,7 +141,7 @@ test('credentials and roots reject intermediate symlinks and credential-bearing 
   symlinkSync(real, join(root, 'alias'));
   writeFileSync(join(real, 'credentials.json'), JSON.stringify(credentials), { mode: 0o600 });
   expect(() => readCredentials(join(root, 'alias', 'credentials.json'))).toThrow('symlink');
-  await expect(installHarnessConnection(credentials, { harness: 'muse', root: join(root, 'alias', 'new') })).rejects.toThrow('symlink');
+  await expect(install(credentials, { harness: 'muse', root: join(root, 'alias', 'new') })).rejects.toThrow('symlink');
   expect(existsSync(join(real, 'new'))).toBe(false);
   expect(() => validateCredentials({ ...credentials, issuer_url: 'https://secret@brain.example.com' })).toThrow('credentials');
   expect(() => validateCredentials({ ...credentials, issuer_url: 'https://brain.example.com?token=private' })).toThrow('query');

@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "skill-resolver.v1.turn-output.json",
+  "title": "gbrain skill resolver: turn output (schema_version 1)",
+  "description": "The result of one turn (`gbrain skills resolve --json`, resolveSkills().output). Everything outside `meta` is byte-identical for the same index, input and session state. Within v1, changes are additive only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "gbrain_version",
+    "catalog",
+    "catalog_hash",
+    "index_hash",
+    "ranker",
+    "no_skill",
+    "no_skill_reason",
+    "budget_exhausted",
+    "suggestions",
+    "block",
+    "block_tokens",
+    "tokenizer",
+    "deduped",
+    "shadow",
+    "meta"
+  ],
+  "$defs": {
+    "fix": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "suggestion"
+      ],
+      "properties": {
+        "suggestion": {
+          "type": "string"
+        },
+        "command": {
+          "type": "string"
+        }
+      }
+    },
+    "suggestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "score",
+        "summary",
+        "reason",
+        "match_strength",
+        "catalog"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The harness's exact load selector (for example plugin:skill)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name."
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 121,
+          "description": "The description cut at 120 characters; empty for names-only catalogs."
+        },
+        "reason": {
+          "type": "string",
+          "description": "The matched fields and terms."
+        },
+        "match_strength": {
+          "enum": [
+            "named",
+            "name",
+            "triggers",
+            "routing",
+            "description",
+            "body"
+          ],
+          "description": "The strongest way it matched: named in the turn, else the first matched field of name, triggers, routing, description, body. An adapter that wants a floor drops body-only (or description-only) suggestions."
+        },
+        "path": {
+          "type": "string",
+          "description": "The SKILL.md path, when the catalog knows it."
+        },
+        "catalog": {
+          "type": "string"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code",
+        "message",
+        "fix"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^skill_[a-z_]+$"
+        },
+        "message": {
+          "type": "string"
+        },
+        "fix": {
+          "$ref": "#/$defs/fix"
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "gbrain_version": {
+      "type": "string"
+    },
+    "catalog": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The catalog name, or names joined with + when merged."
+    },
+    "catalog_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "index_hash": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "ranker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "version",
+        "variant",
+        "k"
+      ],
+      "properties": {
+        "id": {
+          "const": "bm25f-a5"
+        },
+        "version": {
+          "const": 1
+        },
+        "variant": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[DT](\\+[DT])*$"
+        },
+        "k": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        }
+      }
+    },
+    "no_skill": {
+      "type": "boolean",
+      "description": "True only for an acknowledgement or when no indexed term matches."
+    },
+    "no_skill_reason": {
+      "enum": [
+        "ack",
+        "no_match",
+        null
+      ]
+    },
+    "budget_exhausted": {
+      "type": "boolean"
+    },
+    "block_reason": {
+      "description": "Why the block is empty; null when it has a suggestion.",
+      "enum": ["ack", "no_match", "filtered", "deduped", "paced", "budget_exhausted", "shadow", "error", null]
+    },
+    "suggestions": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/suggestion"
+      }
+    },
+    "block": {
+      "type": "string",
+      "description": "The <relevant_skills> block, or \"\"."
+    },
+    "block_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 400
+    },
+    "tokenizer": {
+      "const": "gbrain-estimate-tokens-v1"
+    },
+    "deduped": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "shadow": {
+      "type": "boolean"
+    },
+    "error": {
+      "$ref": "#/$defs/error"
+    },
+    "explain": {
+      "type": "object",
+      "description": "Present only with --explain-target under --json.",
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "indexed",
+        "catalog",
+        "rank",
+        "score",
+        "fields",
+        "excluded",
+        "deduped",
+        "in_block",
+        "skip_reason",
+        "session"
+      ],
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "indexed": {
+          "type": "boolean"
+        },
+        "catalog": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rank": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "score": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fields": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "excluded": {
+          "type": "boolean"
+        },
+        "deduped": {
+          "type": "boolean"
+        },
+        "in_block": {
+          "type": "boolean"
+        },
+        "skip_reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "turn",
+            "spent",
+            "budget",
+            "remaining"
+          ],
+          "properties": {
+            "turn": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "spent": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "budget": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "remaining": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timing_ms",
+        "index_age_s",
+        "index_stale"
+      ],
+      "description": "The volatile part.",
+      "properties": {
+        "timing_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "index_age_s": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "index_stale": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

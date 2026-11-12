@@ -293,7 +293,7 @@ export function gateOnTargetRuntime(
 
 /**
  * Whether this install method + platform/arch can apply an upgrade unattended.
- * `bun` / `bun-link` / `clawhub` delegate to their package managers; `binary`
+ * `bun` / `bun-link` delegate to their package managers; `binary`
  * self-updates via atomic rename ONLY where a release asset is published —
  * today that's darwin-arm64 and linux-x64 (see `.github/workflows/release.yml`).
  * Other binary platform/arch combos (darwin-x64, linux-arm64, win32) have no
@@ -307,7 +307,6 @@ export function canSelfUpdate(
   switch (installMethod) {
     case 'bun':
     case 'bun-link':
-    case 'clawhub':
       return true;
     case 'binary':
       return (platform === 'darwin' && arch === 'arm64') || (platform === 'linux' && arch === 'x64');
@@ -694,6 +693,8 @@ export interface SelfUpgradeState {
   attempting_version?: string;
   last_check_ts?: number;
   last_applied_version?: string;
+  /** #8776: `external` declares that a launcher outside gbrain's service starts autopilot again when it exits, so upgrades hand it over instead of refusing. */
+  autopilot_launcher?: 'external';
 }
 
 export type BreadcrumbTransition = 'applied' | 'failed' | null;
@@ -814,6 +815,7 @@ export const SELF_UPGRADE_CONFIG_LEAVES = [
   'attempting_version',
   'last_check_ts',
   'last_applied_version',
+  'autopilot_launcher',
 ] as const satisfies readonly (keyof SelfUpgradeState)[];
 
 export type SelfUpgradeConfigLeaf = (typeof SELF_UPGRADE_CONFIG_LEAVES)[number];
@@ -918,6 +920,8 @@ export function parseSelfUpgradeConfigValue(leaf: SelfUpgradeConfigLeaf, raw: st
       if (['false', '0', 'no', 'off'].includes(raw.trim().toLowerCase())) return { ok: true, value: false };
       return { ok: false, error: `must be true or false (got '${raw}')` };
     }
+    case 'autopilot_launcher':
+      return raw.trim() === 'external' ? { ok: true, value: 'external' } : { ok: false, error: `must be external (got '${raw}'); unset it to refuse upgrades while autopilot runs outside gbrain's service` };
     case 'quiet_hours':
       return parseQuietHours(raw);
     case 'failed_versions':

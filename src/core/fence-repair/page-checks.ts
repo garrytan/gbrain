@@ -9,7 +9,7 @@
  * chunker and the strip functions share) hid before a repair and shows after
  * it.
  */
-import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFenceFor } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fence.ts';
 import { indexOfOutsideCode, protectedRegions, scanMarkdownCode } from '../fence-scan.ts';
 import type { FenceKind, FencePage, FenceSection } from './types.ts';
@@ -41,7 +41,7 @@ export function strictFailures(page: FencePage): StrictFailure[] {
   const numbers: Record<FenceKind, number[]> = { facts: [], takes: [] };
   for (const [section, text] of sectionsOf(page)) {
     for (const kind of repeatedMarkerKinds(text)) failures.push({ section, fence: kind, check: 'repeated_marker', rows: [] });
-    const facts = parseFactsFence(text);
+    const facts = parseFactsFenceFor(text, page);
     const takes = parseTakesFence(text);
     if (facts.warnings.length) failures.push({ section, fence: 'facts', check: 'warnings', rows: [] });
     if (takes.warnings.length) failures.push({ section, fence: 'takes', check: 'warnings', rows: [] });

@@ -19,6 +19,7 @@ import {
 } from '../mentions/referrers.ts';
 import { mentionCoverageNotice, readMentionCoverage, type MentionCoverage } from '../mentions/coverage.ts';
 import { readEntityReferencesConfig, readRowPageStatus } from '../entity-references-config.ts';
+import { visiblePageTypes } from './stats-by.ts';
 
 export interface BacklinkPage {
   rows: ReferenceRow[];
@@ -61,15 +62,29 @@ async function referrerScope(ctx: OperationContext, slug: string, policy: PageRe
   return { sources, scope: { slug, sourceId, referrerSources: sources, excludePrivate, pack, keepVisibility: excludePrivate ? ['world'] : ['private', 'world'] } };
 }
 
+/** How many of the caller's most common page types a refusal names next to the referrer and pack types. */
+const NAMED_PAGE_TYPES = 20;
+
+/**
+ * GBRA-449: a type some page the caller can read has (in its scope) is a valid filter even when no referrer of this
+ * page has it: the read answers empty with an info notice naming the referrer types. Only a type no visible page has,
+ * outside the pack and `untyped`, is refused, and the refusal names only types of pages the caller can read.
+ */
 async function assertKnownType(ctx: OperationContext, scope: ReferrerScope, type: string): Promise<void> {
   const declared = (scope.pack?.page_types ?? []).flatMap(pt => [pt.name, ...(pt.aliases ?? [])]);
   if (declared.includes(type) || type === 'untyped') return;
   const observed = await referrerTypes(ctx.engine, scope);
   if (observed.includes(type)) return;
+  const visible = (await visiblePageTypes(ctx, { sourceIds: scope.referrerSources })).map(t => t.type);
+  if (visible.includes(type)) {
+    ctx.emitNotice?.({ code: 'empty_retrieval', kind: 'info',
+      why: `No page linking to ${scope.slug} has type "${type}"; its referrers' types are ${observed.join(', ') || 'none yet'}.` });
+    return;
+  }
   const canonical = (scope.pack?.page_types ?? []).map(pt => pt.name);
-  const valid = [...new Set([...observed, ...canonical, 'untyped'])].sort();
+  const valid = [...new Set([...observed, ...visible.slice(0, NAMED_PAGE_TYPES), ...canonical, 'untyped'])].sort();
   throw opError('invalid_params', `get_backlinks: unknown type "${type}".`,
-    `Use a type this page's referrers have (${observed.join(', ') || 'none yet'}), a schema-pack type or untyped; valid values: ${valid.join(', ')}.`,
+    `Use a type this page's referrers have (${observed.join(', ') || 'none yet'}), another page type in this brain, a schema-pack type or untyped; valid values: ${valid.join(', ')}.`,
     { detail: JSON.stringify({ valid_types: valid, referrer_types: observed }) });
 }
 

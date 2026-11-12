@@ -571,3 +571,104 @@ describe('ConnectionManager — session-pooler retry on unreachable direct host 
     expect(cm.isKillSwitchActive()).toBe(true);
   }, 20000);
 });
+
+describe('ConnectionManager — a direct pool that opens after retire()/disconnect() (#8478)', () => {
+  let originalKillSwitch: string | undefined;
+  let originalError: typeof console.error;
+  beforeEach(() => {
+    originalKillSwitch = process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    originalError = console.error;
+    console.error = () => {};
+  });
+  afterEach(() => {
+    console.error = originalError;
+    if (originalKillSwitch === undefined) delete process.env.GBRAIN_DISABLE_DIRECT_POOL;
+    else process.env.GBRAIN_DISABLE_DIRECT_POOL = originalKillSwitch;
+  });
+
+  const POOLER_URL = 'postgresql://postgres.abc:PASSWORD@aws-0-us-east-1.pooler.supabase.com:6543/db';
+  type Pool = ReturnType<typeof ConnectionManager.prototype.read>;
+  type Internals = { initDirectPool: () => Promise<Pool>; _directPool: Pool | null };
+  const unreachable = () => Object.assign(new Error('getaddrinfo ENOTFOUND db.abc.supabase.co'), { code: 'ENOTFOUND' });
+  const fakePool = () => {
+    const pool = { ends: 0, end: async () => { pool.ends++; } };
+    return pool;
+  };
+
+  for (const shutdown of ['retire', 'disconnect'] as const) {
+    for (const route of ['direct', 'session fallback'] as const) {
+      test(`${shutdown}() while the ${route} pool is opening ends that pool and rejects its waiters`, async () => {
+        const cm = new ConnectionManager({ url: POOLER_URL });
+        cm.setReadPool(fakePool() as unknown as Pool);
+        const late = fakePool();
+        let release!: () => void;
+        const opening = new Promise<void>(res => { release = res; });
+        let attempts = 0;
+        let entered!: () => void;
+        const started = new Promise<void>(res => { entered = res; });
+        (cm as unknown as Internals).initDirectPool = async () => {
+          attempts++;
+          if (route === 'session fallback' && attempts === 1) throw unreachable();
+          entered();
+          await opening;
+          return late as unknown as Pool;
+        };
+        const waiters = Promise.allSettled([cm.ddl(), cm.ddl()]);
+        await started;
+        await cm[shutdown]();
+        release();
+        const outcomes = await waiters;
+        expect(outcomes.map(o => o.status)).toEqual(['rejected', 'rejected']);
+        expect(outcomes.map(o => (o as PromiseRejectedResult).reason?.code)).toEqual(['CONNECTION_ENDED', 'CONNECTION_ENDED']);
+        expect(late.ends).toBe(1);
+        expect((cm as unknown as Internals)._directPool).toBeNull();
+        expect(cm.isKillSwitchActive()).toBe(false);
+        expect(attempts).toBe(route === 'direct' ? 1 : 2);
+        if (shutdown === 'disconnect') {
+          const next = fakePool();
+          (cm as unknown as Internals).initDirectPool = async () => next as unknown as Pool;
+          expect(await cm.ddl()).toBe(next as unknown as Pool);
+          expect(next.ends).toBe(0);
+        }
+      }, 20000);
+    }
+
+    test(`a network failure that lands after ${shutdown}() starts no session retry and trips no kill switch`, async () => {
+      const cm = new ConnectionManager({ url: POOLER_URL });
+      cm.setReadPool(fakePool() as unknown as Pool);
+      let fail!: () => void;
+      const failing = new Promise<void>(res => { fail = res; });
+      let attempts = 0;
+      (cm as unknown as Internals).initDirectPool = async () => {
+        attempts++;
+        await failing;
+        throw unreachable();
+      };
+      const waiters = Promise.allSettled([cm.ddl(), cm.ddl()]);
+      await new Promise(res => setTimeout(res, 5));
+      await cm[shutdown]();
+      fail();
+      expect((await waiters).map(o => o.status)).toEqual(['rejected', 'rejected']);
+      expect(attempts).toBe(1);
+      expect(cm.isKillSwitchActive()).toBe(false);
+      expect(cm.resolveDirectUrl()).toContain('db.abc.supabase.co:5432');
+    }, 20000);
+  }
+
+  test('a manager stays usable after disconnect(): the next ddl() opens and keeps a new direct pool', async () => {
+    const cm = new ConnectionManager({ url: POOLER_URL });
+    cm.setReadPool(fakePool() as unknown as Pool);
+    const first = fakePool();
+    const second = fakePool();
+    const pools = [first, second];
+    (cm as unknown as Internals).initDirectPool = async () => pools.shift() as unknown as Pool;
+    expect(await cm.ddl()).toBe(first as unknown as Pool);
+    await cm.disconnect();
+    expect(first.ends).toBe(1);
+    expect(await cm.ddl()).toBe(second as unknown as Pool);
+    expect(await cm.ddl()).toBe(second as unknown as Pool);
+    expect(second.ends).toBe(0);
+  }, 20000);
+});
+

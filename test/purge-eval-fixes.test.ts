@@ -26,6 +26,7 @@ import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { frozenVerbWriteError, runMemoryWrite } from '../src/core/persistence/verb-errors.ts';
 import { opError } from '../src/core/ops/contract.ts';
 import { DELETION_INVENTORY } from '../src/core/deletion-inventory.ts';
+import { redactJson } from '../src/core/persistence/intent-redaction.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const CLAIM = 'Vault combination is 7731';
@@ -91,6 +92,30 @@ describe('purge eval fixes', () => {
     expect(kept.outcome.entry).toEqual({ date: '2026-01-02', summary: '[purged]' });
     expect(done.stores.find((s: { store: string }) => s.store === 'persistence_requests')).toMatchObject({ status: 'deleted' });
   }, 60_000);
+
+  test('W3: a page purge leaves no timeline text in its add_timeline_entry receipts, compacted ones included', async () => {
+    await seed();
+    const kept = await call('add_timeline_entry', { slug: 'people/alice-example', date: '2026-02-03', summary: 'Moved house TIMELINE-MARK-ONE', source: 'https://private.example/TIMELINE-MARK-SOURCE', request_id: randomUUID() });
+    const compacted = await call('add_timeline_entry', { slug: 'people/alice-example', date: '2026-02-04', summary: 'Changed banks TIMELINE-MARK-TWO', request_id: randomUUID() });
+    expect([kept.status, compacted.status]).toEqual(['ok', 'ok']);
+    await engine.executeRaw(`UPDATE persistence_requests SET intent=NULL, compacted=true WHERE operation='add_timeline_entry' AND outcome->'entry'->>'summary' LIKE '%MARK-TWO'`);
+    expect(await journalCarries('TIMELINE-MARK-SOURCE')).toBe(1);
+    expect(await journalCarries('TIMELINE-MARK')).toBe(2);
+    expect((await purgePage('people/alice-example')).status).toBe('purged');
+    expect(await journalCarries('TIMELINE-MARK')).toBe(0);
+    const outcomes = await engine.executeRaw<{ outcome: { entry: { summary: string }; bullet: string } }>(`SELECT outcome FROM persistence_requests WHERE operation='add_timeline_entry' ORDER BY sequence`);
+    expect(outcomes.map(o => [o.outcome.entry.summary, o.outcome.bullet])).toEqual([['[purged]', '[purged]'], ['[purged]', '[purged]']]);
+  }, 60_000);
+
+  test('W3: timeline text is matched whole in its own receipts, so redacting 5,000 of them costs one set lookup per string', () => {
+    const receipts = Array.from({ length: 5000 }, (_, i) => ({ status: 'ok', entry: { date: '2026-02-03', summary: `Entry ${i} for acme-example` }, bullet: `- **2026-02-03** | Entry ${i} for acme-example` }));
+    const exact = new Set(receipts.flatMap(r => [r.entry.summary, r.bullet]));
+    const started = performance.now();
+    const redacted = receipts.map(r => redactJson(r, [], exact));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(redacted.every(r => r.entry.summary === '[purged]' && r.bullet === '[purged]' && r.entry.date === '2026-02-03' && r.status === 'ok')).toBe(true);
+    expect(redactJson({ note: 'Entry 7 for acme-example, quoted elsewhere' }, [], exact)).toEqual({ note: 'Entry 7 for acme-example, quoted elsewhere' });
+  });
 
   test('39-3: remembering a purged claim refuses with purged_content (verb path, local and remote mapping)', async () => {
     const id = await seed();

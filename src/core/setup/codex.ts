@@ -49,6 +49,7 @@ import {
   type CodexSetupEvent,
 } from '../bootstrap/codex-hooks.ts';
 import { stdioServeArgv } from '../mcp-registration.ts';
+import { withStdioMember } from '../stdio-member-flag.ts';
 import type { McpSurface } from '../../mcp/surface.ts';
 import { SetupAbortInjected, type SetupConsent, type SetupStep } from './claude-code.ts';
 import { ensureHookLauncher, hookLauncherPath } from './hook-launcher.ts';
@@ -97,6 +98,8 @@ export interface CodexSetupPlan {
   /** `serve --advertise`; null lists the whole surface. */
   advertise: McpSurface | null;
   events: CodexSetupEvent[];
+  /** GST-363: `serve --stdio-member`: this entry's sessions read as that member. Only a named --stdio-member or the entry setup already wrote sets it. */
+  stdioMember?: string;
 }
 
 export type CodexSetupStep = Omit<SetupStep, 'step'> & { step: SetupStep['step'] | 'trust' };
@@ -108,7 +111,8 @@ export interface CodexInspection {
   receiptPath: string;
   prior: CodexSetupReceipt | null;
   hostedReceipt: { mcp_url?: string } | null;
-  mcp: { state: 'absent' | 'current' | 'owned' | 'remote' | 'unowned'; url?: string };
+  /** stdioMember: the --stdio-member of an entry setup owns (current or owned), which a rewrite carries forward. */
+  mcp: { state: 'absent' | 'current' | 'owned' | 'remote' | 'unowned'; url?: string; stdioMember?: string };
   /** Events already wired by gbrain's bootstrap Codex lane (token-owned). */
   otherLaneEvents: string[];
   /** Owned events whose group the user edited: preserved, never rewritten. */
@@ -136,12 +140,12 @@ export function readCodexSetupReceipt(receiptPath: string): { setup: CodexSetupR
 
 const writeReceipt = (path: string, receipt: CodexSetupReceipt) => atomicWriteTextFile(path, `${JSON.stringify(receipt, null, 2)}\n`, { forceMode: 0o600 });
 
-export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId'>): Record<string, CodexTomlValue> {
+export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId' | 'stdioMember'>): Record<string, CodexTomlValue> {
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
   // Codex starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
-  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise), ...(Object.keys(env).length ? { env } : {}) };
+  return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise, plan.stdioMember), ...(Object.keys(env).length ? { env } : {}) };
 }
 
 function desiredGroups(plan: CodexSetupPlan): Partial<Record<CodexSetupEvent, CodexHookGroup>> {
@@ -180,9 +184,9 @@ export function inspectCodexSetup(plan: CodexSetupPlan): CodexInspection {
   const desired = ownedEntryFingerprint(desiredCodexMcpEntry(plan));
   const entryFp = entry === undefined ? null : ownedEntryFingerprint(entry);
   const mcp: CodexInspection['mcp'] = entry === undefined ? { state: 'absent' }
-    : entryFp === desired ? { state: 'current' }
+    : entryFp === desired ? withStdioMember({ state: 'current' }, entry)
       : typeof (entry as Record<string, unknown>)?.url === 'string' ? { state: 'remote', url: (entry as Record<string, string>).url }
-        : prior && [prior.entry_hash, prior.pending_entry_hash].includes(entryFp) ? { state: 'owned' } : { state: 'unowned' };
+        : prior && [prior.entry_hash, prior.pending_entry_hash].includes(entryFp) ? withStdioMember({ state: 'owned' }, entry) : { state: 'unowned' };
 
   const census = codexHookCensus(paths.hooksPath);
   const groups = desiredGroups(plan);

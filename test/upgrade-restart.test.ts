@@ -282,7 +282,7 @@ describe('planRestart', () => {
       ctx({ serveService: null, autopilotService: null }));
     expect(plan.steps).toEqual([]);
     expect(plan.manual.map(m => [m.role, m.argv])).toEqual([
-      ['serve', ['kill', '10']], ['worker', ['kill', '21']], ['autopilot', ['kill', '30']], ['sync', ['gbrain', 'sync', 'status', '--json']], ['supervisor', ['kill', '20']],
+      ['serve', ['kill', '10']], ['worker', ['kill', '21']], ['autopilot', ['gbrain', 'autopilot', '--install']], ['sync', ['gbrain', 'sync', 'status', '--json']], ['supervisor', ['kill', '20']],
     ]);
     expect(plan.manual[0]!.instruction).toContain('was not started by the installed serve service');
     expect(plan.manual[1]!.instruction).toContain('gbrain jobs supervisor start --detach');

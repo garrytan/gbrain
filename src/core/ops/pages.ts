@@ -33,8 +33,9 @@ import { fileHeldField, readHeldPages } from '../persistence/held-reads.ts';
 import { bumpLastRetrievedAt } from '../last-retrieved.ts';
 import { resolveExcludePrivatePages, isPrivatePage, findPrivateOnlySlugs, isPrivatePageForCaller } from '../search/private-visibility.ts';
 import { unquoteAnyTranscriptText } from '../search/transcript-quote.ts';
+import { withIgnoredPrivacyLabelNotice } from '../search/ignored-privacy-labels.ts';
 import { LIST_PAGES_DESCRIPTION, CAPTURE_DESCRIPTION } from '../operations-descriptions.ts';
-import { listPagesPagination, listingTruncatedNotice } from './list-pages-pagination.ts';
+import { listPagesPagination, listingTruncatedNotice, unusedTypeNotice } from './list-pages-pagination.ts';
 import { OperationError, opError, type Operation, type OperationContext } from './contract.ts';
 import { invalidParam, readFix } from './op-fix.ts';
 import { WHERE_PARAM, whereOpParam } from './where-param.ts';
@@ -379,7 +380,7 @@ const put_page: Operation = {
     }
     if (ctx.remote !== false && typeof p.slug === 'string') await assertLargePageAdmission(ctx.engine, p.slug, sourceId, p);
     (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, p.slug, p.content);
-    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error));
+    return submitPageMutation(ctx, { operation: 'put_page', params: p }).then(funnelPassThrough('save')).catch(error => rethrowNamingRevisionSource(ctx, sourceId, p, error)).then(result => withIgnoredPrivacyLabelNotice(ctx, sourceId, p, result));
   },
   cliHints: { name: 'put', positional: ['slug'], stdin: 'content' },
 };
@@ -666,6 +667,10 @@ const list_pages: Operation = {
     ctx.emitResponseMeta?.('pagination', pagination);
     const truncatedNotice = isLocal ? null : listingTruncatedNotice(pagination, p);
     if (truncatedNotice) ctx.emitNotice?.(truncatedNotice);
+    if (pages.length === 0 && typeof p.type === 'string' && p.type) {
+      const notice = unusedTypeNotice(p.type, await (await import('./stats-by.ts')).visiblePageTypes(ctx, scope).catch(() => null));
+      if (notice) ctx.emitNotice?.(notice);
+    }
     return pages.map(pg => ({
       slug: pg.slug,
       source_id: pg.source_id,

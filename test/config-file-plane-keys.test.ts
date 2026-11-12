@@ -254,9 +254,10 @@ describe('config set — vendor API keys are FILE-plane canonical', () => {
  * Enabling requires the gbrain-authored disclosure stamp (a separate 0600
  * file the external memorable CLI has never written — it full-file-rewrites
  * config.json, so a config-key stamp could be forged by habit, lost to a
- * rewrite race, or resurrected after revocation). Under bun test stdin is not
- * a TTY, so the non-interactive posture is what these tests exercise:
- * refuse without --yes, consent with it.
+ * rewrite race, or resurrected after revocation). captureAll pins stdin to
+ * non-TTY, so the non-interactive posture is what these tests exercise:
+ * refuse without --yes, consent with it. Under a terminal the gate would
+ * otherwise prompt on stdin and the test would wait for an answer.
  */
 import {
   memorableConsentPath,
@@ -268,9 +269,11 @@ async function captureAll(fn: () => Promise<void>): Promise<{ out: string; err: 
   const origLog = console.log;
   const origErr = console.error;
   const origExit = process.exit;
+  const origStdinTTY = Object.getOwnPropertyDescriptor(process.stdin, 'isTTY');
   let out = '';
   let err = '';
   let exitCode: number | null = null;
+  Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
   console.log = (...a: unknown[]) => { out += a.map(String).join(' ') + '\n'; };
   console.error = (...a: unknown[]) => { err += a.map(String).join(' ') + '\n'; };
   process.exit = ((code?: number) => { exitCode = code ?? 0; throw new Error(`__exit_${code}`); }) as never;
@@ -282,6 +285,8 @@ async function captureAll(fn: () => Promise<void>): Promise<{ out: string; err: 
     console.log = origLog;
     console.error = origErr;
     process.exit = origExit;
+    if (origStdinTTY) Object.defineProperty(process.stdin, 'isTTY', origStdinTTY);
+    else delete (process.stdin as { isTTY?: boolean }).isTTY;
   }
   return { out, err, exitCode };
 }
@@ -427,6 +432,7 @@ describe('config set — self_upgrade.* keys are FILE-plane canonical (#5489)', 
     { leaf: 'failed_versions', raw: '0.57.1, v0.57.1.0', stored: ['0.57.1.0'] },
     { leaf: 'last_check_ts', raw: '1790000000000', stored: 1790000000000 },
     { leaf: 'last_applied_version', raw: '0.57.1.0', stored: '0.57.1.0' },
+    { leaf: 'autopilot_launcher', raw: 'external', stored: 'external' },
   ];
 
   test('the cases cover every registered self_upgrade.* key', async () => {

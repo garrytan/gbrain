@@ -1310,7 +1310,7 @@ export async function initPGLite(opts: {
       writeCliNotices(await firstRunBundle(engine, searchMode, registrationSurface));
 
       // The single primary action, last-on-screen.
-      printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0, onPglite: true });
+      printMemoryVerbsQuickstart({ emptyBrain: stats.page_count === 0, onPglite: true, keyless: config.embedding_disabled === true });
     }
   } finally {
     try { await engine.disconnect(); } catch { /* best-effort */ }
@@ -1330,7 +1330,7 @@ const INIT_EMBEDDING_HINT = 'Pick an embedding model whose dimensions match (`gb
  */
 let registrationSurface: McpSurface | undefined;
 let searchModeChoice: import('./init-mode-picker.ts').SearchModeChoice = {};
-function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boolean } = {}): void {
+function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boolean; keyless?: boolean } = {}): void {
   const register = harnessRegistrationCommand(registrationSurface);
   console.log('');
   console.log(`→ Do this next — give your agent memory (copy these ${register ? 'three' : 'two'} commands):`);
@@ -1348,7 +1348,7 @@ function printMemoryVerbsQuickstart(opts: { emptyBrain?: boolean; onPglite?: boo
   console.log('');
   console.log(
     'More: ' +
-      (opts.emptyBrain ? 'bulk-load notes `gbrain import <dir>` · ' : '') +
+      (opts.emptyBrain ? `bulk-load notes \`gbrain import <dir>${opts.keyless ? ' --no-embed' : ''}\` · ` : '') +
       (opts.onPglite ? 'scale up `gbrain migrate --to postgres --plan` · ' : '') +
       'health `gbrain doctor`',
   );
@@ -1694,7 +1694,7 @@ async function supabaseWizard(): Promise<string> {
   }
 
   console.log('\nEnter your Supabase/Postgres connection URL:');
-  console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres'); /* allow-pg-url-literal */
+  console.log('  Format: postgresql://postgres.[ref]:[password]@aws-0-[region].pooler.supabase.com:6543/postgres?sslmode=require'); /* allow-pg-url-literal */
   console.log('  Find it: Supabase Dashboard > Connect (top bar) > Connection String > Transaction pooler\n');
 
   const url = (await promptLineStderr('Connection URL: ')) ?? '';
