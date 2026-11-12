@@ -22,7 +22,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
-import { parseMayActFor } from './members.ts';
+import { audienceMemberIds, parseMayActFor } from './members.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -208,6 +208,9 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
  * GST-2490: `readOnly` (a non-mutating operation) gives an owner read the owner's lineage (a derivative of origins it
  * reads) and, under access.owner_reads_restricted, the opt-in; a write's checks keep the every-caller rule, so its
  * pre-check and its publication agree.
+ * GBRA-108: under access.members_read_lineage a read by any other member speaking for itself (no audience, or an
+ * audience of that one member) gets the same lineage (design 3), and an owner read carries the audience members
+ * (design 2). Never an audience of several, a group or a guest, and never an unbound credential (no member identity).
  */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null, stdioMember?: string, readOnly = false): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), requestRemotePolicy(engine)]);
@@ -217,6 +220,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     const single = singleMemberAudience(audience);
     const owner = single && audience[0] === `member:${remotePolicy.ownerMember}`
       && isOwner(await boundIdentity(engine, auth, transport, stdioMember), remotePolicy);
+    const lineage = readOnly && single && identities.length === 1 && (owner || remotePolicy.membersReadLineage === true);
     return {
       identity: identities.length === 1 ? identities[0]! : [],
       audience: [...audience],
@@ -225,8 +229,9 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
       privateReadableSources: single ? privateSources ?? [] : [],
       hidePrivate: single ? !relaxed && !owner : true,
       owner,
-      ownerLineage: owner && readOnly,
-      ownerReadsRestricted: owner && readOnly && remotePolicy.ownerReadsRestricted === true,
+      lineage,
+      ownerReadsRestricted: owner && lineage && remotePolicy.ownerReadsRestricted === true,
+      audienceKindMembers: owner && lineage ? await audienceMemberIds(engine) : [],
       applyRemoteReadPolicy: false,
       restricted,
       remotePolicy,
@@ -234,6 +239,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
   }
   const identity = restricted || remotePolicy.ownerMember ? await boundIdentity(engine, auth, transport, stdioMember) : [];
   const owner = isOwner(identity, remotePolicy);
+  const lineage = readOnly && identity.some(p => p.startsWith('member:')) && (owner || remotePolicy.membersReadLineage === true);
   return {
     identity,
     audience: null,
@@ -242,8 +248,9 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     privateReadableSources: privateSources ?? [],
     hidePrivate: !relaxed && !owner,
     owner,
-    ownerLineage: owner && readOnly,
-    ownerReadsRestricted: owner && readOnly && remotePolicy.ownerReadsRestricted === true,
+    lineage,
+    ownerReadsRestricted: owner && lineage && remotePolicy.ownerReadsRestricted === true,
+    audienceKindMembers: owner && lineage ? await audienceMemberIds(engine) : [],
     applyRemoteReadPolicy: false,
     restricted,
     remotePolicy,

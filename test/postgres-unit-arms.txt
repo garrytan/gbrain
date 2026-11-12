@@ -12,6 +12,7 @@
 # other Postgres lane runs. The unit, serial and slow lanes unset
 # themselves from scripts/postgres-arm-weights.json.
 test/access-as.test.ts
+test/access-audience-members.test.ts
 test/access-binding.test.ts
 test/access-federated-member-writes.test.ts
 test/access-folder-lock-order.test.ts
@@ -21,6 +22,7 @@ test/access-folder-scoped-role.test.ts
 test/access-hidden-page-writes.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
+test/access-members-read-lineage.test.ts
 test/access-members.test.ts
 test/access-on-behalf-of.test.ts
 test/access-owner-default-writes.test.ts
@@ -28,6 +30,7 @@ test/access-owner-reads.test.ts
 test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
+test/access-raw-only-rules.test.ts
 test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
@@ -75,6 +78,7 @@ test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
+test/db-only-labels-gst2519.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
@@ -131,6 +135,7 @@ test/git-canonical-conversion-progress.test.ts
 test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
 test/git-canonical-indexer-g3.test.ts
+test/git-commit-push-untrack-gst2519.test.ts
 test/git-door-index-lock-7742.test.ts
 test/git-door-planned-state.test.ts
 test/git-door-plumbing-gbra133.test.ts

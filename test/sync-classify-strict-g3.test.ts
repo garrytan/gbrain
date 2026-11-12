@@ -23,6 +23,13 @@ describe('G3: Git wins on a strict source', () => {
     expect(strict(pending)).toEqual(classifySyncPath(pending));
   });
 
+  test('GST-2519: under a declared storage.db_only dir a database version stays; a commit that moved still imports', () => {
+    const declared = { ...dbOnly, dbOnly: true };
+    expect(strict(declared)).toEqual(classifySyncPath(declared));
+    expect(strict(declared)).toMatchObject({ cls: 'db_ahead', settled: true, action: 'none' });
+    expect(strict({ ...gitMoved, page: dbOnly.page, dbOnly: true })).toMatchObject({ cls: 'import', action: 'import', gitWins: 'drift' });
+  });
+
   test('drift on either side imports the commit', () => {
     const both = { ...gitMoved, page: dbOnly.page };
     expect(classifySyncPath(both)).toMatchObject({ cls: 'drift', action: 'hold', side: 'both' });
