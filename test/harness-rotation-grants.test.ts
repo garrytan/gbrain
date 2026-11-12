@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { createEngine } from '../src/core/engine-factory.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { mintHarnessToken } from '../src/core/bootstrap/harness.ts';
-import { carryLegacyGrant, mintLegacyToken } from '../src/core/token-mint.ts';
+import { carryLegacyGrant, mintLegacyToken, readActiveTokenPrivatePages, uncarriedPrivatePagesNote } from '../src/core/token-mint.ts';
 import { executeRawJsonb } from '../src/core/sql-query.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -81,3 +81,34 @@ test('carry rules: an explicit --source wins; policy changes add only their own 
     .toEqual({ takesHolders: ['world'], sourceGrant: ['team-a'], allowedOperations: ['get_page', 'join_brain'], withheldOperations: [] });
   expect(carryLegacyGrant({ allowed_operations: [] }, { ...fresh, explicitSource: false }).allowedOperations).toEqual([]);
 });
+
+// Value: protects=#8104: a rotated harness token never inherits the replaced token's private-pages grant (it starts at none), and the
+// rotation reports the rescope that grants it again; a prior token without the grant reports nothing; fails_when=rotation drops the
+// grant silently (no uncarriedPrivatePages) or carries it onto the new row; why_new=carryLegacyGrant reads only the permissions mirror,
+// which has no private_pages; seam=none (the production mint on a sandboxed PGLite brain); no_claim=the harness log line's placement
+test('rotation does not carry a private-pages grant and names the rescope that grants it again', async () => {
+  const privatePagesOf = (id: string) => withBrain(async engine => (await engine.executeRaw<{ private_pages: string }>(
+    'SELECT private_pages FROM access_tokens WHERE id = $1::uuid', [id]))[0]!.private_pages);
+  const rotate = async (grant: 'granted_sources' | 'none') => {
+    const prior = await withBrain(async engine => {
+      const minted = await mintLegacyToken(engine, { name: 'bootstrap-harness', takesHolders: ['world'], scopes: ['read', 'write'], allowedOperations: ['get_page'] });
+      await engine.executeRaw('UPDATE access_tokens SET private_pages = $2 WHERE id = $1::uuid', [minted.id, grant]);
+      return minted;
+    });
+    return withEnv(env(), () => mintHarnessToken({ name: 'bootstrap-harness', scopes: ['read', 'write'],
+      allowedOperations: ['get_page'], carry: { fromId: prior.id, explicitSource: false, policyAdded: [] } }));
+  };
+  const granted = await rotate('granted_sources');
+  expect(granted.uncarriedPrivatePages).toBe('granted_sources');
+  expect(await privatePagesOf(granted.id)).toBe('none');
+  expect(uncarriedPrivatePagesNote(granted.name, granted.uncarriedPrivatePages!))
+    .toBe('token bootstrap-harness: private-pages grant not carried; run `gbrain auth rescope --token bootstrap-harness --private-pages granted-sources` to grant it again.');
+  const plain = await rotate('none');
+  expect(plain.uncarriedPrivatePages).toBeUndefined();
+  expect(await privatePagesOf(plain.id)).toBe('none');
+  // Last in the file: a brain whose schema predates the column reads every token as none.
+  expect(await withBrain(async engine => {
+    await engine.executeRaw('ALTER TABLE access_tokens DROP COLUMN private_pages');
+    return readActiveTokenPrivatePages(engine, granted.id);
+  })).toBe('none');
+}, 120_000);

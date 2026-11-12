@@ -2331,6 +2331,13 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "elapsed_ms": "<volatile>",
+          "message": "No credential or local agent that reads the same pages for everyone can read chat from several channels.",
+          "name": "unscoped_multi_user_token",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "elapsed_ms": "<volatile>",
           "message": "No image assets indexed yet",

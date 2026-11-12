@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 287195,
-    "stdoutSha256": "0ce2ce7f78140fd56cf7bbd02098a18c5802abfb26bd5713b347d2f50e36e5f1",
+    "stdoutBytes": 287325,
+    "stdoutSha256": "310ed1e4ffd4c7f6a0a4c2bf5ce02b6ad10797755f3f3fefc99d0c2de574c4a2",
     "toolNames": [
       "remember",
       "entity",
@@ -2059,7 +2059,7 @@
               "type": "string"
             },
             "token_budget": {
-              "description": "Evidence token cap.",
+              "description": "Evidence token cap. Without return_unit it caps the chunk payload; with search.query_budget_unit=auto it is the hard delivery cap (below 32 refused).",
               "type": "number"
             },
             "types": {

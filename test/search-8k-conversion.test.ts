@@ -119,6 +119,19 @@ describe('search.evidence_titles', () => {
     expect(titledPageHeader('[observed 2025-07-01]', title)).toBe("[observed 2025-07-01] Forge /page page slug='x' chat");
     expect(titledPageHeader('[observed 2025-07-01]', '  ')).toBe('[observed 2025-07-01]');
   });
+
+  // Value: protects=a page title cannot reorder or break the header line it ends (#7930); fails_when=evidenceTitle stops removing a bidi class or stops blanking C0/C1 controls; why_new=only < > " and U+0085 were tested; seam=none; no_claim=page body text
+  test.each([
+    ['bidi overrides', 'Forge\u202Eknil\u202A\u202B\u202C\u202D chat', 'Forgeknil chat'],
+    ['bidi isolates', 'Forge\u2066\u2067\u2068 chat\u2069', 'Forge chat'],
+    ['bidi marks', 'Forge\u200E\u200F\u061C chat', 'Forge chat'],
+    ['C0 controls', 'Forge\u0000\u0007\u001B[31m chat\u001F', 'Forge [31m chat'],
+    ['DEL and C1 controls', 'Forge\u007F\u0080\u009B31m\u009F chat', 'Forge 31m chat'],
+  ])('the header line strips %s from a title', (_, title, clean) => {
+    expect(titledPageHeader('[observed 2025-07-01]', title)).toBe(`[observed 2025-07-01] ${clean}`);
+    const p = { slug: 'conversations/chat-0', title, chunk_text: 'body', page_id: 1, score: 1 } as unknown as SearchResult;
+    expect(renderPagesBlockDetailed([p], 600, 'forge', { verbatim: true, titles: true }).text).toContain(`title="${clean}"`);
+  });
 });
 
 describe('search.query_facts_block', () => {

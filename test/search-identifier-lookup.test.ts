@@ -7,7 +7,8 @@ import { identifierKeywordQuery, parseIdentifier, textContainsIdentifier, type I
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { seedPage } from './helpers/keyword-paging-fixture.ts';
-import { structuralExactLookup } from '../src/core/search/exact-lookup.ts';
+import { applyExactLookupTier, structuralExactLookup } from '../src/core/search/exact-lookup.ts';
+import type { SearchResult } from '../src/core/types.ts';
 
 describe('parseIdentifier', () => {
   const cases: Array<[string, IdentifierKind | null]> = [
@@ -97,5 +98,21 @@ describe('identifier probe on PGLite', () => {
 
   test('a plain-word query runs no identifier probe', async () => {
     expect(await slugs('billing team')).toEqual([]);
+  });
+
+  // #7935: the tier promoted its hits in reverse, so the best keyword match landed last of the promoted rows.
+  test('promoted identifier hits keep the keyword order, best match first', async () => {
+    await seedPage(engine, 'companies/acme-example', 'Acme Example owns acme-example.com. Mail desk@acme-example.com or visit acme-example.com and acme-example.com/support.');
+    await seedPage(engine, 'people/alice-example', 'Alice Example works at acme-example.com.');
+    await seedPage(engine, 'meetings/2026-04-03', 'Call notes; the agenda link was acme-example.com.');
+    const hits = (await structuralExactLookup(engine, 'acme-example.com', {})).map(h => h.slug);
+    expect(hits).toHaveLength(3);
+    expect(hits[0]).toBe('companies/acme-example');
+    const organic = [{ slug: 'notes/vendor-contact', source_id: 'default', score: 0.9, chunk_text: 'x' } as SearchResult,
+      { slug: hits[2], source_id: 'default', score: 0.5, chunk_text: 'y' } as SearchResult];
+    const out = await applyExactLookupTier(engine, organic, 'acme-example.com', {});
+    expect(out.map(r => r.slug)).toEqual([...hits, 'notes/vendor-contact']);
+    expect(out[0].score).toBeGreaterThan(out[1].score);
+    expect(out[1].score).toBeGreaterThan(out[2].score);
   });
 });

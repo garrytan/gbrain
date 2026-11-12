@@ -10,6 +10,29 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Access, trust and recall wave (salvage of #8150, #8312 and #8081 onto current master).** Three earlier fix waves that had drifted behind master, rebuilt on it with their tests.
+
+**Function search paths keep `pg_temp` (#7785, #7688).** Every gbrain function definition now pins `pg_catalog, public, pg_temp` itself, so a schema replay or `reindex-search-vector` no longer drops what v277 appended, and `bun run check:search-path` refuses a pinned path without `pg_temp` or a pinned function missing from `PINNED_FUNCTION_NAMES`. The end-of-run hardening retries a concurrent `pg_proc` update, names functions another role owns once per run, and skips itself after a lock refusal instead of waiting a second `lock_timeout`. Doctor `function_search_path` points at `gbrain apply-migrations --yes` below v277 and past it prints schema-qualified `ALTER FUNCTION` statements (argument types only) to run as each function's owner.
+
+**Trust review shows what you confirm (#7820, #7821, #7116).** Release and drop previews quote every free-text field and strip default-ignorable characters. `gbrain trust review --accept-all` lists an item it can't preview, or whose summary is too long to show in full, as skipped and never applies it; a page the write gate flagged as instructions is now listed by `trust review` (`flagged_page`) and is never part of accept-all: confirm it on its own with `gbrain trust confirm` after reading it. An older release preparer refuses a previewed index-existing release, and doctor `trust_release_unpreviewed_fields` matches the released hold by request id.
+
+**Private-pages grant follow-ups (#8104).** `get_versions` hides an older version that carried the `pinned_question` marker from a token with the private-pages grant, even after the live page dropped the marker. Token rotation still never carries the grant, and now says so with the `gbrain auth rescope` command that grants it again.
+
+**Recall and search (#7200, #7930, #7938, #7993, #7935, #8033, #7082).** Evidence titles drop bidi and control characters; `query`'s `token_budget` schema names `search.query_budget_unit=auto`. A saved fact a correction superseded no longer comes back through entity facts, follows its corrector in the reply, and matches on normalised figures and stemmed names. `sources_not_readable` counts only pages search returns and active facts. Exact lookup keeps keyword order, projection readiness reads faster with a trust floor in its cache key, and keyword page search limits before joining chunks.
+
+**An install that hands one unscoped credential to an agent several people talk to now says so, loudly, and doctor reports it.** In the HARN-13 host-harness pilot, one bot token over a brain that held many channels' chat made agents answer people with other people's messages: telling the agent gbrain was live cost 9 to 21 points of pass rate, and every added cross-scope failure cited a channel page the bot grant returned. A credential reads the same pages whoever talks to its agent (an unbound one everything its grant reaches, one bound to a member what that member may read), so gbrain warns.
+
+The `unscoped_multi_user_token` safety notice fires from `gbrain setup openclaw|hermes|grok-bot|muse`, from `setup claude-code` when a chat-channel plugin is enabled, from `mcp grant` and `connect` for a bot harness or a grant that reads chat from 2+ channels, from `skillpack scaffold` into an OpenClaw or Hermes workspace, and from `auth create` and `auth register-client` when the new credential reads chat from 2+ channels. It names the fixes (a one-source grant, `sources unfederate`, `GBRAIN_SOURCE` plus `sources unfederate` for a stdio agent, `visibility: private`, a credential bound to each person with `gbrain auth create <name> --member <id>`, or one shared agent with `--may-act-for` and a per-request audience), says plainly when the chat sits in one source and no source grant can separate it, and says that `source_ids` narrows only the call that sends it. A credential holding `--may-act-for` is not flagged, and the notice says its harness must name an audience on every call, because a call that names none reads the credential's full grant. The new read-only doctor check `unscoped_multi_user_token` runs the same detection over every active token, OAuth client and wired local agent. No grant, default or scoping behaviour changes, and no exit code moves.
+
+### Itemized changes
+
+- `src/core/grants/shared-exposure.ts` (new): the detection (bot harnesses, Claude Code channel plugins, the chat-channel census over a credential's or stdio server's read set), the notice and its fix.
+- `src/commands/doctor/checks/unscoped-multi-user-token.ts` (new), registered in the doctor registry and categories; doctor goldens regenerated for the new check.
+- The install routes: `src/commands/setup.ts`, `mcp.ts`, `harness-connect.ts`, `skillpack/scaffold.ts`, `auth.ts`. Warnings go to stderr and into `notices` or `warnings` of a `--json` result.
+- `src/core/error-registry.ts`: the notice code. `docs/mcp/ADMIN.md#one-token-several-people`, `skills/mcp-access/SKILL.md`.
+- Tests: `test/shared-exposure.test.ts`, `test/shared-exposure-routes.test.ts` (PGLite brains with no repository).
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git
