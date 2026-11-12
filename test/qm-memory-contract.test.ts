@@ -28,6 +28,8 @@ const V1_SHA256 = 'c80a7a5f8133f875ef90a2b5052a53c4d2bb0ab95facfa3975ba626c00daa
 /** The v2 and v3 bytes as they landed (v0.60.662.0): a published version never changes. */
 const V2_SHA256 = '5458aa92d9495c391b7ec96978a16d4f7ea9841994e8e9163da1205223f1f6a6';
 const V3_SHA256 = 'cf4e3f514c57bcd381c1bc0846a0de105dd2a0fbbf361aaa08175cd8bfe0760b';
+/** The v4 bytes as they landed (v0.60.666.0, #9152). */
+const V4_SHA256 = '51f2ee77f0925f6ac19ecc116eeb6d7527d00b8a2962ebbad939f61d0afa3b2f';
 
 describe('QM memory-provider contract v1', () => {
   const fixture = JSON.parse(readFileSync(QM_CONTRACT_PATH, 'utf8'));
@@ -295,11 +297,10 @@ describe('QM memory-provider contract v4 (GST-2407: memory_propose, E1 scope_rea
     expect(v3.memory_propose).toBeUndefined();
   });
 
-  test('each personal tool is marked scope_read from SCOPE_READ_OPS, and every scope-read op QM sees is marked', () => {
+  test('each personal tool carries the scope_read marking v4 published, frozen at its sha (context_pack is marked from v5 on)', () => {
+    expect(sha(readFileSync(QM_CONTRACT_PATHS[4]))).toBe(V4_SHA256);
     const marks = Object.fromEntries(fixture.personal_tools.tools.map((t: { name: string; scope_read: boolean }) => [t.name, t.scope_read]));
     expect(marks).toEqual({ context_pack: false, entity: true, find_experts: true, forget_fact: false, get_backlinks: true, get_page: true, get_timeline: true, get_write_request: false, query: true, volunteer_context: true, whois: true });
-    for (const name of Object.keys(marks)) expect(marks[name]).toBe(SCOPE_READ_OPS.has(name));
-    for (const op of SCOPE_READ_OPS) expect(op === 'memory_recall' || marks[op] === true).toBe(true);
     expect(fixture.memory_recall.scope_read).toEqual(v3.memory_recall.scope_read);
     const rules = fixture.personal_tools.scope_read;
     expect(rules.marked).toContain('never as the person');
@@ -344,5 +345,44 @@ describe('QM memory-provider contract v4 (GST-2407: memory_propose, E1 scope_rea
     const fixes = fixture.errors.codes.find((c: { code: string }) => c.code === 'actor_not_attested').reasons;
     expect(fixes.find((r: { reason: string }) => r.reason === 'actor_required').fix).toContain('memory_propose');
     expect(fixture.errors.applies_to).toContain('memory_propose');
+  });
+});
+
+describe('QM memory-provider contract v5 (GST-2407: context_pack reads its named source as the scope)', () => {
+  const fixture = JSON.parse(readFileSync(QM_CONTRACT_PATHS[5], 'utf8'));
+  const v4 = JSON.parse(readFileSync(QM_CONTRACT_PATHS[4], 'utf8'));
+  const sha = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex');
+
+  test('the committed fixture matches the live registry (regenerate with bun scripts/build-qm-memory-contract.ts)', () => {
+    expect(QM_CONTRACT_PATHS[5].endsWith(join('docs', 'contracts', 'qm-memory-provider', 'v5.json'))).toBe(true);
+    expect(readFileSync(QM_CONTRACT_PATHS[5], 'utf8')).toBe(renderQmMemoryContract(5));
+  });
+
+  test('v1 to v4 stay byte for byte as published, on disk and as the builder renders them', () => {
+    for (const [version, want] of [[1, V1_SHA256], [2, V2_SHA256], [3, V3_SHA256], [4, V4_SHA256]] as const) {
+      expect({ version, disk: sha(readFileSync(QM_CONTRACT_PATHS[version])), built: sha(renderQmMemoryContract(version)) }).toEqual({ version, disk: want, built: want });
+    }
+  });
+
+  test('it keeps everything v4 has; only the version, context_pack\'s marking and the scope_read rules change', () => {
+    expect(fixture.version).toBe(5);
+    for (const key of Object.keys(v4)) if (key !== 'version' && key !== 'personal_tools') expect(fixture[key]).toEqual(v4[key]);
+    const { scope_read: rules, tools: personalTools, ...rest } = fixture.personal_tools;
+    const { scope_read: v4Rules, tools: v4Tools, ...v4Rest } = v4.personal_tools;
+    expect(rest).toEqual(v4Rest);
+    expect(personalTools.map((t: { name: string; scope_read: boolean }) => (t.name === 'context_pack' ? { ...t, scope_read: false } : t))).toEqual(v4Tools);
+    const { context_pack: packRule, unmarked, ...ruleRest } = rules;
+    const { unmarked: v4Unmarked, ...v4RuleRest } = v4Rules;
+    expect(ruleRest).toEqual(v4RuleRest);
+    expect(v4Unmarked.startsWith(unmarked)).toBe(true);
+    expect(unmarked).not.toContain('context_pack');
+    for (const word of ['source_id', 'entity_refs', 'session_id', 'invalid_params', 'nothing is read']) expect(packRule).toContain(word);
+  });
+
+  test('each personal tool is marked scope_read from SCOPE_READ_OPS, and every scope-read op QM sees is marked', () => {
+    const marks = Object.fromEntries(fixture.personal_tools.tools.map((t: { name: string; scope_read: boolean }) => [t.name, t.scope_read]));
+    expect(marks).toEqual({ context_pack: true, entity: true, find_experts: true, forget_fact: false, get_backlinks: true, get_page: true, get_timeline: true, get_write_request: false, query: true, volunteer_context: true, whois: true });
+    for (const name of Object.keys(marks)) expect(marks[name]).toBe(SCOPE_READ_OPS.has(name));
+    for (const op of SCOPE_READ_OPS) expect(op === 'memory_recall' || marks[op] === true).toBe(true);
   });
 });
