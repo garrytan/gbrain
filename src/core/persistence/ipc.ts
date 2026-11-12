@@ -9,6 +9,7 @@ import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { Action } from '../agent-output.ts';
 import type { ProjectionBacklog } from '../page-state/projections.ts';
 import { resolveSocketPathForConfig, socketHasLiveListener } from '../context/resolve-ipc.ts';
+import { ownerExceptionFailure, ownerExceptionLogText } from './publication-failure.ts';
 import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import { isPersistenceAdminExtension, isPersistenceAdminOperation, PERSISTENCE_ADMIN_EXTENSIONS, PERSISTENCE_ADMIN_OPERATIONS, type PersistenceAdminExtension, type PersistenceAdminOperation } from './admin-contract.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe, prepareLocalIpcPath } from '../context/ipc-path.ts';
@@ -178,8 +179,7 @@ function publicError(error: unknown, requestId?: string): Record<string, unknown
   const incident = randomUUID();
   // Never reflect driver errors, SQL, credentials, or private payloads: the cause stays on this host's owner log.
   try {
-    const cause = error instanceof Error ? error.stack ?? `${error.name}: ${error.message}` : String(error);
-    process.stderr.write(`[gbrain persistence] request failed in this owner (incident ${incident}): ${redactConnectionInfo(cause)}\n`);
+    process.stderr.write(`[gbrain persistence] request failed in this owner (incident ${incident}):${redactConnectionInfo(ownerExceptionLogText(ownerExceptionFailure(error).detail))}\n`);
   } catch { /* stderr gone */ }
   return opError('internal_error', `The persistence owner failed while running this request (incident ${incident}); the request itself was not at fault.`,
     `The process that holds this brain (the command in fix names it) hit an internal fault and wrote the cause to its own stderr under incident ${incident}; nothing about it crosses the local socket. ${requestId
@@ -366,7 +366,7 @@ export function restoreRecoveryContract(error: OperationError, body: Record<stri
   if (typeof body.code === 'string' && body.code !== error.code) error.canonical = body.code as OperationError['canonical'];
   if (typeof body.detail === 'string') error.detail = body.detail;
   if (typeof body.retryable === 'boolean') error.retryable = body.retryable;
-  if (record(body.fix) && (body.code === 'worktree_refreshing' || body.code === 'internal_error' && body.detail === 'owner_internal')) { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
+  if (record(body.fix) && body.code === 'worktree_refreshing') { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
 }
 
 function remoteOperationError(value: unknown): OperationError {

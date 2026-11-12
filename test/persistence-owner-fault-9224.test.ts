@@ -63,7 +63,8 @@ describe('an owner fault over the persistence socket (#9224)', () => {
     expect(wire).not.toContain(CANARY);
     expect(wire).not.toContain('hunter2');
     const line = logged.find(l => l.includes(incident!)) ?? '';
-    expect(line).toContain(CANARY);
+    expect(line).toContain('class=TypeError');
+    expect(line).not.toContain(CANARY);
     expect(line).not.toContain('hunter2');
   });
 
