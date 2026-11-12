@@ -1,5 +1,6 @@
 {
   "test/access-audience-members.test.ts": 60000,
+  "test/access-labelled-only.test.ts": 101796,
   "test/access-members-read-lineage.test.ts": 60000,
   "test/access-page-rule-fileless.test.ts": 59000,
   "test/access-raw-only-rules.test.ts": 60000,
@@ -174,6 +175,7 @@
   "test/e2e/upload-transport.test.ts": 56150,
   "test/e2e/worker-shutdown-error-matrix-postgres.test.ts": 4700,
   "test/e2e/worktree-refresh-postgres.test.ts": 102000,
+  "test/e2e/worktree-refresh-recovery-postgres.test.ts": 82200,
   "test/effect-git-secret-gate.test.ts": 8950,
   "test/embed-chunk-statistics.test.ts": 400,
   "test/embed-default-concurrency.test.ts": 800,
