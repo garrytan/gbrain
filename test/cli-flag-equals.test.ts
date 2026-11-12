@@ -318,6 +318,7 @@ describe('#7619 split rules', () => {
       'src/commands/pages-unsearchable.ts': ['pages unsearchable'],
       'src/commands/recall.ts': ['recall', 'forget'],
       'src/commands/reindex.ts': ['reindex'],
+      'src/commands/reindex-synopsis.ts': ['reindex'],
       'src/commands/resolvers.ts': ['resolvers list'],
       'src/commands/routing-eval.ts': ['routing-eval'],
       'src/commands/schema.ts': ['schema active', 'schema detect', 'schema suggest', 'schema review-candidates', 'schema review-orphans', 'schema stats', 'schema cardinality-preview', 'schema sync', 'schema lint', 'schema reload', 'schema update-type', 'schema add-alias', 'schema add-prefix', 'schema add-link-type', 'schema set-extractable', 'schema set-expert-routing', 'schema scaffold-extractable'],
