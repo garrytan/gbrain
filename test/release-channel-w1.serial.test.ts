@@ -10,8 +10,8 @@
  *
  * Serial: stubs globalThis.fetch and process-global env.
  */
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -19,17 +19,21 @@ import { VERSION } from '../src/version.ts';
 import { parseSemver } from '../src/core/semver.ts';
 import {
   STABLE_EVIDENCE_POLICY,
+  isCacheFresh,
   offeredVersion,
   parseMarker,
   pendingUpgradeVersion,
   readSnooze,
   readUpdateCache,
   snoozeHolds,
+  updateCachePath,
   writeSnooze,
   writeUpdateCache,
 } from '../src/core/self-upgrade.ts';
 import { STABLE_RECORD_URL, fetchStableRecord, parseStableRecord, requiredEvidenceKeys, sanitizeCause } from '../src/core/stable-channel.ts';
 import { refreshUpdateCache } from '../src/commands/check-update.ts';
+import { attemptAutopilotSelfUpgrade } from '../src/commands/autopilot.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { runSelfUpgrade } from '../src/commands/self-upgrade.ts';
 import { CHANNEL_NOTICE_TEXT, maybeEmitChannelNotice } from '../src/core/release-channel-notice.ts';
 import { checkSelfUpgradeHealth } from '../src/commands/doctor/checks/upgrade-health.ts';
@@ -182,6 +186,59 @@ for (const brain of ['repo-less', 'repo'] as const) {
       const path = join(dotG(), 'update-check.stable.json');
       writeFileSync(path, readFileSync(path, 'utf8').replace(STABLE_EVIDENCE_POLICY, 'stable-record-v1;matrix-from=0.60.1.0'));
       expect(readUpdateCache('stable')).toBeNull();
+    });
+
+    test('a clock rollback does not make a future-dated cache fresh', () => {
+      writeConfig({}, brain);
+      const now = Date.now();
+      const future = now + 24 * 3600_000;
+      for (const channel of ['stable', 'alpha'] as const) {
+        writeUpdateCache({ kind: 'up_to_date', current: VERSION }, { channel, checkedAt: future });
+        // A refresh started before the clock moved back, but completed afterwards.
+        expect(isCacheFresh(readUpdateCache(channel)!, now)).toBe(false);
+        const path = updateCachePath(channel);
+        const raw = JSON.parse(readFileSync(path, 'utf8'));
+        writeFileSync(path, JSON.stringify({ ...raw, checked_at: now }));
+        // A cache written before the clock moved back has a future filesystem mtime too.
+        utimesSync(path, future / 1000, future / 1000);
+        expect(isCacheFresh(readUpdateCache(channel)!, now)).toBe(false);
+      }
+    });
+
+    test('a new check replaces a future-dated answer and retains the withdrawal evidence', async () => {
+      writeConfig({}, brain);
+      const future = Date.now() + 24 * 3600_000;
+      writeUpdateCache({ kind: 'up_to_date', current: VERSION }, { channel: 'stable', checkedAt: future, latest: VERSION });
+      utimesSync(updateCachePath('stable'), future / 1000, future / 1000);
+      serve({ record: record(BEHIND, { known_bad: [VERSION] }) });
+      await refreshUpdateCache();
+      expect(readUpdateCache('stable')).toMatchObject({ latest: BEHIND, knownBad: [VERSION], error: null,
+        marker: { kind: 'upgrade_available', latest: BEHIND } });
+      expect(isCacheFresh(readUpdateCache('stable')!, Date.now())).toBe(true);
+      expect(pendingUpgradeVersion(VERSION)).toBe(BEHIND);
+      expect(readUpdateCache('alpha')).toBeNull();
+    });
+
+    test('small clock skew preserves reversed-completion protection; autopilot refuses a still-stale refresh', async () => {
+      writeConfig({ self_upgrade: { mode: 'auto' } }, brain);
+      const now = Date.now();
+      const clock = spyOn(Date, 'now').mockReturnValue(now);
+      try {
+        writeUpdateCache({ kind: 'upgrade_available', current: VERSION, latest: AHEAD }, { checkedAt: now + 15_000 });
+        const path = updateCachePath('stable');
+        utimesSync(path, (now - 13 * 3600_000) / 1000, (now - 13 * 3600_000) / 1000);
+        serve({ record: record(AHEAD2) });
+        let idleReads = 0;
+        const engine = { kind: 'postgres', sql: async () => { idleReads++; throw new Error('fixture stops before any upgrade'); } } as unknown as BrainEngine;
+        await attemptAutopilotSelfUpgrade(engine, 'postgres', join(home, 'autopilot.lock'));
+        expect(fetched).toEqual([STABLE_RECORD_URL]);
+        expect(readUpdateCache('stable')?.latest).toBe(AHEAD);
+        expect(idleReads).toBe(0);
+        // A genuinely fresh cache still proceeds to the idle check.
+        utimesSync(path, now / 1000, now / 1000);
+        await attemptAutopilotSelfUpgrade(engine, 'postgres', join(home, 'autopilot.lock'));
+        expect(idleReads).toBe(1);
+      } finally { clock.mockRestore(); }
     });
 
     test('an invalid configured channel checks and offers nothing', async () => {
