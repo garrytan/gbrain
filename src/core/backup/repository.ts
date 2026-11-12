@@ -105,7 +105,41 @@ function worktreeDirty(root: string): Promise<boolean> {
   });
 }
 
-function repositoryFingerprint(root: string, origin: string, branch: string, head: string): string {
+/** Only symbolic-ref exit 1 means detached; other failures remain probe errors. */
+function headBranch(root: string): string | null {
+  try { return git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']); }
+  catch (error) {
+    if ((error as { status?: number }).status === 1) return null;
+    throw error;
+  }
+}
+
+/** Local objects corroborate a freshly advertised branch tip; tracking refs alone never do. */
+function containsCommit(root: string, head: string, tip: string, timeoutMs = 2_000): boolean {
+  if (head === tip) return true;
+  try {
+    execFileSync('git', ['-C', root, '--no-replace-objects', 'merge-base', '--is-ancestor', head, tip], {
+      encoding: 'utf8', timeout: Math.max(1, timeoutMs), maxBuffer: 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'], env: { ...backupGitEnv(), GIT_GRAFT_FILE: '' },
+    });
+    return true;
+  }
+  catch { return false; } // Includes unknown objects: do not fetch or infer ancestry.
+}
+
+function detachedRemoteTip(root: string, head: string, tips: string[], sweepDeadline: number): string | undefined {
+  if (tips.includes(head)) return head;
+  // Bound local history probes independently of the remote-output byte cap.
+  const deadline = Math.min(sweepDeadline, Date.now() + 2_000);
+  for (const tip of [...new Set(tips)].slice(0, 32)) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    if (containsCommit(root, head, tip, remaining)) return tip;
+  }
+  return undefined;
+}
+
+function repositoryFingerprint(root: string, origin: string, branch: string | null, head: string): string {
   const directory = realpathSync(git(root, ['rev-parse', '--absolute-git-dir']));
   const stat = statSync(directory, { bigint: true });
   const push = readPushStatusForRoot(root);
@@ -149,14 +183,17 @@ export async function assessBackupRepository(
       try { if (readManifest(root).state === 'initialized') asset.fix_argv = ['gbrain', 'bootstrap', 'repo']; } catch {}
       return asset;
     }
-    const branch = git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+    const branch = headBranch(root);
     const head = git(root, ['rev-parse', '--verify', 'HEAD']);
     const dirty = await worktreeDirty(root);
     let ahead: number | undefined;
-    try { ahead = Number(git(root, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`])); } catch {}
+    if (branch !== null) {
+      try { ahead = Number(git(root, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`])); } catch {}
+    }
     asset.state = ahead && ahead > 0 ? 'unpushed' : dirty ? 'dirty' : 'ok';
     if (ahead && ahead > 0) { asset.ahead = ahead; asset.detail = `${ahead} commit(s) ahead of origin/${branch} (local tracking ref only)`; }
     else if (dirty) asset.detail = 'uncommitted changes';
+    else if (branch === null) asset.detail = 'detached HEAD; remote branch reachability not yet verified';
     if (failedPush) { asset.state = 'failing'; asset.detail = 'last_push_failed'; }
     if (managedFix && (dirty || (ahead ?? 0) > 0 || failedPush)) asset.fix_argv = managedFix;
     const fingerprint = repositoryFingerprint(root, origin, branch, head);
@@ -167,14 +204,15 @@ export async function assessBackupRepository(
       if (previous?.id === id && previous.kind === kind && prior?.repository_fingerprint === fingerprint && Number.isFinite(age) && age >= 0) {
         asset.verification = { ...prior };
         if (prior.state === 'verified') {
-          if (previous.state === 'ok' && !dirty && age <= BACKUP_VERIFICATION_MAX_AGE_MS && prior.local_commit === head && prior.remote_commit === head) {
+          if (previous.state === 'ok' && !dirty && age <= BACKUP_VERIFICATION_MAX_AGE_MS && prior.local_commit === head && prior.remote_commit &&
+            (branch === null ? containsCommit(root, head, prior.remote_commit) : prior.remote_commit === head)) {
             asset.state = 'ok'; asset.fix_argv = null; delete asset.ahead; delete asset.detail;
             return asset;
           }
           asset.verification.state = 'stale';
         }
       }
-      if (ahead === undefined && !dirty && !failedPush) {
+      if (branch !== null && ahead === undefined && !dirty && !failedPush) {
         asset.state = 'no_remote';
         asset.detail = 'remote configured but nothing pushed is recorded locally — run: git push -u origin <branch>; verify with gbrain backup check';
       }
@@ -187,7 +225,7 @@ export async function assessBackupRepository(
       return asset;
     }
     budget.remaining--;
-    const ref = `refs/heads/${branch}`;
+    const ref = branch === null ? 'refs/heads/*' : `refs/heads/${branch}`;
     const output = await new Promise<string>((resolve, reject) => {
       execFile('git', ['-C', root, '-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always',
         '-c', 'protocol.https.allow=always', '-c', 'protocol.http.allow=always', '-c', 'protocol.ssh.allow=always',
@@ -203,17 +241,23 @@ export async function assessBackupRepository(
       return null;
     });
     if (output === null) return asset;
-    const remoteHead = output.trim().split('\n').map(line => line.split(/\s+/)).find(parts => parts[1] === ref)?.[0];
+    const advertised = output.trim().split('\n').map(line => line.split(/\s+/))
+      .filter(parts => /^[a-f0-9]{40,64}$/.test(parts[0] ?? '') &&
+        (branch === null ? parts[1]?.startsWith('refs/heads/') : parts[1] === ref))
+      .map(parts => parts[0]!);
+    const containingTip = branch === null ? detachedRemoteTip(root, head, advertised, budget.deadline) : undefined;
+    const remoteHead = containingTip ?? advertised[0];
     if (!remoteHead || !/^[a-f0-9]{40,64}$/.test(remoteHead)) {
       asset.verification = { state: 'unavailable', checked_at: now.toISOString(), repository_fingerprint: fingerprint };
       return asset;
     }
     const stillClean = git(root, ['rev-parse', '--verify', 'HEAD']) === head
-      && git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD']) === branch
+      && headBranch(root) === branch
       && !await worktreeDirty(root)
       && git(root, ['remote', 'get-url', 'origin']) === origin
       && repositoryFingerprint(root, origin, branch, head) === fingerprint;
-    asset.verification = { state: remoteHead === head && stillClean && !dirty ? 'verified' : 'mismatch', checked_at: now.toISOString(), local_commit: head, remote_commit: remoteHead, repository_fingerprint: fingerprint };
+    const backed = branch === null ? containingTip !== undefined : remoteHead === head;
+    asset.verification = { state: backed && stillClean && !dirty ? 'verified' : 'mismatch', checked_at: now.toISOString(), local_commit: head, remote_commit: remoteHead, repository_fingerprint: fingerprint };
     if (asset.verification.state === 'verified') {
       asset.state = 'ok';
       asset.fix_argv = null;

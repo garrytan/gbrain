@@ -67,6 +67,106 @@ test('a deleted remote cannot be verified by a surviving tracking ref', async ()
   expect(result.assets[0].verification?.state).toBe('unavailable');
 });
 
+test('a detached linked worktree verifies an ancestor of a live remote branch and reuses only its own evidence', async () => {
+  const { root } = await repository();
+  const detached = join(tmp, 'detached');
+  git(root, 'worktree', 'add', '--detach', detached, 'HEAD');
+  const head = git(detached, 'rev-parse', 'HEAD');
+  git(root, 'commit', '--allow-empty', '-m', 'newer remote commit');
+  git(root, 'push');
+  const remoteHead = git(root, 'rev-parse', 'HEAD');
+  const result = await computeBackupCoverage(engine([detached]), verified);
+  expect(result.totals.recoverable_repos).toBe(1);
+  expect(result.assets[0].verification).toMatchObject({ state: 'verified', local_commit: head, remote_commit: remoteHead });
+  const cached = await assessBackupRepository(detached, 'source_repo', 'fixture-0', now, undefined, result.assets[0]);
+  expect(cached.verification?.state).toBe('verified');
+  expect(cached.state).toBe('ok');
+  git(detached, 'commit', '--allow-empty', '-m', 'detached local only');
+  const changed = await assessBackupRepository(detached, 'source_repo', 'fixture-0', now, undefined, result.assets[0]);
+  expect(changed.verification?.state).not.toBe('verified');
+  expect(changed.state).not.toBe('no_remote');
+});
+
+test('a detached exact remote tip verifies without fetching, but a deleted branch invalidates tracking evidence', async () => {
+  const { root, remote } = await repository();
+  git(root, 'checkout', '--detach');
+  let result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.totals.recoverable_repos).toBe(1);
+  git(remote, 'update-ref', '-d', 'refs/heads/main');
+  result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.totals.recoverable_repos).toBe(0);
+  expect(result.assets[0].verification?.state).toBe('missing_ref');
+});
+
+test('unpublished detached commits, dirty detached trees and offline remotes are not recovery proof', async () => {
+  const { root, remote } = await repository();
+  git(root, 'checkout', '--detach');
+  git(root, 'commit', '--allow-empty', '-m', 'unpublished detached');
+  let result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.totals.recoverable_repos).toBe(0);
+  expect(result.assets[0].verification?.state).toBe('mismatch');
+  git(root, 'checkout', '--detach', 'origin/main');
+  writeFileSync(join(root, 'note.md'), '# Uncommitted memory\n');
+  result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.assets[0].state).toBe('dirty');
+  expect(result.totals.recoverable_repos).toBe(0);
+  git(root, 'checkout', '--', 'note.md');
+  rmSync(remote, { recursive: true });
+  result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.assets[0].verification?.state).toBe('unavailable');
+  expect(result.totals.recoverable_repos).toBe(0);
+});
+
+test('detached ancestry ignores local replacement refs and legacy grafts', async () => {
+  const { root } = await repository();
+  const published = git(root, 'rev-parse', 'HEAD');
+  git(root, 'checkout', '--detach');
+  git(root, 'commit', '--allow-empty', '-m', 'unpublished');
+  const unpublished = git(root, 'rev-parse', 'HEAD');
+  git(root, 'replace', '--graft', published, unpublished);
+  expect(git(root, 'merge-base', '--is-ancestor', unpublished, published)).toBe('');
+  let result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.totals.recoverable_repos).toBe(0);
+  git(root, 'replace', '-d', published);
+  writeFileSync(join(root, '.git', 'info', 'grafts'), `${published} ${unpublished}\n`);
+  result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.totals.recoverable_repos).toBe(0);
+});
+
+test('detached ancestry never fetches a remote-only tip to manufacture proof', async () => {
+  const { root, remote } = await repository();
+  const other = join(tmp, 'other');
+  git(tmp, 'clone', remote, other);
+  git(other, 'config', 'user.name', 'Fixture');
+  git(other, 'config', 'user.email', 'fixture@example.invalid');
+  git(other, 'commit', '--allow-empty', '-m', 'remote only');
+  git(other, 'push');
+  const tip = git(other, 'rev-parse', 'HEAD');
+  git(root, 'checkout', '--detach');
+  const result = await computeBackupCoverage(engine([root]), verified);
+  expect(result.totals.recoverable_repos).toBe(0);
+  expect(() => git(root, 'cat-file', '-e', tip)).toThrow();
+});
+
+test('a detached HEAD or branch attachment changed during remote readback is not verified', async () => {
+  for (const change of ['head', 'branch']) {
+    const { root } = await repository(`race-${change}`);
+    git(root, 'checkout', '--detach');
+    const head = git(root, 'rev-parse', 'HEAD');
+    const probe = spyOn(childProcess, 'execFile').mockImplementation(((_file: string, _args: string[], _options: unknown, callback: Function) => {
+      if (change === 'head') git(root, 'commit', '--allow-empty', '-m', 'moved during probe');
+      else git(root, 'checkout', '-b', 'attached-during-probe');
+      setImmediate(() => callback(null, `${head}\trefs/heads/main\n`));
+      return {};
+    }) as unknown as typeof childProcess.execFile);
+    try {
+      const result = await computeBackupCoverage(engine([root]), verified);
+      expect(result.totals.recoverable_repos).toBe(0);
+      expect(result.assets[0].verification?.state).toBe('mismatch');
+    } finally { probe.mockRestore(); }
+  }
+});
+
 test('only a clean matching remote commit is verified, and git never covers the full database', async () => {
   const { root } = await repository();
   const result = await computeBackupCoverage(engine([root]), verified);
