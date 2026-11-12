@@ -333,6 +333,7 @@ test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
+test/notifier-retry-unwatched-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
@@ -659,6 +660,7 @@ test/sync-status-commits-waiting-gst2515.test.ts
 test/sync-status-failure-detail-6513.test.ts
 test/sync-status-truthful-7243.test.ts
 test/sync-storage-invalid-8007.test.ts
+test/sync-strict-skip-gst2520.test.ts
 test/sync-strict-unmanaged-gst2492.test.ts
 test/sync-tree-reuse-gbra133.test.ts
 test/sync-unblock-repair-error-gbra130.test.ts

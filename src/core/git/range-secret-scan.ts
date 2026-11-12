@@ -20,13 +20,14 @@
  * design (docs/guides/write-refusals.md#what-stays-raw-by-design) and their Git backups have always been pushed, so the
  * gate covers what gbrain did not write; `gbrain git commit-push` commits, which carry a script's files, are scanned.
  */
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdtempSync, openSync, readFileSync, readSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 import { GIT_READ_ENV, gitChildEnv } from '../git-env.ts';
 import { readLedger } from './commit-ledger.ts';
 import { GIT_ENV } from '../git-transport.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
+import { shellQuote } from '../agent-output.ts';
 import { loadWorkspaceAllowlist, pathAllowlisted, SCAN_ALLOW_FILENAME } from '../secret-scan-allowlist.ts';
 import { scanText, SCAN_MAX_FILE_BYTES } from '../secret-scan.ts';
 import { spawnSync } from '../spawn.ts';
@@ -44,6 +45,11 @@ export interface RangeScan {
 export const MESSAGE_PATH = '(commit message)';
 
 const SNIFF_BYTES = 8000;
+/** The default time budget of a range scan; a foreground publish takes a longer one with --scan-timeout. */
+export const DEFAULT_SCAN_TIMEOUT_MS = 300_000;
+const PROGRESS_EVERY_MS = 10_000;
+/** Commits per diff-tree run, so the temporary patch file stays the size of one batch, not of the whole history. */
+const DIFF_BATCH = 256;
 const BIG_FILE_THRESHOLD = 512 * 1024 * 1024;
 const CONFIG = ['-c', 'core.quotePath=false', '-c', 'core.attributesFile=/dev/null', '-c', `core.bigFileThreshold=${BIG_FILE_THRESHOLD}`];
 const DIFF = ['diff-tree', '--stdin', '-r', '-p', '--root', '--cc', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color',
@@ -126,9 +132,19 @@ function attributesNeutral(root: string, deadline: number): boolean {
   return !existsSync(file) || readFileSync(file, 'utf8').split('\n').every(line => !line.trim() || line.trim().startsWith('#'));
 }
 
-/** An empty `base` scans `head` and its whole history (a first push that creates the remote branch). */
-export function scanRange(root: string, base: string, head: string, timeoutMs = 300_000): RangeScan {
-  const deadline = Date.now() + timeoutMs;
+/**
+ * An empty `base` scans `head` and its whole history (a first push that creates the remote branch). `progress` receives a
+ * line at once for a whole-history scan, and every 10 s while any scan runs.
+ */
+export function scanRange(root: string, base: string, head: string, timeoutMs = DEFAULT_SCAN_TIMEOUT_MS, progress?: (line: string) => void): RangeScan {
+  const started = Date.now();
+  const deadline = started + timeoutMs;
+  let reported = base ? started : 0, spoke = false;
+  const report = (line: () => string) => {
+    if (!progress || Date.now() - reported < PROGRESS_EVERY_MS) return;
+    reported = Date.now(); spoke = true;
+    progress(`secret scan: ${line()} (${Math.round((reported - started) / 1000)} s of a ${Math.round(timeoutMs / 1000)} s budget)`);
+  };
   const scan: RangeScan = { findings: [], unscanned: [], gate_changes: [] };
   const allowlist = loadWorkspaceAllowlist(root);
   const scanned = (path: string, commit: string, text: string, lineAt: (line: number) => number = line => line) => {
@@ -142,11 +158,9 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
     const commits = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
       .filter(commit => commit && !pageWrites.has(commit));
     if (!commits.length) return scan;
+    report(() => `reading ${commits.length} commit(s)${base ? '' : ', the whole history'}`);
 
-    for (const commit of commits) {
-      const raw = run(root, ['cat-file', 'commit', commit], deadline, { maxBuffer: SCAN_MAX_FILE_BYTES + 1024 * 1024 });
-      if ((raw.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS') { scan.unscanned.push({ path: MESSAGE_PATH, commit }); continue; }
-      const object = must(raw, 'cat-file commit');
+    const scanMessage = (commit: string, object: Buffer): void => {
       const split = object.indexOf('\n\n');
       const encoding = /^encoding (.+)$/m.exec(object.subarray(0, split < 0 ? object.length : split).toString('latin1'))?.[1]?.trim() ?? 'utf-8';
       const bytes = split < 0 ? Buffer.alloc(0) : object.subarray(split + 2);
@@ -156,81 +170,121 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
       }
       const before = scan.findings.length;
       scanned(MESSAGE_PATH, commit, message);
-      if (/^utf-?8$/i.test(encoding)) continue;
+      if (/^utf-?8$/i.test(encoding)) return;
       const seen = new Set(scan.findings.slice(before).map(f => `${f.line}:${f.fingerprint}`));
       for (const f of scanText(bytes.toString('latin1'), { allowlist })) {
         if (!seen.has(`${f.line}:${f.fingerprint}`)) scan.findings.push({ path: MESSAGE_PATH, commit, line: f.line, pattern: f.pattern, fingerprint: f.fingerprint });
+      }
+    };
+    for (let batch = 0; batch < commits.length; batch += DIFF_BATCH) {
+      report(() => `read ${batch} of ${commits.length} commit message(s)`);
+      const slice = commits.slice(batch, batch + DIFF_BATCH);
+      const fd = openSync(join(dir, 'commits'), 'w+', 0o600);
+      try {
+        must(run(root, ['cat-file', '--batch'], deadline, { input: slice.join('\n') + '\n', out: fd }), 'cat-file --batch');
+        let position = 0;
+        const readAt = (length: number) => {
+          const buf = Buffer.alloc(length);
+          for (let got = 0, n; got < length; got += n) {
+            n = readSync(fd, buf, got, length - got, position + got);
+            if (!n) throw new Unreadable(`git cat-file --batch ended early in the commits after ${slice[0]!.slice(0, 12)}`);
+          }
+          return buf;
+        };
+        for (const commit of slice) {
+          const peek = Buffer.alloc(200);
+          const header = peek.subarray(0, readSync(fd, peek, 0, peek.length, position));
+          const nl = header.indexOf(10);
+          const m = nl < 0 ? null : /^([0-9a-f]+) commit (\d+)$/.exec(header.subarray(0, nl).toString('latin1'));
+          if (!m || m[1] !== commit) throw new Unreadable(`git cat-file --batch could not read commit ${commit.slice(0, 12)} (it printed no header for it)`);
+          const size = Number(m[2]);
+          position += nl + 1;
+          if (size > SCAN_MAX_FILE_BYTES + 1024 * 1024) { scan.unscanned.push({ path: MESSAGE_PATH, commit }); position += size + 1; continue; }
+          const object = readAt(size);
+          position += size + 1;
+          scanMessage(commit, object);
+        }
+      } finally {
+        closeSync(fd);
       }
     }
 
     const neutral = attributesNeutral(root, deadline);
     const attrSource = neutral ? [`--attr-source=${must(run(root, ['hash-object', '-t', 'tree', '--stdin'], deadline), 'hash-object').toString().trim()}`] : [];
     const out = join(dir, 'diff');
-    const fd = openSync(out, 'w+', 0o600);
     const binaries: Array<{ commit: string; path: string; blob: string; added: boolean }> = [];
-    try {
-      must(run(root, [...attrSource, ...CONFIG, ...DIFF], deadline, { input: commits.join('\n') + '\n', out: fd }), 'diff-tree');
-      let commit = '', path: string | null = null, header = false, parents = 1, next = 0, bytes = 0, oversized = false;
-      let olds: string[] = [], blob = '', added: string[] = [], at: number[] = [];
-      const flush = () => {
-        if (path && (oversized || added.length) && !pathAllowlisted(path, allowlist)) {
-          if (oversized) scan.unscanned.push({ path, commit });
-          else scanned(path, commit, added.join('\n'), line => at[line - 1] ?? line);
-        }
-        added = []; at = []; bytes = 0; oversized = false;
-      };
-      const unexpected = (line: string) => new Unreadable(`git diff-tree printed a line the scan does not recognise in ${commit.slice(0, 12) || 'the range'}: ${JSON.stringify(line.slice(0, 80))}`);
-      let read = 0;
-      for (const { text: line, long } of fileLines(fd, SCAN_MAX_FILE_BYTES + 1)) {
-        if (++read % 4096 === 0 && Date.now() > deadline) throw new Unreadable('the scan ran past its time budget', true);
-        if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(line)) { flush(); commit = line; path = null; header = false; continue; }
-        if (line.startsWith('diff --git ') || line.startsWith('diff --cc ') || line.startsWith('diff --combined ')) {
-          flush();
-          if (!commit || long) throw unexpected(line);
-          if (line.startsWith('diff --git ')) {
-            const pair = line.slice('diff --git '.length), half = (pair.length - 1) / 2;
-            const left = Number.isInteger(half) && pair[half] === ' ' ? unquote(pair.slice(0, half)) : null;
-            const right = left === null ? null : unquote(pair.slice(half + 1));
-            path = left?.startsWith('a/') && right?.startsWith('b/') && left.slice(2) === right.slice(2) ? right.slice(2) : null;
-          } else path = unquote(line.replace(/^diff --(?:cc|combined) /, ''));
-          if (path === null) throw unexpected(line);
-          if (path === SCAN_ALLOW_FILENAME || path === '.gitattributes' || path.endsWith('/.gitattributes')) scan.gate_changes.push({ path, commit });
-          header = true; olds = []; blob = '';
-          continue;
-        }
-        const hunk = /^(@{2,}) ((?:-\d+(?:,\d+)? )+)\+(\d+)(?:,\d+)? \1(?: |$)/.exec(line);
-        if (hunk && path && !long) {
-          parents = hunk[1]!.length - 1;
-          if (hunk[2]!.trim().split(' ').length !== parents) throw unexpected(line);
-          header = false; next = Number(hunk[3]);
-          continue;
-        }
-        if (header && path && !long) {
-          const index = /^index ((?:[0-9a-f]+,)*[0-9a-f]+)\.\.([0-9a-f]+)(?: [0-7]+)?$/.exec(line);
-          if (index) { olds = index[1]!.split(','); blob = index[2]!; continue; }
-          if (/^(?:old mode|new mode|deleted file mode|new file mode|mode) [0-7,.]+$/.test(line) || line.startsWith('--- ') || line.startsWith('+++ ')) continue;
-          if (line === 'Binary files differ' || /^Binary files .+ differ$/.test(line)) {
-            if (blob && !/^0+$/.test(blob)) binaries.push({ commit, path, blob, added: olds.every(old => /^0+$/.test(old)) });
-            path = null;
+    let patchBytes = 0;
+    for (let batch = 0; batch < commits.length; batch += DIFF_BATCH) {
+      report(() => `read the patches of ${batch} of ${commits.length} commit(s), ${(patchBytes / 1048576).toFixed(0)} MiB`);
+      const fd = openSync(out, 'w+', 0o600);
+      try {
+        must(run(root, [...attrSource, ...CONFIG, ...DIFF], deadline, { input: commits.slice(batch, batch + DIFF_BATCH).join('\n') + '\n', out: fd }), 'diff-tree');
+        patchBytes += fstatSync(fd).size;
+        let commit = '', path: string | null = null, header = false, parents = 1, next = 0, bytes = 0, oversized = false;
+        let olds: string[] = [], blob = '', added: string[] = [], at: number[] = [];
+        const flush = () => {
+          if (path && (oversized || added.length) && !pathAllowlisted(path, allowlist)) {
+            if (oversized) scan.unscanned.push({ path, commit });
+            else scanned(path, commit, added.join('\n'), line => at[line - 1] ?? line);
+          }
+          added = []; at = []; bytes = 0; oversized = false;
+        };
+        const unexpected = (line: string) => new Unreadable(`git diff-tree printed a line the scan does not recognise in ${commit.slice(0, 12) || 'the range'}, starting ${JSON.stringify(line.split(' ')[0]!.slice(0, 16))}`);
+        let read = 0;
+        for (const { text: line, long } of fileLines(fd, SCAN_MAX_FILE_BYTES + 1)) {
+          if (++read % 4096 === 0) {
+            if (Date.now() > deadline) throw new Unreadable('the scan ran past its time budget', true);
+            report(() => `read the patches of ${batch} of ${commits.length} commit(s), ${(patchBytes / 1048576).toFixed(0)} MiB`);
+          }
+          if (/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(line)) { flush(); commit = line; path = null; header = false; continue; }
+          if (line.startsWith('diff --git ') || line.startsWith('diff --cc ') || line.startsWith('diff --combined ')) {
+            flush();
+            if (!commit || long) throw unexpected(line);
+            if (line.startsWith('diff --git ')) {
+              const pair = line.slice('diff --git '.length), half = (pair.length - 1) / 2;
+              const left = Number.isInteger(half) && pair[half] === ' ' ? unquote(pair.slice(0, half)) : null;
+              const right = left === null ? null : unquote(pair.slice(half + 1));
+              path = left?.startsWith('a/') && right?.startsWith('b/') && left.slice(2) === right.slice(2) ? right.slice(2) : null;
+            } else path = unquote(line.replace(/^diff --(?:cc|combined) /, ''));
+            if (path === null) throw unexpected(line);
+            if (path === SCAN_ALLOW_FILENAME || path === '.gitattributes' || path.endsWith('/.gitattributes')) scan.gate_changes.push({ path, commit });
+            header = true; olds = []; blob = '';
             continue;
           }
-          throw unexpected(line);
+          const hunk = /^(@{2,}) ((?:-\d+(?:,\d+)? )+)\+(\d+)(?:,\d+)? \1(?: |$)/.exec(line);
+          if (hunk && path && !long) {
+            parents = hunk[1]!.length - 1;
+            if (hunk[2]!.trim().split(' ').length !== parents) throw unexpected(line);
+            header = false; next = Number(hunk[3]);
+            continue;
+          }
+          if (header && path && !long) {
+            const index = /^index ((?:[0-9a-f]+,)*[0-9a-f]+)\.\.([0-9a-f]+)(?: [0-7]+)?$/.exec(line);
+            if (index) { olds = index[1]!.split(','); blob = index[2]!; continue; }
+            if (/^(?:old mode|new mode|deleted file mode|new file mode|mode) [0-7,.]+$/.test(line) || line.startsWith('--- ') || line.startsWith('+++ ')) continue;
+            if (line === 'Binary files differ' || /^Binary files .+ differ$/.test(line)) {
+              if (blob && !/^0+$/.test(blob)) binaries.push({ commit, path, blob, added: olds.every(old => /^0+$/.test(old)) });
+              path = null;
+              continue;
+            }
+            throw unexpected(line);
+          }
+          if (!path || header) throw unexpected(line);
+          if (line.startsWith('\\')) continue;
+          const prefix = line.slice(0, parents);
+          if (prefix.length < parents || /[^ +-]/.test(prefix)) throw unexpected(line);
+          if (prefix.includes('-')) continue;
+          if (prefix === '+'.repeat(parents)) {
+            bytes += Buffer.byteLength(line) - parents + 1;
+            if (long || bytes > SCAN_MAX_FILE_BYTES) { oversized = true; added = []; at = []; }
+            else { added.push(line.slice(parents)); at.push(next); }
+          }
+          next++;
         }
-        if (!path || header) throw unexpected(line);
-        if (line.startsWith('\\')) continue;
-        const prefix = line.slice(0, parents);
-        if (prefix.length < parents || /[^ +-]/.test(prefix)) throw unexpected(line);
-        if (prefix.includes('-')) continue;
-        if (prefix === '+'.repeat(parents)) {
-          bytes += Buffer.byteLength(line) - parents + 1;
-          if (long || bytes > SCAN_MAX_FILE_BYTES) { oversized = true; added = []; at = []; }
-          else { added.push(line.slice(parents)); at.push(next); }
-        }
-        next++;
+        flush();
+      } finally {
+        closeSync(fd);
       }
-      flush();
-    } finally {
-      closeSync(fd);
     }
 
     const sizes = new Map<string, number>();
@@ -249,6 +303,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
       if ((whole.error as NodeJS.ErrnoException | undefined)?.code === 'ENOBUFS') { scan.unscanned.push({ path: b.path, commit: b.commit }); continue; }
       scanned(b.path, b.commit, must(whole, 'cat-file blob').toString('utf8'));
     }
+    if (spoke) progress!(`secret scan: read ${commits.length} commit(s) in ${Math.round((Date.now() - started) / 1000)} s`);
     return scan;
   } catch (e) {
     if (e instanceof Unreadable) return { ...scan, unreadable: e.message, ...(e.timedOut ? { timed_out: true as const } : {}) };
@@ -273,9 +328,9 @@ const STREAMED_SCAN_WRITERS: ReadonlySet<string> = new Set(['workspace_push']);
  * the whole history): the same scan and refusals as an automatic publish, except for what those writers' own commits
  * already passed (see STAGED_SCAN_WRITERS).
  */
-export function stagedScanPublishRefusal(root: string, base: string, target: string): OperationError | null {
-  const scan = scanRange(root, base, target);
-  if (!scan.gate_changes.length && !scan.unscanned.length) return rangeSecretRefusal(root, base, target, scan);
+export function stagedScanPublishRefusal(root: string, base: string, target: string, opts: PublishScanOptions = {}): OperationError | null {
+  const scan = scanRange(root, base, target, opts.timeoutMs, opts.progress);
+  if (!scan.gate_changes.length && !scan.unscanned.length) return rangeSecretRefusal(root, base, target, scan, opts);
   const own = new Map<string, string>();
   try {
     const common = must(run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], Date.now() + 60_000), 'rev-parse').toString().trim();
@@ -283,16 +338,32 @@ export function stagedScanPublishRefusal(root: string, base: string, target: str
   } catch { /* an unreadable ledger exempts nothing */ }
   return rangeSecretRefusal(root, base, target, { ...scan,
     gate_changes: scan.gate_changes.filter(change => !own.has(change.commit)),
-    unscanned: scan.unscanned.filter(item => item.path === MESSAGE_PATH || !STREAMED_SCAN_WRITERS.has(own.get(item.commit) ?? '')) });
+    unscanned: scan.unscanned.filter(item => item.path === MESSAGE_PATH || !STREAMED_SCAN_WRITERS.has(own.get(item.commit) ?? '')) }, opts);
 }
+
+/**
+ * How a foreground publish runs its range scan: `timeoutMs` is its budget (default 300 s), `progress` gets its progress
+ * lines, and `retryArgv` is the command that publishes again, so a scan that ran out of time refuses naming that command
+ * with a longer `--scan-timeout`.
+ */
+export interface PublishScanOptions { timeoutMs?: number; progress?: (line: string) => void; retryArgv?: string[] }
 
 /**
  * The automatic-publish refusal for the commits in `base..target` of `root`, shared by every publish that scans: null
  * when the scan read the whole range and found nothing; `publish_scan_unreadable` when it could not read it all;
  * otherwise `publish_secret_found` naming each finding, unscanned file and gate change (never a value).
  */
-export function rangeSecretRefusal(root: string, base: string, target: string, scan: RangeScan): OperationError | null {
+export function rangeSecretRefusal(root: string, base: string, target: string, scan: RangeScan, opts: PublishScanOptions = {}): OperationError | null {
   const range = base ? `${base}..${target.slice(0, 12)}` : `${target.slice(0, 12)} and its whole history`;
+  if (scan.timed_out && opts.retryArgv) {
+    const seconds = Math.round((opts.timeoutMs ?? DEFAULT_SCAN_TIMEOUT_MS) / 1000);
+    const argv = [...opts.retryArgv, '--scan-timeout', String(Math.max(seconds * 4, 1200))];
+    return opError('publish_scan_unreadable', `The secret scan of the local commits ${range} ran past its ${seconds} s time budget before it read them all. No secret was reported. Nothing was pushed.`,
+      `A long history takes longer to scan than the budget; the scan still reads every commit before anything is pushed. Rerun with a longer budget: ${shellQuote(argv)}. Never publish with a command that skips this scan.`,
+      { detail: JSON.stringify({ unreadable: scan.unreadable, timed_out: true, budget_seconds: seconds }), fix: { consent: [], actor: 'agent', requires_exclusive: false, argv,
+        why: 'The same publish with a longer scan budget: it still scans every commit and pushes only when the scan finds nothing.',
+        docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } });
+  }
   if (scan.unreadable !== undefined) {
     return opError('publish_scan_unreadable', `The secret scan could not read the local commits ${range} (${scan.unreadable}). No secret was reported. Nothing was pushed.`,
       `The publish pushes only commits it has read in full. Check the checkout with git fsck in ${root} (a missing or corrupt object, a full disk, or a git too slow for the 300 s budget), fix what it reports, then retry. Never publish with a command that skips this scan.`,
