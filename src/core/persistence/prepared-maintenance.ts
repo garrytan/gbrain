@@ -40,6 +40,7 @@ import { auditConflictsCommand, FILE_DRIFT_MESSAGE, liveFileDrift } from './drif
 import { lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
 import { derivationWriteTrust, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
 import { sameInstantTies } from '../facts/claim-ties.ts';
+import type { LabelEdit } from './label-edit.ts';
 import { factPreimages, recordConsolidationGeneration } from '../generations/adapters/fact-rows.ts';
 
 export interface MaintenanceAuthority {
@@ -240,16 +241,19 @@ export function maintenanceGhostRefusal(sourceId: string, slug: string): Operati
 /** #5523: a Life Chronicle timeline row projected onto the depth page in the same publication. */
 export interface MaintenanceEventProjection { depth_slug: string; date: string; summary: string; }
 
-/** `keepTrust`: the edit authors nothing (it only removes privacy labels), so the page keeps its stored trust tier (withTrustKeep). */
+/**
+ * `keepTrust`: the edit authors nothing (it only changes privacy labels), so the page keeps its stored trust tier (withTrustKeep).
+ * `labelEdit` (GST-2468): the label keys the write sets or removes; the canonical file keeps its bytes except those lines (page-prepare.ts labelEditFile).
+ */
 type MaintenancePageOptions = { requestId?: string; expectedRevision: string | null; file?: boolean;
-  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true };
+  eventProjection?: MaintenanceEventProjection; derivation?: DerivationDeclaration; keepTrust?: true; labelEdit?: LabelEdit };
 
 /** A maintenance page publication's intent and request id; `batch` (G6) is the run's batch id, part of both. */
 function maintenancePageRequest(authority: MaintenanceAuthority, slug: string, content: string, options: MaintenancePageOptions, batch?: string) {
   const projection = options.eventProjection ? { event_projection: options.eventProjection } : {};
   const derivation = options.derivation ? { derivation: options.derivation } : {};
   const grouped = batch ? { maintenance_batch: batch } : {};
-  const keep = options.keepTrust ? { keep_trust: true } : {};
+  const keep = { ...(options.keepTrust ? { keep_trust: true } : {}), ...(options.labelEdit ? { label_edit: options.labelEdit } : {}) };
   return { intent: { kind: 'managed_maintenance_page', content, expected_revision: options.expectedRevision, ...projection, ...derivation, ...grouped, ...keep },
     requestId: options.requestId ?? maintenanceRequestId({ authority: authority.writer, slug, content, revision: options.expectedRevision, file: options.file ?? true,
       ...projection, ...derivation, ...grouped, ...keep }) };

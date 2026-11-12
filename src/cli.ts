@@ -34,7 +34,7 @@ export function cliFastPath(argv: string[], env: NodeJS.ProcessEnv = process.env
   const command = rest[0];
   if (!command || command === '--help' || command === '-h') return 'help';
   if (command === '--version' || command === 'version') return 'version';
-  if (env.GBRAIN_HOOK_LANE === 'skill-resolver' && command === 'hook' && (rest[1] === 'user-prompt' || rest[1] === 'session-start')
+  if (env.GBRAIN_HOOK_LANE === 'skill-resolver' && env.GBRAIN_ENFORCED_MEMBER === undefined && command === 'hook' && (rest[1] === 'user-prompt' || rest[1] === 'session-start')
     && !rest.some(a => a === '--help' || a === '-h')) return 'skill-resolver-lane';
   return null;
 }

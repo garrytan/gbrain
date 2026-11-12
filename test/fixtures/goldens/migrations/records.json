@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 298,
+    "count": 299,
     "gaps": [
       17,
       18,
@@ -52,7 +52,7 @@
       "PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX": "4759eaf319a6ad8d99aae7648acb6556745ed7cba051175273e2f46927c77d52",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
       "PERSISTENCE_SYNC_WATERMARK_INDEX": "93523954a30e8483717f07ec97a3e0cd062b15d8a60cc759281054b06c23bb40",
-      "PINNED_FUNCTION_NAMES": "1360b0f7505577cae08292cdd89e0fb841fc02d460d68eb0185fcd8ae4df92a4",
+      "PINNED_FUNCTION_NAMES": "f940551717a5d974effd67e25cd93c287af7394f16e458af0e318619d1f01901",
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "POSTGRES_15_GATE": "09c990d8c0bd6e4ebeb3b897477748609035b0e695b5b2c6a9bf7539f7352193",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
@@ -103,7 +103,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 303,
+    "latest": 304,
     "records": [
       {
         "handler": {
@@ -4950,6 +4950,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 303
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "access_owner_origin",
+        "sql": {
+          "length": 4188,
+          "sha256": "6f153b23e8d7bde011ed8dd88649e3a1343c741349ef36b27ec7a60ae17712f6"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 304
       }
     ],
     "versions": [
@@ -5250,7 +5263,8 @@
       300,
       301,
       302,
-      303
+      303,
+      304
     ]
   },
   "normalizer": "migrations-record-v1"

@@ -25,7 +25,7 @@ export function formatEntityResult(r: any): string {
       for (const s of r.suggestions) lines.push(`  ${s.slug} — ${s.title} [${s.create_safety}]`);
     }
     if (!tm?.total && tm?.unread) lines.push(`  text matches not checked (${tm.unread}); search the name with gbrain search`);
-    if (r.coverage && r.coverage.state !== 'complete') lines.push(`  mention coverage: ${r.coverage.state}, ${r.coverage.pending_pages} page(s) pending`);
+    if (r.coverage && r.coverage.state !== 'complete') lines.push(`  mention coverage: ${r.coverage.state}${r.coverage.pending_pages === undefined ? '' : `, ${r.coverage.pending_pages} page(s) pending`}`);
     lines.push(`  (${r.latency_ms}ms)`);
     return lines.join('\n') + '\n';
   }
@@ -47,7 +47,7 @@ export function formatEntityResult(r: any): string {
   }
   lines.push(`  backlinks: ${c.backlink_count} | active facts: ${c.active_fact_count}`);
   if (c.referenced_by_count) lines.push(`  referenced by ${c.referenced_by_count} page(s):`, ...c.referenced_by.map((g: any) => `    ${g.canonical_type} (${g.total}): ${g.rows.map((x: any) => x.slug).join(', ')}${g.next ? ', ...' : ''}`));
-  if (c.coverage && c.coverage.state !== 'complete') lines.push(`  mention coverage: ${c.coverage.state}, ${c.coverage.pending_pages} page(s) pending`);
+  if (c.coverage && c.coverage.state !== 'complete') lines.push(`  mention coverage: ${c.coverage.state}${c.coverage.pending_pages === undefined ? '' : `, ${c.coverage.pending_pages} page(s) pending`}`);
   if (c.text_mentions?.total) {
     lines.push(`  the name appears in the text of ${c.text_mentions.total}${c.text_mentions.capped ? '+' : ''} other page(s) (unlinked text matches, newest first):`);
     for (const p of c.text_mentions.pages) lines.push(`    ${p.date ?? '          '}  ${p.slug} — ${p.title}`);
