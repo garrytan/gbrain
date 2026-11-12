@@ -258,7 +258,8 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   git(f.brain, 'add', '--', accented, 'people/link-example.md'); git(f.brain, 'commit', '-qm', 'more'); git(f.brain, 'push', '-q', 'origin', 'main');
   git(f.brain, 'update-index', '--assume-unchanged', '--', 'people/link-example.md');
   const clean = helper(f, false, 'write pages', 'people/link-example.md');
-  expect(clean.status).toBe(0);
+  expect(clean.status).toBe(4);
+  expect(clean.stderr).not.toContain('commit_paths_skipped');
   editHidden(f, accented);
   const accentedRun = helper(f, false, 'write pages', accented);
   expect(accentedRun.status).not.toBe(0);
@@ -270,7 +271,7 @@ test('helper without gbrain: a non-ASCII flagged path, a nested-repository file 
   expect(mixed.stderr).toContain('commit_paths_skipped');
   expect(mixed.stderr).toContain(nested);
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
-  expect(remoteTip(f)).toBe(head(f));
+  expect(remoteTip(f)).not.toBe(head(f));
 }, 90_000);
 
 test('write-through: commitPathsLocked fails commit_paths_skipped for a nested-repository file instead of returning the commit', () => {
@@ -307,14 +308,14 @@ test('classic: a skipped path still fails commit_paths_skipped when the push fai
   expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain('LOCAL-ONLY, NEEDS ATTENTION: main');
 }, 60_000);
 
-test('helper without gbrain: a skipped path is still named when the push fails', () => {
+test('helper without gbrain: a skipped path is still named when nothing is pushed', () => {
   const f = fixture('helper-pushfail', 'classic');
   writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
   const nested = nestedPage(f, 'carol-example.md');
   git(f.brain, 'remote', 'set-url', 'origin', join(dir, 'missing.git'));
   const r = helper(f, false, 'write pages', 'people/bob-example.md', nested);
   expect(r.status).toBe(4);
-  expect(r.stderr).toContain('PUSH FAILED');
+  expect(r.stderr).toContain('NOT PUSHED');
   expect(r.stderr).toContain('commit_paths_skipped');
   expect(r.stderr).toContain(nested);
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');

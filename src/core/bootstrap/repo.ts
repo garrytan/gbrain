@@ -574,7 +574,7 @@ async function ensureRemoteHasWorkspace(
   const pushBranch = await currentBranch(runner, workspaceDir);
   await assertOriginMatches(runner, workspaceDir, owner, name);
   await assertHistoryPublishable(runner, workspaceDir, pushBranch, scan);
-  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', pushBranch]);
+  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', pushBranch, '--no-follow-tags', '--recurse-submodules=no']);
   if (push.code !== 0) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
@@ -595,10 +595,13 @@ export interface CreatePrivateRepoOptions {
   gbrainHomeDir?: string;
   /** The refusal for publishing `target` and its whole history (default: the range secret scan; a seam for runner fakes). */
   scanHistory?: HistoryScan;
+  /** The whole-history scan's time budget (`--scan-timeout`; default 300 s). */
+  scanTimeoutMs?: number;
 }
 
 type HistoryScan = (workspaceDir: string, target: string) => OperationError | null;
-const scanWholeHistory: HistoryScan = (workspaceDir, target) => stagedScanPublishRefusal(workspaceDir, '', target);
+const scanWholeHistory = (timeoutMs?: number): HistoryScan => (workspaceDir, target) => stagedScanPublishRefusal(workspaceDir, '', target,
+  { timeoutMs, progress: line => process.stderr.write(`[gbrain] ${line}\n`), retryArgv: ['gbrain', 'bootstrap', 'repo'] });
 
 /**
  * #8902: a first push publishes the branch's whole history, including commits a script made with plain `git commit`
@@ -651,7 +654,7 @@ export async function createPrivateRepo(
 ): Promise<CreatePrivateRepoResult> {
   const runner = opts.runner ?? defaultRunner;
   const gbrainHomeDir = opts.gbrainHomeDir ?? configDir();
-  const scan = opts.scanHistory ?? scanWholeHistory;
+  const scan = opts.scanHistory ?? scanWholeHistory(opts.scanTimeoutMs);
 
   // Gate 1: gh on PATH. Exit-code-2 semantics — the human installs gh.
   const ghVersion = await runner(['gh', '--version']);
@@ -848,7 +851,7 @@ export async function createPrivateRepo(
   // [FIX4] Bind the verified privacy result to the actual push target.
   await assertOriginMatches(runner, workspaceDir, login, name);
   await assertHistoryPublishable(runner, workspaceDir, branch, scan);
-  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', branch]);
+  const push = await runner(['git', '-C', workspaceDir, 'push', '-u', 'origin', branch, '--no-follow-tags', '--recurse-submodules=no']);
   if (push.code !== 0) {
     throw new BootstrapError(
       'REPO_CREATE_FAILED',
