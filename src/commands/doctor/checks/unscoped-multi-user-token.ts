@@ -15,6 +15,7 @@
  * is skipped: the per-person fix names it, and its notice says a call that
  * names no audience reads its full grant.
  * A remote caller (run_doctor only) gets counts, never credential names.
+ * Not applicable on a brain that serves one person (access.serves).
  */
 import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../../../core/grants/model.ts';
 import { BOT_HARNESSES, NOTICE_CODE, chatChannelCensus, credentialReadSources, exposureFix, exposureReasons,
@@ -23,12 +24,18 @@ import { claudeCodeChannelPlugins } from '../../shared-exposure-local.ts';
 import { readBrainFirstLedger } from '../../../core/setup/brain-first.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
+import { infoCheck } from '../check-fix.ts';
+import { brainServes } from '../../../core/access/serves.ts';
 
 interface Finding { subject: ExposureSubject; label: string; reasons: string[]; census: ChatCensus }
 
 async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   const engine = connectedEngine(ctx);
+  const serves = await brainServes(engine).catch(() => null);
+  if (serves?.serves === 'one') {
+    return [infoCheck(NOTICE_CODE, `Not applicable: this brain serves one person (${serves.from === 'config' ? 'config access.serves is one' : `${serves.enabled_members.length} enabled member(s)`}), so every credential reads that person's own pages.`, 'not_applicable')];
+  }
   const memo = new Map<string, Promise<ChatCensus>>();
   const census = (sources: string[]) => {
     const key = [...sources].sort().join(',');

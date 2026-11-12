@@ -102,6 +102,7 @@ describe('brain routes on a repo-less keyless brain', () => {
   async function brain(titles: string[]) {
     const b = box();
     expect((await runCli(['init', '--pglite', '--no-embedding', '--non-interactive'], { env: b.env, cwd: b.root, timeoutMs: 120_000 })).exitCode).toBe(0);
+    expect((await runCli(['config', 'set', 'access.serves', 'several'], { env: b.env, cwd: b.root })).exitCode).toBe(0);
     for (const [i, title] of titles.entries()) {
       const file = join(b.root, `p${i}.md`);
       writeFileSync(file, page(title));

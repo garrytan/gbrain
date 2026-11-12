@@ -2650,8 +2650,10 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "No credential or local agent that reads the same pages for everyone can read chat from several channels.",
+            "message": "Not applicable: this brain serves one person (0 enabled member(s)), so every credential reads that person's own pages.",
             "name": "unscoped_multi_user_token",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {
@@ -7793,8 +7795,10 @@
           {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "No credential or local agent that reads the same pages for everyone can read chat from several channels.",
+            "message": "Not applicable: this brain serves one person (0 enabled member(s)), so every credential reads that person's own pages.",
             "name": "unscoped_multi_user_token",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {

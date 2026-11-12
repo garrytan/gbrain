@@ -40,6 +40,7 @@ async function reset() {
   await engine.executeRaw('DELETE FROM oauth_clients');
   await engine.executeRaw("DELETE FROM sources WHERE id <> 'default'");
   await engine.setConfig('search.remote_private_pages', 'hidden');
+  await engine.setConfig('access.serves', 'several');
   __resetPrivateVisibilityCacheForTests();
 }
 const chat = (slug: string, title: string, frontmatter: Record<string, unknown> = {}, type = 'slack', sourceId = 'default') =>
@@ -139,14 +140,15 @@ describe('signals and the warning', () => {
     expect(split.why).toContain('another person\'s messages');
     expect(split.why).toContain('gbrain auth rescope --token bot --sources <source>');
     expect(split.why).toContain('gbrain sources unfederate <id>');
-    expect(split.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'auth', 'rescope', '--token', 'bot', '--sources', '<source>'], consent: ['credentials'] });
+    expect(split.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'auth', 'rescope', '--token', 'bot', '--member', '<member>'], consent: ['credentials'] });
     const one = sharedTokenNotice({ kind: 'oauth_client', id: 'c1' }, { census: within })!;
     expect(one.why).toContain('the chat sits in one source (default), so a source grant cannot separate it');
-    expect(one.why).not.toContain('auth rescope');
+    expect(one.why).not.toContain('--sources');
+    expect(one.why).toContain('gbrain auth rescope --client c1 --member <id>');
     expect(one.why).toContain('the fix is per-person access, not per-call narrowing');
-    expect(split.why).toContain('the fix is a narrower grant (gbrain auth rescope …) or per-person access, not per-call narrowing');
+    expect(split.why).toContain('the fix is per-person access, not per-call narrowing');
     expect(one.why).toContain('gbrain auth create <name> --may-act-for <members>');
-    expect(one.fix!.argv).toBeUndefined();
+    expect(one.fix!.argv).toEqual(['gbrain', 'auth', 'rescope', '--client', 'c1', '--member', '<member>']);
     for (const n of [split, one]) {
       expect(n.why).toContain('visibility: private (hidden from this agent unless its access may read private pages)');
       expect(n.why).not.toContain('hidden from every remote caller');
@@ -164,7 +166,7 @@ describe('signals and the warning', () => {
     expect(bot.why).toContain('gbrain auth create <name> --member <id>');
     expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).why).not.toContain('cannot tell');
     expect(sharedTokenNotice({ kind: 'stdio', harness: 'claude-code' }, { harness: 'claude-code' })).toBeNull();
-    expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toBeUndefined();
+    expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toEqual(['gbrain', 'setup', 'hermes', '--serves', 'several', '--members', '<id,...>']);
   });
 
   test('Claude Code channel plugins and bot workspaces are read from config paths', () => {
@@ -195,7 +197,7 @@ describe('doctor unscoped_multi_user_token', () => {
     const warn = await doctor();
     expect(warn.status).toBe('warn');
     expect(warn.message).toContain('The token "team-bot" reaches 2 channels in chan-a, chan-b');
-    expect(warn.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'auth', 'rescope', '--token', 'team-bot', '--sources', '<source>'] });
+    expect(warn.fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'auth', 'rescope', '--token', 'team-bot', '--member', '<member>'] });
     expect(categorizeCheck('unscoped_multi_user_token')).toBeDefined();
     await engine.executeRaw('DELETE FROM access_tokens');
     await token('team-bot', ['chan-a']);

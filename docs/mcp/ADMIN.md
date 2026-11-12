@@ -437,11 +437,16 @@ rates by 9 to 21 points, and every added cross-scope failure cited a channel
 page the bot grant returned.
 
 gbrain warns with `unscoped_multi_user_token` (a safety notice) when an
-install route sets up such access:
+install route sets up such access on a brain that serves several people
+(`gbrain access serves`: config `access.serves`, else two or more enabled
+members). On a brain that serves one person every credential reads that
+person's own pages, so no route warns and the doctor check is not applicable.
+When whom the brain serves cannot be read (no local brain, a remote host), the
+warning stays on.
 
 | Route | Warns when |
 |---|---|
-| `gbrain setup openclaw`, `setup hermes`, `setup grok-bot`, `setup muse` | always (a bot harness) |
+| `gbrain setup openclaw`, `setup hermes`, `setup grok-bot`, `setup muse` | a bot harness |
 | `gbrain setup claude-code` | a chat-channel plugin (telegram, discord, slack, imessage, whatsapp, signal) is enabled |
 | `gbrain mcp grant`, `gbrain connect` | the harness is a bot harness, or the grant reads chat from 2+ channels |
 | `gbrain skillpack scaffold` | the target is OpenClaw's or Hermes's own workspace |
@@ -464,22 +469,29 @@ warns when one of them reads chat from 2+ channels, and reports a wired bot
 harness with no such chat as information. A remote `run_doctor` caller gets a
 count, never credential names.
 
-Fix it with today's commands:
+Fix it by binding first:
 
-- When the channels sit in different sources, grant one audience's source
-  only: `gbrain auth rescope --token <name> --sources <source>` (or
-  `--client <id>`), or for a new harness grant
-  `gbrain mcp grant <name> --source <source> --federated-read <source>`. Keep
-  a channel's source out of unscoped reads with `gbrain sources unfederate <id>`.
-- For a local stdio agent, set `GBRAIN_SOURCE=<source>` in its MCP server
-  environment and run `gbrain sources unfederate <source>`: the pin covers
-  reads that name no source, and a federated sibling source stays nameable.
+- Bind the credential to the person who uses the agent:
+  `gbrain auth rescope --token <name> --member <id>` (or `--client <id>`). For
+  one agent several people share, bind it to their audience instead:
+  `gbrain auth rescope --token <name> --may-act-for <members>`, and have its
+  harness name each request's audience. For a local stdio agent, label each
+  person and bind its server with
+  `gbrain setup <harness> --serves several --members <id,...>`
+  (`--stdio-member <member>` when one person alone uses it).
+- Narrowing only, which leaves the credential unbound: when the channels sit
+  in different sources, grant one audience's source with
+  `gbrain auth rescope --token <name> --sources <source>` (or for a new harness
+  grant `gbrain mcp grant <name> --source <source> --federated-read <source>`),
+  or pin a stdio agent with `GBRAIN_SOURCE=<source>` and
+  `gbrain sources unfederate <source>`. Keep a channel's source out of unscoped
+  reads with `gbrain sources unfederate <id>`.
 - When the chat sits in one source, a source grant cannot separate it: mark
   the pages nobody else may see `visibility: private`. That hides them from
   the agent only while its access may not read private pages.
 - Don't rely on `source_ids`: it narrows only the call that sends it, so
   recall, list_pages or any read without it reads the token's full grant.
-  The fix is a narrower grant (`gbrain auth rescope …`) or per-person access.
+  The fix is per-person access.
 - Per-person access: give each person's agent its own credential bound to
   them (`gbrain access member add <id>`, then
   `gbrain auth create <name> --member <id>`) and put `readable_by` on pages
