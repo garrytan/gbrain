@@ -55,6 +55,7 @@
   "test/fenced-embed-reuse-6961.test.ts": 2072,
   "test/forecast-journal.test.ts": 21056,
   "test/frontmatter-reserved-keys-6454.test.ts": 6227,
+  "test/gated-hold-strict-page-gst2535.test.ts": 27201,
   "test/get-chunks-paging.test.ts": 8467,
   "test/graduation-copy.test.ts": 56015,
   "test/graduation-digest.test.ts": 3955,

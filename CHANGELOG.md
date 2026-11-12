@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.697.0] - 2026-11-12
 
 **A quarantined fact or take for a page that already exists is now held for review on a strict source, instead of failing.** With trust protections on (`write_gate.external_mode = quarantine`), a `remember` or `takes_add` of tool output that reads like an instruction is held for the owner's review (`write_held`, a ref such as `h1`). On a source whose pages are canonical in Git (`canonical: git`), that write failed when its page already existed (for a fact, also when it had no entity and `memory/unattributed` already existed). Nothing was saved and nothing was held, so the owner had nothing to review, and the caller was told storage failed: `remember` answered `unavailable` with `write_error: storage_error` ("The write did not commit"), and `takes_add` answered `git_home_required` with `write_error: storage_error`. Now the write is held there exactly as on any other source. Nothing of the held text reaches a fact or take row, a page or Git until the owner decides. Releasing a fact commits it to the page's file before its database row, so a database rebuilt from Git keeps it; a held take still cannot be released on any source, and the owner drops it (`gbrain trust drop h1`). Sources that are not strict and brains with no Git repository answer as before.
 
