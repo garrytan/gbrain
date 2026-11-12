@@ -10,6 +10,15 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**`gbrain mcp verify` now passes its write check on a credential bound to a member.** The verifier's test fact was always sent with `visibility: "world"`, which `remember` refuses for a member credential, so every member-bound connection showed "write" and "write_readback" as failed even when it was set up correctly. A member-bound credential now saves the test fact the way a member's own saves go by default. It is kept private on that member's page, where no other member reads it. The verifier reads the fact back and withdraws it, as before. A credential bound to no member still shares its test fact explicitly, so a brain whose `facts.default_visibility` is private still reads it back. Page mode (`coding-agent` profiles and credentials with direct-write prefixes) had a second mistake: its `put_page` call passed a `title` parameter the tool doesn't declare, so every page-mode write was refused. The title now goes in the page's frontmatter. The same fixes apply to the verify step inside `gbrain connect … --install`.
+
+### Itemized changes
+
+- `src/core/harness/verify.ts`: the fact-mode write reads the credential's bound member from `whoami` (`access.member`) and sends `visibility: "world"` only when there is none. The page-mode `put_page` drops the undeclared `title` parameter for a frontmatter title.
+- Tests: `test/harness-verify-member-credential.test.ts` covers a non-owner member, the owner and an unbound credential, in fact mode and page mode, on PGLite and Postgres (repo-less). It also checks that a member's fixture is private on its member page and unreadable by another member, and that an unbound credential passes under a private `facts.default_visibility`.
+
 ## [0.60.692.0] - 2026-11-12
 
 **On a source whose pages are canonical in Git, every fact writer now commits a fact with no page of its own to Git, and doctor and a new repair find the ones an older gbrain left in the database only.** In the last release only `remember` did this. Google loops, fact extraction, the managed facts writer and an owner releasing a quarantined fact now also commit a fact with no entity, or for an entity with no page, as a row of `memory/unattributed`. Before, they kept it in the database only, where a rebuild from Git lost it, or were refused with `git_home_required` once that page existed. Sources that are not strict, and brains with no Git repository, behave as before.
