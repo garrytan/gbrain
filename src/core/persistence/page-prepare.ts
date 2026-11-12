@@ -98,9 +98,9 @@ import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from
 import { originCommitted } from './sync-markers.ts';
 import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
 import { withTrustKeep } from './context.ts';
-import { holdPrivacyLabels, isFenceEditWrite, pageGateTrust, privacyLabelGuard, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier,
+import { holdPrivacyLabels, isFenceEditWrite, labelGuardApplies, labelGuardTier, pageGateTrust, privacyLabelGuard, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier,
   type HeldPrivacyLabels } from '../trust/page-write.ts';
-import { compareTrust, maxTrust, type WriteTrust } from '../trust/tier.ts';
+import { compareTrust, maxTrust, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import { suppliedTrustMarkerView } from '../trust/channel.ts';
 import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
@@ -124,6 +124,17 @@ export function pageRefusal(code: RegistryCode, message: string, row: WriteReque
     { fix: fix ?? (row.principal_kind === 'local_cli'
       ? readFix(`Reads request ${row.request_id}'s durable receipt: its state and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
       : ownerStatusFix(row.source_id)) });
+}
+
+/**
+ * GST-2521: under the publication's page lock, a write whose label guard tier moved since preparation refuses
+ * `revision_conflict` (a guard raised over labels that already match moves no page revision), so it prepares again and is held.
+ */
+async function assertLabelGuardUnchanged(tx: BrainEngine, row: WriteRequest, trust: WriteTrust | undefined, page: PageSnapshot['page'] | null,
+  stored: TrustTier | null, prepared: TrustTier | null): Promise<void> {
+  if (!labelGuardApplies(row, trust, page, stored) || await labelGuardTier(tx, trust!, page, stored!) === prepared) return;
+  throw pageRefusal('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, row,
+    `The label guard of page ${row.slug} changed while this write was being prepared, so it published nothing. Read the current page and revision, then submit the intended change against it.`);
 }
 
 /**
@@ -1142,7 +1153,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
   const publication: PreparedMutation = { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnly,
     ...(core ? { exclusiveSources: core.exclusiveSources } : {}), ...(trust ? { trust } : {}), ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
-    validate: async tx => { await ready.validate(tx); await core?.validate(tx); }, apply: async (tx, preimage) => {
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, labelGuard?.tier ?? null); },
+    apply: async (tx, preimage) => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     let removedTimeline: TimelineRowsRemoved | null = null;
     let lowered: { proposal_ref: string } | null = null;

@@ -156,8 +156,26 @@ export interface LabelGuard { tier: TrustTier | null; owner: { member: string; i
  */
 export async function privacyLabelGuard(engine: BrainEngine, row: Pick<WriteRequest, 'operation' | 'intent' | 'authority'>, trust: WriteTrust | undefined,
   page: { id: number; frontmatter?: Record<string, unknown> | null } | null, stored: TrustTier | null, incoming?: Record<string, unknown> | null): Promise<LabelGuard | null> {
-  if (!trust || !page || !stored || row.authority?.remote === true || !(CONTENT_OPERATIONS.includes(row.operation) || declaresDerivation(row.intent))
-    || isFenceEditWrite(row) || compareTrust(trust.tier, OWNER_TIER_FLOOR) >= 0) return null;
+  if (!labelGuardApplies(row, trust, page, stored)) return null;
+  const labels = page.frontmatter ?? {};
+  const tier = await labelGuardTier(engine, trust!, page, stored!);
+  const owner = normalizeReaders(labels) !== null || !incoming || normalizeReaders(incoming) !== null ? await ownerReader(engine, labels) : null;
+  return tier || owner ? { tier, owner } : null;
+}
+
+/** Whether privacyLabelGuard holds anything for this write: a local content write or derived publication below operator_curated over a stored page. */
+export function labelGuardApplies(row: Pick<WriteRequest, 'operation' | 'intent' | 'authority'>, trust: WriteTrust | undefined,
+  page: { id: number; frontmatter?: Record<string, unknown> | null } | null, stored: TrustTier | null): page is { id: number; frontmatter?: Record<string, unknown> | null } {
+  return !!trust && !!page && !!stored && row.authority?.remote !== true && (CONTENT_OPERATIONS.includes(row.operation) || declaresDerivation(row.intent))
+    && !isFenceEditWrite(row) && compareTrust(trust.tier, OWNER_TIER_FLOOR) < 0;
+}
+
+/**
+ * privacyLabelGuard's tier for a write at `trust` over `page` (its stored labels, at stored tier `stored`): null when the page
+ * is neither private by its labels nor naming readers, or when the write is at or above the tier. GST-2521: the write's
+ * publication reads it again under the page lock (page-prepare.ts), so a guard raised after preparation is not missed.
+ */
+export async function labelGuardTier(engine: BrainEngine, trust: WriteTrust, page: { id: number; frontmatter?: Record<string, unknown> | null }, stored: TrustTier): Promise<TrustTier | null> {
   const labels = page.frontmatter ?? {};
   let tier: TrustTier | null = null;
   if (labelledPrivate(labels) || normalizeReaders(labels) !== null) {
@@ -171,8 +189,7 @@ export async function privacyLabelGuard(engine: BrainEngine, row: Pick<WriteRequ
       ...[guard?.owner_set ?? null, ...(guard?.priors ?? [])].filter(isTrustTier));
     if (compareTrust(trust.tier, tier) >= 0) tier = null;
   }
-  const owner = normalizeReaders(labels) !== null || !incoming || normalizeReaders(incoming) !== null ? await ownerReader(engine, labels) : null;
-  return tier || owner ? { tier, owner } : null;
+  return tier;
 }
 
 /**

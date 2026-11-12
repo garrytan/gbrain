@@ -43,6 +43,11 @@ import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { privacyLabelGuard } from '../src/core/trust/page-write.ts';
+import { submissionAuthority } from '../src/core/persistence/authority.ts';
+import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
+import { localHostId } from '../src/core/persistence/identity.ts';
+import { preparePageMutation } from '../src/core/persistence/page-prepare.ts';
+import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const NL = String.fromCharCode(10);
@@ -255,6 +260,30 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     const dropped = await put(b, slug, file(slug, [], canary, 'An agent dropped the labels.'));
     expect([...dropped.privacy_labels_kept?.keys ?? []].sort()).toEqual(['readable_by', 'visibility']);
     expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
+  }), 180_000);
+
+  test('an agent write prepared before a guard-only raise does not publish unheld: it refuses revision_conflict', () => repoless(async (b, reads) => {
+    const slug = 'notes/raise-race-example', canary = 'canaryraiserace';
+    await call(b, 'put_page', { slug, content: file(slug, ['visibility: private'], canary) });
+    expect((await pageRow(b.engine, SRC, slug)).tier).toBe('agent_written');
+    await disposePersistenceConsumer(b.engine);
+    const [source] = await b.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1', [SRC]);
+    const authority = await submissionAuthority(b.ctx, 'put_page', SRC, source!.incarnation, slug);
+    const dropped = file(slug, [], canary, 'An agent dropped the label.');
+    const pageId = (await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, slug]))[0]!.id;
+    await admitWrite(b.engine, { principal: authority.principal, authority, operation: 'put_page', sourceId: SRC, sourceIncarnation: source!.incarnation,
+      slug, pageId: Number(pageId), requestId: randomUUID(), callerIntent: { content: dropped, expected_revision: (await pageRow(b.engine, SRC, slug)).revision },
+      intent: { content: dropped, expected_revision: (await pageRow(b.engine, SRC, slug)).revision } });
+    const row = (await claimNextWrite(b.engine, localHostId()))!;
+    const prepared = await preparePageMutation(b.engine, row, b.ctx.config);
+    await repairVisibility(b.engine, ['--source', SRC, '--slug', slug]);
+    expect(await guardOf(b.engine, SRC, slug)).toBe('operator_curated');
+    const published = await publishMutation(b.engine, row, prepared).then(r => r, (error: unknown) => error);
+    expect((published as { code?: string }).code ?? (published as { error_code?: string }).error_code).toBe('revision_conflict');
+    expect((await pageRow(b.engine, SRC, slug)).frontmatter.visibility).toBe('private');
+    expect(await readsOf(reads, slug, canary)).toEqual({ unbound: false, bob: false, owner: true });
+    const retried = await put(b, slug, dropped);
+    expect(retried.privacy_labels_kept?.keys).toEqual(['visibility']);
   }), 180_000);
 
   test('a label door that clears the labels leaves no guard: the agent\'s own later label is its own to drop', () => repoless(async (b) => {

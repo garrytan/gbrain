@@ -208,12 +208,14 @@ export async function readersWrite(engine: BrainEngine, item: ReadersItem): Prom
 }
 
 /**
- * GST-2521: an item whose labels already match (`unchanged` re-checks the page's frontmatter under its row lock) raises the
- * page's label guard without a write; false when the page moved since the plan.
+ * GST-2521: an item whose labels already match (`unchanged` re-checks the page's frontmatter under its page lock) raises the
+ * page's label guard without a write; false when the page moved since the plan. A write prepared before the raise re-reads
+ * the guard under the same lock at publication and refuses `revision_conflict` (page-prepare.ts).
  */
 export async function raiseGuardOnly(engine: BrainEngine, item: { source_id: string; slug: string; target: RepairCursor },
   unchanged: (frontmatter: Record<string, unknown>) => boolean): Promise<false | RepairItemOutcome> {
   return maintenanceTransaction(engine, async tx => {
+    await tx.lockPageKeys([{ sourceId: item.source_id, slug: item.slug }]);
     const [page] = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | null }>(
       'SELECT id, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR UPDATE', [item.source_id, item.slug]);
     if (!page || Number(page.id) !== item.target.id || !unchanged(page.frontmatter ?? {})) return false;
