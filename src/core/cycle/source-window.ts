@@ -34,10 +34,13 @@ export interface SourceCycleWindow {
  * The listing instant, moved back to just before the oldest transaction still
  * open on another connection the cycle's role can see (at most 10 minutes
  * back): `pages.updated_at` is its writer's transaction start, so a page that
- * commits after the listing still lands after the cursor.
+ * commits after the listing still lands after the cursor. An autovacuum
+ * worker never writes a page, so its transaction does not move the instant;
+ * one open across the listing made the next cycle walk the pages written
+ * since it started again.
  */
 const LISTING_INSTANT_SQL = `SELECT to_char(GREATEST(LEAST(clock_timestamp(),
-  (SELECT min(xact_start) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()) - interval '1 millisecond'),
+  (SELECT min(xact_start) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type <> 'autovacuum worker') - interval '1 millisecond'),
   clock_timestamp() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`;
 
 /**
