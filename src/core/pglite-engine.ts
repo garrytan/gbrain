@@ -775,6 +775,11 @@ export class PGLiteEngine implements BrainEngine {
    */
   walRepairReceipt: WalRepairReceipt | null = null;
 
+  /** #9227: whether this engine has its datastore open under the lock that admits one process (always true for an open in-memory store). */
+  holdsDatastoreLock(): boolean {
+    return this._db !== null && this._lock?.acquired === true;
+  }
+
   get db(): PGLiteDB {
     if (!this._db) throw new Error('PGLite not connected. Call connect() first.');
     return this._db;
