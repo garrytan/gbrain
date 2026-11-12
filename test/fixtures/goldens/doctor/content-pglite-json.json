@@ -3871,6 +3871,17 @@
         {
           "category": "brain",
           "details": {
+            "docs": "docs/guides/repair.md#facts-home",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+          "name": "strict_facts_outside_git",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "docs": "docs/guides/write-refusals.md#file_database_drift",
             "sources": []
           },

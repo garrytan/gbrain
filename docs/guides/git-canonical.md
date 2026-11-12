@@ -179,7 +179,13 @@ Every write goes through the same door, whoever sends it:
 
 - **Local writers** (`put_page`, `capture`, `remember`, imports, dream,
   connectors, maintenance) publish through the managed writer, which commits
-  before the row.
+  before the row. A fact with no entity, or for an entity that has no page yet,
+  from any of them (`remember`, fact extraction, Google loops, an owner
+  releasing a quarantined fact) is committed as a row of `memory/unattributed`;
+  a row for an entity names it in the `entity` column and moves into the
+  entity's page once that page exists, including a name saved without a
+  folder (`kofi-example`) once exactly one page such as
+  `people/kofi-example` carries it.
 - **Remote MCP callers and thin clients** send a write request that the
   checkout owner's door commits. The reply carries the revision once it is
   committed and indexed, or `write_pending` with a request id (exit 10 on the
@@ -211,6 +217,7 @@ file is refused with [`git_home_required`](write-refusals.md#git_home_required).
 | Detached pages and origin twins | Kept database-only. |
 | Derived data: chunks, embeddings, links and rows parsed from pages | Rebuilt from Git, never content of record. |
 | Write receipts and other operational records | Kept in the database as metadata; Git commits don't carry them. |
+| Facts for an entity under a folder access rule that has no page yet | Kept database-only: such an entity is never named on the world-readable `memory/unattributed` page. Doctor's `strict_facts_outside_git` counts them and `gbrain repair facts-home` lists them as `folder_restricted`. |
 
 A file under a Git LFS rule is refused with `git_lfs_not_enabled` unless
 `storage.git_lfs` is on and the checkout configures the LFS filter; the door
@@ -231,11 +238,38 @@ This removes `canonical: git` and changes nothing else. Git keeps every door
 commit and no row is rewritten; the source goes back to mixed behavior on its
 next write and sync pass.
 
+## Rebuilding a strict source's database from a clone
+
+A strict source's Git history holds every page outside the database-only
+classes above, so a lost or damaged database can be rebuilt from a clean clone.
+Don't sync the clone into a source that is already marked `canonical: git` on
+a brain without managed persistence: every file is refused with
+`strict_requires_managed`, nothing is imported, and the sync stops with that
+code. The files are fine, so don't use `--skip-failed` for it; that would move
+the checkpoint past content the database never received.
+
+Index the clone as a mixed source first, then convert it:
+
+```bash
+gbrain init --pglite --no-embedding                         # a new, empty brain
+gbrain sources add <source-id> --path <clone>               # the clean clone, as a mixed source
+gbrain sync --source <source-id> --no-pull --no-embed       # index every committed page
+gbrain sources canonical <source-id> --to git               # preview: prints the plan and its hash
+gbrain sources canonical <source-id> --to git --apply --expect <hash>
+gbrain sources reindex <source-id> --from-git               # preview the re-derive from Git
+gbrain sources reindex <source-id> --from-git --apply --expect <hash>
+```
+
+Facts that were held on `memory/unattributed` come back from its file with the
+entity they were saved for. Back up the database as well: Git does not hold the
+database-only classes, the write receipts or the other operational records.
+
 ## What doctor and status show
 
 | Where | What it tells you |
 |---|---|
 | `gbrain doctor` → `git_index_lag` | Per strict source, how many commits and seconds the index trails HEAD. It warns once the oldest unindexed commit is older than 900 s (`GBRAIN_DOCTOR_GIT_INDEX_LAG_WARN_SECONDS`), and its fix is `gbrain sync --source <id> --no-pull`. Until then, search and reads show the older version. |
+| `gbrain doctor` → `strict_facts_outside_git` | Per strict source, the facts with no Git home, the facts held on `memory/unattributed` for more than 30 days, and held facts that cannot move (with the reason, or the candidate pages of a bare name). It warns when any is non-zero, and its fix is the read-only preview of [`gbrain repair facts-home`](repair.md#facts-home). A source that is not strict is not judged. |
 | `gbrain doctor` → `db_ahead_of_git` | The git-gap totals for every source with a checkout, strict or not, with each source's live pages (a scan the budget stopped reads `PARTIAL, <read> of <live> live page(s) read`). Informational: always ok. Bounded by `GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS` (10 s by default). |
 | `gbrain sources git-gap <id> [--sample n] [--json]` | Each page's state against HEAD: `equal`, `database_ahead`, `git_ahead`, declared or undeclared database-only, `worktree_only`, `unparseable`, `unsafe_path`, with a sample of paths, the source's `live_pages`, and `direction_evidence` for differing pages with no import record. Read-only. |
 | `gbrain sources reindex <id> --from-git` | A preview of every database version Git would replace, bound to HEAD by a hash; `--apply --expect <hash>` runs that pass. Use it to re-derive a strict source's index on purpose. |

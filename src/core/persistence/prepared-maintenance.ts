@@ -10,7 +10,7 @@ import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
-import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, renderFactsTable, replaceOrInsertFactsFence, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
 import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
@@ -457,11 +457,12 @@ export type FactFenceAdoptionPlan =
  * every cycle, so the page waits a day or a planner change.
  */
 export async function planFactFenceAdoption(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
-  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string } }): Promise<FactFenceAdoptionPlan> {
+  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string } }): Promise<FactFenceAdoptionPlan> {
   const current = await readFacts(engine, authority.writer.sourceId, options.assignments.map(a => a.id));
   const facts: FactFenceAssignment[] = options.assignments.map(a => ({ ...a, hash: digest(current.find(f => f.id === a.id)?.value ?? null) }));
   const intent = { kind: options.move ? HELD_FACT_MOVE : 'managed_maintenance_adopt_fact_fence', expected_revision: options.expectedRevision,
-    source_incarnation: authority.writer.sourceIncarnation, content: options.content, facts, planner: FACT_FENCE_PLANNER, ...(options.move ? { note: options.move.note } : {}) };
+    source_incarnation: authority.writer.sourceIncarnation, content: options.content, facts, planner: FACT_FENCE_PLANNER,
+    ...(options.move ? { note: options.move.note, ...(options.move.from_entity ? { from_entity: options.move.from_entity } : {}) } : {}) };
   for (let attempt = 0; ; attempt++) {
     const requestId = maintenanceRequestId({ authority: authority.writer, slug, intent, ...(attempt ? { attempt } : {}) });
     const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
@@ -512,14 +513,22 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
       { fix: receiptFix(row) });
   }
   enterClaimStep(clock, 'adoption_parse_fence');
-  const fence = new Map(parseFactsFence(p.content as string).facts.map(f => [f.rowNum, f]));
+  const fence = new Map(parseFactsFenceFor(p.content as string, { slug: row.slug }).facts.map(f => [f.rowNum, f]));
+  // GST-2492 PR 2 (gbrain repair facts-home): a database-only fact with no entity, or whose entity has no page, is adopted
+  // onto memory/unattributed; its cell must name the fact's entity (none for a fact with no entity), so the projection keeps it.
+  const holdingAdoption = !held && row.slug === UNATTRIBUTED_MEMORY_SLUG;
+  // A held row keyed by a bare name (`from_entity`) moves to the page that name resolved to, and is re-keyed to it.
+  const fromEntity = held && typeof p.from_entity === 'string' ? p.from_entity : null;
+  const ownsRow = (value: Record<string, unknown>, rowNum: number) => holdingAdoption
+    ? (fence.get(rowNum)?.entity ?? null) === (value.entity_slug === row.slug ? null : value.entity_slug ?? null)
+    : value.entity_slug === (fromEntity ?? row.slug);
   // `lock` is the publication transaction's re-check: the claim's clock stamps only the preparation's reads.
   const check = async (db: BrainEngine, lock: boolean) => {
     if (!lock) enterClaimStep(clock, 'adoption_read_facts', undefined, 'db');
     const current = await readFacts(db, row.source_id, facts.map(f => f.id), lock);
     for (const assignment of facts) {
       const fact = current.find(f => f.id === assignment.id);
-      if (!fact || digest(fact.value) !== assignment.hash || fact.value.entity_slug !== row.slug || fact.value.expired_at !== null
+      if (!fact || digest(fact.value) !== assignment.hash || !ownsRow(fact.value, assignment.row_num) || fact.value.expired_at !== null
         || (held ? fact.value.source_markdown_slug !== UNATTRIBUTED_MEMORY_SLUG || fact.value.row_num === null : fact.value.row_num !== null)) {
         throw opError('revision_conflict', 'A legacy fact changed, was already adopted or moved to another owner before adoption.',
           `A legacy fact on ${row.slug} in ${row.source_id} changed before fact-fence adoption request ${row.request_id} published; nothing was written. The next fact backfill run re-reads the facts and plans a fresh request.`,
@@ -553,7 +562,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
     // The fence cell's parsed text is written back with the row number: the
     // projection expires any row whose (row_num, fact, visibility) differs from
     // its fence row and inserts a new one, which would lose the legacy id.
-    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2,fact=a.fact
+    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2,fact=a.fact${held ? ',entity_slug=$2' : ''}
       FROM jsonb_to_recordset($3::text::jsonb) AS a(id integer,row_num integer,fact text)
       WHERE f.source_id=$1 AND f.id=a.id AND ${held ? 'f.source_markdown_slug=$4' : 'f.row_num IS NULL'} RETURNING f.id`,
     [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num, fact: fence.get(row_num)!.claim }))), ...(held ? [UNATTRIBUTED_MEMORY_SLUG] : [])]);
