@@ -5,6 +5,7 @@ import type { WriteAuthority } from '../src/core/persistence/model.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { runAccess } from '../src/commands/access.ts';
+import { linkMember } from '../src/core/access/actor.ts';
 import { memberIdentityFor, stdioMemberIdentity } from '../src/core/access/caller.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
@@ -48,6 +49,18 @@ const MISSING = 'notes/missing-example';
 const OPEN_CANARY = 'canarylofcopenx';
 const LABELLED_CANARY = 'canarylofclabelledx';
 const MEMBER_LOOKUP = 'FROM access_members m LEFT JOIN access_group_members g';
+const AUDIENCE_LOOKUP = 'm.id = ANY($1::text[])';
+const ACTOR_LOOKUP = 'FROM access_member_links l';
+const BOT_EXTERNAL_ID = 'u-acme-example-bot';
+const OWNER_SLUG = 'notes/owner-lock-example';
+const OWNER_CANARY = 'canarylofcownerx';
+/** SQLSTATEs an injected failure raises: an internal error (not transient), a dropped connection and a lock timeout (both transient). */
+const FAULT = 'XX000';
+const DROPPED = '08006';
+const LOCK_TIMEOUT = '55P03';
+const ONE_FAILURE = 1;
+/** Submission checks the writer's member twice (writerIdentities, writerLabelledOnly); the stored write's checks come after. */
+const SUBMISSION_LOOKUPS = 2;
 const COMBINED_PROBE = 'AS any_labelled';
 const LOOKUP_FAILURES = 2;
 /** Every lookup of one request fails: a put_page checks visibility at preparation and again at publication, two lookups each. */
@@ -61,22 +74,24 @@ const SLOW_MS = 600_000;
 const SETUP_MS = 300_000;
 const SECOND_POOL = 2;
 
-type Fail = 'throw' | ((sql: string) => string);
+type Fail = string | ((sql: string) => string);
 
 /**
  * Makes the next `times` statements on `engine` that contain `marker` fail, in every transaction it opens too (a
- * transaction engine is Object.create(engine)): 'throw' raises a dropped-connection error without reaching the
+ * transaction engine is Object.create(engine)): a SQLSTATE raises an error with that code without reaching the
  * database; a function sends its rewrite of the statement instead, which the database rejects with a real SQLSTATE
- * (and which aborts an open transaction). Returns how many failed and a restore.
+ * (and which aborts an open transaction). The first `skip` matching statements run untouched. Returns how many failed
+ * and a restore.
  */
-function failStatements(engine: BrainEngine, marker: string, times: number, fail: Fail) {
+function failStatements(engine: BrainEngine, marker: string, times: number, fail: Fail, skip = 0) {
   const original = engine.executeRaw as (...a: unknown[]) => Promise<unknown[]>;
-  const state = { left: times, failed: 0 };
+  const state = { skip, left: times, failed: 0 };
   engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[], opts?: unknown) {
-    if (state.left > 0 && sql.includes(marker)) {
+    if (sql.includes(marker) && state.skip > 0) state.skip--;
+    else if (state.left > 0 && sql.includes(marker)) {
       state.left--;
       state.failed++;
-      if (fail === 'throw') throw Object.assign(new Error('Connection terminated unexpectedly'), { code: '08006' });
+      if (typeof fail === 'string') throw Object.assign(new Error('injected failure ' + fail), { code: fail });
       return original.call(this, fail(sql), params, opts);
     }
     return original.call(this, sql, params, opts);
@@ -84,8 +99,8 @@ function failStatements(engine: BrainEngine, marker: string, times: number, fail
   return { state, restore: () => { delete (engine as { executeRaw?: unknown }).executeRaw; } };
 }
 
-async function withFailures<T>(engine: BrainEngine, marker: string, times: number, fail: Fail, fn: () => Promise<T>): Promise<{ value: T; failed: number }> {
-  const injected = failStatements(engine, marker, times, fail);
+async function withFailures<T>(engine: BrainEngine, marker: string, times: number, fail: Fail, fn: () => Promise<T>, skip = 0): Promise<{ value: T; failed: number }> {
+  const injected = failStatements(engine, marker, times, fail, skip);
   try {
     return { value: await fn(), failed: injected.state.failed };
   } finally {
@@ -220,12 +235,12 @@ for (const kind of testBackends()) {
         ['stdio get_page', () => stdioCall(engine, BOT, 'get_page', { slug: OPEN })],
       ];
       for (const [label, read] of reads) {
-        const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, 'throw', read);
+        const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, FAULT, read);
         expect({ label, failed: failed > 0 }).toEqual({ label, failed: true });
         expect({ label, leaked: value.text.includes(OPEN_CANARY) || value.text.includes('"' + OPEN + '"') }).toEqual({ label, leaked: false });
         expect({ label, isError: value.isError, code: value.json.code }).toEqual({ label, isError: true, code: 'access_identity_unavailable' });
       }
-      const refused = (await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, 'throw', () => call(engine, auth, 'get_page', { slug: OPEN }, true))).value.json;
+      const refused = (await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, FAULT, () => call(engine, auth, 'get_page', { slug: OPEN }, true))).value.json;
       expect(refused).toMatchObject({ retryable: true, class: 'retryable', fix: { next: 'wait' } });
       expect(refused.why).toBeString();
     }, SLOW_MS);
@@ -237,7 +252,7 @@ for (const kind of testBackends()) {
         ['create check', () => assertLabelledOnlyCreate(engine, authorityFor(bot.id), 'notes/fc-direct-new', null, {})],
       ];
       for (const [label, check] of checks) {
-        const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, 'throw', () => outcome(check()));
+        const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, FAULT, () => outcome(check()));
         expect({ label, failed: failed > 0, outcome: value }).toEqual({ label, failed: true, outcome: 'access_identity_unavailable' });
       }
       const auth = await verify(engine, bot.token);
@@ -248,7 +263,7 @@ for (const kind of testBackends()) {
         ['put_page create, every lookup fails', 'notes/fc-put-new', REQUEST_OUTAGE, {}],
       ];
       for (const [label, slug, times, extra] of puts) {
-        const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, times, 'throw',
+        const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, times, FAULT,
           () => call(engine, auth, 'put_page', { slug, content: note('Bot rewrite', []), ...extra }));
         expect({ label, failed: failed > 0, isError: value.isError }).toEqual({ label, failed: true, isError: true });
         expect({ label, code: value.json.code === 'revision_required' ? 'leaks the hidden page' : 'ok' }).toEqual({ label, code: 'ok' });
@@ -257,21 +272,65 @@ for (const kind of testBackends()) {
       expect(await pageRows(engine, 'notes/fc-put-new')).toEqual([]);
     }, SLOW_MS);
 
-    test('fix 1: a lookup whose table or column is missing (a schema older than the member tables) still reads as unbound; any other failure throws', async () => {
+    test('fix 1: a lookup missing access_members, access_group_members or member_id (a schema older than the member tables) still reads as unbound; a transient failure is rethrown unchanged; any other failure throws access_identity_unavailable', async () => {
       const principal = { principal: { kind: 'legacy_token', id: bot.id } };
       expect(await memberIdentityFor(engine, principal)).toContain('member:' + BOT);
       const missing: Array<[string, (sql: string) => string]> = [
-        ['42P01', sql => sql.replace('FROM access_members m', 'FROM access_members_absent m')],
-        ['42703', sql => sql.replace('m.disabled_at IS NULL', 'm.disabled_at_absent IS NULL')],
+        ['42P01', sql => sql.replace('FROM access_members m', 'FROM pg_temp.access_members m')],
+        ['42703', sql => sql.replace('SELECT member_id FROM access_tokens', 'SELECT t.member_id FROM (SELECT id, revoked_at FROM access_tokens) t')],
       ];
       for (const [state, rewrite] of missing) {
         const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, rewrite, () => memberIdentityFor(engine, principal));
         expect({ state, failed, identity: value }).toEqual({ state, failed: 1, identity: [] });
       }
-      expect((await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, 'throw', () => outcome(memberIdentityFor(engine, principal)))).value).toBe('access_identity_unavailable');
-      expect((await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, 'throw', () => outcome(stdioMemberIdentity(engine, BOT)))).value).toBe('access_identity_unavailable');
+      const otherObjects: Array<[string, (sql: string) => string]> = [
+        ['42P01', sql => sql.replace('FROM access_members m', 'FROM access_members_absent m')],
+        ['42703', sql => sql.replace('m.disabled_at IS NULL', 'm.disabled_at_absent IS NULL')],
+      ];
+      for (const [state, rewrite] of otherObjects) {
+        const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, rewrite, () => outcome(memberIdentityFor(engine, principal)));
+        expect({ state, failed, outcome: value }).toEqual({ state, failed: 1, outcome: 'access_identity_unavailable' });
+      }
+      for (const state of [DROPPED, LOCK_TIMEOUT]) {
+        expect({ state, outcome: (await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, state, () => outcome(memberIdentityFor(engine, principal)))).value }).toEqual({ state, outcome: state });
+      }
+      expect((await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, FAULT, () => outcome(memberIdentityFor(engine, principal)))).value).toBe('access_identity_unavailable');
+      expect((await withFailures(engine, MEMBER_LOOKUP, LOOKUP_FAILURES, FAULT, () => outcome(stdioMemberIdentity(engine, BOT)))).value).toBe('access_identity_unavailable');
       expect(await memberIdentityFor(engine, { principal: { kind: 'legacy_token', id: unbound.id } })).toEqual([]);
       expect(await stdioMemberIdentity(engine)).toEqual([]);
+    }, SLOW_MS);
+
+    test('fix 1 (transient): an owner put_page whose stored-write lookup meets one lock timeout is released and retried, and commits', async () => {
+      const auth = await verify(engine, owner.token);
+      const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, ONE_FAILURE, LOCK_TIMEOUT,
+        () => call(engine, auth, 'put_page', { slug: OWNER_SLUG, content: note('Owner lock example', [], 'Owner note ' + OWNER_CANARY + ' here.') }), SUBMISSION_LOOKUPS);
+      expect({ failed, isError: value.isError, code: value.json.code ?? null }).toEqual({ failed: ONE_FAILURE, isError: false, code: null });
+      expect((await pageRows(engine, OWNER_SLUG))[0]?.compiled_truth).toContain(OWNER_CANARY);
+    }, SLOW_MS);
+
+    test('fix 1 red-first (stored audience and attested actor): a write for a labelled-only member stays labelled-only when re-resolving who it writes for fails', async () => {
+      const agent = await mint(engine, 'audience-agent');
+      await bindCredential(engine, { kind: 'token', id: agent.id }, { mayActFor: ['member:' + BOT] });
+      const attest = await mint(engine, 'attest-agent');
+      await bindCredential(engine, { kind: 'token', id: attest.id }, { attestActor: 'qm' });
+      await linkMember(engine, BOT, 'qm', BOT_EXTERNAL_ID);
+      const healthy = { update: 'page_not_found', create: 'access_labelled_only_unnamed' };
+      const writers: Array<[string, WriteAuthority, string, typeof healthy | Record<string, string>]> = [
+        ['audience', { ...authorityFor(agent.id), actingFor: ['member:' + BOT] } as WriteAuthority, AUDIENCE_LOOKUP, healthy],
+        ['attested', { ...authorityFor(attest.id), actingFor: { system: 'qm', external_id: BOT_EXTERNAL_ID, member: BOT } } as WriteAuthority, ACTOR_LOOKUP, { update: DROPPED, create: DROPPED }],
+      ];
+      const seen: Record<string, unknown> = {};
+      const expected: Record<string, unknown> = {};
+      for (const [who, authority, marker, failing] of writers) {
+        const checks = async () => ({ update: await outcome(authorizePageVisibility(engine, authority, OPEN)),
+          create: await outcome(assertLabelledOnlyCreate(engine, authority, 'notes/fc-stored-new', null, {})) });
+        const healthyRun = await checks();
+        const { value, failed } = await withFailures(engine, marker, REQUEST_OUTAGE, DROPPED, checks);
+        seen[who] = { healthy: healthyRun, failed: failed > 0, failing: value };
+        expected[who] = { healthy, failed: true, failing };
+      }
+      expect(seen).toEqual(expected);
+      expect(await pageRows(engine, 'notes/fc-stored-new')).toEqual([]);
     }, SLOW_MS);
 
     test('fix 1 (R94): with lookups working, the owner credential and an unbound credential read as before', async () => {
