@@ -683,7 +683,7 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (gbrain sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
   const driftText = `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
-    + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite), decide with the user, apply it with the plan hash, then run gbrain sync --source ${sourceId} --no-pull`;
+    + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run gbrain sync --source ${sourceId} --no-pull`;
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
   }
@@ -747,11 +747,19 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   const options = `This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
     + `${fileDriftActionVerb('deleted', state, 'file')}. `;
   return { argv: preview('database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
-    why: `${what}${options}Decide with the user, run the apply command the preview prints, then sync again. The rest of the source is not blocked.`,
+    why: `${what}${options}Decide with the user. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`,
     then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Re-screens ${record.path} after the repair (a changed file or page revision re-screens it by itself).` },
     verify };
 }
+
+/**
+ * GST-2579: what every printed file-drift fix says about the step after its read-only preview. A database-wins apply
+ * replaces the file, so it is the user's decision (ask_user): the CLI asks for consent and the apply takes --yes only after they agree.
+ */
+export const FILE_DRIFT_APPLY_STEP = 'The preview writes nothing and names what the winning side overwrites: in bulk, --prefer database keeps every file edit or deletion sync never imported '
+  + '(kept_newer_file, kept_newer_delete), and a page named with --slug lists the commit it would discard. The apply it prints replaces the other copy and needs the user\'s consent: '
+  + 'show them what the preview names, run the apply without --yes to get its consent message (exit 3), and add --yes only after they agree.';
 
 /**
  * The exact next step for one hold: the repair preview for frontmatter, the
@@ -820,7 +828,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         const verify = { argv: ['gbrain', 'sources', 'status', source, '--json'] };
         return { argv: preview('database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
           why: `${record.path} was deleted in Git while ${by}, so sync held the deletion instead of removing a page that changed. This preview (writes nothing) keeps the page and recreates its file; `
-            + `${preview('file').join(' ')} previews the deletion instead (soft-deletes exactly that page). Decide with the user, run the apply command the preview prints, then sync again. The rest of the source is not blocked.`,
+            + `${preview('file').join(' ')} previews the deletion instead (soft-deletes exactly that page). Decide with the user. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`,
           then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
             why: `Re-screens ${record.path} after the repair (a changed file or page revision re-screens it by itself).` },
           verify };
@@ -844,7 +852,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         ? `Page ${slug} differs from ${record.path} and has no import record to tell whether the file or the database changed, so sync held the file instead of overwriting the database version. `
         : `${by} since ${record.path} was last imported, so sync held the file instead of overwriting the database version (${record.meta.sides === 'database' && !record.meta.side ? 'the file did not change in Git'
           : side === 'both' ? 'the file changed too' : 'no import record says whether the file changed too'}). `;
-      const decide = 'Decide with the user which version wins, run the apply command the preview prints, then sync again. The rest of the source is not blocked.';
+      const decide = `Decide with the user which version wins. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`;
       // #6517: a shared-origin delete kept the file for this surviving page, and its receipt names importing the file.
       const shared = record.meta.shared_origin === true;
       return { argv: preview(shared ? 'file' : 'database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/write-refusals.md#file_drift',

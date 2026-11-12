@@ -80,6 +80,7 @@ test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
 test/db-only-labels-gst2519.test.ts
+test/db-wins-unimported-gst2579.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
