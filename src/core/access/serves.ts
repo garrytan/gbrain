@@ -28,7 +28,7 @@ export interface ServesView {
 export async function brainServes(engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>): Promise<ServesView> {
   const members = (await engine.executeRaw<{ id: string }>(
     'SELECT id FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id')).map(r => r.id);
-  const [explicit, derived, since] = await Promise.all([SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY].map(k => engine.getConfig(k)));
+  const [explicit, derived, since] = await Promise.all([engine.getConfig(SERVES_KEY), engine.getConfig(SERVES_DERIVED_KEY), engine.getConfig(SERVES_SINCE_KEY)]);
   const policy = servesPolicyFrom({ [SERVES_KEY]: explicit ?? undefined, [SERVES_DERIVED_KEY]: derived ?? undefined });
   return { serves: policy.several ? 'several' : 'one', from: policy.from, enabled_members: members, since: since?.trim() || null };
 }

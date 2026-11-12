@@ -120,7 +120,7 @@ export function requesterScopeGate(op: Pick<Operation, 'name' | 'mutating'> | un
     return { state: 'not_enforced', connection: c.handle, refuses_at: null, fix: fixFor(c, transport),
       message: `This brain serves several people (${why(serves)}) and ${c.handle} is bound to nobody, so it reads every page no rule restricts for whoever is asking. ${alternatives(c)}` };
   }
-  const old = since !== null && (created === null || created <= since);
+  const old = since !== null && (created === null || created < since);
   if (old && refusesAt !== null && now < refusesAt) {
     const date = new Date(refusesAt * 1000).toISOString();
     return { state: 'grace', connection: c.handle, refuses_at: date, fix: fixFor(c, transport),
@@ -265,7 +265,7 @@ export async function unscopedConnections(engine: Pick<BrainEngine, 'executeRaw'
   const now = Math.floor(nowMs / 1000);
   const entry = (c: Connection, row: { created: unknown; reads_unscoped: unknown }): UnscopedConnection => {
     const { readsUnscoped, createdAt } = credentialScopeFields(row.reads_unscoped, row.created);
-    const old = serves.since !== null && (createdAt === null || createdAt <= serves.since);
+    const old = serves.since !== null && (createdAt === null || createdAt < serves.since);
     const state = readsUnscoped ? 'reads_unscoped' : !serves.enforce ? 'not_enforced' : old && refusesAt !== null && now < refusesAt ? 'grace' : 'refused';
     return { connection: c.handle, state, refuses_at: state === 'grace' ? new Date(refusesAt! * 1000).toISOString() : null, argv: c.argv };
   };

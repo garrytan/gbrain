@@ -334,6 +334,7 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [MSRC] });
         tokens[name] = minted.token;
         if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+        else await readsUnscopedOnPurpose(engine, minted.id);
       }
       await setOwner(engine, OWNER);
     }, 300_000);

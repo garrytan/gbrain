@@ -286,6 +286,8 @@ for (const kind of testBackends()) {
       await setSince(1);
       await mint('fresh-unbound');
       refused(await search('fresh-unbound'), 'created_after');
+      await engine.executeRaw('UPDATE access_tokens SET created_at = $2::timestamptz WHERE id::text = $1', [keys['fresh-unbound']!.id, await engine.getConfig('access.serves_since')]);
+      refused(await search('fresh-unbound'), 'created_after');
       const who = await http('fresh-unbound', 'whoami', {});
       expect(who.isError).toBe(false);
       expect(who.json.access.requester_scope).toEqual({ state: 'refused', reason: 'created_after', argv: ['gbrain', 'auth', 'rescope', '--token', 'fresh-unbound', '--member', '<MEMBER>'] });
