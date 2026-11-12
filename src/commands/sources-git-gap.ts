@@ -379,6 +379,15 @@ async function countSourceRows(tx: BrainEngine, census: GitGapCensus): Promise<v
   census.parked_effects = parked.map(row => ({ kind: row.kind, code: row.code ?? 'unknown', targets: Number(row.targets) }));
 }
 
+/**
+ * GST-2492 PR 2: the fact rows the census counts with no Git home on a page that should have one: unfenced, fenced on a
+ * missing page, or fenced on a page without a file that no declared class covers. Doctor `strict_facts_outside_git` and
+ * `gbrain repair facts-home` judge a strict source by it.
+ */
+export function factsWithoutGitHome(rows: GitGapCensus['rows_without_git_home']): number {
+  return rows.facts_unfenced + rows.facts_fence_page_missing + rows.facts_on_pages_without_file.undeclared;
+}
+
 const counts = (record: Record<string, number>) => Object.entries(record).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(', ') || 'none';
 
 export function describeGitGap(census: GitGapCensus): string {

@@ -480,7 +480,9 @@ async function ownEnforcedReceipt(id: unknown): Promise<boolean> {
 
 /**
  * Output guard (defense in depth): true when any whole string in result is the slug of a page the member cannot read
- * and no page it reads carries the same slug. The caller then withholds the whole output.
+ * and no page it reads carries the same slug. The caller then withholds the whole output. Pages are judged under the
+ * record the read ran under (a read-only operation with the enforced overrides), so a derived page the member reads
+ * through access.members_read_lineage is not withheld; when that record cannot be built, the output is withheld.
  */
 export async function namesHiddenPage(engine: BrainEngine, command: string, result: unknown): Promise<boolean> {
   const strings = new Set<string>();
@@ -493,8 +495,11 @@ export async function namesHiddenPage(engine: BrainEngine, command: string, resu
   walk(result, 0);
   if (!strings.size) return false;
   const ea = await enforcedAccess(engine, command);
-  const { withCallerAccess, readPolicyFragment } = await import('../core/search/private-visibility.ts');
-  const policy = withCallerAccess(ea.access, () => readPolicyFragment('p', ea.access.identity, true, ea.access.satisfiedRuleIds));
+  const [{ withCallerAccess, callerAccessAllowedSql, privacyPartSql }, { remoteCallerAccess }] = await Promise.all([
+    import('../core/search/private-visibility.ts'), import('../core/access/caller.ts')]);
+  const read = await remoteCallerAccess(engine, undefined, [], 'stdio', null, ea.member, true).catch(() => null);
+  if (!read) return true;
+  const policy = withCallerAccess({ ...read, hidePrivate: true, owner: false, privateReadableSources: [] }, () => '(' + callerAccessAllowedSql('p') + ' AND ' + privacyPartSql('p') + ')');
   const hidden = ea.hiddenSources.size ? '(NOT (' + policy + ') OR p.source_id = ANY($2::text[]))' : 'NOT (' + policy + ')';
   const rows = await engine.executeRaw<{ slug: string; hidden: boolean }>('SELECT p.slug, ' + hidden + ' AS hidden FROM pages p WHERE p.slug = ANY($1::text[])',
     ea.hiddenSources.size ? [[...strings], [...ea.hiddenSources]] : [[...strings]]);

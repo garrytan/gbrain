@@ -1078,6 +1078,33 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "Not applicable: every folder and page rule also keeps the pages and facts derived from its pages to its readers (no rule has covers_derived: false).",
+          "name": "access_raw_only_rules",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
+          "name": "access_audience_members",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.",
+          "name": "access_members_read_lineage",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
           "name": "attest_read_shared_scope",
           "readiness_state": "not_applicable",
@@ -3839,6 +3866,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No source is strict (git-canonical), so no index trails a commit.",
           "name": "git_index_lag",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#facts-home",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+          "name": "strict_facts_outside_git",
           "status": "ok"
         },
         {

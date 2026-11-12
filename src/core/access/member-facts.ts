@@ -219,7 +219,8 @@ export function callerIdentityKey(): string {
   const access = currentCallerAccess();
   if (!access.actor && !access.identity.length && !access.audienceIdentities.length && !access.audience) return '';
   const parts = { actor: access.actor ? [access.actor.system, access.actor.member] : null, identity: access.identity, audience: access.audienceIdentities, entries: access.audience,
-    ...(access.ownerLineage ? { owner_reads: access.ownerReadsRestricted ? 'restricted' : 'lineage' } : {}) };
+    ...(access.lineage ? { owner_reads: access.owner ? (access.ownerReadsRestricted ? 'restricted' : 'lineage') : 'member_lineage' } : {}),
+    ...(access.audienceKindMembers.length ? { audience_kind: access.audienceKindMembers } : {}) };
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
 }
 

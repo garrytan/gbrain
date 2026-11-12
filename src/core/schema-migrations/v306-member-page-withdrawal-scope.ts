@@ -11,10 +11,9 @@ import { FACT_INSERT_GUARD_FUNCTION_SQL } from '../facts/insert-guard-schema.ts'
 // withdrawals; the member's save checks the withdrawals of claims that member reads instead (facts/single-prepare.ts).
 // A withdrawal still expires every matching row, member pages included, when it is made. Replaces only the functions: their triggers already call them,
 // and re-creating a trigger would take an ACCESS EXCLUSIVE lock on facts. The migration run's search_path hardening
-// (function-search-path.ts) appends pg_temp again. No row is read or written. Provisional number: renumbered at the
-// merge slot.
-export const v305: Migration = {
-  version: 305,
+// (function-search-path.ts) appends pg_temp again. No row is read or written.
+export const v306: Migration = {
+  version: 306,
   name: 'member_page_withdrawal_scope',
   idempotent: true,
   sql: `${FACT_WITHDRAWAL_PRESERVE_FUNCTION_SQL};\n${FACT_INSERT_GUARD_FUNCTION_SQL}`,

@@ -4,10 +4,12 @@
  * 1. Protects: a fact saved for an entity with no page is stored in the database alone, and the reply says so:
  *    it names no `page`, the batch item carries the same `persistence` and `write_through` as the single form, the
  *    skip reason is `entity_page_missing` wherever the source has a checkout (never `no_repo_configured`), and on a
- *    source whose pages are in Git one `entity_page_missing` notice gives the `put_page` call that creates the page.
+ *    source whose pages are in Git one `entity_page_missing` notice asks the user whether to create the page
+ *    (`next: ask_user`, with the `put_page` call that creates it).
  *    Once the page exists, the extract_facts fence step moves the fact into its Facts table and its file.
  * 2. Fails when: the reply names a page that does not exist, a batch hides where an item landed, a source with a
- *    checkout is told it has no repository, the caller is not told how to give the fact a file, or a brain with no
+ *    checkout is told it has no repository, the caller is not told how to give the fact a file, the page is created
+ *    without asking the user (`next: run`), or a brain with no
  *    Git repository (where the database is the record) is told to create one.
  * 3. Existing coverage: test/remember-share-gst2243.test.ts pins `page` for facts that do land on a page;
  *    test/pathological/b-7-facts-pageless-entity.test.ts covers re-homing page-less facts.
@@ -26,6 +28,8 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { fenceUnfencedFacts, planUnfencedFacts } from '../src/core/facts/unfenced-facts.ts';
 import { formatRememberResult } from '../src/cli/remember-format.ts';
+import { cliRenderContext, renderNotice } from '../src/core/agent-output.ts';
+import { renderCliNotices } from '../src/core/agent-markers.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -115,9 +119,14 @@ for (const backend of testBackends()) describe(`[${backend}] remember on an enti
     expect(notice).toMatchObject({ kind: 'info', dedupe_key: `default\0${PAGELESS}` });
     expect(notice!.why).toContain(`${PAGELESS} has no page`);
     expect(notice!.why).toContain('database only');
-    expect(notice!.fix).toMatchObject({ actor: 'agent', consent: [], argv: ['gbrain', 'put', PAGELESS],
+    expect(notice!.user_message).toBe(`The fact is saved in the database only: ${PAGELESS} has no page, so it is in no file in Git. Should I create a page for ${PAGELESS}?`);
+    expect(notice!.fix).toMatchObject({ ask_user: true, actor: 'agent', consent: [], argv: ['gbrain', 'put', PAGELESS],
       mcp: { tool: 'put_page', arguments: { slug: PAGELESS, content: '<content>' } }, inputs: [{ name: 'content' }],
       verify: { mcp: { tool: 'get_page', arguments: { slug: PAGELESS } } } });
+    // On the CLI the [AGENT] block asks first and fences the question for the user.
+    const agent = renderCliNotices([renderNotice(notice!, cliRenderContext())], { json: false, tty: false }).stdout!;
+    expect(agent).toContain(`next: ask_user: gbrain put ${PAGELESS}`);
+    expect(agent).toContain(`[SHOW USER]\n${notice!.user_message}\n[/SHOW USER]`);
     // A fact that lands on a page carries no such notice.
     const paged = caller(ctx);
     await remember(paged.ctx, 'Hana Example prefers tea.', PAGED);
@@ -126,6 +135,7 @@ for (const backend of testBackends()) describe(`[${backend}] remember on an enti
     const both = caller(ctx);
     await batch(both.ctx);
     expect(both.notices.filter(n => n.code === NOTICE)).toHaveLength(1);
+    expect(both.notices.find(n => n.code === NOTICE)).toMatchObject({ user_message: expect.stringContaining('database only'), fix: { ask_user: true } });
     const replay = caller(ctx);
     await call(replay.ctx, 'remember', { fact: 'The kitchen remodel starts in March.', entity: PAGELESS, provenance: 'chat 2026-11-11', request_id: single.request_id });
     expect(replay.notices.filter(n => n.code === NOTICE)).toHaveLength(1);
@@ -135,11 +145,15 @@ for (const backend of testBackends()) describe(`[${backend}] remember on an enti
     const block = mcp.blocks.find(text => text.startsWith(`[gbrain notice ${NOTICE} kind=info]`));
     expect(block).toBeDefined();
     expect(block).toContain(`fix: put_page {"slug":"${unseen}","content":"<content>"}`);
-    expect(block).toContain('next: run');
+    expect(block).toContain('next: ask_user');
+    expect(block).toContain(`user_message: The fact is saved in the database only: ${unseen} has no page`);
     const inBatch = `notes/pond-plan-${randomUUID().slice(0, 8)}`;
     const mcpBatch = await overMcp(engine, { items: [{ fact: 'Hana Example keeps bees.', entity: PAGED }, { fact: 'The pond plan needs a liner.', entity: inBatch }] });
     expect(mcpBatch.body.items[1].write_through).toEqual({ written: false, skipped: NOTICE });
-    expect(mcpBatch.blocks.filter(text => text.startsWith(`[gbrain notice ${NOTICE} kind=info]`) && text.includes(inBatch))).toHaveLength(1);
+    const batchBlocks = mcpBatch.blocks.filter(text => text.startsWith(`[gbrain notice ${NOTICE} kind=info]`) && text.includes(inBatch));
+    expect(batchBlocks).toHaveLength(1);
+    expect(batchBlocks[0]).toContain('next: ask_user');
+    expect(batchBlocks[0]).not.toContain('next: run');
   }), 180_000);
 
   test('once the page exists, the extract_facts fence step moves the fact into its Facts table and its file', () => checkout('git', async ({ engine, ctx, root }) => {

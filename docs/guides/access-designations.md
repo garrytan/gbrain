@@ -117,7 +117,10 @@ These rules follow the origin, so nobody writes them by hand:
   and any page whose `derived_from` names a private page are private whatever their own field says;
 - anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
   remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
-  origin of it (a folder rule kept to the owner, or readers that list the owner).
+  origin of it (a folder rule kept to the owner, or readers that list the owner). Three operator settings change this,
+  and all are off by default. A raw-only rule does not hide what is derived from its pages, an audience member's own member
+  page reads to the owner as if it named the owner, and `access.members_read_lineage` gives every member the owner's
+  rule (all below).
 
 `gbrain repair visibility` stamps the explicit value on derived pages (tighten-only). The owner reads them all.
 
@@ -139,6 +142,19 @@ changes only that line ([how](repair.md)). Widening a folder rule waits for `gbr
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).
+
+**Raw-only rules.** `gbrain access rule add --prefix transcripts/ --readers alice-example --raw-only` (in
+`access.yml`, `covers_derived: false` on the rule) keeps the pages under `transcripts/` to their readers, but not the
+pages and facts derived from them: an atom, a summary, a synthesized concept, a chronicle event or a fact made from a
+raw-only page is read by whoever reads that derived page. Use it for raw material such as call transcripts, whose
+summaries are meant to be shared. Never use it for a folder whose content is itself the secret. A summary of a
+raw-only page carries what the page says, and the facts extracted from it are readable like any other derived page,
+so the facts pulled out of a fenced transcript are not fenced. A page's own `readable_by` still hides what is derived from it, and a page
+that another covering rule also matches stays covered. Every rule written before this existed covers derived pages and
+keeps its digest. Making a rule raw-only widens access, so it waits for `gbrain access apply` (preview, then
+`--expect <plan_hash>`); making it covering again (the same command without `--raw-only`) applies at once. Doctor's
+`access_raw_only_rules` lists every raw-only rule, and `who-can-read` says when a page's lineage is open. Works the same
+for rules in the database (a repo-less brain) and in `access.yml`.
 
 ### Fact visibility (`private` | `world`)
 
@@ -180,6 +196,31 @@ One owner credential both reads every private page and writes new `default` page
 owner agent can copy private content into a shared page. A prompt planted in a page that agent reads can ask it to.
 Bind only agents you trust with the whole brain as the owner; give every other agent its own member, whose new pages
 stay kept to it.
+
+### Audience members (`gbrain access member kind`)
+
+A member can stand for a group chat or a shared assistant rather than a person. `gbrain access member kind <id>
+audience` (or `gbrain access member add <id> --kind audience`) marks it; `gbrain access member kind <id> person` is the
+undo. The owner then reads that member's own member page (`memory/members/<id>`), its older versions, its derived
+pages and its facts as if the page named the owner, with or without the owner opt-in; folder rules still apply unless
+the opt-in is on. Only that page: a page that lists the audience in `readable_by` stays under the usual rules (the
+owner opt-in opens it), and a person member's member page stays closed to the owner. Nothing changes for any other
+caller, and no write widens. Only the brain operator on the brain host sets a kind; a remote caller is refused
+(`permission_denied`). `gbrain access member list` marks each audience member, `who-can-read` lists the owner on such a
+page, and doctor's `access_audience_members` lists the audience members.
+
+### Members read lineage (`gbrain access members-read-lineage`)
+
+`gbrain access members-read-lineage on` (config `access.members_read_lineage`, off by default and unchanged on
+upgrade) gives every member's credential the owner's lineage rule: a member speaking for itself (no audience, or an
+audience of that one member) reads a derived page or a fact when it reads every origin of it, on every read path and
+in `--as <member>`. Summaries of a page then reach everyone that page lists, so turn it on only when that is what the
+members expect. It never applies to an audience of several members, a group or a guest, an attested call, or an unbound
+credential (an unbound `granted_sources` token included); a member-bound `granted_sources` token reads with its
+member's lineage. It never widens a write, and leaves the owner opt-in to the owner. Only the brain
+operator on the brain host sets it; a remote caller is refused. While it is on, every remote caller's `whoami` says so
+(`members_read_lineage`), `gbrain access check` reports it, `who-can-read` names it on pages it opens, and doctor
+reports `access_members_read_lineage`. `gbrain access members-read-lineage off` is the undo.
 
 ## Related
 

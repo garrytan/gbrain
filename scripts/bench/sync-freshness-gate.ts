@@ -21,6 +21,9 @@
  * p50s against the same baseline and limit: in the sample, the median of each runner's first three runs spans 507.6 to
  * 698.9 ms (every 3 consecutive runs: 491.9 to 698.9) against the 916.9 ms limit, where one first run came within 4.1 ms.
  * A slow first run on a fresh runner no longer decides the cell alone; a regression that moves every run still does.
+ * Postgres managed is gated the same way since 2026-11-11 (GST-2457): its nightly p50 moves in steps of the 50 ms probe
+ * (452.7 to 601.3 ms on 16 of 19 nightlies from 2026-10-24), and three single runs at 656.5, 659.2 and 706.8 ms failed the
+ * 627 ms limit, each passing again on the same commit (the 706.8 ms run's rerun measured 551.2 ms).
  *
  * --oracle (GBRA-133 wave 4, untimed): the two managed cells once more with GBRAIN_SYNC_LEVEL_REUSE_VERIFY=1, so the
  * serve compares every level read it reused across passes with a whole read (persistence/sync-tree-reuse.ts) and logs
@@ -42,7 +45,7 @@ const CELLS: Record<string, string[]> = {
   'pglite-managed-serve-watch': ['--engine', 'pglite', '--mode', 'managed', '--commit', 'single', '--trigger', 'serve', '--detection', 'watch'],
   'postgres-classic-serve-watch': ['--engine', 'postgres', '--mode', 'classic', '--commit', 'single', '--trigger', 'serve', '--detection', 'watch'],
 };
-const MEASUREMENTS: Record<string, number> = { 'pglite-managed-serve-watch': 3 };
+const MEASUREMENTS: Record<string, number> = { 'pglite-managed-serve-watch': 3, 'postgres-managed-serve-watch': 3 };
 const names = flag('cells', Object.keys(CELLS).join(',')).split(',').filter(Boolean);
 for (const n of names) if (!CELLS[n]) { console.error('unknown cell ' + n + '; known: ' + Object.keys(CELLS).join(', ')); process.exit(2); }
 const WORK = resolve(flag('work-dir', join(REPO, '.context/bench/sync-freshness-gate')));

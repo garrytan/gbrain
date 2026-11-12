@@ -11,6 +11,9 @@
  *       readable_by: [alice-example, group:team-a]
  *     - slug: projects                        # a page rule: exactly this one slug (GST-2462)
  *       readable_by: [alice-example]
+ *     - prefix: transcripts/                  # a raw-only rule: keeps these pages to its readers, but not
+ *       readable_by: [alice-example]          # the pages and facts derived from them (covers_derived, default true)
+ *       covers_derived: false
  *
  * A prefix is matched literally against the source's slugs (never LIKE): it is
  * lower case, built of segments that start with a letter or digit, ends in
@@ -25,7 +28,8 @@
  * classifyRulebook() compares the applied rulebook with a desired one rule by
  * rule: an added rule and removed readers narrow and apply at once; a removed
  * rule and added readers widen and wait for an operator's
- * `gbrain access apply --yes`. A moved prefix is both: the rule applies at its
+ * `gbrain access apply --yes`. Turning covers_derived off (a rule stops closing its pages' lineage) widens; turning it
+ * back on narrows. A moved prefix is both: the rule applies at its
  * new prefix at once, and its old prefix keeps the old readers under a held
  * rule (heldRuleId) whose release waits for apply. Its target (what is applied
  * now) is never wider than the applied rulebook: a rule whose readers both lose
@@ -41,6 +45,11 @@ export interface FolderRule {
   prefix: string;
   /** Sorted, distinct normalized principals; empty means readable by nobody (an applied intersection only). */
   readable_by: string[];
+  /**
+   * Raw-only rules: false when the rule keeps its pages to its readers but no longer closes the lineage of the pages
+   * and facts derived from them. Absent means true (every rule written before it existed); only false is carried.
+   */
+  covers_derived?: false;
 }
 
 export interface PolicyProblem {
@@ -58,7 +67,7 @@ export const MAX_RULES = 256;
 const MAX_READERS = 256;
 const PREFIX_RE = /^(?:[a-z0-9][a-z0-9._-]*\/)+$/;
 const SLUG_RE = /^(?:[a-z0-9][a-z0-9._-]*\/)*[a-z0-9][a-z0-9._-]*$/;
-const RULE_KEYS = new Set(['id', 'prefix', 'slug', 'readable_by']);
+const RULE_KEYS = new Set(['id', 'prefix', 'slug', 'readable_by', 'covers_derived']);
 
 /** A stored rule prefix the grammar accepts: a folder (ends in '/') or one page's exact slug. Also safe to embed as an SQL literal: no quote or backslash. */
 export function validPrefix(prefix: string): boolean {
@@ -131,13 +140,14 @@ export function normalizeRule(raw: unknown): { rule: FolderRule } | { problem: s
   if (entry.slug !== undefined && entry.prefix !== undefined) return { problem: 'a rule has prefix (a folder) or slug (one page), not both' };
   const prefixError = entry.slug !== undefined ? slugProblem(entry.slug) : prefixProblem(entry.prefix);
   const prefix = prefixError ? undefined : (entry.slug ?? entry.prefix) as string;
-  if (unknown.length) return { problem: `unknown key ${unknown.map(k => JSON.stringify(k)).join(', ')}; a rule has id, prefix or slug, and readable_by`, prefix };
+  if (unknown.length) return { problem: `unknown key ${unknown.map(k => JSON.stringify(k)).join(', ')}; a rule has id, prefix or slug, readable_by and an optional covers_derived`, prefix };
   if (prefixError) return { problem: prefixError };
   const readers = readersOf(entry.readable_by);
   if ('problem' in readers) return { problem: readers.problem, prefix };
   const id = entry.id === undefined ? ruleIdForPrefix(prefix!) : entry.id;
   if (typeof id !== 'string' || !ACCESS_ID_RE.test(id)) return { problem: `id ${JSON.stringify(id)} is not a rule id (lower-case letters, digits, '.', '_' and '-', 1-64 characters)`, prefix };
-  return { rule: { id, prefix: prefix!, readable_by: readers.readers } };
+  if (entry.covers_derived !== undefined && typeof entry.covers_derived !== 'boolean') return { problem: `covers_derived must be true or false (found ${JSON.stringify(entry.covers_derived)})`, prefix };
+  return { rule: { id, prefix: prefix!, readable_by: readers.readers, ...(entry.covers_derived === false ? { covers_derived: false as const } : {}) } };
 }
 
 /** Rules sorted by id with duplicate ids or prefixes reported. */
@@ -208,7 +218,13 @@ export function parsePolicyYaml(text: string): ParsedPolicy {
 }
 
 export function sortRules(rules: readonly FolderRule[]): FolderRule[] {
-  return [...rules].map(r => ({ id: r.id, prefix: r.prefix, readable_by: [...new Set(r.readable_by)].sort() })).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return [...rules].map(r => ({ id: r.id, prefix: r.prefix, readable_by: [...new Set(r.readable_by)].sort(), ...(r.covers_derived === false ? { covers_derived: false as const } : {}) }))
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/** Whether a rule closes the lineage of the pages and facts derived from the pages it covers (covers_derived, default true). */
+export function coversDerived(rule: Pick<FolderRule, 'covers_derived'>): boolean {
+  return rule.covers_derived !== false;
 }
 
 /** The file text for a rulebook: the same grammar parsePolicyYaml reads, members written bare. */
@@ -221,13 +237,14 @@ export function serializePolicyYaml(rules: readonly FolderRule[], comment?: stri
   lines.push('rules:');
   for (const r of sorted) {
     lines.push(`  - id: ${plain(r.id)}`, r.prefix.endsWith('/') ? `    prefix: ${plain(r.prefix)}` : `    slug: ${plain(r.prefix)}`, `    readable_by: [${r.readable_by.map(reader).join(', ')}]`);
+    if (!coversDerived(r)) lines.push('    covers_derived: false');
   }
   return [...lines, ''].join('\n');
 }
 
-/** A content digest of a rulebook (sha256 over its canonical JSON); equal rulebooks have equal digests. */
+/** A content digest of a rulebook (sha256 over its canonical JSON); equal rulebooks have equal digests. A rule that covers derived pages hashes as it did before covers_derived existed. */
 export function rulebookDigest(rules: readonly FolderRule[]): string {
-  return createHash('sha256').update(JSON.stringify(sortRules(rules).map(r => [r.id, r.prefix, r.readable_by]))).digest('hex');
+  return createHash('sha256').update(JSON.stringify(sortRules(rules).map(r => coversDerived(r) ? [r.id, r.prefix, r.readable_by] : [r.id, r.prefix, r.readable_by, false]))).digest('hex');
 }
 
 /** Rules read back from a stored JSON value (revisions, exports); anything malformed is refused, never repaired. */
@@ -237,14 +254,15 @@ export function rulesFromJson(value: unknown): FolderRule[] {
   return sortRules(raw.map(r => {
     const rule = r as FolderRule;
     if (!rule || typeof rule.id !== 'string' || !ACCESS_ID_RE.test(rule.id) || typeof rule.prefix !== 'string' || !validPrefix(rule.prefix)
-      || !Array.isArray(rule.readable_by) || !rule.readable_by.every(p => typeof p === 'string' && normalizePrincipal(p) === p)) {
+      || !Array.isArray(rule.readable_by) || !rule.readable_by.every(p => typeof p === 'string' && normalizePrincipal(p) === p)
+      || (rule.covers_derived !== undefined && typeof rule.covers_derived !== 'boolean')) {
       throw new Error('stored rulebook holds a malformed rule');
     }
     return rule;
   }));
 }
 
-export type ChangeKind = 'added' | 'removed' | 'readers_removed' | 'readers_added' | 'prefix_moved' | 'prefix_released';
+export type ChangeKind = 'added' | 'removed' | 'readers_removed' | 'readers_added' | 'prefix_moved' | 'prefix_released' | 'derived_released' | 'derived_covered';
 
 const HELD_RULE_RE = /\.held-[0-9a-f]{8}$/;
 
@@ -281,7 +299,7 @@ export function classifyRulebook(applied: readonly FolderRule[], desired: readon
     const b = before.get(id);
     if (!b) { target.push(a); changes.push({ rule: id, kind: 'added', narrowing: true, prefix: a.prefix }); continue; }
     if (b.prefix !== a.prefix) {
-      const held = { id: heldRuleId(id, b.prefix), prefix: b.prefix, readable_by: b.readable_by };
+      const held = { id: heldRuleId(id, b.prefix), prefix: b.prefix, readable_by: b.readable_by, ...(coversDerived(b) ? {} : { covers_derived: false as const }) };
       if (before.has(held.id) || after.has(held.id)) { target.push(b); changes.push({ rule: id, kind: 'prefix_moved', narrowing: false, prefix: a.prefix }); continue; }
       target.push(a, held);
       changes.push({ rule: id, kind: 'prefix_moved', narrowing: true, prefix: a.prefix }, { rule: held.id, kind: 'prefix_released', narrowing: false, prefix: b.prefix });
@@ -289,9 +307,12 @@ export function classifyRulebook(applied: readonly FolderRule[], desired: readon
     }
     const removed = b.readable_by.filter(p => !a.readable_by.includes(p));
     const added = a.readable_by.filter(p => !b.readable_by.includes(p));
-    target.push({ id, prefix: b.prefix, readable_by: b.readable_by.filter(p => a.readable_by.includes(p)) });
+    const rawOnly = !coversDerived(b) && !coversDerived(a);
+    target.push({ id, prefix: b.prefix, readable_by: b.readable_by.filter(p => a.readable_by.includes(p)), ...(rawOnly ? { covers_derived: false as const } : {}) });
     if (removed.length) changes.push({ rule: id, kind: 'readers_removed', narrowing: true, prefix: b.prefix, readers: removed });
     if (added.length) changes.push({ rule: id, kind: 'readers_added', narrowing: false, prefix: b.prefix, readers: added });
+    if (coversDerived(b) && !coversDerived(a)) changes.push({ rule: id, kind: 'derived_released', narrowing: false, prefix: b.prefix });
+    if (!coversDerived(b) && coversDerived(a)) changes.push({ rule: id, kind: 'derived_covered', narrowing: true, prefix: b.prefix });
   }
   for (const [id, b] of before) {
     if (after.has(id)) continue;

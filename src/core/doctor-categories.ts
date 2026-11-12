@@ -106,6 +106,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_may_act_for_wildcard',
   // GST-2490: the owner opt-in (doctor/checks/owner-reads-restricted.ts).
   'access_owner_reads_restricted',
+  // GBRA-108: raw-only rules, audience members and members-read-lineage (doctor/checks/access-lineage.ts).
+  'access_raw_only_rules',
+  'access_audience_members',
+  'access_members_read_lineage',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   'extractor_facts_expired',
@@ -254,6 +258,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
   'git_index_lag',
+  // GST-2492 PR 2: facts of a strict source without a Git home, or held for more than 30 days (doctor/checks/strict-facts-outside-git.ts).
+  'strict_facts_outside_git',
   // GST-1601: local edits adopted in the last 24 h per source (doctor/checks/local-edit-adoptions.ts).
   'local_edit_adoptions',
   'edge_validity',

@@ -439,10 +439,14 @@ Optional response fields; clients must ignore any they do not know.
 
 A fact saved for an entity with no page is stored and recalled like any
 other. Where the source's pages are in Git, the reply also carries one
-`entity_page_missing` notice per entity per session, whose fix is the
-`put_page` call that creates the page; once the page exists, the next
-maintenance cycle can move the entity's facts into its Facts table and file. A
-brain with no Git repository gets no such notice.
+`entity_page_missing` notice per entity per session. While the fact is in the
+database only, the notice's step is `next: ask_user`: its `user_message` says
+the fact is saved in the database only and asks whether to create a page for
+the entity, and its fix is the `put_page` call to make once the user agrees.
+When the fact is held in Git (`write_through.held_for`), the notice only says
+where it is and that it moves once the page exists; it has no fix. Once the
+page exists, the next maintenance cycle can move the entity's facts into its
+Facts table and file. A brain with no Git repository gets no such notice.
 
 #### remember items: several facts in one call (additive)
 
