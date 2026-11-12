@@ -11,6 +11,9 @@
  *     caller's connection, which MUST hold the initSchema advisory lock (key
  *     42) so concurrent bootstraps can't race on a transaction pooler.
  *
+ * Before any DDL it refuses (`foreign_table`, owned-table-shapes.ts) when a table gbrain owns by name was
+ * created by another application, so the blob never adopts and alters it (#9190).
+ *
  * The blob forward-references state that older brains don't have yet (a
  * column-with-index or FK target that a migration adds later). One probe
  * round-trip finds every gap; fresh installs and modern brains no-op.
@@ -39,6 +42,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type postgres from '#postgres';
 import { GRANT_COLUMNS_SQL } from '../grants/schema.ts';
+import { assertOwnedTableShapes } from '../owned-table-shapes.ts';
 
 type ProbeRow = Record<string, boolean>;
 
@@ -338,6 +342,7 @@ type ForwardReferenceGaps = ReturnType<typeof forwardReferenceGaps>;
 
 /** Probe once, then add every missing forward-referenced piece of state in master's order. */
 export async function applyForwardReferenceBootstrap(target: ForwardReferenceBootstrapTarget): Promise<void> {
+  await assertOwnedTableShapes(sql => target.probe(sql));
   const gaps = forwardReferenceGaps(await target.probe(forwardReferenceProbeSql(target.dialect)), target.dialect);
   const {
     needsPagesBootstrap, needsLinksBootstrap, needsChunksBootstrap, needsPagesDeletedAt,

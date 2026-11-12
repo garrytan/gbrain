@@ -38,7 +38,7 @@ import { isConnectorSourceKind } from './connector-identity.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
 import { auditConflictsCommand, FILE_DRIFT_MESSAGE, liveFileDrift } from './drift-conflicts.ts';
 import { lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type DerivationDeclaration } from '../trust/taint.ts';
-import { derivationWriteTrust, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
+import { derivationWriteTrust, raisePageLabelGuard, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
 import { sameInstantTies } from '../facts/claim-ties.ts';
 import type { LabelEdit } from './label-edit.ts';
 import { factPreimages, recordConsolidationGeneration } from '../generations/adapters/fact-rows.ts';
@@ -601,7 +601,8 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
     if (derived) {
       const lowered = await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
       if (declaration) await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
-      if (lowered.length && prior?.tier) await recordAgentPageLowering(tx, row, { tier: prior.tier, revision: prior.revision });
+      // GST-2518: a publication whose labels were kept already filed its proposal with them; a second record would withdraw them.
+      if (lowered.length && prior?.tier && !outcome.privacy_labels_kept) await recordAgentPageLowering(tx, row, { tier: prior.tier, revision: prior.revision });
     }
     return outcome;
   } };
@@ -629,7 +630,12 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_page') {
     const page = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });
-    const prepared: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], () => page.apply(tx, preimage)) } : page;
+    // GST-2521: keep_trust is the owner's label door, which also raises the page's label guard.
+    const prepared: PreparedMutation = row.intent.keep_trust === true ? { ...page, apply: (tx, preimage) => withTrustKeep(tx, ['pages'], async () => {
+      const outcome = await page.apply(tx, preimage);
+      await raisePageLabelGuard(tx, row.source_id, row.slug);
+      return outcome;
+    }) } : page;
     const projection = row.intent.event_projection as MaintenanceEventProjection | undefined;
     if (!projection) return prepared;
     // #5523: the event page and its depth-page timeline row commit together in

@@ -1938,6 +1938,16 @@ More: [docs/guides/repair.md#fix-not-writable](../../docs/guides/repair.md#fix-n
 
 More: [docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately](../../docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately)
 
+### foreign_table
+
+<a id="foreign_table"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A table gbrain owns by name (an OAuth table) already exists in the brain's schema without a column gbrain always gives it, or with a type gbrain never gives it, so schema setup stopped before the schema replay or any migration changed anything; the message names the table, the column, the type found and the type gbrain needs. | gbrain creates its tables with CREATE TABLE IF NOT EXISTS, so without this check it adopted a same-named table another application created in the shared database, added its own columns to it and failed partway through an upgrade on the first statement that compared the wrong type (#9190). The table holds that application's data, so gbrain never moves, renames or drops it. | Ask the user: give gbrain its own database, or move the other table to a schema of its own (ALTER TABLE <table> SET SCHEMA <other_schema> takes its indexes and constraints along) and point that application there; then run gbrain apply-migrations --force-schema --yes. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#foreign-table](../../docs/guides/troubleshooting.md#foreign-table)
+
 ### forget_requires_owner
 
 <a id="forget_requires_owner"></a>

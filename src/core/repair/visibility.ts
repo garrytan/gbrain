@@ -54,7 +54,7 @@ import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
 import { filesInCheckout, writeLabelFile, writeLabelPage } from './label-write.ts';
-import { applyReaders, planReaders, readersBatch, readersGitCounts, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
+import { applyReaders, planReaders, raiseGuardOnly, raiseReadersGuard, readersBatch, readersGitCounts, readersGuardOnly, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -171,13 +171,16 @@ async function planAliases(engine: BrainEngine, sourceIds: string[], only?: numb
 
 /**
  * GST-2468: the pages an operator named with --slug, made private (tighten-only: an explicit private stays). The
- * operator's own single-page label change, which a put_page would rate as an agent edit (trust/channel.ts).
+ * operator's own single-page label change, which a put_page would rate as an agent edit (trust/channel.ts). GST-2521: an
+ * already-private page with no label guard (an upgrade, a rebuild from a clone) is listed private -> private, to raise
+ * the guard without a write.
  */
 async function planNamed(engine: BrainEngine, sourceIds: string[], slugs: string[]) {
-  const rows = await engine.executeRaw<DerivedRow>(`SELECT p.id,p.source_id,p.slug,p.type,p.frontmatter->>'visibility' AS visibility,COALESCE(p.body_bytes, 0) AS chars
+  const rows = await engine.executeRaw<DerivedRow & { guarded: boolean }>(`SELECT p.id,p.source_id,p.slug,p.type,p.frontmatter->>'visibility' AS visibility,COALESCE(p.body_bytes, 0) AS chars,
+      EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = p.id) AS guarded
     FROM pages p WHERE p.deleted_at IS NULL AND p.source_id=ANY($1::text[]) AND p.slug=ANY($2::text[]) ORDER BY p.id`, [sourceIds, slugs], bounded);
   const changes = rows.flatMap(page => {
-    const next = tightened(page.visibility, 'private');
+    const next = tightened(page.visibility, 'private') ?? (page.visibility === 'private' && !page.guarded ? 'private' : null);
     return next ? [{ id: Number(page.id), source_id: page.source_id, slug: page.slug, phase: 5 as const, from: page.visibility, to: next }] : [];
   });
   const found = new Set(rows.map(row => row.slug));
@@ -374,7 +377,7 @@ async function planClass(engine: BrainEngine, sourceIds: string[], cls: Visibili
   const toItems = (part: { changes: VisibilityChange[]; rows: DerivedRow[] }) => {
     const chars = new Map(part.rows.map(row => [Number(row.id), Number(row.chars)]));
     return part.changes.map(change => ({ cursor: { phase: change.phase, id: change.id }, target: { phase: change.phase, id: change.id }, source_id: change.source_id,
-      slug: change.slug, chars: chars.get(change.id) ?? 0, action: `visibility ${change.from ?? '(none)'} -> ${change.to}`, change: { from: change.from, to: change.to } }))
+      slug: change.slug, chars: chars.get(change.id) ?? 0, action: change.from === change.to ? `visibility ${change.to} kept, label guard raised` : `visibility ${change.from ?? '(none)'} -> ${change.to}`, change: { from: change.from, to: change.to } }))
       .sort((a, b) => a.cursor.phase - b.cursor.phase || a.cursor.id - b.cursor.id);
   };
   if (cls === 'facts') {
@@ -490,6 +493,7 @@ export const visibilityRepair: RepairHandler = {
     const pages: Array<{ index: number; item: ReadersItem; ready: ReadersWrite; requestId: string }> = [];
     try {
       for (const [index, item] of run.entries()) {
+        if (readersGuardOnly(item)) { out[index] = await raiseReadersGuard(ctx.engine, item).then(value => ({ value }), (error: unknown) => ({ error })); continue; }
         const ready = await readersWrite(ctx.engine, item).catch((error: unknown) => ({ error }));
         if (ready !== false && 'snapshot' in ready) pages.push({ index, item, ready, requestId: await repairRequestId(ctx, 'visibility', { ...item, cursor: item.target }, ready.snapshot.revision) });
         else out[index] = ready !== false && 'error' in ready ? { error: ready.error } : { value: ready };
@@ -519,6 +523,7 @@ export const visibilityRepair: RepairHandler = {
       const fresh = (target.phase === 5 ? await planNamed(ctx.engine, [item.source_id], [item.slug]) : await planVisibilityRepair(ctx.engine, [item.source_id], target.id))
         .changes.find(c => c.id === target.id);
       if (!fresh || fresh.from !== item.change.from || fresh.to !== item.change.to) return false;
+      if (item.change.from === item.change.to) return await raiseGuardOnly(ctx.engine, { ...item, target }, frontmatter => frontmatter.visibility === item.change!.to);
       const page = { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, visibility: item.change.to } };
       return await labelWrite(ctx, item, snapshot, serializePageToMarkdown(page, snapshot.tags), { set: { visibility: item.change.to }, remove: [] }) ?? true;
     } finally {
