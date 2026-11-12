@@ -172,6 +172,16 @@ sync status names the last error and the trace file
 gbrain sync --source <id> --no-pull to see the error in the foreground, fix it,
 and the notifier resumes on its next retry.
 
+The retries keep running every five minutes with sync.on_commit off (a run a
+recorded request started is finished on the retry tier, even after the request
+itself is settled) and across a resident restart or a change of lease owner,
+which reads the attempt count the previous owner recorded. The short budget a
+resident gives its first run applies only to a source with no failed attempts,
+so a retry after a run that advanced nothing gets the full sync budget.
+Turning sync.on_commit off, or excluding the source with
+sync.on_commit.sources, still ends a retry that a HEAD move started: the source
+goes idle.
+
 A run that committed pages counts as progress even before the source's last
 synced commit moves. When the last error is drain_holder_stalled, another
 process holds the source's drain lease and has made no commit or cursor save

@@ -201,9 +201,10 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'gbrain bootstrap contract [--repair]\n' +
     '  Audit AGENTS.md for the same-turn GBrain write-back contract. --repair appends a marker-owned block and backs up the original.',
   repo:
-    'gbrain bootstrap repo\n' +
+    'gbrain bootstrap repo [--scan-timeout <seconds>]\n' +
     '  Create the dedicated PRIVATE GitHub repo (or adopt an EMPTY private repo you created\n' +
-    '  under your own account), verify the privacy bit via the API, push.',
+    '  under your own account), verify the privacy bit via the API, push. The push scans the\n' +
+    '  whole history for secrets first; --scan-timeout gives a long history more time (default 300).',
   hooks:
     'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
     '                       [--seat <label> | --no-seat] [--surface verbs|starter|full] [--adopt [--name <server>]]\n' +
@@ -981,9 +982,13 @@ async function runRender(ws: string, rest: string[], home: string): Promise<numb
 }
 
 async function runRepo(ws: string, rest: string[], home: string, runner: ExecRunner): Promise<number> {
-  void rest;
+  const scanTimeout = rest.includes('--scan-timeout') ? flagValue(rest, '--scan-timeout') ?? '' : undefined;
+  if (scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(scanTimeout)) {
+    console.error('Usage: gbrain bootstrap repo [--scan-timeout <seconds>]');
+    return 2;
+  }
   return withLock(ws, async () => {
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, ...(scanTimeout ? { scanTimeoutMs: Number(scanTimeout) * 1000 } : {}) });
     const line =
       result.disposition === 'created'
         ? `created private repo: ${result.url}`
