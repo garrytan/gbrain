@@ -71,6 +71,17 @@ function assertPackConfined(params: Record<string, unknown>): void {
   if (params.session_id !== undefined && params.session_id !== null && params.session_id !== '') throw refused('a scope read cannot read a session\'s thread rows (session_id)', 'Leave session_id out of a call that names source_id.');
 }
 
+/**
+ * GBRA-108 design 1: a scope read takes the member's identity away, and with it the labelled-only grant, so it would
+ * open every unlabelled page of the named sources. An attested read for a labelled-only member that names sources is
+ * refused instead, before anything is read.
+ */
+export function scopeReadLabelledOnlyRefused(op: string): OperationError {
+  return opError('permission_denied', `${op}: this person is labelled-only, so a read that names sources cannot run as their audience. Nothing was read.`,
+    'Leave source_id and source_ids out to read as the person, which shows only the pages labelled for them.',
+    { why: 'A scope read drops the member identity, and the labelled-only grant with it, so it would show pages nobody labelled for this person.' });
+}
+
 function scopeAllSourcesRefused(op: string): OperationError {
   return opError('invalid_params', `${op}: a call that names sources reads them as their audience, so '${ALL_SOURCES}' and all_sources are refused. Nothing was read.`,
     'Name the sources to read in source_id or source_ids, or leave them out to read as the person.',

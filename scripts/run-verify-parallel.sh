@@ -145,6 +145,9 @@ CHECKS=(
   "check:gateway-routed"
   "check:worker-pool-atomicity"
   "check:doc-history"
+  # GST-2548: documented scripts/ and test/ paths exist. The unit and census
+  # lanes skip a doc-only pull request; verify does not.
+  "check:docs-repo-paths"
   "check:fixture-privacy"
   "check:source-scope-onboard"
   "check:getpage-scope"
