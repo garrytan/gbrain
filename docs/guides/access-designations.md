@@ -204,8 +204,9 @@ page, and doctor's `access_audience_members` lists the audience members.
 upgrade) gives every member's credential the owner's lineage rule: a member speaking for itself (no audience, or an
 audience of that one member) reads a derived page or a fact when it reads every origin of it, on every read path and
 in `--as <member>`. Summaries of a page then reach everyone that page lists, so turn it on only when that is what the
-members expect. It never applies to an audience of several members, a group or a guest, an attested call, an unbound
-credential or a `granted_sources` grant, never widens a write, and leaves the owner opt-in to the owner. Only the brain
+members expect. It never applies to an audience of several members, a group or a guest, an attested call, or an unbound
+credential (an unbound `granted_sources` token included); a member-bound `granted_sources` token reads with its
+member's lineage. It never widens a write, and leaves the owner opt-in to the owner. Only the brain
 operator on the brain host sets it; a remote caller is refused. While it is on, every remote caller's `whoami` says so
 (`members_read_lineage`), `gbrain access check` reports it, `who-can-read` names it on pages it opens, and doctor
 reports `access_members_read_lineage`. `gbrain access members-read-lineage off` is the undo.

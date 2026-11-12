@@ -11,15 +11,18 @@ import { authorizePageVisibility } from '../src/core/persistence/page-visibility
 import type { WriteAuthority } from '../src/core/persistence/model.ts';
 import { buildLineageBrain, derivedOf, factsOf, type LineageBrain, type Seen } from './helpers/access-lineage-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { ENFORCED_MEMBER_ENV, enforcedRead, namesHiddenPage } from '../src/cli/enforced-member.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 /**
  * GBRA-108 Design 3: config access.members_read_lineage (off by default; set only by the operator on the brain host).
  * 1. Protects: with it on, a member's credential speaking for itself (no audience, or an audience of exactly that one
  *    member) reads the atoms, derived_from pages, synthesized concepts, Life Chronicle events and facts whose origins it
- *    reads, on every read path, as the owner already does. Off, nothing changes. An unbound credential, a
- *    granted_sources credential, an audience of several members, and the owner (whose own lineage and opt-in are
- *    separate) read exactly the same off and on, and no write widens.
+ *    reads, on every read path, as the owner already does; a member-bound granted_sources credential reads exactly
+ *    what its member reads. Off, nothing changes. An unbound credential (an unbound granted_sources one included), an
+ *    audience of several members, and the owner (whose own lineage and opt-in are separate) read exactly the same off
+ *    and on, and no write widens. The enforced member CLI's output guard agrees with the read.
  * 2. Fails when: a member misses a derivative or fact of an origin it reads, or reads one of an origin it does not; any
  *    non-target caller's view changes; the --as preview disagrees with the key; whoami, access check, who-can-read or
  *    doctor do not report the setting; a remote caller turns it on; or the cache keys do not change with it.
@@ -99,7 +102,7 @@ for (const kind of testBackends()) {
             { name: 'as-alice', as: 'alice-example' },
             { name: 'solo', mayActFor: ['member:alice-example', 'member:bob-example'], audience: ['alice-example'] },
             { name: 'pair', mayActFor: ['member:alice-example', 'member:bob-example'], audience: ['alice-example', 'bob-example'] },
-            { name: 'unbound' }, { name: 'granted', grantedSources: true }],
+            { name: 'unbound' }, { name: 'granted', grantedSources: true }, { name: 'alice-granted', member: 'alice-example', grantedSources: true }],
         });
       }, 300_000);
       afterAll(async () => { await b?.close(); }, 60_000);
@@ -110,6 +113,7 @@ for (const kind of testBackends()) {
         expect(off.bob).toEqual(b.expected(['team', 'both', 'open'], []));
         expect(off.solo).toEqual(off.alice);
         expect(off['as-alice']).toEqual(off.alice);
+        expect(await b.seenBy('alice-granted')).toEqual(off.alice);
         expect(off.pair).toEqual(b.expected(['both', 'open'], []));
         for (const who of ['owner', 'carol', 'unbound', 'granted']) expect({ who, seen: off[who] }).toEqual({ who, seen: b.expected(['open'], []) });
         expect((await whoami('alice')).access.members_read_lineage).toBeUndefined();
@@ -124,10 +128,11 @@ for (const kind of testBackends()) {
         expect(await b.seenBy('alice')).toEqual(alice);
         expect(await b.seenBy('solo')).toEqual(alice);
         expect(await b.seenBy('as-alice')).toEqual(alice);
+        expect(await b.seenBy('alice-granted')).toEqual(alice);
         expect(await b.seenBy('bob')).toEqual(b.expected(['team', 'both', 'open', ...derivedOf(b.keys, ['team', 'both'])], factsOf(b.keys, ['team', 'both'])));
       }, 600_000);
 
-      test('on: the owner, another member, an audience of several, an unbound and a granted_sources credential read the same', async () => {
+      test('on: the owner, another member, an audience of several, and unbound credentials (granted_sources included) read the same', async () => {
         for (const who of UNCHANGED) expect({ who, seen: await b.seenBy(who) }).toEqual({ who, seen: off[who]! });
       }, 600_000);
 
@@ -149,6 +154,23 @@ for (const kind of testBackends()) {
         }
       }, 600_000);
 
+      test('on: the enforced member CLI output guard withholds no derived page the member reads, and still one it does not', async () => {
+        await withEnv({ [ENFORCED_MEMBER_ENV]: 'alice-example' }, async () => {
+          const atom = b.pageSlug('al.atom')!;
+          expect(JSON.stringify(await enforcedRead(b.engine, 'get', 'get_page', { slug: atom }, { sourceId: SRC }))).toContain(b.canary('al.atom'));
+          expect(await namesHiddenPage(b.engine, 'get', { slug: atom })).toBe(false);
+          expect(await namesHiddenPage(b.engine, 'get', { slug: b.pageSlug('team.atom')! })).toBe(true);
+          await setMembersReadLineage(b.engine, false, { remote: false });
+          __resetPrivateVisibilityCacheForTests();
+          try {
+            expect(await namesHiddenPage(b.engine, 'get', { slug: atom })).toBe(true);
+          } finally {
+            await setMembersReadLineage(b.engine, true, { remote: false });
+            __resetPrivateVisibilityCacheForTests();
+          }
+        });
+      }, 600_000);
+
       test('the owner opt-in stays the owner\'s: it changes nothing for a member reading with lineage', async () => {
         await setOwnerReadsRestricted(b.engine, true, { remote: false });
         __resetPrivateVisibilityCacheForTests();
@@ -160,6 +182,7 @@ for (const kind of testBackends()) {
         expect(await cli(['members-read-lineage', 'off'])).toMatchObject({ members_read_lineage: false });
         __resetPrivateVisibilityCacheForTests();
         for (const who of ['alice', 'bob', 'solo']) expect({ who, seen: await b.seenBy(who) }).toEqual({ who, seen: off[who]! });
+        expect(await b.seenBy('alice-granted')).toEqual(off.alice);
       }, 600_000);
     });
   }
