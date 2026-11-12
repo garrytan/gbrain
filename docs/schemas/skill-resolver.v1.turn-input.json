@@ -68,7 +68,13 @@
         "description",
         "body"
       ],
-      "description": "The weakest match_strength to suggest (strongest first: named, name, triggers, routing, description, body). Weaker matches are dropped before the cut to top_k. Omit it to keep every match."
+      "description": "The weakest match_strength to suggest (strongest first: named, name, triggers, routing, description, body). Weaker matches are dropped before the cut to top_k, so stronger ones still fill the block: it filters candidates and never empties the block. Omit it to keep every match."
+    },
+    "top_gate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Empty the block (block_reason weak_top_match) when the best skill the block would show (after exclude, min_match_strength, session dedupe and pacing) has a score that, divided by its catalog's maximum idf, ln(1 + (n - 0.5) / 1.5) for n skills, is below this; with merged catalogs, the highest of those candidates. A skill named in the turn bypasses it. Omit it or pass 0 to keep the gate off (the default)."
     },
     "reset_session": {
       "type": "boolean",

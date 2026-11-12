@@ -8953,6 +8953,7 @@
           "reset_session?: boolean | undefined",
           "session_id?: string | undefined",
           "shadow?: boolean | undefined",
+          "top_gate?: number | undefined",
           "top_k?: number | undefined"
         ],
         "name": "TurnInput"
@@ -9006,7 +9007,7 @@
         "kind": "function",
         "name": "commitSessionAsync",
         "signature": [
-          "(home: string, key: string, delta: TurnDelta, hold?: CommitHold) => Promise<boolean>"
+          "(home: string, key: string, delta: TurnDelta, hold?: CommitHold, gc?: GcBound) => Promise<boolean>"
         ]
       },
       {

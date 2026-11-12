@@ -393,6 +393,7 @@ test/skill-resolver-hook-lane.test.ts	skill-resolver lane: codex project catalog
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: compiled binaries	1	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: delivery per harness	4	readFileSync
 test/skill-resolver-hook-lane.test.ts	skill-resolver lane: fail open	6	readFileSync
+test/skill-resolver-hook-lane.test.ts	skill-resolver lane: session GC before the process exits	1	readFileSync
 test/skill-resolver-module-graph.test.ts	the skill resolver module graph	4	readFileSync
 test/skill-resolver-off-pin.test.ts	(file-level)	1	readFileSync
 test/skill-resolver-packaging.test.ts	skill resolver packaging	4	bun-file,readFileSync
