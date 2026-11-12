@@ -22,6 +22,8 @@ import {
   RENAME_SENTINEL_PREFIX,
   isSkippablePath,
   summarizeFailuresByCode,
+  STRICT_REQUIRES_MANAGED,
+  strictRequiresManagedAdvice,
   isEmbeddingInfraCode,
   formatFailedFileList,
   readMetafilePagesMode,
@@ -362,6 +364,7 @@ async function applyBookmarkGate(
 
   if (!gate.advanced) {
     const codeBreakdown = formatCodeBreakdown(failedFiles);
+    const strictRefused = summarizeFailuresByCode(failedFiles).some(c => c.code === STRICT_REQUIRES_MANAGED);
     // Two sentinel classes block here: `<head>` (pin ancestry broken) and
     // `<rename:…>` (#3056 — a rename-reconcile delete failed and advancing
     // would permanently bank the duplicate). Pick the message by which fired —
@@ -406,6 +409,8 @@ async function applyBookmarkGate(
         `${renameDetail || codeBreakdown}\n\n` +
         renameRemedy,
       );
+    } else if (strictRefused) {
+      serr(`\nSync blocked: ${failedFiles.filter(f => isSkippablePath(f.path)).length} file(s) failed (${STRICT_REQUIRES_MANAGED}):\n${codeBreakdown}\n${formatFailedFileList(failedFiles)}\n\n${strictRequiresManagedAdvice(opts.sourceId)}`);
     } else if (run.itemRun.systemic()) {
       const fileFailCount = failedFiles.filter(f => isSkippablePath(f.path)).length;
       serr(
@@ -466,6 +471,7 @@ async function applyBookmarkGate(
       pagesAffected,
       failedFiles: failedFiles.length,
       failureCodes: summarizeFailuresByCode(failedFiles),
+      ...(strictRefused ? { failureAdvice: strictRequiresManagedAdvice(opts.sourceId) } : {}),
       bankedFiles: run.bankedFiles,
     } };
   }

@@ -27,6 +27,8 @@ import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { assertStrictGitHome } from '../src/core/persistence/git-declared.ts';
 import { preparePrivateTransition } from '../src/core/persistence/page-prepare.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
+import { decideTrustProposal } from '../src/core/trust/decide.ts';
+import { parseTrustProposalRef } from '../src/core/trust/proposals.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -175,7 +177,12 @@ test('Q3: every strict writer is classified when it prepares; a managed import, 
     await performManagedSync(engine, OPTS);
     expect(await filed()).toEqual({ reason: 'private', source_path: null, withheld: 'concepts/Turning Idea.md' });
     const before = head(root);
-    expect(await put(ctx, 'concepts/turning-idea', page('Turning idea', 'World again.'), randomUUID(), turned.revision)).toMatchObject({ state: 'committed' });
+    // GST-2518: the synced file was the owner's, so the agent's widening keeps the page private until the owner accepts it.
+    const widened = await put(ctx, 'concepts/turning-idea', page('Turning idea', 'World again.'), randomUUID(), turned.revision);
+    expect(widened).toMatchObject({ state: 'committed', privacy_labels_kept: { keys: ['visibility'] } });
+    expect(await filed()).toEqual({ reason: 'private', source_path: null, withheld: 'concepts/Turning Idea.md' });
+    expect(await decideTrustProposal(engine, parseTrustProposalRef(widened.privacy_labels_kept.proposal_ref)!, 'accept', { confirmation: { via: 'tty' } })).toMatchObject({ status: 'accepted' });
+    await settleManagedGitEffects(engine);
     expect(head(root)).not.toBe(before);
     expect(atHead(root, 'concepts/Turning Idea.md')).toBe('concepts/Turning Idea.md');
     expect(atHead(root, 'concepts/turning-idea.md')).toBe('');

@@ -1109,7 +1109,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 177 table(s) the applied migrations create exist.",
+          "message": "All 178 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -3536,6 +3536,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No source is strict (git-canonical), so no index trails a commit.",
           "name": "git_index_lag",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#facts-home",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+          "name": "strict_facts_outside_git",
           "status": "ok"
         },
         {

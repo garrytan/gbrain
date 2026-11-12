@@ -2784,6 +2784,49 @@ gained a page, lost its target or whose facts changed since the preview reports
 the target is merged rather than copied. It writes the database only; no page is
 rewritten.
 
+<a id="facts-home"></a>
+### Facts of a strict source with no Git home
+
+On a source whose pages are canonical in Git (`canonical: git`), every fact
+should be a row in some page's Facts table, so that a database rebuilt from Git
+keeps it. Facts saved before the source became strict, or by an older gbrain,
+can still live in the database only: a fact for an entity that has no page, or a
+fact with no entity. The doctor check `strict_facts_outside_git` counts them.
+`gbrain repair facts-home` gives them a home in Git. It is explicit-only and
+preview-bound, and it never runs on upgrade.
+
+**Say to your agent:** *"Doctor says some facts of my strict source are not in
+Git. Preview giving them a home, then apply after I agree."* The agent runs
+`gbrain repair facts-home --source <id>` and, after you agree, the printed
+apply command.
+
+```bash
+gbrain repair facts-home --source <id>                          # preview: one line per fact, by group
+gbrain repair facts-home --source <id> --apply --expect <hash>  # writes at most 500 facts per run
+```
+
+The preview puts each fact in one group:
+
+| Group | What the apply does |
+|---|---|
+| `entity_page_missing` | Writes the fact to `memory/unattributed` as a held row that names its entity, in one commit. Once the entity has a page, the next maintenance cycle moves it there. |
+| `no_entity` | Writes the fact to `memory/unattributed`. |
+| `entity_page_exists` | Nothing: the entity has a page, and the next maintenance cycle (`gbrain dream`) moves the fact into it. |
+| `cannot_render` | Nothing: the Facts table cannot show the fact as it stands (the class says why). It stays in the database, active and searchable. |
+| `folder_restricted` | Nothing: the entity is under a folder access rule, so the fact is never named on the world-readable holding page. It stays in the database only. |
+| `entity_page_deleted` | Nothing: the entity's page is deleted (it may have been private, and purging it would not reach a row on the holding page). Restore the page or purge it; the fact stays in the database only. |
+| `held_fact_unmovable` | Nothing: a held row whose page cannot take it, with the reason. `entity_ambiguous` names the pages a bare name could mean; save the fact again with the page slug and forget the held one. |
+| `held_over_30_days` | Nothing: a held row whose entity still has no page after 30 days, with the nearest existing page gbrain finds. |
+| `fenced_page_missing` | Nothing: a row of a page that was deleted. Restore the page or purge it. |
+| `ontology_observation` | Nothing: an ontology observation belongs to its entity's ontology and has no Facts row. |
+
+The apply writes exactly the facts the preview listed. A hash that no longer
+matches refuses with `preview_changed` and prints the preview to run again; a
+fact that changed since the preview is kept and reported. Facts keep their ids,
+provenance and embeddings. On a source that is not strict the preview lists
+nothing and says why, because its database keeps such facts by design.
+`gbrain sources git-gap <id>` shows how far it is from its commit.
+
 <a id="consolidate-ties"></a>
 ### Facts consolidation closed at their own effective time
 

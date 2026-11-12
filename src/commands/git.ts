@@ -11,6 +11,7 @@
  *   gbrain git commit-push --dry-run [--untrack] [--path <dir>] [-m <msg>] [--] <paths…>
  *   gbrain git commit-push --pending [--path <dir>] [-m <msg>]
  *   gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
+ *   gbrain git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
@@ -23,7 +24,8 @@ import { writeStdoutFinal } from '../core/cli-force-exit.ts';
 import { execFileSync } from '../core/spawn.ts';
 import { gitChildEnv } from '../core/git-env.ts';
 import { GIT_ENV } from '../core/git-transport.ts';
-import { staleEnclosingMarker } from '../core/persistence/filesystem-guard.ts';
+import { managedFilesystemRootFor, staleEnclosingMarker } from '../core/persistence/filesystem-guard.ts';
+import { rangeSecretRefusal, scanRange } from '../core/git/range-secret-scan.ts';
 import { canonicalFilesystemPath, checkoutGitMetadata, managedRootMarkerFor, registeredManagedRootRecords } from '../core/persistence/root-registry.ts';
 
 const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--] <paths...>
@@ -33,6 +35,7 @@ const HELP = `Usage: gbrain git commit-push [--path <dir>] -m <msg> [--json] [--
        gbrain git commit-push --pending [--path <dir>] [-m <msg>]
        gbrain git commit-push --untrack [--path <dir>] -m <msg> [--] <paths...>
        gbrain git guard [--install | --uninstall] [--path <dir>] [--json]
+       gbrain git scan [--path <dir>] [--from <rev>] [--to <rev>] [--scan-timeout <s>] [--json]
 
 Commit only the named paths and push them, safely, in a checkout other agents
 share: a short commit lock and a separate push lock per checkout, no
@@ -52,8 +55,10 @@ Flags:
   --keep-checkout     With --push-only: never move the checkout and skip its pre-push hook. The one
                       publish allowed in a managed canonical worktree (its Git effects' integrate_conflict
                       fix); gbrain sources refresh brings the merged remote files in afterwards.
-  --scan-secrets      With --push-only: before pushing, scan what the unpublished commits add (messages,
-                      added lines, merge resolutions) and refuse publish_secret_found on a finding.
+  --scan-secrets      Accepted for older scripts: every push scans what the unpublished commits add
+                      (messages, added lines, merge resolutions) and refuses publish_secret_found on a finding.
+  --scan-timeout <s>  The secret scan's time budget in seconds (default 300); a first push of a long
+                      history may need more. The scan still reads every commit.
   --pull              Bring remote commits in (fast-forward, or an in-memory merge); never pushes.
   --require-clean     Unattended rule: --pull skips when the checkout has any local edit;
                       a push never advances a checkout that has one, and never waits for
@@ -71,7 +76,8 @@ Flags:
                       directory untracks every file Git holds under it. In a managed canonical worktree
                       only files under a storage.db_only dir that gbrain.yml at HEAD declares and
                       .gitignore ignores; it commits there and never pushes.
-  --dry-run           Print the paths, branch and lock that would be used; take no lock, write nothing.
+  --dry-run           Print the paths, branch and lock that would be used, and the marker that makes the
+                      checkout a managed canonical worktree (or none); take no lock, write nothing.
                       With --untrack, the real run's path checks run first and refuse as it would.
   --json              One JSON result (or the error envelope) on stdout.
 
@@ -85,12 +91,19 @@ prepare-commit-msg hook that refuses commits in this checkout not made through
 gbrain (git commit, -a and --no-verify included; merges and commits that finish a
 merge, cherry-pick, revert or rebase pass). A person bypasses it once with
 GBRAIN_COMMIT_GUARD=off git <command>. Without a flag it prints whether the guard
-is installed.`;
+is installed.
+
+gbrain git scan: the secret scan a push runs, over --from..--to (default: the
+upstream as last fetched, ..HEAD), with the checkout's .gbrain-scan-allow. It
+fetches, locks, writes and pushes nothing. It prints what a push would refuse
+(would_refuse) and each finding's path, line, rule, commit and fingerprint, never
+the value; a finding's fingerprint line in .gbrain-scan-allow accepts that value.
+Exit 0 when the scan ran, whatever it found.`;
 
 interface Parsed {
   sub?: string; path?: string; message?: string; branch?: string; expectRemote?: string; json: boolean; pushOnly: boolean; pull: boolean;
   requireClean: boolean; dryRun: boolean; help: boolean; keepCheckout: boolean; paths: string[]; resolve: string[]; base: string[]; untrack: boolean;
-  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean;
+  pending: boolean; allowOutside: boolean; install: boolean; uninstall: boolean; scanSecrets: boolean; scanTimeout?: string; from?: string; to?: string;
 }
 
 function parse(args: string[]): Parsed {
@@ -127,6 +140,9 @@ function parse(args: string[]): Parsed {
     else if (a === '--base' || a.startsWith('--base=')) p.base.push(take('--base'));
     else if (a === '--branch' || a.startsWith('--branch=')) p.branch = take('--branch');
     else if (a === '--expect-remote' || a.startsWith('--expect-remote=')) p.expectRemote = take('--expect-remote');
+    else if (a === '--scan-timeout' || a.startsWith('--scan-timeout=')) p.scanTimeout = take('--scan-timeout');
+    else if (a === '--from' || a.startsWith('--from=')) p.from = take('--from');
+    else if (a === '--to' || a.startsWith('--to=')) p.to = take('--to');
     else if (!p.sub) p.sub = a;
     else if (a.startsWith('-')) throw opError('commit_paths_invalid', `Unknown flag ${a}.`, HELP.split('\n')[0]);
     else p.paths.push(a);
@@ -181,6 +197,32 @@ function assertSourceCheckout(repo: string): void {
       verify: { argv: ['gbrain', 'git', 'commit-push', '--dry-run', '--path', first] } } });
 }
 
+/** `gbrain git scan`: the push's secret scan over a range, read-only, so an operator can see what a push would refuse. */
+function runScan(p: Parsed): number {
+  const repo = checkoutRoot(p.path ?? process.cwd());
+  if (p.scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(p.scanTimeout)) {
+    throw opError('commit_paths_invalid', `--scan-timeout ${p.scanTimeout} is not a number of seconds.`, 'Pass whole seconds, for example --scan-timeout 1800.');
+  }
+  const rev = (spec: string, flag: string): string => {
+    try { return execFileSync('git', ['-C', repo, 'rev-parse', '--verify', '--quiet', '--end-of-options', `${spec}^{commit}`], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim(); }
+    catch { throw opError('commit_paths_invalid', `${flag} ${spec} names no commit in ${repo}.`, 'Pass a commit, for example --from $(git rev-list -1 --before="30 days ago" HEAD); with no upstream, --from is required.'); }
+  };
+  const from = rev(p.from ?? '@{upstream}', '--from');
+  const to = rev(p.to ?? 'HEAD', '--to');
+  const timeoutMs = p.scanTimeout ? Number(p.scanTimeout) * 1000 : undefined;
+  const started = Date.now();
+  const scan = scanRange(repo, from, to, timeoutMs, line => process.stderr.write(`[gbrain] ${line}\n`));
+  const refusal = rangeSecretRefusal(repo, from, to, scan, { timeoutMs });
+  const commits = Number(execFileSync('git', ['-C', repo, 'rev-list', '--count', `${from}..${to}`], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim());
+  const seconds = Math.round((Date.now() - started) / 100) / 10;
+  const items = [...scan.findings.map(f => `  ${f.commit.slice(0, 7)} ${f.path}:${f.line} ${f.pattern} ${f.fingerprint}`),
+    ...scan.unscanned.map(u => `  ${u.commit.slice(0, 7)} ${u.path} too large to scan`), ...scan.gate_changes.map(g => `  ${g.commit.slice(0, 7)} ${g.path} changes what the scan sees`)];
+  emit(p.json, { repo, from, to, commits, seconds, would_refuse: refusal?.code ?? null, findings: scan.findings, unscanned: scan.unscanned, gate_changes: scan.gate_changes,
+    unreadable: scan.unreadable ?? null }, [`scanned ${commits} commit(s) ${from.slice(0, 12)}..${to.slice(0, 12)} in ${seconds} s: ${refusal ? `a push would refuse (${refusal.code})` : 'a push would not refuse'}`,
+    ...(scan.unreadable !== undefined ? [`  not read in full: ${scan.unreadable}`] : []), ...items].join('\n'));
+  return 0;
+}
+
 function emit(json: boolean, doc: Record<string, unknown>, human: string): void {
   if (json) void writeStdoutFinal(`${JSON.stringify(doc)}\n`);
   else console.log(human);
@@ -193,13 +235,14 @@ export async function runGit(args: string[]): Promise<number> {
     json = p.json;
     if (p.help || !p.sub) { console.log(HELP); return p.sub || p.help ? 0 : 2; }
     if (p.sub === 'guard') return runGuard(p);
+    if (p.sub === 'scan') return runScan(p);
     if (p.sub !== 'commit-push') throw opError('commit_paths_invalid', `Unknown subcommand: gbrain git ${p.sub}.`, HELP.split('\n')[0]);
     if (p.install || p.uninstall) throw opError('commit_paths_invalid', '--install and --uninstall belong to gbrain git guard.', 'Run gbrain git guard --install.');
     const repo = checkoutRoot(p.path ?? process.cwd());
     if (!p.path) assertSourceCheckout(repo);
     const cwd = p.path ? realpathSync(p.path) : process.cwd();
     if ((p.pull && p.pushOnly) || (p.pull && (p.message || p.paths.length || p.resolve.length || p.branch)) || (p.untrack && (p.pull || p.pushOnly || p.pending))
-      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout || p.scanSecrets) && !p.pushOnly)
+      || (p.pushOnly && (p.message || p.paths.length)) || ((p.resolve.length || p.branch || p.expectRemote || p.keepCheckout) && !p.pushOnly) || (p.scanTimeout !== undefined && p.pull)
       || (p.pending && (p.pull || p.pushOnly || p.paths.length)) || (p.allowOutside && p.pull) || (p.base.length && (p.pull || p.pushOnly || p.pending))) {
       throw opError('commit_paths_invalid', 'These flags do not combine.',
         'Use one mode: -m <msg> -- <paths> (commit + push), --untrack -m <msg> -- <paths>, --pending [-m <msg>], --push-only [--keep-checkout] [--branch <b>] [--expect-remote <sha> --resolve ...], or --pull [--require-clean].');
@@ -211,6 +254,9 @@ export async function runGit(args: string[]): Promise<number> {
         'Pass the full object id git rev-parse HEAD:<path> printed when you read the file, or absent for a new file.');
       return [path, blob] as const;
     }));
+    if (p.scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(p.scanTimeout)) {
+      throw opError('commit_paths_invalid', `--scan-timeout ${p.scanTimeout} is not a number of seconds.`, 'Pass whole seconds, for example --scan-timeout 1800.');
+    }
     if ((p.resolve.length && !p.expectRemote) || (p.expectRemote && !/^[0-9a-f]{7,64}$/i.test(p.expectRemote))) {
       throw opError('commit_paths_invalid', '--resolve and --expect-remote <sha> go together.',
         'Copy both from the integrate_conflict report: --expect-remote names the remote commit your choice was made against.');
@@ -220,9 +266,10 @@ export async function runGit(args: string[]): Promise<number> {
       const lock = execFileSync('git', ['-C', repo, 'rev-parse', '--git-path', COMMIT_LOCK_NAME], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const branch = execFileSync('git', ['-C', repo, 'symbolic-ref', '--quiet', '--short', 'HEAD'], { env: gitChildEnv({ ...GIT_ENV }) }).toString().trim();
       const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
+      const managed = managedFilesystemRootFor(repo);
       const untracked = p.untrack && paths.length ? previewUntrack(repo, paths, { allowOutsideSourceRoot: p.allowOutside }) : undefined;
-      emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : p.untrack ? 'untrack' : 'commit-push', ...(untracked ? { untracked } : {}) },
-        `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `${p.untrack ? 'untrack' : 'commit'} ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); nothing written`);
+      emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : p.untrack ? 'untrack' : 'commit-push', managed, ...(untracked ? { untracked } : {}) },
+        `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `${p.untrack ? 'untrack' : 'commit'} ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); ${managed ? `managed canonical worktree (${managed.evidence})` : 'not a managed worktree'}; nothing written`);
       return 0;
     }
 
@@ -240,7 +287,9 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.pending ? { pending: true } : {}),
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
-      ...(p.scanSecrets ? { scanSecrets: true } : {}),
+      scanSecrets: true,
+      ...(p.scanTimeout ? { scanTimeoutMs: Number(p.scanTimeout) * 1000 } : {}),
+      scanProgress: (line: string) => process.stderr.write(`[gbrain] ${line}\n`),
       ...(p.untrack ? { untrack: true } : {}),
       ...(p.branch ? { branch: p.branch } : {}),
       ...(p.resolve.length ? { resolutions: parseResolutions(p.resolve) } : {}),
@@ -292,11 +341,13 @@ export async function runGit(args: string[]): Promise<number> {
         if (d.publish) failed = d.publish;
       } catch { /* best-effort */ }
     }
-    if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root') {
+    if (failed.code === 'push_unconfirmed' || failed.code === 'integrate_conflict' || failed.code === 'commit_outside_source_root'
+      || failed.code === 'publish_secret_found' || failed.code === 'publish_scan_unreadable') {
       try {
         const bi = args.indexOf('--branch');
         const branch = bi !== -1 && args[bi + 1] ? args[bi + 1].replace(/^refs\/heads\//, '') : currentBranchOf(args);
-        appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
+        if (failed.code.startsWith('publish_')) appendPushLog('refused', branch, '', failed.code);
+        else appendPushLog(failed.code === 'integrate_conflict' ? 'conflict' : 'local-only', branch, failed.detail ?? '');
       } catch { /* best-effort */ }
     }
     return writeCliError(e, 'git commit-push', { json });

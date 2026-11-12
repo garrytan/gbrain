@@ -26,7 +26,7 @@
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import type { BrainEngine } from '../engine.ts';
 import { escapeFenceCell } from '../fence-shared.ts';
-import { parseFactsFence } from '../facts-fence.ts';
+import { parseFactsFenceFor } from '../facts-fence.ts';
 import { parseTakesFence } from '../takes-fence.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import type { DerivedRow } from '../facts/derivation-inputs.ts';
@@ -257,7 +257,7 @@ export async function pagePurgeClaims(tx: Pick<BrainEngine, 'executeRaw'>, input
     if (!versions.length) break;
     after = Number(versions[versions.length - 1]!.id);
     for (const v of versions) for (const body of [v.compiled_truth ?? '', v.timeline ?? '']) {
-      parseFactsFence(body).facts.forEach(f => claims.add(f.claim));
+      parseFactsFenceFor(body, { slug: input.slug }).facts.forEach(f => claims.add(f.claim));
       parseTakesFence(body).takes.forEach(t => claims.add(t.claim));
     }
     if (versions.length < SCAN_BATCH) break;

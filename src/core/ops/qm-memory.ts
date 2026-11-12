@@ -305,7 +305,7 @@ const memory_write: Operation = {
       const intent = scopeSource === undefined
         ? { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) }
         : { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'world' as const, entity_slug: null, page_slug: SCOPE_PAGE_SLUG };
-      try { await assertFactNotWithdrawn(ctx.engine, writeCtx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
+      try { await assertFactNotWithdrawn(ctx.engine, writeCtx.sourceId ?? 'default', intent, { excludePrivate, remote: ctx.remote !== false }); } catch (e) {
         if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
         throw e;
       }
