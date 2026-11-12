@@ -184,6 +184,7 @@
   "test/embed.serial.test.ts": 10950,
   "test/embedding-completion-atomic.serial.test.ts": 4800,
   "test/embedding-readiness.test.ts": 100,
+  "test/enforced-member.serial.test.ts": 176200,
   "test/engine-sql-facts-keyset.test.ts": 3400,
   "test/engine-sql-segment-derivations.test.ts": 1150,
   "test/engine-sql-sql-text.test.ts": 300,

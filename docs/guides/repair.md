@@ -78,7 +78,32 @@ concept-provenance links), reports progress on stderr, lists one window
 ```bash
 gbrain repair visibility --class facts        # one class: facts, events, aliases or lineage
 gbrain repair visibility --class facts --apply --expect <hash>   # exactly that window
+gbrain repair visibility --slug notes/a-example                  # make named pages private (repeatable)
+gbrain repair visibility --slug notes/a-example --apply --expect <hash>
 ```
+
+Every visibility write is label-only: the page keeps its trust tier, files no
+`lower_page` proposal, and its file changes only on the `visibility` line (a fact
+item: its fence row). A file that cannot take the change without being
+re-rendered (a label with a block value or a duplicate key, no frontmatter
+block) is refused with nothing written; make that edit by hand. `--slug` is the operator's way to make one page private;
+a `put_page` that adds the label is an agent edit and lowers the page. On a brain
+without managed persistence, a page whose file sits in its source's checkout gets
+the same edit in that file and in the database together, so the next sync reads
+the same page. A file holding an edit the database lacks refuses with nothing
+written (run `gbrain sync` first). A file the repair cannot write
+(`sync.write_through` is off, a clone gbrain pulls, a write error) is held
+`file_backed` with nothing written, because the next sync would put the old
+label back from the file; make that edit in the file by hand.
+
+A fenced fact row the apply could not make private is counted in the outcomes
+(`--json`: `outcomes`, each row in `outcome_items`), and the text output says
+`NOT CLOSED`: `fact_left_readable` when remote callers can still read the row,
+`fact_left_world` when the row is still world and only its page's privacy hides
+it from them. Today that happens when
+the original row is more trusted than the repair (it is kept beside the new
+private row), when the page is stored in segments, or when the row is not found
+in the page's facts fence.
 
 The apply touches only the listed items and resumes after its last applied
 item if it stops. Apply the window (or decide not to), then preview again for
@@ -2175,7 +2200,10 @@ refused. On a brain without managed persistence the repair writes only the
 database, so a page whose file sits in its source's checkout is held with
 outcome `file_backed`. The next sync or re-import would put the label back from
 the file, so edit the file's frontmatter, commit it, and run
-`gbrain sync --source <id>`. Repo-less pages clear as usual.
+`gbrain sync --source <id>`. Repo-less pages clear as usual. A clear or restore
+changes only the label lines of the page's file and keeps its trust tier; a
+restore whose label value isn't a plain word is held as `label_not_plain`, so
+add that label to the file by hand.
 
 **Windows and resume.** `--limit <n>` sets the window size (default 1000, at
 most 10000). When more pages remain past the window, the preview says so: apply
