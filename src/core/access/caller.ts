@@ -23,6 +23,7 @@ import { currentCallerAccess } from '../search/private-visibility.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { audienceMemberIds, parseMayActFor } from './members.ts';
+import { labelledOnlyFor } from './labelled-only.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -211,6 +212,8 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
  * GBRA-108: under access.members_read_lineage a read by any other member speaking for itself (no audience, or an
  * audience of that one member) gets the same lineage (design 3), and an owner read carries the audience members
  * (design 2). Never an audience of several, a group or a guest, and never an unbound credential (no member identity).
+ * GBRA-108 design 1: a read or write whose bound member, or any member of its audience, is labelled-only reads only
+ * pages that name it (labelledOnly); never the owner.
  */
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null, stdioMember?: string, readOnly = false): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), requestRemotePolicy(engine)]);
@@ -232,6 +235,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
       lineage,
       ownerReadsRestricted: owner && lineage && remotePolicy.ownerReadsRestricted === true,
       audienceKindMembers: owner && lineage ? await audienceMemberIds(engine) : [],
+      labelledOnly: !owner && restricted && await labelledOnlyFor(engine, [...identities, await boundIdentity(engine, auth, transport, stdioMember)]),
       applyRemoteReadPolicy: false,
       restricted,
       remotePolicy,
@@ -251,6 +255,7 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     lineage,
     ownerReadsRestricted: owner && lineage && remotePolicy.ownerReadsRestricted === true,
     audienceKindMembers: owner && lineage ? await audienceMemberIds(engine) : [],
+    labelledOnly: !owner && restricted && await labelledOnlyFor(engine, [identity]),
     applyRemoteReadPolicy: false,
     restricted,
     remotePolicy,

@@ -31,6 +31,46 @@ identifiers and attribution are available in the pre-removal Git revision
 - Docs: `git-canonical.md`, `entity-scoped-facts.md`, `access-designations.md`, `repair.md`, `write-refusals.md`, `memory-boundaries.md`, `MEMORY_VERBS_v1.md`, `error-codes.md` (regenerated).
 - Tests: new `test/folder-holding-page-gst2492.test.ts` (held in Git before the reply and kept by a rebuild from a clone; three nested rules plus a pending one; no existence leak on get_page, search, query, recall, list_pages and find_pages; a raw-only rule; the rule apply's preview and move; the owner with the opt-in on and off; the page-rule and unreadable refusals locally and over MCP; database-only folders; background writers and repair; non-strict and repo-less unchanged; a segmented saved version named by the preview and reported incomplete by the apply, the sync path and maintenance; the preview's destination for a bare-name row equal to where the apply puts it; an exact page rule over a folder-held row, by CLI and by sync; the preview equal to the apply and its receipts; struck rows and a struck-only entity; a pending move; a NULL timeline kept); updated GST-2492 suites; PGLite and Postgres.
 
+## [0.60.704.0] - 2026-11-12
+
+### QM can read a room's context pack, and the owner sets how a client reads named sources from another machine
+
+**context_pack reads a room as its audience.** A QM client that reads named sources as the scope used to be refused when it asked `context_pack` for a room's source, so QM had no session brief in shared conversations. Now a call that names `source_id` reads only that source, which covers its entities and `entity_refs`, the core block, the counterparty brief and hot facts. Nothing from the person's own member page or from pages kept to named readers comes back, and privacy is never relaxed.
+- A scope call is refused with `invalid_params` before anything is read when it sends `entity_refs` without `source_id`, names an `entity_refs` entry in another source, or sends `session_id` (a session's thread rows are the person's).
+- A client set `--attest-read person` keeps reading as the person, and its pack is narrowed to the named source the same way.
+- Contract `docs/contracts/qm-memory-provider/v5.json` marks `context_pack` `scope_read: true`. v1 to v4 stay byte for byte as published, and v4's markings are frozen in the builder.
+
+**`gbrain mcp admin attest <client> --attest-read person|scope|none`** sets the same `attest_read` that `gbrain auth rescope --attest-read` sets, over the owner session (`attestRead` on `/admin/api/access/attest`). It refuses what the local command refuses, previews with `--dry-run`, and logs `attest_read` in the `access_admin` row.
+
+## [0.60.703.0] - 2026-11-12
+
+**A missing link target written while another page's links are being extracted now wakes the page that mentions it.** A `[[Name]]` reference to a page that did not exist yet was saved with the time of the save. If the target page was written during the extraction, after the extractor had looked for it but before the save, the target looked older than the saved reference, so the stale link sweep never went back to the mentioning page and the link stayed missing until one of the two pages was edited again. v0.60.679.0 named this narrow race as open. Name and basename references are now stamped with the database time taken just before the extraction reads the pages it resolves against, so a target written after that read wakes the mentioning page once on the next sweep, and a target the extractor already saw never loops.
+
+- `src/core/wanted-links-store.ts`: `wantedReadAt` returns the database clock; `replaceWantedLinks` stamps name rows with the `readAt` its caller took before reading, and refuses name rows that arrive without one. Slug rows keep their v0.60.679.0 behaviour.
+- Every caller that writes name rows takes the read time first: `gbrain extract` (full and `--stale`, on every run, including a page that turns stale after the pre-flight count), the wanted-link sweep, link reconciliation, and link preparation on page writes.
+- Still open: on Postgres, a writer transaction that starts before the read time and commits after the extractor's read keeps an `updated_at` older than the stamp, so its mention waits for the next edit of either page.
+- Tests: `nameRowPublishedAfterItsTargetWasWrittenWakesItsOrigin` and `basenameRowPublishedAfterItsTargetWasWrittenWakesItsOrigin` in `test/wanted-links.test.ts` and `test/e2e/wanted-links-postgres.test.ts` (both red first), and `test/wanted-links-stale-count-race.test.ts`. Idea from @akinduroifedayo's #9149.
+- Also carries the nightly shard-weight refresh: `scripts/e2e-weights.json` and its metadata file, exactly as the weight miner wrote them from a full E2E nightly.
+
+## [0.60.702.0] - 2026-11-12
+
+**A member can now be kept to pages labelled for it.** A group chat bot or a shared assistant bound to a member read every unlabelled page its source grant opened, and every summary, atom and fact made from them. `gbrain access member labelled-only <id> on` (off by default, unchanged on upgrade) keeps every credential of that member to pages that name it: the member or one of its groups in `readable_by`, or a folder or page rule listing them. Unlabelled pages, and derived pages and facts that name nobody, are hidden on every read path; with `access.members_read_lineage` on, a derived page passes only when every origin names the member. Writes follow the same rule. Only the operator on the brain host sets it, and never on the owner. It works the same on a repo-less brain and with rules in `access.yml`.
+
+### Itemized changes
+
+#### Labelled-only members
+
+- The labelled-only migration (`src/core/schema-migrations/`, numbered at merge): `access_members.labelled_only` (default false) and the SQL function `gbrain_access_origin_labelled_for()`, which passes a derived page only when it has an origin and every origin names the caller. Nothing is rewritten.
+- `src/core/access/labelled-only.ts`: `gbrain access member labelled-only <id> [on|off]`, local operator only (remote callers get `permission_denied`), never on the owner (`access_labelled_only_owner`, exit 3; `gbrain access owner` refuses a labelled-only member the same way).
+- `src/core/search/private-visibility.ts`: `CallerAccess.labelledOnly` adds one conjunct to every caller page, version and fact filter; derived pages and facts that name nobody fail closed, and under member lineage pass only when every origin names the caller. Facts on the member's own member page stay readable, lineage on or off. `src/core/access/caller.ts`, `actor.ts` and `src/cli/as-preview.ts` set it for a labelled-only member, and `labelledOnlyFor` never reports the configured owner, on any door.
+- The remote read floor: `remoteReadFloorSql` and `remoteProvenanceFloorSql` (`private-visibility.ts`) are the plain page and fact fragments plus the labelled-only conjunct, and exactly the plain fragments for every other caller. Every remote read gate that is not caller-aware uses them: recorded-time reads (`get_page` and `get_versions` with `known_as_of`), the `as_of` amendment list, fact lookups by id (`remember replaces`, `forget`), belief history, proactive briefs, entity resolution and the sources-not-readable check. `test/remote-read-floor.test.ts` lists the write-side, maintenance and classification sites that keep the plain fragment, each with its reason.
+- Attested reads: a read that names sources for a labelled-only person is refused (`permission_denied`, `src/core/access/scope-read.ts`), since the scope read drops the member identity and the grant with it.
+- Writes: `src/core/persistence/page-visibility.ts` holds a labelled-only writer to the same read rule and refuses a create that would not name it (`access_labelled_only_unnamed`, checked in page preparation, streamed uploads and capture ingest); the enforced member CLI (`src/cli/enforced-member.ts`) does the same.
+- The semantic cache key (`xlo=1`) and the per-caller key (`labelled_only`) separate a labelled-only caller.
+- `gbrain access member list`, `access check` and `who-can-read` report it; doctor `access_labelled_only_members`.
+- Docs: `docs/guides/access-designations.md` (labelled-only members), `docs/guides/error-codes.md`, key-files entry.
+- Tests: `test/access-labelled-only.test.ts` (every read path, derived pages and facts with member lineage off and on, older versions, recorded-time and `as_of` reads, a fact by id, the member's own facts, the attested scope-read refusal and owner, writes over MCP, streamed uploads, capture ingest and the enforced CLI, the owner and remote refusals, cache keys, check, who-can-read and doctor; PGLite and Postgres, rules in the database and in `access.yml`); `test/remote-read-floor.test.ts`; migration, catalog and doctor goldens.
+
 ## [0.60.701.0] - 2026-11-12
 
 ### Flaky and slow tests fixed at their cause

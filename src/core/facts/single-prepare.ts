@@ -7,7 +7,7 @@ import { assertFactNotPurged } from './withdrawal.ts';
 import { cosineVerdict } from './capture-dedup.ts';
 import { interleaveFusion } from '../search/fusion-lists.ts';
 import { readSupersessionThreshold } from './supersession-threshold.ts';
-import { ownerReadPolicyFragment, privateProvenanceFilterFragment, readPolicyFragment } from '../search/private-visibility.ts';
+import { ownerReadPolicyFragment, readPolicyFragment, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 import { folderAccessForAll } from '../access/caller.ts';
 import { memberIdentity } from '../access/members.ts';
 import { ownerMemberId } from '../access/owner.ts';
@@ -110,7 +110,7 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
   // GST-359 D: a member writing to its own member page sees that page's withdrawn rows.
-  const seen = (param: number) => `(${privateProvenanceFilterFragment('f')} OR COALESCE(f.source_markdown_slug = $${param}::text, false))`;
+  const seen = (param: number) => `(${remoteProvenanceFloorSql('f')} OR COALESCE(f.source_markdown_slug = $${param}::text, false))`;
   if (opts.excludePrivate) {
     const [backing] = await engine.executeRaw<{ visible: boolean; hidden: boolean }>(`SELECT
         COALESCE(bool_or(${seen(5)}), false) AS visible,
@@ -170,7 +170,7 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
   const [exact] = await engine.executeRaw<FactCandidate>(`SELECT * FROM facts WHERE source_id=$1
     AND entity_slug IS NOT DISTINCT FROM $2 AND visibility=$3 AND expired_at IS NULL
     AND (valid_until IS NULL OR valid_until>now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($4)
-    AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+    AND ($5::text IS NULL OR attributed_to IS NULL OR attributed_to=$5)${opts.excludePrivate && !input.page_slug ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}
     AND ${input.page_slug ? 'source_markdown_slug=$6' : `($6::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
     ORDER BY id LIMIT 1`, [sourceId, input.entity_slug, input.visibility, input.fact, input.attributed_to ?? null, input.page_slug ?? null]);
   if (exact) return { status: 'duplicate', candidate: { ...exact, id: Number(exact.id) } };
@@ -179,7 +179,7 @@ export async function decideSingleFact(engine: BrainEngine, sourceId: string, in
       input.page_slug ? { onlyPage: input.page_slug } : { excludeMemberPages: true });
     const metadata = await engine.executeRaw<{ id: number; source_markdown_slug: string | null; row_num: number | null; trust_tier: FactRow['trust_tier'];
       claim_metric: string | null; claim_unit: string | null; claim_period: string | null }>(
-      `SELECT id,source_markdown_slug,row_num,trust_tier,claim_metric,claim_unit,claim_period FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`,
+      `SELECT id,source_markdown_slug,row_num,trust_tier,claim_metric,claim_unit,claim_period FROM facts WHERE source_id=$1 AND id=ANY($2::int[])${opts.excludePrivate && !input.page_slug ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`,
       [sourceId, candidates.map(c => c.id)]);
     let candidate: FactCandidate | null = null;
     let score = -1;
@@ -238,7 +238,7 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
         AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
-    FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${privateProvenanceFilterFragment('f')})` : ` AND ${privateProvenanceFilterFragment('f')}`}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
+    FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${remoteProvenanceFloorSql('f')})` : ` AND ${remoteProvenanceFloorSql('f')}`}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
     opts.excludePrivate && ownPage ? [targetId, sourceId, ownPage] : [targetId, sourceId]);
   if (!target || (opts.remote && target.visibility !== 'world' && !(ownPage && target.source_markdown_slug === ownPage))) throw notFound();
   // #5913 [R2]: a slug-bound writer learns nothing about a fact outside its prefixes; the answer is the missing-id one.

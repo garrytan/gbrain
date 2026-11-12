@@ -14,6 +14,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY } from '../search/private-visibility.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
+import { opError, type OperationError } from '../ops/contract.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { boundCredentials, memberIdentity } from './members.ts';
 import type { CredentialRef } from './members.ts';
@@ -84,9 +85,32 @@ export async function setOwnerReadsRestricted(engine: BrainEngine, on: boolean, 
   return ownerView(engine);
 }
 
-/** Names the owner; refuses an ill-formed or non-enabled member before writing anything. */
+/** The refusal for a labelled-only grant on the owner: `member` is the owner (or the labelled-only member named as owner). */
+export function labelledOnlyOwnerError(member: string, via: 'grant' | 'owner'): OperationError {
+  const grant = via === 'grant';
+  return opError('access_labelled_only_owner',
+    grant ? `Member "${member}" is the brain owner, so it cannot be labelled-only; nothing was changed.`
+      : `Member "${member}" is labelled-only, so it cannot be the brain owner; nothing was changed.`,
+    grant ? 'Ask the user which member the group or audience credential should read as, add that member, bind the credential to it and mark that member labelled-only.'
+      : `Ask the user whether to clear the labelled-only grant first (gbrain access member labelled-only ${member} off) or name another member the owner.`,
+    {
+      why: 'The owner reads the whole brain. A labelled-only grant would hide every unlabelled page from the owner\'s own credentials, so the two never go together.',
+      fix: grant
+        ? { ask_user: true, argv: ['gbrain', 'access', 'member', 'add', '<MEMBER>'], inputs: [{ name: 'MEMBER', how: 'Ask the user for a new member id for the group or audience credential (lower-case letters, digits, ., _ and -). Then: gbrain auth rescope --token <name> --member <MEMBER>, and gbrain access member labelled-only <MEMBER> on.' }],
+          consent: [], actor: 'user', why: 'Gives the group or audience credential its own member, which can be labelled-only, and leaves the owner reading the whole brain.', requires_exclusive: false }
+        : { ask_user: true, argv: ['gbrain', 'access', 'member', 'labelled-only', member, 'off'], consent: [], actor: 'user', requires_exclusive: false,
+          why: 'Clears the labelled-only grant, so the member may be named the owner; every credential bound to it then reads its whole grant again.' },
+    });
+}
+
+/**
+ * Names the owner; refuses an ill-formed or non-enabled member, and (GBRA-108 design 1) a labelled-only one, before
+ * writing anything.
+ */
 export async function setOwner(engine: BrainEngine, raw: unknown): Promise<OwnerView> {
   const { member } = await memberIdentity(engine, raw);
+  const [row] = await engine.executeRaw<{ labelled_only: boolean }>('SELECT labelled_only FROM access_members WHERE id = $1', [member]);
+  if (row?.labelled_only === true) throw labelledOnlyOwnerError(member, 'owner');
   await engine.setConfig(OWNER_MEMBER_KEY, member);
   return ownerView(engine);
 }

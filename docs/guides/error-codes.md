@@ -72,6 +72,22 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### access_labelled_only_owner
+
+<a id="access_labelled_only_owner"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A labelled-only grant was asked for on the brain owner (gbrain access member labelled-only <owner> on), or a labelled-only member was named the owner (gbrain access owner set), so nothing was changed. | The owner reads the whole brain. A labelled-only grant hides every page that does not name its member, so on the owner it would silently hide the owner's own brain from every credential bound to it. | Ask the user which member the group or audience credential should read as; give it its own member and mark that one labelled-only, or clear the grant before naming the owner. | user | `repeat the read that failed` | 3 | no |
+
+### access_labelled_only_unnamed
+
+<a id="access_labelled_only_unnamed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A credential whose member is labelled-only tried to create a page that would not name it: the page has no readable_by holding the member or one of its groups, and no folder or page rule over its slug lists them, so nothing was written. | A labelled-only member reads only pages labelled for it, so a page it creates must name it; otherwise it would write a page it could never read back, readable by every other caller its source admits. | Add readable_by naming the member or one of its groups to the frontmatter (readable_by: [alice-example, group:team-a]), or ask the brain operator to add a folder rule over the path that lists it, then submit again with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
 ### access_member_disabled
 
 <a id="access_member_disabled"></a>
