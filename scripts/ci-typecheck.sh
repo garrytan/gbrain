@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# test.yml's typecheck step: run the incremental tsc, and if it aborts, run it
-# once more from cold.
+# The typecheck step of test.yml and macos-validation.yml: run the incremental
+# tsc, and if it aborts, run it once more from cold.
 #
 # Usage: scripts/ci-typecheck.sh <command>...   (test.yml: bun run typecheck)
 #
@@ -23,7 +23,8 @@
 # head's key would make every rerun restore it again.
 #
 # GBRAIN_TYPECHECK_ATTEMPT_SECONDS bounds each attempt (default 360, the
-# measured bound the step had before the retry).
+# measured bound test.yml's step had before the retry), through timeout(1)
+# or, on macOS, gtimeout. With neither, only the step's own timeout applies.
 set -uo pipefail
 
 [ "$#" -gt 0 ] || { echo "usage: scripts/ci-typecheck.sh <command>..." >&2; exit 64; }
@@ -37,7 +38,12 @@ record() {
   return 0
 }
 
-timeout "$SECONDS_PER_ATTEMPT" "$@"
+LIMIT=()
+if command -v timeout >/dev/null 2>&1; then LIMIT=(timeout "$SECONDS_PER_ATTEMPT")
+elif command -v gtimeout >/dev/null 2>&1; then LIMIT=(gtimeout "$SECONDS_PER_ATTEMPT")
+fi
+
+${LIMIT[@]+"${LIMIT[@]}"} "$@"
 status=$?
 if [ "$status" -le 128 ]; then
   record "$status"
@@ -46,7 +52,7 @@ fi
 
 echo "::warning title=typecheck aborted::tsc ended by abort or signal (exit $status) without a type error; deleting $BUILDINFO and running it once more from cold"
 rm -f "$BUILDINFO"
-timeout "$SECONDS_PER_ATTEMPT" "$@"
+${LIMIT[@]+"${LIMIT[@]}"} "$@"
 status=$?
 record "$status"
 if [ "$status" -gt 128 ]; then
