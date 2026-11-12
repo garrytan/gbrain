@@ -93,6 +93,7 @@ import { assertReconcileOutputPath, assertReconcileSize } from '../persistence/r
 import { authorizeReconcile, runReconcileApply } from '../persistence/reconcile.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { recordsNoFileOrigin } from '../persistence/unbound-pages.ts';
+import { comparedListing, comparePage, newerPageParagraph, readDriftEvidence, type ComparedPage } from './file-drift-compare.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 export type DriftSide = 'file' | 'database';
@@ -293,7 +294,7 @@ async function selectSlugs(engine: BrainEngine, sourceId: string, opts: RepairPl
     } while (cursor && drifted.length < ALL_DRIFTED_LIMIT);
     const counts = new Map<DriftClass, number>();
     for (const value of classes.values()) counts.set(value, (counts.get(value) ?? 0) + 1);
-    if (!opts.driftClass && counts.size > 1) {
+    if (opts.prefer && !opts.driftClass && counts.size > 1) {
       const listed = [...counts].map(([name, count]) => `${name}=${count}`).join(', ');
       throw opError('invalid_params', `The drifted pages of '${sourceId}' fall into ${counts.size} drift classes (${listed}); one --prefer must not resolve them in bulk.`,
         `Preview one class at a time: ${previewCommand(sourceId, { ...opts, driftClass: [...counts.keys()][0] })}, and so on for each class; or name pages with --slug.`,
@@ -334,7 +335,7 @@ function unknownDriftDetail(sourceId: string, { slug, reason }: UnknownDrift): s
  * (`file_drift_state_required`): its two actions are opposite. Holds an older gbrain wrote with `sides: database` have
  * no side and are listed with their single-page route.
  */
-async function selectHeld(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions & { prefer: DriftSide }):
+async function selectHeld(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions):
   Promise<{ targets: HeldTarget[]; before: number; notSelected: number; legacy: GitHoldRecord[]; otherProvenance: number; provenance?: Record<string, number> }> {
   const after = opts.cursor ? heldCursorPath(sourceId, opts.cursor) : null;
   const rows = await engine.executeRaw<{ record: GitHoldRecord; in_window: boolean }>(`SELECT h.completed_keys->0 AS record,
@@ -355,14 +356,15 @@ async function selectHeld(engine: BrainEngine, sourceId: string, opts: RepairPla
     const group = groups.get(key(target)) ?? { side: target.side, ...(target.state ? { state: target.state } : {}), count: 0 };
     group.count++; groups.set(key(target), group);
   }
-  const narrower = (group: { side: FileDriftSide; state?: FileDriftDeletedState }) => heldCommand(sourceId, group.side, group.state, opts.prefer, opts);
+  const narrower = (group: { side: FileDriftSide; state?: FileDriftDeletedState }) => heldCommand(sourceId, group.side, group.state, opts.prefer!, opts);
   const statusFix = readFix('Lists the held files of this source with their side and state, read-only.', { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] });
-  if (!opts.side && groups.size > 1) {
+  // GST-2568: a comparison without --prefer resolves nothing, so several Decisions may be compared together.
+  if (opts.prefer && !opts.side && groups.size > 1) {
     const listed = [...groups.entries()].map(([name, group]) => `${name}=${group.count}`).join(', ');
     throw opError('file_drift_mixed_selection', `The held file-drift pages of '${sourceId}' are ${groups.size} different Decisions (${listed}); one --prefer must not resolve them in bulk.`,
       `Nothing was previewed. Preview one Decision at a time: ${[...groups.values()].map(narrower).join('; ')}.`, { fix: statusFix });
   }
-  const only = !opts.side && groups.size === 1 ? [...groups.values()][0]! : null;
+  const only = opts.prefer && !opts.side && groups.size === 1 ? [...groups.values()][0]! : null;
   if (only?.side === 'deleted') throw stateRequired(sourceId, opts, [only.state!]);
   const selected = targets.filter(target => !opts.side || target.side === opts.side && (!opts.state || target.state === opts.state));
   let window = selected.filter(target => target.inWindow).map(({ inWindow: _inWindow, ...target }) => target);
@@ -403,12 +405,28 @@ function stateRequired(sourceId: string, opts: RepairPlanOptions, states: readon
     { fix: readFix('Lists the held files of this source with their side and state, read-only.', { argv: ['gbrain', 'sources', 'status', sourceId, '--json'] }) });
 }
 
+const USAGE = 'gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>] | --held [--side both|unknown|deleted [--state tombstone_edited|purged_differs|file_gone [--provenance never_committed|deleted_by_commit|deletion_uncommitted]]] [--cursor <next_cursor>]) [--only <glob>]... [--skip <glob>]... [--prefer file|database]';
+
+/** GST-2568: the selection's winner-free comparison (no --prefer), as argv: read-only, it names each page's newer side. */
+function compareArgv(sourceId: string, opts: RepairPlanOptions): string[] {
+  const select = opts.held ? ['--held', ...(opts.side ? ['--side', opts.side] : []), ...(opts.state ? ['--state', opts.state] : []), ...(opts.provenance ? ['--provenance', opts.provenance] : []), ...(opts.cursor ? ['--cursor', opts.cursor] : [])]
+    : opts.allDrifted ? ['--all-drifted', ...(opts.driftClass ? ['--class', opts.driftClass] : []), ...(opts.since ? ['--since', opts.since] : [])]
+    : [...(opts.slugs ?? []).flatMap(slug => ['--slug', slug]), ...(opts.requests ?? []).flatMap(id => ['--request', id])];
+  return ['gbrain', 'repair', 'file-drift', '--source', sourceId, ...select, ...(opts.only ?? []).flatMap(glob => ['--only', glob]), ...(opts.skip ?? []).flatMap(glob => ['--skip', glob]), '--json'];
+}
+
 function validateOptions(scope: RepairScope, opts: RepairPlanOptions | undefined): asserts opts is RepairPlanOptions & { prefer: DriftSide } {
+  validateSelection(scope, opts);
+  if (opts.prefer !== 'file' && opts.prefer !== 'database') throw opError('invalid_params', 'gbrain repair file-drift needs --prefer file or --prefer database to resolve pages.',
+    `Nothing was written. Choose the side whose content wins (protected metadata, tags union, protected takes and private facts are kept either way); the comparison in fix shows each page's newer side first: ${USAGE}`,
+    { fix: readFix('Compares each selected page with its file and names the newer side and what a repair would do, writing nothing.', { argv: compareArgv(scope.source_ids[0]!, opts) }) });
+  if (opts.side === 'deleted' && !opts.state) throw stateRequired(scope.source_ids[0]!, opts, FILE_DRIFT_DELETED_STATES);
+}
+
+function validateSelection(scope: RepairScope, opts: RepairPlanOptions | undefined): asserts opts is RepairPlanOptions {
   if (opts?.remote !== false) throw trustedCliRequired('gbrain repair file-drift runs only for the trusted local CLI on the brain host.');
-  const usage = 'gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>] | --held [--side both|unknown|deleted [--state tombstone_edited|purged_differs|file_gone [--provenance never_committed|deleted_by_commit|deletion_uncommitted]]] [--cursor <next_cursor>]) [--only <glob>]... [--skip <glob>]... --prefer file|database';
+  const usage = USAGE;
   if (scope.source_ids.length !== 1) throw opError('invalid_params', 'gbrain repair file-drift needs exactly one --source.', `Name the source: ${usage}`);
-  if (opts.prefer !== 'file' && opts.prefer !== 'database') throw opError('invalid_params', 'gbrain repair file-drift needs --prefer file or --prefer database.',
-    `Choose the side whose content wins (protected metadata, tags union, protected takes and private facts are kept either way): ${usage}`);
   const modes = [opts.slugs?.length ? 1 : 0, opts.requests?.length ? 1 : 0, opts.allDrifted ? 1 : 0, opts.held ? 1 : 0].reduce((a, b) => a + b, 0);
   if (modes !== 1) throw opError('invalid_params', 'Select pages one way: --slug, --request, --all-drifted or --held.', `Pick one selection: ${usage}`);
   if ((opts.side || opts.state) && !opts.held) throw opError('invalid_params', '--side and --state only narrow --held.', `Drop them, or select the held pages with --held: ${usage}`);
@@ -418,7 +436,6 @@ function validateOptions(scope: RepairScope, opts: RepairPlanOptions | undefined
   if (opts.state && !(FILE_DRIFT_DELETED_STATES as readonly string[]).includes(opts.state)) throw opError('invalid_params', `Unknown deleted-side state '${opts.state}'.`,
     `Pass --state ${FILE_DRIFT_DELETED_STATES.join(', --state ')} with --side deleted; gbrain sources status ${scope.source_ids[0]} --json lists each held file's state.`);
   if (opts.state && opts.side !== 'deleted') throw opError('invalid_params', '--state only narrows --side deleted.', `Drop --state, or pass --side deleted with it: ${usage}`);
-  if (opts.side === 'deleted' && !opts.state) throw stateRequired(scope.source_ids[0]!, opts, FILE_DRIFT_DELETED_STATES);
   if (opts.provenance && !(DELETION_PROVENANCES as readonly string[]).includes(opts.provenance)) throw opError('invalid_params', `Unknown deletion provenance '${opts.provenance}'.`,
     `Pass --provenance ${DELETION_PROVENANCES.join(', --provenance ')}; each page of a --held --side deleted --state file_gone preview names its provenance.`);
   if (opts.provenance && opts.state !== 'file_gone') throw opError('invalid_params', '--provenance only narrows --held --side deleted --state file_gone.',
@@ -726,11 +743,53 @@ function item(page: ApprovedPage, index: number, hash: string, last: boolean, pr
   return { cursor: { phase: 0, id: index + 1 }, source_id: page.source_id, slug: page.slug, chars: 0, action: `prefer_${prefer}`, page, hash, last };
 }
 
+/**
+ * GST-2568: the selection compared with no winner named (file-drift-compare.ts): per page what differs, which side is newer
+ * and what a repair would do. Reads only; it prints no apply command, and a held selection is windowed as a preview is.
+ */
+async function compareSelection(engine: BrainEngine, sourceId: string, opts: RepairPlanOptions): Promise<RepairPlan> {
+  const held = opts.held ? await selectHeld(engine, sourceId, opts) : null;
+  const selected = held ? null : await selectSlugs(engine, sourceId, opts);
+  const targets: { slug: string | null; hold?: GitHoldRecord }[] = held ? [...held.legacy.map(hold => ({ slug: hold.slug, hold })), ...held.targets.slice(0, HELD_WINDOW_PAGES).map(target => ({ slug: target.hold.slug, hold: target.hold }))]
+    : selected!.slugs.map(slug => ({ slug }));
+  const residuals: Record<string, number> = { ...(held?.notSelected || selected?.notSelected ? { not_selected: held?.notSelected ?? selected!.notSelected } : {}), ...(held?.before ? { before_cursor: held.before } : {}) };
+  const count = (key: string) => { residuals[key] = (residuals[key] ?? 0) + 1; };
+  const listing: NonNullable<RepairPlan['listing']> = [];
+  for (const row of selected?.unknown ?? []) { count(`unknown_${row.reason}`); listing.push({ item: `${sourceId}:${row.slug}`, class: 'unknown', detail: unknownDriftDetail(sourceId, row) }); }
+  const assessmentAt = new Date().toISOString();
+  const windowEnd = Math.min(Date.now() + HELD_WINDOW_BUDGET_MS, opts.deadline ?? Infinity);
+  const pages: ComparedPage[] = [];
+  let windowed = 0;
+  opts.progress?.start('repair.file_drift.compare', targets.length);
+  if (targets.length) await asLocalCli(engine, async () => {
+    for (const target of targets) {
+      if (held && pages.length && Date.now() >= windowEnd) break;
+      opts.progress?.tick(1, target.slug ?? target.hold?.path);
+      if (target.hold && fileDriftSide(target.hold.meta)) windowed++;
+      pages.push(await comparePage(engine, sourceId, target, assessmentAt));
+    }
+  });
+  opts.progress?.finish();
+  for (const page of pages) { count(page.would); listing.push(comparedListing(page)); }
+  const remaining = held ? held.targets.length - windowed : 0;
+  const nextCursor = remaining > 0 && windowed > 0 ? heldCursor(held!.targets[windowed - 1]!.hold.path) : undefined;
+  if (remaining > 0) residuals.after_window = remaining;
+  const filesNewer = pages.filter(page => page.would === 'prefer_file').length;
+  const next = [...(filesNewer ? [`Preview the file side for the ${filesNewer} page(s) whose file is newer: ${previewCommand(sourceId, { ...opts, prefer: 'file' })} (pages newer than their file are left held, kept_newer_page)`] : []),
+    ...(nextCursor ? [`Compare the next window: ${shellQuote(compareArgv(sourceId, { ...opts, cursor: nextCursor }).slice(0, -1))}`] : [])];
+  return { items: [], residuals, listing, details: { compare: true, writes: 'none',
+    pages: pages.map(({ item: _item, ...page }) => page), ...(next.length ? { next_actions: next } : {}),
+    ...(held ? { window: { previewed: windowed, remaining, complete: remaining === 0, ...(nextCursor ? { next_cursor: nextCursor } : {}) } } : {}),
+    evidence: 'newer compares the file\'s last commit time at HEAD with the page\'s updated_at; unknown when the file has uncommitted bytes or either time is missing.' } };
+}
+
 export const fileDriftRepair: RepairHandler = {
   kind: 'file-drift',
   outcomeItemsLimit: 1000,
   async plan(engine, scope, after, opts): Promise<RepairPlan> {
     if (opts?.remote === false && !opts.apply && !opts.prefer && !opts.slugs?.length && !opts.requests?.length && !opts.allDrifted && !opts.driftClass && !opts.held && !opts.side && !opts.state && !opts.cursor && !opts.provenance) return survey(engine, scope, opts);
+    validateSelection(scope, opts);
+    if (!opts.apply && !opts.prefer) return compareSelection(engine, scope.source_ids[0]!, opts);
     validateOptions(scope, opts);
     const sourceId = scope.source_ids[0]!;
     const command = previewCommand(sourceId, opts);
@@ -781,6 +840,7 @@ export const fileDriftRepair: RepairHandler = {
     const windowEnd = Math.min(Date.now() + HELD_WINDOW_BUDGET_MS, opts.deadline ?? Infinity);
     let previewed = 0;
     const [source] = held ? [] : await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+    const newerPages: string[] = [];
     opts.progress?.start('repair.file_drift.preview', targets.length);
     await asLocalCli(engine, async () => {
       for (const { slug: targetSlug, held: target } of targets) {
@@ -838,6 +898,15 @@ export const fileDriftRepair: RepairHandler = {
             listing.push({ item: `${sourceId}:${slug}`, class: live.still_present === false ? 'no_drift' : 'unknown', detail: live.reason });
             continue;
           }
+          // GST-2568: Git stays the parent, but a page edited after its file's last commit is never dropped file-wins in bulk;
+          // an explicit --slug still resolves it, with the warning naming the edit it drops.
+          if (opts.prefer === 'file') {
+            const evidence = await readDriftEvidence(engine, sourceId, slug, assessmentAt);
+            if (evidence.newer === 'database' && evidence.differs !== 'none') {
+              if (!opts.slugs?.length) { count('kept_newer_page'); listing.push({ item: `${sourceId}:${slug}`, class: 'kept_newer_page', detail: newerPageParagraph(sourceId, slug, evidence) }); continue; }
+              newerPages.push(`${slug}: ${newerPageParagraph(sourceId, slug, evidence).replace('it stays held for a person', '--prefer file named for it drops that edit')}`);
+            }
+          }
           const page = await prepareDriftPage(engine, sourceId, slug, opts.prefer, assessmentAt);
           if (classes.has(slug)) page.class = classes.get(slug);
           pages.push(page);
@@ -869,6 +938,7 @@ export const fileDriftRepair: RepairHandler = {
     const removed = pages.flatMap(page => 'remove_file' in page ? [page.remove_file.path] : []);
     let warnings: string[] = nextCommand ? [`This preview covered ${previewed} of the ${held!.targets.length} selected held pages${opts.cursor ? ' after its cursor' : ''} (one window stops at ${HELD_WINDOW_PAGES} pages or ${HELD_WINDOW_BUDGET_MS / 1000} s); its hash and apply command cover only these. `
       + `After applying this window (or deciding not to), preview the next one: ${nextCommand}`] : [];
+    if (newerPages.length) warnings.unshift(`The apply drops a database edit newer than its file for ${newerPages.length} page(s): ${newerPages.join(' ')}`);
     const releases = pages.filter(page => 'release_hold' in page).length;
     if (releases) warnings.push(`The apply only schedules a re-screen of ${releases} held file(s) whose page and file agree; the next sync (gbrain sync --source ${sourceId}) releases each that still agrees.`);
     let undoneBySync: { recreated: number; removed: number } | null = null;

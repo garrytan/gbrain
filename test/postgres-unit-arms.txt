@@ -122,6 +122,7 @@ test/fence-fact-append.test.ts
 test/fence-first-generation-8819.test.ts
 test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
+test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts

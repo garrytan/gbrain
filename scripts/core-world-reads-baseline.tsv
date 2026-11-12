@@ -871,6 +871,7 @@ src/core/remote-token-cache.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/repair/agent-session-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/captured-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/fences.ts	process_env	2	W6: settings plane out of the core
+src/core/repair/file-drift-compare.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/repair/file-drift.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	spawn_import	1	W7: process-wide effects move to src/cli

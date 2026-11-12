@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+### Sync no longer holds pages over gbrain's own frontmatter stamps, and file-drift repairs can compare before you pick a side
+
+**A page that differs from its file only by what gbrain itself wrote is no longer held as file drift.** A schema-pack retype changes a page's type in the database and keeps the old type as `legacy_type` (plus an optional `subtype`) without touching the file. A file that still named the old type then read as a different page, and a later mass rewrite of the files, or a page imported before import records existed, turned that into a `file_drift` hold that needed a person. Sync now reads such a file with the stored retype stamp kept, so nothing differs. A real database edit (a label, a body change) is still held.
+
+- **Existing holds of that kind release by themselves.** The next sync after upgrading re-screens each held `file_drift` page that is not a deletion once, releases the ones that now agree with no page write and no commit, and says how many (`Released N held file(s) that no longer need a decision.`, JSON `holds_released`). On a seeded source of 3,000 holds, 99% of them normalisation-only, one sync released 2,970 and left the 30 real differences held, in about 27 s on PGLite and 61 s on Postgres; the next sync took about 0.1 s.
+- **A later commit over a page that only gained derived keys imports.** When the page side changed only by keys gbrain derives (a stored reserved `type` key or a `validate: false` stamp) and someone commits a body edit to the file, sync imports the file instead of holding it.
+- **A page whose file is gone under a `gbrain.yml` `db_only` folder is no drift.** An existing deleted-side hold there now releases.
+- **`gbrain repair file-drift` compares without a winner.** Any selection without `--prefer` lists, per page, what differs, which side is newer (the file's last commit against the page's `updated_at`) and what a repair would do, and writes nothing. A `--prefer` preview with no side names that comparison as its fix.
+- **`--prefer file` never drops a newer page in bulk.** A `--held`, `--all-drifted` or `--request` preview lists a page edited after its file's last commit as `kept_newer_page` and leaves it held; naming the page with `--slug` still resolves it, with a warning naming the edit it drops. A page whose file is gone is never deleted by a comparison (GST-2568).
+
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git
