@@ -10,6 +10,16 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**A visibility repair now closes a fenced fact instead of leaving a world copy beside it.** When `gbrain repair visibility --class facts` made a `## Facts` row private and the stored row was more trusted than the repair, the fence guard kept the original world row live and filed a contested private copy, so remote callers could still read the fact while the page and its file read as fixed. A write that only makes a fence row private now makes the stored row private in place, keeping its id and trust tier, and files no proposal. On a brain without managed persistence the repair makes the fenced row private itself, because that import does not re-project the fence. A write that makes a more trusted private row world is still held for the owner.
+
+### Itemized changes
+
+- `src/core/trust/fence-guard.ts`: a guarded row whose claim the writer kept and whose visibility it only narrowed (world to private) moves to the new row's position and turns private in place, instead of being detached and contested.
+- `src/core/repair/visibility.ts`: on a brain without managed persistence, a fenced fact row the label write made private in the fence is made private in the database too; `fact_left_readable` and `fact_left_world` stay for the rows that still cannot be closed.
+- Tests: `test/label-only-repairs.test.ts` (managed and repo-less, PGLite and Postgres) and `test/trust-guarded-supersession.test.ts` (narrowing applies in place; widening stays guarded).
+
 ## [0.60.683.0] - 2026-11-11
 
 **Making a page private through an operator repair no longer lowers its trust or rewrites its file.** On a managed brain, an operator who added `visibility: private` to one page through a local `put_page`, or ran `gbrain repair visibility`, saw the page drop from "your notes" (operator_curated) to "written by an agent", a pending `lower_page` proposal only a typed token could settle, and a re-rendered file: a `slug` key removed, a `source_kind` value overwritten with `put_page`, keys reordered, and provenance stamps and a `trust_tier` marker added. Both repairs and `gbrain repair private-labels` now write through one label-only door. The page keeps its tier, no proposal is filed, and its file changes only on the label lines, with every other key, its order and the body kept byte for byte. A new slug-bound form, `gbrain repair visibility --slug <page>`, is the operator's single-page way to make a page private (preview first, then `--apply --expect <hash>`). A plain `put_page`, local or remote, is still an agent edit and lowers the page as before. `gbrain trust backfill --label-lowerings` lists every `lower_page` proposal as label-only or content, counted by proposer, so an operator can see which lowerings came from label-only writes; it changes nothing, and raising a page back stays a trust decision.

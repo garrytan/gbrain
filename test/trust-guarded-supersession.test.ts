@@ -230,6 +230,31 @@ describe('guarded fence re-projection (A5, ENG-1)', () => {
       expect((await factRow(b, before['Erin lives in Oslo'])).expired_at).not.toBeNull();
     }
   }), 90_000);
+
+  test('GST-2487: an agent that only makes a confirmed fence row private turns that row private in place; making one world stays guarded', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const b = await brain(engine);
+      const slug = 'people/ivy-example';
+      const as = (r: ReturnType<typeof row>, visibility: string) => ({ ...r, visibility });
+      await run(b.local, 'put_page', { slug, content: page('Ivy', body([row(1, 'Ivy lives in Lyon'), as(row(2, 'Ivy keeps bees'), 'private')])) });
+      const live = () => engine.executeRaw<{ id: number; fact: string; visibility: string; row_num: number | null; trust_tier: string }>(
+        'SELECT id::int AS id, fact, visibility, row_num, trust_tier FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL ORDER BY id', [b.sourceId, slug]);
+      const before = await live();
+      for (const r of before) await confirmFact(b, Number(r.id));
+      const current = await operationsByName.get_page.handler(b.remote, { slug, include_content: true }) as Record<string, any>;
+      const flipped = await run(b.remote, 'put_page', { slug, content: page('Ivy', body([as(row(1, 'Ivy lives in Lyon'), 'private'), row(2, 'Ivy keeps bees')])), expected_revision: current.revision });
+      const after = await live();
+      const by = (fact: string) => after.filter(r => r.fact === fact);
+      expect(by('Ivy lives in Lyon')).toEqual([{ id: Number(before[0]!.id), fact: 'Ivy lives in Lyon', visibility: 'private', row_num: 1, trust_tier: 'user_confirmed' }]);
+      // Widening is not a tightening: the confirmed private row stays private and detached, and the world row waits on the owner.
+      expect(by('Ivy keeps bees')).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: Number(before[1]!.id), visibility: 'private', row_num: null, trust_tier: 'user_confirmed' }),
+        expect.objectContaining({ visibility: 'world', row_num: 2, trust_tier: 'agent_written' })]));
+      const proposals = await listTrustProposals(engine, { sourceId: b.sourceId });
+      expect(proposals.map(p => [p.action as string, p.target_id])).toEqual([['supersede_fact', Number(before[1]!.id)]]);
+      expect(flipped.contested?.proposal_ref).toMatch(/^tp\d+$/);
+    }
+  }), 90_000);
 });
 
 describe('guarded takes supersession and the takes gate', () => {
