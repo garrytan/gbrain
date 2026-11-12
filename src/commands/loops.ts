@@ -309,7 +309,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       'open_loops',
       { group_by: 'none', limit: 200, ...narrowing },
       readScope,
-    )) as { loops: Array<Record<string, unknown>>; count: number };
+    )) as { loops: Array<Record<string, unknown>>; count: number; truncated: boolean };
     if (json) {
       process.stdout.write(JSON.stringify({ ok: true, status: 'ok', ...result }, null, 2) + '\n');
       return;
@@ -322,6 +322,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       const due = l.due_at ? `  due ${String(l.due_at).slice(0, 10)}` : '';
       process.stdout.write(`#${String(l.id).padEnd(5)} [${String(l.loop_type)}]${due}  ${String(l.summary)}\n`);
     }
+    if (result.truncated) process.stdout.write(`Showing the ${result.loops.length} most recently active of ${result.count}${result.count >= 500 ? '+' : ''} matching loops.\n`);
     return;
   }
 

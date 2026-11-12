@@ -616,11 +616,41 @@ function resolveSameDirSlug(pageSlug: string, ref: EntityRef): string {
 }
 
 /**
+ * #6983: page-relative slugs for a `.md` markdown link with a directory
+ * segment and no `/`, `./` or `../` prefix (`[x](notes/a.md)`), in the FS
+ * walker's resolveSlug order: the linking page's directory, then each
+ * ancestor, stopping before the root. The first one that is a page wins; the
+ * root-relative slug resolveMarkdownLinkSlug returns is the fallback, so
+ * wiki-root-relative authoring keeps resolving. Engine-slug links (no `.md`)
+ * stay root-relative. Empty for a root-level page or any other link shape.
+ */
+export function pageRelativeMarkdownSlugs(pageSlug: string, href: string): string[] {
+  const target = href.trim().replace(/#.*$/, '');
+  if (!/\.md$/i.test(target) || /^[./]/.test(target)) return [];
+  const ref = extractEntityRefs(`[link](${href.trim()})`)[0];
+  if (!ref || ref.sameDir || ref.upLevels) return [];
+  const dirs = pageSlug.split('/').slice(0, -1);
+  const slugs: string[] = [];
+  for (let keep = dirs.length; keep > 0; keep--) slugs.push(`${dirs.slice(0, keep).join('/')}/${ref.slug}`.toLowerCase());
+  return slugs;
+}
+
+/** The raw href of the pass-1 markdown link starting at `index` in `content`. */
+function markdownHrefAt(content: string, index: number): string | null {
+  const re = new RegExp(ENTITY_REF_RE.source, 'y');
+  re.lastIndex = index;
+  const match = re.exec(content);
+  return match ? match[0].slice(match[0].indexOf('](') + 2, -1) : null;
+}
+
+/**
  * The page slug a markdown link `href` on page `pageSlug` points at, resolved
  * exactly as extractPageLinks resolves it (page-relative `./` and `../`,
  * root-relative dir paths, `.md` and `#anchor` stripped). Null when the
- * extractor would emit no link for it. The writer's link validator calls
- * this, so "the validator accepts it" means "the graph links it".
+ * extractor would emit no link for it. A `.md` dir link first tries
+ * pageRelativeMarkdownSlugs, which needs page existence; this is its
+ * fallback. The writer's link validator calls both, so "the validator
+ * accepts it" means "the graph links it".
  */
 export function resolveMarkdownLinkSlug(pageSlug: string, href: string): string | null {
   const ref = extractEntityRefs(`[link](${href})`)[0];
@@ -991,7 +1021,15 @@ export async function extractBodyLinks(slug: string, content: string, pageType: 
     // refs) — validateSlug stores every slug lowercase on both engines, so a
     // mixed-case candidate could never resolve. NOT slugifyPath: it strips
     // characters validateSlug permits and would mangle a legit put_page slug.
-    const targetSlug = resolveRelativeSlug(slug, ref).toLowerCase();
+    let targetSlug = resolveRelativeSlug(slug, ref).toLowerCase();
+    // #6983: a `.md` dir link resolves against this page's directory first,
+    // like the FS walker; the root-relative slug stays the fallback.
+    const href = refPass === 0 && resolver.resolveBasenameMatches ? markdownHrefAt(content, idx) : null;
+    const pageRelative = href ? pageRelativeMarkdownSlugs(slug, href) : [];
+    if (pageRelative.length > 0) {
+      const existing = new Set(await resolver.resolveBasenameMatches!(ref.slug.slice(ref.slug.lastIndexOf('/') + 1)));
+      targetSlug = pageRelative.find(s => existing.has(s)) ?? targetSlug;
+    }
     candidates.push({
       targetSlug,
       targetSourceId: ref.sourceId ?? undefined,

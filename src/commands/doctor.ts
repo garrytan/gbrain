@@ -136,7 +136,7 @@ export {
   buildRetrievalReflexCheck,
 } from './doctor/checks/verbs-reflex.ts';
 import type { DoctorContext, DoctorTier } from './doctor/context.ts';
-import { doctorRunSummary, parseDoctorTier, scoredChecks, startDoctorDeadline, tierFields, type DoctorDeadline, type DoctorRunSummary, type ScoreCategory } from './doctor/budget.ts';
+import { doctorRunSummary, parseDoctorScope, parseDoctorTier, scoredChecks, startDoctorDeadline, tierFields, type DoctorDeadline, type DoctorRunSummary, type ScoreCategory } from './doctor/budget.ts';
 export { doctorRunSummary, type DoctorRunSummary } from './doctor/budget.ts';
 import { runDoctorRegistry, parseOnlyChecks, doctorRefreshRegistry } from './doctor/registry.ts';
 import { finalizeCheckFixes, fixLine, unknownScoreCategories, type CheckAgentFields } from './doctor/check-fix.ts';
@@ -414,7 +414,7 @@ export async function buildChecks(
   // `runResolverChecks`-equivalent invocations are gated below; the same gate
   // covers `whoknows_health` (the one DB-dependent skill check) where it's
   // invoked later in the function.
-  const scope: 'all' | 'brain' = args.includes('--scope=brain') ? 'brain' : 'all';
+  const scope = parseDoctorScope(args);
 
   // v0.41.29.0: explicit `--source <id>` scopes the `orphan_ratio` check to one
   // source. EXPLICIT-ONLY by design — a raw flag parse, NOT resolveSourceWithTier.

@@ -52,6 +52,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, publishMaintenancePages, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { atomOriginSlugSql } from '../persistence/atom-origin.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
 import { filesInCheckout, writeLabelFile, writeLabelPage } from './label-write.ts';
 import { applyReaders, planReaders, raiseGuardOnly, raiseReadersGuard, readersBatch, readersGitCounts, readersGuardOnly, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
@@ -113,7 +114,7 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
       length(a.compiled_truth) AS chars, a.frontmatter->>'source_slug' AS source_slug,
       o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter,
       (o.id IS NOT NULL AND ${folderRestrictedSql('o')}) AS origin_folder_restricted
-    FROM pages a LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=a.frontmatter->>'source_slug' AND o.deleted_at IS NULL
+    FROM pages a LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=${atomOriginSlugSql('a')} AND o.deleted_at IS NULL
     WHERE a.type='atom' AND a.deleted_at IS NULL AND a.source_id=ANY($1::text[])
       AND ($2::integer[] IS NULL OR a.id=ANY($2::integer[])) ORDER BY a.id`, [sourceIds, atomIds], bounded);
 

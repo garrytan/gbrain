@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 287195,
-    "stdoutSha256": "0ce2ce7f78140fd56cf7bbd02098a18c5802abfb26bd5713b347d2f50e36e5f1",
+    "stdoutBytes": 287283,
+    "stdoutSha256": "ce2367e74670d11cf639a3b09af1017bcd034924e2bda64b4bd879fc936b714a",
     "toolNames": [
       "remember",
       "entity",
@@ -8587,7 +8587,7 @@
               "type": "boolean"
             },
             "limit": {
-              "description": "Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.",
+              "description": "Grouped: max groups (default 3). Flat: max loops (default 50); `count` is the number matched (at most 500) and `truncated: true` marks a list cut by this limit or by the 500-row internal cap (then `count` is a lower bound).",
               "type": "number"
             },
             "loop_type": {
