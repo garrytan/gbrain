@@ -379,6 +379,7 @@ test/setup-serves-several.test.ts	labelling refuses or reports what it cannot ma
 test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	15	readFileSync
+test/shared-skills-frontmatter-compatibility.test.ts	(file-level)	3	readFileSync
 test/shared-skills-init.serial.test.ts	real combined brain initialization	4	readFileSync
 test/shared-skills-migration-cli.serial.test.ts	(file-level)	1	readFileSync
 test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync

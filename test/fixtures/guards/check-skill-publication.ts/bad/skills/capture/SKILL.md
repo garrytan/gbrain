@@ -1,8 +1,8 @@
 ---
 name: capture
-description: Synthetic fixture with a list-valued marker.
+description: Synthetic fixture with an escaping page-write path.
 writes_pages:
-  - "inbox/*"
+  - "../outside/*"
 ---
 
 Body.

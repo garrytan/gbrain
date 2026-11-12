@@ -3,8 +3,8 @@
  * A-NEW-3 (#5476): every bundled SKILL.md (skills/, plugin/skills/ and each
  * plugin-variants/<v>/skills/) must pass the shared-skill publication parser
  * (`normalizeSkillFiles` + `skillMetadata`), the same check `put_skill` and
- * the 0.53 adoption run. A bundled skill that fails it (the capture skill's
- * list-valued `writes_pages:` did) blocks every brain that adopts the pack.
+ * the shared-skills adoption run. Invalid metadata in a bundled skill blocks
+ * every brain that adopts the pack; channel/path declarations are not grants.
  *
  * GBRAIN_GUARD_ROOT points the scan at a fixture tree (guard self-test).
  * Exit 0 clean, 1 on any violation.
@@ -38,7 +38,7 @@ if (failures.length) {
   console.error(`FAIL: ${failures.length} bundled SKILL.md file(s) fail the shared-skill publication parser:`);
   for (const failure of failures) console.error(`  ${failure}`);
   console.error('Why:  put_skill and the 0.53 shared-skills adoption refuse these files, so a brain adopting the bundled pack is blocked.');
-  console.error('Fix:  correct the frontmatter (markers like writes_pages take true/false; list directories under writes_to), then regenerate plugin trees.');
+  console.error('Fix:  correct the reported frontmatter without discarding its channel, privacy or path intent. Use boolean markers, the exact supported publish: teio channel, or a non-empty contained writes_pages path list; keep writes_to for the separate boolean/directory format. Regenerate plugin trees when a bundled skill changes.');
   process.exit(1);
 }
 console.log(`OK: ${checked} bundled SKILL.md file(s) pass the shared-skill publication parser.`);
