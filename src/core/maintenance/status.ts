@@ -30,6 +30,8 @@ export interface UpkeepStatus {
   embed_spend_today_usd: number | null;
   embed_daily_cap_usd: number | null;
   fix?: Action;
+  /** The second option beside `fix` when upkeep is overdue: the opt-in operating-system schedule. */
+  alternative_fix?: Action;
 }
 
 function ago(ms: number): string {
@@ -65,6 +67,19 @@ export function upkeepFix(paid: boolean): Action {
   };
 }
 
+/** Overdue means no serve ran upkeep: name both ways back. */
+const SCHEDULE_NOTE = ' It runs while an agent\'s gbrain serve is open and idle; run it now with gbrain maintain --unattended, or add the opt-in schedule with gbrain maintain --schedule.';
+
+/** The second option: install the opt-in schedule, a persistent_install the user approves. */
+export function scheduleFix(): Action {
+  return {
+    argv: ['gbrain', 'maintain', '--schedule'], consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
+    preview_argv: ['gbrain', 'maintain', '--schedule', '--dry-run'],
+    why: 'Installs an operating-system schedule (launchd, systemd user timer or crontab) that runs free upkeep every 6 hours when no gbrain serve is running; gbrain maintain --unschedule removes it.',
+    verify: { argv: ['gbrain', 'doctor', '--only', 'unattended_maintenance', '--json'] },
+  };
+}
+
 export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date.now()): Promise<UpkeepStatus> {
   const now = new Date(nowMs);
   const [record, enabled, owner, pending, cap, spent] = await Promise.all([
@@ -94,11 +109,11 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
     if (age === null || age < UPKEEP_OVERDUE_MS) {
       return { ...base, state: 'never', message: `Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge).${purgeNote}` };
     }
-    return { ...base, fix, state: 'overdue', message: `No free upkeep run is recorded on this brain, which is ${ago(age)} old.${purgeNote}` };
+    return { ...base, fix, alternative_fix: scheduleFix(), state: 'overdue', message: `No free upkeep run is recorded on this brain, which is ${ago(age)} old.${SCHEDULE_NOTE}${purgeNote}` };
   }
   const age = nowMs - Date.parse(record.at);
   if (age > UPKEEP_OVERDUE_MS) {
-    return { ...base, fix, state: 'overdue', message: `Free upkeep last ran ${ago(age)} ago (${record.runner}), past its 48h window.${purgeNote}${spendNote}` };
+    return { ...base, fix, alternative_fix: scheduleFix(), state: 'overdue', message: `Free upkeep last ran ${ago(age)} ago (${record.runner}), past its 48h window.${SCHEDULE_NOTE}${purgeNote}${spendNote}` };
   }
   const ran = record.steps.filter((s) => s.status === 'ok' || s.status === 'warn').length;
   const due = Date.parse(record.next_due_at) - nowMs;

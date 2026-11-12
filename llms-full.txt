@@ -2272,7 +2272,8 @@ and HTTP MCP) saves references as text without inline graph extraction; a
 post-commit `links` effect then adds plain mention edges to existing pages the
 writer can see (`gbrain config set mcp.remote_auto_links off` disables it). Stdio
 `gbrain serve` runs bounded startup/idle sweeps for typed edges; `gbrain serve --http` does not
-self-sweep. For HTTP, arrange explicit host-side `gbrain sweep --once` or
+self-sweep, and its daily idle upkeep (link extraction included) is the only
+graph work it does on its own. For HTTP, arrange explicit host-side `gbrain sweep --once` or
 extraction; use authorized `add_link` calls for edges needed immediately.
 
 After this step:
@@ -2476,7 +2477,9 @@ Optional: skip this entire step for memory-only installs. Ask before scheduling
 capture, enrichment, maintenance or a service; do not infer consent from a
 successful install or from a health recommendation.
 
-Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
+An open `gbrain serve` already runs the free upkeep while its agent is idle
+(`gbrain maintain --status` shows the last run). For the jobs below, set up
+using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
 platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon).
 
 Every cron job, workspace script and hook calls gbrain through **one wrapper**
@@ -3025,7 +3028,7 @@ stdout (`--json`):
       "code": "first_run_decisions",
       "kind": "ask",
       "why": "The brain is ready. These settings were applied with defaults or need the user's choice; none blocks using the brain.",
-      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.",
+      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip; upkeep: on), or tell me what to change.",
       "decisions": [
         {
           "id": "search_mode",
@@ -3124,6 +3127,29 @@ stdout (`--json`):
           ],
           "default": "skip",
           "default_reason": "No agent harness was detected."
+        },
+        {
+          "id": "upkeep",
+          "question": "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.",
+          "options": [
+            {
+              "id": "on",
+              "label": "Keep free upkeep on (in effect now)"
+            },
+            {
+              "id": "off",
+              "label": "Turn free upkeep off",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "maintenance.auto",
+                "false"
+              ]
+            }
+          ],
+          "default": "on",
+          "default_reason": "In effect now: the agent's gbrain serve runs the free upkeep tier while idle; nothing needs an answer."
         }
       ],
       "contract_version": 1
@@ -3133,7 +3159,7 @@ stdout (`--json`):
 }
 ```
 
-stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `writeback` (default `salient`), `harness_wiring` (default `skip`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
+stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip; upkeep: on), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `writeback` (default `salient`), `harness_wiring` (default `skip`), `upkeep` (default `on`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
 
 ### 5. A caller mistake over stdio MCP, recorded: `run` (journey)
 
@@ -4033,8 +4059,10 @@ each with a `fix`.
   embeddings needs a provider key and costs money (`credentials`, `paid`):
   ask first, then use the exact command the readiness fix names. It keeps
   pages and facts.
-- **Maintenance.** Without a worker, queued jobs wait. `gbrain autopilot
-  --install` installs a background service (`persistent_install`): ask first.
+- **Maintenance.** An open `gbrain serve` runs free upkeep while idle
+  (`gbrain maintain --status`). Without a worker, queued jobs wait.
+  `gbrain maintain --schedule` and `gbrain autopilot --install` install a
+  background service (`persistent_install`): ask first.
 - **Backup.** Repo backups exclude database-only pages and facts. When the
   `backup_coverage` notice fires, tell the user what is unprotected.
 - **Surface.** `--surface verbs` (memory verbs), `starter` or `full` decides
@@ -4248,7 +4276,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run", "retriage the backlog", "re-score the triage" | `skills/maintain/SKILL.md` (dream cycle section) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
-| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
+| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain maintain --status`. An open `gbrain serve` runs free upkeep while idle. For a brain no agent opens most days, offer `gbrain maintain --schedule` (asks consent). A Postgres brain with a repo can use `gbrain autopilot --install --repo ~/brain` |
 | "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
 | "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |
@@ -4572,7 +4600,7 @@ Want to see a tutorial that isn't here yet? [Open an issue](https://github.com/g
 
 The whole loop is described in [`docs/architecture/topologies.md`](docs/architecture/topologies.md) with diagrams.
 
-**Say to your agent:** *"Set up autopilot"* (installs the cron that runs the loop) — *"Run dream"* — *"Did the dream cycle run?"*
+**Say to your agent:** *"Did upkeep run?"* (your agent's open `gbrain serve` runs the free upkeep while it is idle; `gbrain maintain --schedule` adds a timer for a brain no agent opens) — *"Run dream"* — *"Did the dream cycle run?"*
 
 ## Capabilities
 
@@ -7064,8 +7092,14 @@ scheduling surfaces — reach for these first:
   hand-rolling the dream cycle below.
 - **`gbrain jobs` / minions** — queue shell jobs or LLM subagents with retry,
   backoff, and an audit trail. See the `minion-orchestrator` skill.
-- **`gbrain autopilot`** — the long-lived background daemon that runs cycles
-  on its own cadence.
+- **`gbrain serve`** — while the agent connected to it is idle, it runs the
+  free upkeep (`gbrain maintain --unattended`) once a day, with nothing to
+  install. `gbrain maintain --status` shows the last run.
+- **`gbrain maintain --schedule`** — for a brain no agent opens most days:
+  installs a job that runs the same upkeep every 6 hours (launchd, a systemd
+  user timer or cron). Opt-in; preview with `--dry-run`.
+- **`gbrain autopilot`** — the long-lived background daemon that runs full
+  cycles on its own cadence, for a Postgres brain with a repo.
 - **`cron-scheduler` skill** (`skills/cron-scheduler/`) — teaches an agent to
   manage its harness's scheduler.
 - **Bootstrap session-triggered schedules** — `gbrain bootstrap` installs

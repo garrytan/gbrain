@@ -7,6 +7,7 @@
  * that runs free upkeep now.
  */
 import type { Check } from '../../doctor.ts';
+import { cliRenderContext, renderAction } from '../../../core/agent-output.ts';
 import { checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { readUpkeepStatus, type UpkeepStatus } from '../../../core/maintenance/status.ts';
@@ -19,6 +20,7 @@ function details(s: UpkeepStatus): Record<string, unknown> {
     pending_purge_count: s.pending_purge_count, paid_phases_opt_in: s.paid_phases_opt_in,
     embed_spend_today_usd: s.embed_spend_today_usd, embed_daily_cap_usd: s.embed_daily_cap_usd,
     ...(s.failing ? { failing: s.failing } : {}),
+    ...(s.alternative_fix ? { alternative_fix: renderAction(s.alternative_fix, cliRenderContext()) } : {}),
   };
 }
 

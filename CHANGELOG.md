@@ -20,6 +20,14 @@ identifiers and attribution are available in the pre-removal Git revision
 - A new doctor check, `unattended_maintenance`, reports the same thing. It warns when upkeep hasn't run for 48 hours or a step keeps failing, and its fix is `gbrain maintain --unattended`. A brain where `maintenance.auto` is `false`, or where autopilot runs upkeep, reads as ok.
 - `gbrain maintain --purge` previews which soft-deleted pages are past their 72-hour window. `--yes --expect <hash>` purges exactly the previewed set, and refuses with `preview_changed` when the set moved since the preview. Upkeep never purges pages on its own.
 
+### Upkeep runs while your agent is connected, and `--schedule` covers the rest
+
+**An open `gbrain serve` now does the free upkeep for you, so a default install needs no service, cron job or second command.** When the agent connected to `gbrain serve` (stdio or HTTP) goes quiet, serve runs `gbrain maintain --unattended` in slices of about 3 seconds, at most one full round a day per brain, and stops a slice the moment a tool call arrives. It writes the same record that `gbrain maintain --status` and doctor read, with runner `serve`. It never deletes a page, and on a keyless brain it never spends anything. When two serves share one brain, only one runs it and the other skips. Turn it off with `gbrain config set maintenance.auto false` (or `GBRAIN_SWEEP=0`, which also stops the idle sweep).
+
+- `gbrain maintain --schedule` is for a brain with no agent session open most days. It installs a job that runs `gbrain maintain --unattended` every 6 hours (launchd on macOS, a systemd user timer on Linux, cron otherwise). It asks before installing, `--dry-run` shows exactly what it would write, and `--unschedule` removes it. Nothing installs it by default. A scheduled run that finds a live `gbrain serve` on the brain exits 0 with `maintenance_owned_by_serve` and leaves the work to serve.
+- `gbrain init` and `gbrain setup <harness>` now say how upkeep works in their first-run settings block, and how to turn it off.
+- doctor's overdue upkeep warning and `gbrain maintain --status` now also offer `gbrain maintain --schedule` as the second fix.
+
 ### Smaller changes
 
 - The old bookkeeping cleanup inside the cycle's `purge` phase is now its own phase, `bookkeeping_gc`, with the same retentions. It never touches a page, so upkeep can run it while `purge` stays manual. `purge`'s summary now counts only pages, sources and orphaned clone folders.
@@ -36,6 +44,12 @@ identifiers and attribution are available in the pre-removal Git revision
 - `src/core/cycle.ts`: `CycleOpts.stamp` (`full`, `source_only`, `none`) so a partial run can't claim a full cycle, and `deferFactEmbedding` so fact extraction stays free on a keyed brain.
 - `src/commands/autopilot-refusals.ts` (new) and `src/core/error-registry.ts`: new codes `autopilot_no_repo`, `autopilot_pglite_daemon`, `cycle_already_running`, `engine_degraded`, `maintenance_disabled` and `maintenance_owned_by_autopilot`.
 - Tests: `test/maintenance-unattended.test.ts` (PGLite and Postgres) and `test/e2e/maintain-unattended-keyless-pglite.test.ts`.
+- `src/core/maintenance/idle.ts` (new): `runIdleUpkeep` (the stdio serve calls it from its idle tick, after the sweep) and `armIdleUpkeep` (the HTTP serve's new idle timer), with a 3-second budget per run. `src/core/foreground-activity.ts` gains `onForegroundRequest`, which aborts a run in flight, and `src/commands/serve-http.ts` marks each `/mcp` POST as foreground work.
+- `src/core/maintenance/run.ts`: a PGLite brain runs `CHECKPOINT` after a finished round, recorded as the `checkpoint` step.
+- `src/commands/extract.ts`, `src/core/cycle.ts` and `src/core/cycle/connector-extract.ts`: the cycle's stale link drain now stops between batches of 25 pages when the cycle is aborted. Before, a first upkeep run on a 10,000-page brain with no repository spent 64 seconds in this one step, past its 3-second budget, and tool calls made meanwhile took about twice as long.
+- `src/core/cycle/extract-facts.ts`: the facts walk now gives the event loop a turn every 50 pages. On PGLite, queries finish without ever letting timers or stdin run, so on a 10,000-page brain the walk froze the serve for about 2 seconds and a tool call sent during it waited until the walk ended (p99 1.7 seconds). With the fix, the freeze is under 150 ms, a call stops the walk, and tool calls during upkeep stay at p99 241 ms against 139 ms with upkeep off.
+- `src/commands/maintain-schedule.ts` (new): `--schedule`, `--unschedule` and the live-serve check, routed before the engine opens. New codes `maintenance_owned_by_serve`, `schedule_unsupported` (Windows and containers) and `schedule_install_failed`.
+- Tests: `test/serve-idle-upkeep-gbra438.test.ts`, `test/maintenance-idle-gbra438.test.ts` (PGLite and Postgres, including two serves on one brain), `test/maintain-schedule-gbra438.test.ts` and `test/e2e/serve-idle-upkeep-keyless-pglite.test.ts`.
 
 ## [0.60.699.0] - 2026-11-12
 

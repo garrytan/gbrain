@@ -2140,6 +2140,7 @@ export async function extractStaleFromDB(
      */
     timeBudgetMs?: number;
     /** GBRA-130 A-1 (managed brains): clear held link-extraction failures first. */ retryHeld?: boolean;
+    /** GBRA-438: an abort (idle upkeep's budget, or a tool call) stops the sweep between batches, like timeBudgetMs. */ signal?: AbortSignal;
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; skippedUnknownSource?: number; mentions?: MentionPassResult;
   linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[] }> {
@@ -2166,7 +2167,7 @@ export async function extractStaleFromDB(
   // (the mention pass runs inside it).
   if (await managedPersistenceEnabled(engine)) {
     const { runManagedStaleExtraction, formatManagedStaleExtraction } = await import('../core/persistence/links-maintenance.ts');
-    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld });
+    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld, signal: opts.signal });
     if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
     else if (!opts.quiet) process.stdout.write(formatManagedStaleExtraction(r, false, true) + '\n');
     return { linksCreated: r.created, timelineCreated: r.timeline, pagesProcessed: r.pages, staleRemaining: r.remaining + (r.mentions?.remaining ?? 0),
@@ -2362,12 +2363,12 @@ export async function extractStaleFromDB(
     progress.tick(processedRefs.length);
     afterPageId = rows[rows.length - 1]!.id;
 
-    if (Date.now() > linkDeadline) { budgetHit = true; break; }
+    if (Date.now() > linkDeadline || opts.signal?.aborted) { budgetHit = true; break; }
   }
 
   progress.finish();
   if (packUnavailable) throw new Error('Cannot extract links: active schema pack is unavailable.');
-  const mentions = await runMentionPass(engine, { sourceId: sourceIdFilter, ...(catchUp ? {} : { deadline: startMs + timeBudgetMs }) });
+  const mentions = await runMentionPass(engine, { sourceId: sourceIdFilter, ...(catchUp ? {} : { deadline: opts.signal?.aborted ? 0 : startMs + timeBudgetMs }) });
   const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs }) + mentions.remaining;
   const counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);
 

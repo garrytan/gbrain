@@ -428,7 +428,8 @@ and HTTP MCP) saves references as text without inline graph extraction; a
 post-commit `links` effect then adds plain mention edges to existing pages the
 writer can see (`gbrain config set mcp.remote_auto_links off` disables it). Stdio
 `gbrain serve` runs bounded startup/idle sweeps for typed edges; `gbrain serve --http` does not
-self-sweep. For HTTP, arrange explicit host-side `gbrain sweep --once` or
+self-sweep, and its daily idle upkeep (link extraction included) is the only
+graph work it does on its own. For HTTP, arrange explicit host-side `gbrain sweep --once` or
 extraction; use authorized `add_link` calls for edges needed immediately.
 
 After this step:
@@ -632,7 +633,9 @@ Optional: skip this entire step for memory-only installs. Ask before scheduling
 capture, enrichment, maintenance or a service; do not infer consent from a
 successful install or from a health recommendation.
 
-Set up using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
+An open `gbrain serve` already runs the free upkeep while its agent is idle
+(`gbrain maintain --status` shows the last run). For the jobs below, set up
+using your platform's scheduler (OpenClaw cron, Railway cron, crontab), or skip the
 platform glue entirely with `gbrain autopilot --install` (built-in self-maintaining daemon).
 
 Every cron job, workspace script and hook calls gbrain through **one wrapper**

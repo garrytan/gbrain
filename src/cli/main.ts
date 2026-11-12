@@ -2113,6 +2113,8 @@ async function routeEngineFreeSubcommands(command: string, args: string[]): Prom
     const { tryRunConfigEngineFree } = await import('../commands/config.ts');
     if (await tryRunConfigEngineFree(args)) return true;
   }
+  // GBRA-438: `maintain --schedule`, `--unschedule` and a scheduled run beside a live serve open no engine (PGLite would wait on its lock).
+  if (command === 'maintain' && await (await import('../commands/maintain-schedule.ts')).tryRunMaintainEngineFree(args)) return true;
   // Engine graduation owns its connections (routing rules: commands/migrate-graduation.ts routesToGraduation).
   if (command === 'migrate' && await (await import('../commands/migrate-graduation.ts')).tryRunMigrateGraduation(args)) return true;
   if (command === 'mcp') {

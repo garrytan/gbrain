@@ -800,6 +800,9 @@ async function pendingLegacyRows(engine: BrainEngine, sourceId: string): Promise
   return new Map(legacy.map(row => [row.entity_slug, parseInt(row.n ?? '0', 10)]));
 }
 
+/** Pages between macrotask yields in the reconcile walk (about 10 ms of work on PGLite). */
+const FACTS_WALK_YIELD_EVERY = 50;
+
 /**
  * Run the extract_facts phase against the current brain state. Returns
  * an ExtractFactsResult envelope; status mapping (ok / warn / fail)
@@ -1121,6 +1124,9 @@ export async function runExtractFacts(
   };
 
   for (const slug of slugs) {
+    // GBRA-438: PGLite resolves queries on a microtask chain, so a macrotask yield every FACTS_WALK_YIELD_EVERY pages lets a
+    // timer, a budget or a request (stdin) trip the abort mid-walk instead of after it.
+    if (result.pagesScanned > 0 && result.pagesScanned % FACTS_WALK_YIELD_EVERY === 0) await new Promise(r => setTimeout(r, 0));
     // #1972: bail at the top of the per-page loop on abort. Each page is an
     // independent delete-then-insert commit, so breaking leaves a consistent
     // partial state; the receipt/rollup below still runs with partial counts.

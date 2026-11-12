@@ -175,6 +175,11 @@ export async function readUpkeepRecord(engine: BrainEngine): Promise<UpkeepRecor
   }
 }
 
+/** Whether a run would do work now: no record yet, a round left unfinished, or past next_due_at. */
+export function upkeepDue(record: UpkeepRecord | null, now: Date): boolean {
+  return !record || !!record.cursor || !(Date.parse(record.next_due_at) > now.getTime());
+}
+
 export async function upkeepEnabled(engine: BrainEngine): Promise<boolean> {
   const raw = (await engine.getConfig(MAINTENANCE_AUTO_KEY).catch(() => null))?.trim().toLowerCase();
   return !(raw === 'false' || raw === '0' || raw === 'off' || raw === 'no');
@@ -324,6 +329,20 @@ async function runEmbedStep(engine: BrainEngine, now: Date, signal: AbortSignal 
 }
 
 /**
+ * PGLite only: a top-level CHECKPOINT once a round finishes, outside every
+ * transaction, so the WAL the round wrote is folded into the data files
+ * while the brain is quiet instead of at the next open.
+ */
+async function checkpointStep(engine: BrainEngine): Promise<UpkeepStep> {
+  try {
+    await engine.executeRaw('CHECKPOINT');
+    return { name: 'checkpoint', scope: 'global', status: 'ok' };
+  } catch (error) {
+    return { name: 'checkpoint', scope: 'global', status: 'fail', code: (error as { code?: string } | null)?.code ?? 'checkpoint_failed' };
+  }
+}
+
+/**
  * One unattended upkeep run. Never throws: a run that cannot start returns a
  * skip with its code and fix, a failed step is recorded with its own code and
  * the run moves on to the next item.
@@ -337,8 +356,8 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
       if (prior && refused.code) await engine.setConfig(MAINTENANCE_LAST_RUN_KEY, JSON.stringify({ ...prior, last_skip: { at: now.toISOString(), code: refused.code } }));
       return refused;
     }
-    if (prior && !prior.cursor && Date.parse(prior.next_due_at) > now.getTime()) {
-      return { status: 'not_due', exit: 0, message: `Upkeep already ran at ${prior.at}; next due at ${prior.next_due_at}.`, record: prior };
+    if (!upkeepDue(prior, now)) {
+      return { status: 'not_due', exit: 0, message: `Upkeep already ran at ${prior!.at}; next due at ${prior!.next_due_at}.`, record: prior! };
     }
     const plan = unattendedPlan(opts.providers ?? await readSafePhaseProviders(engine));
     const sources = (await engine.listAllSources()).sort((a, b) => a.id.localeCompare(b.id));
@@ -396,6 +415,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
       steps.push(result.step);
       embed = result.embed;
     }
+    if (finished && engine.kind === 'pglite' && !opts.signal?.aborted) steps.push(await checkpointStep(engine));
     const failed = steps.filter((step) => step.status === 'fail');
     const nextFailures: UpkeepFailure[] = failures
       .filter((f) => !steps.some((s) => s.name === f.step && s.scope === f.scope && s.status !== 'fail' && s.reason !== 'backed_off'));

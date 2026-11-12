@@ -1473,7 +1473,7 @@ async function runPhaseExtract(
         includeFrontmatter,
         sourceIdFilter: sourceId,
         catchUp: false,
-        timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS,
+        timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS, signal, // GBRA-438: idle upkeep's budget and a tool call stop the drain
       });
       staleRemaining = drained.staleRemaining;
       staleDetails = {
@@ -2357,7 +2357,7 @@ async function runCycleUnscoped(
           details: { reason: 'no_database' },
         });
       } else if (brainDir === null) {
-        const { result, duration_ms } = await timePhase(async () => (await import('./cycle/connector-extract.ts')).runPhaseExtractDatabaseOnly(engine, { dryRun, sourceId: cycleSourceId, timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS }), 'extract');
+        const { result, duration_ms } = await timePhase(async () => (await import('./cycle/connector-extract.ts')).runPhaseExtractDatabaseOnly(engine, { dryRun, sourceId: cycleSourceId, timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS, signal: cycleSignal }), 'extract');
         phaseResults.push({ ...result, duration_ms });
       } else {
         // No sync (or a failed one) and no source window (#8573): syncPagesAffected
