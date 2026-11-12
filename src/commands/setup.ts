@@ -963,8 +963,13 @@ function describeInstructions(o: BrainFirstOutcome, dryRun: boolean): string {
 
 /** Whom the brain behind this launcher serves, for the shared-token warning; null when it cannot be read (the warning stays on). */
 function exposureServesVia(launcher: string | null | undefined): ExposureServes {
-  const read = launcher && launcher.startsWith('/') ? readServesStatus(launcher) : null;
-  return read && 'status' in read ? read.status.serves : null;
+  if (!launcher || !launcher.startsWith('/')) return null;
+  try {
+    const read = readServesStatus(launcher);
+    return 'status' in read ? read.status.serves : null;
+  } catch {
+    return null;
+  }
 }
 
 /** --serves several on the instructions alone: the brain must serve several people and its stdio server be bound. */
