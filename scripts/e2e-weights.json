@@ -419,6 +419,7 @@
   "test/e2e/mcp-budget-reservation-postgres.test.ts": 440,
   "test/e2e/mcp-search-transport-matrix.test.ts": 67200,
   "test/e2e/mechanical.test.ts": 51100,
+  "test/e2e/member-page-withdrawal-scope-migration.test.ts": 3200,
   "test/e2e/memory-safety-wave-postgres.test.ts": 6930,
   "test/e2e/mentions-parity.test.ts": 2590,
   "test/e2e/migrate-chain.test.ts": 5660,

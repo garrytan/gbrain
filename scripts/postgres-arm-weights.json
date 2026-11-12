@@ -317,7 +317,7 @@
   "test/origin-twins-6948.test.ts": 5322,
   "test/orphan-effect-diagnostics-7985.test.ts": 13288,
   "test/overwritten-edits-6712.test.ts": 58270,
-  "test/owner-facts-d1-gst2346.test.ts": 24367,
+  "test/owner-facts-d1-gst2346.test.ts": 28215,
   "test/owner-member-boundary.test.ts": 8601,
   "test/owner-reads-restricted.test.ts": 75912,
   "test/owner-refusal.test.ts": 6032,
