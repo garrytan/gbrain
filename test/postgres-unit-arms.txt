@@ -111,6 +111,7 @@ test/fact-fence-adoption-exits.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
+test/facts-embedding-refusal-heal-8526.test.ts
 test/facts-entity-moved-7602.test.ts
 test/facts-home-review-gst2492.test.ts
 test/facts-insert-guards-7105.test.ts
@@ -145,7 +146,9 @@ test/git-door-strict-gbra133.test.ts
 test/git-door-write-cost.test.ts
 test/git-gap-census.test.ts
 test/git-gap-direction-evidence-d4.test.ts
+test/google-classic-purged-item-8644.test.ts
 test/google-connector-facts-fence-7292.test.ts
+test/google-withdrawn-fence-carry-8645.test.ts
 test/grade-takes-window.test.ts
 test/graduation-copy.test.ts
 test/graduation-digest.test.ts

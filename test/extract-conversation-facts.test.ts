@@ -1663,6 +1663,16 @@ describe('runExtractConversationFactsCore', () => {
     expect(result).toMatchObject({ pages: 1, pagesFailed: 1 });
   });
 
+  test('transcript ingest reports a budget stop and skipped pages instead of reading complete (#8722)', async () => {
+    const slugs = ['conversations/batch-first', 'conversations/batch-last'];
+    await seedBatch(slugs);
+    chatFailure = new BudgetExhausted('reserve denied', { reason: 'cost', spent: 5, cap: 5 });
+    await withEnv({ ANTHROPIC_API_KEY: 'sk-test' }, async () => {
+      const result = await runIngestFacts(engine, { sourceId: 'default', slugs, quiet: true });
+      expect(result).toMatchObject({ pages: 2, pagesFailed: 0, budgetExhausted: true, budgetReason: 'cost', pagesSkippedTooLarge: 0, pagesLockSkipped: 0 });
+    });
+  });
+
   test.each([
     { name: 'a failed page exits 1', malformed: true, exit: 1, failed: 1 },
     { name: 'no failed page exits 0', malformed: false, exit: 0, failed: 0 },
