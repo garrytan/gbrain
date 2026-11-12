@@ -175,6 +175,8 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     expect(classes(preview)).toEqual([]);
     expect(preview.warnings).toEqual([expect.stringContaining('Source default is not strict')]);
     expect(preview.details).toMatchObject({ strict: false, verify: 'gbrain sources git-gap default --json' });
-    expect(await factRow(engine, SUBJECTLESS)).toMatchObject({ row_num: null });
+    const applied = await repair(engine, { apply: true, expect: preview.preview_hash });
+    expect(applied.applied).toBe(0);
+    expect(await factRow(engine, SUBJECTLESS)).toMatchObject({ row_num: null, source_markdown_slug: null });
   }), 120_000);
 });
