@@ -365,6 +365,22 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
     expect(rebuilt[forgotten]!.filter(row => row.active)).toEqual([]);
     expect(rebuilt[purged]!.filter(row => row.active)).toEqual([]);
   }), 300_000);
+
+  test("the owner's forget strikes a private fact the brain host saved for a pageless entity, and a rebuild keeps it withdrawn", () => strict(async ({ engine, ctx, root }) => {
+    const owner = await ownerAuth(engine);
+    const kept = 'The kitchen remodel budget is private.';
+    const saved = await call(ctx, 'remember', { fact: kept, entity: PAGELESS, provenance: 'chat 2026-11-11', visibility: 'private', request_id: randomUUID() });
+    expect(saved).toMatchObject({ status: 'inserted', write_through: { written: true, held_for: PAGELESS } });
+    await settleManagedGitEffects(engine);
+    expect(lineOf(head(root, HOLD_FILE), kept)).toContain('| private |');
+    expect(await factRows(engine, kept)).toMatchObject([{ entity_slug: PAGELESS, source_markdown_slug: HOLD, active: true }]);
+    const forgot = await asOwner(engine, owner, 'forget', { id: String(saved.id) });
+    expect(forgot.isError ? forgot.text : 'ok').toBe('ok');
+    await settleManagedGitEffects(engine);
+    expect(lineOf(head(root, HOLD_FILE), kept)).toContain(`~~${kept}~~`);
+    expect(await factRows(engine, kept)).toMatchObject([{ active: false }]);
+    expect((await rebuild(root, databaseUrl, [kept]))[kept]!.filter(row => row.active)).toEqual([]);
+  }), 300_000);
 });
 
 describe('the entity column of the facts fence (GST-2492)', () => {
