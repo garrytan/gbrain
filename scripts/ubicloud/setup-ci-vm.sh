@@ -8,7 +8,10 @@
 #   - node (pinned; NODE_VERSION, matching native-locks.yml's setup-node, from
 #     nodejs.org and checksum-verified: apt's Node 18 cannot import a .ts file,
 #     which test/skill-resolver-packaging.test.ts does)
-#   - git, python3, procps, psql, jq, cc, timeout (test prerequisites)
+#   - git, python3, procps, psql, jq, cc, timeout (test prerequisites); git
+#     comes from the git-core PPA, as on GitHub's runners, because stock
+#     Ubuntu 24.04 ships 2.43 and the suite needs GIT_MIN (maintenance
+#     run --detach, partial-clone lazy-fetch behaviour)
 #   - SLOTS isolated pgvector/pgvector:pg16 servers, each fronted by a
 #     transaction-mode PgBouncer, so every E2E slot owns its whole server just
 #     as each ci:local shard owns postgres-N (slot i: postgres on
@@ -44,6 +47,8 @@ CHECKOUT="${CHECKOUT:-.}"
 CHECKOUT_MARKER="${CHECKOUT_MARKER:-}"
 GITLEAKS_VERSION=8.30.1
 APT_PACKAGES=(git ca-certificates python3 procps postgresql-client jq gcc libc6-dev)
+GIT_PPA=ppa:git-core/ppa
+GIT_MIN=2.47.0
 PG_IMAGE="${PG_IMAGE:-pgvector/pgvector:pg16}"
 PGBOUNCER_IMAGE=edoburu/pgbouncer:latest
 # Throwaway password of the loopback-only test servers (docker-compose.ci.yml uses the same).
@@ -71,6 +76,12 @@ apt_get() {
     -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false "$@" >/dev/null
 }
 
+git_current() {
+  local have
+  have=$(git --version 2>/dev/null | awk '{print $3}')
+  [ -n "$have" ] && [ "$(printf '%s\n' "$GIT_MIN" "$have" | sort -V | head -1)" = "$GIT_MIN" ]
+}
+
 # Docker first so the image pulls overlap the rest of apt. Containers start
 # only once apt is done: a package's systemd reload while Docker creates a
 # container's scope unit fails the `docker run` ("Message recipient
@@ -78,11 +89,17 @@ apt_get() {
 install_system() {
   local pg_pull pgb_pull bin baked=1
   for bin in docker psql cc jq git; do command -v "$bin" >/dev/null || baked=0; done
+  git_current || baked=0
   if [ "$baked" = 1 ]; then
     sudo docker pull -q "$PG_IMAGE" >/dev/null
     sudo docker pull -q "$PGBOUNCER_IMAGE" >/dev/null
     return
   fi
+  command -v add-apt-repository >/dev/null || {
+    apt_get update
+    apt_get install -y --no-install-recommends software-properties-common
+  }
+  sudo add-apt-repository -y -n "$GIT_PPA" >/dev/null
   apt_get update
   apt_get install -y --no-install-recommends docker.io
   sudo docker pull -q "$PG_IMAGE" >/dev/null &
@@ -92,6 +109,7 @@ install_system() {
   apt_get install -y --no-install-recommends "${APT_PACKAGES[@]}"
   wait "$pg_pull"
   wait "$pgb_pull"
+  git_current || fail "$(git --version) is older than git $GIT_MIN after installing from $GIT_PPA"
 }
 
 if [ "${PREPARE_IMAGE:-0}" = "1" ]; then

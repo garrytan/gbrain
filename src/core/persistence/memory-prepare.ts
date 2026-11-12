@@ -96,7 +96,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
-  await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate });
+  await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
   signal?.throwIfAborted();
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
@@ -134,7 +134,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const lexicalOld = await lexical(engine);
   const contestedOld = contested ? decision.candidate! : lexicalOld;
   const validate = async (tx: BrainEngine) => {
-    await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
+    await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);
@@ -157,7 +157,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
       valid_from: validFrom.toISOString(), valid_until: validUntil?.toISOString() ?? null, source_session: fact.source_session, ...claimColumns(p) },
     input: gateInput(requestChannelTrust(row) ?? { tier: 'unknown', origin: null }, row.id), cfg: await loadWriteGateConfig(engine) });
   if (gate.action === 'reject') throw writeGateRejectedError(gate.assessment);
-  if (gate.action === 'hold') return { observedRevision, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
+  if (gate.action === 'hold') return { observedRevision, noop: true, validate, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
   // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
   let fence: FenceFactAppend | undefined;

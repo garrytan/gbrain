@@ -250,7 +250,7 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
     payload: { page_id: snapshot.page.id, claim: p.claim, kind: p.kind ?? null, holder: p.holder ?? null, weight: p.weight ?? null, source: p.source ?? null, since: p.since ?? null },
     input: gateInput(trust, row.id), cfg: await loadWriteGateConfig(engine) }) : null;
   if (gate?.action === 'reject') throw writeGateRejectedError(gate.assessment);
-  if (gate?.action === 'hold') return { observedRevision: snapshot.revision, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
+  if (gate?.action === 'hold') return { observedRevision: snapshot.revision, noop: true, apply: async tx => heldOutcome(gate.assessment, (await recordWriteGateHold(tx, gate.hold!)).holdId) };
   // Rows Tier 1 rewrote are re-indexed with the row this write changes.
   const normalizedRows=new Set((target?.fixes ?? []).filter(f=>f.fence==='takes' && f.row!==null).map(f=>f.row!));
   if (normalizedRows.size) changed=[...changed,...parseTakesFence(next).takes.filter(t=>normalizedRows.has(t.rowNum) && !changed.some(c=>c.rowNum===t.rowNum))];

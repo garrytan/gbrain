@@ -1954,6 +1954,16 @@ More: [docs/guides/repair.md#fix-not-writable](../../docs/guides/repair.md#fix-n
 
 More: [docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately](../../docs/guides/shared-brain-skills.md#approve-publication-following-and-editing-separately)
 
+### foreign_table
+
+<a id="foreign_table"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A table gbrain owns by name (an OAuth table) already exists in the brain's schema without a column gbrain always gives it, or with a type gbrain never gives it, so schema setup stopped before the schema replay or any migration changed anything; the message names the table, the column, the type found and the type gbrain needs. | gbrain creates its tables with CREATE TABLE IF NOT EXISTS, so without this check it adopted a same-named table another application created in the shared database, added its own columns to it and failed partway through an upgrade on the first statement that compared the wrong type (#9190). The table holds that application's data, so gbrain never moves, renames or drops it. | Ask the user: give gbrain its own database, or move the other table to a schema of its own (ALTER TABLE <table> SET SCHEMA <other_schema> takes its indexes and constraints along) and point that application there; then run gbrain apply-migrations --force-schema --yes. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#foreign-table](../../docs/guides/troubleshooting.md#foreign-table)
+
 ### forget_requires_owner
 
 <a id="forget_requires_owner"></a>
@@ -5567,6 +5577,16 @@ More: [docs/guides/system-one.md#unpriced_model](../../docs/guides/system-one.md
 Reasons: `not_utf8`, `control_character`.
 
 More: [docs/guides/write-refusals.md#unsupported_path](../../docs/guides/write-refusals.md#unsupported_path)
+
+### untrack_not_db_only
+
+<a id="untrack_not_db_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain git commit-push --untrack in a managed canonical worktree was refused before the index changed: a file to untrack is not under a storage.db_only dir that gbrain.yml at HEAD declares, or .gitignore does not ignore it. | The next sync deletes the page of a file that leaves Git outside a declared storage.db_only dir, and a file .gitignore does not ignore can be committed again by any later commit. | Declare the folder under storage.db_only in gbrain.yml and add its <dir>/ line to .gitignore, commit both with gbrain git commit-push -m <msg> -- gbrain.yml .gitignore, then rerun the untrack. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/shared-checkout-git.md#untrack](../../docs/guides/shared-checkout-git.md#untrack)
 
 ### upload_expired
 

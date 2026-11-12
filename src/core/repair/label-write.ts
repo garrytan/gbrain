@@ -9,6 +9,8 @@
  *     source's checkout (`filesInCheckout`) calls writeLabelFile, which imports the file's own bytes with only the label
  *     lines edited and writes them back in that transaction, so the next sync reads the same page.
  * An ordinary put_page, local or remote, stays an agent content write (trust/channel.ts): it is never used here.
+ * GST-2521: every label write raises the page's label guard (raisePageLabelGuard), so an agent write at the page's own
+ * tier is held from widening what the owner set.
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
@@ -20,6 +22,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { labelEditFile } from '../persistence/page-prepare.ts';
 import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import type { RepairItemOutcome } from './core.ts';
+import { raisePageLabelGuard } from '../trust/page-write.ts';
 
 const bounded = { timeoutMs: 120_000 };
 
@@ -50,6 +53,7 @@ export async function importAtRevision(engine: BrainEngine, page: { source_id: s
     const result = await withTrustKeep(tx, ['pages'], () => importFromContent(tx, page.slug, content, { sourceId: page.source_id, noEmbed: !embed, preserveGateMarkers: true }));
     if (result.status === 'error') throw opError('invalid_params', `${page.source_id}:${page.slug} was not written: ${result.error ?? 'the import refused it'}`,
       `Preview ${preview} again; the page is listed with its current state.`);
+    await raisePageLabelGuard(tx, page.source_id, page.slug);
     await afterImport?.(tx);
     return (await tx.readPageSnapshot(page.slug, { sourceId: page.source_id }))?.revision ?? null;
   });

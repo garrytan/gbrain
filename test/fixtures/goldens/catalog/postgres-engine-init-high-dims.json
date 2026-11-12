@@ -320,6 +320,9 @@
       "page_facts_reconcile.page_facts_reconcile_pkey": "p PRIMARY KEY (page_id)",
       "page_generation_clock.page_generation_clock_id_check": "c CHECK ((id = 1))",
       "page_generation_clock.page_generation_clock_pkey": "p PRIMARY KEY (id)",
+      "page_label_guards.page_label_guards_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_label_guards.page_label_guards_pkey": "p PRIMARY KEY (page_id)",
+      "page_label_guards.page_label_guards_tier_check": "c CHECK ((tier = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text])))",
       "page_mention_state.page_mention_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "page_mention_state.page_mention_state_pkey": "p PRIMARY KEY (page_id)",
       "page_mention_state.page_mention_state_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
@@ -626,13 +629,13 @@
       "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
       "gbrain_guard_deferred_request()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=edf066d51ee76d4037663393271883a12d7fdf4f0f01b7d1faa9e979d552c6c6",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=aa01528006dd7029eac6808e0233991524c9de9dc14aaf41f44160d67a747042",
-      "gbrain_guard_inserted_facts()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=027c16bf0f61101510f54966dfa7d3c5f90112cef52a51861adc36103a0bc02b",
+      "gbrain_guard_inserted_facts()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=78fe53917ec54c7627df4961a7669e0d65f8adfa7e249da1beeb58dc37978a66",
       "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=bb477ec66ecac06e6edba773a94a2834ef4286a0b9e5cfa8b9b8646e003b0b9e",
       "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2709686143e064b577e2b3c8e3e2b1009d52a836a2bc709f5f003a251eb004d2",
       "gbrain_guard_skill_publication()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e854c0d058e75a65c3a90127c5c417380975100e83fc34288f6085e786df10a9",
       "gbrain_lease_shared_skill_delivery()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=5e493c1ac8dce8cb025a736629e563437c4b214744137c302c532c20bf7e7acf",
       "gbrain_mark_derivation_scope_entry()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=72ac0027fd37ecc4c72ad2e294ae3a98564736339b9ac917ea5d4112ec3cd35f",
-      "gbrain_preserve_fact_withdrawal()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=9beb118551a08451a228146373f50f2aa2ce0cfe89937e937d361b33224aa0aa",
+      "gbrain_preserve_fact_withdrawal()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=6677571f69ebfb82f183514caf6b94ccaaa0fda3a4326cf7601d21f155936c15",
       "gbrain_queue_page_projection()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=dc7a279205df83f00b9147adea8e609a410d0484d04648ea3fdb4344a5caf259",
       "gbrain_refuse_purged_fact()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d1d584b91ceea7f4e63c235b790ef89c958c578e635f77ddd644918bc36d33f1",
       "gbrain_refuse_purged_page()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=8aaaf7c22fc9acb4b1e84fe75f11ae6c889949b78de1ef6bdba1db54ef43844e",
@@ -956,6 +959,9 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_generation_clock": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "page_label_guards": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "page_links": [
@@ -1523,6 +1529,7 @@
       "page_extraction_state_truncated_idx": "CREATE INDEX page_extraction_state_truncated_idx ON public.page_extraction_state USING btree (pipeline, page_id) WHERE (input_truncated IS NOT NULL)",
       "page_facts_reconcile_pkey": "CREATE UNIQUE INDEX page_facts_reconcile_pkey ON public.page_facts_reconcile USING btree (page_id)",
       "page_generation_clock_pkey": "CREATE UNIQUE INDEX page_generation_clock_pkey ON public.page_generation_clock USING btree (id)",
+      "page_label_guards_pkey": "CREATE UNIQUE INDEX page_label_guards_pkey ON public.page_label_guards USING btree (page_id)",
       "page_mention_state_pkey": "CREATE UNIQUE INDEX page_mention_state_pkey ON public.page_mention_state USING btree (page_id)",
       "page_mention_state_source_idx": "CREATE INDEX page_mention_state_source_idx ON public.page_mention_state USING btree (source_id, mention_version)",
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
@@ -3419,6 +3426,14 @@
         "columns": [
           "1 id integer/int4 NOT NULL",
           "2 value bigint/int8 NOT NULL DEFAULT 0"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "page_label_guards": {
+        "columns": [
+          "1 page_id integer/int4 NOT NULL",
+          "2 tier text/text NOT NULL",
+          "3 set_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

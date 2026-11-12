@@ -93,6 +93,7 @@ import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { provenanceRepair } from './provenance.ts';
 import { secretSpansRepair } from './secret-spans.ts';
 import { rowsBehindRepair } from './rows-behind.ts';
+import { factsHomeRepair } from './facts-home.ts';
 import { privateLabelsRepair, type PrivateLabelsLedger } from './private-labels.ts';
 import type { ReadersRequest } from './readers.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
@@ -653,6 +654,15 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'by rule and each changed field\'s old and new SHA-256, never a value; --apply --expect <hash> rewrites exactly that set, one transaction per '
       + 'page, then re-scans it. Database only: no file write, no Git commit, and a sync hold stays, so held pages are redacted where they are stored. '
       + 'History (page versions, receipts, Git) is kept. Trusted local CLI only; runs only when named; never on upgrade.',
+  },
+  'facts-home': {
+    handler: factsHomeRepair, embeds: 'none', checks: ['strict_facts_outside_git'], explicit_only: true, preview_bound: true,
+    summary: 'Give the facts of a strict source (pages canonical in Git) that live in the database alone a home in Git (GST-2492). Needs --source; '
+      + 'a source that is not strict lists nothing. The preview lists every such fact by group and writes nothing: a fact with no entity, or for an '
+      + 'entity with no page, is written to memory/unattributed (a held row names its entity and moves to the page of its entity once that page exists); a fact whose '
+      + 'entity has a page is left to the extract_facts upkeep step; facts the Facts table cannot render, facts for an entity under a folder access rule, '
+      + 'held rows their page cannot take and held rows older than 30 days (with the nearest existing page) are listed and left alone. --apply --expect '
+      + '<hash> writes exactly the previewed set in one commit; the facts rows move in place. Runs only when named; never on upgrade.',
   },
   'rows-behind': {
     handler: rowsBehindRepair, embeds: 'effect', checks: ['sync_rows_behind_checkpoint'], explicit_only: true, preview_bound: true,

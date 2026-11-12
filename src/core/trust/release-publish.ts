@@ -38,7 +38,8 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { prepareFenceFactAppend } from '../facts/fence-fact-append.ts';
 import { assertFactNotWithdrawn } from '../facts/single-prepare.ts';
 import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
-import { parseFactsFence, type ParsedFact } from '../facts-fence.ts';
+import { parseFactsFenceFor, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { holdsInGit } from '../facts/held-fact-move.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
@@ -68,7 +69,7 @@ function releaseTarget(hold: Pick<WriteGateHold, 'slug' | 'payload'>): { slug: s
 async function cellAt(engine: BrainEngine, page: PageSnapshot['page'], rowNum: number): Promise<ParsedFact | null> {
   if (segmentedOverCeiling(page)) return null;
   const base = await materializedPage(engine, page);
-  return [base.compiled_truth, base.timeline ?? ''].flatMap(text => parseFactsFence(text).facts).find(f => f.rowNum === rowNum) ?? null;
+  return [base.compiled_truth, base.timeline ?? ''].flatMap(text => parseFactsFenceFor(text, { slug: page.slug }).facts).find(f => f.rowNum === rowNum) ?? null;
 }
 
 /**
@@ -107,10 +108,15 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
   if (!(await managedPersistenceEnabled(engine))) return null;
   const hold = await getWriteGateHold(engine, holdId);
   if (!hold || hold.kind !== 'fact') return null;
-  const target = releaseTarget(hold);
-  if (!target) return null;
-  const snapshot = await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, includeDeleted: true });
-  if (!snapshot) return null;
+  let target = releaseTarget(hold);
+  let snapshot = target ? await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, includeDeleted: true }) : null;
+  // GST-2492 PR 2: on a strict source a fact with no entity, or whose entity has no page, is released onto
+  // memory/unattributed (a held row names its entity), so it is committed to Git before its database row.
+  if ((!target || !snapshot && target.mode === 'append') && await holdsInGit(engine, hold.source_id, str(hold.payload.entity_slug))) {
+    target = { slug: UNATTRIBUTED_MEMORY_SLUG, mode: 'append' };
+    snapshot = await engine.readPageSnapshot(UNATTRIBUTED_MEMORY_SLUG, { sourceId: hold.source_id, includeDeleted: true });
+  }
+  if (!target || !snapshot && target.slug !== UNATTRIBUTED_MEMORY_SLUG) return null;
   const { initializeLocalPersistence, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
   const { submissionAuthority } = await import('../persistence/authority.ts');
   const { admitWrite, getWriteRequest } = await import('../persistence/journal.ts');
@@ -130,17 +136,17 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
   }
   if (prior) { writeResponse(await waitForWrite(engine, prior, cfg, DOOR_WAIT_MS)); return true; }
   if (hold.status !== 'held') return false;
-  const cell = target.mode === 'index-existing' ? await cellAt(engine, snapshot.page, target.rowNum!) : null;
+  const cell = target.mode === 'index-existing' ? await cellAt(engine, snapshot!.page, target.rowNum!) : null;
   if (approved && !(await approved(hold, cell))) {
     throw opError('preview_changed', `h${hold.id} changed after you approved it; nothing was changed.`,
       'Run the command again: it shows the current state and asks for a new confirmation.');
   }
   const ref = `${hold.source_id}/${target.slug}`;
-  if (snapshot.page.deleted_at) {
+  if (snapshot?.page.deleted_at) {
     throw opError('page_not_found', `The page h${hold.id} would be released into (${ref}) is deleted; nothing was changed and the fact stays held.`,
       `Restore the page first (gbrain restore ${target.slug}), or drop the hold with gbrain trust drop h${hold.id}.`);
   }
-  if (!(await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, excludePrivate: true }))) {
+  if (snapshot && !(await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, excludePrivate: true }))) {
     throw opError('page_not_found', `The page h${hold.id} would be released into (${ref}) is private; nothing was changed and the fact stays held.`,
       `Drop the hold with gbrain trust drop h${hold.id} and remember the fact on the page yourself if it belongs there.`);
   }
@@ -151,7 +157,7 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
   let binding: { worktree_id: string; topology_generation: string | number } | null = null;
   if (target.mode === 'append') {
     const { resolveFactWriteTarget } = await import('../persistence/fact-write-target.ts');
-    const write = await resolveFactWriteTarget(engine, hold.source_id, source, { fileBacked: Boolean(snapshot.page.source_path), remote: false });
+    const write = await resolveFactWriteTarget(engine, hold.source_id, source, { fileBacked: snapshot ? Boolean(snapshot.page.source_path) : true, remote: false });
     if (write.kind === 'publish') {
       binding = write.binding;
       if (write.databaseOnlyReason) authority.databaseOnlyReason = write.databaseOnlyReason;
@@ -164,7 +170,7 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
     ...(target.rowNum !== undefined ? { row_num: target.rowNum, cell_fields: cellFieldsDigest(cell) } : {}) };
   const row = await admitWrite(engine, {
     principal, operation: TRUST_RELEASE_OPERATION, sourceId: hold.source_id, sourceIncarnation: source.incarnation, slug: target.slug,
-    pageId: snapshot.page.id, requestId, callerIntent: { ...intent }, intent: { ...intent }, authority,
+    pageId: snapshot?.page.id ?? null, requestId, callerIntent: { ...intent }, intent: { ...intent }, authority,
     worktreeId: binding?.worktree_id ?? null, topologyGeneration: binding?.topology_generation ?? null,
   });
   writeResponse(await waitForWrite(engine, row, cfg, DOOR_WAIT_MS));
@@ -184,12 +190,13 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   const hold = await getWriteGateHold(engine, intent.hold_id);
   if (!current(hold)) throw decidedMeanwhile(intent.hold_id);
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  if (!snapshot || snapshot.page.deleted_at || snapshot.page.id !== row.page_id) {
+  const firstHolding = !snapshot && row.slug === UNATTRIBUTED_MEMORY_SLUG && row.page_id === null && intent.mode === 'append';
+  if (!firstHolding && (!snapshot || snapshot.page.deleted_at || snapshot.page.id !== row.page_id)) {
     throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is released into was deleted or recreated; the fact stays held.`);
   }
   const p = hold.payload;
   const fact: NewFact & { valid_from: Date } = {
-    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? row.slug,
+    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? (row.slug === UNATTRIBUTED_MEMORY_SLUG ? null : row.slug),
     visibility: p.visibility === 'world' ? 'world' : 'private', source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context),
     source_session: str(p.source_session), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(),
     valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null, embedding: null, embedding_model: null, ...claimColumns(p as never),
@@ -200,7 +207,7 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
     ? { mode: 'index-existing', rowNum: intent.row_num!, fact, pendingTier: 'user_confirmed' }
     : { fact, pendingTier: 'user_confirmed' });
   if (intent.mode === 'index-existing') {
-    const cell = await cellAt(engine, snapshot.page, intent.row_num!);
+    const cell = await cellAt(engine, snapshot!.page, intent.row_num!);
     if (cell && ((cell.context ?? null) !== (str(p.context) ?? null) || (cell.source ?? FENCE_SOURCE_DEFAULT) !== (str(p.source) ?? FENCE_SOURCE_DEFAULT))) {
       throw opError('fence_row_changed', `Fence row ${intent.row_num} of ${row.slug} was edited after h${hold.id} was held (held_row_edited); nothing was changed and the fact stays held.`,
         `The row's context or source no longer matches what h${hold.id} held, so releasing it would index content the owner did not review, and releasing h${hold.id} again refuses the same way. Drop it (gbrain trust drop h${hold.id}); if the edit was itself held, gbrain trust review lists it separately.`,
@@ -217,7 +224,7 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   };
   const page = append.prepared;
   return {
-    ...(page ?? {}), observedRevision: snapshot.revision,
+    ...(page ?? {}), observedRevision: snapshot?.revision ?? null,
     trust: { tier: 'user_confirmed', origin: { channel: 'trust_release', ...(hold.request_id ? { request_id: hold.request_id } : {}),
       ...(intent.mode === 'index-existing' ? { fields_previewed: true as const } : {}) } },
     validate: async tx => { await lockHold(tx); await assertFactNotWithdrawn(tx, row.source_id, claim); await page?.validate?.(tx); },

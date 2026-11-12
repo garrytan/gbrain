@@ -8,7 +8,9 @@
  * `WATCHDOG_SUSPECT_MARK` appended to its history (`stacktrace`, append-only,
  * so the mark outlives the worker and survives handler progress writes). A
  * marked job is claimed only by a worker with nothing in flight, and that
- * worker claims nothing else beside it (worker.ts), so the next trip is
+ * worker claims nothing else beside it (worker.ts); GST-2529: once it has waited
+ * the worker's `watchdogSuspectWaitMs`, a busy worker stops claiming until it
+ * drains, so a steady stream of other jobs cannot hold it back. The next trip is
  * attributable: a job that trips the watchdog while it ran alone is charged
  * (an attempt, dead at max attempts) and stays marked.
  *
@@ -32,7 +34,7 @@ export function appendSuspectMarkSql(param: string): string {
 }
 
 /** SQL true for a job carrying the mark ($n). */
-function markedJobSql(param: string): string {
+export function markedJobSql(param: string): string {
   return `(COALESCE(stacktrace, '[]'::jsonb) @> jsonb_build_array(${param}::text))`;
 }
 

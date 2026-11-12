@@ -24,8 +24,8 @@ const RESOLVED = (source: string, slug: string) => `SELECT ${slug} UNION SELECT 
           UNION SELECT h.new_slug FROM slug_rename_history h WHERE h.source_id = ${source} AND h.old_slug = ${slug}`;
 const DECLARED = `jsonb_array_elements_text(CASE WHEN jsonb_typeof(fm->'derived_from') = 'array' THEN fm->'derived_from' ELSE jsonb_build_array(fm->'derived_from') END)`;
 
-export const v306: Migration = {
-  version: 306,
+export const v308: Migration = {
+  version: 308,
   name: 'access_labelled_only',
   idempotent: true,
   sql: `

@@ -25,6 +25,7 @@ import { opError } from '../ops/contract.ts';
 import { currentHoldStore, trustKillSwitchState } from './owner-actions.ts';
 import { getTrustProposal, listTrustProposals, pendingTrustProposalsFor, trustProposalRef, type TrustProposalAction, type TrustProposalRow } from './proposals.ts';
 import { lowerPageState, readPageTrustState } from './page-handlers.ts';
+import { heldLabelsText } from './page-write.ts';
 import { TRUST_MARKER_REPAIR_COMMAND } from './marker-repair.ts';
 import { formatTrustRef, pageRef, parseTrustRef, resolvePageRef } from './refs.ts';
 import { compareTrust, OWNER_TIER_FLOOR, storedTrustTier, trustLabel, USER_SAID_ORIGIN_MARKER, type TrustTier } from './tier.ts';
@@ -142,7 +143,8 @@ function proposalItem(p: TrustProposalRow, page: string | null, markerRepair = f
     return {
       ref, kind: 'lowered_page', detail: p.action, source_id: p.source_id, page, day: day(p.updated_at), created_at: p.created_at,
       tier: s.edited_tier, label: trustLabel(s.edited_tier),
-      summary: `An agent edit lowered ${page ?? `page ${p.target_id}`} from "${trustLabel(s.prior_tier)}" to "${trustLabel(s.edited_tier)}"`,
+      summary: `An agent edit lowered ${page ?? `page ${p.target_id}`} from "${trustLabel(s.prior_tier)}" to "${trustLabel(s.edited_tier)}"`
+        + (s.labels ? `; it asked to widen privacy labels (${heldLabelsText(s.labels)}), which stay as they were until you confirm` : ''),
       commands: { confirm: trust('confirm', ref), ...(s.version_id !== null ? { revert: trust('revert', ref) } : {}), drop: trust('drop', ref),
         ...(markerRepair ? { repair: [...TRUST_MARKER_REPAIR_COMMAND] } : {}), explain: trust('explain', ref) },
     };
