@@ -10,6 +10,7 @@ import { replaceWantedLinks, type WantedLinksReplacement } from './wanted-links-
 import { applyTemporalEvidence, relationshipKeysForOrigin, type TemporalBody } from './link-temporal-apply.ts';
 import { primeRelationSemantics } from './link-semantics-pack.ts';
 import { effectiveRangesEnabled, LINK_EXTRACTION_GENERATION_KEY, type LineGrammarSettings } from './line-grammar.ts';
+import { isLockTimeoutError } from './retry-matcher.ts';
 
 export interface DerivedLinkOrigin {
   slug: string;
@@ -29,6 +30,8 @@ export interface DerivedLinkReplacementOptions {
   preserveExisting?: boolean;
   includeLegacyNullProducer?: boolean;
   expectedEndpoints?: Array<{ slug: string; sourceId: string; revision: string }>;
+  /** Bounds only the page-lock acquisition. */
+  lockTimeoutMs?: number;
   /** The origin's unresolved authored references, replaced in the same transaction (wanted pages). */
   wanted?: WantedLinksReplacement;
   /** The caller installed the pack relation semantics already (links-preparation.ts `primeSemantics`). */
@@ -56,6 +59,14 @@ export class DerivedLinkEndpointChangedError extends Error {
   readonly code = 'revision_conflict';
 }
 
+export class PageLockBusyError extends Error {
+  readonly code = 'page_lock_busy';
+  constructor(origin: Pick<DerivedLinkOrigin, 'sourceId' | 'slug'>, cause: unknown) {
+    super(`Page write lock is busy for ${origin.sourceId}:${origin.slug}`, { cause });
+    this.name = 'PageLockBusyError';
+  }
+}
+
 /** The line-grammar settings changed between preparation and publication; the page stays stale and re-extracts. */
 export class DerivedLinkSettingsChangedError extends DerivedLinkEndpointChangedError {
   constructor() { super('Line-grammar settings changed after these links were prepared'); this.name = 'DerivedLinkSettingsChangedError'; }
@@ -81,7 +92,7 @@ export function isConcurrentLinkWriteConflict(error: unknown): boolean {
  * A deferring caller's outcome for one origin: written, left stale by a settings change or a concurrent write, or
  * (#6808) refused because the origin's source or a link target's source has no sources row (the missing source id).
  */
-export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write' | { unknownSource: string };
+export type DeferredDerivedLinkOutcome = { created: number; removed: number } | 'settings_changed' | 'concurrent_write' | 'lock_busy' | { unknownSource: string };
 
 /** replaceDerivedLinksUnlessSettingsChanged for a run that defers (and counts) pages a concurrent writer moved or whose source is gone. */
 export async function replaceDerivedLinksDeferringConflicts(engine: Pick<BrainEngine, 'replaceDerivedLinks'>,
@@ -90,8 +101,28 @@ export async function replaceDerivedLinksDeferringConflicts(engine: Pick<BrainEn
   catch (error) {
     if (error instanceof PageSourceMissingError) return { unknownSource: error.sourceId };
     if (isConcurrentLinkWriteConflict(error)) return 'concurrent_write';
+    if (error instanceof PageLockBusyError) return 'lock_busy';
     throw error;
   }
+}
+
+/** Acquire page guards, bounding only the lock wait when requested. */
+async function acquireDerivedLinkLocks(tx: BrainEngine, prime: () => Promise<void>, lockKeys: () => Promise<unknown>,
+  lockTimeoutMs: number | undefined, origin: Pick<DerivedLinkOrigin, 'sourceId' | 'slug'>): Promise<void> {
+  if (lockTimeoutMs === undefined) {
+    await pipelined(tx, [prime, lockKeys]);
+    return;
+  }
+  await prime();
+  const [{ prior }] = await tx.executeRaw<{ prior: string }>("SELECT current_setting('lock_timeout') AS prior");
+  await tx.executeRaw("SELECT set_config('lock_timeout', $1, true)", [`${Math.max(1, Math.floor(lockTimeoutMs))}ms`]);
+  try {
+    await lockKeys();
+  } catch (error) {
+    if (isLockTimeoutError(error)) throw new PageLockBusyError(origin, error);
+    throw error;
+  }
+  await tx.executeRaw("SELECT set_config('lock_timeout', $1, true)", [prior]);
 }
 
 /** #6808: a page a DB link drain deferred because a source it writes through has no sources row. */
@@ -176,10 +207,9 @@ export async function replaceDerivedLinks(
   const { producers, rows } = derivedLinkRows(origin, links, opts);
   const beliefs = unmanagedBeliefPoint(origin.sourceId, [origin.slug], 'derived_links');
   const result = await engine.transaction(async tx => {
-    await pipelined(tx, [
-      async () => { if (!opts.semanticsPrimed) await primeRelationSemantics(tx); },
-      () => tx.lockPageKeys(derivedLinkLockKeys(origin, rows)),
-    ]);
+    const lockKeys = () => tx.lockPageKeys(derivedLinkLockKeys(origin, rows));
+    const prime = async () => { if (!opts.semanticsPrimed) await primeRelationSemantics(tx); };
+    await acquireDerivedLinkLocks(tx, prime, lockKeys, opts.lockTimeoutMs, origin);
     if (opts.lineGrammar && await lockedExtractionGeneration(tx) !== opts.lineGrammar.generation) throw new DerivedLinkSettingsChangedError();
     const snapshot = origin.snapshot !== undefined ? origin.snapshot : await tx.readPageSnapshot(origin.slug, { sourceId: origin.sourceId });
     return beliefs.run(tx, () => publishDerivedLinks(tx, origin, producers, rows, opts, snapshot));
@@ -207,10 +237,11 @@ export async function replaceDerivedLinksBatch(
   if (!prepared.length) return [];
   const beliefs = prepared.map(item => unmanagedBeliefPoint(item.origin.sourceId, [item.origin.slug], 'derived_links'));
   const results = await engine.transaction(async tx => {
-    await pipelined(tx, [
+    const bounds = prepared.flatMap(item => item.opts.lockTimeoutMs === undefined ? [] : [item.opts.lockTimeoutMs]);
+    await acquireDerivedLinkLocks(tx,
       async () => { if (prepared.some(item => !item.opts.semanticsPrimed)) await primeRelationSemantics(tx); },
       () => tx.lockPageKeys(prepared.flatMap(item => derivedLinkLockKeys(item.origin, item.rows))),
-    ]);
+      bounds.length ? Math.min(...bounds) : undefined, prepared[0].origin);
     if (prepared.some(item => item.opts.lineGrammar)) {
       const generation = await lockedExtractionGeneration(tx);
       if (prepared.some(item => item.opts.lineGrammar && item.opts.lineGrammar.generation !== generation)) throw new DerivedLinkSettingsChangedError();
