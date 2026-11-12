@@ -643,8 +643,8 @@ async function runLockedMigrations(
   const fail = (status: string, failure: OperationError): void => { doc.status = status; report.failure = failure; };
   // Without the orchestration lease (a schema too old for it), schema work goes
   // through initSchema(), which serializes on the schema lock.
-  const migrateSchema = async (eng: BrainEngine, from: number): Promise<{ applied: number; current: number }> => {
-    if (heldLock()) { const { runMigrations } = await import('../core/migrate.ts'); return runMigrations(eng); }
+  const migrateSchema = async (eng: BrainEngine, from: number, replayBlob = false): Promise<{ applied: number; current: number }> => {
+    if (heldLock() && !replayBlob) { const { runMigrations } = await import('../core/migrate.ts'); return runMigrations(eng); }
     await eng.initSchema();
     const current = parseInt(await eng.getConfig('version') || String(from), 10);
     return { applied: Math.max(0, current - from), current };
@@ -704,7 +704,9 @@ async function runLockedMigrations(
       }
       const { engine: eng, version } = await connectAtSchemaVersion(cfg);
       console.log('Running schema migrations from current config.version...');
-      const result = await migrateSchema(eng, version);
+      // --force-schema replays the idempotent schema blob first (initSchema), so a
+      // blob-owned table that went missing exists before the pending migrations run.
+      const result = await migrateSchema(eng, version, true);
       console.log(`Applied ${result.applied} schema migration(s); now at v${result.current}.`);
       doc.schema = result;
       await eng.disconnect();
