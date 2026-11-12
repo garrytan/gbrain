@@ -12,7 +12,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { enforcedAccess, markdownLabels, memberPageView, refuseEnforced } from './enforced-member.ts';
 
 const VALUE_FLAGS = new Set(['-m', '--message', '--path', '--repo', '--base', '--branch', '--resolve', '--expect-remote']);
-const REFUSED_FLAGS = new Set(['--pending', '--push-only', '--resolve', '--expect-remote', '--allow-outside-source-root', '--keep-checkout', '--branch', '--scan-secrets', '--install', '--uninstall']);
+const REFUSED_FLAGS = new Set(['--pending', '--push-only', '--resolve', '--expect-remote', '--allow-outside-source-root', '--keep-checkout', '--branch', '--scan-secrets', '--install', '--uninstall', '--untrack']);
 
 function gitOut(repo: string, args: string[]): string | null {
   try { return execFileSync('git', ['-C', repo, ...args], { stdio: ['ignore', 'pipe', 'ignore'] }).toString(); } catch { return null; }

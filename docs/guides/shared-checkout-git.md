@@ -107,6 +107,9 @@ gbrain git commit-push --pull
 # Commit and push the write-through files gbrain could not commit (doctor's dirty_age names them)
 gbrain git commit-push --pending
 
+# Stop tracking files and keep them on disk (see "Untrack" below)
+gbrain git commit-push --untrack -m "stop tracking the archive" -- archive-example
+
 # Preview: prints the paths, branch and lock it would use; takes no lock, writes nothing
 gbrain git commit-push --dry-run -m "people: add alice-example" -- people/alice-example.md
 ```
@@ -259,6 +262,37 @@ equal the one given. Otherwise the command refuses `commit_base_moved` naming th
 HEAD's blob; nothing is staged or committed. Read the file at HEAD again, redo the change and rerun with
 the new base. Every `--base` path must also be one of the committed paths. Pages the agent also edits
 are better written with `gbrain put` (put_page), which carries its own revision check.
+
+<a id="untrack"></a>
+## Untrack: stop tracking files, keep them on disk
+
+`git rm --cached` followed by a plain commit is the usual way to stop tracking a file, but in a shared
+checkout the commit sweeps up whatever else is staged. `--untrack` does it in one locked step:
+
+```bash
+gbrain git commit-push --dry-run --untrack -m "stop tracking the archive" -- archive-example   # preview
+gbrain git commit-push --untrack -m "stop tracking the archive" -- archive-example
+```
+
+It removes every file the last commit holds under each named path from Git and the index, leaves the files
+on disk, and commits exactly those deletions (anything else staged stays staged and out of the commit; a commit a
+hook changed is taken back). A path the last commit holds nothing under, or a file marked skip-worktree, refuses
+`commit_paths_invalid` before anything changes. In an ordinary checkout the commit is pushed like any other.
+
+In a managed canonical worktree (the checkout gbrain's persistence owner writes), untracking a page file would
+make the next sync delete that page, so `--untrack` there only takes files under a `storage.db_only` directory
+that `gbrain.yml` at HEAD declares and that `.gitignore` ignores. The database row is canonical there, so every
+page stays live with its content. Anything else refuses `untrack_not_db_only` with the index as it was: declare
+the folder first (add it under `storage.db_only` and its `<dir>/` line to `.gitignore`, commit both with
+`gbrain git commit-push -m <msg> -- gbrain.yml .gitignore`), then rerun. The commit stays local, like every
+commit-push there; the owner's next Git publish, or `gbrain git commit-push --push-only --keep-checkout`,
+publishes it.
+
+If you already ran `git rm --cached` by hand, a plain commit-push of those paths refuses
+`commit_paths_skipped` and names the `--untrack` command that commits the removal.
+
+To undo, `git revert <untrack commit>` (then commit-push `--push-only` as usual). The revert writes the
+committed bytes back over the files on disk, so copy any local edit to them first.
 
 ## Source roots
 

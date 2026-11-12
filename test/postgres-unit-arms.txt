@@ -78,6 +78,7 @@ test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
+test/db-only-labels-gst2519.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
@@ -132,6 +133,7 @@ test/git-canonical-conversion-progress.test.ts
 test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
 test/git-canonical-indexer-g3.test.ts
+test/git-commit-push-untrack-gst2519.test.ts
 test/git-door-index-lock-7742.test.ts
 test/git-door-planned-state.test.ts
 test/git-door-plumbing-gbra133.test.ts

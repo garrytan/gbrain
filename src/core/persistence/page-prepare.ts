@@ -424,6 +424,11 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
       options = { ...options, deleting: true };
     } else await assertLfsTarget(engine, row, root, path, options.remote === true);
   }
+  // GST-2519: the live file check (liveFileDrift: no content) of a strict page declared git_ignored, whose path Git still
+  // ignores, finds no file target, as its publication does; a page whose ignore rule is gone is still checked for its file.
+  if (binding.canonical_git === true && content === null && options.deleting !== true && snapshot && !snapshot.page.deleted_at && !snapshot.page.source_path && !existsSync(path)
+    && (await engine.executeRaw<{ reason: string | null }>('SELECT database_only_reason AS reason FROM pages WHERE id=$1', [snapshot.page.id]))[0]?.reason === 'git_ignored'
+    && await waitingOnWhile(options.clock, 'git', () => ignoredTarget(root, path))) return undefined;
   if (options.newPageIgnoredDatabaseOnly && !snapshot && content !== null && !existsSync(path) && !isSourceDbOnlySlug(root, row.slug, 'not_db_only') && await waitingOnWhile(options.clock, 'git', () => gitIgnoresUntracked(root, relative(root, path).split(sep).join('/')))
     && !(await gitDurabilityPolicy(binding, root)).durable) return undefined;
   if (options.excludeTombstone && snapshot?.page.deleted_at) {

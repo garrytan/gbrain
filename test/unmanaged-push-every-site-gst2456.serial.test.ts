@@ -1,6 +1,6 @@
 /**
  * GST-2456 (#8902 part 2): every push gbrain makes from an unmanaged checkout range-scans the commits it publishes:
- * `gbrain git commit-push` in commit mode and with --pending, the post-commit hook harden installs, the durability
+ * `gbrain git commit-push` in commit mode, with --pending and with --untrack, the post-commit hook harden installs, the durability
  * helper's `_run` (and its fallback, which now pushes nothing without gbrain), with tags never riding along. Also
  * `gbrain sources push` against an upstream that is not origin, its --json refusal, and the scan's time budget. Real git
  * against local bare remotes; synthetic credentials only. HOME, GBRAIN_HOME, PATH and the file transport switch are
@@ -108,6 +108,18 @@ describe('gbrain git commit-push', () => {
     expect(envelope(r.stdout).code ?? envelope(r.stdout).error).toBe('publish_secret_found');
     expect(remoteTip()).toBe(base);
     expect(git(root, 'show', 'HEAD:pending.md')).toBe('written through');
+  }, T);
+
+  test('--untrack refuses the earlier commits it would push and keeps its own untrack commit', () => {
+    removedSecret();
+    const r = cli(['git', 'commit-push', '--untrack', '--json', '-m', 'stop tracking the readme', '--', 'README.md']);
+    expect(r.status).not.toBe(0);
+    expect(envelope(r.stdout).code ?? envelope(r.stdout).error).toBe('publish_secret_found');
+    expect(r.stdout + r.stderr).not.toContain(TOKEN);
+    expect(remoteTip()).toBe(base);
+    expect(git(root, 'ls-tree', '--name-only', 'HEAD', '--', 'README.md')).toBe('');
+    expect(git(root, 'log', '-1', '--format=%s')).toBe('stop tracking the readme');
+    expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe('initial\n');
   }, T);
 
   test('--push-only, the unattended cron form with --keep-checkout included, scans without --scan-secrets', () => {
