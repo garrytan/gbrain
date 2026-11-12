@@ -74,6 +74,12 @@ describe('analyzeSkillDrift', () => {
       ['SKILL_DRIFT_UNKNOWN_TOOL', 'get_page'],
     ]);
   });
+
+  test('a command the dispatcher routes elsewhere is checked against the command it reaches', () => {
+    const real = cliSurface();
+    expect(analyzeSkillDrift('f', skill('`gbrain skills resolve --text <request> --json`'), real).findings).toEqual([]);
+    expect(analyzeSkillDrift('f', skill('`gbrain skills resolve --txt <request>`'), real).findings.map(f => f.code)).toEqual(['SKILL_DRIFT_UNKNOWN_FLAG']);
+  });
 });
 
 test('nearest returns only a close candidate', () => {

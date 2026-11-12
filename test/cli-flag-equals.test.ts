@@ -444,6 +444,7 @@ describe('#7619 split rules', () => {
       'src/cli/enforced-commit-push.ts': 'git child argv',
       'src/cli/enforced-member.ts': 'the GBRAIN_ENFORCED_MEMBER gate reads both forms of the recall and sync flags it checks, so an = spelling cannot skip a refusal or the source check',
       'src/core/bootstrap/repo.ts': 'git child argv',
+      'src/commands/upgrade.ts': 'bun child argv (--backend=copyfile)',
     };
     const READER = [/['"`]--[a-z0-9-]+=/, /(?:startsWith|indexOf|===)\(?\s*`\$\{\w+\}=`/, /startsWith\(\w+ \+ '='\)/];
     const found = [...new Glob('src/**/*.ts').scanSync('.')].filter(p => !p.endsWith('.generated.ts') && READER.some(r => r.test(readFileSync(p, 'utf8'))));

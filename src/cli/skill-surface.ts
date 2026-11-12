@@ -12,6 +12,7 @@ import { cliAliases, validateCommandFlags } from './flag-validation.ts';
 import { findUnknownFlag } from './flag-equals.ts';
 import { parseGlobalFlags } from '../core/cli-options.ts';
 import { CLI_FLAG_REGISTRY } from '../core/cli-flag-registry.generated.ts';
+import { routeCommand } from './command-route.ts';
 
 export function cliSurface(): CliSurface {
   const opNames = OPERATION_MANIFEST.map(op => op.name);
@@ -21,7 +22,8 @@ export function cliSurface(): CliSurface {
     isCommand: name => CLI_ONLY.has(name) || cliOps.has(name) || cliAliases.has(name),
     subcommands: command => ROUTERS[command]?.bareHelpFirst ? ROUTERS[command]!.subcommands : undefined,
     stripGlobalFlags: argv => parseGlobalFlags(argv).rest,
-    unknownFlag: (command, args) => {
+    unknownFlag: (asWritten, argv) => {
+      const { command, subArgs: args } = routeCommand(asWritten, argv);
       if (!CLI_ONLY.has(command) && ROUTERS[command]?.subcommands.includes(args[0] ?? '')) {
         const legal = CLI_FLAG_REGISTRY[command];
         return legal ? findUnknownFlag(args, new Set(legal)) : null;

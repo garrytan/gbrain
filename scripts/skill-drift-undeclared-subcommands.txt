@@ -2,6 +2,7 @@
 # that declare no subcommands in src/cli/subcommands.ts, so scripts/check-skill-health.ts can only
 # check their flags. Shrink-only: declaring a command's subcommands (ROUTERS, bareHelpFirst) removes
 # it from this list, and a stale line fails. Add a command only in a reviewer-visible commit.
+access
 agent
 auth
 autopilot

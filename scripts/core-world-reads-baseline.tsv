@@ -57,7 +57,8 @@ src/core/ai/probes.ts	process_env	3	W3: AI settings arrive on the engine
 src/core/ai/provider-env.ts	process_env	2	W3: AI settings arrive on the engine
 src/core/ai/providers/claude-cli-continuation.ts	module_collection	1	W3: per-engine gateway state
 src/core/ai/providers/claude-cli-language-model.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/ai/providers/claude-cli-language-model.ts	process_env	3	W3: AI settings arrive on the engine
+src/core/ai/providers/claude-cli-language-model.ts	module_collection	1	W3: per-engine gateway state (the per-binary claude --version probe cache, #8350)
+src/core/ai/providers/claude-cli-language-model.ts	process_env	4	W3: AI settings arrive on the engine (adds the GBRAIN_CLAUDE_CLI_USER_SETTINGS opt-in, #8350)
 src/core/ai/providers/claude-cli-language-model.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/ai/providers/claude-cli-scratch.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ai/query-embed-cache.ts	module_collection	1	W3: per-engine gateway state
