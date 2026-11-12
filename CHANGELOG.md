@@ -10,6 +10,17 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**Sync no longer wedges on a source with thousands of old file-drift holds, and `sync status` stops calling a source synced while new commits wait**
+
+Since v0.60.677.0, every unknown-side `file_drift` hold written under the earlier drift screen is screened once more, and that screen reads each held path's earlier committed versions. It read them with one Git process per path and reported nothing while it ran. On a source with thousands of such holds, the pass stayed silent past the sync's 300-second no-progress check and was stopped (`drain_stalled`) before it stamped any hold, so every later pass repeated the same reads and the source never synced again.
+
+- The re-screen now reads every held path's history through one `git cat-file --batch-check` per 2,000 paths, with no file bodies, and reports progress as each path's history arrives. A Git read that hangs still reports nothing, so the no-progress check still stops it. On a generated repository with 80,000 files and 3,000 commits, 10,000 holds took 6.2 s instead of 141 s, and 80,000 holds took 66 s instead of 17 minutes. The longest silence was 36 ms instead of the whole read.
+- A pass stopped partway keeps the holds it re-screened, and the next pass reads only the rest.
+- `gbrain sync status` reads `resumable` / `commits_waiting` when nothing else is pending but the checkout's HEAD is past the last synced commit, with a `next` that runs the sync. It used to read `synced` / `nothing_pending` until the next sync happened to run.
+- With `sync.on_commit` off, the notifier's fix now says so, instead of saying that no resident runs.
+
 ## [0.60.685.0] - 2026-11-12
 
 **`remember` now tells the truth about a fact saved for something that has no page yet, a source that lives in Git keeps that fact in Git, and the brain owner's own agents save facts shared by default.** Three changes to how agents save and withdraw facts land together.
