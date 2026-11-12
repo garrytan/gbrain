@@ -485,9 +485,9 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const fenceHolds = committed?.fence_held ? await (await import('../generations/fence.ts')).fenceHoldEntries(engine, [sourceId]) : [];
   const settled = statusState({ human: !!(liveError?.needs_human), heldForHuman: holds.some(hold => hold.needs_human), oldest, recovery, liveJob: liveJob !== null, unfinished, lastError: !!liveError, actionable: actionable.length > 0, holds: holds.length > 0, pass: passState });
   // GST-2515: a source with nothing else pending is not synced while its checkout has commits past the last synced commit.
-  // A scoped convergence keeps last_commit by design, a hold that needs a person keeps its own reason, and a writeback still
-  // integrating is the source's own commit.
-  const waiting = (settled[1] === 'nothing_pending' || settled[1] === 'held_by_design') && !gitPushHolds.length && source.last_commit
+  // A scoped convergence keeps last_commit by design, a hold that needs a person keeps its own reason, a writeback still
+  // integrating is the source's own commit, and an open worktree refresh or fence hold names its own next step.
+  const waiting = (settled[1] === 'nothing_pending' || settled[1] === 'held_by_design') && !gitPushHolds.length && !fenceHolds.length && !worktreeRefresh && source.last_commit
     ? await commitsPastLastSync(engine, sourceId, source.last_commit) : null;
   const [state, stateReason]: [SyncStatusState, SyncStatusReason] = waiting ? ['resumable', 'commits_waiting'] : settled;
   const admission = await syncAdmissionStatus(engine, sourceId, source.incarnation,
