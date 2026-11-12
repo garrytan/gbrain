@@ -777,7 +777,8 @@ A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
 In gbrain, a credential bound to one member withdraws only facts on its own
 member page (another fact it reads is refused naming the brain host); the
-brain owner's own credential also withdraws a shared fact it reads.
+brain owner's own credential also withdraws a shared fact it reads, and a
+private fact it reads on a page that credential can write.
 
 #### forget publishes like a page write (additive note)
 

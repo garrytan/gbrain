@@ -148,7 +148,10 @@ credential (or a stdio server started with `--stdio-member <owner>`), speaking f
 subagent job, no slug fence), saves like a credential bound to no member: shared on the subject's page, or `private` on its member page when it passes `visibility: "private"` or the
 page or `facts.default_visibility` keeps facts private (the reply names the `page` and `visibility`; an explicit
 `visibility: "world"` onto a page whose facts are kept private is refused, `share_target_restricted`), and its
-`forget` withdraws a shared fact it reads. The trade-off: an owner agent that follows a planted instruction can share a fact
+`forget` withdraws a shared fact it reads, and a private fact it reads on a page its credential can write (one the brain
+host saved with `visibility: "private"`, for example). A fact on a `visibility: private` page, on a page that names readers or on another
+member's page stays with the brain host, and one the owner confirmed or curated files a `forget_requires_owner`
+proposal instead, as for a shared fact. The trade-off: an owner agent that follows a planted instruction can share a fact
 without passing any flag, so pass `visibility: "private"` for a fact that must stay with the owner. Extracted facts follow `facts.default_visibility` (private when unset)
 and are never wider than their page. Remote fact reads return private facts to the owner only.
 
