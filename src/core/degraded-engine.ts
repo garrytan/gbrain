@@ -185,6 +185,10 @@ export function createDegradedEngine(opts: DegradedEngineOptions): BrainEngine {
         if (name === 'constructor' || name in target) continue;
         const desc = Object.getOwnPropertyDescriptor(proto, name);
         if (desc && typeof desc.value === 'function') target[name] = (...args: unknown[]) => (own[name] as (...a: unknown[]) => unknown).apply(engine, args);
+        // A getter only the live engine's class has (PGLite's `db`) must reach callers too, or `tryAcquireDbLock` sees no handle.
+        else if (desc && typeof desc.get === 'function' && name !== 'kind') {
+          Object.defineProperty(target, name, { get: () => (live ? (live as unknown as Record<string, unknown>)[name] : undefined), enumerable: true, configurable: true });
+        }
       }
       proto = Object.getPrototypeOf(proto);
     }
