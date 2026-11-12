@@ -499,6 +499,7 @@ test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
 test/privacy-label-ignored.test.ts
+test/physical-root-moved-8625.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
 test/purge-expires-page-facts.test.ts
@@ -679,6 +680,7 @@ test/sync-waiver-run-imports.test.ts
 test/take-resolution-survives-publish.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
+test/think-remote-model.test.ts
 test/timeline-chunk-reuse.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
