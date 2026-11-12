@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.693.0] - 2026-11-12
 
 **The brain owner's own agents can now withdraw a private fact the brain host saved.** A credential bound to the brain owner (`gbrain access owner set`) reads private facts, but its `forget` refused one the host had saved with `visibility: "private"` and said only the brain host could withdraw it. Now, speaking for itself, the owner's credential (or a stdio server started with `--stdio-member <owner>`) withdraws a private fact it reads when the page that holds it is one the credential can already write. The fact is struck in the page's file on a brain with a Git repository, and on a strict source a fact held for an entity with no page is struck in `memory/unattributed`, so a rebuild from Git keeps it withdrawn. Three things stay as they were. A fact on a `visibility: private` page, on a page whose readers leave the owner out or on another member's page is still withdrawn on the brain host (`gbrain forget <id>`). A fact the owner confirmed or curated still asks the owner first (`forget_requires_owner`). Member credentials, attested calls (`x-qm-actor`), audiences, subagent jobs, slug-fenced clients and unbound connections get exactly the answers they got before.
 
