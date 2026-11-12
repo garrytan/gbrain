@@ -14,6 +14,11 @@
  *  - `multi_channel_chat`: the read set holds remote-visible chat pages from
  *    MULTI_CHANNEL_MIN or more distinct channels (every DM page counts alone).
  *
+ * The warning applies only to a brain that serves several people
+ * (access.serves, src/core/access/serves.ts): on a one-person brain every
+ * credential reads that person's own pages, so nothing is flagged. When whom
+ * the brain serves cannot be read, the warning stays on.
+ *
  * Every input is a database row or a harness config file (read by
  * src/commands/shared-exposure-local.ts), never git, so a repo-less brain is
  * covered the same way as a repo brain.
@@ -27,6 +32,7 @@ import { localFederatedSourceIds, resolveSourceWithTier } from '../source-resolv
 import { privatePagesFilterFragmentFast, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { pageTypesForAllowed } from '../facts/conversation-types.ts';
 import type { PrincipalGrant } from './model.ts';
+import { brainServes } from '../access/serves.ts';
 
 export const NOTICE_CODE = 'unscoped_multi_user_token';
 export const BOT_HARNESSES: readonly string[] = ['openclaw', 'hermes', 'grok-bot', 'muse'];
@@ -38,6 +44,17 @@ export const MULTI_CHANNEL_MIN = 2;
 const DOCS = 'docs/mcp/ADMIN.md#one-token-several-people';
 
 export type ExposureReason = 'bot_harness' | 'channel_plugin' | 'multi_channel_chat';
+/** Whom the brain serves: 'one' silences the warning, null (unreadable) keeps it. */
+export type ExposureServes = 'one' | 'several' | null;
+
+/** brainServes for the warning; null when it cannot be read, so an install route never fails on its warning. */
+export async function exposureServes(engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>): Promise<ExposureServes> {
+  try {
+    return (await brainServes(engine)).serves;
+  } catch {
+    return null;
+  }
+}
 /** `chat_sources`: the read sources that hold chat; channels across 2+ of them can be split by source grants, within one they cannot. */
 export interface ChatCensus { sources: string[]; chat_pages: number; channels: number; chat_sources: string[] }
 
@@ -123,7 +140,14 @@ export function subjectLabel(s: ExposureSubject): string {
 /** Source grants can separate channels only when they sit in different sources. */
 const splitBySource = (census: ChatCensus | null | undefined): boolean => !census || census.chat_sources.length >= 2;
 
-/** The narrowing command: a credential's rescope, or a stdio server pinned to one source. Null when no source split exists. */
+/** The binding command: a credential bound to a member, or the harness's people labelled and its server bound. */
+export function bindArgv(s: ExposureSubject): string[] {
+  if (s.kind === 'legacy_token') return ['gbrain', 'auth', 'rescope', '--token', s.name, '--member', '<member>'];
+  if (s.kind === 'oauth_client') return ['gbrain', 'auth', 'rescope', '--client', s.id, '--member', '<member>'];
+  return ['gbrain', 'setup', s.harness, '--serves', 'several', '--members', '<id,...>'];
+}
+
+/** The narrowing command: a credential's source rescope, which leaves it unbound. Null when no source split exists. */
 export function narrowArgv(s: ExposureSubject, census?: ChatCensus | null): string[] | null {
   if (!splitBySource(census)) return null;
   if (s.kind === 'legacy_token') return ['gbrain', 'auth', 'rescope', '--token', s.name, '--sources', '<source>'];
@@ -145,38 +169,40 @@ const PER_PERSON = 'Per-person access: give each person\'s agent its own credent
   + 'Never bind a shared agent\'s credential to one person: it then reads as that person for everyone who talks to it.';
 
 /**
- * Today's fixes, chosen by where the chat lives, then the per-person setup.
- * One string so every route prints the same commands.
+ * The fixes, binding first: a credential bound to the person who uses the
+ * agent, or to the audience several people share; then the narrowings, which
+ * leave the credential unbound. One string so every route prints the same commands.
  */
 export function remedyText(s: ExposureSubject, census?: ChatCensus | null): string {
-  const steps: string[] = [];
+  const target = s.kind === 'legacy_token' ? `--token ${s.name}` : s.kind === 'oauth_client' ? `--client ${s.id}` : null;
+  const steps: string[] = [target
+    ? `bind the credential to the person who uses this agent (gbrain auth rescope ${target} --member <id>), or, for one agent several people share, to their audience (gbrain auth rescope ${target} --may-act-for <members>; its harness then names each request's audience)`
+    : `label each person and bind this harness's server (${bindArgv(s).join(' ')}; --stdio-member <member> when one person alone uses the harness)`];
   if (splitBySource(census)) {
     steps.push(s.kind === 'stdio'
-      ? 'pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment and running gbrain sources unfederate <source> (a federated sibling source stays nameable)'
-      : `grant one audience's source only (${narrowArgv(s, census)!.join(' ')}; a new harness grant: gbrain mcp grant <name> --source <source> --federated-read <source>)`);
+      ? 'narrowing only, which leaves the server unbound: pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment and running gbrain sources unfederate <source> (a federated sibling source stays nameable)'
+      : `narrowing only, which leaves the token unbound: ${narrowArgv(s, census)!.join(' ')} (a new harness grant: gbrain mcp grant <name> --source <source> --federated-read <source>)`);
     steps.push('keep a channel\'s source out of unscoped reads (gbrain sources unfederate <id>)');
   } else {
     steps.push(`the chat sits in one source (${census!.chat_sources[0]}), so a source grant cannot separate it`);
   }
   steps.push('mark pages nobody else may see visibility: private (hidden from this agent unless its access may read private pages)');
-  return `Fix: ${steps.join('; ')}. source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token's full grant; the fix is ${splitBySource(census) ? 'a narrower grant (gbrain auth rescope …) or per-person access' : 'per-person access'}, not per-call narrowing. ${PER_PERSON}`;
+  return `Fix: ${steps.join('; ')}. source_ids narrows only the call that sends it, so recall, list_pages or any read without it reads the token's full grant; the fix is per-person access, not per-call narrowing. ${PER_PERSON}`;
 }
 
 export function exposureFix(s: ExposureSubject, census?: ChatCensus | null): Action {
-  const argv = narrowArgv(s, census);
   const verify = { argv: ['gbrain', 'doctor', '--only', NOTICE_CODE, '--json'] };
   const message = `${subjectLabel(s)} lets the agent read every channel it reaches, so when several people use the agent it may show one person another person's messages. ${remedyText(s, census).replace(/^Fix: (.)/, (_m, c: string) => c.toUpperCase())}`;
-  if (argv) {
-    return { ask_user: true, argv, consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS, verify,
-      inputs: [{ name: 'source', how: 'Ask the user which one source this agent\'s audience may read (gbrain sources list).' }],
-      why: 'Narrowing the grant limits what the agent can show anyone to one audience\'s source; the secret is unchanged.', user_message: message };
-  }
-  return { ask_user: true, consent: [], actor: 'user', requires_exclusive: false, docs: DOCS, verify,
-    why: 'Scoping this agent is the user\'s choice: a credential per person, a shared-channel audience, one source, private pages or a narrower deployment.', user_message: message };
+  return { ask_user: true, argv: bindArgv(s), consent: ['credentials'], actor: 'agent', requires_exclusive: false, docs: DOCS, verify,
+    inputs: s.kind === 'stdio'
+      ? [{ name: 'id,...', how: 'Ask the user who talks to this agent (gbrain access member list); use --stdio-member <member> instead when one person alone uses it.' }]
+      : [{ name: 'member', how: 'Ask the user which member uses this agent (gbrain access member list); when several people share it, rescope with --may-act-for <members> instead.' }],
+    why: 'A bound credential reads only what its member, or each request\'s audience, may read; the secret is unchanged.', user_message: message };
 }
 
-/** The install-time warning. Null when no signal holds. */
-export function sharedTokenNotice(s: ExposureSubject, input: { harness?: string; channelPlugins?: readonly string[]; census?: ChatCensus | null }): Notice | null {
+/** The install-time warning. Null when the brain serves one person or no signal holds. */
+export function sharedTokenNotice(s: ExposureSubject, input: { harness?: string; channelPlugins?: readonly string[]; census?: ChatCensus | null; serves?: ExposureServes }): Notice | null {
+  if (input.serves === 'one') return null;
   const reasons = exposureReasons(input);
   if (reasons.length === 0) return null;
   const fix = exposureFix(s, input.census);

@@ -32,7 +32,7 @@ import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook,
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
-import { renderedExposure, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
+import { BOT_HARNESSES, renderedExposure, sharedTokenNotice, writeExposureNotice, type ExposureServes } from '../core/grants/shared-exposure.ts';
 import { claudeCodeChannelPlugins } from './shared-exposure-local.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
 import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
@@ -580,7 +580,7 @@ export async function runSetup(args: string[]): Promise<number> {
       const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
-      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions, skills, resolver, serves });
+      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions, skills, resolver, serves, launcher });
     }
 
     let notices: Notice[] = [];
@@ -605,7 +605,7 @@ export async function runSetup(args: string[]): Promise<number> {
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices, notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves });
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves, launcher });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
@@ -961,6 +961,12 @@ function describeInstructions(o: BrainFirstOutcome, dryRun: boolean): string {
   return `${describeBrainFirstOutcome(o, dryRun)} [${o.decision.source}; ${how}]`;
 }
 
+/** Whom the brain behind this launcher serves, for the shared-token warning; null when it cannot be read (the warning stays on). */
+function exposureServesVia(launcher: string | null | undefined): ExposureServes {
+  const read = launcher && launcher.startsWith('/') ? readServesStatus(launcher) : null;
+  return read && 'status' in read ? read.status.serves : null;
+}
+
 /** --serves several on the instructions alone: the brain must serve several people and its stdio server be bound. */
 function servesBound(flags: SetupFlags): boolean {
   const launcher = flags.gbrainBin ?? resolveGbrainBin();
@@ -983,7 +989,8 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
   const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
   const mcp = { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
-  const exposure = flags.remove ? null : sharedTokenNotice({ kind: 'stdio', harness }, { harness });
+  const exposure = flags.remove || !BOT_HARNESSES.includes(harness) ? null
+    : sharedTokenNotice({ kind: 'stdio', harness }, { harness, serves: exposureServesVia(flags.gbrainBin ?? resolveGbrainBin()) });
   const notices = renderedExposure(exposure);
   if (!isBrainFirstHarness(harness)) {
     const pasted: BrainFirstAccess = adapter.connection === 'thin-cli' ? { kind: 'cli', launcher: flags.gbrainBin ?? 'gbrain' } : access;
@@ -1104,11 +1111,13 @@ async function finish(out: Out, doc: {
   turnHook?: TurnHookVerdict | null;
   resolver?: ResolverSetupResult | null;
   serves?: ServesOutcome | null;
+  launcher?: string;
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
   const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) ? 1 : 0;
-  const exposure = harness === 'claude-code' && !doc.remove ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: claudeCodeChannelPlugins() }) : null;
+  const plugins = harness === 'claude-code' && !doc.remove ? claudeCodeChannelPlugins() : [];
+  const exposure = plugins.length ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: plugins, serves: exposureServesVia(doc.launcher) }) : null;
   const notices = exposure ? [...doc.notices, exposure] : doc.notices;
   if (out.json) {
     await writeJsonDocument(`${JSON.stringify({

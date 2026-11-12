@@ -35,7 +35,7 @@ import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type
 import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, type ClientGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from '../core/agent-output.ts';
 import type { INSTALL_SURFACE_SET_BY } from '../mcp/surface.ts';
-import { credentialCensus, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
+import { credentialCensus, exposureServes, sharedTokenNotice, writeExposureNotice } from '../core/grants/shared-exposure.ts';
 import { migrateLegacyTokens, parseRescopeTokenArgs, renderLegacyGrantAxis, rescopeLegacyToken, resolveRescopeTarget, type MigrateLegacyResult, type RescopeTokenResult } from '../core/grants/legacy-token.ts';
 import { bindCredential, type BindingPatch, type BindingResult } from '../core/access/members.ts';
 import { bindingLine, checkBindingTarget, takeBindingFlags } from './auth-binding.ts';
@@ -103,7 +103,7 @@ async function create(name: string, opts: { takesHolders?: string[]; scopes?: st
       console.log(`Revoke with: gbrain auth revoke "${name}" (or gbrain auth revoke --id <id> from auth list)`);
       console.log(`Change its grants: gbrain auth rescope --token "${name}" --takes-holders world,garry (or --sources, --operations)`);
       const grant = { principal: { kind: 'legacy_token' as const, id }, scopes: opts.scopes ?? ['read', 'write', 'admin'], sources: { kind: 'default' as const } };
-      if (!opts.binding?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'legacy_token', name }, { census: await credentialCensus(engine, grant) }));
+      if (!opts.binding?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'legacy_token', name }, { census: await credentialCensus(engine, grant), serves: await exposureServes(engine) }));
     });
   } catch (e: any) {
     if (e instanceof OperationError) exitCliError(e, 'auth');
@@ -786,7 +786,7 @@ async function registerClient(name: string, args: string[]) {
       }
       if (bound) console.log(bindingLine(bound));
       const grant = await readClientGrant(engine, registered.clientId).then(grantFromClient).catch(() => null);
-      if (grant && !binding.patch?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'oauth_client', id: registered.clientId, name }, { census: await credentialCensus(engine, grant) }));
+      if (grant && !binding.patch?.mayActFor?.length) writeExposureNotice(sharedTokenNotice({ kind: 'oauth_client', id: registered.clientId, name }, { census: await credentialCensus(engine, grant), serves: await exposureServes(engine) }));
     });
   } catch (e: any) {
     if (e instanceof OperationError) exitCliError(e, 'auth');
