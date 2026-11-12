@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.696.0] - 2026-11-12
 
 **`gbrain mcp verify` now passes its write check on a credential bound to a member.** The verifier's test fact was always sent with `visibility: "world"`, which `remember` refuses for a member credential, so every member-bound connection showed "write" and "write_readback" as failed even when it was set up correctly. A member-bound credential now saves the test fact the way a member's own saves go by default. It is kept private on that member's page, where no other member reads it. The verifier reads the fact back and withdraws it, as before. A credential bound to no member still shares its test fact explicitly, so a brain whose `facts.default_visibility` is private still reads it back. Page mode (`coding-agent` profiles and credentials with direct-write prefixes) had a second mistake: its `put_page` call passed a `title` parameter the tool doesn't declare, so every page-mode write was refused. The title now goes in the page's frontmatter. The same fixes apply to the verify step inside `gbrain connect … --install`.
 
