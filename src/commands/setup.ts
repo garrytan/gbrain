@@ -1020,7 +1020,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const turnHook = !off && !placed ? null : harness === 'hermes'
     ? (off ? removeHermesTurnHook({ hermesHome: dirname(target.path), dryRun: flags.dryRun }) : syncHermesTurnHook({ hermesHome: dirname(target.path), access, dryRun: flags.dryRun }))
     : harness === 'openclaw'
-      ? (off ? removeOpenclawTurnPlugin({ dryRun: flags.dryRun }) : syncOpenclawTurnPlugin({ access, dryRun: flags.dryRun }))
+      ? (off ? removeOpenclawTurnPlugin({ dryRun: flags.dryRun, workspace: flags.remove ? undefined : flags.workspace }) : syncOpenclawTurnPlugin({ access, dryRun: flags.dryRun, workspace: flags.workspace }))
       : isTurnRuleHarness(harness) ? turnRuleHookFor(harness, off, flags, projectDir, rerun.join(' ')) : null;
   // Loud failure: an accepted install whose per-turn hook does not load exits non-zero and names the harness's own check.
   // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.

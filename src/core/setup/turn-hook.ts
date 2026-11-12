@@ -31,14 +31,14 @@
  * inspect command when it does not.
  */
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { bunSpawnSync } from '../spawn.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
 import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash, codexSetupHookGroup, codexSetupTrustEntry, writeCodexSetupHooks, type CodexHookGroup } from '../bootstrap/codex-hooks.ts';
 import { appendCodexTomlTable, readCodexTomlTable, removeCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { buildClaudeHookCommand, classifyHarnessHook, hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../bootstrap/hooks.ts';
 import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, GBRAIN_HOOK_MARKER_KEY, claudeManagedSettingsPaths, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
-import { ensureHookLauncher, hookLauncherPath, hookLauncherState } from './hook-launcher.ts';
+import { ensureHookLauncher, hookLauncherPath, hookLauncherState, hookShellPath } from './hook-launcher.ts';
 import { isSkillResolverEntry } from './skill-resolver-lane.ts';
 
 export const TURN_RULE_LANE = 'turn-rule';
@@ -73,7 +73,7 @@ const claudePath = (p: TurnHookPaths) => p.claudeSettings ?? claudeUserSettingsP
 const codexPaths = (p: TurnHookPaths) => ({ hooks: p.codexHooks ?? codexHooksPath(), config: p.codexConfig ?? codexConfigPath() });
 
 export function claudeTurnRuleCommand(gbrainBin: string, gbrainHome: string | undefined, launcher: string): string {
-  return buildClaudeHookCommand(gbrainBin, EVENT, { ...(gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE }, launcher);
+  return buildClaudeHookCommand(hookShellPath(gbrainBin), EVENT, { ...(gbrainHome ? { GBRAIN_HOME: gbrainHome } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE }, hookShellPath(launcher));
 }
 
 export function codexTurnRuleGroup(gbrainBin: string, gbrainHome: string | undefined, launcher: string): CodexHookGroup {
@@ -132,7 +132,8 @@ export function syncTurnRuleHook(opts: { harness: TurnRuleHarness; gbrainBin: st
   const paths = opts.paths ?? {};
   const where = opts.harness === 'codex' ? codexPaths(paths).hooks : claudePath(paths);
   const print = (why: string): TurnHookOutcome => ({ harness: opts.harness, action: 'print', path: where, detail: `per-turn rule hook not installed: ${why}`, next: opts.rerun });
-  if (!opts.gbrainBin || !opts.gbrainBin.startsWith('/')) return print('no absolute gbrain binary was found (harnesses inherit no PATH); install gbrain globally or pass --gbrain-bin');
+  if (!opts.gbrainBin || !(opts.gbrainBin.startsWith('/') || win32.isAbsolute(opts.gbrainBin))) return print('no absolute gbrain binary was found (harnesses inherit no PATH); install gbrain globally or pass --gbrain-bin');
+  if (opts.harness === 'codex' && !opts.gbrainBin.startsWith('/')) return print('Codex runs hook commands on Windows without a POSIX shell, so it cannot run gbrain\'s hook launcher');
   try {
     const launcher = paths.hookLauncher ?? hookLauncherPath();
     // The launcher goes down first: a hook that names it must find it.
@@ -156,7 +157,7 @@ function syncClaude(bin: string, home: string | undefined, launcher: string, pat
   if (dryRun) return { harness: 'claude-code', action: 'write', path, detail };
   mkdirSync(dirname(path), { recursive: true });
   const owned = new Set([wantHash, ...ours.map((e) => hookEntryHash(e)).filter((h): h is string => !!h)]);
-  writeClaudeHooksAt(path, { gbrainBin: bin, hookLauncher: launcher, env: { ...(home ? { GBRAIN_HOME: home } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE, GBRAIN_SEAT: '' },
+  writeClaudeHooksAt(path, { gbrainBin: hookShellPath(bin), hookLauncher: hookShellPath(launcher), env: { ...(home ? { GBRAIN_HOME: home } : {}), GBRAIN_HOOK_LANE: TURN_RULE_LANE, GBRAIN_SEAT: '' },
     events: [EVENT], marker: TURN_RULE_MARKER, ownedEntryHashes: owned, freshMode: 0o600 });
   return { harness: 'claude-code', action: 'write', path, detail };
 }

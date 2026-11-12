@@ -342,8 +342,16 @@ const request_tools: Operation = {
       const { resolveStrictParamsMode } = await import('../../mcp/validate-params.ts');
       const strictParams = (await resolveStrictParamsMode(ctx.engine, ctx.config)) === 'reject';
       if (ctx.revealTools) {
-        ctx.revealTools(picked.map(o => o.name));
-        return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
+        // A widenable session's catalog reaches past what it serves; only tools it can call now are listed.
+        const callable = catalogCeiling === ceiling ? visibleSet : new Set((await visibleOpsForCaller(ctx, ceiling)).map(o => o.name));
+        const reachable = picked.filter(o => callable.has(o.name)).map(o => o.name);
+        const outside = picked.filter(o => !callable.has(o.name)).map(o => `\`${o.name}\``);
+        if (reachable.length) ctx.revealTools(reachable);
+        if (!outside.length) return { tools: buildToolDefs(picked, { strictParams }), listed: true, note: 'These tools are now in your tool list (tools/list_changed was sent); call them directly.' };
+        return {
+          tools: buildToolDefs(picked, { strictParams }), listed: false,
+          note: `${reachable.length ? `${reachable.map(n => `\`${n}\``).join(', ')} are now in your tool list (tools/list_changed was sent). ` : ''}${outside.join(', ')} are outside this session's '${ceiling}' surface, so they are not listed and cannot be called yet: call request_tools {"surface":"full"} to add them to this session, then call them by name.`,
+        };
       }
       return { tools: buildToolDefs(picked, { strictParams }) };
     }
