@@ -39,7 +39,7 @@ import { slugify } from '../entities/resolve.ts';
 import { stripTakesFence } from '../takes-fence.ts';
 import { stripFactsFence } from '../facts-fence.ts';
 import { redactFindings } from '../secret-scan.ts';
-import { privatePagesFilterForCaller, privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
 import type { EntityCandidate } from './entity-salience.ts';
 import { reflexPointerRationale } from './reflex-rationale.ts';
 import { preferEntityTitleMatches } from './title-matches.ts';
@@ -239,7 +239,7 @@ export async function resolveEntitiesToPointers(
 
   // v0.46.15: weak-alias + surname arms share one kill switch (default ON).
   const lexicalArms = opts.lexicalArms !== false;
-  const privacySql = opts.excludePrivate === false ? '' : `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}`;
+  const privacySql = opts.excludePrivate === false ? '' : `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}`;
 
   // display lookup keyed by normalized query, so resolved slugs can recover a
   // human surface form for the pointer label.

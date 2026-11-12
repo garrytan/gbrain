@@ -20,6 +20,7 @@ test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
 test/access-hidden-page-writes.test.ts
+test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members-read-lineage.test.ts
@@ -92,6 +93,7 @@ test/doctor-routing-skill-pack-source.test.ts
 test/doctor-strict-facts-outside-git.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
 test/edge-whitespace-twins.test.ts
+test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts

@@ -302,6 +302,8 @@ gbrain mcp admin memory-proposals approve <request_id> --dry-run --url … --adm
 ```
 
 The other commands are `--attest-actor none` (clear the right),
+`attest CLIENT_ID --attest-read person|scope|none` (how a call that names sources reads them,
+as `gbrain auth rescope --attest-read` sets it),
 `member-set ID --email ADDR|none`, `member-disable|member-enable ID`, `members [--all]`,
 `unlink --qm ID` and `links [--member ID]`. A member's email is optional,
 stored lower-case and unique per brain; `link --email` finds the one member that

@@ -83,6 +83,7 @@
     "check:gateway-routed": "bash scripts/check-gateway-routed-no-direct-anthropic.sh",
     "check:worker-pool-atomicity": "bash scripts/check-worker-pool-atomicity.sh",
     "check:doc-history": "bash scripts/check-key-files-current-state.sh",
+    "check:docs-repo-paths": "bun test --timeout 60000 test/docs-repo-paths.test.ts",
     "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
     "check:skill-brain-first": "bash scripts/check-skill-brain-first.sh",
     "check:skill-publication": "bun scripts/check-skill-publication.ts",
@@ -257,7 +258,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.699.0",
+  "version": "0.60.704.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",
