@@ -10,6 +10,32 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+### A brain that serves several people refuses reads from connections bound to nobody
+
+**On a brain that serves several people, a token, OAuth client or stdio server bound to no member can no longer read every unmarked page for whoever is asking.** After a 14-day grace for connections that already existed, such a read is refused with `requester_scope_required` and nothing is read. A brain serves several people when two or more members are enabled, or when config `access.serves` is `several`. A brain pinned `access.serves one` never refuses, however many members it has, and a credential bound to a member, the owner's included, reads exactly what it read before. Everything is database state, so repo-less and keyless brains get the same refusal and the same grace with no new config.
+
+| Connection | Before | Now, on a brain that serves several people |
+|---|---|---|
+| Bound to a member (`--member`, the owner included), naming an audience per call (`--may-act-for`), or attested | reads as that person | unchanged |
+| Bound to nobody, existed when the brain started serving several people | read every page no rule restricts | reads for 14 more days, each answer carrying `_meta.access.requester_scope` with the date and the fix; then refused |
+| Bound to nobody, created later | read every page no rule restricts | refused at once (`requester_scope_required`, reason `created_after`) |
+| Marked `--reads-unscoped --yes` by the operator | (no such mark) | reads as before, on purpose, audited |
+| Any connection on a one-person brain, or the local CLI | unchanged | unchanged |
+
+### Itemized changes
+
+- `src/core/access/requester-scope.ts` (new): the gate, run in `dispatchToolCall` after access resolves and in every agent job tool call. Every read op and every read-scope op (`think` included) is gated unless it reads no page: `whoami`, `get_brain_identity`, `get_status_snapshot`, `search_modes`, `get_health`, the caller's own `join_brain` / `leave_brain` / `sync_brain_skills` / `request_tools`, and a non-admin credential's own `get_job` / `wait_job`. When the serves policy cannot be read it is read once more, and a second failure refuses retryably (`requester_scope_unknown`) rather than reading as one person; a bound credential is never refused that way.
+- Migration v308 (number assigned at the merge slot): `reads_unscoped` on `access_tokens` and `oauth_clients`, and a trigger that keeps config `access.serves_derived` and sets `access.serves_since` once, the first time the brain serves several people, so a request reads both from its config snapshot. Disabling and re-enabling a member does not restart the grace. Nothing else is rewritten.
+- `gbrain auth create`, `gbrain auth register-client` and the admin dashboard's key mint refuse an unbound credential on such a brain (`credential_scope_required`). `gbrain auth rescope ... --reads-unscoped --yes` (`none` removes it) is the explicit opt-out, written to the `access-reads-unscoped` audit file; `gbrain access check` reports it.
+- The fix every refusal, notice, `whoami` note and `gbrain access owner` hint gives for stdio is the per-harness binding, `gbrain setup claude-code|codex --stdio-member <id>`, on PGLite and Postgres alike, or a per-person key over `gbrain serve --http` for a harness several people talk to. Nothing suggests `config set mcp.stdio_member`, and no upgrade, doctor or setup path writes it.
+- Doctor: `unscoped_shared_reads` fails per unbound credential with its state, grace end and bind command (warns while `access.requester_scope_enforce` is false); `shared_stdio_binding` fails when `mcp.stdio_member` is set on a host where OpenClaw or Hermes is installed, with `gbrain config unset mcp.stdio_member` as its ask-first fix. `gbrain post-upgrade` lists the unbound credentials.
+- `src/commands/setup-serves.ts`: a `hermes` on PATH counts as the Hermes agent only when it is a script, so React Native's compiled `hermes` engine no longer makes setup refuse `--stdio-member` or doctor fail `shared_stdio_binding`.
+- Hosted brains keep `access.requester_scope_enforce false` until their control plane binds each connection; every unbound read then answers with the notice and nothing is refused.
+- Docs: `docs/guides/write-refusals.md` (the three codes), `docs/guides/setup.md`, `docs/guides/multi-source-brains.md`, `docs/tutorials/company-brain.md`, `docs/architecture/key-files/access.md`; a behaviour-change notice row explains the change on upgrade.
+- Tests: `test/requester-scope.test.ts` (PGLite and Postgres, repo-less and a repo brain: the refusal, the grace, the pinned one-person brain and the owner-bound key unchanged, every gated op refused before its handler, the hosted switch, agent jobs, the CLI), `test/shared-stdio-binding.test.ts`.
+
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git

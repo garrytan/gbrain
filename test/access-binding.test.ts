@@ -38,6 +38,7 @@ import { watchPrincipal } from '../src/core/ops/wakeshift.ts';
 import { principalLive, STDIO_REGISTRATION_PRINCIPAL } from '../src/core/wakeshift/drain.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const DIMS = 1536;
 const SRC = 'source-a';
@@ -74,6 +75,7 @@ for (const kind of testBackends()) {
       await bindCredential(engine, { kind: 'token', id: tokens.alice!.id }, { member: 'alice-example', mayActFor: ['member:bob-example'] });
       await bindCredential(engine, { kind: 'token', id: tokens.bob!.id }, { member: 'bob-example' });
       await engine.executeRaw("UPDATE access_tokens SET member_id = 'nobody-example' WHERE id = $1::uuid", [tokens.ghost!.id]);
+      await readsUnscopedOnPurpose(engine, tokens.unbound!.id);
     }, 120_000);
 
     afterAll(async () => {
@@ -226,10 +228,10 @@ for (const kind of testBackends()) {
       const out = await dispatchToolCall(engine, 'whoami', {}, { remote: true, transport: 'http', auth, sourceId: SRC });
       const body = JSON.parse(out.content[0]!.text);
       expect(body.access).toEqual({ member: 'alice-example', groups: ['team-a'], may_act_for: ['member:bob-example'], bound_by: 'credential',
-        applied: { member: 'alice-example', groups: ['team-a'], audience: null, policy_rev: {}, relaxation: 'none' } });
+        applied: { member: 'alice-example', groups: ['team-a'], audience: null, policy_rev: {}, relaxation: 'none' }, requester_scope: { state: 'scoped' } });
       expect(body.grant_diagnosis).toMatchObject({ member: 'alice-example', groups: ['team-a'], may_act_for: ['member:bob-example'] });
       const unbound = JSON.parse((await dispatchToolCall(engine, 'whoami', {}, { remote: true, transport: 'http', auth: await verify(tokens.unbound!.token), sourceId: SRC })).content[0]!.text);
-      expect(unbound.access).toMatchObject({ member: null, groups: [], bound_by: 'none' });
+      expect(unbound.access).toMatchObject({ member: null, groups: [], bound_by: 'none', requester_scope: { state: 'reads_unscoped' } });
       expect(unbound.grant_diagnosis).toMatchObject({ member: null, may_act_for: null });
       const local = JSON.parse((await dispatchToolCall(engine, 'whoami', {}, { remote: false, sourceId: SRC })).content[0]!.text);
       expect(local.access).toMatchObject({ member: null, bound_by: 'none' });
