@@ -203,7 +203,7 @@ pages and its facts as if the page named the owner, with or without the owner op
 the opt-in is on. Only that page: a page that lists the audience in `readable_by` stays under the usual rules (the
 owner opt-in opens it), and a person member's member page stays closed to the owner. Nothing changes for any other
 caller, and no write widens. Only the brain operator on the brain host sets a kind; a remote caller is refused
-(`permission_denied`). `gbrain access member list` shows each member's kind, `who-can-read` lists the owner on such a
+(`permission_denied`). `gbrain access member list` marks each audience member, `who-can-read` lists the owner on such a
 page, and doctor's `access_audience_members` lists the audience members.
 
 ### Members read lineage (`gbrain access members-read-lineage`)
