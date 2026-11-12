@@ -289,6 +289,7 @@ test/links-attendance-blocked.test.ts
 test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
 test/list-pages-empty-type-notice-gbra449.test.ts
+test/lower-tier-label-hold.test.ts
 test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
 test/managed-cycle-pull-upstream.test.ts
@@ -339,6 +340,7 @@ test/origin-twins-6948.test.ts
 test/orphan-effect-diagnostics-7985.test.ts
 test/overwritten-edits-6712.test.ts
 test/owner-facts-d1-gst2346.test.ts
+test/owner-label-guard.test.ts
 test/owner-member-boundary.test.ts
 test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts

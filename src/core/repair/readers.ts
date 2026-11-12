@@ -28,6 +28,8 @@ import { digest } from '../persistence/digest.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { raisePageLabelGuard } from '../trust/page-write.ts';
 import { afterCursor, type RepairCursor, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 /** The operator's request: `--readers` as typed (`none` removes), the owner flag, and the `--slugs-file` path with its slugs. */
@@ -96,18 +98,24 @@ function previewCommand(scope: RepairScope, request: ReadersRequest, slugs: stri
     + ' --readers ' + request.readers + (request.allowWithoutOwner ? ' --allow-without-owner' : '');
 }
 
-/** The named pages whose readers differ from the selection's, in page-id order, with the pages not found and already set. */
+/**
+ * The named pages whose readers differ from the selection's, in page-id order, with the pages not found and already set.
+ * GST-2521: a page that already names the selection's readers but has no label guard (an upgrade, a rebuild from a clone)
+ * is listed too, to raise the guard without a write.
+ */
 async function planPages(engine: BrainEngine, selection: Selection) {
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; named: boolean; readers: unknown; chars: number }>(
-    `SELECT p.id, p.source_id, p.slug, p.frontmatter ? 'readable_by' AS named, p.frontmatter->'readable_by' AS readers, COALESCE(p.body_bytes, 0) AS chars
+  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; named: boolean; readers: unknown; chars: number; guarded: boolean }>(
+    `SELECT p.id, p.source_id, p.slug, p.frontmatter ? 'readable_by' AS named, p.frontmatter->'readable_by' AS readers, COALESCE(p.body_bytes, 0) AS chars,
+      EXISTS (SELECT 1 FROM page_label_guards g WHERE g.page_id = p.id) AS guarded
     FROM pages p WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND p.slug = ANY($2::text[]) ORDER BY p.id`, [selection.source_ids, selection.slugs], { timeoutMs: 120_000 });
   const target = normalized(selection.readers);
   const items: ReadersItem[] = rows.flatMap(row => {
     const from = normalizeReaders(row.named ? { [READERS_KEY]: row.readers } : {});
-    if (same(from, target)) return [];
+    const guardOnly = same(from, target);
+    if (guardOnly && (target === null || row.guarded)) return [];
     const id = Number(row.id);
     return [{ cursor: { phase: READERS_PHASE, id }, target: { phase: READERS_PHASE, id }, source_id: row.source_id, slug: row.slug, chars: Number(row.chars),
-      action: 'readers ' + listText(from) + ' -> ' + listText(selection.readers), readers: { from, to: selection.readers } }];
+      action: guardOnly ? 'readers ' + listText(from) + ' kept, label guard raised' : 'readers ' + listText(from) + ' -> ' + listText(selection.readers), readers: { from, to: selection.readers } }];
   });
   const found = new Set(rows.map(row => row.slug));
   return { items, residuals: { named_not_found: selection.slugs.filter(slug => !found.has(slug)).length, readers_already_set: rows.length - items.length } };
@@ -199,6 +207,30 @@ export async function readersWrite(engine: BrainEngine, item: ReadersItem): Prom
   return { snapshot, content: serializePageToMarkdown({ ...snapshot.page, frontmatter }, snapshot.tags), edit };
 }
 
+/**
+ * GST-2521: an item whose labels already match (`unchanged` re-checks the page's frontmatter under its page lock) raises the
+ * page's label guard without a write; false when the page moved since the plan. A write prepared before the raise re-reads
+ * the guard under the same lock at publication and refuses `revision_conflict` (page-prepare.ts).
+ */
+export async function raiseGuardOnly(engine: BrainEngine, item: { source_id: string; slug: string; target: RepairCursor },
+  unchanged: (frontmatter: Record<string, unknown>) => boolean): Promise<false | RepairItemOutcome> {
+  return maintenanceTransaction(engine, async tx => {
+    await tx.lockPageKeys([{ sourceId: item.source_id, slug: item.slug }]);
+    const [page] = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | null }>(
+      'SELECT id, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL FOR UPDATE', [item.source_id, item.slug]);
+    if (!page || Number(page.id) !== item.target.id || !unchanged(page.frontmatter ?? {})) return false;
+    await raisePageLabelGuard(tx, item.source_id, item.slug);
+    return { applied: true, outcome: 'label_guard_raised' };
+  });
+}
+
+/** A readers item that only raises the label guard: its page already names the requested readers. */
+export const readersGuardOnly = (item: ReadersItem) => same(item.readers.from, normalized(item.readers.to));
+
+/** A guard-only readers item applied: the guard raised while the page still names those readers. */
+export const raiseReadersGuard = (engine: BrainEngine, item: ReadersItem) =>
+  raiseGuardOnly(engine, item, frontmatter => same(normalizeReaders(frontmatter), item.readers.from));
+
 /** The outcome of a written readers item. */
 export const readersOutcome = (item: ReadersItem): RepairItemOutcome => ({ applied: true, outcome: item.readers.to ? 'readers_set' : 'readers_removed' });
 
@@ -216,6 +248,7 @@ export async function retireReaders(engine: BrainEngine, items: ReadersItem[]): 
 export async function applyReaders(engine: BrainEngine, item: ReadersItem,
   write: (snapshot: PageSnapshot, content: string, edit: LabelEdit, batch?: string) => Promise<RepairItemOutcome | null>): Promise<boolean | RepairItemOutcome> {
   try {
+    if (readersGuardOnly(item)) return await raiseReadersGuard(engine, item);
     const ready = await readersWrite(engine, item);
     if (ready === false || !('snapshot' in ready)) return ready;
     return await write(ready.snapshot, ready.content, ready.edit, item.hash ? readersBatch(item.hash, item.source_id) : undefined) ?? readersOutcome(item);
