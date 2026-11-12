@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { nameWords, matchNameVariant, editDistance, type NameMatchKind } from './name-variants.ts';
 import { isFactEntityPage } from './resolve.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 
 export type NearNameKind = 'same' | 'typo' | 'acronym';
 
@@ -152,7 +152,7 @@ export interface EntityNameLoad { names: EntityName[]; truncated: boolean; alias
  */
 export async function loadEntityNames(engine: BrainEngine, sourceId: string, opts: { excludePrivate?: boolean; max?: number } = {}): Promise<EntityNameLoad> {
   const max = opts.max ?? NEAR_NAME_MAX_ENTITIES;
-  const privacy = opts.excludePrivate ? `AND ${privatePagesFilterFragment('p')}` : '';
+  const privacy = opts.excludePrivate ? `AND ${remoteReadFloorSql('p')}` : '';
   const rows = await engine.executeRaw<{ slug: string; type: string | null; title: string | null; aliases: unknown; distinct_from: unknown; created_at: string }>(
     `SELECT p.slug, p.type, p.title, p.frontmatter -> 'aliases' AS aliases, p.frontmatter -> 'distinct_from' AS distinct_from,
             p.created_at::text AS created_at
