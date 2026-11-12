@@ -1019,7 +1019,7 @@ export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ow
 
 /** GST-363: an explicit access.serves wins over the trigger-kept member count; enforcement is on unless set to false. */
 export function servesPolicyFrom(config: Record<string, string | undefined>): ServesPolicy {
-  const explicit = config[SERVES_KEY]?.trim();
+  const explicit = config[SERVES_KEY]?.trim().toLowerCase();
   const fromConfig = explicit === 'one' || explicit === 'several';
   const since = Date.parse(config[SERVES_SINCE_KEY]?.trim() ?? '');
   return {

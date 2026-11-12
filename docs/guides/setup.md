@@ -227,7 +227,8 @@ keys). A brain pinned `access.serves one` never refuses, however many members
 it has.
 Nothing binds stdio on its own: upgrade, post-upgrade and doctor never write
 `mcp.stdio_member`, and `gbrain doctor` fails `shared_stdio_binding` when it is
-set on a host where OpenClaw or Hermes is installed (its fix is
+set on a host where OpenClaw or Hermes is installed and the brain serves several
+people (its fix is
 `gbrain config unset mcp.stdio_member`). A team that shares everything may
 mark one credential `gbrain auth rescope --token <name> --reads-unscoped --yes`
 (`--reads-unscoped none` takes it back); every change is recorded in the

@@ -16,7 +16,7 @@ import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, folderAccessFor, remoteCallerAccess } from '../core/access/caller.ts';
-import { credentialScopeFor, requesterScopeGate, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
+import { credentialScopeFor, requesterScopeGate, requesterScopeRefuses, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
@@ -1041,6 +1041,10 @@ export async function dispatchToolCall(
         const credential = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
         access = await withServesReread(engine, access, credential);
         scopeNotice = requesterScopeGate(op, access, credential, opts.transport);
+      } else if (!attested?.actor && reachable && scoped.metaHook) {
+        // GST-363: the ops the gate lets through (exempt reads, writes) carry no hot memory to a connection whose reads it refuses.
+        const credential = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
+        if (requesterScopeRefuses(await withServesReread(engine, access, credential), credential, opts.transport)) scoped = { ...scoped, metaHook: undefined };
       }
     } catch (e) {
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the

@@ -44,6 +44,7 @@ import { takeBindingFlags } from '../src/commands/auth-binding.ts';
 import { ownerLines } from '../src/commands/access.ts';
 import { buildBrainTools } from '../src/core/minions/tools/brain-allowlist.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { getBrainHotMemoryMeta } from '../src/core/facts/meta-hook.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { runCli } from './helpers/cli-spawn.ts';
@@ -166,9 +167,11 @@ for (const kind of testBackends()) {
       await enableMember(engine, 'bob-example');
       expect(await engine.getConfig('access.serves_derived')).toBe('several');
       expect(await engine.getConfig('access.serves_since')).toBe(since);
-      await engine.setConfig('access.serves', 'one');
-      expect((await brainServes(engine)).serves).toBe('one');
-      expect((await search('old-unbound')).meta?.access?.requester_scope).toBeUndefined();
+      for (const pinned of ['one', ' One ']) {
+        await engine.setConfig('access.serves', pinned);
+        expect({ pinned, serves: (await brainServes(engine)).serves }).toEqual({ pinned, serves: 'one' });
+        expect((await search('old-unbound')).meta?.access?.requester_scope).toBeUndefined();
+      }
       await engine.unsetConfig('access.serves');
     }, 60_000);
 
@@ -249,6 +252,26 @@ for (const kind of testBackends()) {
       const audit = readAudienceAssertions().filter(e => e.outcome === 'requester_scope_required' && e.op === 'search');
       expect(audit.length).toBeGreaterThan(0);
       expect(JSON.stringify(audit)).not.toContain(keys['old-unbound']!.token);
+    }, 60_000);
+
+    test('a refused unbound connection gets no hot memory on the ops the gate lets through (exempt reads, writes); a bound one still does', async () => {
+      await setSince(15);
+      const fact = await dispatchToolCall(engine, 'remember', { fact: 'Harbor ledger notes canaryhotfact', provenance: 'fixture' }, { remote: false, sourceId: 'default' });
+      expect(fact.isError).toBeFalsy();
+      const hot = async (tool: string, args: Record<string, unknown>, stdioMember?: string) => {
+        const out = await dispatchToolCall(engine, tool, args, { remote: true, transport: 'stdio', sourceId: 'default', takesHoldersAllowList: ['world'],
+          metaHook: getBrainHotMemoryMeta, sessionId: `hot-${tool}-${stdioMember ?? 'unbound'}`, ...(stdioMember ? { stdioMember } : {}) });
+        return { isError: out.isError === true, all: JSON.stringify(out) };
+      };
+      expect((await stdio('search', { query: 'harbor ledger notes', match: 'keyword', limit: 10 })).json).toMatchObject({ code: 'requester_scope_required', reason: 'grace_ended' });
+      for (const tool of ['whoami', 'get_brain_identity', 'search_modes']) {
+        const out = await hot(tool, {});
+        expect({ tool, isError: out.isError, leaked: out.all.includes('canaryhotfact') }).toEqual({ tool, isError: false, leaked: false });
+      }
+      const write = await hot('remember', { fact: 'Harbor ledger notes canaryhotwrite', provenance: 'fixture' });
+      expect(write.all.includes('canaryhotfact')).toBe(false);
+      const bound = await hot('whoami', {}, 'alice-example');
+      expect({ isError: bound.isError, sees: bound.all.includes('canaryhotfact') }).toEqual({ isError: false, sees: true });
     }, 60_000);
 
     test('over HTTP, a member-bound key is unaffected', async () => {

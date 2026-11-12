@@ -129,6 +129,17 @@ export function requesterScopeGate(op: Pick<Operation, 'name' | 'mutating'> | un
   throw requesterScopeRequired(op!.name, c, serves, transport, old ? 'grace_ended' : since === null ? 'since_unknown' : 'created_after');
 }
 
+/** Whether requesterScopeGate would refuse a read from this connection, for the ops it does not gate. */
+export function requesterScopeRefuses(access: Partial<CallerAccess>, auth: ScopeAuth | undefined, via: string | undefined): boolean {
+  try {
+    requesterScopeGate({ name: 'search', mutating: false }, access, auth, via);
+    return false;
+  } catch (e) {
+    if (/^requester_scope_(required|unknown)$/.test(String((e as { code?: unknown }).code))) return true;
+    throw e;
+  }
+}
+
 function boundToSomeone(access: Partial<CallerAccess>): boolean {
   return !!access.audience?.length || !!access.actor || (access.identity ?? []).some(p => p.startsWith('member:'));
 }

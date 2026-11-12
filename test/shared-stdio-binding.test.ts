@@ -2,7 +2,8 @@
  * GST-363 (PR 2): doctor shared_stdio_binding. config mcp.stdio_member binds every stdio session on the host to one
  * member, so on a host where a harness several people talk to (OpenClaw, Hermes; sharedStdioHarness) is installed,
  * that harness reads as that member, private pages included. The check fails there with the unset command as its
- * fix, passes when no shared harness is installed, and is not applicable while the key is unset. Repo-less PGLite.
+ * fix, passes when no shared harness is installed, and is not applicable while the key is unset or the brain serves one
+ * person (R94: the owner's own harness keeps its binding). Repo-less PGLite.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -22,12 +23,26 @@ describe('doctor shared_stdio_binding (pglite, repo-less)', () => {
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'gbrain-shared-stdio-'));
     engine = new PGLiteEngine(); await engine.connect({ engine: 'pglite' } as never); await engine.initSchema();
+    await engine.setConfig('access.serves', 'several');
   }, 120_000);
   afterAll(async () => { await engine?.disconnect(); rmSync(home, { recursive: true, force: true }); }, 60_000);
 
   test('not applicable while mcp.stdio_member is unset, even with a shared harness installed', async () => {
     const hermes = join(home, 'hermes-unset'); mkdirSync(hermes);
     expect(await doctor({ HERMES_HOME: hermes })).toMatchObject({ name: 'shared_stdio_binding', status: 'ok', readiness_state: 'not_applicable' });
+  });
+
+  test('R94: on a brain that serves one person (pinned, in any case), set with OpenClaw installed is not applicable and offers no unset', async () => {
+    await engine.setConfig('mcp.stdio_member', 'alice-example');
+    const openclaw = join(home, 'openclaw-one'); mkdirSync(openclaw);
+    for (const pinned of ['one', 'One']) {
+      await engine.setConfig('access.serves', pinned);
+      const c = await doctor({ OPENCLAW_STATE_DIR: openclaw });
+      expect({ pinned, check: c }).toMatchObject({ pinned, check: { name: 'shared_stdio_binding', status: 'ok', readiness_state: 'not_applicable' } });
+      expect(c.fix).toBeUndefined();
+    }
+    await engine.setConfig('access.serves', 'several');
+    await engine.unsetConfig('mcp.stdio_member');
   });
 
   test('set with no shared harness on the host: ok', async () => {

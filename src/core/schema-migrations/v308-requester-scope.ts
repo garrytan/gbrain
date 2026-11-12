@@ -35,7 +35,7 @@ BEGIN
     FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL;
   INSERT INTO config (key, value) VALUES ('access.serves_derived', derived)
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value WHERE config.value IS DISTINCT FROM EXCLUDED.value;
-  SELECT btrim(value) INTO explicit FROM config WHERE key = 'access.serves';
+  SELECT lower(btrim(value)) INTO explicit FROM config WHERE key = 'access.serves';
   IF (CASE WHEN explicit IN ('one', 'several') THEN explicit ELSE derived END) = 'several' THEN
     INSERT INTO config (key, value) VALUES ('access.serves_since', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
       ON CONFLICT (key) DO NOTHING;
