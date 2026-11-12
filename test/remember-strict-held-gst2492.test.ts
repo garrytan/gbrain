@@ -6,13 +6,14 @@
  *    batch item and receipt say where it is (`page: memory/unattributed`, `write_through.held_for`). A rebuild from a
  *    clone of HEAD brings the fact back for its entity. Once the entity has a page, the extract_facts phase moves the
  *    row into that page in one commit and strikes the holding row; forget and supersede strike the held row, and purge
- *    removes it from the file.
+ *    removes it from the file. The brain owner's own credential (GST-2346 D1) holds such a fact the same way, shared,
+ *    withdraws it, and the host's purge removes it.
  * 2. Fails when: a strict source keeps such a fact in the database alone (a rebuild loses it), a rebuild brings back a
  *    forgotten, superseded or purged held fact, a move duplicates or loses the fact, or a private entity page is named
  *    on the world-readable holding page.
  * 3. Existing coverage: test/remember-pageless-entity-gst2446.test.ts pins the non-strict and repo-less answers.
  * 4. Real seams: the coordinated write and the write door on PGLite and Postgres (DATABASE_URL), a managed Git checkout,
- *    the operation handler as the local CLI calls it, MCP dispatch as a remote and a prefix-bound caller, and a rebuild
+ *    the operation handler as the local CLI calls it, MCP dispatch as a remote, an owner-bound OAuth and a prefix-bound caller, and a rebuild
  *    of a fresh database from a clone of HEAD through sync and the facts step.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
@@ -30,6 +31,11 @@ import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import * as fence from '../src/core/facts-fence.ts';
 import { scanCanonicalFences } from '../src/core/fence-repair/refusal.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { addMember, bindCredential } from '../src/core/access/members.ts';
+import { setOwner } from '../src/core/access/owner.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -56,6 +62,22 @@ async function overMcp(engine: BrainEngine, params: Record<string, unknown>, aut
   const out = await dispatchToolCall(engine, 'remember', { provenance: 'chat 2026-11-11', request_id: randomUUID(), ...params }, { ...STDIO, ...(auth ? { auth } : {}) });
   return { body: JSON.parse(out.content[0]!.text) as Record<string, any>, blocks: out.content.slice(1).map(block => block.text), isError: out.isError === true };
 }
+
+/** A real OAuth client-credentials token bound to the brain owner, verified the way the HTTP transport verifies it. */
+async function ownerAuth(engine: BrainEngine): Promise<AuthInfo> {
+  const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+  __resetPrivateVisibilityCacheForTests();
+  await addMember(engine, 'carol-example');
+  await setOwner(engine, 'carol-example');
+  const client = await provider.registerClientManual('owner-example', ['client_credentials'], 'read write', [], 'default');
+  await bindCredential(engine, { kind: 'client', id: client.clientId }, { member: 'carol-example' });
+  const { access_token } = await provider.exchangeClientCredentials(client.clientId, client.clientSecret ?? '');
+  return await provider.verifyAccessToken(access_token) as unknown as AuthInfo;
+}
+const asOwner = async (engine: BrainEngine, auth: AuthInfo, op: string, params: Record<string, unknown>) => {
+  const out = await dispatchToolCall(engine, op, { request_id: randomUUID(), ...params }, { remote: true, transport: 'http', sourceId: 'default', auth });
+  return { body: JSON.parse(out.content[0]!.text) as Record<string, any>, text: out.content.map(block => block.text).join('\n'), isError: out.isError === true };
+};
 
 /** A fresh database indexed from a clone of HEAD, with the facts step run, as a rebuild would: the rows of each claim. */
 async function rebuild(root: string, databaseUrl: string | undefined, claims: string[]) {
@@ -312,6 +334,37 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
     expect(none.body.error).toBe('scope_denied');
     expect(none.body.message).toContain(`slug '${HOLD}' is not under`);
   }), 180_000);
+
+  test("the owner's own credential holds a pageless fact shared in Git, its forget strikes it, and the host's purge removes it", () => strict(async ({ engine, ctx, root }) => {
+    const owner = await ownerAuth(engine);
+    const forgotten = 'The kitchen remodel starts in March.';
+    const purged = 'The kitchen remodel needs a permit.';
+    const saved = await asOwner(engine, owner, 'remember', { fact: forgotten, entity: PAGELESS, provenance: 'chat 2026-11-11' });
+    expect(saved.isError ? saved.text : 'ok').toBe('ok');
+    expect(saved.body).toMatchObject({ status: 'inserted', page: HOLD, visibility: 'world', persistence: { mode: 'filesystem' },
+      write_through: { written: true, held_for: PAGELESS } });
+    expect(lineOf(head(root, HOLD_FILE), forgotten)).toContain(PAGELESS);
+    expect(await factRows(engine, forgotten)).toMatchObject([{ entity_slug: PAGELESS, source_markdown_slug: HOLD, active: true }]);
+    const forgot = await asOwner(engine, owner, 'forget', { id: String(saved.body.id) });
+    expect(forgot.isError ? forgot.text : 'ok').toBe('ok');
+    await settleManagedGitEffects(engine);
+    expect(lineOf(head(root, HOLD_FILE), forgotten)).toContain(`~~${forgotten}~~`);
+    expect(await factRows(engine, forgotten)).toMatchObject([{ active: false }]);
+
+    const second = await asOwner(engine, owner, 'remember', { fact: purged, entity: PAGELESS, provenance: 'chat 2026-11-11' });
+    expect(second.body).toMatchObject({ page: HOLD, write_through: { written: true, held_for: PAGELESS } });
+    const remote = await asOwner(engine, owner, 'purge_fact', { id: Number(second.body.id), dry_run: true });
+    expect([remote.isError, remote.text.includes('trusted_local_only')]).toEqual([true, true]);
+    await settleManagedGitEffects(engine);
+    const dry = await call(ctx, 'purge_fact', { id: Number(second.body.id), dry_run: true });
+    expect(await call(ctx, 'purge_fact', { id: Number(second.body.id), confirm: dry.confirm_token, expected_revision: dry.expected_revision })).toMatchObject({ state: 'committed' });
+    await settleManagedGitEffects(engine);
+    expect(head(root, HOLD_FILE)).not.toContain(purged);
+    expect(await factRows(engine, purged)).toEqual([]);
+    const rebuilt = await rebuild(root, databaseUrl, [forgotten, purged]);
+    expect(rebuilt[forgotten]!.filter(row => row.active)).toEqual([]);
+    expect(rebuilt[purged]!.filter(row => row.active)).toEqual([]);
+  }), 300_000);
 });
 
 describe('the entity column of the facts fence (GST-2492)', () => {

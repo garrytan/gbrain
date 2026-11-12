@@ -12,9 +12,21 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**`remember` now says when a fact is on no page.** `remember` never creates a page. A fact saved for an entity whose page does not exist yet is stored in the database and recall returns it, but the reply read as if the fact had been written to that page, so an agent would report it as saved to a file. What is stored has not changed; the reply now tells the truth about it.
+**`remember` now tells the truth about a fact saved for something that has no page yet, a source that lives in Git keeps that fact in Git, and the brain owner's own agents save facts shared by default.** Three changes to how agents save and withdraw facts land together.
+
+A fact saved for an entity whose page does not exist yet (`remember` never creates a page) used to get a reply that named the missing page, so an agent would report the fact as saved to a file. The reply now says the fact is stored in the database only and names the `put_page` call that creates the page. On a source whose pages are canonical in Git (`canonical: git`), such a fact no longer lives in the database alone, where a rebuild from Git would lose it: it is committed to Git as a row of `memory/unattributed` that names the entity, and maintenance moves it into the entity's page once that page exists. Other sources and brains with no Git repository store it as before.
+
+A credential bound to the brain owner (`gbrain access owner set`) reads the whole brain, but its `remember` kept every fact private on the owner's member page unless the call passed `share: true`, its `visibility: "world"` was refused, and its `forget` refused a fact it had just shared. Those private facts also stayed out of hot memory, turn context and context packs, which carry shared facts only. Now, speaking for itself, the owner's credential saves a fact with no `visibility` on its subject's page for every reader of the source, keeps it private on its member page when the call passes `visibility: "private"`, when the page or `facts.default_visibility` keeps facts private, or when it replaces a fact on that page, and withdraws a shared fact it reads. The trade-off: an owner agent that follows a planted instruction can now share a fact without passing a flag, so pass `visibility: "private"` for a fact that must stay with the owner. Member credentials, attested QM calls (`x-qm-actor`), audiences, subagent jobs and slug-fenced clients keep what they had.
+
+The changes meet on a strict source: the owner's save for an entity with no page is held, shared, on `memory/unattributed` like any other shared save, the owner's `forget` strikes it there, and the brain host's purge removes it from the file.
+
+Upgrade every gbrain host of a strict source together: an older gbrain holds a `memory/unattributed` file that carries the new `entity` column as a malformed fence, with no data loss.
+
+Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
 
 ### Itemized changes
+
+#### The reply for a fact on no page (GST-2446, #9165)
 
 - The reply names a `page` only when the fact is on one. For an entity with no page it used to carry `page: "<the entity slug>"`, a page that does not exist; now the field is absent. A pending reply's `target.slug` follows the same rule, and so does a fact with no entity on a source that cannot hold the `memory/unattributed` page.
 - Each `items` entry of a batch carries `persistence` and `write_through`, the same fields the single form returns. Before, a batch item gave no sign of whether it landed in a page file or in the database alone.
@@ -24,25 +36,28 @@ identifiers and attribution are available in the pre-removal Git revision
 - Docs: `docs/guides/entity-scoped-facts.md`, the `remember` section of `docs/mcp/TOOL_REFERENCE.md` and `docs/protocol/MEMORY_VERBS_v1.md` describe the reply. One behavior-change row discloses the reply change after an upgrade.
 - Tests: `test/remember-pageless-entity-gst2446.test.ts` runs on PGLite and Postgres against a Git checkout, a content folder with no Git and a source with no checkout, single and batch, through the operation handler and through MCP dispatch. It also pins that the fact reaches the page's Facts table and its committed file once the page is created.
 
-**On a source whose pages are canonical in Git, a fact saved for an entity with no page is now committed to Git.** Until now such a fact lived only in the database, so rebuilding the brain from its Git repository lost it. `remember` now writes it into `memory/unattributed` as a row whose new `entity` column names the entity, committed before the database row, and moves it into the entity's page once that page exists. Other sources and brains with no Git repository behave as before.
+#### A strict source keeps a pageless fact in Git (GST-2492, #9179)
 
 - The reply, each batch item and the write receipt say where the fact is: `page: "memory/unattributed"`, `persistence: {mode: "filesystem"}`, `write_through: {written: true, held_for: "<entity>"}`, and the `entity_page_missing` notice says the fact is saved and committed and when it moves.
 - The `extract_facts` maintenance phase moves held facts into a new entity page in one commit: the fact keeps its id, provenance and embedding, and the held row is struck (`moved to <entity>`); when the page is restricted the held row is removed instead, so the world-readable holding page keeps nothing of it. A page kept out of Git does not take the fact; the run warns `HELD_FACT_UNMOVABLE` and the fact stays held.
-- `forget` strikes a held fact's own row, and `purge_fact` removes it from `memory/unattributed` as it removes a fact with no entity, so a rebuild does not bring it back; `remember … replaces` supersedes a held fact from `memory/unattributed` or from the entity's page.
+- `forget` strikes a held fact's own row, and `purge_fact` removes it from `memory/unattributed` as it removes a fact with no entity, so a rebuild does not bring it back (a purge of a held fact also drops every copy of the same claim text on `memory/unattributed`, held for another entity or with no entity); `remember … replaces` supersedes a held fact from `memory/unattributed` or from the entity's page.
 - A client bound to slug prefixes may save a held fact for an entity inside its prefixes; a fact with no entity is still refused for it. An entity under a folder access rule is never held on the world-readable page: its fact stays in the database, as before.
 - Only `memory/unattributed` reads the `entity` column, and an invalid entity cell makes its fence malformed. Every other page parses exactly as before. An older gbrain holds a `memory/unattributed` file that carries the column as a malformed fence, so upgrade every host of a strict source together.
 - Tests: `test/remember-strict-held-gst2492.test.ts` on PGLite and Postgres: the commit before the reply (handler, batch, MCP), rebuilds from a clone of HEAD, the move (one commit, interrupted after its commit and replayed), restricted and database-only pages, forget, purge, both supersede paths, a prefix-bound client, duplicates and the fence column.
-**The brain owner's own agents now save facts shared by default, the way they already save pages.** A credential bound to the brain owner (`gbrain access owner set`) reads the whole brain, but its `remember` kept every fact private on the owner's member page unless the call passed `share: true`, its `visibility: "world"` was refused, and its `forget` refused a fact it had just shared. Those private facts also stayed out of hot memory, turn context and context packs, which carry shared facts only. Now, speaking for itself, the owner's credential saves a fact with no `visibility` on its subject's page for every reader of the source, keeps it private on its member page when the call passes `visibility: "private"`, when the page or `facts.default_visibility` keeps facts private, or when it replaces a fact on that page, and withdraws a shared fact it reads. An explicit `visibility: "world"` onto a page whose facts are kept private is refused (`share_target_restricted`), as `share: true` is. The reply still names the `page` and `visibility` the fact got. The trade-off: an owner agent that follows a planted instruction can now share a fact without passing a flag, so pass `visibility: "private"` for a fact that must stay with the owner. Member credentials, attested QM calls (`x-qm-actor`), audiences, subagent jobs and slug-fenced clients keep what they had. Works the same on a brain with no Git repository and on a managed one.
 
-Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
+#### The owner's own facts are shared by default (GST-2346 D1, #9178)
 
-### Itemized changes
-
+- An explicit `visibility: "world"` onto a page whose facts are kept private is refused (`share_target_restricted`), as `share: true` is, and the reply still names the `page` and `visibility` the fact got. Works the same on a brain with no Git repository and on a managed one.
 - `src/core/access/member-facts.ts`: `ownerSpeaksForItself` (`CallerAccess.owner`, no attested actor, no audience, not a subagent, no slug fence).
 - `src/core/persistence/memory-mutations.ts`: `remember` takes the ordinary route for the owner and moves a default save the page or brain default keeps private to the owner's member page; `forget` takes the ordinary remote path for the owner when that path reads the fact. `src/core/verbs.ts`: no `member_share_required` for the owner.
 - `src/core/facts/writeback-config.ts`, `src/core/ops/memory-settings.ts`, `src/mcp/http-transport.ts`, `src/commands/serve-http-mcp.ts`: with writeback on, the owner's credential gets the instructions of a credential bound to no member.
 - Docs: access designations, the company-brain tutorial, `TOOL_REFERENCE.md`, `MEMORY_VERBS_v1.md`, the access key-files entry, `skills/brain-ops/SKILL.md`; behaviour-change row `owner_facts_shared_gst2346`.
 - Tests: `test/owner-facts-d1-gst2346.test.ts` (every caller shape, repo-less and managed, PGLite and Postgres); `test/member-forget-refusal-9101.test.ts` now expects the owner to withdraw a fact it shared.
+
+#### Where the changes meet
+
+- `test/remember-strict-held-gst2492.test.ts` adds an owner-bound OAuth credential on a strict source, on PGLite and Postgres: its save for an entity with no page is held, shared, on `memory/unattributed` with #9179's reply, its `forget` strikes the held row, `purge_fact` over MCP is refused `trusted_local_only`, and the host's purge removes the claim so a rebuild from Git does not bring it back.
+- `docs/guides/memory-boundaries.md`: the purge section says a purge of a held fact drops every copy of the same claim text on `memory/unattributed`.
 
 ## [0.60.684.0] - 2026-11-12
 
