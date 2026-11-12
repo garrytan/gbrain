@@ -366,7 +366,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
       const states = await guard('reading the notifier states', () => opts.store.readStates(fresh.map(r => r.sourceId)), [] as NotifierSourceRow[]);
       restoreStates(sources, states, now());
     }
-    for (const rt of sources.values()) rt.watched = enabled && !excluded.has(rt.sourceId);
+    for (const rt of fresh) rt.watched = enabled && !excluded.has(rt.sourceId);
     for (const rt of sources.values()) {
       if (stopped) return;
       if (!rt.watched || forcePoll || !opts.watch) { if (!rt.watched) closeWatch(rt); continue; }
@@ -503,7 +503,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
       running.set(rt.sourceId, { id: start.jobId, sourceId: rt.sourceId, head: rt.head, lastCommit: rt.lastCommit, intent, markers });
       await transition(rt, { state: 'running', firstDue: 'keep' });
       decide(rt.sourceId, 'start', { detail: `${intent}${slice ? ` slice ${slice}s` : ''}` });
-      log(`${rt.sourceId}: ${intent === 'freshness' && rt.head ? `HEAD moved to ${short(rt.head)} (last synced ${short(rt.lastCommit)})` : `a ${intent} request is pending`}; started ${rt.kind === 'classic' ? 'classic' : 'managed'} sync job ${start.jobId}`);
+      log(`${rt.sourceId}: ${intent === 'freshness' && rt.head ? `HEAD moved to ${short(rt.head)} (last synced ${short(rt.lastCommit)})` : rt.markers.length ? `a ${intent} request is pending` : 'retrying an unfinished run'}; started ${rt.kind === 'classic' ? 'classic' : 'managed'} sync job ${start.jobId}`);
     }
   };
 
@@ -527,7 +527,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     if (stopped) return;
     for (const rt of sources.values()) {
       const w = enabled && !excluded.has(rt.sourceId);
-      if (w !== rt.watched) { rt.watched = w; if (!w) closeWatch(rt); else listedAt = -Infinity; }
+      if (w !== rt.watched) { rt.watched = w; if (w) listedAt = -Infinity; else { closeWatch(rt); if ((rt.state === 'retry' || rt.state === 'due') && !rt.markers.length) await transition(rt, { state: 'idle', reason: null, firstDue: 'clear', attempts: 0, error: null }); } }
     }
     const wasNudged = nudged;
     nudged = false;

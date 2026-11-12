@@ -12,7 +12,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { RETRY_BACKOFF_MS, startCommitNotifier, type CommitNotifier, type JobStatus, type NotifierStore, type StartRequest } from '../src/core/commit-notifier.ts';
+import { FLAG_EVERY_MS, RETRY_BACKOFF_MS, startCommitNotifier, type CommitNotifier, type JobStatus, type NotifierStore, type StartRequest } from '../src/core/commit-notifier.ts';
 import { readNotifierSources, settleMarkers, upsertMarker } from '../src/core/notifier/store.ts';
 import { sqlNotifierStore } from '../src/core/notifier/resident.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -25,12 +25,12 @@ const QUIET = 400;
 
 interface World { t: number; starts: StartRequest[]; jobs: Map<string, JobStatus> }
 
-function resident(w: World, store: NotifierStore, kind: 'serve' | 'jobs-worker' = 'serve'): CommitNotifier {
+function resident(w: World, store: NotifierStore, kind: 'serve' | 'jobs-worker' = 'serve', flag = { on: false }): CommitNotifier {
   return startCommitNotifier({
     resident: kind, log: () => {}, hostId: HOST, store, now: () => w.t, pollMs: 3000, quietMs: QUIET, heartbeatMs: 10_000,
     firstSliceSeconds: 30, sliceSeconds: 120, maxConcurrent: 1,
     setInterval: () => 'interval', clearInterval: () => {}, setTimeout: () => 'timer', clearTimeout: () => {},
-    readFlag: async () => false,
+    readFlag: async () => flag.on,
     listSources: async () => [{ sourceId: SOURCE, root: '/nonexistent/source-a', gitDir: null, lastCommit: A, kind: 'managed' }],
     lastCommit: async () => A, revParse: async () => B, syncRunning: () => false, drainHeld: async () => false,
     startSync: async (_s, req) => { w.starts.push(req); const jobId = 'job-' + w.starts.length; w.jobs.set(jobId, { state: 'running' }); return { jobId }; },
@@ -96,6 +96,24 @@ describe('GST-2515: an unwatched source keeps its retry tier (in-memory store)',
     expect(standby.owner).toBe(true);
     expect(slices(w)).toEqual([30, null]);
     await standby.stop();
+  });
+
+  test('turning sync.on_commit off stops a retry that a HEAD move started: the source goes idle and nothing more starts', async () => {
+    const w: World = { t: 1_000_000, starts: [], jobs: new Map() };
+    const store = memoryNotifierStore({ lastCommit: () => A });
+    const flag = { on: true };
+    const n = resident(w, store, 'serve', flag);
+    await n.tick();
+    w.t += QUIET; await n.tick();
+    expect(w.starts).toHaveLength(1);
+    await stallLast(w, n);
+    expect(store.states.get(SOURCE)).toMatchObject({ state: 'retry' });
+    flag.on = false;
+    w.t += FLAG_EVERY_MS; await n.tick();
+    for (const wait of RETRY_BACKOFF_MS) { w.t += wait; await n.tick(); }
+    expect(w.starts).toHaveLength(1);
+    expect(store.states.get(SOURCE)).toMatchObject({ state: 'idle' });
+    await n.stop();
   });
 
   test('a run that completes clears the owed retry: the source goes idle and nothing more starts', async () => {
