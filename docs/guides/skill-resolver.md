@@ -302,6 +302,35 @@ so those sessions get nothing, and doctor says so. `gbrain skills pin add <id>
 --skill-loading off` removes the extension and the state; pins stay in
 config.json.
 
+## Cursor pinned skills
+
+Cursor gets pinned skills only. No Cursor hook can add text to the model's
+request, so there are no per-turn suggestions, and no check on this machine
+can see Cursor's request, so this route is unverified. Doctor reports Cursor
+as partial: pinned only, no per-turn hook, unverified.
+
+Run `gbrain setup cursor --skill-loading resolve` in the project:
+
+1. Setup builds the project's catalog, `cursor-project-<16 hex>`, from the skill
+   directories Cursor loads there: the project's `.agents/skills`,
+   `.cursor/skills`, `.claude/skills` and `.codex/skills`, then the same four
+   under your home directory. It records the project in
+   `~/.gbrain/cursor-skill-pins.json`.
+2. Pins come from `gbrain skills pin add <id> --catalog <that catalog>` (setup
+   prints the name). A pin the catalog does not hold is left out. With no pins
+   there is no rule file.
+3. The pins go in their own always-applied rule,
+   `.cursor/rules/gbrain-pinned-skills.mdc`, with each skill's SKILL.md path.
+   Your own rules and gbrain's brain-first rule are never touched, and a file
+   at that path that gbrain did not write is left alone (setup exits 1).
+4. Inside a git repository the rule's path goes in the repository's
+   `info/exclude` (never `.gitignore`), so it is never committed.
+
+`gbrain skills pin add|remove` rewrites the rule from any directory, and
+Cursor applies it from its next request. `gbrain setup cursor --skill-loading
+off` in the project removes the rule, its exclude line and the record; pins
+stay in config.json.
+
 ## Pinned skills
 
 Pins are the operator's always-on skills for one catalog. gbrain ships none,
