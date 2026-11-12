@@ -73,6 +73,20 @@ On Postgres, when gbrain connects as a role that can read `pages` but does not o
 - Tests: `test/search-keyword-paging.test.ts`, `test/search/keyword-handles.test.ts`, `test/search/keyword-handles-or-alternatives-8618.test.ts`, `test/search/output-redaction-link-slugs-8545.test.ts`, `test/takes-search-validity-8546.test.ts`, `test/trajectory.test.ts`, `test/trajectory-format.test.ts`, `test/loops-source-read-failure-8452.test.ts`.
 - Tests (query embeddings and planner statistics): `test/engine-gateway-state.test.ts` (closing engine A while engine B's query embed is in flight leaves B's vector cached, so repeating the query makes no provider call; an engine's own in-flight embed is still not cached after it closes); `test/engine-cache-namespace.test.ts` (a namespaced engine's in-flight embed is still there for the reopened brain); `test/projection-statistics.test.ts` (a SELECT-only role over owner-analyzed statistics: nothing missing, `cannot be inspected`, two small passes refresh nothing and print nothing, a large pass warns once); `test/e2e/planner-stats-postgres.test.ts` (doctor run as a SELECT-only role reports the projection statistic as uninspectable).
 
+**A brain set to `search.mode tokenmax` now says when its pages are not on the synopsis tier, and `gbrain reindex --synopsis` puts them there.** Import and sync embed tokenmax pages at the free title tier and leave per-chunk synopses to the `contextual_reindex_per_chunk` job, but nothing ever queued that job, so a brain could search on title-tier vectors for weeks while reporting tokenmax.
+
+### What changed
+
+| Situation | Before | Now |
+|---|---|---|
+| `gbrain doctor` on a brain whose configured tier is `per_chunk_synopsis` | nothing about it | `synopsis_tier_coverage` gives chunk and page coverage, the large pages left on the title tier and the last sweep job; it warns below 50% of chunks and names `gbrain reindex --synopsis`. The remote doctor runs it too, confined to the caller's sources |
+| `gbrain search modes` | the configured tier only | one line with the synopsis-tier coverage (local only; the `search_modes` op leaves it out) |
+| `gbrain reindex --synopsis` | did not exist | previews pages, chunks, synopsis tokens and dollars on the configured synopsis model plus the re-embed, and spends nothing |
+| `gbrain config set search.mode tokenmax` | the banner named `gbrain reindex --markdown` (which embeds at the title tier) and, on a TTY with a live worker, offered to queue it | the banner names `gbrain reindex --synopsis`; on a TTY it shows the sweep's preview and runs the sweep in that terminal only when you answer yes. Without a TTY it prints the preview command |
+| `gbrain reindex --synopsis --yes [--max-usd <usd>]` | did not exist | queues one `contextual_reindex_per_chunk` job per page under one spend cap the worker enforces across them, runs them in-process and reports the new coverage. Running it again resumes: finished pages are skipped and queued jobs are picked up |
+
+Nothing is scheduled automatically and no default changes. Inline pages over 1 MiB keep the title tier, as before. Repo-less brains work the same way: the sweep reads and writes the database only.
+
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git

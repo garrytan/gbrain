@@ -1,30 +1,27 @@
 /**
  * v0.40.3.0 — mode-switch UX (D3)
  *
- * Pure unit tests for the 3 exports:
  *   - summarizeTransition: 5-cell matrix + invalid fallthrough
- *   - probeWorkerAvailable: active / stale / never_seen branches via DI
- *   - buildReindexIdempotencyKey: content-stable invariance (codex D12 #1)
+ *   - runModeSwitchUx without a TTY: the banner names the synopsis sweep
+ *     preview (#8744) and prompts for nothing. The TTY preview-and-ask path
+ *     runs against a real brain in test/synopsis-sweep-8744.serial.test.ts.
  */
 
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { resetPgliteState } from './helpers/reset-pglite.ts';
-import {
-  summarizeTransition,
-  probeWorkerAvailable,
-  buildReindexIdempotencyKey,
-  WORKER_STALE_THRESHOLD_MS,
-} from '../src/core/search/mode-switch-ux.ts';
+import { describe, expect, test } from 'bun:test';
+import { runModeSwitchUx, summarizeTransition } from '../src/core/search/mode-switch-ux.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 describe('summarizeTransition (5-cell matrix + invalid fallthrough)', () => {
   test('any → tokenmax: tokenmax_opt_in with reindex required', () => {
     const s = summarizeTransition('balanced', 'tokenmax');
     expect(s.kind).toBe('tokenmax_opt_in');
     expect(s.reindex_required).toBe(true);
-    expect(s.reindex_command).toBe('gbrain reindex --markdown');
+    expect(s.reindex_command).toBe('gbrain reindex --synopsis');
     expect(s.cost_estimate_per_query_cents).toBeGreaterThan(0);
     expect(s.callout_lines.some((l) => l.includes('tokenmax'))).toBe(true);
+    // #8744: import and reindex --markdown embed at the title tier; only the synopsis sweep backfills.
+    expect(s.callout_lines.some((l) => l.includes('`gbrain reindex --synopsis`'))).toBe(true);
+    expect(s.callout_lines.join('\n')).not.toContain('reindex --markdown');
   });
 
   test('first-time any → tokenmax (null → tokenmax)', () => {
@@ -75,92 +72,30 @@ describe('summarizeTransition (5-cell matrix + invalid fallthrough)', () => {
   });
 });
 
-describe('probeWorkerAvailable (DI for active/stale/never_seen)', () => {
-  let engine: PGLiteEngine;
+describe('runModeSwitchUx without a TTY', () => {
+  const capture = async (newMode: string) => {
+    const lines: string[] = [];
+    const error = console.error;
+    console.error = (...args: unknown[]) => { lines.push(args.join(' ')); };
+    try {
+      await withEnv({ GBRAIN_NO_MODE_SWITCH_UX: undefined }, () => runModeSwitchUx({ oldMode: 'balanced', newMode, engine: {} as never, isTty: false,
+        answerFn: async () => { throw new Error('no prompt without a TTY'); } }));
+    } finally {
+      console.error = error;
+    }
+    return lines;
+  };
 
-  beforeAll(async () => {
-    engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
+  test('balanced → tokenmax: the banner names the free synopsis sweep preview, not reindex --markdown', async () => {
+    const lines = await capture('tokenmax');
+    expect(lines[0]).toBe('[mode-switch] Switched to tokenmax. Per-chunk Haiku synopsis enabled.');
+    expect(lines.some((l) => l.includes('`gbrain reindex --synopsis`'))).toBe(true);
+    expect(lines.at(-1)).toBe('[mode-switch] Preview the backfill (spends nothing): gbrain reindex --synopsis');
+    expect(lines.join('\n')).not.toContain('reindex --markdown');
   });
 
-  afterAll(async () => {
-    await engine.disconnect();
-  });
-
-  beforeEach(async () => {
-    await resetPgliteState(engine);
-  });
-
-  test('never_seen when minion_jobs has no recent activity', async () => {
-    const result = await probeWorkerAvailable(engine);
-    expect(result.status).toBe('never_seen');
-    expect(result.paste_ready_start_command).toBe('gbrain jobs work');
-    expect(result.last_heartbeat_iso).toBeUndefined();
-  });
-
-  test('active when minion_jobs activity is fresh (<2 min)', async () => {
-    // Seed a recently-started job.
-    await engine.executeRaw(
-      `INSERT INTO minion_jobs (submission_authority, queue, name, data, status, started_at)
-       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', 'test-job', '{}'::jsonb, 'active', now())`,
-    );
-    const result = await probeWorkerAvailable(engine);
-    expect(result.status).toBe('active');
-    expect(result.last_heartbeat_iso).toBeDefined();
-  });
-
-  test('stale when activity is older than 2 min but within 10-min window', async () => {
-    // Seed a 5-minute-old started_at (within 10-min query window, > 2-min stale).
-    await engine.executeRaw(
-      `INSERT INTO minion_jobs (submission_authority, queue, name, data, status, started_at)
-       VALUES ('{"version":1,"kind":"application"}'::jsonb, 'default', 'test-stale-job', '{}'::jsonb, 'completed',
-               now() - INTERVAL '5 minutes')`,
-    );
-    const result = await probeWorkerAvailable(engine);
-    expect(result.status).toBe('stale');
-    expect(result.last_heartbeat_iso).toBeDefined();
-  });
-
-  test('threshold constant is 2 minutes (120_000 ms)', () => {
-    expect(WORKER_STALE_THRESHOLD_MS).toBe(120_000);
-  });
-});
-
-describe('buildReindexIdempotencyKey (codex D12 Bug 1 content-stable invariance)', () => {
-  test('same inputs produce identical key', () => {
-    const k1 = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    const k2 = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    expect(k1).toBe(k2);
-  });
-
-  test('key shape matches the canonical pattern', () => {
-    const k = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    expect(k).toBe('cr-backfill:default:2:tokenmax');
-  });
-
-  test('different source_id produces different key', () => {
-    const k1 = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    const k2 = buildReindexIdempotencyKey('other-source', 2, 'tokenmax');
-    expect(k1).not.toBe(k2);
-  });
-
-  test('different chunker_version produces different key (re-chunk = new key)', () => {
-    const k1 = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    const k2 = buildReindexIdempotencyKey('default', 3, 'tokenmax');
-    expect(k1).not.toBe(k2);
-  });
-
-  test('different mode produces different key', () => {
-    const k1 = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    const k2 = buildReindexIdempotencyKey('default', 2, 'balanced');
-    expect(k1).not.toBe(k2);
-  });
-
-  test('NOT timestamp-based: two consecutive runs with same state produce same key', async () => {
-    const k1 = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    await new Promise((r) => setTimeout(r, 10));
-    const k2 = buildReindexIdempotencyKey('default', 2, 'tokenmax');
-    expect(k1).toBe(k2);
+  test('balanced → conservative: no backfill hint', async () => {
+    const lines = await capture('conservative');
+    expect(lines.join('\n')).not.toContain('reindex');
   });
 });

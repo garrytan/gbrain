@@ -1163,6 +1163,10 @@
       },
       {
         "category": "brain",
+        "name": "synopsis_tier_coverage"
+      },
+      {
+        "category": "brain",
         "name": "hidden_by_search_policy"
       },
       {

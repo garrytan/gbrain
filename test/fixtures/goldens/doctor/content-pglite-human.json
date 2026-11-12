@@ -271,6 +271,7 @@
       "  [OK] embedding_plane_disagreement: The config file disables embeddings and the database holds no vectors.",
       "  [OK] fence_integrity: No malformed facts or takes fence is held, stored or waiting in a checkout (2 source(s) scanned).",
       "  [OK] search_mode: Mode: conservative (no per-key overrides — mode bundle is canonical).",
+      "  [INFO] synopsis_tier_coverage: Not applicable: the configured contextual-retrieval tier is none, not per_chunk_synopsis.",
       "  [OK] hidden_by_search_policy: No pages hidden by search-exclude policy.",
       "  [OK] eval_drift: No retrieval-affecting files changed in working tree.",
       "  [OK] reranker_health: Reranker disabled — no failures expected",

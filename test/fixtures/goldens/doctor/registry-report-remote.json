@@ -167,6 +167,10 @@
       },
       {
         "category": "brain",
+        "name": "synopsis_tier_coverage"
+      },
+      {
+        "category": "brain",
         "name": "text_projection_readiness"
       },
       {

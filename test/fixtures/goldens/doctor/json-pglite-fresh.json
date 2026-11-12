@@ -3697,6 +3697,19 @@
         {
           "category": "brain",
           "details": {
+            "configured": false,
+            "global_tier": "none"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: the configured contextual-retrieval tier is none, not per_chunk_synopsis.",
+          "name": "synopsis_tier_coverage",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "counts": {},
             "prefixes": [
               "test/",

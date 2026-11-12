@@ -48,6 +48,10 @@ export async function run(engine: BrainEngine, args: string[]): Promise<void> {
     }
     return;
   }
+  if (args.includes('--synopsis')) {
+    await (await import('../../commands/reindex-synopsis.ts')).runReindexSynopsis(engine, args);
+    return;
+  }
   if (args.includes('--segmented')) {
     await reindex.runReindexSegmented(engine, args);
     return;
