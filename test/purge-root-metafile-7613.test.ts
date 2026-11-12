@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -14,9 +15,12 @@ const note = (title: string, body: string) => serializeMarkdown({}, body, '', { 
 /**
  * Pages imported before the brain was managed (and before their path became a sync metafile), soft-deleted past the
  * 72-hour retention. Each file holds `disk` when given, else the page's own markdown, so the purge's comparison matches.
+ * The checkout is a Git repository with no commit, so every file is uncommitted: GST-2201 keeps a committed file on purge,
+ * and these tests need the purge to be allowed to remove a file so that only the #7613 metafile rule keeps one.
  */
 function seedExpiredTombstones(files: LegacyFile[]) {
   return async ({ engine, root }: { engine: BrainEngine; root: string }) => {
+    execFileSync('git', ['-C', root, 'init', '-q', '-b', 'main'], { stdio: ['ignore', 'pipe', 'pipe'] });
     for (const file of files) {
       mkdirSync(dirname(join(root, file.path)), { recursive: true });
       writeFileSync(join(root, file.path), file.disk ?? file.page);
