@@ -42,6 +42,7 @@ import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.t
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { privacyLabelGuard } from '../src/core/trust/page-write.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const NL = String.fromCharCode(10);
@@ -192,6 +193,30 @@ for (const backend of testBackends()) describe('[' + backend + '] owner-set labe
     expect((await pageRow(b.engine, SRC, open)).frontmatter.readable_by).toEqual(['alice-example', OWNER]);
     expect(await readsOf(reads, open, openCanary)).toEqual({ unbound: false, bob: false, owner: true });
   }), 180_000);
+
+  test('B fails closed: an error reading the owner refuses the write instead of dropping the owner', () => repoless(async (b) => {
+    const slug = 'notes/owner-read-error-example', canary = 'canaryownererror';
+    await seedOwnerPage(b.engine, SRC, slug, file(slug, ['readable_by: [alice-example, ' + OWNER + ']'], canary));
+    const [page] = await b.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, slug]);
+    const failing = new Proxy(b.engine, { get(target, key, receiver) {
+      if (key !== 'executeRaw') return Reflect.get(target, key, receiver);
+      return (sql: string, params?: unknown[]) => /access_members/.test(sql) ? Promise.reject(new Error('connection reset')) : target.executeRaw(sql, params);
+    } });
+    const row = { operation: 'put_page', intent: {}, authority: { remote: false } } as any;
+    await expect(privacyLabelGuard(failing, row, { tier: 'agent_written' } as any, { id: Number(page!.id), frontmatter: { readable_by: ['alice-example', OWNER] } },
+      'operator_curated', { readable_by: ['alice-example'] })).rejects.toThrow('connection reset');
+  }), 120_000);
+
+  test('a label door that clears the labels leaves no guard: the agent\'s own later label is its own to drop', () => repoless(async (b) => {
+    const slug = 'notes/cleared-example', canary = 'canarycleared';
+    await call(b, 'put_page', { slug, content: file(slug, ['readable_by: [alice-example, ' + OWNER + ']'], canary) });
+    await repairVisibility(b.engine, ['--source', SRC, '--slug', slug, '--readers', 'none']);
+    expect((await pageRow(b.engine, SRC, slug)).frontmatter.readable_by).toBeUndefined();
+    await put(b, slug, file(slug, ['visibility: private'], canary, 'The agent made it private.'));
+    const dropped = await put(b, slug, file(slug, [], canary, 'The agent opened it again.'));
+    expect(dropped.privacy_labels_kept).toBeUndefined();
+    expect((await pageRow(b.engine, SRC, slug)).frontmatter.visibility).toBeUndefined();
+  }), 120_000);
 
   test('nothing is held that should not be: an agent narrowing that keeps the owner, the owner\'s readers setter, the owner opt-in', () => repoless(async (b, reads) => {
     const keep = 'notes/keeps-owner-example', canary = 'canarykeepsowner';

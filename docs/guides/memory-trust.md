@@ -308,8 +308,10 @@ Labels you set on an agent's page hold too. `gbrain repair visibility` (and
 its `--readers` setter, and `gbrain repair private-labels`) keeps the page's
 agent tier, but it raises the page's label guard to your tier, so a later agent
 write at the page's tier that drops or widens your labels is held the same way.
-The guard is kept in the database, so on a managed Git brain rebuilt from a
-clone it starts empty; run the label repair again to set it.
+The guard is kept in the database and set only by a label repair run after the
+upgrade, so labels you set earlier, and a managed Git brain rebuilt from a
+clone, start without it; run the label repair again to set it. A repair that
+leaves the page with no privacy label removes the guard.
 
 An agent also can't take you out of a page's readers. When a write below your
 tier sets `readable_by` to a list that leaves you, the brain owner, out of a

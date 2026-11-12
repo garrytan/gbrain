@@ -36,10 +36,10 @@ import { declaredWriteTrust, readDerivationDeclaration } from './taint.ts';
 import { insertTrustProposal, updatePendingTrustProposalAfter } from './proposals.ts';
 import { propagateTierLowering } from './propagation.ts';
 import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, isTrustTier, maxTrust, minTrust, storedTrustTier, type TrustTier, type WriteTrust } from './tier.ts';
-import { PRIVACY_ALIASES } from '../search/private-visibility.ts';
-import { normalizeReaders, readersAllow } from '../access/principals.ts';
-import { memberIdentity } from '../access/members.ts';
-import { ownerMemberId, ownerReadsRestrictedOn } from '../access/owner.ts';
+import { OWNER_MEMBER_KEY, PRIVACY_ALIASES } from '../search/private-visibility.ts';
+import { ACCESS_ID_RE, identityFor, normalizeReaders, readersAllow } from '../access/principals.ts';
+import { getMember } from '../access/members.ts';
+import { ownerReadsRestrictedOn } from '../access/owner.ts';
 import { asciiLower } from '../edge-whitespace.ts';
 
 /** Page writes that only edit a gbrain-managed fence (or strike a row) and keep the page's tier. */
@@ -173,22 +173,36 @@ export async function privacyLabelGuard(engine: BrainEngine, row: Pick<WriteRequ
   return tier || owner ? { tier, owner } : null;
 }
 
-/** GST-2521: the brain owner, when the owner reads `frontmatter` by its readers and the opt-in to read past readers is off. */
+/**
+ * GST-2521: the brain owner, when the owner reads `frontmatter` by its readers and the opt-in to read past readers is off.
+ * No owner, an ill-formed id, or a member that is not enabled reads as none (nobody reads as such an owner); a read error
+ * propagates, so the write fails instead of publishing without the owner.
+ */
 async function ownerReader(engine: BrainEngine, frontmatter: Record<string, unknown>): Promise<LabelGuard['owner']> {
-  const member = await ownerMemberId(engine);
-  if (!member || await ownerReadsRestrictedOn(engine)) return null;
-  const identity = await memberIdentity(engine, member).then(found => found.identity, () => null);
-  return identity && readersAllow(frontmatter, identity) ? { member, identity } : null;
+  const id = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim();
+  if (!id || !ACCESS_ID_RE.test(id) || await ownerReadsRestrictedOn(engine)) return null;
+  const member = await getMember(engine, id);
+  if (member?.status !== 'enabled') return null;
+  const identity = identityFor(member.id, member.groups);
+  return readersAllow(frontmatter, identity) ? { member: member.id, identity } : null;
 }
 
 /**
  * GST-2521: the owner's label door (`gbrain repair visibility`, its `--readers` setter, `gbrain repair private-labels`)
- * keeps the page's tier, so it raises the page's label guard to operator_curated: a later write below that is held from
- * widening the labels the owner set. In the door's own transaction.
+ * keeps the page's tier, so it raises the page's label guard to operator_curated when it leaves the page private by its
+ * labels or naming readers: a later write below that is held from widening them. A door that leaves no such label
+ * removes the guard. In the door's own transaction, after its write.
  */
 export async function raisePageLabelGuard(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
-  await tx.executeRaw(`INSERT INTO page_label_guards (page_id, tier) SELECT id, $3 FROM pages WHERE source_id = $1 AND slug = $2
-    ON CONFLICT (page_id) DO UPDATE SET tier = EXCLUDED.tier, set_at = now()`, [sourceId, slug, OWNER_TIER_FLOOR]);
+  const [page] = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | null }>('SELECT id, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  if (!page) return;
+  const labels = page.frontmatter ?? {};
+  if (!labelledPrivate(labels) && normalizeReaders(labels) === null) {
+    await tx.executeRaw('DELETE FROM page_label_guards WHERE page_id = $1', [Number(page.id)]);
+    return;
+  }
+  await tx.executeRaw(`INSERT INTO page_label_guards (page_id, tier) VALUES ($1, $2)
+    ON CONFLICT (page_id) DO UPDATE SET tier = EXCLUDED.tier, set_at = now()`, [Number(page.id), OWNER_TIER_FLOOR]);
 }
 
 /**
