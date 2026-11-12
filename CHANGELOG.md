@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.692.0] - 2026-11-12
 
 **On a source whose pages are canonical in Git, every fact writer now commits a fact with no page of its own to Git, and doctor and a new repair find the ones an older gbrain left in the database only.** In the last release only `remember` did this. Google loops, fact extraction, the managed facts writer and an owner releasing a quarantined fact now also commit a fact with no entity, or for an entity with no page, as a row of `memory/unattributed`. Before, they kept it in the database only, where a rebuild from Git lost it, or were refused with `git_home_required` once that page existed. Sources that are not strict, and brains with no Git repository, behave as before.
 
@@ -24,6 +24,7 @@ identifiers and attribution are available in the pre-removal Git revision
 - **Purge readers now read `memory/unattributed`'s `entity` column.** The guard that drops a failed write's stored copy of purged content, and a page purge's claim inventory, used to see that page's held rows as a malformed table and miss them.
 - Docs: `docs/guides/repair.md#facts-home`, `docs/guides/git-canonical.md`, `docs/guides/write-refusals.md`, `docs/guides/entity-scoped-facts.md`, the `remember` section of `docs/mcp/TOOL_REFERENCE.md` and `docs/protocol/MEMORY_VERBS_v1.md`. Behaviour-change rows disclose each change after an upgrade.
 - Tests, on PGLite and Postgres: `test/strict-background-writers-gst2492.test.ts`, `test/repair-facts-home-gst2492.test.ts`, `test/held-bare-name-move-gst2492.test.ts`, `test/sync-strict-unmanaged-gst2492.test.ts`, `test/held-fence-readers-gst2492.test.ts`, `test/facts-home-review-gst2492.test.ts` and `test/doctor-strict-facts-outside-git.test.ts`. The `entity_page_missing` assertions in `test/remember-pageless-entity-gst2446.test.ts` and `test/remember-strict-held-gst2492.test.ts` now pin `ask_user` and the held form.
+
 ## [0.60.691.0] - 2026-11-12
 
 **A privacy label repair on a database-only page now sticks, and a supported command stops tracking a folder's files without deleting their pages.** Pages under a folder declared `storage.db_only` in `gbrain.yml` live in the database. Some of those folders still had files Git tracked from before the declaration, and on a git-canonical source every sync put the committed file back over the database, undoing a `gbrain repair visibility` that had made the page private. Sync now keeps the database version there, a commit to such a file can no longer widen who reads the page, and `gbrain git commit-push --untrack` takes the old files out of Git safely so the problem cannot come back.
