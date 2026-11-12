@@ -419,6 +419,16 @@ export async function submitMaintenanceConsolidation(engine: BrainEngine, author
 export interface FactFenceAssignment { id: number; row_num: number; hash: string }
 
 /**
+ * The row hash an adoption or held-move plan pins. `valid_from` and `valid_until` count to the second, the precision a fence
+ * cell keeps: the facts reconcile rewrites a new row's sub-second time to its cell's, and a request still pending across
+ * that reconcile commits instead of ending revision_conflict beside a second request for the same move (GST-2492).
+ */
+const SUBSECOND = /\.\d+(?=Z$|[+-]\d\d(?::?\d\d)?$)/;
+const toSecond = (time: unknown) => (typeof time === 'string' ? time.replace(SUBSECOND, '') : time);
+const pinnedFactHash = (value: Record<string, unknown> | null | undefined) =>
+  digest(value ? { ...value, valid_from: toSecond(value.valid_from), valid_until: toSecond(value.valid_until) } : null);
+
+/**
  * v0.32.2 on a managed brain: publish the page with its rendered facts fence
  * and adopt the legacy rows in place, so the canonical projection matches
  * them by (source, page, row_num) instead of inserting duplicates.
@@ -461,7 +471,7 @@ export type FactFenceAdoptionPlan =
 export async function planFactFenceAdoption(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
   options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string; from_slug?: string; drop?: readonly HeldDrop[] } }): Promise<FactFenceAdoptionPlan> {
   const current = await readFacts(engine, authority.writer.sourceId, options.assignments.map(a => a.id));
-  const facts: FactFenceAssignment[] = options.assignments.map(a => ({ ...a, hash: digest(current.find(f => f.id === a.id)?.value ?? null) }));
+  const facts: FactFenceAssignment[] = options.assignments.map(a => ({ ...a, hash: pinnedFactHash(current.find(f => f.id === a.id)?.value) }));
   const intent = { kind: options.move ? HELD_FACT_MOVE : 'managed_maintenance_adopt_fact_fence', expected_revision: options.expectedRevision,
     source_incarnation: authority.writer.sourceIncarnation, content: options.content, facts, planner: FACT_FENCE_PLANNER,
     ...(options.move ? { note: options.move.note, ...(options.move.from_entity ? { from_entity: options.move.from_entity } : {}),
@@ -561,7 +571,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
     const current = await readFacts(db, row.source_id, facts.map(f => f.id), lock);
     for (const assignment of facts) {
       const fact = current.find(f => f.id === assignment.id);
-      if (!fact || digest(fact.value) !== assignment.hash || !ownsRow(fact.value, assignment.row_num) || fact.value.expired_at !== null
+      if (!fact || pinnedFactHash(fact.value) !== assignment.hash || !ownsRow(fact.value, assignment.row_num) || fact.value.expired_at !== null
         || (held ? fact.value.source_markdown_slug !== fromSlug || fact.value.row_num === null : fact.value.row_num !== null)) {
         throw opError('revision_conflict', 'A legacy fact changed, was already adopted or moved to another owner before adoption.',
           `A legacy fact on ${row.slug} in ${row.source_id} changed before fact-fence adoption request ${row.request_id} published; nothing was written. The next fact backfill run re-reads the facts and plans a fresh request.`,

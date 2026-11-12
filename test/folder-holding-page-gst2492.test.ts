@@ -761,6 +761,46 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     expect(upkeep.warnings.some(w => w.startsWith('HELD_FACT_PENDING: ') && w.includes(request))).toBe(true);
     await settleManagedGitEffects(engine);
     expect(await factRows(engine, garden)).toMatchObject([{ source_markdown_slug: 'notes/garden-plan' }]);
+    // The request the apply named is the one that commits: the facts reconcile that ran between its acceptance and its commit
+    // (it rewrites the new row's time to the second its fence cell keeps) does not strand it beside a second request.
+    expect(await engine.executeRaw("SELECT request_id::text AS request_id, state FROM persistence_requests WHERE slug = 'notes/garden-plan' AND intent->>'kind' = 'managed_maintenance_move_held_fact' ORDER BY sequence"))
+      .toEqual([{ request_id: request, state: 'committed' }]);
+  }), 300_000);
+
+  test('a sync that brings a rule, a maintenance pass and a save on the same holding page all finish, and every fact ends on one page', () => strict(async ({ engine, ctx, root }) => {
+    const moveModule = await import('../src/core/facts/held-fact-move.ts');
+    const acme = 'The acme-example brief is moved under contention.';
+    const beta = 'The beta-example plan is moved under contention.';
+    const late = 'The garden plan is saved under contention.';
+    await remember(ctx, acme, 'clients/acme-example/brief');
+    await remember(ctx, beta, 'clients/beta-example/plan');
+    await settleManagedGitEffects(engine);
+    const policy = (rules: FolderRule[]) => commitPolicyFile(root, POLICY_FILE, () => serializePolicyYaml(rules), 'access: rule');
+    const sync = () => performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true } as never);
+    // One rule is applied with its move lost, so maintenance has a move due; the second rule arrives with the contended sync.
+    const died = spyOn(moveModule, 'moveRuledSharedHeld').mockImplementation(async () => { throw new Error('process died'); });
+    try { policy([rule('beta', 'clients/beta-example/', ['alice-example'])]); await sync(); } finally { died.mockRestore(); }
+    expect(await factRows(engine, beta)).toMatchObject([{ source_markdown_slug: HOLD }]);
+    policy([rule('beta', 'clients/beta-example/', ['alice-example']), rule('acme', 'clients/acme-example/', ['alice-example'])]);
+    // The sync holds its lease and then moves, the maintenance pass moves, and a save appends to the page both take rows off.
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const watchdog = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('a sync, a maintenance pass and a save on one holding page did not all finish within 120 s')), 120_000); });
+    try {
+      const [, , saved] = await Promise.race([Promise.all([sync(), runExtractFacts(engine, { sourceId: 'default' }), remember(ctx, late, 'notes/garden-plan')]), watchdog]);
+      expect(saved).toMatchObject({ status: 'inserted', page: HOLD });
+    } finally { clearTimeout(timer); }
+    // Whatever the three left undone, the next passes finish it: nothing stays due and no request stays open.
+    for (let pass = 0; (await moveModule.moveRuledSharedHeld(engine, 'default')) !== null; pass++) { expect(pass).toBeLessThan(4); await settleManagedGitEffects(engine); }
+    await settleManagedGitEffects(engine);
+    expect(await factRows(engine, acme)).toMatchObject([{ entity_slug: 'clients/acme-example/brief', source_markdown_slug: 'clients/acme-example/memory/unattributed' }]);
+    expect(await factRows(engine, beta)).toMatchObject([{ entity_slug: 'clients/beta-example/plan', source_markdown_slug: 'clients/beta-example/memory/unattributed' }]);
+    expect(await factRows(engine, late)).toMatchObject([{ source_markdown_slug: HOLD }]);
+    expect(await engine.executeRaw("SELECT request_id::text AS request_id, state FROM persistence_requests WHERE completed_at IS NULL")).toEqual([]);
+    const shared = head(root, `${HOLD}.md`);
+    expect(shared).toContain(late);
+    for (const moved of [acme, beta]) expect(shared).not.toContain(moved);
+    expect(head(root, 'clients/acme-example/memory/unattributed.md')).toContain(acme);
+    expect(head(root, 'clients/beta-example/memory/unattributed.md')).toContain(beta);
   }), 300_000);
 
   test('a source that is not strict, and a brain with no Git repository, keep a ruled entity\'s fact database-only as before', async () => {
