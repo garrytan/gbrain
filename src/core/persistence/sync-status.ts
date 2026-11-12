@@ -38,6 +38,8 @@ import { laneFaultInMessage } from './sync-window.ts';
 import { cursorFenceCause, syncKnockOnSql } from './sync-knock-on.ts';
 import { listIncompleteSyncReceipts, type SyncSettledIndexes } from './checkpoint-validation.ts';
 import { drainEstimate, engineStallProbe } from './sync-drain.ts';
+import { readCheckoutRoot } from './applied-watermark.ts';
+import { readGitBehind } from './sync-freshness.ts';
 import { classifyRecordedFault, classifyTerminal, type TerminalCategory } from './terminal-classify.ts';
 import type { PublicCategory } from './public-category.ts';
 import { readSyncFile, resolveManagedSyncContext } from './sync-discovery.ts';
@@ -246,7 +248,9 @@ export const SYNC_STATUS_REASONS = ['nothing_pending', 'held_by_design', 'held_n
   // #7355: passes keep stopping before they end.
   'pass_abandoned',
   // #7596: the newest pass's process stopped (killed or crashed) without ending it.
-  'pass_interrupted'] as const;
+  'pass_interrupted',
+  // GST-2515: nothing else is pending, but the checkout's HEAD is past the last synced commit.
+  'commits_waiting'] as const;
 export type SyncStatusReason = typeof SYNC_STATUS_REASONS[number];
 export type SyncStatusRead = { status: 'read' } | { status: 'not_read'; fix: Action };
 /** The bound of each default probe (the oldest blocker, the recovery records). */
@@ -479,7 +483,13 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
   const connectorLastError = await (await import('./connector-status.ts')).readConnectorLastError(engine, sourceId);
   const gitPushHolds = committed?.git_push_held ? await readGitPushHolds(engine, [sourceId]) : [];
   const fenceHolds = committed?.fence_held ? await (await import('../generations/fence.ts')).fenceHoldEntries(engine, [sourceId]) : [];
-  const [state, stateReason] = statusState({ human: !!(liveError?.needs_human), heldForHuman: holds.some(hold => hold.needs_human), oldest, recovery, liveJob: liveJob !== null, unfinished, lastError: !!liveError, actionable: actionable.length > 0, holds: holds.length > 0, pass: passState });
+  const settled = statusState({ human: !!(liveError?.needs_human), heldForHuman: holds.some(hold => hold.needs_human), oldest, recovery, liveJob: liveJob !== null, unfinished, lastError: !!liveError, actionable: actionable.length > 0, holds: holds.length > 0, pass: passState });
+  // GST-2515: a source with nothing else pending is not synced while its checkout has commits past the last synced commit.
+  // A scoped convergence keeps last_commit by design, a hold that needs a person keeps its own reason, and a writeback still
+  // integrating is the source's own commit.
+  const waiting = (settled[1] === 'nothing_pending' || settled[1] === 'held_by_design') && !gitPushHolds.length && source.last_commit
+    ? await commitsPastLastSync(engine, sourceId, source.last_commit) : null;
+  const [state, stateReason]: [SyncStatusState, SyncStatusReason] = waiting ? ['resumable', 'commits_waiting'] : settled;
   const admission = await syncAdmissionStatus(engine, sourceId, source.incarnation,
     { stored: source.admission_stored, row_value: source.admission_row_value, set_at: source.admission_set_at, pinned: source.admission_pinned, destructive: source.admission_destructive });
   const passNext = passRow && passState && passState[1] === stateReason ? passStatusNext(sourceId, passState[1], passRow, resume, source.writeback_failed, interrupted) : null;
@@ -491,6 +501,8 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     resume_argv: resume, ...blockers, cursors: detail ? await liveCursors(engine, sourceId, source.incarnation, selected?.key ?? null, failures) : [],
     terminal_failures: terminal, connector_last_error: connectorLastError, git_push_holds: gitPushHolds, fence_holds: fenceHolds, worktree_refresh: worktreeRefresh, next: next ?? recovery_next ?? passNext ?? (stateReason === 'request_pending' && oldest.status === 'ok' && oldest.request ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Write request ${oldest.request.request_id} of this source is still ${oldest.request.state}${oldest.request.step ? ` (step ${oldest.request.step})` : ''}; a running owner finishes it on its own, and the next sync of this source drains it.` } satisfies Action
+      : stateReason === 'commits_waiting' ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
+      why: `The checkout's HEAD is ${waiting} commit(s) past the last synced commit ${source.last_commit?.slice(0, 12)}; this sync imports them.` } satisfies Action
       : stateReason === 'status_unknown' ? { argv: ['gbrain', 'sync', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `The oldest-blocker or recovery probe did not answer within ${SYNC_STATUS_PROBE_MS / 1000} s, so this status does not know the state (it is not reported synced). Rerun it after a short wait; gbrain doctor --json checks the database if it keeps timing out.` } satisfies Action
       : gitPushHolds.find(hold => hold.conflict || hold.parked)?.fix ?? fenceHolds[0]?.fix ?? (worktreeRefresh?.liveness === 'unknown' ? worktreeRefresh.fix : null)),
@@ -528,6 +540,18 @@ function statusState(s: { human: boolean; heldForHuman: boolean; oldest: SyncSta
   if (s.oldest.status !== 'ok' || s.recovery.status !== 'ok') return ['resumable', 'status_unknown'];
   if (s.pass) return s.pass;
   return ['synced', s.heldForHuman ? 'held_needs_human' : s.holds ? 'held_by_design' : 'nothing_pending'];
+}
+
+/**
+ * GST-2515: how many commits the source's checkout on this host has past `lastCommit`; null when none, or when Git cannot say.
+ * A company-brain source syncs to its approved revision, never to HEAD, so commits past it are not waiting.
+ */
+async function commitsPastLastSync(engine: BrainEngine, sourceId: string, lastCommit: string): Promise<number | null> {
+  const [company] = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE id=$1 AND config->'company_brain' IS NOT NULL", [sourceId]);
+  if (company) return null;
+  const root = (await readCheckoutRoot(engine, sourceId).catch(() => undefined))?.root;
+  const lag = root ? await readGitBehind(root, lastCommit).catch(() => null) : null;
+  return lag?.commits ? lag.commits : null;
 }
 
 /** #6712 PR 2: the source's oldest unfinished request, read through the drain's own bounded head probe. */
