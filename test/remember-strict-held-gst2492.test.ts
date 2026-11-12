@@ -23,7 +23,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
-import type { Notice } from '../src/core/agent-output.ts';
+import { cliRenderContext, renderNotice, type Notice } from '../src/core/agent-output.ts';
+import { renderCliNotices } from '../src/core/agent-markers.ts';
 import { operationsByName, type AuthInfo } from '../src/core/operations.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { performSync } from '../src/commands/sync.ts';
@@ -118,16 +119,26 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
     const [notice] = notices.filter(n => n.code === 'entity_page_missing');
     expect(notice!.why).toContain(`held on ${HOLD} until ${PAGELESS} has a page`);
     expect(notice!.why).toContain('committed to Git');
+    // Held in Git, the fact needs nothing: no step to run and nothing to ask, on any surface.
+    expect(notice).toMatchObject({ kind: 'info' });
+    expect(notice).not.toHaveProperty('fix');
+    expect(notice).not.toHaveProperty('user_message');
+    const agent = renderCliNotices([renderNotice(notice!, cliRenderContext())], { json: false, tty: false }).stdout!;
+    expect(agent).toContain('held on memory/unattributed');
+    expect(agent).not.toContain('next:');
+    expect(agent).not.toContain('[SHOW USER]');
     const receipt = await call(ctx, 'get_write_request', { request_id: single.request_id });
     expect(receipt.outcome.write_through).toEqual({ written: true, held_for: PAGELESS });
     expect(await factRows(engine, claim)).toMatchObject([{ entity_slug: PAGELESS, source_markdown_slug: HOLD, active: true }]);
 
     const budget = 'The remodel budget is 40,000 USD.';
-    const { items } = await call(ctx, 'remember', { provenance: 'chat 2026-11-11', items: [
+    const { items } = await call(local, 'remember', { provenance: 'chat 2026-11-11', items: [
       { fact: 'Hana Example cycles to work.', entity: PAGED }, { fact: budget, entity: PAGELESS }] });
     expect(items[0]).toMatchObject({ page: PAGED, write_through: { written: true } });
     expect(items[0].write_through).not.toHaveProperty('held_for');
     expect(items[1]).toMatchObject({ status: 'inserted', page: HOLD, persistence: { mode: 'filesystem' }, write_through: { written: true, held_for: PAGELESS } });
+    expect(notices.filter(n => n.code === 'entity_page_missing')).toHaveLength(2);
+    for (const n of notices.filter(n => n.code === 'entity_page_missing')) expect(n).not.toHaveProperty('fix');
     expect(lineOf(head(root, HOLD_FILE), budget)).toContain(PAGELESS);
 
     // MCP shows a notice once per entity per session, so this entity is new.
@@ -136,7 +147,10 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
     const mcp = await overMcp(engine, { fact: contractor, entity: garden });
     expect(mcp.isError).toBe(false);
     expect(mcp.body).toMatchObject({ status: 'inserted', page: HOLD, write_through: { written: true, held_for: garden } });
-    expect(mcp.blocks.join('\n')).toContain(`held on ${HOLD}`);
+    const heldBlock = mcp.blocks.find(text => text.startsWith('[gbrain notice entity_page_missing kind=info]'))!;
+    expect(heldBlock).toContain(`held on ${HOLD}`);
+    expect(heldBlock).not.toContain('next:');
+    expect(heldBlock).not.toContain('put_page');
     expect(lineOf(head(root, HOLD_FILE), contractor)).toContain(garden);
 
     const rebuilt = await rebuild(root, databaseUrl, [claim, budget, contractor]);

@@ -254,6 +254,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'db_ahead_of_git',
   // Git-canonical G3: how far each strict source's index trails HEAD (doctor/checks/git-index-lag.ts).
   'git_index_lag',
+  // GST-2492 PR 2: facts of a strict source without a Git home, or held for more than 30 days (doctor/checks/strict-facts-outside-git.ts).
+  'strict_facts_outside_git',
   // GST-1601: local edits adopted in the last 24 h per source (doctor/checks/local-edit-adoptions.ts).
   'local_edit_adoptions',
   'edge_validity',

@@ -1119,6 +1119,10 @@
       },
       {
         "category": "brain",
+        "name": "strict_facts_outside_git"
+      },
+      {
+        "category": "brain",
         "name": "local_edit_adoptions"
       },
       {

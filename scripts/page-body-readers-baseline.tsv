@@ -268,7 +268,7 @@ src/core/facts/subject-infer-write.ts	linkAllowed	field	STREAM
 src/core/facts/unfenced-facts.ts	auditUnadoptableFacts	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	fenceDatabaseOnlyPage	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	planFence	field	NONE	reads compiled_truth from the object withHeldFactsFence returns for the body string its caller passed; no stored page body is read here
-src/core/facts/unfenced-facts.ts	planManagedPage	call:serializePageToMarkdown	SEGW	
+src/core/facts/unfenced-facts.ts	planPageFence	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	withHeldFactsFence	field	NONE	the body object its caller passes (file text or an inline snapshot); no stored page body is read here
 src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	field	STREAM	inline rows only
 src/core/facts/withdrawal-discovery.ts	discoverWithdrawalTargets	sql	STREAM	page scan reads inline bodies (NULL never matches); segmented pages are found by the chunk scan and their mirror writers refuse or skip (per-segment discovery, PR 2)
