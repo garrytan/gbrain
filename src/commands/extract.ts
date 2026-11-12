@@ -107,7 +107,7 @@ import { loadAllSources } from '../core/sources-load.ts';
 import { plannerStatsForLinkDrain } from '../core/planner-stats.ts';
 import { isSegmentedPage, withoutBody } from '../core/page-body/page-shape.ts';
 import { extractSegmentedPageLinks } from '../core/page-body/segment-links.ts';
-import { STALE_TIME_BUDGET_MS, formatStaleCounts, staleExtractionCounts } from '../core/extraction-lag.ts';
+import { STALE_TIME_BUDGET_MS, formatStaleCounts, staleExtractionCounts, type StaleExtractionCounts } from '../core/extraction-lag.ts';
 import { assertStaleSourceModeUnambiguous } from './extract-stale-options.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
@@ -2127,6 +2127,7 @@ export async function extractStaleFromDB(
     jsonMode: boolean;
     /** Embedded callers (the cycle) own the report: emit nothing on stdout. */
     quiet?: boolean;
+    /** Include terminal eligibility even for quiet callers; defaults to !quiet. */ counts?: boolean;
     /** Unset → the configured knob (resolveIncludeFrontmatter); explicit wins. */
     includeFrontmatter?: boolean;
     sourceIdFilter?: string;
@@ -2142,35 +2143,35 @@ export async function extractStaleFromDB(
     /** GBRA-130 A-1 (managed brains): clear held link-extraction failures first. */ retryHeld?: boolean;
   },
 ): Promise<{ linksCreated: number; timelineCreated: number; pagesProcessed: number; staleRemaining: number; skippedMissingTarget?: number; skippedCrossSource?: number; skippedAttendanceIncomplete?: number; skippedChanged?: number; skippedConcurrentWrite?: number; skippedUnknownSource?: number; mentions?: MentionPassResult;
-  linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[] }> {
+  counts?: StaleExtractionCounts; linkFailed?: number; linkFailures?: LinkExtractionFailure[]; linkSystemic?: LinkExtractionSystemic[] }> {
   const { dryRun, jsonMode, sourceIdFilter, catchUp } = opts;
   const includeFrontmatter = opts.includeFrontmatter ?? await resolveIncludeFrontmatter(engine);
   const log = opts.quiet ? (..._args: unknown[]) => {} : console.log;
   const timeBudgetMs = opts.timeBudgetMs ?? STALE_TIME_BUDGET_MS;
-  const grammar = await readLineGrammarSettings(engine), lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
+  const includeCounts = opts.counts ?? !opts.quiet, grammar = await readLineGrammarSettings(engine), lineGrammar = { enabled: grammar.enabled, allowUndeclaredTypes: grammar.allowUndeclaredTypes };
   const versionTs = linkExtractorWatermarkFor(grammar.generation);
 
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
   const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
   if (dryRun) {
-    const m = await previewMentionPass(engine, sourceIdFilter), counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);
+    const m = await previewMentionPass(engine, sourceIdFilter), counts = includeCounts ? await staleExtractionCounts(engine, sourceIdFilter) : null;
     if (jsonMode && !opts.quiet) {
       process.stdout.write(JSON.stringify({ action: 'extract_stale_dry_run', stale_pages: totalStale, mention_due_pages: m.due, mention_last_pass_at: m.last_pass_at, ...counts }) + '\n');
     } else {
       log(`(dry run) ${totalStale} page(s) need link/timeline extraction; ${m.due} page(s) need a mention pass (last pass: ${m.last_pass_at ?? 'never'}). Run without --dry-run to extract.${counts ? `\n${formatStaleCounts(counts)}` : ''}`);
     }
-    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale + m.due };
+    return { linksCreated: 0, timelineCreated: 0, pagesProcessed: 0, staleRemaining: totalStale + m.due, ...(counts ? { counts } : {}) };
   }
   // Managed brains: the writer guard owns canonical rows, so links, missing
   // canonical timeline rows and the watermark publish on the one managed path
   // (the mention pass runs inside it).
   if (await managedPersistenceEnabled(engine)) {
     const { runManagedStaleExtraction, formatManagedStaleExtraction } = await import('../core/persistence/links-maintenance.ts');
-    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld });
+    const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: includeCounts, retryHeld: opts.retryHeld });
     if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
     else if (!opts.quiet) process.stdout.write(formatManagedStaleExtraction(r, false, true) + '\n');
     return { linksCreated: r.created, timelineCreated: r.timeline, pagesProcessed: r.pages, staleRemaining: r.remaining + (r.mentions?.remaining ?? 0),
-      ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
+      ...(r.counts ? { counts: r.counts } : {}), ...(r.skipped ? { skippedChanged: r.skipped } : {}), ...(r.mentions ? { mentions: r.mentions } : {}),
       ...(r.failed ? { linkFailed: r.failed, linkFailures: r.failures } : {}), ...(r.systemic?.length ? { linkSystemic: r.systemic } : {}) };
   }
 
@@ -2369,7 +2370,7 @@ export async function extractStaleFromDB(
   if (packUnavailable) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const mentions = await runMentionPass(engine, { sourceId: sourceIdFilter, ...(catchUp ? {} : { deadline: startMs + timeBudgetMs }) });
   const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs }) + mentions.remaining;
-  const counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);
+  const counts = includeCounts ? await staleExtractionCounts(engine, sourceIdFilter) : null;
 
   if (!jsonMode) {
     const mentionLine = formatMentionSummary(mentions);
@@ -2403,7 +2404,7 @@ export async function extractStaleFromDB(
     }) + '\n');
   }
   return { linksCreated, timelineCreated, pagesProcessed, staleRemaining, skippedMissingTarget, skippedCrossSource,
-    ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skippedChanged } : {}), ...(skippedConcurrentWrite ? { skippedConcurrentWrite } : {}), ...(unknownSource.length ? { skippedUnknownSource: unknownSource.length } : {}), ...(contentFailures.length ? { linkFailed: contentFailures.length } : {}), mentions };
+    ...(counts ? { counts } : {}), ...(skippedAttendanceIncomplete ? { skippedAttendanceIncomplete } : {}), ...(skippedChanged ? { skippedChanged } : {}), ...(skippedConcurrentWrite ? { skippedConcurrentWrite } : {}), ...(unknownSource.length ? { skippedUnknownSource: unknownSource.length } : {}), ...(contentFailures.length ? { linkFailed: contentFailures.length } : {}), mentions };
 }
 
 /**

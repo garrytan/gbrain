@@ -22,12 +22,16 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
         jsonMode: false,
         sourceIdFilter,
         catchUp: false,
+        counts: true,
       });
-      // Internal 30-min budget hit with work remaining → chain a
+      // Internal 30-min budget hit with eligible work remaining → chain a
       // continuation job so a very large deferred backlog converges without
       // waiting for the next sync. Forward-progress guard (pagesProcessed >
       // 0) prevents an infinite chain if the sweep can't advance.
-      if (!job.data.dryRun && r.staleRemaining > 0 && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)) {
+      // Raw stale totals include attendance-blocked and held pages. A useful
+      // sweep must not chain an empty child when only those pages remain.
+      // Leave root sweeps unchanged: they reconsider attendance dependencies.
+      if (!job.data.dryRun && !r.counts?.complete && r.staleRemaining > 0 && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)) {
         try {
           const queue = new MinionQueue(engine);
           // NO maxWaiting: with an unscoped (NULL-sourceId) payload the

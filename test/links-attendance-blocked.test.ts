@@ -25,6 +25,8 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { makeExtractHandler } from '../src/core/minions/handlers/extract.ts';
+import type { MinionJobContext } from '../src/core/minions/types.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -161,3 +163,39 @@ test('#5761: the unmanaged extract --stale sweep marks and clears the same way',
     expect(await marker(engine, sourceId)).toMatchObject({ blocked: null, extracted: true });
   }
 });
+
+test('#8672: managed job reports eligible remainder and does not chain into attendance-only work', async () => {
+  await managedFixture(async (engine, sourceId) => {
+    await engine.setConfig('links.include_frontmatter', 'true');
+    await engine.setConfig('mentions.enabled', 'false');
+    const run = () => makeExtractHandler(engine)({ id: 8672, data: { stale: true, sourceId } } as unknown as MinionJobContext);
+    const first = await run();
+    expect(first).toMatchObject({ pagesProcessed: 1, staleRemaining: 1 });
+    const children = () => engine.executeRaw('SELECT id FROM minion_jobs WHERE name=$1 AND data->>\'sourceId\'=$2', ['extract', sourceId]);
+    expect(await children()).toHaveLength(0);
+    expect(first).toMatchObject({ counts: { actionable: 0, attendance_blocked: 1, held: 0, mention_due: null, complete: true } });
+    expect(await marker(engine, sourceId)).toEqual({ blocked: true, at: true, extracted: false });
+    expect(await attended(engine, sourceId)).toBe(0);
+    expect(await run()).toMatchObject({ pagesProcessed: 0, staleRemaining: 1,
+      counts: { attendance_blocked: 1, complete: true } });
+    expect(await children()).toHaveLength(0);
+    // No permanent exclusion: an ordinary root sweep must reconsider the unchanged meeting.
+    await putPage(engine, sourceId, PERSON, '---\ntitle: Alice Example\ntype: person\n---\nAlice.');
+    expect(await run()).toMatchObject({ staleRemaining: 0, counts: { attendance_blocked: 0, complete: true } });
+    expect(await attended(engine, sourceId)).toBe(1);
+  });
+}, 120_000);
+
+test('#8672: quiet embedded and preview results retain eligibility on classic and managed paths', async () => {
+  await managedFixture(async (engine, sourceId) => {
+    await engine.setConfig('mentions.enabled', 'false');
+    const opts = { includeFrontmatter: true, dryRun: false, jsonMode: false, quiet: true, counts: true, sourceIdFilter: sourceId, catchUp: true };
+    expect(await extractStaleFromDB(engine, opts)).toMatchObject({ staleRemaining: 1,
+      counts: { actionable: 0, attendance_blocked: 1, held: 0, mention_due: null, complete: true } });
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    expect(await extractStaleFromDB(engine, opts)).toMatchObject({ staleRemaining: 1,
+      counts: { actionable: 0, attendance_blocked: 1, complete: true } });
+    expect(await extractStaleFromDB(engine, { ...opts, dryRun: true })).toMatchObject({ pagesProcessed: 0,
+      counts: { actionable: 0, attendance_blocked: 1, complete: true } });
+  });
+}, 120_000);
