@@ -16,7 +16,7 @@ import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
-import { assertAccessId, existingMember, getMember, type MemberRecord } from './members.ts';
+import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
 
 /**
@@ -46,6 +46,11 @@ export async function labelledOnlyMemberIds(engine: Pick<BrainEngine, 'executeRa
   const rows = await engine.executeRaw<{ id: string }>(
     'SELECT id FROM access_members WHERE labelled_only AND disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id');
   return rows.map(r => r.id);
+}
+
+/** The enabled labelled-only members, sorted, each with how many credentials are bound to it (doctor's audit list). */
+export async function labelledOnlyMembers(engine: BrainEngine): Promise<Array<{ id: string; credentials: number }>> {
+  return Promise.all((await labelledOnlyMemberIds(engine)).map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
 }
 
 /** Whether any member carries the grant: the one cheap test a write runs before resolving its writer. Unreadable counts as yes. */

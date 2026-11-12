@@ -12,19 +12,18 @@
 import type { Check } from '../../doctor.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
-import { labelledOnlyMemberIds } from '../../../core/access/labelled-only.ts';
+import { labelledOnlyMembers } from '../../../core/access/labelled-only.ts';
 import { ownerMemberId } from '../../../core/access/owner.ts';
-import { boundCredentials } from '../../../core/access/members.ts';
 
 const name = 'access_labelled_only_members';
 
 async function verdict(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
   try {
-    const ids = await labelledOnlyMemberIds(engine);
+    const members = await labelledOnlyMembers(engine);
+    const ids = members.map(m => m.id);
     if (!ids.length) return infoCheck(name, 'Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).', 'not_applicable');
     const owner = await ownerMemberId(engine);
-    const members = await Promise.all(ids.map(async id => ({ id, credentials: (await boundCredentials(engine, id)).length })));
     if (owner && ids.includes(owner)) {
       return { name, status: 'warn', details: { members, owner },
         message: `The brain owner (${owner}) is marked labelled-only. The owner reads the whole brain, so the grant does not apply to it; clear it with gbrain access member labelled-only ${owner} off.`,
