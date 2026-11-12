@@ -487,6 +487,7 @@
   "test/qm-scope-read.test.ts": 12809,
   "test/qm-scope-writes.test.ts": 26999,
   "test/read-meta-diag.test.ts": 6603,
+  "test/readers-label-setter.test.ts": 35850,
   "test/reason-trailers-gbra217.test.ts": 22834,
   "test/recall-page-fill.test.ts": 11747,
   "test/receipt-compaction-newest-sync-gbra130.test.ts": 7251,

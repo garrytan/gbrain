@@ -52,6 +52,7 @@ import { classifyItemFailure, ItemRun, type ItemFailure } from '../item-failure.
 import type { ProgressReporter } from '../progress.ts';
 import type { GenerationsSelection } from '../generations/repair.ts';
 import type { PrivateLabelsLedger } from './private-labels.ts';
+import type { ReadersRequest } from './readers.ts';
 
 export const REPAIR_KINDS = ['timeline', 'visibility', 'safe-chunks', 'contextual-mode', 'connector-checkpoints', 'request-indexes', 'connector-fences', 'take-supersession', 'accepted-takes', 'orphan-bindings', 'embedding-effects', 'attribution-backfill', 'planner-stats', 'google-file-modes', 'stale-atoms', 'atoms-restore', 'atom-fence-rows', 'extractor-facts', 'unwithdrawn-facts', 'conversation-labels', 'captured-facts', 'agent-session-facts', 'redacted-facts', 'loop-facts', 'ontology-facts', 'facts-rehome', 'consolidate-ties', 'duplicate-facts', 'orphan-children', 'failed-writes', 'split-facts', 'frontmatter', 'fences', 'slug-conflicts', 'timeline-comments', 'timeline-order', 'contact-rows', 'managed-sync-orphans', 'content-receipt-root', 'frontmatter-keys', 'file-drift', 'stuck-recovery', 'ghost-pages', 'origin-twins', 'receipt-compaction', 'aliases', 'rename-identity', 'overwritten-edits', 'legacy-twins', 'missing-tables', 'url-clone-fences', 'segmented-mirror', 'segmented-tiling', 'uncommitted-deletions', 'generations', 'lost-fence-rows', 'fact-claim-dates', 'provenance', 'secret-spans', 'rows-behind', 'access', 'private-labels'] as const;
 export type RepairKind = typeof REPAIR_KINDS[number];
@@ -147,7 +148,9 @@ export interface RepairPlanOptions { apply: boolean; expect?: string; includeAmb
   /** `agent-session-facts` (#8064): operator evidence, sessions whose cwd is under a prefix (`--cwd`) or named (`--session`), and the note's agent (`--principal`). */
   cwdPrefixes?: string[]; sessions?: string[]; principal?: string;
   /** `private-labels`: the undo ledger the CLI keeps (its path, lines for --class restore, and the append). */
-  privateLabelsLedger?: PrivateLabelsLedger }
+  privateLabelsLedger?: PrivateLabelsLedger;
+  /** `visibility` (GST-2476): set the named pages' readers (`--readers`, `--allow-without-owner`, `--slugs-file`; repair/readers.ts). */
+  readers?: ReadersRequest }
 
 export interface RepairHandler {
   kind: RepairKind;
@@ -372,7 +375,7 @@ export async function runRepair(ctx: OperationContext, handler: RepairHandler, s
     prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string;
     provenance?: string; cursor?: string; progress?: ProgressReporter;
     keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-    cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger;
+    cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest;
     spec?: Pick<RepairKindSpec, 'explicit_only' | 'consent' | 'spends'>; maxLlmUsd?: number; deadline?: number; now?: () => number;
     /** GBRA-133: the CLI's termination signal; the apply stops before the next item with a result instead of dying mid-run. */
     stop?: AbortSignal;
@@ -406,7 +409,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
     ...(opts.limit !== undefined ? { limit: opts.limit } : {}), ...(opts.generations ? { generations: opts.generations } : {}),
     ...(opts.day ? { day: opts.day } : {}), ...(opts.rules?.length ? { rules: opts.rules } : {}),
     ...(opts.cwdPrefixes?.length ? { cwdPrefixes: opts.cwdPrefixes } : {}), ...(opts.sessions?.length ? { sessions: opts.sessions } : {}), ...(opts.principal ? { principal: opts.principal } : {}),
-    ...(opts.privateLabelsLedger ? { privateLabelsLedger: opts.privateLabelsLedger } : {}) };
+    ...(opts.privateLabelsLedger ? { privateLabelsLedger: opts.privateLabelsLedger } : {}), ...(opts.readers ? { readers: opts.readers } : {}) };
   const plan = await handler.plan(ctx.engine, scope, resumed, planOpts);
   const pending = opts.limit !== undefined ? plan.items.slice(0, opts.limit) : plan.items;
   const counters = await capacity(ctx);

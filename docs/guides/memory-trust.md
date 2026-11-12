@@ -274,7 +274,7 @@ Run the preview again to verify: repaired pages no longer show.
 ## Label lowerings
 
 A privacy label is not content. `gbrain repair visibility` (including
-`--slug <page>` for one page) and `gbrain repair private-labels` keep a
+`--slug <page>` for one page and `--readers <list>` for its `readable_by`) and `gbrain repair private-labels` keep a
 page's tier, file no `lower_page` item, and change only the label lines of its
 file. A `put_page` that adds the same label is an agent edit and lowers the
 page, because a local agent with a shell is indistinguishable from you.

@@ -133,7 +133,9 @@ at the source root, or one whose file left git, which a `visibility` edit cannot
 the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
 shared brain, and it binds the owner too: the owner reads such a page only when listed, unless the brain operator
 turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
-none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a
+none. The page's writers set it; on an existing page the brain host sets or removes it with
+`gbrain repair visibility --slug <page> --readers <list>` (or `--slugs-file`), which keeps the page's trust tier and
+changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. A credential bound to a
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).

@@ -313,6 +313,7 @@
         "getTimelineForDate",
         "getUnverifiedExtractionPageIds",
         "getVersions",
+        "holdSchemaMigrationLock",
         "initSchema",
         "insertFact",
         "insertFacts",

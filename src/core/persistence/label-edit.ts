@@ -2,11 +2,14 @@
  * GST-2468: a label-only maintenance page write (`managed_maintenance_page` with `label_edit`) changes the page's
  * privacy labels and nothing else, so its canonical file keeps its own bytes: only the label lines are removed, replaced
  * or appended to the frontmatter block (page-prepare.ts labelEditFile). The edit names `set` (a key and its plain
- * scalar value) and `remove` (keys), both among LABEL_KEYS. The editor reads no YAML: a label line it cannot edit
- * as one line (a block or multi-line value, a duplicate key, a value that needs quoting, no frontmatter block) returns
- * null, and the write refuses instead of re-rendering the file.
+ * scalar value, or for `readable_by` its readers as a one-line flow list, GST-2476) and `remove` (keys), both among
+ * LABEL_KEYS and READERS_KEY. The editor reads no YAML: a label line it cannot edit as one line (a block or multi-line
+ * value, a duplicate key, a value that needs quoting, no frontmatter block) returns null, and the write refuses instead
+ * of re-rendering the file.
  */
 import { opError } from '../ops/contract.ts';
+import { ACCESS_ID_RE } from '../access/principals.ts';
+import { loadBoundedYaml } from '../data-frontmatter.ts';
 
 /** The frontmatter keys a label edit may touch: visibility and the privacy aliases (search/private-visibility.ts PRIVACY_ALIASES). */
 export const LABEL_KEYS: readonly string[] = ['visibility', 'access', 'confidentiality'];
@@ -14,7 +17,16 @@ const PLAIN_VALUE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 /** A value a label edit can write as one unquoted line. */
 export const isPlainLabelValue = (value: unknown): value is string => typeof value === 'string' && PLAIN_VALUE.test(value);
 
-export interface LabelEdit { set: Record<string, string>; remove: string[] }
+/** GST-2476: the readers key, written as `readable_by: [alice-example, group:team-a]` (repair/readers.ts). */
+export const READERS_KEY = 'readable_by';
+const EDIT_KEYS: readonly string[] = [...LABEL_KEYS, READERS_KEY];
+const READER = new RegExp(`^(?:group:|member:)?${ACCESS_ID_RE.source.slice(1, -1)}$`);
+/** Readers a label edit can write as one flow-list line: 1-256 member ids or group:<id>, each in its canonical spelling. */
+export const isPlainReaders = (value: unknown): value is string[] => Array.isArray(value) && value.length >= 1 && value.length <= 256
+  && value.every(entry => typeof entry === 'string' && READER.test(entry));
+const plainValue = (key: string, value: unknown) => key === READERS_KEY ? isPlainReaders(value) : isPlainLabelValue(value);
+
+export interface LabelEdit { set: Record<string, string | string[]>; remove: string[] }
 
 /** The intent's label_edit, validated, or undefined when the intent carries none. */
 export function readLabelEdit(value: unknown): LabelEdit | undefined {
@@ -22,11 +34,11 @@ export function readLabelEdit(value: unknown): LabelEdit | undefined {
   const edit = value as { set?: unknown; remove?: unknown };
   const set = edit.set ?? {}, remove = edit.remove ?? [];
   const valid = typeof set === 'object' && set !== null && !Array.isArray(set) && Array.isArray(remove)
-    && Object.entries(set).every(([key, v]) => LABEL_KEYS.includes(key) && isPlainLabelValue(v))
-    && remove.every(key => typeof key === 'string' && LABEL_KEYS.includes(key) && !Object.hasOwn(set, key));
+    && Object.entries(set).every(([key, v]) => EDIT_KEYS.includes(key) && plainValue(key, v))
+    && remove.every(key => typeof key === 'string' && EDIT_KEYS.includes(key) && !Object.hasOwn(set, key));
   if (!valid) throw opError('invalid_params', 'The label edit names a key or value a label edit cannot write.',
-    `A label edit sets or removes only ${LABEL_KEYS.join(', ')}, each value a plain word. This is a gbrain planning defect: report it with the gbrain version; nothing was written.`);
-  return { set: { ...set as Record<string, string> }, remove: [...new Set(remove as string[])] };
+    `A label edit sets or removes only ${EDIT_KEYS.join(', ')}, each value a plain word (${READERS_KEY}: a list of member ids and group: ids). This is a gbrain planning defect: report it with the gbrain version; nothing was written.`);
+  return { set: Object.fromEntries(Object.entries(set as LabelEdit['set']).map(([key, v]) => [key, Array.isArray(v) ? [...v] : v])), remove: [...new Set(remove as string[])] };
 }
 
 /** frontmatter with the edit applied (key order kept, a new key last). */
@@ -36,7 +48,10 @@ export function labelEditedFrontmatter(frontmatter: Record<string, unknown>, edi
 
 const KEY_LINES: Record<string, RegExp> = {
   visibility: /^visibility[ \t]*:(?:[ \t]|\r?\n|$)/, access: /^access[ \t]*:(?:[ \t]|\r?\n|$)/, confidentiality: /^confidentiality[ \t]*:(?:[ \t]|\r?\n|$)/,
+  readable_by: /^readable_by[ \t]*:(?:[ \t]|\r?\n|$)/,
 };
+const listEntry = (entry: string) => (loadBoundedYaml(`[${entry}]`) as unknown[])[0] === entry ? entry : `'${entry}'`;
+const valueText = (value: string | string[]) => Array.isArray(value) ? `[${value.map(listEntry).join(', ')}]` : value;
 const keyLine = (key: string) => KEY_LINES[key] ?? /(?!)/;
 
 /**
@@ -61,8 +76,8 @@ export function spliceLabelLines(text: string, edit: LabelEdit): { text: string;
   const eol = lines[0]!.endsWith('\r\n') ? '\r\n' : '\n';
   for (const [key, value] of Object.entries(edit.set)) {
     const at = kept.findIndex(line => keyLine(key).test(line));
-    if (at >= 0) kept[at] = `${key}: ${value}${kept[at]!.endsWith('\r\n') ? '\r\n' : '\n'}`;
-    else kept.push(`${key}: ${value}${eol}`);
+    if (at >= 0) kept[at] = `${key}: ${valueText(value)}${kept[at]!.endsWith('\r\n') ? '\r\n' : '\n'}`;
+    else kept.push(`${key}: ${valueText(value)}${eol}`);
   }
   const head = bom + lines[0] + kept.join('') + lines[close];
   return { text: head + lines.slice(close + 1).join(''), head };
