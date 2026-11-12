@@ -47,6 +47,8 @@ import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { resolveRepairScope, type RepairKind } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
+import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -294,11 +296,17 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     await remember(ctx, 'The garden plan needs more compost.', 'notes/garden-plan');
     await settleManagedGitEffects(engine);
     for (const who of ['bob', 'unbound']) expect(await versionsText(as, who, HOLD)).toContain(claim);
+    // A saved version with no timeline keeps none (NULL, not an empty string) once its row is removed.
+    await engine.executeRaw("UPDATE page_versions SET timeline = NULL WHERE page_id = (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1)", [HOLD]);
+    const nullTimelines = () => engine.executeRaw<{ id: number }>(`SELECT v.id::int AS id FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = 'default' AND p.slug = $1 AND v.timeline IS NULL ORDER BY v.id`, [HOLD]);
+    const untimed = await nullTimelines();
     const before = await versionBodies(engine, HOLD);
     const preview = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--json']);
     const carrying = before.filter(v => v.body.includes(claim)).length;
     expect(carrying).toBeGreaterThan(0);
-    expect(preview.held_versions_editing).toEqual({ rows: carrying, versions: carrying });
+    // The preview counts what the apply's receipt records: the versions carrying the row now, plus the one the move saves.
+    expect(preview.held_versions_editing).toEqual({ rows: carrying + 1, versions: carrying + 1, pages: [{ slug: HOLD, rows: carrying + 1, versions: carrying + 1 }] });
     const applied = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--yes', '--expect', String(preview.expect), '--json']);
     expect(applied.held_facts).toEqual({ moved: 1, unmovable: [] });
     await settleManagedGitEffects(engine);
@@ -306,6 +314,8 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     for (const v of before) {
       expect(after.get(v.id)).toBe(v.body.split('\n').filter(line => !line.includes(claim)).join('\n'));
     }
+    expect(untimed.length).toBe(before.length);
+    expect((await nullTimelines()).filter(v => untimed.some(u => u.id === v.id))).toEqual(untimed);
     expect([...after.values()].some(body => body.includes(kept))).toBe(true);
     const [fact] = await factRows(engine, claim);
     // The audit counts the versions the preview listed plus the one the move itself saved (the shared page before the move).
@@ -376,7 +386,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     expect(await remember(ctx, claim, entity)).toMatchObject({ page: HOLD });
     await settleManagedGitEffects(engine);
     const preview = await cli(engine, ['rule', 'add', '--slug', entity, '--readers', 'alice-example', '--source', 'default', '--json']);
-    expect(preview.held_facts_moving).toEqual([{ fact_id: expect.any(Number), entity_slug: entity, to: entity }]);
+    expect(preview.held_facts_moving).toEqual([{ fact_id: expect.any(Number), entity_slug: entity, from: HOLD, to: entity }]);
     const lines: string[] = [];
     const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
     try { await runAccessRules(engine, 'rule', ['add', '--slug', entity, '--readers', 'alice-example', '--source', 'default'], false); } finally { spy.mockRestore(); }
@@ -402,7 +412,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     expect(head(root, `${HOLD}.md`)).toContain(claim);
     expect((await reads(as, 'bob', HOLD, claim)).fact).toBe(true);
     const preview = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--json']);
-    expect(preview.held_facts_moving).toEqual([{ fact_id: expect.any(Number), entity_slug: entity, to: holding }]);
+    expect(preview.held_facts_moving).toEqual([{ fact_id: expect.any(Number), entity_slug: entity, from: HOLD, to: holding }]);
     expect(head(root, `${HOLD}.md`)).toContain(claim);
     const applied = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--yes', '--expect', String(preview.expect), '--json']);
     expect(applied).toMatchObject({ state: 'applied', held_facts: { moved: 1, unmovable: [] } });
@@ -448,7 +458,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     const words = await humanLines(engine, 'rule', args('clients/acme-example/'));
     expect(words).toContain(`Not edited: 1 saved version(s) of ${HOLD} are stored in segments, which this apply cannot edit. ${consequence(1)} The apply will report itself incomplete.`);
     const applied = await cli(engine, ['rule', ...args('clients/acme-example/'), '--yes', '--expect', String(preview.expect), '--json']);
-    expect(applied.held_facts).toEqual({ moved: 1, unmovable: [], complete: false, segmented_versions_not_edited: 1 });
+    expect(applied.held_facts).toEqual({ moved: 1, unmovable: [], complete: false, segmented_versions_not_edited: 1, segmented_pages: [{ slug: HOLD, versions: 1 }] });
     const second = await cli(engine, ['rule', ...args('clients/beta-example/'), '--json']);
     expect(second.held_versions_editing).toMatchObject({ segmented_versions_not_edited: 1 });
     const done = await humanLines(engine, 'rule', [...args('clients/beta-example/'), '--yes', '--expect', String(second.expect)]);
@@ -498,7 +508,7 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     const applied = await cli(engine, ['rule', ...args, '--yes', '--expect', String(preview.expect), '--json']);
     expect(applied.held_facts).toMatchObject({ moved: 1 });
     const [after] = await factRows(engine, claim);
-    expect(preview.held_facts_moving).toEqual([{ fact_id: Number(saved.id), entity_slug: 'kofi-example', to: after!.source_markdown_slug }]);
+    expect(preview.held_facts_moving).toEqual([{ fact_id: Number(saved.id), entity_slug: 'kofi-example', from: HOLD, to: after!.source_markdown_slug }]);
     expect(after!.source_markdown_slug).toBe('people/kofi-example');
   }), 300_000);
 
@@ -613,6 +623,144 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     expect(after.rows.map(r => [r.group, r.reason])).toEqual([['folder_restricted', 'page_rule']]);
     expect((await rebuild(root, databaseUrl, [older, background]))).toEqual({ [older]: [{ entity_slug: 'partners/alice-example/old-notes', source_markdown_slug: FOLDER_HOLD }],
       [background]: [{ entity_slug: ENTITY, source_markdown_slug: FOLDER_HOLD }] });
+  }), 300_000);
+
+  /** The held_versions_edited receipts, summed: what the preview's counts must equal. */
+  const auditSum = async (engine: BrainEngine) => (await auditRows(engine)).reduce((n, r) => ({ rows: n.rows + Number(r.audit.rows), versions: n.versions + Number(r.audit.versions) }), { rows: 0, versions: 0 });
+
+  test('an exact page rule over a row held on a folder holding page: the preview names what the apply does, and the row leaves that page\'s saved versions', () => strict(async ({ engine, ctx }) => {
+    const as = await members(engine);
+    const partners = ['add', '--prefix', 'partners/', '--readers', 'alice-example,bob-example', '--source', 'default'];
+    await cli(engine, ['rule', ...partners, '--yes', '--expect', String((await cli(engine, ['rule', ...partners, '--json'])).expect), '--json']);
+    const claim = 'The deal with acme-example has a secret side letter.';
+    const kept = 'The old notes of alice-example stay with the partners.';
+    expect(await remember(ctx, claim, ENTITY)).toMatchObject({ page: FOLDER_HOLD });
+    expect(await remember(ctx, kept, 'partners/alice-example/old-notes')).toMatchObject({ page: FOLDER_HOLD });
+    await settleManagedGitEffects(engine);
+    __resetPrivateVisibilityCacheForTests();
+    expect(await versionsText(as, 'bob', FOLDER_HOLD)).toContain(claim);
+    const exact = ['add', '--slug', ENTITY, '--readers', 'alice-example', '--source', 'default'];
+    const preview = await cli(engine, ['rule', ...exact, '--json']);
+    const [fact] = await factRows(engine, claim);
+    expect(preview.held_facts_moving).toEqual([{ fact_id: fact!.id, entity_slug: ENTITY, from: FOLDER_HOLD, to: ENTITY }]);
+    const applied = await cli(engine, ['rule', ...exact, '--yes', '--expect', String(preview.expect), '--json']);
+    expect(applied.held_facts).toEqual({ moved: preview.held_facts_moving.length, unmovable: [] });
+    expect(preview.held_versions_editing.pages).toEqual([{ slug: FOLDER_HOLD, rows: preview.held_versions_editing.rows, versions: preview.held_versions_editing.versions }]);
+    expect((await auditRows(engine)).map(r => r.audit)).toEqual([{ slug: FOLDER_HOLD, moved_to: ENTITY, fact_ids: [fact!.id], rows: preview.held_versions_editing.rows, versions: preview.held_versions_editing.versions }]);
+    expect(await auditSum(engine)).toEqual({ rows: preview.held_versions_editing.rows, versions: preview.held_versions_editing.versions });
+    expect(preview.held_versions_editing.versions).toBeGreaterThan(0);
+    await settleManagedGitEffects(engine);
+    __resetPrivateVisibilityCacheForTests();
+    expect(await versionsText(as, 'bob', FOLDER_HOLD)).not.toContain(claim);
+    expect(await factRows(engine, kept)).toMatchObject([{ source_markdown_slug: FOLDER_HOLD }]);
+    expect((await engine.getPage(FOLDER_HOLD, { sourceId: 'default' }))?.compiled_truth).toContain(kept);
+    expect((await as('bob', 'get_page', { slug: ENTITY })).isError).toBe(true);
+    expect(await reads(as, 'alice', ENTITY, claim)).toEqual({ page: true, fact: true });
+  }), 300_000);
+
+  test('the preview lists every held row the apply moves, says why one moves only because its page exists, and counts what the receipts record', () => strict(async ({ engine, ctx }) => {
+    const garden = 'The garden plan adds a pond.';
+    const claim = 'The acme-example brief   carries  a spaced clause.';
+    await remember(ctx, garden, 'notes/garden-plan');
+    await remember(ctx, claim, 'clients/acme-example/brief');
+    await settleManagedGitEffects(engine);
+    await call(ctx, 'put_page', { slug: 'notes/garden-plan', content: page('Garden plan') });
+    await settleManagedGitEffects(engine);
+    const [g] = await factRows(engine, garden);
+    const [a] = await engine.executeRaw<{ id: number }>("SELECT id::int AS id FROM facts WHERE source_id = 'default' AND entity_slug = 'clients/acme-example/brief' AND expired_at IS NULL");
+    const args = ['add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default'];
+    const preview = await cli(engine, ['rule', ...args, '--json']);
+    expect(preview.held_facts_moving).toEqual([
+      { fact_id: a!.id, entity_slug: 'clients/acme-example/brief', from: HOLD, to: 'clients/acme-example/memory/unattributed' },
+      { fact_id: g!.id, entity_slug: 'notes/garden-plan', from: HOLD, to: 'notes/garden-plan', because: 'its page exists' }]);
+    expect(await humanLines(engine, 'rule', args)).toContain(`fact ${g!.id} for notes/garden-plan from ${HOLD} to notes/garden-plan (its page), because its page exists`);
+    const applied = await cli(engine, ['rule', ...args, '--yes', '--expect', String(preview.expect), '--json']);
+    expect(applied.held_facts).toEqual({ moved: preview.held_facts_moving.length, unmovable: [] });
+    expect(await factRows(engine, garden)).toMatchObject([{ source_markdown_slug: 'notes/garden-plan' }]);
+    expect(await auditSum(engine)).toEqual({ rows: preview.held_versions_editing.rows, versions: preview.held_versions_editing.versions });
+    expect(preview.held_versions_editing.versions).toBeGreaterThan(0);
+  }), 300_000);
+
+  test('an exact page rule that arrives by sync over a folder-held row: the excluded member reads nothing of it right after the sync; nothing changed, nothing is due', () => strict(async ({ engine, ctx, root }) => {
+    const as = await members(engine);
+    const { moveRuledSharedHeld } = await import('../src/core/facts/held-fact-move.ts');
+    const policy = (list: FolderRule[]) => commitPolicyFile(root, POLICY_FILE, () => serializePolicyYaml(list), 'access: rule');
+    const sync = () => performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true } as never);
+    policy([rule('partners', 'partners/', ['alice-example', 'bob-example'])]);
+    await sync();
+    const claim = 'The deal with acme-example has a synced side letter.';
+    expect(await remember(ctx, claim, ENTITY)).toMatchObject({ page: FOLDER_HOLD });
+    await settleManagedGitEffects(engine);
+    expect(await moveRuledSharedHeld(engine, 'default')).toBeNull();
+    __resetPrivateVisibilityCacheForTests();
+    expect(await reads(as, 'bob', FOLDER_HOLD, claim)).toEqual({ page: true, fact: true });
+    policy([rule('partners', 'partners/', ['alice-example', 'bob-example']), rule('deal', ENTITY, ['alice-example'])]);
+    await sync();
+    await settleManagedGitEffects(engine);
+    __resetPrivateVisibilityCacheForTests();
+    expect((await as('bob', 'get_page', { slug: FOLDER_HOLD })).text).not.toContain(claim);
+    expect((await as('bob', 'search', { query: claim, match: 'keyword', fields: 'full', limit: 20 })).text).not.toContain(claim);
+    expect((await as('bob', 'recall', { query: 'synced side letter' })).text).not.toContain(claim);
+    expect(await reads(as, 'alice', ENTITY, claim)).toEqual({ page: true, fact: true });
+    expect(await moveRuledSharedHeld(engine, 'default')).toBeNull();
+  }), 300_000);
+
+  test('struck held rows leave the holding page with their entity\'s live rows, and an entity with only struck rows leaves too', () => strict(async ({ engine, ctx }) => {
+    const as = await members(engine);
+    const gone = 'The acme-example brief once had a withdrawn clause.';
+    const memo = 'The acme-example memo was withdrawn entirely.';
+    const live = 'The acme-example brief carries a live clause.';
+    const quote = 'The garden plan quotes: The acme-example brief carries a live clause.';
+    for (const [claim, entity] of [[gone, 'clients/acme-example/brief'], [memo, 'clients/acme-example/memo']]) {
+      const saved = await remember(ctx, claim, entity);
+      await settleManagedGitEffects(engine);
+      await call(ctx, 'forget', { id: String(saved.id) });
+    }
+    await remember(ctx, live, 'clients/acme-example/brief');
+    await remember(ctx, quote, 'notes/garden-plan');
+    await settleManagedGitEffects(engine);
+    expect(await versionsText(as, 'bob', HOLD)).toContain(gone);
+    const args = ['add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default'];
+    const preview = await cli(engine, ['rule', ...args, '--json']);
+    expect(preview.held_struck_rows_leaving).toBe(2);
+    const applied = await cli(engine, ['rule', ...args, '--yes', '--expect', String(preview.expect), '--json']);
+    expect(applied.held_facts).toEqual({ moved: 1, unmovable: [] });
+    expect(await auditSum(engine)).toEqual({ rows: preview.held_versions_editing.rows, versions: preview.held_versions_editing.versions });
+    await settleManagedGitEffects(engine);
+    __resetPrivateVisibilityCacheForTests();
+    for (const text of [(await as('bob', 'get_page', { slug: HOLD })).text, await versionsText(as, 'bob', HOLD)]) {
+      for (const hidden of [gone, memo, `| ${live} |`, 'clients/acme-example']) expect(text).not.toContain(hidden);
+      expect(text).toContain(quote);
+    }
+    const { moveRuledSharedHeld } = await import('../src/core/facts/held-fact-move.ts');
+    expect(await moveRuledSharedHeld(engine, 'default')).toBeNull();
+    expect((await runExtractFacts(engine, { sourceId: 'default' })).heldFactsMoved ?? 0).toBe(0);
+  }), 300_000);
+
+  test('a held-fact move still pending when the write wait ends is reported incomplete with its request, not counted as moved', () => strict(async ({ engine, ctx }) => {
+    await rules(engine, [rule('zz', 'zz-example/', ['alice-example'])]);
+    const garden = 'The garden plan adds a pending pond.';
+    await remember(ctx, garden, 'notes/garden-plan');
+    await call(ctx, 'put_page', { slug: 'notes/garden-plan', content: page('Garden plan') });
+    await settleManagedGitEffects(engine);
+    __setMaintenanceWriteWaitForTests(600);
+    const lock = (await acquireWorktree((await getWorktreeBinding(engine, 'default'))!, 1000))!;
+    let applied: Record<string, any>, words: string, upkeep: Awaited<ReturnType<typeof runExtractFacts>>;
+    try {
+      const args = (prefix: string) => ['add', '--prefix', prefix, '--readers', 'alice-example', '--source', 'default'];
+      applied = await cli(engine, ['rule', ...args('yy-example/'), '--yes', '--expect', String((await cli(engine, ['rule', ...args('yy-example/'), '--json'])).expect), '--json']);
+      words = await humanLines(engine, 'rule', [...args('xx-example/'), '--yes', '--expect', String((await cli(engine, ['rule', ...args('xx-example/'), '--json'])).expect)]);
+      upkeep = await runExtractFacts(engine, { sourceId: 'default' });
+    } finally { __setMaintenanceWriteWaitForTests(null); await lock.release(); }
+    await runExtractFacts(engine, { sourceId: 'default' });
+    const [pending] = await engine.executeRaw<{ request_id: string }>("SELECT request_id::text AS request_id FROM persistence_requests WHERE slug = 'notes/garden-plan' AND intent->>'kind' = 'managed_maintenance_move_held_fact'");
+    const request = pending!.request_id;
+    expect(applied.held_facts).toEqual({ moved: 0, unmovable: [], complete: false, pending: [{ slug: 'notes/garden-plan', from: HOLD, request_id: request }] });
+    expect(words).toContain(`Incomplete: the move of held facts off ${HOLD} to notes/garden-plan is accepted and still pending (request ${request}; gbrain write-request ${request} shows it)`);
+    expect(upkeep.heldFactsMoved ?? 0).toBe(0);
+    expect(upkeep.warnings.some(w => w.startsWith('HELD_FACT_PENDING: ') && w.includes(request))).toBe(true);
+    await settleManagedGitEffects(engine);
+    expect(await factRows(engine, garden)).toMatchObject([{ source_markdown_slug: 'notes/garden-plan' }]);
   }), 300_000);
 
   test('a source that is not strict, and a brain with no Git repository, keep a ruled entity\'s fact database-only as before', async () => {

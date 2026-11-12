@@ -82,7 +82,7 @@ import {
 } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unfenced-facts.ts';
-import { moveHeldFacts } from '../facts/held-fact-move.ts';
+import { heldMoveIncomplete, moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
 import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
@@ -860,12 +860,12 @@ export async function runExtractFacts(
       result.warnings.push(`FACTS_FENCE_FAILED: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
     }
     // GST-2492: facts a strict source holds move into their entity page once it exists, and a fact held on
-    // memory/unattributed whose entity a folder rule now covers moves to that folder's holding page.
+    // memory/unattributed whose entity a folder rule now covers moves to that folder's holding page. A move still pending is reported, not counted.
     try {
       const held = await moveHeldFacts(engine, sourceId);
       if (held.moved + held.rehomed) result.heldFactsMoved = held.moved + held.rehomed;
       result.pagesFailed += held.write_errors;
-      result.warnings.push(...held.unmovable.map(row => `HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`), ...(held.segmented_versions_not_edited ? [`HELD_VERSIONS_NOT_EDITED: ${held.segmented_versions_not_edited} saved version(s) of memory/unattributed are stored in segments and were not edited; readers of its saved versions can still read the moved rows in up to ${held.segmented_versions_not_edited} of them.`] : []));
+      result.warnings.push(...held.unmovable.map(row => `HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`), ...heldMoveIncomplete(held).map(w => `${w.code}: ${w.text}`));
     } catch (e) {
       fenceStepFailed ||= !isFenceHold(e);
       result.warnings.push(`HELD_FACT_UNMOVABLE: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);

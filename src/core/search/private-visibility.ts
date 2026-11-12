@@ -28,7 +28,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
-import { holdingSlugSql, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { holdingSlugSql } from '../facts-fence.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -858,10 +858,10 @@ export function privateEntityFilterForCaller(factAlias: string, perCandidate = f
 }
 
 /**
- * GST-2492: a fact still held on the shared memory/unattributed page for an entity a folder rule now covers (a rule
- * applied by sync, or a remember planned before the rule, until the held-fact move takes it to the folder's page) reads
- * as that entity's page would: only for a caller who satisfies every covering rule, and for nobody while a pending
- * narrowing covers it. The owner under the opt-in reads it, as it reads every restricted page.
+ * GST-2492: a fact still held on a holding page for an entity a rule now narrows below that page (a folder rule over the
+ * shared page, an exact page rule over a folder's holding page; applied by sync, or a remember planned before the rule,
+ * until the held-fact move takes it away) reads as that entity's page would: only for a caller who satisfies every
+ * covering rule, and for nobody while a pending narrowing covers it. The owner under the opt-in reads it, as it reads every restricted page.
  */
 function sharedHeldRuledSql(factAlias: string): string {
   const access = currentCallerAccess();
@@ -869,7 +869,7 @@ function sharedHeldRuledSql(factAlias: string): string {
   const satisfied = access.restricted ? access.satisfiedRuleIds : [];
   const ids = satisfied.length && satisfied.every(validQualifiedRuleId) ? [...new Set(satisfied)].sort() : [];
   const array = ids.length ? `ARRAY[${ids.map(id => `'${id}'`).join(', ')}]::text[]` : 'ARRAY[]::text[]';
-  return ` AND NOT (${factAlias}.entity_slug IS NOT NULL AND ${factAlias}.source_markdown_slug = '${UNATTRIBUTED_MEMORY_SLUG}'`
+  return ` AND NOT (${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)}`
     + ` AND (NOT COALESCE(gbrain_access_folder_rules(${factAlias}.source_id, ${factAlias}.entity_slug) <@ ${array}, true)`
     + ` OR gbrain_access_pending_covers(${factAlias}.source_id, ${factAlias}.entity_slug)))`;
 }

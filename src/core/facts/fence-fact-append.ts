@@ -202,8 +202,9 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
  * row is gone (nothing in a file to strike). The page write is prepared unprojected, as remember's own is.
  */
 export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, slug: string,
-  retire: { rowNum: number | readonly number[]; note: string; validUntil: Date | null; forgotten?: boolean; remove?: boolean }, signal?: AbortSignal): Promise<CompanionPage | null> {
-  const retired = new Set([retire.rowNum].flat());
+  retire: { rowNum: number | readonly number[]; note: string; validUntil: Date | null; forgotten?: boolean; remove?: boolean; drop?: readonly number[] }, signal?: AbortSignal):
+  Promise<(CompanionPage & { mutation: PreparedMutation }) | null> {
+  const retired = new Set([retire.rowNum].flat()), drop = new Set(retire.drop ?? []);
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: row.source_id, includeDeleted: true });
   if (!snapshot || snapshot.page.deleted_at) return null;
   if (segmentedOverCeiling(snapshot.page)) throw pageBodyOverCeilingError(snapshot.page, `${row.operation} facts fence write`);
@@ -211,19 +212,20 @@ export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteR
   // #6188 / #6385 R12, as the append: the stored fence is normalized first and a residual refuses typed instead of losing the rows it skipped.
   const target = await normalizeTargetFences(engine, { sourceId: row.source_id, slug, kind: 'facts', page: base });
   const fenced = { compiled_truth: target.page.compiled_truth, timeline: target.page.timeline ?? '' };
-  const section = (['compiled_truth', 'timeline'] as const).find(key => parseFactsFenceFor(fenced[key], { slug }).facts.some(f => retired.has(f.rowNum) && f.active));
+  const section = (['compiled_truth', 'timeline'] as const).find(key => parseFactsFenceFor(fenced[key], { slug }).facts.some(f => (retired.has(f.rowNum) && f.active) || (drop.has(f.rowNum) && !f.active)));
   if (!section) return null;
   const until = retire.validUntil ? formatFenceDate(retire.validUntil) : undefined;
   const parsed = parseFactsFenceFor(fenced[section], { slug });
   refuseUnparsedRewrite(target.page, slug, row.source_id, () => assertFenceRewritable('facts', parsed));
   // GST-2492: a forgotten held row is struck as a withdrawal strikes a row (`forgotten: <note>`), so it reads back forgotten;
-  // `remove` takes the rows out (a fact moved into a page not every reader can read leaves nothing on the holding page).
-  const rows = parsed.facts.filter(f => !retire.remove || !retired.has(f.rowNum) || !f.active).map(f => !retired.has(f.rowNum) || !f.active ? f : retire.forgotten ? withdrawnFact(f, (retire.validUntil ?? new Date()).toISOString().slice(0, 10), retire.note)
+  // `remove` takes the rows out (a fact moved into a page not every reader can read leaves nothing on the holding page);
+  // `drop` takes out struck rows (the withdrawn held rows of an entity that leaves the holding page).
+  const rows = parsed.facts.filter(f => !(drop.has(f.rowNum) && !f.active) && (!retire.remove || !retired.has(f.rowNum) || !f.active)).map(f => !retired.has(f.rowNum) || !f.active ? f : retire.forgotten ? withdrawnFact(f, (retire.validUntil ?? new Date()).toISOString().slice(0, 10), retire.note)
     : { ...f, active: false, context: [retire.note, f.context?.trim()].filter(Boolean).join(' | '), ...(until ? { validUntil: until } : {}) });
   const content = serializePageToMarkdown({ ...base, ...fenced, [section]: replaceOrInsertFactsFence(fenced[section], renderFactsTable(rows)) }, snapshot.tags);
   const prepared = await preparePageMutation(engine, { ...row, slug, page_id: snapshot.page.id,
     intent: { ...row.intent, content, expected_revision: snapshot.revision, force: false } }, config, undefined, signal, { unprojected: true });
-  return { slug, pageId: snapshot.page.id, observedRevision: prepared.observedRevision, ...(prepared.file ? { file: prepared.file } : {}),
+  return { slug, pageId: snapshot.page.id, observedRevision: prepared.observedRevision, mutation: prepared, ...(prepared.file ? { file: prepared.file } : {}),
     ...(prepared.validate ? { validate: (tx: BrainEngine) => prepared.validate!(tx) } : {}), apply: (tx, preimage) => prepared.apply(tx, preimage) };
 }
 
@@ -255,7 +257,7 @@ export async function heldRowsInVersions(db: BrainEngine, sourceId: string, slug
     }
   };
   await rewriteVersionBodies(db, { columns: '', where: `v.id>$2 AND p.slug=$3 AND (${entities.map((_, i) => carriesClaimSql('v', 4 + 2 * i)).join(' OR ')})`,
-    params: after => [sourceId, after, slug, ...entities.flatMap(claimNeedles)], lock: write }, strip, (_v, _edited, changed) => { if (changed) out.versions++; }, write);
+    params: after => [sourceId, after, slug, ...entities.flatMap(claimNeedles)], lock: write, keepNullTimeline: true }, strip, (_v, _edited, changed) => { if (changed) out.versions++; }, write);
   const [segmented] = await db.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id = v.page_id
     WHERE p.source_id = $1 AND p.slug = $2 AND v.body_storage = 'segmented'`, [sourceId, slug]);
   out.segmented = Number(segmented?.n ?? 0);

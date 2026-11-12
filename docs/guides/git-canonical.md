@@ -194,19 +194,26 @@ Every write goes through the same door, whoever sends it:
   of its own apply (`gbrain access rule add` previews them as
   `held_facts_moving`; `gbrain access apply` and `gbrain access resume` move
   them too). A rule that arrives through a sync of the policy file moves them
-  as soon as that sync releases its lease, so for the seconds the sync pass
-  takes the row is still in the shared page's body (its fact already reads only
-  for the rule's readers); if the process stops in between, the next
-  maintenance cycle moves them. The move also removes those rows from the
-  shared page's saved versions in the database (the rule's preview counts
-  them, and the move's write receipt records which rows, how many versions and
-  where they went). A saved version stored in segments (a shared page over
-  1 MiB with `pages.segmented_storage` on) is not edited: the preview names how
-  many there are (`segmented_versions_not_edited`), the apply's result says it
-  is incomplete (`complete: false`), and readers of the shared page's saved
-  versions can still read the moved rows in up to that many versions. The
-  preview names each held fact's destination as the move resolves it, so a row
-  saved under a bare name shows the page that name resolves to. Git history is never rewritten: the shared page's earlier
+  as soon as that sync releases its lease (an exact page rule on an entity
+  held on its folder's page moves that row into the entity's page the same
+  way), so for the seconds the sync pass takes the row is still in the holding
+  page's body (its fact already reads only for the rule's readers); if the
+  process stops in between, the next maintenance cycle moves them. The move
+  also removes those rows, and the struck (withdrawn) rows of the same
+  entities, from the holding page it leaves and from that page's saved
+  versions in the database (the rule's preview counts them per page, and the
+  move's write receipt records which rows, how many versions and where they
+  went). A saved version stored in segments (a holding page over 1 MiB with
+  `pages.segmented_storage` on) is not edited: the preview names how many
+  there are (`segmented_versions_not_edited`), the apply's result says it is
+  incomplete (`complete: false`), and readers of that page's saved versions
+  can still read the moved rows in up to that many versions. A move still
+  pending when the apply stops waiting is reported incomplete the same way,
+  with its request id, and is not counted as moved. The preview lists every
+  held fact the apply moves, with its destination as the move resolves it, so
+  a row saved under a bare name shows the page that name resolves to, and a
+  row that moves only because its entity's page now exists says so
+  (`because`). Git history is never rewritten: the holding page's earlier
   commits keep the row as it was before the rule. An entity under an exact page rule (a rule on the
   entity's own slug) has no holding page with its readers: the fact is refused
   with [`git_home_required`](write-refusals.md#git_home_required) (reason

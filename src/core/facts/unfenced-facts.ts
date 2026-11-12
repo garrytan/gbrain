@@ -69,7 +69,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { assertLifetimeIdHeadroom } from '../persistence/journal.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenancePreflight, planFactFenceAdoption, submitFactFenceAdoption, submitPlannedFactFenceAdoption, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, planFactFenceAdoption, submitFactFenceAdoption, submitPlannedFactFenceAdoption, type HeldDrop, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { resolveFactWriteTarget } from '../persistence/fact-write-target.ts';
 import { submissionAuthority } from '../persistence/authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from '../persistence/identity.ts';
@@ -517,7 +517,7 @@ export async function planPageFence(engine: BrainEngine, sourceId: string, slug:
 }
 
 export async function planManagedPage(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, entitySlug: string, group: UnfencedFactRow[],
-  move?: { note: string; from_entity?: string; from_slug?: string }): Promise<ManagedPagePlan> {
+  move?: { note: string; from_entity?: string; from_slug?: string; drop?: readonly HeldDrop[] }): Promise<ManagedPagePlan> {
   const planned = await planPageFence(engine, sourceId, entitySlug, group);
   if (!planned) return { kind: 'no_page' };
   const { snapshot, fence } = planned;

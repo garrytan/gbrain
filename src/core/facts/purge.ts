@@ -310,10 +310,11 @@ const VERSION_REDACTION_BATCH = 5000;
  * The one reader and rewriter of inline saved-version bodies, for purge's redaction and the held-fact move
  * (fence-fact-append.ts heldRowsInVersions): the inline versions of source $1 matching `where` in keyset batches by id,
  * `edit` applied to each body part, and the version rewritten when either part changed, unless `write` is false (a
- * preview). `visit` sees each version's edited parts. Segmented versions are each caller's own pass.
+ * preview). `visit` sees each version's edited parts. `keepNullTimeline` (the held-row edit) writes a NULL timeline back as
+ * NULL. Segmented versions are each caller's own pass.
  */
 export async function rewriteVersionBodies<X extends object>(tx: BrainEngine,
-  query: { columns?: string; where: string; params: (after: number) => unknown[]; lock?: boolean },
+  query: { columns?: string; where: string; params: (after: number) => unknown[]; lock?: boolean; keepNullTimeline?: boolean },
   edit: (text: string, slug: string) => Promise<string> | string,
   visit: (v: X & { id: number; slug: string }, edited: [string, string], changed: boolean) => void, write = true): Promise<void> {
   for (let after = 0; ;) {
@@ -327,7 +328,8 @@ export async function rewriteVersionBodies<X extends object>(tx: BrainEngine,
       const compiled = await edit(v.compiled_truth, v.slug);
       const timeline = await edit(v.timeline ?? '', v.slug);
       const changed = compiled !== v.compiled_truth || timeline !== (v.timeline ?? '');
-      if (changed && write) await tx.executeRaw('UPDATE page_versions SET compiled_truth=$2,timeline=$3 WHERE id=$1', [v.id, compiled, timeline]);
+      if (changed && write) await tx.executeRaw('UPDATE page_versions SET compiled_truth=$2,timeline=$3 WHERE id=$1',
+        [v.id, compiled, query.keepNullTimeline && v.timeline === null && timeline === '' ? null : timeline]);
       visit(v, [compiled, timeline], changed);
     }
     if (rows.length < VERSION_REDACTION_BATCH) break;

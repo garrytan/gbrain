@@ -435,6 +435,8 @@ export const FACT_FENCE_PLANNER = 2;
  * no page) into their entity page's fence: the rows keep their ids and move in place, and their holding rows are struck.
  */
 export const HELD_FACT_MOVE = 'managed_maintenance_move_held_fact';
+/** A struck (withdrawn) held row that leaves its holding page with its entity's live rows (GST-2492). */
+export type HeldDrop = { row_num: number; entity: string; claim: string };
 /** How long a refused adoption is held back; the owner that refused it may since have restarted onto code that adopts it. */
 const ADOPTION_REFUSAL_HOLD_MS = 24 * 60 * 60 * 1000;
 
@@ -457,13 +459,13 @@ export type FactFenceAdoptionPlan =
  * every cycle, so the page waits a day or a planner change.
  */
 export async function planFactFenceAdoption(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
-  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string; from_slug?: string } }): Promise<FactFenceAdoptionPlan> {
+  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string; from_slug?: string; drop?: readonly HeldDrop[] } }): Promise<FactFenceAdoptionPlan> {
   const current = await readFacts(engine, authority.writer.sourceId, options.assignments.map(a => a.id));
   const facts: FactFenceAssignment[] = options.assignments.map(a => ({ ...a, hash: digest(current.find(f => f.id === a.id)?.value ?? null) }));
   const intent = { kind: options.move ? HELD_FACT_MOVE : 'managed_maintenance_adopt_fact_fence', expected_revision: options.expectedRevision,
     source_incarnation: authority.writer.sourceIncarnation, content: options.content, facts, planner: FACT_FENCE_PLANNER,
     ...(options.move ? { note: options.move.note, ...(options.move.from_entity ? { from_entity: options.move.from_entity } : {}),
-      ...(options.move.from_slug ? { from_slug: options.move.from_slug } : {}) } : {}) };
+      ...(options.move.from_slug ? { from_slug: options.move.from_slug } : {}), ...(options.move.drop?.length ? { drop: options.move.drop } : {}) } : {}) };
   for (let attempt = 0; ; attempt++) {
     const requestId = maintenanceRequestId({ authority: authority.writer, slug, intent, ...(attempt ? { attempt } : {}) });
     const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
@@ -473,6 +475,16 @@ export async function planFactFenceAdoption(engine: BrainEngine, authority: Main
       return { kind: 'suppressed', prior };
     }
   }
+}
+
+/**
+ * GST-2492: the struck held rows of an entity with no live row left on holding page `from`, removed from it (and its saved
+ * versions) once a rule narrows the entity below that page's readers. The request id is returned before the wait.
+ */
+export function planHeldRowDrop(authority: MaintenanceAuthority, from: string, revision: string, drop: readonly HeldDrop[]) {
+  const intent = { kind: HELD_FACT_MOVE, expected_revision: revision, source_incarnation: authority.writer.sourceIncarnation, facts: [], drop,
+    note: 'moved', planner: FACT_FENCE_PLANNER, ...(from === UNATTRIBUTED_MEMORY_SLUG ? {} : { from_slug: from }) };
+  return { intent, requestId: maintenanceRequestId({ authority: authority.writer, slug: from, intent }) };
 }
 
 export async function submitPlannedFactFenceAdoption(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
@@ -513,14 +525,31 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
       `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The plan itself is malformed, so report the request ID to the user rather than running the same backfill again.`,
       { fix: receiptFix(row) });
   }
+  // The holding page a held row moves off (`from_slug`, memory/unattributed when absent), and the struck rows of the
+  // entity that leave it with the live ones (GST-2492): withdrawn, so they are removed rather than moved.
+  const fromSlug = held && typeof p.from_slug === 'string' && isHoldingSlug(p.from_slug) ? p.from_slug : UNATTRIBUTED_MEMORY_SLUG;
+  const drop = held && Array.isArray(p.drop) ? p.drop as HeldDrop[] : [];
+  const scrubbing = (keys: Array<{ entity: string; claim: string }>, after: PreparedMutation['afterEffects']) => async (tx: BrainEngine, outcome: Record<string, unknown>) => {
+    await after?.(tx, outcome);
+    const edited = await heldRowsInVersions(tx, row.source_id, fromSlug, [...keys, ...drop], true);
+    outcome.held_versions_edited = { slug: fromSlug, moved_to: facts.length ? row.slug : null, fact_ids: facts.map(f => f.id), rows: edited.rows, versions: edited.versions,
+      ...(drop.length ? { struck_rows: drop.length } : {}), ...(edited.segmented ? { segmented_versions_not_edited: edited.segmented } : {}) };
+  };
+  const unhold = (tx: BrainEngine) => tx.executeRaw('UPDATE facts SET row_num=NULL WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=ANY($3::int[]) AND expired_at IS NOT NULL',
+    [row.source_id, fromSlug, drop.map(d => d.row_num)]);
+  if (held && !facts.length) {
+    const page = await prepareFenceRowRetirement(unbounded, { ...row, intent: { kind: 'managed_maintenance_page' } }, config, fromSlug,
+      { note: 'moved', rowNum: [], validUntil: null, drop: drop.map(d => d.row_num) });
+    if (!page) throw opError('revision_conflict', 'The struck held rows already left their holding page.',
+      `The struck rows of request ${row.request_id} are no longer on ${fromSlug} in ${row.source_id}; nothing was written. The next maintenance run plans from the current page.`, { fix: receiptFix(row) });
+    return { ...page.mutation, afterEffects: scrubbing([], page.mutation.afterEffects), apply: async (tx, preimage) => { await unhold(tx); return page.mutation.apply(tx, preimage); } };
+  }
   enterClaimStep(clock, 'adoption_parse_fence');
   const fence = new Map(parseFactsFenceFor(p.content as string, { slug: row.slug }).facts.map(f => [f.rowNum, f]));
   // GST-2492 PR 2 (gbrain repair facts-home): a database-only fact with no entity, or whose entity has no page, is adopted
   // onto a holding page; its cell must name the fact's entity (none for a fact with no entity), so the projection keeps it.
   // A held move onto a holding page (a held row whose entity a folder rule now covers) keeps its entity the same way.
   const holdingAdoption = isHoldingSlug(row.slug);
-  // The holding page a held row moves off (`from_slug`, memory/unattributed when absent).
-  const fromSlug = held && typeof p.from_slug === 'string' && isHoldingSlug(p.from_slug) ? p.from_slug : UNATTRIBUTED_MEMORY_SLUG;
   // A held row keyed by a bare name (`from_entity`) moves to the page that name resolved to, and is re-keyed to it.
   const fromEntity = held && typeof p.from_entity === 'string' ? p.from_entity : null;
   const ownsRow = (value: Record<string, unknown>, rowNum: number) => holdingAdoption
@@ -559,17 +588,12 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   const pageRow = { ...row, intent: { kind: 'managed_maintenance_page', content: p.content, expected_revision: p.expected_revision } };
   const prepared = await preparePageMutation(unbounded, pageRow, config, undefined, undefined, { clock });
   const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, fromSlug, { note: String(p.note), remove: p.note === 'moved',
-    rowNum: (await readFacts(engine, row.source_id, facts.map(f => f.id))).map(f => Number(f.value.row_num)), validUntil: null }) : null;
-  // GST-2492 (A2): a row removed from the shared page (it moved where not every reader of the source can read) leaves its
-  // saved versions too, in this transaction; the receipt records which rows, how many versions and where they went.
-  const scrub = held && p.note === 'moved' && fromSlug === UNATTRIBUTED_MEMORY_SLUG
-    ? facts.map(f => ({ entity: holdingAdoption ? fence.get(f.row_num)!.entity ?? '' : fromEntity ?? row.slug, claim: fence.get(f.row_num)!.claim })) : null;
-  const afterEffects = scrub ? async (tx: BrainEngine, outcome: Record<string, unknown>) => {
-    await prepared.afterEffects?.(tx, outcome);
-    const edited = await heldRowsInVersions(tx, row.source_id, fromSlug, scrub, true);
-    outcome.held_versions_edited = { slug: fromSlug, moved_to: row.slug, fact_ids: facts.map(f => f.id), rows: edited.rows, versions: edited.versions,
-      ...(edited.segmented ? { segmented_versions_not_edited: edited.segmented } : {}) };
-  } : prepared.afterEffects;
+    rowNum: (await readFacts(engine, row.source_id, facts.map(f => f.id))).map(f => Number(f.value.row_num)), validUntil: null, drop: drop.map(d => d.row_num) }) : null;
+  // GST-2492 (A2): a row removed from its holding page (it moved where not every reader of that page can read) leaves the
+  // page's saved versions too, in this transaction; the receipt records which rows, how many versions and where they went.
+  const afterEffects = held && p.note === 'moved'
+    ? scrubbing(facts.map(f => ({ entity: holdingAdoption ? fence.get(f.row_num)!.entity ?? '' : fromEntity ?? row.slug, claim: fence.get(f.row_num)!.claim })), prepared.afterEffects)
+    : prepared.afterEffects;
   return { ...prepared, ...(afterEffects ? { afterEffects } : {}), ...(holding ? { companions: [holding] } : {}), validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
     // Runs ahead of the page import and its canonical projection, so the
     // projection's expiry pass and insertFacts see the adopted positions.
@@ -584,6 +608,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
       `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.request_id} was publishing, so its transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} for the final state before planning any new adoption.`,
       { fix: receiptFix(row) });
     if (held) noteBelief({ kind: 'transferred', fromSlug, table: 'facts', ids: facts.map(f => f.id) });
+    if (drop.length) await unhold(tx);
     const outcome = await prepared.apply(tx);
     return { ...outcome, facts_adopted: facts.length };
   } };

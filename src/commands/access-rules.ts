@@ -121,9 +121,11 @@ export interface RulePreview {
    * GST-2492: facts a strict source holds on memory/unattributed for an entity this change starts covering, and the page
    * the apply moves each to (its folder's holding page, or the entity's own page, created for an exact page rule).
    */
-  held_facts_moving: Array<{ fact_id: number; entity_slug: string; to: string }>;
+  held_facts_moving: Array<{ fact_id: number; entity_slug: string; from: string; to: string; because?: 'its page exists' }>;
+  /** Struck (withdrawn) held rows of those entities, removed from their holding page with them. */
+  held_struck_rows_leaving: number;
   /** The rows of those facts in the shared page's saved versions, and those versions, the apply removes them from (database only; the version the move itself saves is edited too). */
-  held_versions_editing: { rows: number; versions: number; segmented_versions_not_edited?: number };
+  held_versions_editing: { rows: number; versions: number; pages?: Array<{ slug: string; rows: number; versions: number; segmented_versions_not_edited?: number }>; segmented_versions_not_edited?: number };
 }
 
 async function previewRules(engine: BrainEngine, sourceId: string, store: AccessStore, persisted: boolean, desired: FolderRule[]): Promise<RulePreview> {
@@ -149,12 +151,9 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   }
   const credentials: RulePreview['credentials_losing'] = [];
   for (const m of losing) for (const c of await boundCredentials(engine, m)) credentials.push({ member: m, kind: c.kind, name: c.name });
-  // A narrowing applies at once, so the held facts it covers leave the world-readable holding page in the same apply.
-  const heldRows = await engine.executeRaw<{ id: number; entity_slug: string; fact: string }>(`SELECT f.id::int AS id, f.entity_slug, f.fact
-    FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND f.entity_slug <> $2 ORDER BY f.id`, [sourceId, UNATTRIBUTED_MEMORY_SLUG]);
-  // C4: each row's `to` is where the apply's move puts it (heldRowDestination), with the desired rules deciding a page-less entity's home.
-  const { heldRowDestination, holdingHome } = await import('../core/facts/held-fact-move.ts');
+  // A narrowing applies at once, so the held facts it covers leave their holding page in the same apply. The preview runs
+  // the apply's own planner (planHeldMoves, every holding page), with the desired rules deciding a page-less entity's home.
+  const { planHeldMoves, holdingHome } = await import('../core/facts/held-fact-move.ts');
   const covers = (slug: string) => cls.target.some(rule => ruleCovers(slug, rule.prefix));
   const desiredHome = async (key: string) => {
     const now = await holdingHome(engine, sourceId, key);
@@ -162,18 +161,29 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
     if (cls.target.some(rule => rule.prefix === key)) return { refused: 'page_rule' as const };
     return { slug: covers(key) ? folderHoldingSlug(key) : UNATTRIBUTED_MEMORY_SLUG };
   };
-  const destinations = new Map<string, string | null>();
-  for (const key of new Set(heldRows.map(row => row.entity_slug))) {
-    const dest = await heldRowDestination(engine, sourceId, key, UNATTRIBUTED_MEMORY_SLUG, desiredHome);
-    destinations.set(key, dest && 'slug' in dest && covers(dest.slug) ? dest.slug : null);
+  const plan = await planHeldMoves(engine, sourceId, { home: desiredHome, hidden: covers });
+  // A row the apply moves only because its entity's page now exists (as the next maintenance cycle would) says so.
+  const moving = plan.groups.flatMap(g => g.group.map(row => ({ fact_id: Number(row.id), entity_slug: row.entity_slug!, from: g.from, to: g.slug,
+    ...(g.kind === 'page' && !covers(g.slug) ? { because: 'its page exists' as const } : {}) })));
+  // A2: each move whose note is `moved` also removes its rows (and the entity's struck rows) from the saved versions of the
+  // page it leaves (database only; Git history stays): the versions carrying them now, plus the one each move on that page
+  // saves before it (the k-th move there finds its rows in k such versions).
+  const pages = new Map<string, { slug: string; rows: number; versions: number; segmented_versions_not_edited?: number }>(), moves = new Map<string, number>();
+  for (const g of plan.groups) {
+    const k = (moves.get(g.from) ?? 0) + 1;
+    moves.set(g.from, k);
+    if (g.note !== 'moved') continue;
+    const keys = [...g.group.map(row => ({ entity: row.entity_slug!, claim: row.fact })), ...g.struck];
+    const v = await heldRowsInVersions(engine, sourceId, g.from, keys, false);
+    const page = pages.get(g.from) ?? { slug: g.from, rows: 0, versions: 0 };
+    pages.set(g.from, { ...page, rows: page.rows + v.rows + k * keys.length, versions: page.versions + v.versions + k, ...(v.segmented ? { segmented_versions_not_edited: v.segmented } : {}) });
   }
-  const covered = heldRows.filter(row => destinations.get(row.entity_slug));
-  const moving = covered.map(row => ({ fact_id: Number(row.id), entity_slug: row.entity_slug, to: destinations.get(row.entity_slug)! }));
-  // A2: the apply also removes those rows from the shared page's saved versions (database only; Git history stays).
-  const versions = await heldRowsInVersions(engine, sourceId, UNATTRIBUTED_MEMORY_SLUG, covered.map(row => ({ entity: row.entity_slug, claim: row.fact })), false);
+  const edits = [...pages.values()], segmented = Math.max(0, ...edits.map(p => p.segmented_versions_not_edited ?? 0));
   return { source_id: sourceId, store, store_persisted: persisted, expect, desired, changes: cls.changes, held: cls.held, matched_pages: matched,
     unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, held_facts_moving: moving,
-    held_versions_editing: { rows: versions.rows, versions: versions.versions, ...(versions.segmented ? { segmented_versions_not_edited: versions.segmented } : {}) } };
+    held_struck_rows_leaving: plan.groups.reduce((n, g) => n + (g.note === 'moved' ? g.struck.length : 0), 0),
+    held_versions_editing: { rows: edits.reduce((n, p) => n + p.rows, 0), versions: edits.reduce((n, p) => n + p.versions, 0),
+      ...(edits.length ? { pages: edits } : {}), ...(segmented ? { segmented_versions_not_edited: segmented } : {}) } };
 }
 
 function previewLines(p: RulePreview, rerun: string): string[] {
@@ -184,9 +194,11 @@ function previewLines(p: RulePreview, rerun: string): string[] {
     ...(p.unknown_readers.length ? [`  Unknown readers (no such member or group; they match nobody): ${p.unknown_readers.join(', ')}`] : []),
     ...(p.members_losing.length ? [`  Members losing access: ${p.members_losing.join(', ')}`] : []),
     ...(p.credentials_losing.length ? [`  Credentials losing access: ${p.credentials_losing.map(c => `${c.kind} ${c.name} (${c.member})`).join(', ')}`] : []),
-    ...(p.held_facts_moving.length ? [`  Held facts leaving ${UNATTRIBUTED_MEMORY_SLUG} with this change: ${p.held_facts_moving.length} (${p.held_facts_moving.slice(0, 10).map(m => `fact ${m.fact_id} for ${m.entity_slug} to ${m.to}${m.to === m.entity_slug ? ' (its page)' : ''}`).join(', ')}${p.held_facts_moving.length > 10 ? ', ...' : ''})`] : []),
-    ...(p.held_versions_editing.versions ? [`  Their rows also leave ${p.held_versions_editing.versions} saved version(s) of ${UNATTRIBUTED_MEMORY_SLUG} (${p.held_versions_editing.rows} row(s); database only, Git history is not rewritten)`] : []),
-    ...(p.held_versions_editing.segmented_versions_not_edited ? [`  Not edited: ${p.held_versions_editing.segmented_versions_not_edited} saved version(s) of ${UNATTRIBUTED_MEMORY_SLUG} are stored in segments, which this apply cannot edit. ${segmentedConsequence(p.held_versions_editing.segmented_versions_not_edited)} The apply will report itself incomplete.`] : []),
+    ...(p.held_facts_moving.length ? [`  Held facts leaving their holding page with this change: ${p.held_facts_moving.length} (${p.held_facts_moving.slice(0, 10).map(m => `fact ${m.fact_id} for ${m.entity_slug} from ${m.from} to ${m.to}${m.to === m.entity_slug ? ' (its page)' : ''}${m.because ? `, because ${m.because}` : ''}`).join(', ')}${p.held_facts_moving.length > 10 ? ', ...' : ''})`] : []),
+    ...(p.held_struck_rows_leaving ? [`  ${p.held_struck_rows_leaving} struck (withdrawn) held row(s) of those entities leave their holding page with them`] : []),
+    ...(p.held_versions_editing.pages ?? []).flatMap(e => [
+      ...(e.versions ? [`  Their rows also leave ${e.versions} saved version(s) of ${e.slug} (${e.rows} row(s); database only, Git history is not rewritten)`] : []),
+      ...(e.segmented_versions_not_edited ? [`  Not edited: ${e.segmented_versions_not_edited} saved version(s) of ${e.slug} are stored in segments, which this apply cannot edit. ${segmentedConsequence(e.slug, e.segmented_versions_not_edited)} The apply will report itself incomplete.`] : [])]),
     'Pages under no rule are unchanged; unbound credentials and stdio read no page under a rule.',
     `Nothing written. To approve, add --yes --expect ${p.expect} (${rerun}).`,
   ];
@@ -206,16 +218,17 @@ export interface EditResult {
   git?: GitPolicyReceipt;
   note?: string;
   /** GST-2492: held facts this apply moved off memory/unattributed to a page the new rules cover, and those that could not move. */
-  held_facts?: { moved: number; unmovable: Array<{ slug: string; fact_ids: number[]; reason: string }>; complete?: false; segmented_versions_not_edited?: number };
+  held_facts?: { moved: number; unmovable: Array<{ slug: string; fact_ids: number[]; reason: string }>; complete?: false; segmented_versions_not_edited?: number;
+    segmented_pages?: Array<{ slug: string; versions: number }>; pending?: Array<{ slug: string; from: string; request_id: string }> };
 }
 
-/** GST-2492 (B): what an unedited segmented saved version of the shared page leaves readable. */
-const segmentedConsequence = (n: number) => `Readers of ${UNATTRIBUTED_MEMORY_SLUG}'s saved versions can still read the moved rows in up to ${n} of those version(s).`;
+/** GST-2492 (B): what an unedited segmented saved version of a holding page leaves readable. */
+const segmentedConsequence = (slug: string, n: number) => `Readers of ${slug}'s saved versions can still read the moved rows in up to ${n} of those version(s).`;
 
-/** The words of a held-fact move that left segmented saved versions of the shared page unedited. */
+/** The words of a held-fact move left incomplete: segmented saved versions of the page it left unedited, or a move still pending. */
 function heldIncompleteLines(held: EditResult['held_facts']): string[] {
-  const n = held?.segmented_versions_not_edited;
-  return n ? [`  Incomplete: the held facts moved, but ${n} saved version(s) of ${UNATTRIBUTED_MEMORY_SLUG} are stored in segments and were not edited. ${segmentedConsequence(n)}`] : [];
+  return [...(held?.segmented_pages ?? []).map(p => `  Incomplete: the held facts moved, but ${p.versions} saved version(s) of ${p.slug} are stored in segments and were not edited. ${segmentedConsequence(p.slug, p.versions)}`),
+    ...(held?.pending ?? []).map(p => `  Incomplete: the move of held facts off ${p.from} to ${p.slug} is accepted and still pending (request ${p.request_id}; gbrain write-request ${p.request_id} shows it); until it commits they read as they did on ${p.from}.`)];
 }
 
 /**
@@ -232,12 +245,13 @@ async function withHeldFactsMoved(engine: BrainEngine, result: EditResult): Prom
 /** The held-fact move after any rule apply (edit, approved widening, resume); undefined when nothing was held. */
 async function heldFactsMoved(engine: BrainEngine, sourceId: string): Promise<EditResult['held_facts']> {
   const { moveHeldFacts } = await import('../core/facts/held-fact-move.ts');
-  const moved = await moveHeldFacts(engine, sourceId).catch((error: unknown) =>
-    ({ moved: 0, rehomed: 0, segmented_versions_not_edited: 0, unmovable: [{ slug: UNATTRIBUTED_MEMORY_SLUG, fact_ids: [], reason: (error instanceof Error ? error.message : String(error)).slice(0, 300) }] }));
-  if (!moved.moved && !moved.rehomed && !moved.unmovable.length) return undefined;
+  const moved = await moveHeldFacts(engine, sourceId).catch((error: unknown) => ({ moved: 0, rehomed: 0, segmented_versions_not_edited: 0, segmented_pages: [], pending: [],
+    unmovable: [{ slug: UNATTRIBUTED_MEMORY_SLUG, fact_ids: [], reason: (error instanceof Error ? error.message : String(error)).slice(0, 300) }] }));
+  if (!moved.moved && !moved.rehomed && !moved.unmovable.length && !moved.pending.length) return undefined;
   const segmented = moved.segmented_versions_not_edited;
   return { moved: moved.moved + moved.rehomed, unmovable: moved.unmovable.map(({ slug, fact_ids, reason }) => ({ slug, fact_ids, reason })),
-    ...(segmented ? { complete: false as const, segmented_versions_not_edited: segmented } : {}) };
+    ...(segmented || moved.pending.length ? { complete: false as const } : {}),
+    ...(segmented ? { segmented_versions_not_edited: segmented, segmented_pages: moved.segmented_pages } : {}), ...(moved.pending.length ? { pending: moved.pending } : {}) };
 }
 
 /** Writes a desired rulebook through the source's store (after the caller's preview) and reports the result. */
