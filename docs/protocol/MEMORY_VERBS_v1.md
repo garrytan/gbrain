@@ -328,7 +328,10 @@ and a claim forgotten without an entity is withdrawn for every entity. To link
 a fact saved without an entity, do not forget it; remember it with `entity`
 and `replaces` set to its id. In gbrain, a fact saved without an entity is a
 row of the `memory/unattributed` page's `## Facts` table, created on first
-use; linking it strikes that row in the same write.
+use; linking it strikes that row in the same write. A remote save onto a
+member's own page is refused only when that member could read what was
+forgotten (a fact on its own page, or for the brain owner a fact it reads);
+a claim it never read saves as its own fact, with the reply a new claim gets.
 
 #### remember withdrawn refusal detail (additive)
 
@@ -781,7 +784,9 @@ A forget never withdraws an active fact the caller cannot read; when one
 would be reached, the refusal keeps the `claim_linked:` prefix and names no fact.
 In gbrain, a credential bound to one member withdraws only facts on its own
 member page (another fact it reads is refused naming the brain host); the
-brain owner's own credential also withdraws a shared fact it reads.
+brain owner's own credential also withdraws a shared fact it reads, and any
+other fact it reads on a page that credential can write, such as a page whose
+`readable_by` names the owner.
 
 #### forget publishes like a page write (additive note)
 

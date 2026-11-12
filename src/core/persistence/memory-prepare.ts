@@ -96,7 +96,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   if (p.expected_revision !== undefined) assertPageRevision(snapshot, engineMutationPrecondition(parseMutationPrecondition(p)));
   const observedRevision = snapshot?.revision ?? null;
   const excludePrivate = await resolveExcludePrivatePages(engine, row.authority.remote === true);
-  await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate });
+  await assertFactNotWithdrawn(engine, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
   signal?.throwIfAborted();
   const embeddingConfigSql = "SELECT key,value FROM config WHERE key IN ('embedding_model','embedding_dimensions') ORDER BY key";
   const observedEmbeddingConfig = JSON.stringify(await engine.executeRaw(embeddingConfigSql));
@@ -134,7 +134,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const lexicalOld = await lexical(engine);
   const contestedOld = contested ? decision.candidate! : lexicalOld;
   const validate = async (tx: BrainEngine) => {
-    await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate });
+    await assertFactNotWithdrawn(tx, row.source_id, input, { excludePrivate, remote: row.authority.remote === true });
     if (embedding && JSON.stringify(await tx.executeRaw(`${embeddingConfigSql} FOR SHARE`)) !== observedEmbeddingConfig) conflict(row);
     const current = await decide(tx, true);
     if (candidateState(current) !== candidateState(decision)) conflict(row);

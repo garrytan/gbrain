@@ -181,8 +181,19 @@ export function factWithdrawalSubjectSql(alias: string): string {
   return `CASE WHEN ${onOwnedMemoryPageSql(alias)} THEN ${alias}.source_markdown_slug ELSE COALESCE(${alias}.entity_slug, '*') END`;
 }
 
-/** Whether withdrawal row `w` covers fact `f`, as SQL: every subject ('*'), the fact's entity, or the owned memory page it sits on. */
+/**
+ * Whether withdrawal row `w` covers fact `f`, as SQL: every subject ('*'), the fact's entity, or the owned memory page it
+ * sits on. GST-2346: a fact on a member page is covered by that page's own withdrawals alone, as the insert guards
+ * judge it (facts/withdrawal-schema.ts): a withdrawal of another subject expired it when it was made, or the row is one
+ * its member saved since, checked against the claims that member reads.
+ */
 export function withdrawalCoversFactSql(w: string, f: string): string {
+  return `(CASE WHEN starts_with(COALESCE(${f}.source_markdown_slug, ''), '${MEMBER_PAGE_PREFIX}') THEN ${w}.subject = ${f}.source_markdown_slug
+    ELSE ${withdrawalReachedFactSql(w, f)} END)`;
+}
+
+/** Whether withdrawal row `w` expired fact `f` when it was made (recordFactWithdrawal's reach), as SQL: every subject ('*'), the fact's entity, or the owned memory page it sits on. */
+export function withdrawalReachedFactSql(w: string, f: string): string {
   return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${onOwnedMemoryPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
 }
 
