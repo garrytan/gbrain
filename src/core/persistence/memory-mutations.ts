@@ -430,7 +430,9 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   if (!ownPage) await refuseForgetReachingOtherCopies(ctx.engine, sourceId, fact, worldOnly, hidePrivate);
   const slug = fact.source_markdown_slug ?? fact.entity_slug ?? UNATTRIBUTED_MEMORY_SLUG;
   enforceClientSlugFence(ctx, slug, operation); enforceSubagentSlugFence(ctx, slug, operation);
-  const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug);
+  // A page the fact is about that turned private since is one this credential may not write: the brain host withdraws that fact.
+  const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug)
+    .catch((error: unknown) => { throw ownerReach && error instanceof OperationError && error.code === 'page_not_found' ? hostWithdraws() : error; });
   if (ownerReach && !await storedOwnerSpeaksForItself(ctx.engine, authority)) throw hostWithdraws();
   const snapshot = await ctx.engine.readPageSnapshot(slug, { sourceId, includeDeleted: true });
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);

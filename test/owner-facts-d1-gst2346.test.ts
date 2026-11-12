@@ -344,10 +344,11 @@ for (const kind of testBackends()) {
     test("preparation judges the owner again from the stored principal: a stored request from any other writer reads the fact as not found", async () => {
       const id = await hostFact('Acme host kept a dated note canaryhostprepare');
       const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [SRC, ACME]);
-      const prepare = async (who: string, authority: Record<string, unknown> = {}, intent: Record<string, unknown> = { owner_reach: true }) => prepareForgetMutation(engine, {
+      const stored = async (who: string, authority: Record<string, unknown> = {}, intent: Record<string, unknown> = { owner_reach: true }) => ({
         operation: 'forget', id: randomUUID(), request_id: randomUUID(), source_id: SRC, slug: ACME, page_id: page!.id, worktree_id: null, intent: { id, ...intent },
         authority: { version: 1, remote: true, principal: (await h.auth(who) as unknown as { principal: unknown }).principal, sourceId: SRC, slugPrefixes: null, ...authority },
-      } as never, {} as never).then(() => 'prepared', (error: { code?: string }) => error.code);
+      }) as never;
+      const prepare = async (...row: Parameters<typeof stored>) => prepareForgetMutation(engine, await stored(...row), {} as never).then(() => 'prepared', (error: { code?: string }) => error.code);
       expect(await prepare('owner')).toBe('prepared');
       expect(await prepare('owner', {}, {})).toBe('not_found');
       expect(await prepare('alice')).toBe('not_found');
@@ -355,12 +356,50 @@ for (const kind of testBackends()) {
       expect(await prepare('owner', { actingFor: ['member:' + OWNER] })).toBe('not_found');
       expect(await prepare('owner', { restrictedNamespace: true })).toBe('not_found');
       expect(await prepare('owner', { slugPrefixes: ['companies/'] })).toBe('not_found');
+      // A request prepared while its writer was the owner is judged once more under the publication's locks.
+      const prepared = await prepareForgetMutation(engine, await stored('owner'), {} as never);
+      await prepared.validate!(engine);
       await setOwner(engine, 'bob-example');
       try {
         expect(await prepare('owner')).toBe('not_found');
         expect(await prepare('bob')).toBe('prepared');
+        await expect(prepared.validate!(engine)).rejects.toMatchObject({ code: 'not_found' });
       } finally { await setOwner(engine, OWNER); __resetPrivateVisibilityCacheForTests(); }
       expect((await h.row('canaryhostprepare'))!.active).toBe(true);
+    }, 120_000);
+
+    test("a stdio server bound to the owner withdraws a host-written private fact the same way; one bound to a member does not", async () => {
+      const stdio = async (id: string, stdioMember: string) => {
+        const out = await dispatchToolCall(engine, 'forget', { id }, { remote: true, transport: 'stdio', sourceId: SRC, takesHoldersAllowList: ['world'], stdioMember });
+        let json: Record<string, any> = {};
+        try { json = JSON.parse(out.content[0]?.text ?? ''); } catch { /* prose */ }
+        return { isError: out.isError === true, json };
+      };
+      const id = await hostFact('Acme host kept a stdio note canaryhoststdio');
+      expect((await stdio(id, 'alice-example')).json.error).toBe('not_found');
+      expect((await h.row('canaryhoststdio'))!.active).toBe(true);
+      const out = await stdio(id, OWNER);
+      expect(out.isError ? JSON.stringify(out.json) : 'ok').toBe('ok');
+      expect((await h.row('canaryhoststdio'))!.active).toBe(false);
+    }, 120_000);
+
+    test("the owner's forget never reaches a copy its credential cannot write: another member's copy, a page that turned private, a page that names readers", async () => {
+      const active = async (canary: string) => (await engine.executeRaw<{ active: boolean }>('SELECT expired_at IS NULL AS active FROM facts WHERE fact LIKE $1 ORDER BY id', ['%' + canary + '%'])).map(r => r.active);
+      // Another member holds the same private claim about the same entity: the withdrawal would cover it, so nothing is withdrawn.
+      await h.remember('alice', 'Acme pays a quiet bonus canaryhostcopy');
+      const copy = await h.call('owner', 'forget', { id: await hostFact('Acme pays a quiet bonus canaryhostcopy') });
+      expect([copy.isError, copy.text.includes('claim_linked'), copy.text.includes('canaryhostcopy')]).toEqual([true, true, false]);
+      expect(await active('canaryhostcopy')).toEqual([true, true]);
+      // The fact's page was made private after the host saved it: the refusal names the brain host, as for any page kept from remote writers.
+      const hooli = await hostFact('Hooli runs a quiet lab canaryhostturned', { entity: 'companies/hooli-example' });
+      await importFromContent(engine, 'companies/hooli-example', '---\ntype: company\ntitle: Hooli Example\nvisibility: private\n---\n# Hooli Example\n\nHooli example.', { sourceId: SRC });
+      const turned = await h.call('owner', 'forget', { id: hooli });
+      expect([turned.isError, turned.json.error, turned.text.includes('brain host')]).toEqual([true, 'scope_denied', true]);
+      expect(await active('canaryhostturned')).toEqual([true]);
+      // A page that names the owner as a reader: a write does not use the owner's read rule for such pages, so forget answers not_found.
+      const globex = await h.call('owner', 'forget', { id: await hostFact('Globex pilot is quiet canaryhostglobex', { entity: GLOBEX }) });
+      expect([globex.isError, globex.json.error]).toEqual([true, 'not_found']);
+      expect(await active('canaryhostglobex')).toEqual([true]);
     }, 120_000);
 
     test("an unbound connection never reads or withdraws the owner's private fact", async () => {

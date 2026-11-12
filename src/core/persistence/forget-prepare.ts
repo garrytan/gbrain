@@ -169,7 +169,7 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
     validate: async tx => {
       // Under the publication's locks: the fact is still visible, no more trusted than a remote caller, and reaches no other copy.
       const current = await readForgetTarget(tx, id, sourceId, worldOnly, excludePrivate, true, ownPage);
-      if (!current) throw missing();
+      if (!current || (ownerReach && !await storedOwnerSpeaksForItself(tx, row.authority))) throw missing();
       if (remote && supersessionGuarded('agent_written', current.trust_tier)) throw remoteForgetRaced(id);
       if (!ownPage) await refuseForgetReachingOtherCopies(tx, sourceId, current, worldOnly, excludePrivate);
       await held?.validate?.(tx);
