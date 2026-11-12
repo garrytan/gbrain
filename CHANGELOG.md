@@ -18,9 +18,9 @@ A fact saved for an entity whose page does not exist yet (`remember` never creat
 
 A credential bound to the brain owner (`gbrain access owner set`) reads the whole brain, but its `remember` kept every fact private on the owner's member page unless the call passed `share: true`, its `visibility: "world"` was refused, and its `forget` refused a fact it had just shared. Those private facts also stayed out of hot memory, turn context and context packs, which carry shared facts only. Now, speaking for itself, the owner's credential saves a fact with no `visibility` on its subject's page for every reader of the source, keeps it private on its member page when the call passes `visibility: "private"`, when the page or `facts.default_visibility` keeps facts private, or when it replaces a fact on that page, and withdraws a shared fact it reads. The trade-off: an owner agent that follows a planted instruction can now share a fact without passing a flag, so pass `visibility: "private"` for a fact that must stay with the owner. Member credentials, attested QM calls (`x-qm-actor`), audiences, subagent jobs and slug-fenced clients keep what they had.
 
-The changes meet on a strict source: the owner's save for an entity with no page is held, shared, on `memory/unattributed` like any other shared save, the owner's `forget` strikes it there, and the brain host's purge removes it from the file.
+The changes meet on a strict source. The owner's save for an entity with no page is held, shared, on `memory/unattributed` like any other shared save, the owner's `forget` strikes it there, and the brain host's purge removes it from the file.
 
-Upgrade every gbrain host of a strict source together: an older gbrain holds a `memory/unattributed` file that carries the new `entity` column as a malformed fence, with no data loss.
+Upgrade every gbrain host of a strict source together, because an older gbrain holds a `memory/unattributed` file that carries the new `entity` column as a malformed fence, with no data loss.
 
 Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
 
@@ -39,9 +39,9 @@ Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
 #### A strict source keeps a pageless fact in Git (GST-2492, #9179)
 
 - The reply, each batch item and the write receipt say where the fact is: `page: "memory/unattributed"`, `persistence: {mode: "filesystem"}`, `write_through: {written: true, held_for: "<entity>"}`, and the `entity_page_missing` notice says the fact is saved and committed and when it moves.
-- The `extract_facts` maintenance phase moves held facts into a new entity page in one commit: the fact keeps its id, provenance and embedding, and the held row is struck (`moved to <entity>`); when the page is restricted the held row is removed instead, so the world-readable holding page keeps nothing of it. A page kept out of Git does not take the fact; the run warns `HELD_FACT_UNMOVABLE` and the fact stays held.
+- The `extract_facts` maintenance phase moves held facts into a new entity page in one commit. The fact keeps its id, provenance and embedding, and the held row is struck (`moved to <entity>`); when the page is restricted the held row is removed instead, so the world-readable holding page keeps nothing of it. A page kept out of Git does not take the fact; the run warns `HELD_FACT_UNMOVABLE` and the fact stays held.
 - `forget` strikes a held fact's own row, and `purge_fact` removes it from `memory/unattributed` as it removes a fact with no entity, so a rebuild does not bring it back (a purge of a held fact also drops every copy of the same claim text on `memory/unattributed`, held for another entity or with no entity); `remember … replaces` supersedes a held fact from `memory/unattributed` or from the entity's page.
-- A client bound to slug prefixes may save a held fact for an entity inside its prefixes; a fact with no entity is still refused for it. An entity under a folder access rule is never held on the world-readable page: its fact stays in the database, as before.
+- A client bound to slug prefixes may save a held fact for an entity inside its prefixes; a fact with no entity is still refused for it. An entity under a folder access rule is never held on the world-readable page, so its fact stays in the database, as before.
 - Only `memory/unattributed` reads the `entity` column, and an invalid entity cell makes its fence malformed. Every other page parses exactly as before. An older gbrain holds a `memory/unattributed` file that carries the column as a malformed fence, so upgrade every host of a strict source together.
 - Tests: `test/remember-strict-held-gst2492.test.ts` on PGLite and Postgres: the commit before the reply (handler, batch, MCP), rebuilds from a clone of HEAD, the move (one commit, interrupted after its commit and replayed), restricted and database-only pages, forget, purge, both supersede paths, a prefix-bound client, duplicates and the fence column.
 
@@ -56,7 +56,7 @@ Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
 
 #### Where the changes meet
 
-- `test/remember-strict-held-gst2492.test.ts` adds an owner-bound OAuth credential on a strict source, on PGLite and Postgres: its save for an entity with no page is held, shared, on `memory/unattributed` with #9179's reply, its `forget` strikes the held row, `purge_fact` over MCP is refused `trusted_local_only`, and the host's purge removes the claim so a rebuild from Git does not bring it back.
+- `test/remember-strict-held-gst2492.test.ts` adds an owner-bound OAuth credential on a strict source, on PGLite and Postgres. Its save for an entity with no page is held, shared, on `memory/unattributed` with #9179's reply, its `forget` strikes the held row, `purge_fact` over MCP is refused `trusted_local_only`, and the host's purge removes the claim so a rebuild from Git does not bring it back.
 - `docs/guides/memory-boundaries.md`: the purge section says a purge of a held fact drops every copy of the same claim text on `memory/unattributed`.
 
 ## [0.60.684.0] - 2026-11-12
