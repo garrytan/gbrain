@@ -480,12 +480,14 @@ test/persistence-page-authority.test.ts
 test/persistence-physical-root-device.test.ts
 test/persistence-preactivation-claim.test.ts
 test/persistence-publication-deadline.test.ts
+test/persistence-receipt-git-state.test.ts
 test/persistence-receipt-true-up.test.ts
 test/persistence-reconcile-git-dirty-6138.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-skip-cost.test.ts
 test/persistence-stale-plan-retry.test.ts
+test/persistence-stuck-head-9227.test.ts
 test/persistence-sync-cursor-options.test.ts
 test/persistence-sync-cursor-strategy-6696.test.ts
 test/persistence-sync-fence-holds.test.ts

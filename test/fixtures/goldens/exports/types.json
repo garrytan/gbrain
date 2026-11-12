@@ -7158,6 +7158,7 @@
           "getTimelineForDate: (date: string, opts?: ChronicleTimelineOpts) => Promise<ChronicleTimelineRow[]>",
           "getUnverifiedExtractionPageIds: (pageIds: number[], opts?: PageReadScope) => Promise<Map<number, { unverified: boolean; status: string; }>>",
           "getVersions: <B extends boolean = true>(slug: string, opts?: GetVersionsOpts<B>) => Promise<PageVersionRows<B>>",
+          "holdsDatastoreLock: () => boolean",
           "initSchema: () => Promise<void>",
           "insertFact: (input: NewFact, ctx: { source_id: string; supersedeId?: number; }) => Promise<{ id: number; status: FactInsertStatus; }>",
           "insertFacts: (rows: Array<NewFact & { row_num: number; source_markdown_slug: string; superseded_by_row?: number; }>, ctx: { source_id: string; }, opts?: { deleteForPageFirst?: { slug: string; excludeSourcePrefixes?: string[]; preserveExpiredLegacy?: boolean; }; }) => Promise<{ inserted: number; ids: number[]; warnings: string[]; deleted: number; }>",
