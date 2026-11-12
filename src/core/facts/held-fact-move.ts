@@ -95,6 +95,17 @@ export async function ensurePageForHeldRows(engine: BrainEngine, sourceId: strin
 
 type HeldRow = UnfencedFactRow & { from_slug: string };
 
+/**
+ * GST-2492 (B2): after a sync releases its lease, the held facts a folder rule it applied now covers leave the shared page
+ * at once instead of at the next maintenance cycle (still the fallback after a crash). Null when none is due.
+ */
+export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string): Promise<HeldFactMoveOutcome | null> {
+  const [due] = await engine.executeRaw<{ due: boolean }>(`SELECT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $2
+      AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.entity_slug IS NOT NULL AND (gbrain_access_folder_rules(f.source_id, f.entity_slug) IS NOT NULL
+      OR gbrain_access_pending_covers(f.source_id, f.entity_slug))) AS due`, [sourceId, UNATTRIBUTED_MEMORY_SLUG]);
+  return due?.due ? moveHeldFacts(engine, sourceId) : null;
+}
+
 export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Promise<HeldFactMoveOutcome> {
   const outcome: HeldFactMoveOutcome = { moved: 0, moved_slugs: [], rehomed: 0, unmovable: [], write_errors: 0 };
   const rows = await engine.executeRaw<HeldRow>(

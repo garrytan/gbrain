@@ -228,6 +228,8 @@ src/core/facts/backstop.ts	runPipeline	field	STREAM
 src/core/facts/conversation-window-extract.ts	regularPageVersionToken	field	STREAM	
 src/core/facts/drain.ts	estimateBacklogUsd	sql	META	
 src/core/facts/eligibility.ts	isFactsBackstopEligible	field	LEAD	
+src/core/facts/fence-fact-append.ts	heldRowsInVersions	field	SEGW	GST-2492 A2, as purge's redactPageVersions: rewrites inline version bodies only; a segmented version is counted (segmented_versions_not_edited on the receipt), never read
+src/core/facts/fence-fact-append.ts	heldRowsInVersions	sql	SEGW	GST-2492 A2, as purge's redactPageVersions: selects inline version bodies; a segmented version is selected only to be counted
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	field	SEGW	assertInlineBody before the fence write
 src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	field	SEGW	the body materializedPage read back within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) first

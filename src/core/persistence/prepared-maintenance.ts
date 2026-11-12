@@ -11,7 +11,7 @@ import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
 import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
-import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
+import { heldRowsInVersions, prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { submissionAuthority, authorizeStoredRequest, authorizeWrite } from './authority.ts';
@@ -560,7 +560,17 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   const prepared = await preparePageMutation(unbounded, pageRow, config, undefined, undefined, { clock });
   const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, fromSlug, { note: String(p.note), remove: p.note === 'moved',
     rowNum: (await readFacts(engine, row.source_id, facts.map(f => f.id))).map(f => Number(f.value.row_num)), validUntil: null }) : null;
-  return { ...prepared, ...(holding ? { companions: [holding] } : {}), validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
+  // GST-2492 (A2): a row removed from the shared page (it moved where not every reader of the source can read) leaves its
+  // saved versions too, in this transaction; the receipt records which rows, how many versions and where they went.
+  const scrub = held && p.note === 'moved' && fromSlug === UNATTRIBUTED_MEMORY_SLUG
+    ? facts.map(f => ({ entity: holdingAdoption ? fence.get(f.row_num)!.entity ?? '' : fromEntity ?? row.slug, claim: fence.get(f.row_num)!.claim })) : null;
+  const afterEffects = scrub ? async (tx: BrainEngine, outcome: Record<string, unknown>) => {
+    await prepared.afterEffects?.(tx, outcome);
+    const edited = await heldRowsInVersions(tx, row.source_id, fromSlug, scrub, true);
+    outcome.held_versions_edited = { slug: fromSlug, moved_to: row.slug, fact_ids: facts.map(f => f.id), rows: edited.rows, versions: edited.versions,
+      ...(edited.segmented ? { segmented_versions_not_edited: edited.segmented } : {}) };
+  } : prepared.afterEffects;
+  return { ...prepared, ...(afterEffects ? { afterEffects } : {}), ...(holding ? { companions: [holding] } : {}), validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
     // Runs ahead of the page import and its canonical projection, so the
     // projection's expiry pass and insertFacts see the adopted positions.
     // The fence cell's parsed text is written back with the row number: the

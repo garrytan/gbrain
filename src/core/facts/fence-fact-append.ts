@@ -32,7 +32,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import type { Page } from '../types.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { factsFenceSection, fenceCellReadBackProblem, formatFenceDate, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, strikeFactRowInPage, upsertFactRow } from '../facts-fence.ts';
+import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, factsFenceSection, fenceCellReadBackProblem, formatFenceDate, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, strikeFactRowInPage, upsertFactRow } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
@@ -223,5 +223,48 @@ export async function prepareFenceRowRetirement(engine: BrainEngine, row: WriteR
     intent: { ...row.intent, content, expected_revision: snapshot.revision, force: false } }, config, undefined, signal, { unprojected: true });
   return { slug, pageId: snapshot.page.id, observedRevision: prepared.observedRevision, ...(prepared.file ? { file: prepared.file } : {}),
     ...(prepared.validate ? { validate: (tx: BrainEngine) => prepared.validate!(tx) } : {}), apply: (tx, preimage) => prepared.apply(tx, preimage) };
+}
+
+
+/**
+ * GST-2492 (A2): the rows of `rows` (an entity's held claims) in the saved versions of holding page `slug`, removed when
+ * `write`. Each edited version keeps every other byte; only the table lines of those rows go. Database only: Git
+ * history is never rewritten. Idempotent (a second run finds nothing). Segmented versions are counted, not edited.
+ */
+export async function heldRowsInVersions(db: BrainEngine, sourceId: string, slug: string, rows: ReadonlyArray<{ entity: string; claim: string }>, write: boolean):
+  Promise<{ versions: number; rows: number; segmented: number }> {
+  const out = { versions: 0, rows: 0, segmented: 0 };
+  const keys = new Set(rows.map(r => `${r.entity}\0${r.claim.trim()}`));
+  const entities = [...new Set(rows.map(r => r.entity))];
+  if (!keys.size) return out;
+  const versions = await db.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; segmented: boolean }>(
+    `SELECT v.id, v.compiled_truth, v.timeline, v.body_storage = 'segmented' AS segmented FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 AND (v.body_storage = 'segmented' OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS e
+        WHERE strpos(COALESCE(v.compiled_truth, ''), e) > 0 OR strpos(COALESCE(v.timeline, ''), e) > 0)) ORDER BY v.id${write ? ' FOR UPDATE OF v' : ''}`,
+    [sourceId, slug, entities]);
+  const strip = (text: string): [string, number] => {
+    let removed = 0;
+    for (let from = 0; ;) {
+      const begin = text.indexOf(FACTS_FENCE_BEGIN, from), end = begin < 0 ? -1 : text.indexOf(FACTS_FENCE_END, begin);
+      if (end < 0) return [text, removed];
+      const block = text.slice(begin, end + FACTS_FENCE_END.length);
+      const drop = new Set(parseFactsFenceFor(block, { slug }).facts.filter(f => f.entity && keys.has(`${f.entity}\0${f.claim.trim()}`)).map(f => f.rowNum));
+      const lines = block.split('\n');
+      const kept = lines.filter(line => !drop.has(Number(/^\|\s*(\d+)\s*\|/.exec(line)?.[1] ?? NaN)));
+      removed += lines.length - kept.length;
+      const next = kept.join('\n');
+      text = text.slice(0, begin) + next + text.slice(end + FACTS_FENCE_END.length);
+      from = begin + next.length;
+    }
+  };
+  for (const v of versions) {
+    if (v.segmented) { out.segmented++; continue; }
+    const [compiled, a] = strip(v.compiled_truth ?? ''), [timeline, b] = strip(v.timeline ?? '');
+    if (!a && !b) continue;
+    out.versions++; out.rows += a + b;
+    if (write) await db.executeRaw('UPDATE page_versions SET compiled_truth = $2, timeline = $3 WHERE id = $1',
+      [v.id, v.compiled_truth === null ? null : compiled, v.timeline === null ? null : timeline]);
+  }
+  return out;
 }
 

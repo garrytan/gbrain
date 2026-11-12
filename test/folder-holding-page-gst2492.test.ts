@@ -35,8 +35,9 @@ import { parseFactsFenceFor } from '../src/core/facts-fence.ts';
 import { isFactEntityPage, isIdentityEntity } from '../src/core/entities/resolve.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { scanFactsHome } from '../src/core/facts/facts-home.ts';
-import { folderRulesAllow, type FolderRule } from '../src/core/access/folder-rules.ts';
+import { folderRulesAllow, serializePolicyYaml, type FolderRule } from '../src/core/access/folder-rules.ts';
 import { policySeams, proposeRevision, resumePolicy } from '../src/core/access/policy.ts';
+import { commitPolicyFile, POLICY_FILE } from '../src/core/access/policy-git.ts';
 import { identityFor } from '../src/core/access/principals.ts';
 import { setOwner, setOwnerReadsRestricted } from '../src/core/access/owner.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
@@ -272,6 +273,121 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     expect((await runExtractFacts(engine, { sourceId: 'default' })).heldFactsMoved).toBe(1);
     expect(await reads(as, 'bob', 'clients/beta-example/memory/unattributed', other)).toEqual({ page: false, fact: false });
     expect((await as('bob', 'get_page', { slug: HOLD })).text).not.toContain('beta-example');
+  }), 300_000);
+
+  const versionBodies = (engine: BrainEngine, slug: string) => engine.executeRaw<{ id: number; body: string }>(
+    `SELECT v.id::int AS id, COALESCE(v.compiled_truth, '') || '\u0001' || COALESCE(v.timeline, '') AS body FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = 'default' AND p.slug = $1 ORDER BY v.id`, [slug]);
+  const versionsText = async (as: Reader, who: string, slug: string) => (await as(who, 'get_versions', { slug, include_body: true, limit: 50 })).text;
+  const auditRows = (engine: BrainEngine) => engine.executeRaw<{ audit: Record<string, unknown> }>(
+    `SELECT outcome->'held_versions_edited' AS audit FROM persistence_requests WHERE outcome ? 'held_versions_edited' ORDER BY created_at`);
+
+  test('a rule\'s apply removes the moved rows from the shared page\'s saved versions, byte for byte, once, with an audit record', () => strict(async ({ engine, ctx, root }) => {
+    const as = await members(engine);
+    await setOwner(engine, 'carol-example');
+    const entity = 'clients/acme-example/brief';
+    const holding = 'clients/acme-example/memory/unattributed';
+    const claim = 'The acme-example brief carries a quiet clause.';
+    const kept = 'The garden plan adds a third raised bed.';
+    await remember(ctx, claim, entity);
+    await remember(ctx, kept, 'notes/garden-plan');
+    await remember(ctx, 'The garden plan needs more compost.', 'notes/garden-plan');
+    await settleManagedGitEffects(engine);
+    for (const who of ['bob', 'unbound']) expect(await versionsText(as, who, HOLD)).toContain(claim);
+    const before = await versionBodies(engine, HOLD);
+    const preview = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--json']);
+    const carrying = before.filter(v => v.body.includes(claim)).length;
+    expect(carrying).toBeGreaterThan(0);
+    expect(preview.held_versions_editing).toEqual({ rows: carrying, versions: carrying });
+    const applied = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--yes', '--expect', String(preview.expect), '--json']);
+    expect(applied.held_facts).toEqual({ moved: 1, unmovable: [] });
+    await settleManagedGitEffects(engine);
+    const after = new Map((await versionBodies(engine, HOLD)).map(v => [v.id, v.body]));
+    for (const v of before) {
+      expect(after.get(v.id)).toBe(v.body.split('\n').filter(line => !line.includes(claim)).join('\n'));
+    }
+    expect([...after.values()].some(body => body.includes(kept))).toBe(true);
+    const [fact] = await factRows(engine, claim);
+    // The audit counts the versions the preview listed plus the one the move itself saved (the shared page before the move).
+    expect((await auditRows(engine)).map(r => r.audit)).toEqual([{ slug: HOLD, moved_to: holding, fact_ids: [fact!.id], rows: carrying + 1, versions: carrying + 1 }]);
+    for (const who of ['bob', 'unbound']) {
+      const text = await versionsText(as, who, HOLD);
+      expect(text).not.toContain(claim);
+      expect(text).not.toContain('clients/acme-example');
+      expect(text).toContain(kept);
+    }
+    await setOwnerReadsRestricted(engine, true, { remote: false });
+    __resetPrivateVisibilityCacheForTests();
+    expect(await reads(as, 'carol', holding, claim)).toEqual({ page: true, fact: true });
+    expect(await reads(as, 'alice', holding, claim)).toEqual({ page: true, fact: true });
+    // Git history is never rewritten: the shared page's earlier commit still holds the row.
+    expect(git(root, 'log', '-p', '--format=%H', '--', `${HOLD}.md`)).toContain(claim);
+    // A second apply finds nothing to move and edits nothing.
+    const again = await cli(engine, ['rule', 'add', '--prefix', 'clients/acme-example/', '--readers', 'alice-example', '--source', 'default', '--json']);
+    expect(again.held_versions_editing).toEqual({ rows: 0, versions: 0 });
+    expect((await cli(engine, ['resume', '--source', 'default', '--json'])).held_facts).toBeUndefined();
+    expect((await runExtractFacts(engine, { sourceId: 'default' })).heldFactsMoved ?? 0).toBe(0);
+    expect(new Map((await versionBodies(engine, HOLD)).map(v => [v.id, v.body]))).toEqual(after);
+    expect(await auditRows(engine)).toHaveLength(1);
+  }), 300_000);
+
+  test('a rule that arrives by sync moves the held facts right after the sync, beside a write in flight; after a crash, maintenance moves them', () => strict(async ({ engine, ctx, root }) => {
+    const as = await members(engine);
+    const moveModule = await import('../src/core/facts/held-fact-move.ts');
+    const original = moveModule.moveRuledSharedHeld;
+    const claim = 'The acme-example brief carries a synced clause.';
+    const crashed = 'The beta-example plan carries a synced clause.';
+    await remember(ctx, claim, 'clients/acme-example/brief');
+    await remember(ctx, crashed, 'clients/beta-example/plan');
+    await settleManagedGitEffects(engine);
+    const policy = (rules: FolderRule[]) => commitPolicyFile(root, POLICY_FILE, () => serializePolicyYaml(rules), 'access: rule');
+    const sync = () => performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true } as never);
+    // A write on the shared page is in flight while the post-sync move runs; both finish.
+    const inFlight = 'The garden plan has a fourth bed.';
+    let write: Promise<unknown> | null = null;
+    const spy = spyOn(moveModule, 'moveRuledSharedHeld').mockImplementation(async (e, s) => { write = remember(ctx, inFlight, 'notes/garden-plan'); return original(e, s); });
+    try {
+      policy([rule('acme', 'clients/acme-example/', ['alice-example'])]);
+      await sync();
+      expect(write).not.toBeNull();
+      await write;
+    } finally { spy.mockRestore(); }
+    expect(await factRows(engine, claim)).toMatchObject([{ source_markdown_slug: 'clients/acme-example/memory/unattributed' }]);
+    expect(await factRows(engine, inFlight)).toMatchObject([{ source_markdown_slug: HOLD }]);
+    for (const who of ['bob', 'unbound']) expect(await versionsText(as, who, HOLD)).not.toContain(claim);
+    // The sync finishes and the process dies before the move: the rows wait on the shared page until maintenance moves them.
+    const died = spyOn(moveModule, 'moveRuledSharedHeld').mockImplementation(async () => { throw new Error('process died'); });
+    try {
+      policy([rule('acme', 'clients/acme-example/', ['alice-example']), rule('beta', 'clients/beta-example/', ['alice-example'])]);
+      await sync();
+    } finally { died.mockRestore(); }
+    expect(await factRows(engine, crashed)).toMatchObject([{ source_markdown_slug: HOLD }]);
+    expect((await runExtractFacts(engine, { sourceId: 'default' })).heldFactsMoved).toBe(1);
+    expect(await factRows(engine, crashed)).toMatchObject([{ source_markdown_slug: 'clients/beta-example/memory/unattributed' }]);
+    for (const who of ['bob', 'unbound']) {
+      expect(await versionsText(as, who, HOLD)).not.toContain(crashed);
+      expect((await as(who, 'get_page', { slug: HOLD })).text).not.toContain('beta-example');
+    }
+  }), 300_000);
+
+  test('an exact page rule\'s apply creates the entity\'s page through the write door (Git before its row) and the preview names it', () => strict(async ({ engine, ctx, root }) => {
+    const entity = 'notes/secret-brief';
+    const claim = 'The secret brief names a launch date.';
+    expect(await remember(ctx, claim, entity)).toMatchObject({ page: HOLD });
+    await settleManagedGitEffects(engine);
+    const preview = await cli(engine, ['rule', 'add', '--slug', entity, '--readers', 'alice-example', '--source', 'default', '--json']);
+    expect(preview.held_facts_moving).toEqual([{ fact_id: expect.any(Number), entity_slug: entity, to: entity }]);
+    const lines: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
+    try { await runAccessRules(engine, 'rule', ['add', '--slug', entity, '--readers', 'alice-example', '--source', 'default'], false); } finally { spy.mockRestore(); }
+    expect(lines.join('\n')).toContain(`to ${entity} (its page)`);
+    const applied = await cli(engine, ['rule', 'add', '--slug', entity, '--readers', 'alice-example', '--source', 'default', '--yes', '--expect', String(preview.expect), '--json']);
+    expect(applied.held_facts).toEqual({ moved: 1, unmovable: [] });
+    expect(head(root, `${entity}.md`)).toContain(claim);
+    const [created] = await engine.executeRaw<{ outcome: Record<string, any> }>(
+      `SELECT outcome FROM persistence_requests WHERE slug = $1 AND operation = 'put_page' AND state = 'committed' ORDER BY created_at LIMIT 1`, [entity]);
+    expect(created!.outcome.persistence).toMatchObject({ mode: 'filesystem', git_state: 'committed', git_commit: expect.any(String) });
+    expect(await factRows(engine, claim)).toMatchObject([{ entity_slug: entity, source_markdown_slug: entity }]);
   }), 300_000);
 
   test('a folder rule\'s own apply moves the held facts it covers off the shared page, and its preview counts them', () => strict(async ({ engine, ctx, root }) => {

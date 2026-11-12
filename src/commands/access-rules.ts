@@ -23,6 +23,7 @@ import { usageError } from '../cli/cli-error.ts';
 import { opError } from '../core/ops/contract.ts';
 import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleCovers, ruleCoversSql, parsePolicyYaml, serializePolicyYaml, sortRules, type FolderRule, type RuleChange } from '../core/access/folder-rules.ts';
 import { folderHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../core/facts-fence.ts';
+import { heldRowsInVersions } from '../core/facts/fence-fact-append.ts';
 import { identityFor } from '../core/access/principals.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
 import {
@@ -121,6 +122,8 @@ export interface RulePreview {
    * the apply moves each to (its folder's holding page, or the entity's own page, created for an exact page rule).
    */
   held_facts_moving: Array<{ fact_id: number; entity_slug: string; to: string }>;
+  /** The rows of those facts in the shared page's saved versions, and those versions, the apply removes them from (database only; the version the move itself saves is edited too). */
+  held_versions_editing: { rows: number; versions: number };
 }
 
 async function previewRules(engine: BrainEngine, sourceId: string, store: AccessStore, persisted: boolean, desired: FolderRule[]): Promise<RulePreview> {
@@ -147,14 +150,18 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   const credentials: RulePreview['credentials_losing'] = [];
   for (const m of losing) for (const c of await boundCredentials(engine, m)) credentials.push({ member: m, kind: c.kind, name: c.name });
   // A narrowing applies at once, so the held facts it covers leave the world-readable holding page in the same apply.
-  const heldRows = await engine.executeRaw<{ id: number; entity_slug: string; page: boolean }>(`SELECT f.id::int AS id, f.entity_slug,
+  const heldRows = await engine.executeRaw<{ id: number; entity_slug: string; fact: string; page: boolean }>(`SELECT f.id::int AS id, f.entity_slug, f.fact,
       EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL) AS page
     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
       AND f.entity_slug IS NOT NULL AND f.entity_slug <> $2 ORDER BY f.id`, [sourceId, UNATTRIBUTED_MEMORY_SLUG]);
-  const moving = heldRows.filter(row => cls.target.some(rule => ruleCovers(row.entity_slug, rule.prefix))).map(row => ({ fact_id: Number(row.id), entity_slug: row.entity_slug,
+  const covered = heldRows.filter(row => cls.target.some(rule => ruleCovers(row.entity_slug, rule.prefix)));
+  const moving = covered.map(row => ({ fact_id: Number(row.id), entity_slug: row.entity_slug,
     to: row.page || cls.target.some(rule => rule.prefix === row.entity_slug) ? row.entity_slug : folderHoldingSlug(row.entity_slug) }));
+  // A2: the apply also removes those rows from the shared page's saved versions (database only; Git history stays).
+  const versions = await heldRowsInVersions(engine, sourceId, UNATTRIBUTED_MEMORY_SLUG, covered.map(row => ({ entity: row.entity_slug, claim: row.fact })), false);
   return { source_id: sourceId, store, store_persisted: persisted, expect, desired, changes: cls.changes, held: cls.held, matched_pages: matched,
-    unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, held_facts_moving: moving };
+    unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, held_facts_moving: moving,
+    held_versions_editing: { rows: versions.rows, versions: versions.versions } };
 }
 
 function previewLines(p: RulePreview, rerun: string): string[] {
@@ -166,6 +173,7 @@ function previewLines(p: RulePreview, rerun: string): string[] {
     ...(p.members_losing.length ? [`  Members losing access: ${p.members_losing.join(', ')}`] : []),
     ...(p.credentials_losing.length ? [`  Credentials losing access: ${p.credentials_losing.map(c => `${c.kind} ${c.name} (${c.member})`).join(', ')}`] : []),
     ...(p.held_facts_moving.length ? [`  Held facts leaving ${UNATTRIBUTED_MEMORY_SLUG} with this change: ${p.held_facts_moving.length} (${p.held_facts_moving.slice(0, 10).map(m => `fact ${m.fact_id} for ${m.entity_slug} to ${m.to}${m.to === m.entity_slug ? ' (its page)' : ''}`).join(', ')}${p.held_facts_moving.length > 10 ? ', ...' : ''})`] : []),
+    ...(p.held_versions_editing.versions ? [`  Their rows also leave ${p.held_versions_editing.versions} saved version(s) of ${UNATTRIBUTED_MEMORY_SLUG} (${p.held_versions_editing.rows} row(s); database only, Git history is not rewritten)`] : []),
     'Pages under no rule are unchanged; unbound credentials and stdio read no page under a rule.',
     `Nothing written. To approve, add --yes --expect ${p.expect} (${rerun}).`,
   ];
