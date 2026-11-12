@@ -1,5 +1,7 @@
 import { opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, labelledOnlyForSql, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
+import { anyLabelledOnlyMember, labelledOnlyFor } from '../access/labelled-only.ts';
+import { hostFix } from '../ops/op-fix.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { folderAccessForAll, memberIdentityFor, resolveAudienceIdentities } from '../access/caller.ts';
 import type { AudiencePrincipal } from '../access/audience.ts';
@@ -33,7 +35,10 @@ export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote
  */
 export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, slug: string): Promise<void> {
   if (!authority.remote) return;
-  if (authority.excludePrivate ?? true) {
+  // GBRA-108 design 1: a labelled-only writer reads only pages that name it, so the empty-identity shortcut (a page every
+  // caller reads) does not apply to it.
+  const labelled = await anyLabelledOnlyMember(engine) && await writerLabelledOnly(engine, authority, await writerIdentities(engine, authority));
+  if (!labelled && (authority.excludePrivate ?? true)) {
     // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
     // opens a page that names readers or sits under a folder rule), so a page visible with none needs no policy read
     // or member lookup.
@@ -44,7 +49,7 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   }
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
-  if (!hidePrivate && !policy.restricted) return;
+  if (!hidePrivate && !policy.restricted && !labelled) return;
   const fragment = await writerReadPolicySql(engine, authority, 'pages', hidePrivate, policy.restricted);
   const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
     AND NOT (${fragment}) LIMIT 1`, [authority.sourceId, slug]);
@@ -54,14 +59,62 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
 /**
  * The read policy a stored remote write's writer is held to, re-resolved live: the member-access part always (an
  * empty identity, the strictest reading, when the brain has no restrictions), then the privacy part when
- * `hidePrivate`. No operator hatch relaxes the member-access part.
+ * `hidePrivate`. No operator hatch relaxes the member-access part. GBRA-108 design 1: a labelled-only writer is held to
+ * pages that name it too, the same rule its reads follow.
  */
 export async function writerReadPolicySql(engine: SqlEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
   restricted?: boolean): Promise<string> {
   restricted ??= (await readRemotePolicyNow(engine)).restricted;
   const identities = restricted ? await writerIdentities(engine, authority) : [[]];
   const folder = restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] };
-  return withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
+  const fragment = withCallerAccess({ folderCoverage: folder.folderCoverage }, () => readPolicyFragment(pageAlias, { all: identities }, hidePrivate, folder.satisfiedRuleIds));
+  if (!restricted || !await anyLabelledOnlyMember(engine) || !await writerLabelledOnly(engine, authority, identities)) return fragment;
+  return `(${fragment} AND ${labelledOnlyForSql(pageAlias, identities, folder.satisfiedRuleIds)})`;
+}
+
+/**
+ * GBRA-108 design 1: a stored write is labelled-only when its credential's member, or a member it writes for, carries
+ * the grant (labelledOnlyFor); never the owner.
+ */
+async function writerLabelledOnly(engine: SqlEngine, authority: WriteAuthority, identities: readonly (readonly string[])[]): Promise<boolean> {
+  const bound = authority.actingFor && !Array.isArray(authority.actingFor) ? [] : await memberIdentityFor(engine, authority);
+  const [owner] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [OWNER_MEMBER_KEY]);
+  const ownerId = owner?.value?.trim();
+  const members = [...identities, bound].filter(id => !(ownerId && id.includes(`member:${ownerId}`)));
+  return labelledOnlyFor(engine, members);
+}
+
+/**
+ * GBRA-108 design 1: a labelled-only writer may create a page only when the page names it: its readable_by holds the
+ * member or one of its groups (or an audience entry it writes for), or a folder or page rule over the slug lists them.
+ * Otherwise it would write a page it could never read back. An update is held to the readers check
+ * (authorizePageVisibility), so only a slug with no live page is checked here. Refused with the readers line to add and
+ * the page rule the operator could add instead.
+ */
+export async function assertLabelledOnlyCreate(engine: SqlEngine, authority: WriteAuthority, slug: string,
+  stored: { deleted_at?: unknown } | null | undefined, frontmatter: unknown): Promise<void> {
+  if (!authority.remote || (stored && stored.deleted_at == null) || !await anyLabelledOnlyMember(engine)) return;
+  const identities = await writerIdentities(engine, authority);
+  if (!await writerLabelledOnly(engine, authority, identities)) return;
+  const named = new Set(identities.flat());
+  if ((normalizeReaders(frontmatter) ?? []).some(r => named.has(r))) return;
+  const folder = await folderAccessForAll(engine, identities);
+  const [row] = await engine.executeRaw<{ named: boolean }>('SELECT COALESCE(gbrain_access_folder_rules($1, $2) && $3::text[], false) AS named',
+    [authority.sourceId, slug, folder.satisfiedRuleIds]);
+  if (row?.named === true) return;
+  const reader = [...named].sort().find(p => p.startsWith('member:'))?.slice('member:'.length) ?? [...named].sort()[0] ?? 'alice-example';
+  throw opError('access_labelled_only_unnamed', `This connection is labelled-only, so a page it creates must name it: add readable_by: [${reader}] (or one of its groups) to the frontmatter of ${slug}, or ask the user for a page or folder rule over it that lists them; nothing was written.`,
+    `Add readable_by: [${reader}] (or one of its groups) to the frontmatter and submit again with a new request_id, or ask the user to add a page or folder rule that lists it on the brain host.`,
+    { fix: hostFix({ remote: true, transport: 'http' }, ['gbrain', 'access', 'rule', 'add', '--slug', slug, '--readers', reader, '--source', authority.sourceId],
+      'A page rule over this slug that lists the labelled-only member, so the page it creates names it. Adding readable_by to the page itself needs no operator.') });
+}
+
+/** The readers check (remoteReadersChecked) and the labelled-only create check (assertLabelledOnlyCreate) of one remote page write. */
+export async function remoteLabelsChecked<T extends { parsedPage: { frontmatter: unknown } }>(engine: SqlEngine, authority: WriteAuthority, slug: string,
+  stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, prepared: T): Promise<T> {
+  const ready = await remoteReadersChecked(engine, authority, stored?.frontmatter, prepared);
+  await assertLabelledOnlyCreate(engine, authority, slug, stored, ready.parsedPage.frontmatter);
+  return ready;
 }
 
 /**

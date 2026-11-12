@@ -211,6 +211,28 @@ operator on the brain host sets it; a remote caller is refused. While it is on, 
 (`members_read_lineage`), `gbrain access check` reports it, `who-can-read` names it on pages it opens, and doctor
 reports `access_members_read_lineage`. `gbrain access members-read-lineage off` is the undo.
 
+### Labelled-only members (`gbrain access member labelled-only`)
+
+Some credentials should see only what someone deliberately labelled for them: a group chat bot, a shared assistant, an
+audience of several people. `gbrain access member labelled-only <id> on` marks a member that way (off by default and
+unchanged on upgrade; `off` is the undo). Every token, OAuth client and stdio binding of that member then reads only
+pages that name it: its id or one of its groups in `readable_by`, or a folder or page rule that lists them. A page with
+no label, which its source grant would otherwise open, is hidden on every read path, `--as <member>` and the enforced
+member CLI included. So is every derived page and fact that names nobody (summaries, atoms, chronicle events,
+`derived_from` pages): they fail closed. With `access.members_read_lineage` on, a derived page or fact passes only when it
+has at least one origin and every origin names the member; one unlabelled origin keeps it hidden. An older version
+counts only if that version itself named the member or a rule over the page lists it, so adding `readable_by` to a
+page does not open its unlabelled history.
+
+The grant lives on the member, not on one credential, so a second key for the same member cannot forget it. Writes
+follow the same rule: the member cannot update a page it cannot read, and a page it creates must name it
+(`access_labelled_only_unnamed`; add `readable_by: [<member>]` or ask for a rule over the folder). It never applies
+to the owner: setting it there, or naming a labelled-only member the owner, is refused with exit 3
+(`access_labelled_only_owner`) and asks the user. Only the brain operator on the brain host sets it; a remote caller is
+refused (`permission_denied`). `gbrain access member list` and `gbrain access check` show it, `who-can-read` notes
+which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain
+binary sharing the same database ignores the grant, so upgrade every binary that serves the brain before turning it on.
+
 ## Related
 
 - [Multi-source brains](multi-source-brains.md): sources and grants.
