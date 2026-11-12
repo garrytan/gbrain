@@ -230,12 +230,18 @@ member CLI included. So is every derived page and fact that names nobody (summar
 `derived_from` pages): they fail closed. With `access.members_read_lineage` on, a derived page or fact passes only when it
 has at least one origin and every origin names the member; one unlabelled origin keeps it hidden. An older version
 counts only if that version itself named the member or a rule over the page lists it, so adding `readable_by` to a
-page does not open its unlabelled history.
+page does not open its unlabelled history. The member's own memory stays readable: facts on its own member page (the
+ones its `remember` calls saved) pass with lineage on or off. Under a shared agent's audience, the label test uses the
+audience's identities, not the bound member's, so a page must name someone in the audience. An attested read for a
+labelled-only person that names sources would run as the scope, with no member identity and so without the grant, so it
+is refused (`permission_denied`); leave the sources out to read as the person.
 
 The grant lives on the member, not on one credential, so a second key for the same member cannot forget it. Writes
 follow the same rule: the member cannot update a page it cannot read, and a page it creates must name it
-(`access_labelled_only_unnamed`; add `readable_by: [<member>]` or ask for a rule over the folder). It never applies
-to the owner: setting it there, or naming a labelled-only member the owner, is refused with exit 3
+(`access_labelled_only_unnamed`; add `readable_by: [<member>]` or ask for a rule over the folder). A `put_page` to an
+existing slug the member cannot read answers `page_not_found`, and to a new slug `access_labelled_only_unnamed`, the same
+existence pattern pages with readers already have. It never applies to the owner, even if the flag is stored on the
+owner's row: setting it there, or naming a labelled-only member the owner, is refused with exit 3
 (`access_labelled_only_owner`) and asks the user. Only the brain operator on the brain host sets it; a remote caller is
 refused (`permission_denied`). `gbrain access member list` and `gbrain access check` show it, `who-can-read` notes
 which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain

@@ -505,14 +505,37 @@ function labelledOnlySql(alias: string, access: LabelledRecord, readers = true):
 
 /**
  * GBRA-108 design 1: the fact conjunct of a labelled-only read. A fact has no readers or rule of its own, so it is hidden,
- * except under access.members_read_lineage when its provenance page exists and names the caller (labelledOnlySql). Empty
- * for every other caller.
+ * except on the caller's own member page while that page names the member (the member's own memory), and under
+ * access.members_read_lineage when its provenance page exists and names the caller (labelledOnlySql). Empty for every
+ * other caller.
  */
 function labelledOnlyFactSql(factAlias: string): string {
   const access = currentCallerAccess();
   if (!access.labelledOnly) return '';
-  if (!access.lineage || access.owner) return ' AND FALSE';
-  return ` AND EXISTS (SELECT 1 FROM pages lp WHERE lp.source_id = ${factAlias}.source_id AND lp.slug = ${factAlias}.source_markdown_slug AND ${labelledOnlySql('lp', access)})`;
+  const lone = access.audienceIdentities.length ? null : access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
+  const member = access.actor?.member ?? lone;
+  const own = member && ACCESS_ID_RE.test(member) ? `EXISTS (SELECT 1 FROM pages lp WHERE lp.source_id = ${factAlias}.source_id AND lp.slug = ${factAlias}.source_markdown_slug
+    AND lp.slug = '${MEMBER_PAGE_PREFIX}${member}' AND COALESCE(lp.page_readers && ARRAY['member:${member}']::text[], false))` : 'FALSE';
+  if (!access.lineage || access.owner) return ` AND ${own}`;
+  return ` AND (${own} OR EXISTS (SELECT 1 FROM pages lp WHERE lp.source_id = ${factAlias}.source_id AND lp.slug = ${factAlias}.source_markdown_slug AND ${labelledOnlySql('lp', access)}))`;
+}
+
+/**
+ * GBRA-108 design 1: the floor of a remote read gate that is not caller-aware. For any caller that is not labelled-only
+ * it is exactly privatePagesFilterFragment; a labelled-only caller also gets its labelled-only conjunct, so a page that
+ * does not name it never answers. Write-side, maintenance and derived-visibility decisions keep the plain fragment; test/remote-read-floor.test.ts pins which call sites do.
+ */
+export function remoteReadFloorSql(pageAlias: string, derived = false): string {
+  const plain = privatePagesFilterFragment(pageAlias, derived);
+  const access = currentCallerAccess();
+  return access.labelledOnly ? `(${plain} AND ${labelledOnlySql(pageAlias, access)})` : plain;
+}
+
+/** remoteReadFloorSql for a fact lookup: privateProvenanceFilterFragment, plus the labelled-only fact conjunct for a labelled-only caller. */
+export function remoteProvenanceFloorSql(factAlias: string): string {
+  const plain = privateProvenanceFilterFragment(factAlias);
+  const labelled = labelledOnlyFactSql(factAlias);
+  return labelled ? `(${plain}${labelled})` : plain;
 }
 
 const GUEST_ENTRY = 'guest';

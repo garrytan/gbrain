@@ -1,9 +1,13 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { accessLabelledOnlyEntry } from '../src/commands/doctor/checks/access-labelled-only.ts';
 import { accessCheck, runAccess, whoCanRead } from '../src/commands/access.ts';
 import { setMembersReadLineage } from '../src/core/access/lineage.ts';
-import { setMemberLabelledOnly } from '../src/core/access/labelled-only.ts';
+import { labelledOnlyFor, setMemberLabelledOnly } from '../src/core/access/labelled-only.ts';
+import { linkMember } from '../src/core/access/actor.ts';
+import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
+import { assertWebhookWriterMayReplace } from '../src/core/minions/handlers/ingest-capture.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { callerIdentityKey } from '../src/core/access/member-facts.ts';
@@ -21,7 +25,7 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { ENFORCED_MEMBER_ENV, enforcedRead, memberPageView, type EnforcedAccess } from '../src/cli/enforced-member.ts';
 import { remoteCallerAccess } from '../src/core/access/caller.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { buildLineageBrain, derivedOf, factsOf, HUB, type LineageBrain, type Seen } from './helpers/access-lineage-fixture.ts';
+import { buildLineageBrain, derivedOf, ENTITY as ENTITY_SLUG, factsOf, HUB, type LineageBrain, type Seen } from './helpers/access-lineage-fixture.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -59,6 +63,14 @@ const RELAB = 'notes/relabelled-example';
 const RELAB_V1 = 'canarylorelabonex';
 const RELAB_V2 = 'canarylorelabtwox';
 const OTHERS = ['owner', 'bob', 'alice', 'unbound'] as const;
+const BOT_QM = 'U0BOTEXAMPLE';
+const OWNER_QM = 'U0OWNEREXAMPLE';
+const KAO = 'notes/recorded-open-example';
+const KAO_CANARY = 'canarylorecordedx';
+const AMENDED = 'notes/amended-lab-example';
+const OWN_FACT = 'The group bot keeps its own planning checklist';
+const MiB = 1024 ** 2;
+const PART_CHARS = 3_900_000;
 
 describe('labelled-only grant: the cache keys', () => {
   test('the semantic cache and the caller identity key separate a labelled-only caller from an ordinary one', () => {
@@ -113,6 +125,7 @@ for (const kind of testBackends()) {
       const SRC = 'lo-src';
       const before: Record<string, Seen> = {};
       const writeToken = { token: '', id: '' };
+      const attestClient = { token: '' };
       async function cli(args: string[]): Promise<any> {
         const lines: string[] = [];
         const spy = spyOn(console, 'log').mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(' ')); });
@@ -124,16 +137,19 @@ for (const kind of testBackends()) {
       const doctor = async () => (await accessLabelledOnlyEntry.run({ engine: b.engine } as unknown as DoctorContext) as Array<{ name: string; status: string; message: string }>)[0]!;
       const authority = (): WriteAuthority => ({ version: 1, principal: { kind: 'legacy_token', id: writeToken.id }, remote: true, excludePrivate: true, sourceId: SRC,
         sourceIncarnation: 'unused', scopes: ['read', 'write'], operations: null, slugPrefixes: null } as WriteAuthority);
-      async function put(slug: string, fm: string[]): Promise<{ isError: boolean; json: Record<string, any> }> {
-        const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(b.engine), transaction: fn => b.engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
-        const auth = await provider.verifyAccessToken(writeToken.token) as unknown as AuthInfo;
-        const content = ['---', 'type: note', 'title: Bot page', ...fm, '---', '# Bot page', '', 'Written by the group bot.'].join('\n');
-        const out = await dispatchToolCall(b.engine, 'put_page', { slug, content }, { remote: true, transport: 'http', auth, sourceId: SRC, takesHoldersAllowList: ['world'] });
+      const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(b.engine), transaction: fn => b.engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      /** One remote call as the bot's write token, or (`actor`) as the attest client naming that person. */
+      async function wcall(op: string, params: Record<string, unknown>, actor?: string): Promise<{ isError: boolean; text: string; json: Record<string, any> }> {
+        const auth = await provider().verifyAccessToken(actor ? attestClient.token : writeToken.token) as unknown as AuthInfo;
+        const out = await dispatchToolCall(b.engine, op, params, { remote: true, transport: 'http', auth, sourceId: SRC, takesHoldersAllowList: ['world'], inboundFrameBytes: 4 * MiB,
+          ...(actor ? { actor: { header: actor } } : {}) });
         const text = out.content.map(c => c.text).join('\n');
         let json: Record<string, any> = {};
         try { json = JSON.parse(text); } catch { /* prose */ }
-        return { isError: out.isError === true, json };
+        return { isError: out.isError === true, text, json };
       }
+      const note = (title: string, fm: string[]) => ['---', 'type: note', 'title: ' + title, ...fm, '---', '# ' + title, '', 'Written by the group bot.'].join('\n');
+      const put = (slug: string, fm: string[]) => wcall('put_page', { slug, content: note('Bot page', fm) });
       const oldCanary = (key: string) => 'canaryold' + 'lo' + key.replace(/[^a-z]/g, '') + 'x';
       /** The enforced member CLI's whole read surface (enforced-member-classes READ_OPS), for one origin key: which ops show it. */
       async function enforcedSeen(key: 'lab' | 'open'): Promise<string[]> {
@@ -192,6 +208,11 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(b.engine, { name: 'bot-writer', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [SRC] });
         await bindCredential(b.engine, { kind: 'token', id: minted.id }, { member: BOT });
         Object.assign(writeToken, { token: minted.token, id: minted.id });
+        const client = await provider().registerClientManual('lo-attest-' + randomUUID().slice(0, 8), ['client_credentials'], 'read', [], SRC);
+        await bindCredential(b.engine, { kind: 'client', id: client.clientId }, { attestActor: 'qm', attestOps: ['get_page'] });
+        attestClient.token = (await provider().exchangeClientCredentials(client.clientId, client.clientSecret ?? '')).access_token;
+        await linkMember(b.engine, BOT, 'qm', BOT_QM);
+        await linkMember(b.engine, OWNER, 'qm', OWNER_QM);
       }, 300_000);
       afterAll(async () => { await b?.close(); }, 60_000);
 
@@ -305,6 +326,131 @@ for (const kind of testBackends()) {
           await grant(false);
         }
         expect(await all()).toEqual(['readable', 'readable', 'missing', 'missing']);
+      }, 600_000);
+
+      test('on: a recorded-time read (get_page and get_versions with known_as_of) of an unlabelled page is page_not_found; an as_of read names no unlabelled amendment', async () => {
+        await enableBeliefLedger(b.engine, SRC);
+        await importFromContent(b.engine, KAO, ['---', 'type: note', 'title: recorded open', '---', '# recorded open', '', 'Harbor ledger planning notes ' + KAO_CANARY + ' here.'].join('\n'), { sourceId: SRC });
+        await importFromContent(b.engine, AMENDED, ['---', 'type: note', 'title: amended lab', 'readable_by: [group:team-a]', "valid_from: '2026-01-01'", '---', '# amended lab', '', 'Anchor page.'].join('\n'), { sourceId: SRC });
+        await b.engine.addLink(ORIGINS.open.slug, AMENDED, 'amends', 'amends', 'fixture', undefined, undefined, { fromSourceId: SRC, toSourceId: SRC });
+        const knownAsOf = new Date().toISOString();
+        const asOf = knownAsOf.slice(0, 10);
+        const reads = async (who: string) => [
+          await b.call(who, 'get_page', { slug: KAO, known_as_of: knownAsOf }),
+          await b.call(who, 'get_versions', { slug: KAO, known_as_of: knownAsOf, include_body: true }),
+        ];
+        for (const text of await reads('bot')) expect(text).toContain(KAO_CANARY);
+        expect(await b.call('bot', 'get_page', { slug: AMENDED, as_of: asOf })).toContain(ORIGINS.open.slug);
+        await grant(true);
+        try {
+          for (const text of await reads('bot')) {
+            expect(text).not.toContain(KAO_CANARY);
+            expect(JSON.parse(text).code).toBe('page_not_found');
+          }
+          const amended = JSON.parse(await b.call('bot', 'get_page', { slug: AMENDED, as_of: asOf }));
+          expect(amended.slug).toBe(AMENDED);
+          expect(JSON.stringify(amended)).not.toContain(ORIGINS.open.slug);
+          for (const text of await reads('bob')) expect(text).toContain(KAO_CANARY);
+          expect(await b.call('bob', 'get_page', { slug: AMENDED, as_of: asOf })).toContain(ORIGINS.open.slug);
+        } finally {
+          await grant(false);
+        }
+      }, 600_000);
+
+      test('on: a fact on an unlabelled page is not_found by id, like a fact that does not exist', async () => {
+        const [fact] = await b.engine.executeRaw<{ id: number | string }>("SELECT id FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND source = 'fixture'", [SRC, ORIGINS.open.slug]);
+        const replace = (id: string) => wcall('remember', { fact: 'A replacement planning claim', entity: ENTITY_SLUG, provenance: 'fixture chat 2026-11-01', replaces: id });
+        expect((await replace(String(fact!.id))).json.message).toContain('replaces_visibility_mismatch');
+        await grant(true);
+        try {
+          const hidden = await replace(String(fact!.id));
+          const missing = await replace('999999');
+          expect({ code: hidden.json.code, message: hidden.json.message.replace(String(fact!.id), 'N') }).toEqual({ code: missing.json.code, message: missing.json.message.replace('999999', 'N') });
+          expect(missing.json.code).toBe('not_found');
+        } finally {
+          await grant(false);
+        }
+      }, 600_000);
+
+      test('on: recall returns the member\'s own facts with lineage off and on, and still no fact of another page', async () => {
+        expect((await wcall('remember', { fact: OWN_FACT, entity: ENTITY_SLUG, provenance: 'fixture chat 2026-11-01' })).isError).toBe(false);
+        await grant(true);
+        try {
+          for (const on of [false, true]) {
+            await lineage(on);
+            const text = (await wcall('recall', { entity: ENTITY_SLUG })).text;
+            expect(text).toContain(OWN_FACT);
+            for (const key of on ? ['open', 'other'] : ['lab', 'rule', 'open', 'other']) expect(text).not.toContain(b.canary(key + '.fact'));
+          }
+        } finally {
+          await lineage(false);
+          await grant(false);
+        }
+      }, 600_000);
+
+      test('attested reads: a scope read for a labelled-only person is refused before anything is read; the person read stays labelled-only', async () => {
+        const scope = () => wcall('get_page', { slug: ORIGINS.open.slug, source_id: SRC }, BOT_QM);
+        expect((await scope()).text).toContain(b.canary('open'));
+        await grant(true);
+        try {
+          const refused = await scope();
+          expect({ isError: refused.isError, code: refused.json.code }).toEqual({ isError: true, code: 'permission_denied' });
+          expect(refused.json.message).toContain('labelled-only');
+          expect(refused.text).not.toContain(b.canary('open'));
+          expect((await wcall('get_page', { slug: ORIGINS.open.slug }, BOT_QM)).json.code).toBe('page_not_found');
+          expect((await wcall('get_page', { slug: ORIGINS.lab.slug }, BOT_QM)).text).toContain(b.canary('lab'));
+        } finally {
+          await grant(false);
+        }
+      }, 600_000);
+
+      test('the owner is never labelled-only, whatever the stored flag says, on the attested door too', async () => {
+        await b.engine.executeRaw('UPDATE access_members SET labelled_only = true WHERE id = $1', [OWNER]);
+        __resetPrivateVisibilityCacheForTests();
+        try {
+          expect(await labelledOnlyFor(b.engine, [['member:' + OWNER]])).toBe(false);
+          expect((await wcall('get_page', { slug: ORIGINS.open.slug }, OWNER_QM)).text).toContain(b.canary('open'));
+          expect(await b.call('owner', 'get_page', { slug: ORIGINS.open.slug })).toContain(b.canary('open'));
+        } finally {
+          await b.engine.executeRaw('UPDATE access_members SET labelled_only = false WHERE id = $1', [OWNER]);
+          __resetPrivateVisibilityCacheForTests();
+        }
+      }, 600_000);
+
+      test('creates: a webhook capture must name the member, as put_page does', async () => {
+        const writer = { principal: { kind: 'legacy_token', id: writeToken.id } };
+        await grant(true);
+        try {
+          await expect(assertWebhookWriterMayReplace(b.engine, writer, SRC, 'notes/capture-new', note('Capture', []))).rejects.toMatchObject({ code: 'access_labelled_only_unnamed' });
+          expect(await assertWebhookWriterMayReplace(b.engine, writer, SRC, 'notes/capture-new', note('Capture', ['readable_by: [group:team-a]']))).toBeNull();
+        } finally {
+          await grant(false);
+        }
+        expect(await assertWebhookWriterMayReplace(b.engine, writer, SRC, 'notes/capture-new', note('Capture', []))).toBeNull();
+      }, 600_000);
+
+      if (store === 'database') test('creates: a streamed upload over the single-string ceiling must name the member; nothing is written', async () => {
+        await b.engine.setConfig('write_gate.agent_mode', 'off');
+        await grant(true);
+        try {
+          const slug = 'notes/bot-upload-new';
+          const filler = 'We agreed to ship the review checklist first and revisit pricing next week. '.repeat(64) + '\n\n';
+          const text = note('Bot upload', []) + '\n\n' + filler.repeat(Math.ceil(25 * MiB / filler.length));
+          const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+          const begin = await wcall('begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: sha(text), request_id: randomUUID() });
+          expect(begin.isError).toBe(false);
+          for (let part = 0, at = 0; at < text.length; part++, at += PART_CHARS) {
+            const piece = text.slice(at, at + PART_CHARS);
+            expect((await wcall('upload_page_part', { upload_id: begin.json.upload_id, part, text: piece, part_sha256: sha(piece) })).isError).toBe(false);
+          }
+          let commit = await wcall('commit_page_upload', { upload_id: begin.json.upload_id, wait_ms: 30_000 });
+          for (let attempt = 0; commit.json.code === 'write_pending' && attempt < 40; attempt++) commit = await wcall('commit_page_upload', { upload_id: begin.json.upload_id, wait_ms: 30_000 });
+          expect(commit.text).toContain('access_labelled_only_unnamed');
+          expect((await b.engine.executeRaw('SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2', [SRC, slug])).length).toBe(0);
+        } finally {
+          await grant(false);
+          await b.engine.executeRaw("DELETE FROM config WHERE key = 'write_gate.agent_mode'");
+        }
       }, 600_000);
     });
   }

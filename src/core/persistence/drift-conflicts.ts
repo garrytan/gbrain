@@ -28,7 +28,7 @@ import { normalizeSlugPrefix } from '../ops/context.ts';
 import { resolveSourceLocalFilePath } from '../markdown.ts';
 import { recordedPathFromFileUri, scannerSlugRootMode } from '../write-through.ts';
 import { hardenedGitSync, hardenedPathDirty } from '../hardened-git.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { validateSlug } from '../utils.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
@@ -320,7 +320,7 @@ export async function auditDriftConflicts(engine: BrainEngine, sourceId: string,
     where.push(`(${alternatives.join(' OR ')})`);
   }
   if (!access.trusted || access.excludePrivate) {
-    where.push(`EXISTS (SELECT 1 FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL${access.excludePrivate ? ` AND ${privatePagesFilterFragment('p')}` : ''})`);
+    where.push(`EXISTS (SELECT 1 FROM pages p WHERE p.source_id=r.source_id AND p.slug=r.slug AND p.deleted_at IS NULL${access.excludePrivate ? ` AND ${remoteReadFloorSql('p')}` : ''})`);
   }
   const filtered = where.join(' AND ');
   const [totals] = await engine.executeRaw<{ slugs: number; receipts: number }>(

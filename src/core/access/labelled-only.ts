@@ -18,6 +18,7 @@ import { hostOnlyError } from '../ops/op-fix.ts';
 import { ACCESS_ID_RE } from './principals.ts';
 import { assertAccessId, boundCredentials, existingMember, getMember, type MemberRecord } from './members.ts';
 import { labelledOnlyOwnerError, ownerMemberId } from './owner.ts';
+import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
 
 /**
  * Marks a member labelled-only or clears it. Only the trusted local operator may (remote strictly false), and never on the
@@ -65,13 +66,14 @@ export async function anyLabelledOnlyMember(engine: Pick<BrainEngine, 'executeRa
 /**
  * Whether a read or write by these identities is labelled-only: one of their members carries the grant. A table that
  * cannot be read counts as yes (fail closed: it only narrows). Identities without a member (unbound, a group, a guest)
- * are never labelled-only.
+ * are never labelled-only, and neither is the configured owner (access.owner_member), whichever door the call came in by.
  */
 export async function labelledOnlyFor(engine: Pick<BrainEngine, 'executeRaw'>, identities: readonly (readonly string[])[]): Promise<boolean> {
   const members = [...new Set(identities.flat().filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length)).filter(id => ACCESS_ID_RE.test(id)))];
   if (!members.length) return false;
   try {
-    return (await engine.executeRaw('SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[]) LIMIT 1', [members])).length > 0;
+    return (await engine.executeRaw(`SELECT 1 FROM access_members WHERE labelled_only AND id = ANY($1::text[])
+      AND id IS DISTINCT FROM (SELECT btrim(value) FROM config WHERE key = $2) LIMIT 1`, [members, OWNER_MEMBER_KEY])).length > 0;
   } catch {
     return true;
   }
