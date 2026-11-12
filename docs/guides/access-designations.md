@@ -118,7 +118,7 @@ These rules follow the origin, so nobody writes them by hand:
 - anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
   remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
   origin of it (a folder rule kept to the owner, or readers that list the owner). Three operator settings change this,
-  all off by default: a raw-only rule does not hide what is derived from its pages, an audience member's own member
+  and all are off by default. A raw-only rule does not hide what is derived from its pages, an audience member's own member
   page reads to the owner as if it named the owner, and `access.members_read_lineage` gives every member the owner's
   rule (all below).
 
@@ -147,7 +147,7 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 `access.yml`, `covers_derived: false` on the rule) keeps the pages under `transcripts/` to their readers, but not the
 pages and facts derived from them: an atom, a summary, a synthesized concept, a chronicle event or a fact made from a
 raw-only page is read by whoever reads that derived page. Use it for raw material such as call transcripts, whose
-summaries are meant to be shared. Never use it for a folder whose content is itself the secret: a summary of a
+summaries are meant to be shared. Never use it for a folder whose content is itself the secret. A summary of a
 raw-only page carries what the page says, and the facts extracted from it are readable like any other derived page,
 so the facts pulled out of a fenced transcript are not fenced. A page's own `readable_by` still hides what is derived from it, and a page
 that another covering rule also matches stays covered. Every rule written before this existed covers derived pages and
