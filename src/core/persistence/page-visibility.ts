@@ -38,15 +38,29 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   const slug = authorizedSlug(authority, page);
   // GBRA-108 design 1: a labelled-only writer reads only pages that name it, so the empty-identity shortcut (a page every
   // caller reads) does not apply to it.
-  const labelled = await anyLabelledOnlyMember(engine) && await writerLabelledOnly(engine, authority, await writerIdentities(engine, authority));
-  if (!labelled && (authority.excludePrivate ?? true)) {
+  // The grant probe rides on the empty-identity read, so a write on a brain with no labelled-only member costs no extra
+  // statement; an unreadable probe counts as yes, as anyLabelledOnlyMember does.
+  const excludePrivate = authority.excludePrivate ?? true;
+  const hiddenSql = `SELECT (page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL) FROM pages
+      WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`;
+  let probe: { any_labelled?: boolean; identity_may_open: boolean | null } | undefined;
+  if (excludePrivate) {
+    try {
+      [probe] = await engine.executeRaw<{ any_labelled: boolean; identity_may_open: boolean | null }>(
+        `SELECT EXISTS (SELECT 1 FROM access_members WHERE labelled_only) AS any_labelled, (${hiddenSql}) AS identity_may_open`, [authority.sourceId, slug]);
+    } catch {
+      probe = undefined;
+    }
+  }
+  const anyLabelled = excludePrivate ? probe?.any_labelled ?? true : await anyLabelledOnlyMember(engine);
+  const labelled = anyLabelled && await writerLabelledOnly(engine, authority, await writerIdentities(engine, authority));
+  if (!labelled && excludePrivate) {
     // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
     // opens a page that names readers or sits under a folder rule), so a page visible with none needs no policy read
     // or member lookup.
-    const [hidden] = await engine.executeRaw<{ identity_may_open: boolean }>(`SELECT (page_readers IS NOT NULL OR folder_rule_ids IS NOT NULL) AS identity_may_open
-      FROM pages WHERE source_id=$1 AND slug=$2 AND NOT (${readPolicyFragment('pages', [], true)}) LIMIT 1`, [authority.sourceId, slug]);
-    if (!hidden) return;
-    if (!hidden.identity_may_open) throw pageNotVisibleError();
+    probe ??= (await engine.executeRaw<{ identity_may_open: boolean | null }>(`SELECT (${hiddenSql}) AS identity_may_open`, [authority.sourceId, slug]))[0];
+    if (probe?.identity_may_open == null) return;
+    if (!probe.identity_may_open) throw pageNotVisibleError();
   }
   const policy = await readRemotePolicyNow(engine);
   const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
@@ -94,7 +108,10 @@ async function writerLabelledOnly(engine: SqlEngine, authority: WriteAuthority, 
  */
 export async function assertLabelledOnlyCreate(engine: SqlEngine, authority: WriteAuthority, slug: string,
   stored: { deleted_at?: unknown } | null | undefined, frontmatter: unknown): Promise<void> {
-  if (!authority.remote || (stored && stored.deleted_at == null) || !await anyLabelledOnlyMember(engine)) return;
+  if (!authority.remote || (stored && stored.deleted_at == null)) return;
+  // A labelled-only member is a member, and adding one marks the brain restricted for good, so a request whose ambient
+  // policy shows no restrictions needs no probe; stored writes and replays carry no ambient policy and probe.
+  if (currentCallerAccess().remotePolicy?.restricted === false || !await anyLabelledOnlyMember(engine)) return;
   const identities = await writerIdentities(engine, authority);
   if (!await writerLabelledOnly(engine, authority, identities)) return;
   const named = new Set(identities.flat());
