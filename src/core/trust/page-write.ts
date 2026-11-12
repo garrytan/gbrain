@@ -37,7 +37,9 @@ import { insertTrustProposal, updatePendingTrustProposalAfter } from './proposal
 import { propagateTierLowering } from './propagation.ts';
 import { OWNER_TIER_FLOOR, compareTrust, effectiveWriteTrust, isTrustTier, maxTrust, minTrust, storedTrustTier, type TrustTier, type WriteTrust } from './tier.ts';
 import { PRIVACY_ALIASES } from '../search/private-visibility.ts';
-import { normalizeReaders } from '../access/principals.ts';
+import { normalizeReaders, readersAllow } from '../access/principals.ts';
+import { memberIdentity } from '../access/members.ts';
+import { ownerMemberId, ownerReadsRestrictedOn } from '../access/owner.ts';
 import { asciiLower } from '../edge-whitespace.ts';
 
 /** Page writes that only edit a gbrain-managed fence (or strike a row) and keep the page's tier. */
@@ -137,44 +139,81 @@ function readersWidened(stored: Record<string, unknown>, incoming: Record<string
   return after === null || after.some(reader => !before.includes(reader));
 }
 
+/** GST-2518, GST-2521: what a held write keeps: the labels it would widen below `tier`, and the brain owner as a reader (`owner`). */
+export interface LabelGuard { tier: TrustTier | null; owner: { member: string; identity: string[] } | null }
+
 /**
- * GST-2518: the label guard tier when a write must keep the page's privacy labels, else null. It applies to a local content
- * write or derived page publication below operator_curated over a page that is private by its labels or names readers, when
- * the write is below the guard: the stored tier (an unclassified `unknown` page reads as operator_curated lowered by its
- * frontmatter caps, as its marker does), raised to the prior tier of every `lower_page` proposal of the page since the
- * owner last accepted one (pending, dismissed, reverted or undone). So earlier lowering edits, or a rejected or undone
- * widening, do not let an equal-tier write widen the page. Other writes send no query.
+ * GST-2518: the label guard for a local content write or derived page publication below operator_curated, else null. Its
+ * tier holds a page that is private by its labels or names readers when the write is below it: the stored tier (an
+ * unclassified `unknown` page reads as operator_curated lowered by its frontmatter caps, as its marker does), raised to
+ * the tier the owner's label door left (GST-2521, `page_label_guards`) and to the prior tier of every `lower_page`
+ * proposal of the page since the owner last accepted one (pending, dismissed, reverted or undone). So owner-set labels,
+ * earlier lowering edits, or a rejected or undone widening do not let an equal-tier write widen the page.
+ * GST-2521: `owner` is set when the brain owner reads the page by its readers now (and the owner opt-in to read restricted
+ * pages is off), so the write cannot take the owner out of them. `incoming` is the written frontmatter when known; a write
+ * that names no readers over a page that names none sends no owner query, and a page with no labels no guard query.
  */
 export async function privacyLabelGuard(engine: BrainEngine, row: Pick<WriteRequest, 'operation' | 'intent' | 'authority'>, trust: WriteTrust | undefined,
-  page: { id: number; frontmatter?: Record<string, unknown> | null } | null, stored: TrustTier | null): Promise<TrustTier | null> {
+  page: { id: number; frontmatter?: Record<string, unknown> | null } | null, stored: TrustTier | null, incoming?: Record<string, unknown> | null): Promise<LabelGuard | null> {
   if (!trust || !page || !stored || row.authority?.remote === true || !(CONTENT_OPERATIONS.includes(row.operation) || declaresDerivation(row.intent))
     || isFenceEditWrite(row) || compareTrust(trust.tier, OWNER_TIER_FLOOR) >= 0) return null;
   const labels = page.frontmatter ?? {};
-  if (!labelledPrivate(labels) && normalizeReaders(labels) === null) return null;
-  const since = await engine.executeRaw<{ prior: string | null }>(`SELECT before_state->>'prior_tier' AS prior FROM trust_proposals
-    WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status <> 'accepted' AND id > COALESCE((SELECT max(id) FROM trust_proposals
-      WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'), 0)`, [Number(page.id)]);
-  const guard = maxTrust(stored === 'unknown' ? minTrust(OWNER_TIER_FLOOR, ...frontmatterTrustCaps(labels)) : stored,
-    ...since.map(proposal => proposal.prior).filter(isTrustTier));
-  return compareTrust(trust.tier, guard) < 0 ? guard : null;
+  let tier: TrustTier | null = null;
+  if (labelledPrivate(labels) || normalizeReaders(labels) !== null) {
+    const [guard] = await engine.executeRaw<{ owner_set: string | null; priors: (string | null)[] | null }>(`SELECT
+      (SELECT tier FROM page_label_guards WHERE page_id = $1) AS owner_set,
+      ARRAY(SELECT before_state->>'prior_tier' FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status <> 'accepted'
+        AND id > COALESCE((SELECT max(id) FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'), 0)) AS priors`,
+    [Number(page.id)]);
+    tier = maxTrust(stored === 'unknown' ? minTrust(OWNER_TIER_FLOOR, ...frontmatterTrustCaps(labels)) : stored,
+      ...[guard?.owner_set ?? null, ...(guard?.priors ?? [])].filter(isTrustTier));
+    if (compareTrust(trust.tier, tier) >= 0) tier = null;
+  }
+  const owner = normalizeReaders(labels) !== null || !incoming || normalizeReaders(incoming) !== null ? await ownerReader(engine, labels) : null;
+  return tier || owner ? { tier, owner } : null;
+}
+
+/** GST-2521: the brain owner, when the owner reads `frontmatter` by its readers and the opt-in to read past readers is off. */
+async function ownerReader(engine: BrainEngine, frontmatter: Record<string, unknown>): Promise<LabelGuard['owner']> {
+  const member = await ownerMemberId(engine);
+  if (!member || await ownerReadsRestrictedOn(engine)) return null;
+  const identity = await memberIdentity(engine, member).then(found => found.identity, () => null);
+  return identity && readersAllow(frontmatter, identity) ? { member, identity } : null;
 }
 
 /**
- * GST-2518: in place, puts back the stored labels `frontmatter` would widen: the visibility and alias keys when the stored
- * page is private by them and the incoming one is not, and readable_by when the incoming readers let anyone new in.
- * A narrowing of the other kind is kept. Returns what was kept and asked for, or null when nothing widened.
+ * GST-2521: the owner's label door (`gbrain repair visibility`, its `--readers` setter, `gbrain repair private-labels`)
+ * keeps the page's tier, so it raises the page's label guard to operator_curated: a later write below that is held from
+ * widening the labels the owner set. In the door's own transaction.
  */
-export function holdPrivacyLabels(frontmatter: Record<string, unknown>, stored: Record<string, unknown> | null | undefined): HeldPrivacyLabels | null {
+export async function raisePageLabelGuard(tx: BrainEngine, sourceId: string, slug: string): Promise<void> {
+  await tx.executeRaw(`INSERT INTO page_label_guards (page_id, tier) SELECT id, $3 FROM pages WHERE source_id = $1 AND slug = $2
+    ON CONFLICT (page_id) DO UPDATE SET tier = EXCLUDED.tier, set_at = now()`, [sourceId, slug, OWNER_TIER_FLOOR]);
+}
+
+/**
+ * GST-2518: in place, puts back the stored labels `frontmatter` would widen below the guard tier: the visibility and alias
+ * keys when the stored page is private by them and the incoming one is not, and readable_by when the incoming readers let
+ * anyone new in. GST-2521: readers that would leave out the owner the guard names keep the owner, with the rest of the
+ * narrowing (the stored readers when the incoming ones are malformed). Another narrowing is kept. Returns what was kept
+ * and asked for, or null when nothing was held.
+ */
+export function holdPrivacyLabels(frontmatter: Record<string, unknown>, stored: Record<string, unknown> | null | undefined, guard: LabelGuard): HeldPrivacyLabels | null {
   if (!stored) return null;
-  const guarded = [...(labelledPrivate(stored) && !labelledPrivate(frontmatter) ? PRIVACY_FLAG_KEYS : []), ...(readersWidened(stored, frontmatter) ? [READERS_KEY] : [])];
+  const widened = guard.tier !== null && readersWidened(stored, frontmatter);
+  const ownerOut = guard.owner !== null && !readersAllow(frontmatter, guard.owner.identity);
+  const guarded = [...(guard.tier && labelledPrivate(stored) && !labelledPrivate(frontmatter) ? PRIVACY_FLAG_KEYS : []), ...(widened || ownerOut ? [READERS_KEY] : [])];
   const keys = guarded.filter(key => JSON.stringify(stored[key] ?? null) !== JSON.stringify(frontmatter[key] ?? null));
   if (!keys.length) return null;
   const held: HeldPrivacyLabels = { keys, kept: {}, requested: {} };
   for (const key of keys) {
-    held.kept[key] = stored[key] ?? null;
-    held.requested[key] = frontmatter[key] ?? null;
-    if (stored[key] === undefined) delete frontmatter[key];
-    else frontmatter[key] = stored[key];
+    const requested = frontmatter[key];
+    const withOwner = key === READERS_KEY && !widened ? [...(typeof requested === 'string' ? [requested] : Array.isArray(requested) ? requested : []), guard.owner!.member] : null;
+    const kept = withOwner && readersAllow({ [READERS_KEY]: withOwner }, guard.owner!.identity) ? withOwner : stored[key];
+    held.kept[key] = kept ?? null;
+    held.requested[key] = requested ?? null;
+    if (kept === undefined) delete frontmatter[key];
+    else frontmatter[key] = kept;
   }
   return held;
 }

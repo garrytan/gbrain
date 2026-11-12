@@ -315,6 +315,9 @@
       "page_facts_reconcile.page_facts_reconcile_pkey": "p PRIMARY KEY (page_id)",
       "page_generation_clock.page_generation_clock_id_check": "c CHECK ((id = 1))",
       "page_generation_clock.page_generation_clock_pkey": "p PRIMARY KEY (id)",
+      "page_label_guards.page_label_guards_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "page_label_guards.page_label_guards_pkey": "p PRIMARY KEY (page_id)",
+      "page_label_guards.page_label_guards_tier_check": "c CHECK ((tier = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text])))",
       "page_mention_state.page_mention_state_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
       "page_mention_state.page_mention_state_pkey": "p PRIMARY KEY (page_id)",
       "page_mention_state.page_mention_state_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
@@ -946,6 +949,9 @@
       "page_generation_clock": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "page_label_guards": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "page_links": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1514,6 +1520,7 @@
       "page_extraction_state_truncated_idx": "CREATE INDEX page_extraction_state_truncated_idx ON public.page_extraction_state USING btree (pipeline, page_id) WHERE (input_truncated IS NOT NULL)",
       "page_facts_reconcile_pkey": "CREATE UNIQUE INDEX page_facts_reconcile_pkey ON public.page_facts_reconcile USING btree (page_id)",
       "page_generation_clock_pkey": "CREATE UNIQUE INDEX page_generation_clock_pkey ON public.page_generation_clock USING btree (id)",
+      "page_label_guards_pkey": "CREATE UNIQUE INDEX page_label_guards_pkey ON public.page_label_guards USING btree (page_id)",
       "page_mention_state_pkey": "CREATE UNIQUE INDEX page_mention_state_pkey ON public.page_mention_state USING btree (page_id)",
       "page_mention_state_source_idx": "CREATE INDEX page_mention_state_source_idx ON public.page_mention_state USING btree (source_id, mention_version)",
       "page_projection_jobs_pkey": "CREATE UNIQUE INDEX page_projection_jobs_pkey ON public.page_projection_jobs USING btree (source_incarnation, slug)",
@@ -3401,6 +3408,14 @@
           "2 value bigint/int8 NOT NULL DEFAULT 0"
         ],
         "flags": "relkind=r rls=false force_rls=false"
+      },
+      "page_label_guards": {
+        "columns": [
+          "1 page_id integer/int4 NOT NULL",
+          "2 tier text/text NOT NULL",
+          "3 set_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
       },
       "page_mention_state": {
         "columns": [

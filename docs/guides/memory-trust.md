@@ -304,6 +304,21 @@ apply to a write that only narrows a label, to a write that leaves the labels
 alone, to a writer at or above the page's tier, or to your own edits (a file
 you edit and sync, `gbrain repair visibility`).
 
+Labels you set on an agent's page hold too. `gbrain repair visibility` (and
+its `--readers` setter, and `gbrain repair private-labels`) keeps the page's
+agent tier, but it raises the page's label guard to your tier, so a later agent
+write at the page's tier that drops or widens your labels is held the same way.
+The guard is kept in the database, so on a managed Git brain rebuilt from a
+clone it starts empty; run the label repair again to set it.
+
+An agent also can't take you out of a page's readers. When a write below your
+tier sets `readable_by` to a list that leaves you, the brain owner, out of a
+page you read now, gbrain publishes the rest of the change with you still in
+the list and records the readers it asked for in the page's `lower_page` item;
+`gbrain trust confirm tp<id>` applies them. An agent narrowing that keeps you
+in the list, your own readers changes, and a brain with
+`access.owner_reads_restricted` on (you read every page anyway) are unaffected.
+
 ```bash
 gbrain trust backfill --label-lowerings [--source <id>] [--json]   # read-only
 ```

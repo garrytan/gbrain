@@ -1036,10 +1036,11 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   let provenance: CanonicalProvenance | undefined;
   let suppliedTrustMarker: unknown;
   // #5575: the page's tier, computed once before import so the write gate sees exactly it (ENG-18).
-  const trust = provenanceWriteTrust(row, typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null, snapshot?.page.frontmatter);
+  const incoming = typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null;
+  const trust = provenanceWriteTrust(row, incoming, snapshot?.page.frontmatter);
   const gateTrust = pageGateTrust(row, trust, storedTier);
-  // GST-2518: a lower-tier local write keeps the page's privacy labels it would widen; its proposal carries the request.
-  const labelGuard = await privacyLabelGuard(engine, row, trust, snapshot?.page ?? null, storedTier);
+  // GST-2518: a lower-tier local write keeps the page's privacy labels it would widen (GST-2521: and the owner as a reader); its proposal carries the request.
+  const labelGuard = await privacyLabelGuard(engine, row, trust, snapshot?.page ?? null, storedTier, incoming);
   let heldLabels: HeldPrivacyLabels | null = null;
   const defaultSourceWriter = row.operation === 'restore_page' || row.operation === 'revert_version' ? null : await defaultSourceMemberWriter(engine, row.authority), defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter);
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
@@ -1062,7 +1063,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     prepareFrontmatter: page => {
       provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
-      if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter);
+      if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
@@ -1154,7 +1155,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       const applied = await (isFenceEditWrite(row) ? withTrustKeep(tx, ['pages'], () => ready.apply(tx, lean ? preimage : undefined)) : ready.apply(tx, lean ? preimage : undefined));
       projectionPending = applied?.segmented?.complete === false || applied?.projectionPending === true;
       segmentedWrite = applied?.segmented !== undefined;
-      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: heldLabels && labelGuard ? maxTrust(prior, labelGuard) : prior, revision: snapshot!.revision }, undefined, heldLabels) : null;
+      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: heldLabels && labelGuard?.tier ? maxTrust(prior, labelGuard.tier) : prior, revision: snapshot!.revision }, undefined, heldLabels) : null;
       // Mandatory metadata shares publication rollback; exact no-ops never heal it. These, and the
       // projections (facts, takes, timeline rows of the page the import just wrote live), are independent and sent together.
       const [, pinned] = await pipelined(tx, [
@@ -1195,7 +1196,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       }
     } else if (heldLabels && snapshot && labelGuard) {
       // GST-2518: a write that only widened labels publishes nothing once they are kept; its request still reaches the owner.
-      lowered = await recordAgentPageLowering(tx, row, { tier: labelGuard, revision: snapshot.revision }, undefined, heldLabels);
+      lowered = await recordAgentPageLowering(tx, row, { tier: labelGuard.tier ?? storedTier!, revision: snapshot.revision }, undefined, heldLabels);
     }
     const coreUsage = core?.usage();
     const gate = noop ? undefined : gateField(ready.result.gate, `p:${row.source_id}/${row.slug}`, null);
