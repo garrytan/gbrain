@@ -49,6 +49,14 @@ identifiers and attribution are available in the pre-removal Git revision
 
 Brainstorm message idea from @javieraldape (#7113, rewritten on master). Every change behaves the same on a repo-less brain except the door and conversion items, which need a checkout as they always have.
 
+### A forget interrupted after its Git commit still withdraws the fact
+
+**Git is the parent, so the database now follows a commit that already landed.** On a source configured `canonical: git`, a write is committed to Git first and its database row second. When something failed between the two (an unexpected error after the Git commit, before the row committed), the write ended `failed` with `storage_error` and the reply said "nothing was saved", although Git held the change. For a `forget` that meant the fact stayed active until the next sync, no withdrawal was recorded, and the same claim could be remembered again as a new fact (GST-2517).
+
+- The owner now replays such a write. The replay finds its change already committed and records it without a second commit: a `forget` turns the fact inactive and records its withdrawal, and a `remember` or `put_page` gets its one row. A shared fact forgotten by the owner and a member's own-page fact behave the same. A killed process in the same window was already recovered this way.
+- If the replay fails too, the request ends failed with the landed commit on its receipt (`landed_before_row`). A `remember` or `forget` reply then names that commit and says the database has not recorded it, instead of "nothing was saved". A `forget` submitted again with a new request_id records the withdrawal without a second commit.
+- `gbrain repair failed-writes` no longer says a refused `forget` "will be produced again by the next dream cycle": only callers make forgets, so it lists one as a write to resubmit.
+
 ### For contributors
 
 - No git call under `src` passes git's global `--literal-pathspecs` switch any more; read paths name each path as `:(literal)<path>` through `literalPathspecs`, `test/git-env-guard.test.ts` refuses the switch anywhere in `src`, and `literalPathspecs('')` throws.

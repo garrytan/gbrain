@@ -881,14 +881,19 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       // Withdrawal is authoritative DB state and is never rolled back here.
       const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
         ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
+      // GST-2517: a door commit that landed in this attempt put the write in Git, so the row follows by replay unless the door
+      // itself refused after landing (a git_* code, whose receipt names the commit); the replay makes no second commit, so a
+      // failure of its own is final.
+      const replayLanded = landed !== null && !failure?.code.startsWith('git_');
       // #8767: so is a local edit adoption's own commit (local-edit-adoption.ts), on a failure and on the requeued replay.
       landed ??= adoption?.landed ?? null;
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
-      if (failure) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
+      if (failure && !replayLanded) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
       for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(current.recovery_bytes)]);
       const [queued] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='queued',execution_token=NULL,
-        claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),updated_at=now()
+        claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),
+        ${failure ? 'error_code=NULL,error_message=NULL,error_detail=NULL,' : ''}updated_at=now()
         WHERE id=$1::uuid RETURNING *`, [id, kept ? JSON.stringify(kept) : null]);
       return queued;
     });
