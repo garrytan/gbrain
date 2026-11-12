@@ -110,7 +110,7 @@
     "ci:ubicloud": "bun run scripts/ci-ubicloud.ts",
     "ci:ubicloud:diff": "bun run scripts/ci-ubicloud.ts --diff",
     "ci:select-e2e": "bun run scripts/select-e2e.ts",
-    "typecheck": "node --max-old-space-size=6144 node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/gbrain-typecheck.tsbuildinfo",
+    "typecheck": "node --max-old-space-size=8192 node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/gbrain-typecheck.tsbuildinfo",
     "check:jsonb": "bash scripts/check-jsonb-pattern.sh",
     "check:jsonb-params": "node scripts/check-jsonb-params.mjs",
     "check:search-path": "bash scripts/check-search-path.sh",
@@ -255,7 +255,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.685.0",
+  "version": "0.60.688.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

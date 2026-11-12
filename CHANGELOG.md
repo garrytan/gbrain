@@ -10,7 +10,7 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
+## [0.60.688.0] - 2026-11-12
 
 **Sync no longer wedges on a source with thousands of old file-drift holds, and `sync status` stops calling a source synced while new commits wait**
 
@@ -22,6 +22,40 @@ Since v0.60.677.0, every unknown-side `file_drift` hold written under the earlie
 - With `sync.on_commit` off, the notifier's fix now says so, instead of saying that no resident runs.
 - A large source that the background syncer could not finish no longer retries forever with the same short budget. A resident gives its first run 30 seconds, and every resident restart or change of the process holding the notifier counted as "first" again, so each retry stopped at the same point having saved nothing. That short budget now goes only to a source with no failed attempts on record, and a retry after a run that saved nothing gets the full sync budget.
 - A source the background syncer marked stalled (`notifier_stalled`, "retrying every 300 s") now really is retried every five minutes. With `sync.on_commit` off (the default), the retry only happened while the original sync request was still on record, and a run that stopped early could clear that request, so the source sat stalled with nothing retrying it and nothing in the log. The retry now continues until a run completes, also after a restart or when another resident takes over the notifier, which now reads the state the previous one recorded.
+
+## [0.60.687.0] - 2026-11-12
+
+**An upgrade can no longer run the same schema step twice at once.** When two gbrain processes started on one brain together (a cron job and an agent, or two hosts after an upgrade), both could apply the same schema migration. On Postgres reached through a transaction-mode pooler such as PgBouncer or Supabase's pooler, the lock meant to keep them apart did not hold. The pooler hands each statement to whichever server connection is free, so the lock could be taken on one connection and left behind on another. The second process then ran the step too, which showed up as a failed migration (for example a duplicate key on `pg_proc` while a function was being created) or as a step applied twice, and a lock left behind could keep later upgrades waiting until they timed out. Every path that changes the schema now takes one lock that holds for the whole run, through a pooler or a direct connection, and on PGLite. There is nothing to do beyond upgrading.
+
+### Itemized changes
+
+- The schema setup a gbrain process runs when it opens the brain (which `gbrain init` and `gbrain upgrade` go through) and `gbrain apply-migrations` take the same schema-migration lock, and each migration step checks that the lock is still held before it runs.
+- On Postgres the lock is a transaction-scoped advisory lock held on one reserved server connection for the whole run, so a transaction-mode pooler cannot move it, and it is released when the run ends or the connection drops. A connection pool with only one connection keeps the previous session lock.
+- While one process holds the lock, another waits for it and then finds the steps already applied. If the wait times out, the message names the process holding the lock and, when that process is a running migration, says to let it finish rather than terminate it.
+- The idle-connection check that runs before a migration no longer counts the lock's own connection as a blocker.
+- Tests: `test/e2e/schema-migration-lock-postgres.test.ts` (direct Postgres and PgBouncer), `test/e2e/schema-migration-lock-direct-pool-postgres.test.ts` and `test/schema-migration-lock-pglite.test.ts` start two runners at once and check that each step runs once and that no lock is left behind.
+- For contributors: `bun run typecheck` raises its Node heap ceiling from 6,144 MB to 8,192 MB, because a cold tsc run now peaks at about 6.5 GB and one CI typecheck job aborted at the old ceiling.
+
+## [0.60.686.0] - 2026-11-12
+
+**The brain host can now set who reads a page without lowering its trust.** `gbrain repair visibility --slug <page> --readers alice-example,group:team-a` (or `--slugs-file <file>` for a long list, `--readers none` to remove the field) sets a page's `readable_by` through the same label-only door: the page keeps its tier and provenance, no `lower_page` proposal is filed, and its file changes only on the `readable_by` line. Before, the only way was a `put_page`, which lowered the page to "written by an agent". Readers are checked first. An unknown or disabled member or an unknown group refuses with nothing written, and a list that leaves out the brain owner refuses unless `--allow-without-owner` is passed, because `readable_by` binds the owner too. A list of thousands holds no run-wide lock. On a managed brain each admission window of pages is admitted together (Postgres publishes them in groups of up to 8), the Git effect commits the ready files together (up to 100 per commit), and `--json` counts them by effect state in `details.git`. A managed page with no file outside a declared `storage.db_only` path is now held `canonical_file_missing` with nothing written (it was refused as a failed `source_changed`), for every `repair visibility` write.
+
+**A visibility repair now closes a fenced fact instead of leaving a world copy beside it.** When `gbrain repair visibility --class facts` made a `## Facts` row private and the stored row was more trusted than the repair, the fence guard kept the original world row live and filed a contested private copy, so remote callers could still read the fact while the page and its file read as fixed. A write that only makes a fence row private now makes the stored row private in place, keeping its id and trust tier, and files no proposal. On a brain without managed persistence the repair makes the fenced row private itself, because that import does not re-project the fence. A write that makes a more trusted private row world is still held for the owner.
+
+### Itemized changes
+
+#### Set who reads a page, label-only (GST-2476, #9184)
+
+- `src/core/persistence/label-edit.ts`: the label edit also takes `readable_by`, written as a one-line list (`readable_by: [a, b]`); block lists and duplicate keys are declined. `LABEL_KEYS` is unchanged, so `gbrain trust backfill --label-lowerings` reads as before.
+- `src/core/repair/readers.ts` (new), `src/core/repair/visibility.ts`, `src/commands/repair.ts`: `gbrain repair visibility (--slug <slug>... | --slugs-file <file>) --readers <ids|none> [--allow-without-owner]`, preview-bound (`--apply --expect <hash>`), up to 10,000 pages per run; reader validation (`access_member_invalid`, owner rule); `details.git` effect counts on apply; a managed run admits each window of pages together (`applyBatch`, `publishMaintenancePages` under the run's batch id); a managed page with no canonical file outside `storage.db_only` held `canonical_file_missing`.
+- `src/core/repair/label-write.ts`: a readers run publishes its pages under one maintenance batch.
+- Tests: `test/readers-label-setter.test.ts` (managed Git source with tracked files, a `storage.db_only` page and a page with no file; repo-less brain with remote reads by member, a 150-page slugs file, refusals and `preview_changed`).
+
+#### A visibility repair closes a fenced fact (GST-2487, #9188)
+
+- `src/core/trust/fence-guard.ts`: a guarded row whose claim the writer kept and whose visibility it only narrowed (world to private) moves to the new row's position and turns private in place, instead of being detached and contested.
+- `src/core/repair/visibility.ts`: on a brain without managed persistence, a fenced fact row the label write made private in the fence is made private in the database too; `fact_left_readable` and `fact_left_world` stay for the rows that still cannot be closed.
+- Tests: `test/label-only-repairs.test.ts` (managed and repo-less, PGLite and Postgres) and `test/trust-guarded-supersession.test.ts` (narrowing applies in place; widening stays guarded).
 
 ## [0.60.685.0] - 2026-11-12
 
@@ -118,7 +152,7 @@ Reported by @andreineacsu (#9101). First fixed by @Masashi-Ono0611 in #9103.
 
 ## [0.60.681.0] - 2026-11-11
 
-**The low-capacity warning now says it is not a refusal, and a quota refusal no longer reads a whole week of admissions while it holds the write counters.** v0.60.685.0 made the `write_capacity_low` notice open with "This write was saved", but the notice also rides sync status, dry runs and failed batches, where nothing was saved. It now opens with "This notice is not a refusal: writes still work, and this call's own result says what it did", and over MCP its fix is the read-only `get_brain_health` call instead of a CLI command the agent would relay to its user. A `write_quota_exhausted`, `write_quota_insufficient` or background-pause refusal runs under the counter locks, and v0.60.685.0 had it walk the scope's whole week (up to 200,000 admissions) to match doctor's value. It now takes the 7-day mean rates the last forecast recorded, lifecycle changes included, and without a forecast from the last minute it samples the latest 1,000 admissions as before. Both apply only under a cap the operator set: since v0.60.685.0 the caps are off by default.
+**The low-capacity warning now says it is not a refusal, and a quota refusal no longer reads a whole week of admissions while it holds the write counters.** v0.60.686.0 made the `write_capacity_low` notice open with "This write was saved", but the notice also rides sync status, dry runs and failed batches, where nothing was saved. It now opens with "This notice is not a refusal: writes still work, and this call's own result says what it did", and over MCP its fix is the read-only `get_brain_health` call instead of a CLI command the agent would relay to its user. A `write_quota_exhausted`, `write_quota_insufficient` or background-pause refusal runs under the counter locks, and v0.60.686.0 had it walk the scope's whole week (up to 200,000 admissions) to match doctor's value. It now takes the 7-day mean rates the last forecast recorded, lifecycle changes included, and without a forecast from the last minute it samples the latest 1,000 admissions as before. Both apply only under a cap the operator set: since v0.60.686.0 the caps are off by default.
 
 ### Itemized changes
 
