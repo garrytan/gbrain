@@ -734,7 +734,8 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...snapshot.page, source_path: null, source_uri: null } }, preparedPurge);
       if (preparedPurge) return purgePageInTransaction(tx, row, snapshot, preparedPurge);
-      if (!noop) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
+      // GST-2518: a soft delete authors no content, so the tombstone keeps its tier (and a write over it the page's label guard).
+      if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
         recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
     } };

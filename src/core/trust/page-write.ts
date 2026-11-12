@@ -139,20 +139,23 @@ function readersWidened(stored: Record<string, unknown>, incoming: Record<string
 
 /**
  * GST-2518: the label guard tier when a write must keep the page's privacy labels, else null. It applies to a local content
- * write below operator_curated over a page that is private by its labels or names readers, when the write is below the
- * guard: the stored tier, raised to the prior tier of the page's newest `lower_page` proposal unless the owner accepted it
- * (pending, dismissed, reverted or undone). So an earlier lowering edit, or a rejected or undone widening, does not let an
- * equal-tier write widen the page. Other writes send no query.
+ * write or derived page publication below operator_curated over a page that is private by its labels or names readers, when
+ * the write is below the guard: the stored tier (an unclassified `unknown` page reads as operator_curated lowered by its
+ * frontmatter caps, as its marker does), raised to the prior tier of every `lower_page` proposal of the page since the
+ * owner last accepted one (pending, dismissed, reverted or undone). So earlier lowering edits, or a rejected or undone
+ * widening, do not let an equal-tier write widen the page. Other writes send no query.
  */
 export async function privacyLabelGuard(engine: BrainEngine, row: Pick<WriteRequest, 'operation' | 'intent' | 'authority'>, trust: WriteTrust | undefined,
   page: { id: number; frontmatter?: Record<string, unknown> | null } | null, stored: TrustTier | null): Promise<TrustTier | null> {
-  if (!trust || !page || !stored || row.authority?.remote === true || !CONTENT_OPERATIONS.includes(row.operation) || isFenceEditWrite(row)
-    || compareTrust(trust.tier, OWNER_TIER_FLOOR) >= 0) return null;
+  if (!trust || !page || !stored || row.authority?.remote === true || !(CONTENT_OPERATIONS.includes(row.operation) || declaresDerivation(row.intent))
+    || isFenceEditWrite(row) || compareTrust(trust.tier, OWNER_TIER_FLOOR) >= 0) return null;
   const labels = page.frontmatter ?? {};
   if (!labelledPrivate(labels) && normalizeReaders(labels) === null) return null;
-  const [newest] = await engine.executeRaw<{ status: string; prior: string | null }>(`SELECT status, before_state->>'prior_tier' AS prior FROM trust_proposals
-    WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' ORDER BY id DESC LIMIT 1`, [Number(page.id)]);
-  const guard = newest && newest.status !== 'accepted' && isTrustTier(newest.prior) ? maxTrust(stored, newest.prior) : stored;
+  const since = await engine.executeRaw<{ prior: string | null }>(`SELECT before_state->>'prior_tier' AS prior FROM trust_proposals
+    WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status <> 'accepted' AND id > COALESCE((SELECT max(id) FROM trust_proposals
+      WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'), 0)`, [Number(page.id)]);
+  const guard = maxTrust(stored === 'unknown' ? minTrust(OWNER_TIER_FLOOR, ...frontmatterTrustCaps(labels)) : stored,
+    ...since.map(proposal => proposal.prior).filter(isTrustTier));
   return compareTrust(trust.tier, guard) < 0 ? guard : null;
 }
 

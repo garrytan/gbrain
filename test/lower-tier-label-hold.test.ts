@@ -8,7 +8,8 @@
  *    page is still at the held revision), reject keeps the earlier ones, undo restores them. An unbound remote read and a
  *    non-owner member read see nothing before accept; a credential bound to the owner reads the page before, during and
  *    after the hold. A later lower-tier write that puts the label back withdraws the widening; an earlier body edit that
- *    lowered the page does not open a second-step bypass.
+ *    lowered the page, a rejected widening, a delete, or an unclassified (unknown) tier does not open a bypass; a derived
+ *    maintenance publication is held like a content write; undo applies only to the page its accept wrote.
  * 2. Fails when: the held write publishes the wider label, the proposal loses the requested labels, accept widens a
  *    withdrawn or changed page, reject or undo leaves the page wider, or a write that should pass is held (the owner's
  *    own sync, an equal-tier writer, a narrowing, a label-neutral edit, the operator readers setter).
@@ -46,6 +47,8 @@ import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.t
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { maintenancePreflight, publishMaintenancePages } from '../src/core/persistence/prepared-maintenance.ts';
+import { declareDerivation } from '../src/core/trust/taint.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 
 const NL = String.fromCharCode(10);
@@ -114,6 +117,9 @@ async function put(b: Brain, slug: string, content: string): Promise<Record<stri
 const proposalsOf = async (b: Brain, slug: string): Promise<TrustProposalRow[]> =>
   (await listTrustProposals(b.engine, { sourceId: b.sourceId, status: 'all' })).filter(p => p.action === 'lower_page' && p.before_state.slug === slug);
 const decide = (b: Brain, ref: string, decision: 'accept' | 'reject' | 'undo') => decideTrustProposal(b.engine, parseTrustProposalRef(ref)!, decision, owner);
+async function call(b: Brain, name: string, params: Record<string, unknown>): Promise<Record<string, any>> {
+  return await operations.find(op => op.name === name)!.handler(b.ctx, { request_id: randomUUID(), wait_ms: 30_000, ...params }) as Record<string, any>;
+}
 
 /** A repo-less brain (no managed persistence, no checkout: the default keyless install) is the database record. */
 for (const backend of testBackends()) describe('[' + backend + '] a lower-tier local write that widens a privacy label, on a repo-less brain', () => {
@@ -225,6 +231,56 @@ for (const backend of testBackends()) describe('[' + backend + '] a lower-tier l
     expect((await proposalsOf(b, slug)).map(p => p.status)).toEqual(['pending']);
   }), 180_000);
 
+  test('a rejected widening, then a lowering body edit, does not let a later write drop the label', () => repoless(async (b, reads) => {
+    const slug = 'notes/rejected-example', canary = 'canaryrejected';
+    await seedOwnerPage(b.engine, SRC, slug, file(slug, ['visibility: private'], canary));
+    const first = await put(b, slug, file(slug, [], canary, 'Rewritten once.'));
+    expect(await decide(b, first.privacy_labels_kept.proposal_ref, 'reject')).toMatchObject({ status: 'rejected' });
+    await call(b, 'put_page', { slug, content: file(slug, ['visibility: private'], canary, 'A tool output edit.'), content_origin: 'tool_output',
+      expected_revision: (await pageRow(b.engine, SRC, slug)).revision });
+    const third = await put(b, slug, file(slug, [], canary, 'Rewritten again.'));
+    expect(third.privacy_labels_kept?.keys).toEqual(['visibility']);
+    expect((await pageRow(b.engine, SRC, slug)).frontmatter.visibility).toBe('private');
+    expect({ unbound: await reads('unbound', slug, canary), bob: await reads('bob', slug, canary), owner: await reads('owner', slug, canary) })
+      .toEqual({ unbound: false, bob: false, owner: true });
+  }), 180_000);
+
+  test('a delete keeps the tombstone\'s tier, so a write over the tombstone keeps the label', () => repoless(async (b, reads) => {
+    const slug = 'notes/tombstone-example', canary = 'canarytombstone';
+    await seedOwnerPage(b.engine, SRC, slug, file(slug, ['visibility: private'], canary));
+    await call(b, 'delete_page', { slug, expected_revision: (await pageRow(b.engine, SRC, slug)).revision });
+    const [tombstone] = await b.engine.executeRaw<{ revision: string; tier: string }>(
+      'SELECT knowledge_revision::text AS revision, trust_tier::text AS tier FROM pages WHERE source_id=$1 AND slug=$2', [SRC, slug]);
+    expect(tombstone!.tier).toBe('operator_curated');
+    const written = await call(b, 'put_page', { slug, content: file(slug, [], canary, 'Recreated.'), expected_revision: tombstone!.revision });
+    expect(written.privacy_labels_kept?.keys).toEqual(['visibility']);
+    expect((await pageRow(b.engine, SRC, slug)).frontmatter.visibility).toBe('private');
+    expect({ unbound: await reads('unbound', slug, canary), owner: await reads('owner', slug, canary) }).toEqual({ unbound: false, owner: true });
+  }), 180_000);
+
+  test('an unclassified (unknown tier) private page is held like an owner page', () => repoless(async (b, reads) => {
+    const slug = 'notes/unknown-example', canary = 'canaryunknown';
+    await importFromContent(b.engine, slug, file(slug, ['visibility: private'], canary), { noEmbed: true, sourceId: SRC });
+    expect((await pageRow(b.engine, SRC, slug)).tier).toBe('unknown');
+    const written = await put(b, slug, file(slug, [], canary, 'An agent rewrote it.'));
+    expect(written.privacy_labels_kept?.keys).toEqual(['visibility']);
+    expect({ unbound: await reads('unbound', slug, canary), owner: await reads('owner', slug, canary) }).toEqual({ unbound: false, owner: true });
+    expect(await decide(b, written.privacy_labels_kept.proposal_ref, 'accept')).toMatchObject({ status: 'accepted' });
+    expect(await reads('unbound', slug, canary)).toBe(true);
+  }), 180_000);
+
+  test('undo after the page changed since accept is stale and changes nothing', () => repoless(async (b) => {
+    const slug = 'notes/undo-stale-example', canary = 'canaryundostale';
+    await seedOwnerPage(b.engine, SRC, slug, file(slug, ['visibility: private'], canary));
+    const written = await put(b, slug, file(slug, [], canary, 'Agent text.'));
+    expect(await decide(b, written.privacy_labels_kept.proposal_ref, 'accept')).toMatchObject({ status: 'accepted' });
+    await seedOwnerPage(b.engine, SRC, slug, file(slug, [], canary, 'The owner rewrote it later.'));
+    expect(await decide(b, written.privacy_labels_kept.proposal_ref, 'undo')).toMatchObject({ status: 'stale' });
+    const page = await pageRow(b.engine, SRC, slug);
+    expect(page.tier).toBe('operator_curated');
+    expect(page.frontmatter.visibility).toBeUndefined();
+  }), 180_000);
+
   test('nothing is held that should not be: an equal-tier writer, a narrowing, a label-neutral edit, the owner readers setter', () => repoless(async (b, reads) => {
     // An equal-tier writer: a page an agent wrote (agent_written) and labelled, then dropped by the same tier.
     const own = 'notes/agent-own-example';
@@ -307,5 +363,22 @@ for (const backend of testBackends()) describe('[' + backend + '] a lower-tier l
     expect((await pageRow(engine, 'default', mine)).frontmatter.visibility).toBeUndefined();
     expect((await pageRow(engine, 'default', mine)).tier).toBe('operator_curated');
     expect(await proposalsOf(b, mine)).toEqual([]);
+  }, { databaseUrl, setup }), 240_000);
+
+  test('a derived maintenance publication (dream patterns) keeps the label in the commit and files it for the owner', () => managedBrain(async ({ engine, ctx, root }) => {
+    const b: Brain = { engine, ctx, sourceId: 'default', home: root };
+    const reads = await remoteReaders(engine, 'default');
+    const slug = 'notes/derived-example', canary = 'canaryderived';
+    await commitAndSync(engine, root, { [slug]: file(slug, ['visibility: private'], canary) });
+    const derivation = declareDerivation({ tier: 'agent_written', origin: { channel: 'derive:patterns' } }, []);
+    await publishMaintenancePages(engine, (await maintenancePreflight(engine, 'default'))!, [{ slug, content: file(slug, [], canary, 'A derived rewrite.'),
+      expectedRevision: (await pageRow(engine, 'default', slug)).revision, derivation }]);
+    await settleManagedGitEffects(engine);
+    expect(committed(root, slug)).toContain(NL + 'visibility: private' + NL);
+    expect(committed(root, slug)).toContain('A derived rewrite.');
+    expect({ unbound: await reads('unbound', slug, canary), owner: await reads('owner', slug, canary) }).toEqual({ unbound: false, owner: true });
+    const [proposal, ...rest] = await proposalsOf(b, slug);
+    expect(rest).toEqual([]);
+    expect(proposal!.after_state.labels).toMatchObject({ keys: ['visibility'], kept: { visibility: 'private' } });
   }, { databaseUrl, setup }), 240_000);
 });

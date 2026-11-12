@@ -215,7 +215,11 @@ type OwnerPageIntent = {
 /** Closes a decided proposal inside the publication transaction, or refuses (it was decided meanwhile). */
 async function closeProposal(tx: BrainEngine, proposal: PageActionInput['proposal'], by: Principal | null | undefined): Promise<void> {
   if (!proposal) return;
-  if (!(await transitionTrustProposal(tx, proposal.id, proposal.from ?? 'pending', proposal.to, { after: proposal.after, decidedBy: by ?? null }))) {
+  // GST-2518: an accepted held-label proposal records the revision its accept wrote, so an undo applies only to that page.
+  const [accepted] = proposal.to === 'accepted' && heldPrivacyLabels(proposal.after) ? await tx.executeRaw<{ revision: string }>(`SELECT p.knowledge_revision::text AS revision
+    FROM trust_proposals t JOIN pages p ON p.id = t.target_id WHERE t.id = $1 AND t.target_table = 'pages'`, [proposal.id]) : [];
+  const after = accepted ? { ...proposal.after, accepted_revision: accepted.revision } : proposal.after;
+  if (!(await transitionTrustProposal(tx, proposal.id, proposal.from ?? 'pending', proposal.to, { after, decidedBy: by ?? null }))) {
     throw opError('preview_changed', `Trust proposal tp${proposal.id} was decided by someone else meanwhile; nothing was changed.`,
       'Run gbrain trust review to see its current state.');
   }
@@ -533,17 +537,14 @@ registerTrustProposalHandler('lower_page', {
     });
     return decisionResult(proposal, 'accept', 'accepted', { detail: { ...result } });
   },
-  // GST-2518: only a proposal that held privacy labels undoes: its kept labels and edited tier come back, while the page still has the accepted labels.
+  // GST-2518: only a proposal that held privacy labels undoes: its kept labels and edited tier come back, while the page is still the one its accept wrote.
   async undo(engine, proposal, ctx) {
     const labels = heldPrivacyLabels(proposal.after_state);
     if (!labels) return decisionResult(proposal, 'undo', 'refused', { reason: 'undo_unsupported' });
     const state = lowerPageState(proposal);
     const page = state.slug ? await readPageTrustState(engine, proposal.source_id, state.slug) : null;
     if (!page || page.pageId !== proposal.target_id) return decisionResult(proposal, 'undo', 'stale', { reason: 'page_missing' });
-    const frontmatter = (page.snapshot.page.frontmatter ?? {}) as Record<string, unknown>;
-    if (labels.keys.some(key => JSON.stringify(frontmatter[key] ?? null) !== JSON.stringify(labels.requested[key] ?? null))) {
-      return decisionResult(proposal, 'undo', 'stale', { reason: 'labels_changed_since' });
-    }
+    if (page.revision !== proposal.after_state.accepted_revision) return decisionResult(proposal, 'undo', 'stale', { reason: 'page_changed_since' });
     const result = await undoPageLabels(engine, {
       sourceId: proposal.source_id, slug: state.slug, expectedRevision: page.revision, confirmation: ctx.confirmation, by: ctx.decidedBy, config: ctx.config,
       labels: labels.kept, tier: state.edited_tier,

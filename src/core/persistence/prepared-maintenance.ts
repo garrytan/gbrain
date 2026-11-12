@@ -592,7 +592,8 @@ export async function prepareMaintenanceMutation(engine: BrainEngine, row: Write
     if (derived) {
       const lowered = await lowerToDerivedTier(tx, derived.table, [derived.id], trust);
       if (declaration) await recordTaintEdges(tx, { ...derived, sourceId: row.source_id }, declaration.inputs);
-      if (lowered.length && prior?.tier) await recordAgentPageLowering(tx, row, { tier: prior.tier, revision: prior.revision });
+      // GST-2518: a publication whose labels were kept already filed its proposal with them; a second record would withdraw them.
+      if (lowered.length && prior?.tier && !outcome.privacy_labels_kept) await recordAgentPageLowering(tx, row, { tier: prior.tier, revision: prior.revision });
     }
     return outcome;
   } };

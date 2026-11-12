@@ -290,12 +290,16 @@ for, for example `visibility private -> (none)`.
 - `gbrain trust confirm tp<id>` endorses the edit and applies exactly those
   labels, if the page hasn't changed since.
 - `gbrain trust drop tp<id>` keeps the earlier labels.
-- Undoing a confirm puts the earlier labels and the edit's tier back.
+- Undoing a confirm puts the earlier labels and the edit's tier back, if the
+  page hasn't changed since the confirm.
 
 Until you decide, the page stays private to remote callers and to members
 who weren't readers; a credential bound to you still reads it. The hold also
-applies after you drop the item, and after an earlier agent edit that lowered
-the page, so a later agent write still can't widen the labels. It doesn't
+applies after you drop the item, after an earlier agent edit that lowered
+the page, and after an agent deletes the page and writes it again, so a later
+agent write still can't widen the labels. A maintenance job's derived page
+(a dream patterns run rewriting one of your pages) is held the same way, and a
+page with no recorded tier (`unknown`) counts as yours. It doesn't
 apply to a write that only narrows a label, to a write that leaves the labels
 alone, to a writer at or above the page's tier, or to your own edits (a file
 you edit and sync, `gbrain repair visibility`).
