@@ -11,6 +11,7 @@
 
 import { shellQuote } from './shell-quote.ts';
 import type { McpSurface } from '../mcp/surface.ts';
+import { STDIO_MEMBER_FLAG } from './stdio-member-flag.ts';
 
 export { shellQuote };
 
@@ -58,9 +59,10 @@ const SURFACE_ORDER: readonly McpSurface[] = ['verbs', 'starter', 'full'];
  * existing bare registration bare when it replaces it. `--advertise` is
  * written only when it is narrower than the surface.
  */
-export function stdioServeArgv(bin: string, surface: McpSurface | null = REGISTRATION_SURFACE, advertise: McpSurface | null = null): string[] {
-  if (!surface) return [bin, 'serve'];
-  return [bin, 'serve', '--surface', surface, ...(advertise && SURFACE_ORDER.indexOf(advertise) < SURFACE_ORDER.indexOf(surface) ? ['--advertise', advertise] : [])];
+export function stdioServeArgv(bin: string, surface: McpSurface | null = REGISTRATION_SURFACE, advertise: McpSurface | null = null, stdioMember?: string): string[] {
+  const member = stdioMember !== undefined ? [STDIO_MEMBER_FLAG, stdioMember] : [];
+  if (!surface) return [bin, 'serve', ...member];
+  return [bin, 'serve', '--surface', surface, ...(advertise && SURFACE_ORDER.indexOf(advertise) < SURFACE_ORDER.indexOf(surface) ? ['--advertise', advertise] : []), ...member];
 }
 
 /**

@@ -391,7 +391,15 @@
       },
       {
         "category": "brain",
+        "name": "unlabeled_people_folders"
+      },
+      {
+        "category": "brain",
         "name": "access_may_act_for_wildcard"
+      },
+      {
+        "category": "brain",
+        "name": "access_owner_reads_restricted"
       },
       {
         "category": "brain",
@@ -508,6 +516,10 @@
       {
         "category": "brain",
         "name": "timeline_history"
+      },
+      {
+        "category": "brain",
+        "name": "privacy_label_ignored"
       },
       {
         "category": "brain",

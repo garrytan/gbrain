@@ -107,7 +107,7 @@ export function resolveHermeticConfigDir(
   return v;
 }
 
-/** Parsed shape of `claude --print --output-format json`. */
+/** Parsed shape of the result event `claude --print` emits. */
 interface ClaudeJsonResult {
   type: 'result';
   subtype: 'success' | string;
@@ -153,18 +153,25 @@ type EnvelopeParse =
   | { ok: false; reason: 'no-result-event' };
 
 /**
- * Unwrap `--output-format json` stdout into the result envelope and the event
- * array it came in. `runClaude` passes `--verbose` (#6791), so the CLI emits
- * [{type:"system",subtype:"init",...}, ..., {type:"result",...}]; the bare
- * result object (events null) is still accepted. The array shape was verified on
- * CLI 2.1.145; that it carries every assistant message, in the 2.1.296 bundle.
+ * Unwrap the CLI's stdout into the result envelope and the event array it came
+ * in. `runClaude` passes `--output-format stream-json --verbose` (#7352,
+ * #6791), so the CLI prints one event per line: {type:"system",...}, the
+ * assistant messages, then {type:"result",...}; verified on CLI 2.0.60 and
+ * 2.1.319. A single JSON document (the `--output-format json` event array, or
+ * a bare result object with events null) is still accepted.
  */
 function parseResultEnvelope(stdout: string): EnvelopeParse {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
   } catch (error) {
-    return { ok: false, reason: 'not-json', error };
+    try {
+      const lines = stdout.split('\n').filter(line => line.trim().length > 0);
+      if (lines.length < 2) return { ok: false, reason: 'not-json', error };
+      parsed = lines.map(line => JSON.parse(line));
+    } catch {
+      return { ok: false, reason: 'not-json', error };
+    }
   }
   const events = Array.isArray(parsed) ? parsed : null;
   if (Array.isArray(parsed)) {
@@ -279,13 +286,15 @@ function buildToolUseInstructions(
 }
 
 /**
- * Render the ai-sdk message array into a single text prompt for `claude --print`
- * stdin. System messages are extracted up-front and concatenated into the
- * `--system-prompt` flag value. Tool calls and tool results are rendered as
+ * Render the ai-sdk message array into one text block per conversation message
+ * for `claude --print` stdin (#7352: the CLI's prompt cache matches at block
+ * boundaries, so a tool loop's next turn reads this turn's cache only when this
+ * turn's blocks are an unchanged prefix of it). System messages are extracted
+ * up-front and concatenated into the `--system-prompt` flag value. Tool calls and tool results are rendered as
  * placeholders so the model sees the conversation in a coherent shape even
  * though the adapter does not natively round-trip tool calls through claude-cli.
  */
-function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; userPrompt: string } {
+function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; userBlocks: string[] } {
   const systemParts: string[] = [];
   const convo: string[] = [];
 
@@ -339,7 +348,7 @@ function renderPrompt(prompt: LanguageModelV2Prompt): { systemText: string; user
     }
   }
 
-  return { systemText: systemParts.join('\n'), userPrompt: convo.join('\n\n') };
+  return { systemText: systemParts.join('\n'), userBlocks: convo };
 }
 
 /** Oldest claude CLI that accepts every flag `runClaude` passes (probed:
@@ -376,12 +385,12 @@ export function thinkingDisabledBelowFloor(maxOutputTokens: number | undefined):
 
 /**
  * Spawn `claude --print` with the contamination-suppression flags and return
- * the parsed `--output-format json` envelope. Aborts propagate to SIGTERM on
+ * the parsed result envelope. Aborts propagate to SIGTERM on
  * the child.
  */
 function runClaude(
   systemPrompt: string,
-  userPrompt: string,
+  userBlocks: string[],
   model: string,
   signal?: AbortSignal,
   maxOutputTokens?: number,
@@ -398,10 +407,13 @@ function runClaude(
       : '{"disableAllHooks":true}';
     const args = [
       '--print',
-      // #6791: --verbose turns the json output into the session's event
-      // array, the only record of the segments before an automatic
-      // continuation (the envelope's result holds the last one).
-      '--output-format', 'json', '--verbose',
+      // #7352: one user message whose content blocks are the conversation's
+      // messages, read as stream-json; the CLI then answers in stream-json.
+      // #6791: --verbose keeps the session's events in that output, the only
+      // record of the segments before an automatic continuation (the
+      // envelope's result holds the last one).
+      '--input-format', 'stream-json',
+      '--output-format', 'stream-json', '--verbose',
       '--model', model,
       '--disable-slash-commands',
       // Agent isolation: this subprocess must behave like a raw LLM, not a
@@ -542,7 +554,7 @@ function runClaude(
     // error itself is safe to swallow.
     child.stdin.on('error', () => { /* surfaced via child 'error'/'close' */ });
     try {
-      child.stdin.write(userPrompt);
+      child.stdin.write(JSON.stringify({ type: 'user', message: { role: 'user', content: userBlocks.map(text => ({ type: 'text', text: text.toWellFormed() })) } }) + '\n');
       child.stdin.end();
     } catch (e) {
       if (signal) signal.removeEventListener('abort', onAbort);
@@ -728,11 +740,11 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
     providerMetadata?: SharedV2ProviderMetadata;
     warnings: never[];
   }> {
-    const { systemText, userPrompt } = renderPrompt(options.prompt);
+    const { systemText, userBlocks } = renderPrompt(options.prompt);
     const toolInstructions = buildToolUseInstructions(options.tools);
     const systemPrompt = [systemText, toolInstructions].filter(s => s.length > 0).join('\n');
 
-    const result = await runClaude(systemPrompt, userPrompt, this.modelId, options.abortSignal, options.maxOutputTokens);
+    const result = await runClaude(systemPrompt, userBlocks, this.modelId, options.abortSignal, options.maxOutputTokens);
     // The CLI reports Anthropic's separate buckets; LanguageModelV2Usage wants
     // the TOTAL input with the cache read as a subset (what every SDK provider
     // reports), so the gateway prices cache tokens once. Cache creation has no

@@ -356,3 +356,18 @@ test('managed: the put_page fix names the managed source in both the CLI argv an
   expect(thrown?.fix?.mcp?.tool).toBe('put_page');
   expect(thrown?.fix?.mcp?.arguments.source_id).toBe('source-a');
 }, 60_000);
+
+test('classic: a file another writer adds or edits under a named directory just after the commit is not reported as skipped', async () => {
+  const f = fixture('classic-race', 'classic');
+  writeFileSync(join(f.brain, 'people', 'alice-example.md'), page('Alice', 'Second version.'));
+  // Stands in for a writer that lands between the commit and the skipped-path check: it adds a page and edits the one just committed.
+  const hook = join(f.brain, '.git', 'hooks', 'post-commit');
+  writeFileSync(hook, `#!/bin/sh\nprintf '%s\\n' '---' 'title: Dave' '---' 'Written after the commit.' > people/dave-example.md\nprintf 'A later edit.\\n' >> people/alice-example.md\n`);
+  chmodSync(hook, 0o755);
+  const r = await commitPush(f, 'people/');
+  expect({ code: r.exitCode, stdout: r.stdout }).toMatchObject({ code: 0 });
+  expect(JSON.parse(r.stdout)).toMatchObject({ outcome: 'pushed' });
+  expect(headBlob(f, 'people/alice-example.md')).toBe(page('Alice', 'Second version.').trim());
+  expect(git(f.brain, 'ls-files', '--others', '--', 'people/')).toBe('people/dave-example.md');
+  expect(remoteTip(f)).toBe(head(f));
+}, 60_000);

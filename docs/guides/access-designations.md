@@ -16,8 +16,11 @@ Five kinds of caller read a brain:
 - **Local CLI** on the brain host (`remote = false`). Reads everything.
 - **The owner**: a remote credential (token or OAuth client) or stdio server bound to the member named by
   `gbrain access owner set <member>` (config `access.owner_member`). Bind each of the owner's agents, delegates and
-  sub-agents included, with `gbrain auth rescope --token <name> --member <owner>` (stdio: `gbrain config set
-  mcp.stdio_member <owner>`). On a single-user brain this is how the owner's own agent reads the whole brain.
+  sub-agents included, with `gbrain auth rescope --token <name> --member <owner>`. A Claude Code or Codex install
+  only the owner uses: `gbrain setup <claude-code|codex> --stdio-member <owner>`, which binds that harness's stdio
+  entry on that machine and nothing else (PGLite or Postgres); for a harness several people talk to, one key per
+  person over `gbrain serve --http` (`gbrain auth create <name> --member <id>`). On a single-user brain this is how the owner's own
+  agent reads the whole brain.
 - **Other members**: credentials bound to any other enabled member.
 - **Public or unbound callers**: credentials bound to no member, and audiences that include a guest.
 - **Shared rooms**: a shared agent speaking for an audience of several people (`X-Gbrain-On-Behalf-Of` /
@@ -89,6 +92,22 @@ Writers never add them to new pages: write `visibility: private` when a page nee
 keeps `restricted`, `confidential` and `confidentiality` as real restrictions
 ([how to run and undo it](repair.md#private-labels-over-stamped-access-private)).
 
+#### Unrecognized label values
+
+Any other value of `access` or `confidentiality` is ignored: `access: personal`, a confidentiality value naming a
+health record, or free text such as `access: "PRIVATE - do not share"` makes nothing private. A page that carries one
+and no `visibility` reads like an unlabelled page: every remote caller of its source can read it (unless `readable_by`
+or a folder rule limits it), and on a source with a git checkout the label does not keep it out of git, so it can be
+committed and pushed to the brain's git remote. gbrain does not add values to the lists or rewrite the label.
+
+Instead it says so. A `put_page`, `gbrain import` or `gbrain sync` that stores such a page carries one
+`privacy_label_ignored` safety notice: it names the key and the value (an import or sync counts pages by value and names
+no page), leaves out the git sentence on a repo-less source, and its fix asks the user before adding
+`visibility: private`. `gbrain doctor --only privacy_label_ignored` counts the stored pages by value: a value containing
+private, confidential, secret, restricted, personal, health or therapy (any case) is a warning, any other value is
+information, and the fix is the read-only listing `gbrain list --where <key>=<value> --json`. To keep such a page private,
+add `visibility: private` to its frontmatter.
+
 ### Derived pages and lineage
 
 These rules follow the origin, so nobody writes them by hand:
@@ -96,7 +115,9 @@ These rules follow the origin, so nobody writes them by hand:
   origin may be a private transcript);
 - an atom whose origin page is private, a concept with a private input, a chronicle event from a private meeting,
   and any page whose `derived_from` names a private page are private whatever their own field says;
-- anything derived from a page that names `readable_by` is hidden from every remote caller.
+- anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
+  remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
+  origin of it (a folder rule kept to the owner, or readers that list the owner).
 
 `gbrain repair visibility` stamps the explicit value on derived pages (tighten-only). The owner reads them all.
 
@@ -107,9 +128,11 @@ Pinned-question pages are the owner's own and read as private. The owner reads t
 ### `readable_by` and folder rules (member access)
 
 `readable_by: [alice-example, group:team-a]` keeps a page to the members and groups it lists; `gbrain access rule
-add --prefix <folder>/ --readers <list>` does the same for a folder. This is the boundary between people in a
-shared brain, and it binds the owner too: the owner reads such a page only when listed. No grant, hatch or owner
-binding relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
+add --prefix <folder>/ --readers <list>` does the same for a folder, and `--slug <page>` for exactly one page (a page
+at the source root, or one whose file left git, which a `visibility` edit cannot reach; upgrade every host that shares
+the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
+shared brain, and it binds the owner too: the owner reads such a page only when listed, unless the brain operator
+turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; widening a folder rule waits for `gbrain access apply`. A credential bound to a
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
@@ -118,7 +141,10 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 ### Fact visibility (`private` | `world`)
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
-explicit private `facts.default_visibility`; extracted facts follow `facts.default_visibility` (private when unset)
+explicit private `facts.default_visibility`. A remote credential bound to a member, the owner's included, saves
+`private` on its own member page (`memory/members/<member>`) unless the call passes `share: true`, and its
+`visibility: "world"` is refused; it withdraws only facts on that page, and the brain host withdraws the rest
+(`gbrain forget <id>`). Extracted facts follow `facts.default_visibility` (private when unset)
 and are never wider than their page. Remote fact reads return private facts to the owner only.
 
 ### The owner (`gbrain access owner`)
@@ -128,6 +154,17 @@ and are never wider than their page. Remote fact reads return private facts to t
 database, so a repo-less brain works the same. The owner relaxation applies to a credential bound to that member
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
+
+**The owner opt-in.** `gbrain access owner reads-restricted on` (config `access.owner_reads_restricted`, off by
+default and unchanged on upgrade) lets the owner's credentials read the pages that `readable_by` lists, folder rules
+and page rules keep to other members, and their derived pages and facts, on every read path: HTTP tokens, OAuth
+clients, a stdio server bound to the owner, and `--as <owner>`. It never opens another member's own member page
+(`memory/members/<id>`), its derived pages or its facts, never widens a write (the owner still writes only the pages
+its readers and rules name), and changes nothing any other caller reads. Only the brain operator on the brain host
+sets it; a remote caller is refused. While it is on, `gbrain access check` and `gbrain access who-can-read` show the
+owner among the readers, every remote caller's `whoami` says so, and doctor reports `access_owner_reads_restricted`.
+`gbrain access owner reads-restricted off` is the undo. Turn it on only when the members agree that the owner reads
+what is kept to them, for example a brain where the members are the owner's own groups and assistants.
 
 One owner credential both reads every private page and writes new `default` pages that other members read, so an
 owner agent can copy private content into a shared page. A prompt planted in a page that agent reads can ask it to.

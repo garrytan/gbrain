@@ -80,6 +80,11 @@ export interface PageSnapshot {
 
 /** A stale expected revision; stored on receipts (#7602 matches it for fact entity requests refused before the fix). */
 export const PAGE_CHANGED_AFTER_READ_MESSAGE = 'The page changed after it was read. Read its current revision before retrying.';
+/** The coordinator's refusal when the page moved between preparation and publication (coordinator.ts, group-publish.ts,
+ * segmented-apply.ts), also thrown when a staged large file no longer matches its stage (large-file.ts); fact requests never
+ * stage large files. It lives here, beside PAGE_CHANGED_AFTER_READ_MESSAGE, so segmented-apply.ts reads it without importing
+ * verb-errors.ts and everything that module reaches. */
+export const PAGE_CHANGED_DURING_PREPARATION_MESSAGE = 'The page changed during preparation.';
 
 /**
  * The three revision refusals. `expectedRevision` is the caller's precondition: a revision (stale → `revision_conflict`),
@@ -108,7 +113,7 @@ export class RevisionBackfillPendingError extends PageRevisionConflictError {
   constructor(expectedRevision: string | null) {
     super(expectedRevision, REVISION_BACKFILL_PENDING);
     this.message = 'This page has no revision yet: the revision backfill for pages written before the upgrade has not reached it. '
-      + 'Resume it with: gbrain apply-migrations --yes (see docs/guides/write-refusals.md#other-error-codes).';
+      + 'Resume it on the brain host with: gbrain apply-migrations --force-schema (see docs/guides/write-refusals.md#revision-backfill).';
     this.name = 'RevisionBackfillPendingError';
   }
 }

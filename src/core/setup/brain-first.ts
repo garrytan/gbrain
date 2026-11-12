@@ -48,7 +48,10 @@ export function isBrainFirstHarness(v: string | undefined): v is BrainFirstHarne
 }
 
 /** How the agent reaches the brain, which decides the tool names the block uses. */
-export type BrainFirstAccess = { kind: 'mcp'; server: string; surface?: McpSurface } | { kind: 'cli'; launcher: string };
+export type BrainFirstAccess = { kind: 'mcp'; server: string; surface?: McpSurface; serves?: 'several' } | { kind: 'cli'; launcher: string };
+
+/** GST-363: on a brain that serves several people the connection is bound to the person asking, so the agent does no scoping of its own. */
+export const SERVES_SEVERAL_LINE = 'This connection reads only what the person asking may read.';
 
 /** The block interior (without markers). */
 export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess, optOut = `gbrain setup ${harness} --instructions-only --no-instructions`): string {
@@ -65,7 +68,8 @@ export function renderBrainFirstBlock(harness: string, access: BrainFirstAccess,
     '',
     lookup,
     '- Fill gaps with your other tools. On an empty or thin result, retry with words the notes would use: synonyms, the formal name, the owner, several joined with OR.',
-    access.kind === 'cli'
+    access.kind === 'mcp' && access.serves === 'several' ? `- ${SERVES_SEVERAL_LINE}`
+    : access.kind === 'cli'
       ? `- Brain results span every source the brain holds. Pass \`--source-ids <ids>\` to a search or query to narrow it to what the current requester may see, and apply your own access rules to what comes back.`
       : access.surface === 'verbs'
         ? '- Brain results span every source the token can read, so apply your own access rules to what comes back.'
@@ -90,7 +94,7 @@ export function renderBrainFirstTurnRule(access: BrainFirstAccess, harness?: str
   const how = access.kind === 'cli' ? `\`${access.launcher} search "<names>"\` or \`${access.launcher} query "<question>"\``
     : access.surface === 'verbs' ? `\`recall\` or \`entity\` on the \`${access.server}\` MCP server`
       : `\`search\` or \`query\` on the \`${access.server}\` MCP server`;
-  return `GBrain: before answering this turn, check GBrain first (${how}) for the people, companies, projects, meetings and decisions it touches.${access.kind === 'mcp' ? turnRuleDiscovery(harness, access) : ''} Results span every source it holds: use only what the current requester may see. Then answer and finish the task.`;
+  return `GBrain: before answering this turn, check GBrain first (${how}) for the people, companies, projects, meetings and decisions it touches.${access.kind === 'mcp' ? turnRuleDiscovery(harness, access) : ''} ${access.kind === 'mcp' && access.serves === 'several' ? SERVES_SEVERAL_LINE : 'Results span every source it holds: use only what the current requester may see.'} Then answer and finish the task.`;
 }
 
 /**

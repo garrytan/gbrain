@@ -10,11 +10,13 @@ import { collectWantedLinks, possibleWantedRows } from '../src/core/wanted-links
 import { LINK_EXTRACTOR_VERSION_TS, type LinkCandidate } from '../src/core/link-extraction.ts';
 import { bareNameReferenceSettles, BRACKETED_CODE, disabledClearsRows, FOREIGN_PREFIXES, forwardReferenceHeals,
   impossibleTargetsNeverAbortTheSweep, impossibleTargetsStayOutOfWrites, onlyUnresolvedAuthoredReferences, POSSIBLE_WANTED,
-  privateOriginsStayPrivate, restoredTargetHeals, wantedKeys } from './helpers/wanted-links-scenarios.ts';
+  privateOriginsStayPrivate, restoredTargetHeals, topLevelSlugNamePageEditWakesOnce, topLevelSlugNameReferenceSettles, wantedKeys } from './helpers/wanted-links-scenarios.ts';
 
 test('a link written before its target exists becomes an edge after the target is created', () => forwardReferenceHeals(), 120_000);
 test('resolved references, prose paths and code spans are never wanted', () => onlyUnresolvedAuthoredReferences(), 120_000);
 test('a bare-name reference matched only by basename settles after one re-extraction', () => bareNameReferenceSettles(), 120_000);
+test('#9140: a bare-name reference equal to a top-level slug settles after one re-extraction', () => topLevelSlugNameReferenceSettles(), 120_000);
+test('#9140: editing the top-level page wakes that origin once, and one extraction settles it again', () => topLevelSlugNamePageEditWakesOnce(), 120_000);
 test('remote callers never see targets or counts from private origins', () => privateOriginsStayPrivate(), 120_000);
 test('restoring a deleted target heals links written while it was deleted', () => restoredTargetHeals(), 120_000);
 test('wanted_pages.enabled=false clears an origin\'s rows on its next extraction', () => disabledClearsRows(), 120_000);

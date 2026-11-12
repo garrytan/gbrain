@@ -22,6 +22,11 @@ export interface WriteAuthority {
    * link from the id to the same enabled member, so an unlink, a disabled member or a revoked right refuses it.
    */
   actingFor?: string[] | { system: string; external_id: string; member: string };
+  /**
+   * GST-363: the member a local_stdio writer's serve was started with (`gbrain serve --stdio-member`). Preparation and
+   * publication re-resolve it live (a disabled member reads as nobody); absent, they read config mcp.stdio_member.
+   */
+  stdioMember?: string;
   /** GST-359 D: the attested operation this write serves when it differs from the stored one (memory_write as remember). */
   attestedOp?: string;
   /** GST-1113: the scope source an attested memory_write named instead of the principal's own; publication re-checks attest_sources. */
@@ -180,9 +185,9 @@ export interface JournalLimits {
 export const DEFAULT_JOURNAL_LIMITS: Readonly<JournalLimits> = Object.freeze({
   principalOutstanding: 100, brainOutstanding: 1000,
   principalIntentBytes: 64 * 1024 ** 2, brainIntentBytes: 256 * 1024 ** 2,
-  // #6696 (A2): sized for 5,000 admissions a day for a year (docs/guides/concurrent-writes.md#growth-model).
-  principalLifetimeIds: 2_000_000, brainLifetimeIds: 8_000_000,
-  principalTerminalBytes: 16 * 1024 ** 3, brainTerminalBytes: 64 * 1024 ** 3,
+  // GBRA-108: the cumulative caps are opt-in (Infinity until persistence.limits.* sets one); housekeeping and doctor bound receipt storage.
+  principalLifetimeIds: Infinity, brainLifetimeIds: Infinity,
+  principalTerminalBytes: Infinity, brainTerminalBytes: Infinity,
   brainRecoveryBytes: 1024 ** 3, worktreeRecoveryBytes: 256 * 1024 ** 2,
 });
 export type SqlEngine = Pick<BrainEngine, 'executeRaw'>;

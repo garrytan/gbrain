@@ -465,8 +465,8 @@ export async function stageOccurrenceChunks(engine: BrainEngine, input: { pageId
 
 /** The stored body of `pageId` at `generation` (default live), region by region, one segment at a time. */
 export async function* readSegmentedBody(engine: BrainEngine, pageId: number, sourceId: string,
-  opts: { generation?: number } = {}): AsyncIterable<{ region: BodyRegion; bytes: Uint8Array }> {
-  const { rows } = await readTiledManifest(engine, pageId, opts.generation);
+  opts: { generation?: number; bodyBytes?: number } = {}): AsyncIterable<{ region: BodyRegion; bytes: Uint8Array }> {
+  const { rows } = await readTiledManifest(engine, pageId, opts.generation, opts.bodyBytes);
   const batchBytes = STAGE_BATCH_BYTES[engine.kind];
   for (let start = 0; start < rows.length;) {
     let end = start, bytes = 0;
@@ -482,9 +482,13 @@ export async function* readSegmentedBody(engine: BrainEngine, pageId: number, so
   }
 }
 
-/** The whole body of a segmented page as strings. Only for pages within the single-string ceiling (callers check `body_bytes`). */
-export async function materializeSegmentedBody(engine: BrainEngine, pageId: number, sourceId: string): Promise<{ compiled_truth: string; timeline: string }> {
+/**
+ * The whole body of a segmented page as strings, at `opts.generation` (default live; `opts.bodyBytes` its known size).
+ * Only for pages within the single-string ceiling (callers check `body_bytes`).
+ */
+export async function materializeSegmentedBody(engine: BrainEngine, pageId: number, sourceId: string,
+  opts: { generation?: number; bodyBytes?: number } = {}): Promise<{ compiled_truth: string; timeline: string }> {
   const parts: Record<BodyRegion, string[]> = { truth: [], timeline: [] };
-  for await (const part of readSegmentedBody(engine, pageId, sourceId)) parts[part.region].push(utf8.decode(part.bytes));
+  for await (const part of readSegmentedBody(engine, pageId, sourceId, opts)) parts[part.region].push(utf8.decode(part.bytes));
   return { compiled_truth: parts.truth.join(''), timeline: parts.timeline.join('') };
 }

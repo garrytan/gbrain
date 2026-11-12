@@ -70,6 +70,9 @@ const INITIALIZED_MANIFEST: AgentManifest = {
 let ws: string;
 let home: string;
 
+/** The fake runner holds no real history; the history scan itself is covered by test/unmanaged-push-history-scan-8902.serial.test.ts. */
+const noHistoryScan = () => null;
+
 beforeEach(() => {
   ws = mkdtempSync(join(tmpdir(), 'gbrain-bootstrap-ws-'));
   home = mkdtempSync(join(tmpdir(), 'gbrain-bootstrap-home-'));
@@ -123,7 +126,7 @@ async function expectBootstrapError(p: Promise<unknown>): Promise<BootstrapError
 describe('createPrivateRepo', () => {
   test('create flow: name collision → -2 suffix, identity set, privacy verified, receipt + GITHUB.md updated', async () => {
     const { runner, calls } = makeRunner(happyRules());
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
 
     expect(result.name).toBe('test-agent-workspace-2');
     expect(result.url).toBe('https://github.com/alice/test-agent-workspace-2');
@@ -165,7 +168,7 @@ describe('createPrivateRepo', () => {
         { key: 'diff --cached --name-only', code: 0, stdout: 'agent.json\nGITHUB.md\n' },
       ]),
     );
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     expect(result.reused).toBe(false);
 
     // The commit was created before the push (no empty-remote push).
@@ -190,7 +193,7 @@ describe('createPrivateRepo', () => {
         { key: 'diff --cached --name-only', code: 0, stdout: '' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('REPO_CREATE_FAILED');
     expect(err.message).toContain('no files to commit');
     expect(calls.some((c) => c.join(' ').includes('push -u origin'))).toBe(false);
@@ -206,7 +209,7 @@ describe('createPrivateRepo', () => {
         { key: 'diff --cached --name-only', code: 0, stdout: 'leak.md\n' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('SECRET_SCAN_BLOCKED');
     expect(err.message).not.toContain('sk-A1b2C3d4'); // value never surfaces
     expect(err.message).toMatch(/leak\.md:1 \[openai\] sha256:[0-9a-f]{16}/);
@@ -232,7 +235,7 @@ describe('createPrivateRepo', () => {
       { key: 'repo create', code: 0 },
       { key: '--jq .private', code: 0, stdout: 'true\n' },
     ]);
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('ORIGIN_EXISTS');
     expect(err.message).toContain('verified-private');
     expect(calls.some((c) => c.join(' ').includes('push -u origin'))).toBe(false); // nothing pushed
@@ -240,13 +243,13 @@ describe('createPrivateRepo', () => {
 
   test('privacy verify says false → hard REPO_NOT_PRIVATE error', async () => {
     const { runner } = makeRunner(happyRules([{ key: '--jq .private', code: 0, stdout: 'false\n' }]));
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('REPO_NOT_PRIVATE');
   });
 
   test('privacy verify 500 → VERIFY_UNAVAILABLE (distinct from not-private), tells the user to re-run', async () => {
     const { runner } = makeRunner(happyRules([{ key: '--jq .private', code: 1, stderr: 'gh: HTTP 500 Internal Server Error' }]));
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('VERIFY_UNAVAILABLE');
     expect(err.code).not.toBe('REPO_NOT_PRIVATE');
     expect(err.message).toContain('re-run');
@@ -256,7 +259,7 @@ describe('createPrivateRepo', () => {
     const { runner, calls } = makeRunner(
       happyRules([{ key: 'remote get-url origin', code: 0, stdout: 'https://github.com/someone/else.git\n' }]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('ORIGIN_EXISTS');
     expect(err.message).toContain('bootstrap attach');
     // Refused before any create.
@@ -266,7 +269,7 @@ describe('createPrivateRepo', () => {
   test('template manifest → TEMPLATE_UNINITIALIZED [CX2-1]', async () => {
     writeManifest(ws, { ...INITIALIZED_MANIFEST, initialized: false });
     const { runner } = makeRunner(happyRules());
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('TEMPLATE_UNINITIALIZED');
     expect(err.message).toContain('bootstrap render');
   });
@@ -274,7 +277,7 @@ describe('createPrivateRepo', () => {
   test('absent manifest → NOT_A_WORKSPACE', async () => {
     rmSync(join(ws, 'agent.json'));
     const { runner } = makeRunner(happyRules());
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('NOT_A_WORKSPACE');
   });
 
@@ -300,7 +303,7 @@ describe('createPrivateRepo', () => {
         { key: 'ls-remote --heads origin', code: 0, stdout: `deadbeef\trefs/heads/main\n` },
       ]),
     );
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     expect(result.reused).toBe(true);
     expect(result.url).toBe(url);
     expect(result.name).toBe('test-agent-workspace-2');
@@ -332,7 +335,7 @@ describe('createPrivateRepo', () => {
         { key: 'ls-remote --heads origin', code: 0, stdout: '' },
       ]),
     );
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     expect(result.reused).toBe(true);
     expect(calls.some((c) => c.join(' ').includes('repo create'))).toBe(false);
     // The deferred push was completed rather than false-succeeding on empty.
@@ -353,7 +356,7 @@ describe('createPrivateRepo', () => {
       registrations: [],
     });
     const { runner } = makeRunner(happyRules([{ key: 'remote get-url origin', code: 0, stdout: `${url}\n` }]));
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     expect(result.reused).toBe(true);
     expect((readReceipt(home) as RepoReceipt).repo_url).toBe(url);
     // Adoption must not clobber the existing receipt's brain ownership.
@@ -376,13 +379,13 @@ describe('createPrivateRepo', () => {
     const { runner } = makeRunner(
       happyRules([{ key: 'remote get-url origin', code: 0, stdout: 'https://github.com/mallory/swapped\n' }]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('ORIGIN_EXISTS');
   });
 
   test('gh missing → GH_MISSING with exit-code-2 semantics', async () => {
     const { runner } = makeRunner([{ key: 'gh --version', code: 127, stderr: 'command not found' }]);
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('GH_MISSING');
     expect(err.exitCode).toBe(2);
   });
@@ -392,7 +395,7 @@ describe('createPrivateRepo', () => {
       { key: 'gh --version', code: 0 },
       { key: 'auth status', code: 1, stderr: 'You are not logged into any GitHub hosts' },
     ]);
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('GH_AUTH');
     expect(err.exitCode).toBe(2);
     expect(err.message).toContain('gh auth login');
@@ -410,7 +413,7 @@ describe('createPrivateRepo', () => {
     // both flags on a `gh` that supports them — this test pins the exact
     // argv so a regression back to the unscoped bare form is caught.
     const { runner, calls } = makeRunner(happyRules());
-    await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     const authCall = calls.find((c) => c[0] === 'gh' && c[1] === 'auth' && c[2] === 'status');
     expect(authCall).toEqual(['gh', 'auth', 'status', '--active', '--hostname', 'github.com']);
   });
@@ -430,7 +433,7 @@ describe('createPrivateRepo', () => {
         { key: 'gh --version', code: 0, stdout: 'gh version 2.56.0 (2024-08-01)\n' },
       ]),
     );
-    await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     const authCall = calls.find((c) => c[0] === 'gh' && c[1] === 'auth' && c[2] === 'status');
     expect(authCall).toEqual(['gh', 'auth', 'status', '--hostname', 'github.com']);
   });
@@ -439,7 +442,7 @@ describe('createPrivateRepo', () => {
     const { runner, calls } = makeRunner(
       happyRules([{ key: 'gh --version', code: 0, stdout: 'gh version 2.57.0 (2024-09-11)\n' }]),
     );
-    await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     const authCall = calls.find((c) => c[0] === 'gh' && c[1] === 'auth' && c[2] === 'status');
     expect(authCall).toEqual(['gh', 'auth', 'status', '--active', '--hostname', 'github.com']);
   });
@@ -448,7 +451,7 @@ describe('createPrivateRepo', () => {
     const { runner, calls } = makeRunner(
       happyRules([{ key: 'gh --version', code: 0, stdout: 'not a recognizable version string\n' }]),
     );
-    await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     const authCall = calls.find((c) => c[0] === 'gh' && c[1] === 'auth' && c[2] === 'status');
     expect(authCall).toEqual(['gh', 'auth', 'status', '--hostname', 'github.com']);
   });
@@ -490,7 +493,7 @@ describe('createPrivateRepo', () => {
         { key: '--jq .private', code: 0, stdout: 'true\n' },
       ]),
     );
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     expect(result.disposition).toBe('adopted');
     expect(result.reused).toBe(true);
     expect(result.url).toBe(url);
@@ -516,7 +519,7 @@ describe('createPrivateRepo', () => {
         { key: 'rev-parse --verify HEAD', code: 1, stderr: 'fatal: needed a single revision' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('ORIGIN_NOT_EMPTY');
     expect(err.message).toContain('EMPTY');
     // No silent no-op: nothing pushed, repo_url never recorded.
@@ -535,7 +538,7 @@ describe('createPrivateRepo', () => {
         { key: 'ls-remote origin', code: 0, stdout: 'abc123\trefs/heads/main\n' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('ORIGIN_NOT_EMPTY');
     expect(calls.some((c) => c.join(' ').includes('push -u origin'))).toBe(false);
     expect((readReceipt(home) as RepoReceipt).repo_url).toBeUndefined();
@@ -564,7 +567,7 @@ describe('createPrivateRepo', () => {
         { key: '--jq .private', code: 0, stdout: 'true\n' },
       ]),
     );
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan });
     expect(result.disposition).toBe('adopted');
     // pending bypassed the emptiness check — never probed all-refs ls-remote.
     expect(calls.some((c) => c.join(' ') === `git -C ${ws} ls-remote origin`)).toBe(false);
@@ -579,7 +582,7 @@ describe('createPrivateRepo', () => {
     const { runner, calls } = makeRunner(
       happyRules([{ key: 'remote get-url origin', code: 0, stdout: `${url}\n` }]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('ORIGIN_EXISTS');
     // Ownership fails first — never even probes the remote for emptiness.
     expect(calls.some((c) => c.join(' ') === `git -C ${ws} ls-remote origin`)).toBe(false);
@@ -595,7 +598,7 @@ describe('createPrivateRepo', () => {
         { key: '--jq .private', code: 0, stdout: 'false\n' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('REPO_NOT_PRIVATE');
   });
 
@@ -608,7 +611,7 @@ describe('createPrivateRepo', () => {
         { key: 'ls-remote origin', code: 1, stderr: 'fatal: could not read from remote repository' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('REMOTE_CHECK_FAILED');
     expect(calls.some((c) => c.join(' ').includes('push -u origin'))).toBe(false);
   });
@@ -629,7 +632,7 @@ describe('createPrivateRepo', () => {
         { key: 'push -u origin', code: 1, stderr: 'fatal: unable to access' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('REPO_CREATE_FAILED');
     // repo_url must NOT be recorded on push failure (else status false-reports done).
     expect((readReceipt(home) as RepoReceipt).repo_url).toBeUndefined();
@@ -650,7 +653,7 @@ describe('createPrivateRepo', () => {
         { key: '--jq .private', code: 0, stdout: 'true\n' },
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('SECRET_SCAN_BLOCKED');
     expect(calls.some((c) => c.join(' ').includes('push -u origin'))).toBe(false);
   });
@@ -679,7 +682,7 @@ describe('createPrivateRepo', () => {
         { key: 'ls-files -z', code: 0, stdout: 'secrets.md' }, // committed tree to scan
       ]),
     );
-    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home }));
+    const err = await expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }));
     expect(err.code).toBe('SECRET_SCAN_BLOCKED');
     expect(calls.some((c) => c.join(' ').includes('push -u origin'))).toBe(false);
   });
@@ -787,7 +790,7 @@ describe('createPrivateRepo cloud-sandbox guard [CLOUD_SANDBOX_REPO]', () => {
   test('cloud sandbox + no existing origin → CLOUD_SANDBOX_REPO before any create call', async () => {
     const { runner, calls } = makeRunner(happyRules());
     const err = await withEnv({ CLAUDE_CODE_REMOTE: 'true' }, () =>
-      expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home })),
+      expectBootstrapError(createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan })),
     );
     expect(err.code).toBe('CLOUD_SANDBOX_REPO');
     expect(err.message).toContain('gbrain bootstrap attach');
@@ -799,7 +802,7 @@ describe('createPrivateRepo cloud-sandbox guard [CLOUD_SANDBOX_REPO]', () => {
   test('local env: the same rules create normally (guard is cloud-only)', async () => {
     const { runner, calls } = makeRunner(happyRules());
     const result = await withEnv({ CLAUDE_CODE_REMOTE: undefined }, () =>
-      createPrivateRepo(ws, { runner, gbrainHomeDir: home }),
+      createPrivateRepo(ws, { runner, gbrainHomeDir: home, scanHistory: noHistoryScan }),
     );
     expect(result.disposition).toBe('created');
     expect(calls.some((c) => c.join(' ').includes('repo create'))).toBe(true);

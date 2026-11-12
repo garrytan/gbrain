@@ -8,7 +8,9 @@
  * Usage: bun scripts/build-skill-resolver-bundle.ts --out <file.mjs> [--smoke]
  * Writes <file.mjs>.sha256 beside it (sha256sum format). --smoke imports the
  * bundle with node, builds a catalog from JSON and the bundled catalog in a
- * scratch home, resolves one turn, and exits 1 on any failure.
+ * scratch home, resolves one turn, builds one catalog on a worker thread
+ * (the bundle is its own worker entry) and resolves it through a warm handle,
+ * and exits 1 on any failure.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,7 +38,14 @@ if (args.includes('--smoke')) {
       "if (t.output.suggestions[0]?.id !== 'x:deploy' || t.output.suggestions[0]?.match_strength !== 'name' || b.catalog.skill_count < 1) { console.error(JSON.stringify(t.output)); process.exit(1); }",
       "if (!(await m.commitSessionAsync(home, t.pending.key, t.pending.delta))) { console.error('commitSessionAsync did not commit'); process.exit(1); }",
       `if (m.GBRAIN_VERSION !== ${JSON.stringify(VERSION)}) { console.error('GBRAIN_VERSION ' + m.GBRAIN_VERSION); process.exit(1); }`,
-      "console.log(JSON.stringify({ node: process.version, gbrain_version: m.GBRAIN_VERSION, bundled_skills: b.catalog.skill_count, top: t.output.suggestions[0].id }));",
+      "const off = await m.buildSkillIndexOffThread({ catalog: 'w', fromJson: JSON.stringify([{ id: 'x:invoice', name: 'invoice', description: 'Draft an invoice for a customer' }]), fromJsonStdin: true }, { home });",
+      "const bad = await m.buildSkillIndexOffThread({ catalog: '../w', fromJson: '[]', fromJsonStdin: true }, { home }).then(() => null, e => e);",
+      "if (!(bad instanceof m.ResolverError) || bad.code !== 'skill_catalog_unknown' || !bad.fix.suggestion) { console.error('off-thread error ' + String(bad)); process.exit(1); }",
+      "const h = m.openCatalog(['w'], { home });",
+      "const w = await h.resolve({ message: 'draft an invoice' });",
+      "h.close();",
+      "if (off.catalog.skill_count !== 1 || w.output.suggestions[0]?.id !== 'x:invoice') { console.error(JSON.stringify(w.output)); process.exit(1); }",
+      "console.log(JSON.stringify({ node: process.version, gbrain_version: m.GBRAIN_VERSION, bundled_skills: b.catalog.skill_count, top: t.output.suggestions[0].id, off_thread: off.catalog.name, warm_top: w.output.suggestions[0].id }));",
     ].join('\n'));
     const run = Bun.spawnSync(['node', probe], { stdout: 'pipe', stderr: 'pipe', cwd: home });
     process.stdout.write(run.stdout.toString());

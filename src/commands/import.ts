@@ -1,4 +1,6 @@
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
+import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
+import { ignoredPrivacyLabelRunNotice } from '../core/search/ignored-privacy-labels.ts';
 import { importFenceTally, type FencesNormalized } from '../core/fence-repair/report.ts';
 import { opError } from '../core/ops/contract.ts';
 import { hasSourceFilesystemLock, withSourceFilesystemLock, currentSourceFilesystemSignal } from '../core/minions/source-filesystem.ts';
@@ -223,6 +225,7 @@ export interface RunImportResult {
   type_warnings?: Array<{ kind: 'alias_of' | 'undeclared'; type: string; canonical?: string; directory?: string; count: number }>;
   /** #5050: unchanged pages re-sealed at the safe-chunk fence, and the embedding work that left. */
   resealed?: { pages: number; pending_chunks: number; embedding_usd: number | null }; fences_normalized?: FencesNormalized; fence_issues?: unknown;
+  /** GST-2462: the run's one `privacy_label_ignored` notice (counts by value of ignored privacy labels). */ privacy_label_notice?: import('../core/agent-output.ts').Notice;
 }
 
 /**
@@ -269,6 +272,7 @@ export async function runImport(
     strategy?: SyncStrategy;
     sourceId?: string;
     managedBookmark?: boolean;
+    /** GST-2462: the run the privacy_label_ignored notice names. */ noticeRun?: 'sync';
     /** Paths the caller keeps out of this run (#5988 holds, #8620 reserved skill paths); skipped without importing, not failures. */
     heldPaths?: Pick<ReadonlySet<string>, 'has'>;
     /** #5988: each file's outcome (a throw arrives as `{ status: 'error', error }`); `'held'` = the caller held it, not a failure. */
@@ -1190,6 +1194,7 @@ export async function runImport(
   else if (existsSync(checkpointPath)) info(`  Checkpoint preserved (${errors} errors). Run again to retry failed files.`);
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(1);
+  const privacyLabelNotice = await ignoredPrivacyLabelRunNotice(engine, sourceId ?? 'default', { slugs: importedSlugs }, opts.noticeRun ?? 'import');
   const resealSummary = resealed.pages > 0
     ? { pages: resealed.pages, pending_chunks: resealed.pendingChunks, embedding_usd: resealEmbeddingUsd(resealed.pendingChars) }
     : null;
@@ -1211,6 +1216,7 @@ export async function runImport(
       failures,
       // Effective destination — same expression as the import-file write (import-file.ts) and the ingest_log row below.
       source_id: sourceId ?? 'default',
+      ...(privacyLabelNotice ? { notices: [renderNotice(privacyLabelNotice, cliRenderContext())] } : {}),
     }));
   } else {
     slog(`\nImport complete (${totalTime}s):`);
@@ -1232,6 +1238,7 @@ export async function runImport(
     ...(typeWarningCounts.size > 0 && typeWarningsEnabled
       ? { type_warnings: [...typeWarningCounts.values()] }
       : {}),
+    ...(privacyLabelNotice ? { privacy_label_notice: privacyLabelNotice } : {}),
   };
 }
 

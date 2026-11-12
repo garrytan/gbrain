@@ -90,6 +90,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'trust_release_unpreviewed_fields',
   'credential_projection_pending',
   'derived_visibility',
+  'privacy_label_ignored',
   // GBRA-218: member read access (doctor/checks/member-access.ts).
   'access_readers_malformed',
   'access_unknown_readers',
@@ -99,8 +100,12 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_widening_held',
   'access_policy_invalid',
   'access_policy_store_mismatch',
+  // GST-363: a brain that serves several people keeps each people/<name>/ folder to its readers (doctor/checks/unlabeled-people-folders.ts).
+  'unlabeled_people_folders',
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
+  // GST-2490: the owner opt-in (doctor/checks/owner-reads-restricted.ts).
+  'access_owner_reads_restricted',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
   'extractor_facts_expired',

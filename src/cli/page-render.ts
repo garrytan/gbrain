@@ -140,6 +140,7 @@ export function formatGetPage(r: GetPageResult): string {
     return `Ambiguous slug. Did you mean:\n${r.candidates.map((c: string) => `  ${c}`).join('\n')}\n`;
   }
   if (typeof r.body !== 'string') {
+    if (typeof r.content === 'string' && r.revision) process.stderr.write(`[gbrain] revision ${r.revision}: put or delete this page with --expected-revision ${r.revision}.\n`);
     return serializeMarkdown(r.frontmatter || {}, r.compiled_truth || '', r.timeline || '', { type: r.type, title: r.title, tags: r.tags || [] });
   }
   if (r.section || r.grep) return renderSlice(r);

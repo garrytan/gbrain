@@ -266,7 +266,7 @@ function route(input: TerminalInput): Partial_ {
     if (known === 'canonical_file_missing') {
       return { category: 'canonical_file_missing', code, origin: origin ?? known, ...row('canonical_file_missing'),
         action: { argv: ['gbrain', 'repair', 'ghost-pages', '--source', source], consent: [], actor: 'agent', requires_exclusive: false,
-          why: 'Previews the live pages whose canonical file is missing and writes nothing; apply only after the user agrees, or restore the file and sync.',
+          why: `Previews the live pages whose canonical file is missing and writes nothing; apply only after the user agrees, or restore the file and sync. To keep ${input.slug} and only narrow who reads it, with no file written, preview a page rule instead: gbrain access rule add --slug ${input.slug} --readers <member> --source ${source} (writes nothing without --yes).`,
           verify: { argv: failuresArgv(source) }, docs: 'docs/guides/write-refusals.md#canonical_file_missing' } };
     }
     if (known === 'source_binding_changed' || known === 'unsafe_file_target') {
@@ -397,6 +397,22 @@ export function terminalKnockOnSql(alias: string): string {
 
 /** Page removals: a later one supersedes any earlier write of the page. */
 export const PAGE_REMOVAL_OPERATIONS: readonly string[] = ['delete_page', 'purge_page'];
+
+/** The writes `gbrain repair failed-writes` replays: a caller's own `put_page` (no owner `kind`), `add_timeline_entry` and `remember`. */
+export const CALLER_REPLAYABLE_OPERATIONS: readonly string[] = ['put_page', 'add_timeline_entry', 'remember'];
+/** A writer-guard refusal (no publication ran). */
+export const GUARD_REFUSAL_SQL = (r: string) => `(${r}.state='failed' AND (${r}.error_code='writer_coordinator_required'
+  OR (${r}.error_code='storage_error' AND ${r}.error_message LIKE 'Publication failed (P0001)%')))`;
+/** #6429: a refusal from prepareFileTarget (page-prepare.ts); the receipt keeps the code, not the refusal's detail. */
+export const DRIFT_REFUSAL_SQL = (r: string) => `(${r}.state='conflict' AND ${r}.error_code='source_changed')`;
+/**
+ * GBRA-108: a caller's refused write that `gbrain repair failed-writes` could still replay: no later request wrote, removed or
+ * repeated it (`supersessionSql`). The retention pass keeps its intent until then; `gbrain repair receipt-compaction
+ * --include-failures` is the operator's explicit drop.
+ */
+export const UNRESOLVED_CALLER_REFUSAL_SQL = (r: string) => `((${GUARD_REFUSAL_SQL(r)} OR ${DRIFT_REFUSAL_SQL(r)})
+  AND ${r}.operation IN (${CALLER_REPLAYABLE_OPERATIONS.map(op => `'${op}'`).join(',')}) AND NOT (${r}.operation='put_page' AND ${r}.intent ? 'kind')
+  AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql(r, 'c')}))`;
 
 /**
  * The supersession rule of `gbrain repair failed-writes`, as a predicate over a candidate later request `c` of the

@@ -127,7 +127,7 @@ export function capacityDiagnostics(counters: Counter[], limits: JournalLimits) 
       : [['outstanding_count', `${scope}Outstanding`], ['intent_bytes', `${scope}IntentBytes`],
         ['lifetime_ids', `${scope}LifetimeIds`], ['terminal_bytes', `${scope}TerminalBytes`],
         ...(scope === 'brain' ? [['recovery_bytes', 'brainRecoveryBytes'] as const] : [])];
-    return resources.map(([resource, setting]) => {
+    return resources.filter(([, setting]) => Number.isFinite(limits[setting])).map(([resource, setting]) => {
       const used = Number(counter[resource]), limit = limits[setting];
       const approaching = limit === 0 ? used > 0 : used >= limit * 0.8;
       return { scope: counter.key, resource, used, limit, remaining: Math.max(0, limit - used),
@@ -198,7 +198,8 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     ? 'The process that answered has no resident consumer (a one-shot CLI, for example); another process may own writes. See worktrees and bindings for ownership.'
     : 'The resident consumer of the process that answered this status.' };
   return { ...brain, sampled_at: new Date().toISOString(), publication_concurrency: publicationConcurrency(engine),
-    local_process_ingress, worktrees, counters, queue, effects, limits, capacity: capacityDiagnostics(counters, limits), preparation_policy,
+    local_process_ingress, worktrees, counters, queue, effects,
+    limits: Object.fromEntries(Object.entries(limits).filter(([, value]) => Number.isFinite(value))), capacity: capacityDiagnostics(counters, limits), preparation_policy,
     recent_failures: failures.map(row => ({ ...row, next_action: recentFailureNextAction(row.error_detail?.origin, row.request_id) })),
     backend_visibility: backends.visibility,
     blockers: blockers.map(({ id: rowId, claim_phase: _phase, execution_token: _token, claim_lapsed: _lapsed, publication_started: _started, ...row }, index) => {

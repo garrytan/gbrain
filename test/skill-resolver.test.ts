@@ -26,7 +26,7 @@ import { lexTerms } from '../src/core/skills/resolver/tokenize.ts';
 import { isAcknowledgement, mentionsSkill } from '../src/core/skills/resolver/rank.ts';
 import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
-import { commitSession, commitSessionAsync, gcSessions, loadSession, sessionKey } from '../src/core/skills/resolver/session.ts';
+import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
@@ -302,6 +302,35 @@ describe('sessions', () => {
     expect(loadSession(home, key).turn).toBe(1);
   });
 
+  test('a spent budget stays spent on an acknowledgement or a no-match turn (HARN-52)', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    await commitSession(home, sessionKey('on', 'claude-code', 'a'), { tokens: 2000, suggested: [], resuggested: [], reset: false });
+    for (const message of ['ok thanks', 'zzqxv']) {
+      const r = await resolveSkills({ message, session_id: 'a', harness: 'claude-code' }, { home });
+      expect([r.output.no_skill, r.output.budget_exhausted, r.output.block_reason]).toEqual([true, true, message === 'zzqxv' ? 'no_match' : 'ack']);
+    }
+    expect((await resolveSkills({ message: 'ok thanks', session_id: 'fresh', harness: 'claude-code' }, { home })).output.budget_exhausted).toBe(false);
+  });
+
+  test('block_reason says why a block is empty: deduped, paced, budget_exhausted, filtered, shadow', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const first = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
+    expect(first.output.block_reason).toBeNull();
+    await first.commit();
+    const again = await resolveSkills({ message: 'deploy', session_id: 'd' }, { home, sessionTokenBudget: 50_000 });
+    expect([again.output.block, again.output.block_reason]).toEqual(['', 'deduped']);
+    await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
+    const paced = await resolveSkills({ message: 'team status', session_id: 'p' }, { home });
+    expect([paced.output.block, paced.output.block_reason]).toEqual(['', 'paced']);
+    await commitSession(home, sessionKey('on', undefined, 'p'), { tokens: 1000, suggested: [], resuggested: [], reset: false });
+    expect((await resolveSkills({ message: 'team status', session_id: 'p' }, { home })).output.block_reason).toBe('budget_exhausted');
+    expect((await resolveSkills({ message: 'deploy', exclude: ['gbrain:deploy'], min_match_strength: 'name' }, { home })).output.block_reason).toBe('filtered');
+    const shadow = await resolveSkills({ message: 'deploy', shadow: true }, { home });
+    expect([shadow.output.block_reason, shadow.shadowOutput?.block_reason]).toEqual(['shadow', null]);
+  });
+
   test('a skill the turn names still gets its line after the budget is spent; its tokens count', async () => {
     const home = tmp();
     await jsonCatalog(home, 'c', BASIC);
@@ -417,6 +446,21 @@ describe('sessions', () => {
     utimesSync(join(dir, file), old, old);
     expect(gcSessions(home)).toBe(1);
     expect(existsSync(join(dir, file))).toBe(false);
+  });
+
+  test('async GC never deletes an idle session file while a commit holds its lease; the commit keeps the earlier state', async () => {
+    const home = tmp();
+    const key = sessionKey('on', undefined, 'gc-race');
+    expect(await commitSessionAsync(home, key, { tokens: 100, suggested: ['a'], resuggested: [], reset: false })).toBe(true);
+    await sessionGcSettled();
+    const file = join(home, 'skill-index', 'sessions', `${key}.json`);
+    const old = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+    utimesSync(file, old, old);
+    let removed = -1;
+    const ok = await commitSessionAsync(home, key, { tokens: 7, suggested: ['b'], resuggested: [], reset: false }, { at: async (stage) => { if (stage === 'held') removed = await gcSessionsAsync(home); } });
+    expect(ok).toBe(true);
+    expect(removed).toBe(0);
+    expect(loadSession(home, key)).toMatchObject({ turn: 2, spent: 107 });
   });
 });
 
@@ -541,15 +585,39 @@ describe('catalog sources and bounds', () => {
     }
   });
 
-  test('bounds: 10,000 skills build, 10,001 refuse; over 8 MB refuses; the body is capped at 4 KB', async () => {
+  test('bounds: 10,000 skills build, 10,001 refuse; over 64 MB refuses; the body is capped at 4 KB', async () => {
     const home = tmp();
     const many = Array.from({ length: 10_000 }, (_, i) => ({ id: `s${i}`, name: `skill-${i}`, description: `${word(i, 9)} task` }));
     const rec = await buildSkillIndex({ catalog: 'big', fromJson: JSON.stringify(many), fromJsonStdin: true }, { home });
     expect(rec.catalog.skill_count).toBe(10_000);
     expect(await codeOf(buildSkillIndex({ catalog: 'big2', fromJson: JSON.stringify([...many, { id: 'one-more', name: 'x' }]), fromJsonStdin: true }, { home }))).toBe('skill_source_invalid');
-    expect(await codeOf(buildSkillIndex({ catalog: 'huge', fromJson: JSON.stringify([{ id: 'a', name: 'a', description: 'x'.repeat(9 * 1024 * 1024) }]), fromJsonStdin: true }, { home }))).toBe('skill_source_invalid');
+    expect(await codeOf(buildSkillIndex({ catalog: 'huge', fromJson: JSON.stringify([{ id: 'a', name: 'a', description: 'x'.repeat(65 * 1024 * 1024) }]), fromJsonStdin: true }, { home }))).toBe('skill_source_invalid');
     await jsonCatalog(home, 'body', [{ id: 'b', name: 'b', description: 'd', body: `${'filler '.repeat(700)} zebrafinch` }]);
     expect((await resolveSkills({ message: 'zebrafinch' }, { home, catalogs: ['body'] })).output.no_skill_reason).toBe('no_match');
+  });
+
+  test('a JSON catalog over 8 MB of full bodies builds: bodies are trimmed to 4 KB, the snapshot is kept trimmed and stays fresh', async () => {
+    const home = tmp();
+    const full = Array.from({ length: 300 }, (_, i) => ({ id: `s${i}`, name: `skill-${i}`, description: `${word(i, 9)} task`, body: `${i === 7 ? 'zebrafinch ' : ''}${'filler text '.repeat(3000)}` }));
+    const text = JSON.stringify(full);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(8 * 1024 * 1024);
+    const rec = await buildSkillIndex({ catalog: 'full', fromJson: text, fromJsonStdin: true }, { home });
+    expect(rec.catalog.skill_count).toBe(300);
+    const snap = readFileSync(join(home, 'skill-index', 'full', 'source.json'), 'utf8');
+    expect(Buffer.byteLength(snap)).toBeLessThan(2 * 1024 * 1024);
+    expect((JSON.parse(snap) as { body: string }[])[0]!.body.length).toBeLessThanOrEqual(4096);
+    expect((await catalogStatus('full', { home })).fresh).toBe(true);
+    expect((await resolveSkills({ message: 'zebrafinch' }, { home, catalogs: ['full'] })).output.suggestions[0]?.id).toBe('s7');
+  });
+
+  test('a JSON catalog over 8 MB stays fresh when a 4 KB cut ends on whitespace or a body opens with two frontmatter blocks', async () => {
+    const home = tmp();
+    const full = Array.from({ length: 900 }, (_, i) => ({ id: `s${i}`, name: `skill-${i}`, description: `${word(i, 9)} task`,
+      body: i === 1 ? `---\nkind: a\n---\n---\nkind: b\n---\n${'abc '.repeat(2500)}` : 'abc '.repeat(2500) }));
+    const text = JSON.stringify(full);
+    expect(Buffer.byteLength(text)).toBeGreaterThan(8 * 1024 * 1024);
+    await buildSkillIndex({ catalog: 'ws', fromJson: text, fromJsonStdin: true }, { home });
+    expect(await catalogStatus('ws', { home })).toMatchObject({ fresh: true, stale_reason: null });
   });
 
   test('a SKILL.md over 64 KB is skipped as unreadable, not read whole', async () => {
