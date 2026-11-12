@@ -1,3 +1,7 @@
+---
+important: data-loss
+---
+
 ### A database-wins file-drift repair no longer discards a newer file edit
 
 **`gbrain repair file-drift --prefer database` and `gbrain sources reconcile --apply` could overwrite a change to a page's file that sync had not imported yet, or bring back a file another writer had just deleted, with nothing in the preview saying so.** A repair now checks each page's file against sync's import record before it takes the database copy.
