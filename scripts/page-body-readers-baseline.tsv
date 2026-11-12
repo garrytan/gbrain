@@ -697,3 +697,7 @@ src/eval/brainbench/metrics/trust-reads.ts	canaryPersisted	sql	STREAM
 src/eval/chronicle/harness.ts	seedChronicleEvalCorpus	call:putPage	SEGW	
 src/eval/longmemeval/call-plan.ts	planPages	call:prepareMarkdownChunks	INLINE	
 src/eval/longmemeval/call-plan.ts	planPages	field	INLINE	
+src/cli/enforced-member.ts	checkEnforcedWrite	field	INLINE	the stored page comes from storedPage, which refuses a segmented page (assertInlineBody)
+src/cli/enforced-member.ts	markdownLabels	field	NONE	not a stored page body: the parsed markdown a put or a committed file submits
+src/cli/enforced-member.ts	pageLabels	field	INLINE	reads a page from storedPage (segmented refused by assertInlineBody) or parsed submitted markdown
+src/cli/enforced-member.ts	storedPage	sql	INLINE	refuses a segmented page with assertInlineBody before its body is read
