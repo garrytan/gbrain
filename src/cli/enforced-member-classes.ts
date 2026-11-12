@@ -86,7 +86,7 @@ export const ARGUMENT_CONDITIONS: Readonly<Record<string, string>> = {
 /** Arguments of classified CLI-only commands the mode refuses. */
 export const CLI_ARGUMENT_CONDITIONS: Readonly<Record<string, string>> = {
   recall: 'the facts arms (entity, --since, --question, --grep, --query) and the page arm; --pending, --supersessions, --session, --watch and --since-last-run are refused',
-  'git commit-push': 'named paths (each readable by the member, no label change, no access policy file), --dry-run and --pull; --pending, --push-only, --resolve and --allow-outside-source-root are refused; output withheld',
+  'git commit-push': 'named paths (each readable by the member, no label change, no access policy file), --dry-run and --pull; --pending, --push-only, --resolve, --untrack and --allow-outside-source-root are refused; output withheld',
   sync: 'only --source <id> (a source the member reads), --no-pull, --no-embed, --json and --dry-run; output withheld; sync status and every other flag or subcommand are refused',
   'sources refresh': 'exactly one source id the member reads, with --json or --dry-run only; output withheld; every other sources subcommand (status and writer status name held paths) is refused',
   doctor: 'plain doctor or doctor --json only; output replaced by each check name and status and the count per status',

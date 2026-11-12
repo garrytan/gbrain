@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.691.0] - 2026-11-12
+
+**A privacy label repair on a database-only page now sticks, and a supported command stops tracking a folder's files without deleting their pages.** Pages under a folder declared `storage.db_only` in `gbrain.yml` live in the database. Some of those folders still had files Git tracked from before the declaration, and on a git-canonical source every sync put the committed file back over the database, undoing a `gbrain repair visibility` that had made the page private. Sync now keeps the database version there, a commit to such a file can no longer widen who reads the page, and `gbrain git commit-push --untrack` takes the old files out of Git safely so the problem cannot come back.
+
+### Itemized changes
+
+- **Label repairs under `storage.db_only` stick.** On a strict (git-canonical) source a page whose file Git still tracks under a declared `storage.db_only` folder keeps a database change across `gbrain sync` and `gbrain sync --full`. A commit that changes the file still imports.
+- **An import there never widens.** On every managed source, a commit to a tracked file under `storage.db_only` keeps each privacy label (`visibility`, `access`, `confidentiality`, `readable_by`) the page has and the file does not state. A label the file states applies, a wider one included, so the owner can still widen on purpose. Files outside `storage.db_only` import exactly as before.
+- **Ignored pages take label repairs.** On a strict source, `gbrain repair visibility` on a page saved under a path Git ignores (`git_ignored`, no file) writes the label in the database instead of holding the page `canonical_file_missing`.
+- **`gbrain git commit-push --untrack -m <msg> -- <paths>`** removes the named files from Git and the index, keeps them on disk and commits only those deletions under the commit lock; `--dry-run --untrack` previews and refuses the same way. In a managed canonical worktree it only takes files under a `storage.db_only` folder that `gbrain.yml` at HEAD declares and `.gitignore` ignores (else `untrack_not_db_only`, nothing changed), never pushes, and every page stays live with its content. A plain commit-push of a removal staged by hand with `git rm --cached` now points at `--untrack`. Guide: [untrack](docs/guides/shared-checkout-git.md#untrack).
+- Tests: `test/db-only-labels-gst2519.test.ts`, `test/sync-classify-strict-g3.test.ts` and `test/git-commit-push-untrack-gst2519.test.ts` run on PGLite and Postgres, strict and non-strict sources.
+
 ## [0.60.690.0] - 2026-11-12
 
 ### Nightly checks stop failing on their own fixtures and sampling
