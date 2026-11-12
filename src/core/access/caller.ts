@@ -32,7 +32,7 @@ import { remotePrivacyRelaxed, requestRemotePolicy, type CallerAccess, type Fold
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
 import type { Action } from '../agent-output.ts';
-import { OperationError, opError } from '../ops/contract.ts';
+import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
@@ -68,14 +68,37 @@ function identityUnavailable(): OperationError {
     });
 }
 
+/**
+ * Marks a transient failure liveIdentity rethrew unchanged (a non-enumerable property, so the error still reads the
+ * same to the persistence consumer), so the dispatch boundary can tell it from other statements' failures.
+ */
+const TRANSIENT_LOOKUP_FAILURE = Symbol('gbrain.transientIdentityLookupFailure');
+
+/**
+ * At the MCP dispatch boundary: access_identity_unavailable (retryable, not admitted) when `error`, or an error it was
+ * wrapped in, is a transient failure of a member-identity lookup; else null. A request that fails this way at
+ * submission has written nothing, so the same request_id can be sent again. The persistence consumer never sees the
+ * mapping: its lookups keep the original error, which it releases and retries.
+ */
+export function identityLookupUnavailable(error: unknown): OperationError | null {
+  for (let e = error, depth = 0; e && typeof e === 'object' && depth < 8; e = (e as { cause?: unknown }).cause, depth++) {
+    if ((e as { [TRANSIENT_LOOKUP_FAILURE]?: true })[TRANSIENT_LOOKUP_FAILURE] === true) return markNotAdmitted(identityUnavailable());
+  }
+  return null;
+}
+
 async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
   let row: { id: string; groups: string[] } | undefined;
   try {
     [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
   } catch (error) {
     if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
+    if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
+      if (Object.isExtensible(error)) Object.defineProperty(error, TRANSIENT_LOOKUP_FAILURE, { value: true });
+      throw error;
+    }
     const code = (error as { code?: unknown } | null)?.code;
-    if (typeof code !== 'string' || !SQLSTATE_RE.test(code) || transientDatabaseFailure(error) || transientInterruption(error)) throw error;
+    if (typeof code !== 'string' || !SQLSTATE_RE.test(code)) throw error;
     throw identityUnavailable();
   }
   if (!row || normalizePrincipal(`member:${row.id}`) !== `member:${row.id}`) return [];

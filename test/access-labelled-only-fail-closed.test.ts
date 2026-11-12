@@ -59,6 +59,9 @@ const FAULT = 'XX000';
 const DROPPED = '08006';
 const LOCK_TIMEOUT = '55P03';
 const ONE_FAILURE = 1;
+const SUBMIT_SLUG = 'notes/owner-submit-example';
+const SUBMIT_CANARY = 'canarylofcsubmitx';
+const SUBMIT_REQUEST = '00000000-0000-4000-8000-00000000a1f1';
 /** Submission checks the writer's member twice (writerIdentities, writerLabelledOnly); the stored write's checks come after. */
 const SUBMISSION_LOOKUPS = 2;
 const COMBINED_PROBE = 'AS any_labelled';
@@ -306,6 +309,18 @@ for (const kind of testBackends()) {
         () => call(engine, auth, 'put_page', { slug: OWNER_SLUG, content: note('Owner lock example', [], 'Owner note ' + OWNER_CANARY + ' here.') }), SUBMISSION_LOOKUPS);
       expect({ failed, isError: value.isError, code: value.json.code ?? null }).toEqual({ failed: ONE_FAILURE, isError: false, code: null });
       expect((await pageRows(engine, OWNER_SLUG))[0]?.compiled_truth).toContain(OWNER_CANARY);
+    }, SLOW_MS);
+
+    test('fix 1 red-first (submission): an owner put_page whose submission lookup meets one lock timeout gets the retryable access_identity_unavailable, writes nothing, and commits when sent again with the same request_id', async () => {
+      const auth = await verify(engine, owner.token);
+      const params = { slug: SUBMIT_SLUG, content: note('Owner submit example', [], 'Owner note ' + SUBMIT_CANARY + ' here.'), request_id: SUBMIT_REQUEST };
+      const { value, failed } = await withFailures(engine, MEMBER_LOOKUP, ONE_FAILURE, LOCK_TIMEOUT, () => call(engine, auth, 'put_page', params));
+      expect({ failed, isError: value.isError, code: value.json.code, retryable: value.json.retryable, next: value.json.fix?.next })
+        .toEqual({ failed: ONE_FAILURE, isError: true, code: 'access_identity_unavailable', retryable: true, next: 'wait' });
+      expect(await pageRows(engine, SUBMIT_SLUG)).toEqual([]);
+      const again = await call(engine, auth, 'put_page', params);
+      expect({ isError: again.isError, code: again.json.code ?? null }).toEqual({ isError: false, code: null });
+      expect((await pageRows(engine, SUBMIT_SLUG))[0]?.compiled_truth).toContain(SUBMIT_CANARY);
     }, SLOW_MS);
 
     test('fix 1 red-first (stored audience and attested actor): a write for a labelled-only member stays labelled-only when re-resolving who it writes for fails', async () => {
