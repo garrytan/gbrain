@@ -294,6 +294,7 @@ test/list-pages-empty-type-notice-gbra449.test.ts
 test/lower-tier-label-hold.test.ts
 test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
+test/maintenance-unattended.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts

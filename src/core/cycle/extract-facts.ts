@@ -723,6 +723,8 @@ export interface ExtractFactsOpts {
    * (src/core/facts/reconcile-watermark.ts). The dream cycle sets it.
    */
   drain?: FactsReconcileDrainOpts;
+  /** GBRA-438: write new rows without calling the embedding provider; the stale-fact embed drain adds their vectors later. */
+  deferEmbedding?: boolean;
 }
 
 export interface ExtractFactsResult {
@@ -1038,7 +1040,7 @@ export async function runExtractFacts(
     // consolidate's cosine clustering and find_trajectory's drift_score see
     // them. Rows updated in place keep their vectors: the claim text is
     // unchanged. Falls open without an embedding provider, with a warning.
-    if (toInsert.length > 0) {
+    if (toInsert.length > 0 && !opts.deferEmbedding) {
       if (isAvailable('embedding')) {
         try {
           const texts = toInsert.map(e => e.fact);

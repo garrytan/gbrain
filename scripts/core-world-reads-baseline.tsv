@@ -498,6 +498,7 @@ src/core/interaction.ts	process_env	3	W6: settings plane out of the core
 src/core/last-retrieved.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/link-extraction.ts	process_env	2	W6: settings plane out of the core
 src/core/link-validity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/maintenance/run.ts	fs_import	1	GBRA-438: unattended upkeep checks that a source checkout still exists before running filesystem phases there (a vanished checkout runs the database-only phases instead of failing each run); moves with the W7 filesystem boundary
 src/core/markdown-chunks.ts	process_env	1	W6: settings plane out of the core
 src/core/markdown.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/mcp-client.ts	module_collection	1	W6: per-engine state, or mark as a constant table

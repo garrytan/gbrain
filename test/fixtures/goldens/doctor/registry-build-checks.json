@@ -819,6 +819,10 @@
       },
       {
         "category": "ops",
+        "name": "unattended_maintenance"
+      },
+      {
+        "category": "ops",
         "name": "embed_backfill_stalled"
       },
       {

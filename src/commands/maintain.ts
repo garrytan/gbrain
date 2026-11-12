@@ -13,18 +13,15 @@
 
 import { existsSync } from 'fs';
 import { isAbsolute } from 'path';
-import { isAvailable } from '../core/ai/gateway.ts';
-import { fenceRepairLlmEnabled } from '../core/fence-repair/config.ts';
-import { resolveFenceRepairModel } from '../core/fence-repair/model.ts';
-import { resolveContentRepairModel } from '../core/content-repair/llm.ts';
-import { loadConfigSnapshot } from '../core/config-snapshot.ts';
-import { readDecideConfig } from '../core/ai/decide/config.ts';
-import { hasTypesafeKey } from '../core/ai/decide/index.ts';
+import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import type { BrainHealth } from '../core/types.ts';
 import { buildChecks, computeDoctorReport, type DoctorReport, type Check } from './doctor.ts';
 import { extractStaleFromDB } from './extract.ts';
-import { resolveCyclePhases, runCycle, type CycleReport, type CyclePhase } from '../core/cycle.ts';
+import { runCycle, type CycleReport } from '../core/cycle.ts';
+import { maintainSafePhases, readSafePhaseProviders, isValidRunnerName, runUnattendedMaintenance, type UpkeepOutcome } from '../core/maintenance/run.ts';
+import { readUpkeepStatus } from '../core/maintenance/status.ts';
+import { cliRenderContext, noticeBlock, renderAction, renderNotice, type Action } from '../core/agent-output.ts';
 import { ItemRun } from '../core/item-failure.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
@@ -42,6 +39,19 @@ export interface MaintainOptions {
   safe: boolean;
   dryRun: boolean;
   help: boolean;
+  unattended: boolean;
+  runner: string;
+  status: boolean;
+  purge: boolean;
+  yes: boolean;
+  expect: string | null;
+}
+
+function flagValue(args: string[], flag: string): string | null {
+  const i = args.indexOf(flag);
+  if (i >= 0) return args[i + 1] ?? '';
+  const eq = args.find((a) => a.startsWith(flag + '='));
+  return eq ? eq.slice(flag.length + 1) : null;
 }
 
 export interface MaintainReport {
@@ -64,6 +74,12 @@ export function parseMaintainArgs(args: string[]): MaintainOptions {
     safe,
     dryRun: args.includes('--dry-run') || !safe,
     help: args.includes('--help') || args.includes('-h'),
+    unattended: args.includes('--unattended'),
+    runner: flagValue(args, '--runner') ?? 'cli',
+    status: args.includes('--status'),
+    purge: args.includes('--purge'),
+    yes: args.includes('--yes'),
+    expect: flagValue(args, '--expect'),
   };
 }
 
@@ -80,44 +96,8 @@ export function extractCycleFreshnessSourceIds(checks: Check[]): string[] {
   return [...ids].sort();
 }
 
-/**
- * The cycle phases `--safe` may run: free, and never hard-deleting. The page
- * purge and every phase that calls a model stay with `gbrain dream` and
- * `gbrain pages purge-deleted`.
- */
-export const MAINTAIN_SAFE_PHASES: readonly CyclePhase[] = [
-  'lint', 'backlinks', 'sync', 'fence_repair', 'content_repair', 'unindexed_files',
-  'extract', 'extract_facts', 'resolve_symbol_edges', 'recompute_emotional_weight',
-  'consolidate', 'orphans', 'schema-suggest',
-];
-
-/** Which providers a safe phase would call on this brain; those phases are held back. */
-export interface SafePhaseProviders {
-  embedding: boolean;
-  decideConflict: boolean;
-  fenceRepairModel: boolean;
-  contentRepairModel: boolean;
-}
-
-export function maintainSafePhases(sourceId: string, providers: SafePhaseProviders): { phases: CyclePhase[]; held: CyclePhase[] } {
-  const held: CyclePhase[] = [];
-  if (providers.embedding || providers.decideConflict) held.push('extract_facts');
-  if (providers.fenceRepairModel || providers.embedding) held.push('fence_repair');
-  if (providers.contentRepairModel || providers.embedding) held.push('content_repair');
-  const phases = resolveCyclePhases(undefined, sourceId)
-    .filter((phase) => MAINTAIN_SAFE_PHASES.includes(phase) && !held.includes(phase));
-  return { phases, held };
-}
-
-async function readSafePhaseProviders(engine: BrainEngine): Promise<SafePhaseProviders> {
-  const repairLlm = await fenceRepairLlmEnabled(engine);
-  return {
-    embedding: isAvailable('embedding'),
-    decideConflict: readDecideConfig(await loadConfigSnapshot(engine), { typesafeKey: hasTypesafeKey() }).slots.conflict.mode !== 'off',
-    fenceRepairModel: repairLlm && (await resolveFenceRepairModel(engine)) !== null,
-    contentRepairModel: repairLlm && (await resolveContentRepairModel(engine)) !== null,
-  };
-}
+// The step list --safe shares with unattended upkeep lives in the runner core.
+export { MAINTAIN_SAFE_PHASES, maintainSafePhases, type SafePhaseProviders } from '../core/maintenance/run.ts';
 
 async function buildDoctorReport(engine: BrainEngine): Promise<DoctorReport> {
   const checks = await buildChecks(engine, ['--json', '--scope=brain']);
@@ -241,13 +221,24 @@ export async function runMaintain(engine: BrainEngine, args: string[]): Promise<
   const opts = parseMaintainArgs(args);
   if (opts.help) {
     console.log(`Usage: gbrain maintain [--safe] [--dry-run] [--json]
+       gbrain maintain --unattended [--runner <name>] [--json]
+       gbrain maintain --status [--json]
+       gbrain maintain --purge [--yes --expect <hash>] [--json]
 
 Conservative self-healing maintenance.
 
 Modes:
-  --dry-run   Preview safe actions without writes. Default when --safe is absent.
-  --safe      Apply safe actions: stale extraction and source cycle freshness.
-  --json      Emit a structured before/action/after report.
+  --dry-run     Preview safe actions without writes. Default when --safe is absent.
+  --safe        Apply safe actions: stale extraction and source cycle freshness.
+  --unattended  Run free upkeep once when it is due: links, timeline, facts index,
+                bookkeeping GC and, with an embedding key, the embedding backlog
+                within maintenance.embed_daily_usd (default $1 a day; 0 = off).
+                Never purges a page or calls a chat model. Records
+                maintenance.last_run; --runner names the caller (default cli).
+  --status      Show the last upkeep run, the next due time and what waits for you.
+  --purge       Preview the page purge (soft-deleted pages past purge.retention_hours);
+                apply it with --yes --expect <hash> from the preview.
+  --json        Emit a structured report.
 
 Not auto-applied:
   source-file frontmatter fixes, schema-pack upgrades, atom-pack changes,
@@ -257,6 +248,9 @@ Not auto-applied:
 `);
     return;
   }
+  if (opts.unattended) return void await runUnattendedCli(engine, opts);
+  if (opts.status) return void await runStatusCli(engine, opts);
+  if (opts.purge) return void await runPurgeCli(engine, opts);
 
   const beforeHealth = await engine.getHealth();
   const beforeDoctor = await buildDoctorReport(engine);
@@ -301,4 +295,84 @@ function printMaintainReport(report: MaintainReport): void {
   if (report.mode === 'dry-run') {
     console.log('Run `gbrain maintain --safe` to apply safe actions.');
   }
+}
+
+function printNotice(code: string, why: string, fix: Action | undefined): void {
+  process.stderr.write(noticeBlock(renderNotice({ code, kind: 'info', why, ...(fix ? { fix } : {}) }, cliRenderContext())) + '\n');
+}
+
+async function runUnattendedCli(engine: BrainEngine, opts: MaintainOptions): Promise<UpkeepOutcome | void> {
+  if (!isValidRunnerName(opts.runner)) {
+    console.error(`--runner must be a short lowercase name (letters, digits, - or _), got "${opts.runner}".`);
+    setCliExitVerdict(2);
+    return;
+  }
+  const outcome = await runUnattendedMaintenance(engine, { runner: opts.runner });
+  if (outcome.exit) setCliExitVerdict(outcome.exit);
+  if (opts.json) {
+    console.log(JSON.stringify({ ...outcome, ...(outcome.fix ? { fix: renderAction(outcome.fix, cliRenderContext()) } : {}) }, null, 2));
+    return outcome;
+  }
+  console.log(outcome.message);
+  for (const step of outcome.record?.steps ?? []) {
+    if (outcome.status !== 'ran') break;
+    console.log(`  ${step.status}: ${step.name} (${step.scope})${step.code ? ` ${step.code}` : step.reason ? ` ${step.reason}` : ''}`);
+  }
+  if (outcome.status === 'skipped' && outcome.code) printNotice(outcome.code, outcome.message, outcome.fix);
+  return outcome;
+}
+
+async function runStatusCli(engine: BrainEngine, opts: MaintainOptions): Promise<void> {
+  const status = await readUpkeepStatus(engine);
+  const { fix, ...rest } = status;
+  if (opts.json) {
+    console.log(JSON.stringify({ ...rest, ...(fix ? { fix: renderAction(fix, cliRenderContext()) } : {}) }, null, 2));
+    return;
+  }
+  console.log(status.message);
+  if (status.last_run) console.log(`Last run: ${status.last_run} (${status.runner}), next due: ${status.next_due_at}`);
+  if (status.held.length) console.log(`Held back on this brain (they would call a provider): ${status.held.join(', ')}`);
+  console.log(`Left for you (paid, opt-in; gbrain dream or an autopilot runs them): ${status.paid_phases_opt_in.join(', ')}`);
+  if (fix) console.log(`Fix: ${fix.argv!.join(' ')}: ${fix.why}`);
+}
+
+/** Hash of exactly what a purge would remove, so --expect binds the apply to the preview the person saw. */
+export function purgePreviewHash(retentionHours: number, pages: ReadonlyArray<{ source_id?: string; slug: string }>): string {
+  const keys = pages.map((p) => `${p.source_id ?? 'default'}/${p.slug}`).sort();
+  return createHash('sha256').update(JSON.stringify({ retentionHours, keys })).digest('hex').slice(0, 12);
+}
+
+async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<void> {
+  const [{ selectPurgeCandidates, purgeDeletedPagesCoordinated }, { readPurgeRetentionHours }] = await Promise.all([
+    import('../core/persistence/purge-deleted.ts'), import('../core/sync-reconcile.ts')]);
+  const retention = await readPurgeRetentionHours(engine);
+  const selection = await selectPurgeCandidates(engine, retention, { automatic: true });
+  const pages: Array<{ source_id?: string; slug: string }> = selection.managed
+    ? selection.candidates.map((c) => ({ source_id: c.source_id, slug: c.slug }))
+    : selection.slugs.map((slug) => ({ slug }));
+  const hash = purgePreviewHash(retention, pages);
+  const apply = ['gbrain', 'maintain', '--purge', '--yes', '--expect', hash];
+  if (!opts.yes) {
+    const preview = { mode: 'preview', retention_hours: retention, count: pages.length, pages: pages.slice(0, 50), blocked: selection.blocked.length, hash,
+      ...(pages.length ? { apply: renderAction({ argv: apply, consent: ['destructive'], actor: 'agent', requires_exclusive: false,
+        why: `Permanently deletes the ${pages.length} page(s) listed (soft-deleted more than ${retention}h ago); gbrain restore cannot bring them back.` }, cliRenderContext()) } : {}) };
+    if (opts.json) { console.log(JSON.stringify(preview, null, 2)); return; }
+    console.log(`${pages.length} soft-deleted page(s) are past the ${retention}h recovery window.`);
+    for (const p of pages.slice(0, 50)) console.log(`  ${p.source_id ?? 'default'}/${p.slug}`);
+    if (pages.length > 50) console.log(`  ...and ${pages.length - 50} more`);
+    if (pages.length) console.log(`Nothing was deleted. To purge exactly these, run: ${apply.join(' ')}`);
+    return;
+  }
+  if (opts.expect !== hash) {
+    const why = opts.expect ? `The purge set changed since the preview (expected ${opts.expect}, now ${hash}); nothing was deleted.` : 'A purge needs --expect <hash> from the preview; nothing was deleted.';
+    setCliExitVerdict(3);
+    const fix: Action = { argv: ['gbrain', 'maintain', '--purge'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows the current purge set and its hash; it deletes nothing.' };
+    if (opts.json) console.log(JSON.stringify({ mode: 'refused', code: 'preview_changed', why, hash, fix: renderAction(fix, cliRenderContext()) }, null, 2));
+    else console.error(`${why} Preview again: gbrain maintain --purge`);
+    return;
+  }
+  const result = await purgeDeletedPagesCoordinated(engine, retention, { automatic: true });
+  if (result.error) setCliExitVerdict(1);
+  if (opts.json) { console.log(JSON.stringify({ mode: 'applied', purged: result.count, slugs: result.slugs, blocked: result.blocked, deferred: result.deferred, ...(result.error ? { error: result.error } : {}) }, null, 2)); return; }
+  console.log(`Purged ${result.count} page(s).${result.blocked.length ? ` ${result.blocked.length} blocked; see --json.` : ''}`);
 }
