@@ -173,7 +173,7 @@ export function openclawSkillPluginRegistered(dir = openclawSkillPluginDir()): b
 }
 
 /** Build the library from this gbrain's source and keep it at <lib>/<sha256>.mjs, writable by its owner only. */
-async function ensureLibrary(home: string, previous: string | null): Promise<{ sha256: string; wrote: boolean; path: string }> {
+export async function ensureResolverLibrary(home: string, previous: string | null): Promise<{ sha256: string; wrote: boolean; path: string }> {
   const { buildResolverLibrary, LIBRARY_FILE } = await import('../../commands/skill-resolver-library.ts');
   const dir = openclawSkillLibDir(home);
   const built = await buildResolverLibrary(join(dir, LIBRARY_FILE));
@@ -322,7 +322,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   }
 
   let lib: { sha256: string; wrote: boolean; path: string };
-  try { lib = await ensureLibrary(home, prior?.library_sha256 ?? null); } catch (e) {
+  try { lib = await ensureResolverLibrary(home, prior?.library_sha256 ?? null); } catch (e) {
     return fail({ code: e instanceof ResolverError && e.code === 'skill_source_unreadable' ? 'skill_source_unreadable' : 'skill_resolver_setup_incomplete',
       message: `The skill resolver library could not be built (${(e as Error).message}). The catalogs were built; the state file and the plugin were not written.` });
   }

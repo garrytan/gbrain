@@ -9,8 +9,8 @@ model.
 
 - **Off by default.** Nothing changes until you build a catalog and wire a
   harness to call `gbrain skills resolve`, or turn on the hook lane with
-  `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw: the
-  plugin below). Setup writes nothing for it otherwise.
+  `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw and
+  Pi: the plugin and extension below). Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
   network, no model, no clock, no randomness on the turn path.
@@ -41,7 +41,7 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Claude Code plugins | `gbrain skills index build --catalog claude-code-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
-| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. |
+| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. For Pi, `gbrain setup pi --skill-loading resolve` builds `pi-user` for you (see below). |
 | OpenClaw | `openclaw skills list --json \| gbrain skills index build --catalog openclaw-main --from-json - --dir <skills dir> --harness openclaw` | The list builds as is: the name is the id, and a skill OpenClaw hides from the model is skipped as ineligible. Each listed skill takes its body, path and triggers from the `--dir` skill of the same name; folder-only skills stay out. |
 | Other adapters | `gbrain skills index build --catalog <name> --from-json - --harness <h>` | The adapter pipes its skill list (schema below) and owns rebuilds. |
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
@@ -252,6 +252,55 @@ and, over the last 24 hours, the turns, outcomes, how many reads were of
 suggested skills and the deadline-miss rate. Above 5% over at least 20 turns
 it warns with `skill_resolve_timeout`; keep a rollout in shadow until the rate
 is under that on the real host.
+
+## Pi extension
+
+Pi runs extensions inside its own Node process, so the resolver goes there as
+an extension instead of a per-turn CLI call.
+`gbrain setup pi --skill-loading resolve --gbrain-bin <abs path>`:
+
+1. Builds one catalog, `pi-user`, from the skill directories Pi loads in every
+   project: `$PI_CODING_AGENT_DIR/skills` (default `~/.pi/agent/skills`) and
+   `~/.agents/skills`. Project skills (`.pi/skills`, a project's
+   `.agents/skills`) are not in it.
+2. Writes the Node library to `~/.gbrain/lib/<sha256>.mjs` (the same one the
+   OpenClaw plugin uses), the state to `~/.gbrain/pi-skill-resolver.json`
+   (mode 0600) and the extension to
+   `$PI_CODING_AGENT_DIR/extensions/gbrain-skill-resolver/`.
+3. Runs one turn through the extension under Node, and, with `pi` on PATH,
+   checks that `pi --help` lists the extension's `--gbrain-skill-resolver`
+   flag. If it does not, Pi is not loading the extension: setup exits 3 with
+   `skill_resolver_plugin_not_installed` (check that `PI_CODING_AGENT_DIR` is
+   the same for Pi and for setup).
+
+Before each user run (Pi's `before_agent_start`) the extension sends up to 3
+suggestions with at least a description match as one hidden message right
+after the prompt, with each skill's SKILL.md path. Pi stores that message in
+the session and replays it on later turns, and a skill already suggested in a
+session is not suggested again, so each suggestion costs its tokens once.
+After a compaction (`session_compact`) the session starts fresh, so skills can
+be offered again. Pinned skills go in a system prompt section,
+`<gbrain_pinned_skills>`, on every run with the same text, so the prompt
+cache keeps working. Runs Pi starts itself (`messageType: custom`) get the pins
+but no suggestions. A pinned skill is never suggested, and neither is a skill
+Pi does not show the model on that run (not loaded, or
+`disable-model-invocation: true`).
+
+Ranking runs in a worker thread. A run waits at most 150 ms while the worker
+starts (the first run of a `pi -p` process) and 50 ms after that; a miss sends
+nothing and is logged as `timeout`. Measured with Pi 1.5.2 on a 4-core cloud
+machine, a cold `pi -p` run waited 70 to 100 ms, and the whole run took about
+150 ms longer than with `--no-extensions`. Each run appends one line (outcome,
+duration, suggested ids; never the prompt) to
+`skill-index/logs/pi-<date>.jsonl`, and `gbrain doctor --only skill_resolver`
+reports the extension, the library, the catalog and the last day's runs.
+
+Coverage is partial: Pi started with extensions off (`pi --no-extensions`, or
+a program that embeds Pi with `noExtensions`, as QM does) loads no extension,
+so those sessions get nothing, and doctor says so. `gbrain skills pin add <id>
+--catalog pi-user` updates the pins from Pi's next run. `gbrain setup pi
+--skill-loading off` removes the extension and the state; pins stay in
+config.json.
 
 ## Pinned skills
 

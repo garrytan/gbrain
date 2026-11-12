@@ -22,6 +22,7 @@ import { CLAUDE_PLUGINS_CATALOG, projectCatalogPrefix, userCatalogName } from '.
 import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill-resolver-config.ts';
 import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState } from '../../../core/setup/skill-resolver-hook.ts';
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
+import { describePiSkillView, piSkillView, type PiSkillView } from './skill-resolver-pi.ts';
 
 const name = 'skill_resolver';
 const HARNESSES: ResolverHarness[] = ['claude-code', 'codex', 'hermes'];
@@ -37,6 +38,8 @@ export interface SkillResolverView {
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number> };
   /** The OpenClaw plugin (gbrain setup openclaw --skill-loading resolve|shadow), when any of it exists. */
   openclaw?: OpenclawSkillView;
+  /** The Pi extension (gbrain setup pi --skill-loading resolve), when any of it exists. */
+  pi?: PiSkillView;
 }
 
 function recentLane(home: string): SkillResolverView['recent'] | null {
@@ -79,8 +82,9 @@ export async function skillResolverView(home = configDir()): Promise<SkillResolv
     harnesses.push({ harness, on: on.includes(harness), hook, catalogs: views });
   }
   const openclaw = await openclawSkillView(home);
-  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw) return null;
-  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}) };
+  const pi = await piSkillView(home);
+  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw && !pi) return null;
+  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}), ...(pi ? { pi } : {}) };
 }
 
 const setupArgv = (harness: string) => ['gbrain', 'setup', harness, '--skill-loading', 'resolve'];
@@ -95,7 +99,8 @@ export function describeSkillResolver(v: SkillResolverView): string {
   });
   const errs = Object.entries(v.recent.errors).map(([c, n]) => `${c} x${n}`).join(', ');
   const oc = v.openclaw ? `; ${describeOpenclawSkill(v.openclaw).line}` : '';
-  return `Skill resolver: ${parts.join('; ') || (v.openclaw ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}.`;
+  const pi = v.pi ? `; ${describePiSkillView(v.pi).line}` : '';
+  return `Skill resolver: ${parts.join('; ') || (v.openclaw || v.pi ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}${pi}.`;
 }
 
 export function skillResolverCheck(v: SkillResolverView | null): Check | null {
@@ -120,6 +125,12 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} OpenClaw: ${oc.what}.`, details: { ...details, code: oc.code },
       fix: { argv: ['gbrain', 'setup', 'openclaw', '--skills-index-only'], consent: [], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${oc.code}`,
         why: 'Rebuilds the OpenClaw catalogs, the library and the plugin state without running any OpenClaw command; gbrain setup openclaw --skill-loading resolve reinstalls the plugin itself.' } };
+  }
+  const pi = v.pi ? describePiSkillView(v.pi).problem : null;
+  if (pi) {
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} Pi: ${pi.what}.`, details: { ...details, code: pi.code },
+      fix: { argv: setupArgv('pi'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${pi.code}`,
+        why: 'Rebuilds the pi-user catalog, the library and the state, and rewrites the Pi extension; gbrain setup pi --skill-loading off removes it instead.' } };
   }
   return { name, status: 'ok', message: describeSkillResolver(v), details };
 }
