@@ -20,6 +20,8 @@ Since v0.60.677.0, every unknown-side `file_drift` hold written under the earlie
 - A pass stopped partway keeps the holds it re-screened, and the next pass reads only the rest.
 - `gbrain sync status` reads `resumable` / `commits_waiting` when nothing else is pending (or only holds that need no person) but the checkout's HEAD is past the last synced commit, with a `next` that runs the sync. It used to read `synced` until the next sync happened to run. A hold that needs a person keeps its own reason, and a company-brain source, which syncs to its approved revision, never reads it.
 - With `sync.on_commit` off, the notifier's fix now says so, instead of saying that no resident runs.
+- A large source that the background syncer could not finish no longer retries forever with the same short budget. A resident gives its first run 30 seconds, and every resident restart or change of the process holding the notifier counted as "first" again, so each retry stopped at the same point having saved nothing. That short budget now goes only to a source with no failed attempts on record, and a retry after a run that saved nothing gets the full sync budget.
+- A source the background syncer marked stalled (`notifier_stalled`, "retrying every 300 s") now really is retried every five minutes. With `sync.on_commit` off (the default), the retry only happened while the original sync request was still on record, and a run that stopped early could clear that request, so the source sat stalled with nothing retrying it and nothing in the log. The retry now continues until a run completes, also after a restart or when another resident takes over the notifier, which now reads the state the previous one recorded.
 
 ## [0.60.685.0] - 2026-11-12
 
