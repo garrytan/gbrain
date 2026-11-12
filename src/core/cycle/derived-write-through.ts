@@ -36,6 +36,7 @@ import { validateSourceId } from '../utils.ts';
 import { isDbOnly, loadStorageConfig } from '../storage-config.ts';
 import { deletePageThrough, isWriteThroughDisabled, resolvePageWriteTarget, writePageThrough, type PageWriteTarget } from '../write-through.ts';
 import { urlCloneReadOnly } from '../url-clone.ts';
+import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { classifyGitCheckout, type GitCheckoutClass } from '../git-checkout.ts';
 import { checkoutRoot, commitAndPush, commitPathsLocked, notePending, scopePaths } from '../git/commit-push.ts';
@@ -355,7 +356,7 @@ async function dreamFileTarget(engine: BrainEngine, brainDir: string, slug: stri
  * #6982: write the file of a page the dream cycle wrote in the database (a synthesis or patterns output, the cycle
  * summary) without replacing an edit only the file holds, then commit it (#8073: `commitDerivedChanges`; a refused
  * commit rolls the file back and returns its `write_through_failed` hold). Nothing is written with `sync.write_through`
- * off, for a clone gbrain owns, or for a declared `storage.db_only` slug: the database is the copy of record. The file is
+ * off, for a read-only mirror or a clone gbrain owns, or for a declared `storage.db_only` slug: the database is the copy of record. The file is
  * the page's file of record (`resolvePageWriteTarget`: recorded source_path, own-local_path roots); a source with no
  * usable checkout (no root configured, or the root is missing) keeps the caller's brainDir layout (`<brainDir>/<slug>.md`,
  * foreign sources under `.sources/<id>/`). The file is replaced only when `replaceableFile` finds nothing in it the
@@ -381,6 +382,7 @@ async function writeDreamFile(engine: BrainEngine, brainDir: string, slug: strin
   opts: { nativeSourceId: string; markdown: string }): Promise<{ result: DreamPageFileWrite; change?: DerivedFileChange }> {
   if (await isWriteThroughDisabled(engine)) return { result: { written: false, skipped: 'disabled_by_config' } };
   if (await urlCloneReadOnly(engine, sourceId)) return { result: { written: false, skipped: 'url_clone' } };
+  if (await sourceMirrorReadOnly(engine, sourceId)) return { result: { written: false, skipped: 'mirror_read_only' } };
   const target = await dreamFileTarget(engine, brainDir, slug, sourceId, opts.nativeSourceId);
   if ('skipped' in target) return { result: { written: false, skipped: target.skipped } };
   try {
@@ -411,7 +413,7 @@ async function writeDreamFile(engine: BrainEngine, brainDir: string, slug: strin
  */
 export async function removeDreamPageFile(engine: BrainEngine, brainDir: string, slug: string, sourceId: string,
   nativeSourceId: string): Promise<{ removed: boolean; held?: string }> {
-  if (await isWriteThroughDisabled(engine) || await urlCloneReadOnly(engine, sourceId)) return { removed: false };
+  if (await isWriteThroughDisabled(engine) || await sourceMirrorReadOnly(engine, sourceId)) return { removed: false };
   const target = await dreamFileTarget(engine, brainDir, slug, sourceId, nativeSourceId);
   if ('skipped' in target) return { removed: false };
   const { filePath } = target;

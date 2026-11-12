@@ -99,6 +99,64 @@ function refuseCommits(b: Brain): void {
 
 for (const { backend, databaseUrl } of pathologicalArms()) {
   describe(`#8073 dream reverse-write commits its files (${backend})`, () => {
+    test('#8935: a read-only mirror keeps new dream pages and the cycle summary database-only', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await b.engine.executeRaw(`UPDATE sources SET config = '{"mirror_read_only":true}'::jsonb WHERE id = $1`, [SOURCE]);
+        const head = b.git('rev-parse', 'HEAD');
+        const result = await b.reverseWrite([IDEA, PLAN]);
+        const summary = await writeDreamPageFile(b.engine, b.brainDir, SUMMARY, SOURCE,
+          { nativeSourceId: SOURCE, markdown: serializePageToMarkdown((await b.engine.getPage(SUMMARY, { sourceId: SOURCE }))!, []) });
+        expect({ written: result.written, held: result.held, summary: summary.written,
+          head: b.git('rev-parse', 'HEAD'), dirty: dirty(b), files: filesUnder(b.root) })
+          .toEqual({ written: 0, held: [], summary: false, head, dirty: '', files: ['README.md'] });
+        expect((await b.engine.getPage(IDEA, { sourceId: SOURCE }))?.title).toBe('Alice Example idea');
+      });
+    }, 180_000);
+
+    test('#8935: enabling mirror mode preserves an existing file during rewrite and retirement', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await b.reverseWrite([IDEA]);
+        const before = readFileSync(b.path(IDEA), 'utf8');
+        await importFromContent(b.engine, IDEA, page('Alice Example idea', 'A newer database-only dream.'), { noEmbed: true, sourceId: SOURCE });
+        await b.engine.executeRaw(`UPDATE sources SET config = '{"mirror_read_only":true}'::jsonb WHERE id = $1`, [SOURCE]);
+        const head = b.git('rev-parse', 'HEAD');
+        const result = await b.reverseWrite([IDEA]);
+        const removed = await removeDreamPageFile(b.engine, b.brainDir, IDEA, SOURCE, SOURCE);
+        expect({ written: result.written, held: result.held, removed: removed.removed,
+          bytes: readFileSync(b.path(IDEA), 'utf8'), head: b.git('rev-parse', 'HEAD'), dirty: dirty(b) })
+          .toEqual({ written: 0, held: [], removed: false, bytes: before, head, dirty: '' });
+        await b.engine.executeRaw(`UPDATE sources SET config = '{}'::jsonb WHERE id = $1`, [SOURCE]);
+        expect((await b.reverseWrite([IDEA])).written).toBe(1);
+        expect(readFileSync(b.path(IDEA), 'utf8')).toContain('A newer database-only dream.');
+      });
+    }, 180_000);
+
+    test('#8935: a retired mirror page keeps its matching tracked file', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await b.reverseWrite([IDEA]);
+        const before = readFileSync(b.path(IDEA), 'utf8');
+        await b.engine.executeRaw(`UPDATE sources SET config = '{"mirror_read_only":true}'::jsonb WHERE id = $1`, [SOURCE]);
+        const head = b.git('rev-parse', 'HEAD');
+        const removed = await removeDreamPageFile(b.engine, b.brainDir, IDEA, SOURCE, SOURCE);
+        expect({ removed: removed.removed, bytes: readFileSync(b.path(IDEA), 'utf8'), head: b.git('rev-parse', 'HEAD'), dirty: dirty(b) })
+          .toEqual({ removed: false, bytes: before, head, dirty: '' });
+      });
+    }, 180_000);
+
+    test('#8935: a mirror without a checkout cannot use brainDir fallback, while a writable sibling publishes', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await b.engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('mirror','mirror','{"mirror_read_only":true}'::jsonb)`);
+        await importFromContent(b.engine, IDEA, page('Mirror idea', 'Database-only mirror output.'), { noEmbed: true, sourceId: 'mirror' });
+        const held: string[] = [];
+        const written = await reverseWriteDreamRefs(b.engine, b.brainDir,
+          [{ slug: IDEA, source_id: 'mirror' }, { slug: PLAN, source_id: SOURCE }],
+          { phase: 'synthesize', nativeSourceId: SOURCE, render: (p, tags) => serializePageToMarkdown(p, tags), held });
+        expect({ written, held, fallback: existsSync(join(b.root, '.sources', 'mirror')), sibling: existsSync(b.path(PLAN)), dirty: dirty(b) })
+          .toEqual({ written: 1, held: [], fallback: false, sibling: true, dirty: '' });
+        expect((await b.engine.getPage(IDEA, { sourceId: 'mirror' }))?.title).toBe('Mirror idea');
+      });
+    }, 180_000);
+
     test('a reverse-write of several pages lands as one commit naming exactly their files, and the checkout stays clean', async () => {
       await withBrain(databaseUrl, 'git', async b => {
         const before = commitCount(b);
