@@ -364,6 +364,21 @@ export function isDeadlockError(err: unknown): boolean {
   return /40P01|deadlock detected/i.test(msg);
 }
 
+/** Refuse up front when a pre-existing oauth_* table has a foreign column type. */
+async function assertOAuthTableShapes(engine: BrainEngine): Promise<void> {
+  const expected: Array<[string, string]> = [
+    ['oauth_tokens', 'expires_at'], ['oauth_codes', 'expires_at'], ['oauth_clients', 'client_secret_expires_at'],
+  ];
+  for (const [table, column] of expected) {
+    const rows = await engine.executeRaw<{ data_type: string }>(
+      `SELECT data_type FROM information_schema.columns
+       WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`, [table, column]);
+    if (rows[0] && String(rows[0].data_type) !== 'bigint') {
+      throw new Error(`${table}.${column} is ${String(rows[0].data_type)}, expected bigint: an existing ${table} table that gbrain did not create is in the way; rename it and re-run`);
+    }
+  }
+}
+
 export async function runMigrations(engine: BrainEngine): Promise<{ applied: number; current: number }> {
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
@@ -473,6 +488,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
   try {
     // Pre-flight: warn about connections that might block DDL
     await checkForBlockingConnections(engine);
+    if (pending.some(m => m.version >= 210)) await assertOAuthTableShapes(engine);
 
     for (const m of pending) {
       if (!quietReplay) process.stderr.write(`  [${m.version}] ${m.name}...\n`);

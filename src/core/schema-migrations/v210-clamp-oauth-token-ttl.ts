@@ -27,6 +27,11 @@ const ISSUANCE_CLOCK_SLACK_SECONDS = 300;
 export async function clampOAuthTokenTtls(engine: BrainEngine): Promise<void> {
   await engine.transaction(async tx => {
     const sql = sqlQueryForEngine(tx);
+    const [col] = await sql`SELECT data_type FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = 'oauth_tokens' AND column_name = 'expires_at'`;
+    if (col && String(col.data_type) !== 'bigint') {
+      throw new Error(`oauth_tokens.expires_at is ${String(col.data_type)}, expected bigint: an existing oauth_tokens table that gbrain did not create is in the way; rename it and re-run`);
+    }
     const clients = await sql`SELECT * FROM oauth_clients ORDER BY client_id FOR UPDATE`;
     const names = new Map(clients.map(row => [String(row.client_id), String(row.client_name ?? '')]));
     for (const row of clients) {
