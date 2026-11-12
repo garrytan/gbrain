@@ -21,6 +21,8 @@ export interface IdleUpkeepOpts {
   runner: string;
   signal: AbortSignal;
   budgetMs?: number;
+  /** The process's first idle run: parked items get one more set of slices (UpkeepOpts.retryParked). */
+  retryParked?: boolean;
   log?: (line: string) => void;
   /** Test seams, passed to the runner. */
   now?: () => Date;
@@ -32,26 +34,30 @@ export interface IdleUpkeepOpts {
 export async function runIdleUpkeep(engine: BrainEngine, opts: IdleUpkeepOpts): Promise<UpkeepOutcome | null> {
   try {
     if (opts.signal.aborted || !await upkeepEnabled(engine)) return null;
-    if (!upkeepDue(await readUpkeepRecord(engine), (opts.now ?? (() => new Date()))())) return null;
+    const record = await readUpkeepRecord(engine);
+    if (!upkeepDue(record, (opts.now ?? (() => new Date()))()) && !(opts.retryParked && record?.parked?.length)) return null;
   } catch {
     return null;
   }
   const startedAt = Date.now();
   opts.log?.(`[gbrain serve] idle upkeep: started`);
   const outcome = await runUnattendedMaintenance(engine, {
-    runner: opts.runner, budgetMs: opts.budgetMs ?? IDLE_UPKEEP_BUDGET_MS, signal: opts.signal,
+    runner: opts.runner, budgetMs: opts.budgetMs ?? IDLE_UPKEEP_BUDGET_MS, signal: opts.signal, ...(opts.retryParked ? { retryParked: true } : {}),
     ...(opts.now ? { now: opts.now } : {}), ...(opts.providers ? { providers: opts.providers } : {}), ...(opts.cycle ? { cycle: opts.cycle } : {}),
   });
   opts.log?.(`[gbrain serve] idle upkeep: finished in ${Date.now() - startedAt} ms (${outcome.status}${outcome.code ? ` ${outcome.code}` : ''})`);
   return outcome;
 }
 
+/** One idle upkeep run; `retryParked` is true on the process's first run. */
+export type IdleUpkeep = (engine: BrainEngine, signal: AbortSignal, retryParked: boolean) => Promise<unknown>;
+
 export interface IdleUpkeepTimerDeps {
   intervalMs: number;
   setInterval: (fn: () => void, ms: number) => unknown;
   clearInterval: (handle: unknown) => void;
   /** One run with the abort signal a request trips; defaults to `runIdleUpkeep` as runner `serve`. */
-  upkeep?: (engine: BrainEngine, signal: AbortSignal) => Promise<unknown>;
+  upkeep?: IdleUpkeep;
   log?: (line: string) => void;
 }
 
@@ -61,9 +67,10 @@ export interface IdleUpkeepTimerDeps {
  * only opens the window. A request that starts mid-run aborts it.
  */
 export function armIdleUpkeep(engine: BrainEngine, deps: IdleUpkeepTimerDeps): { stop(): void } {
-  const upkeep = deps.upkeep ?? ((e: BrainEngine, signal: AbortSignal) => runIdleUpkeep(e, { runner: 'serve', signal, log: deps.log }));
+  const upkeep: IdleUpkeep = deps.upkeep ?? ((e, signal, retryParked) => runIdleUpkeep(e, { runner: 'serve', signal, retryParked, log: deps.log }));
   const sawForeground = foregroundWindow();
   let opened = false;
+  let first = true;
   let running: AbortController | null = null;
   const unsubscribe = onForegroundRequest(() => running?.abort());
   const handle = deps.setInterval(() => {
@@ -72,8 +79,10 @@ export function armIdleUpkeep(engine: BrainEngine, deps: IdleUpkeepTimerDeps): {
     if (active || running) return;
     const controller = new AbortController();
     running = controller;
+    const retryParked = first;
+    first = false;
     Promise.resolve()
-      .then(() => upkeep(engine, controller.signal))
+      .then(() => upkeep(engine, controller.signal, retryParked))
       .catch(() => { /* best-effort; never kill serve */ })
       .finally(() => { if (running === controller) running = null; });
   }, deps.intervalMs);

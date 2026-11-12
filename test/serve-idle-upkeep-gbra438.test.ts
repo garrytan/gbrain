@@ -54,6 +54,7 @@ function harness() {
   const cleared: unknown[] = [];
   const events: string[] = [];
   const runs: AbortSignal[] = [];
+  const retries: boolean[] = [];
   let sweepGate = gate();
   let upkeepGate = gate();
   const opts: ServeOptions = {
@@ -62,15 +63,16 @@ function harness() {
     setInterval: (fn) => { timers.push(fn); return timers.length; }, clearInterval: (h) => { cleared.push(h); },
     mcpStdio: false, bootTimeoutMs: 0, sweepEnabled: true, factsDrain: false,
     sweep: async () => { events.push('sweep:start'); await sweepGate.promise; events.push('sweep:end'); },
-    upkeep: async (_engine, signal) => {
+    upkeep: async (_engine, signal, retryParked) => {
       events.push('upkeep:start');
       runs.push(signal);
+      retries.push(retryParked);
       await Promise.race([upkeepGate.promise, new Promise<void>((r) => signal.addEventListener('abort', () => r()))]);
       events.push(signal.aborted ? 'upkeep:aborted' : 'upkeep:end');
     },
   };
   return {
-    stdin, signals, timers, cleared, events, runs, opts,
+    stdin, signals, timers, cleared, events, runs, retries, opts,
     tick: () => timers[0]!(),
     openSweep: () => { sweepGate.open(); sweepGate = gate(); },
     openUpkeep: () => { upkeepGate.open(); upkeepGate = gate(); },
@@ -113,6 +115,21 @@ describe('stdio serve: idle upkeep on the idle tick', () => {
     await until(() => h.events.includes('upkeep:end'));
     expect(h.events.filter((e) => e === 'sweep:start')).toHaveLength(1);
     expect(h.events.filter((e) => e === 'upkeep:start')).toHaveLength(1);
+  });
+
+  test("the process's first idle run retries parked items (retryParked); later runs do not", async () => {
+    const h = harness();
+    await runServe(engineOf('pglite'), [], h.opts);
+    h.tick(); h.tick();
+    for (const n of [1, 2]) {
+      await until(() => h.events.filter((e) => e === 'sweep:start').length === n);
+      h.openSweep();
+      await until(() => h.runs.length === n);
+      h.openUpkeep();
+      await until(() => h.events.filter((e) => e === 'upkeep:end').length === n);
+      if (n === 1) h.tick();
+    }
+    expect(h.retries).toEqual([true, false]);
   });
 
   test('stdin data aborts the run in flight', async () => {
@@ -203,6 +220,7 @@ describe('HTTP serve: the same idle tick, keyed on request activity', () => {
     expect(h.runs).toHaveLength(1);
     h.tick();
     await until(() => h.runs.length === 2);
+    expect(h.retries).toEqual([true, false]);
     h.openUpkeep();
     h.stopServer();
     await served;

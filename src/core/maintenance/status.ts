@@ -14,7 +14,7 @@ import {
 /** Past this age, an upkeep run (or a brain with none) reads as overdue. */
 export const UPKEEP_OVERDUE_MS = 48 * 60 * 60 * 1000;
 
-export type UpkeepState = 'ok' | 'never' | 'off' | 'autopilot' | 'overdue' | 'failing';
+export type UpkeepState = 'ok' | 'never' | 'off' | 'autopilot' | 'overdue' | 'failing' | 'parked';
 
 export interface UpkeepStatus {
   state: UpkeepState;
@@ -25,6 +25,8 @@ export interface UpkeepStatus {
   held: string[];
   next_due_at: string | null;
   failing: UpkeepFailure | null;
+  /** Items the serve's budgeted runs gave up on; an unbudgeted run finishes them. */
+  parked: NonNullable<UpkeepRecord['parked']>;
   pending_purge_count: number | null;
   paid_phases_opt_in: string[];
   embed_spend_today_usd: number | null;
@@ -89,7 +91,7 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
   const keyed = isAvailable('embedding');
   const base = {
     runner: record?.runner ?? null, last_run: record?.at ?? null, steps: record?.steps ?? [], held: record?.held ?? [],
-    next_due_at: record?.next_due_at ?? null, failing: null as UpkeepFailure | null, pending_purge_count: pending,
+    next_due_at: record?.next_due_at ?? null, failing: null as UpkeepFailure | null, parked: record?.parked ?? [], pending_purge_count: pending,
     paid_phases_opt_in: [...PAID_PHASES], embed_spend_today_usd: keyed ? spent : null, embed_daily_cap_usd: keyed ? cap : null,
   };
   const purgeNote = pending
@@ -114,6 +116,11 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
   const age = nowMs - Date.parse(record.at);
   if (age > UPKEEP_OVERDUE_MS) {
     return { ...base, fix, alternative_fix: scheduleFix(), state: 'overdue', message: `Free upkeep last ran ${ago(age)} ago (${record.runner}), past its 48h window.${SCHEDULE_NOTE}${purgeNote}${spendNote}` };
+  }
+  if (base.parked.length) {
+    const named = base.parked.map((p) => `${p.key} after ${p.slices} slices`).join(', ');
+    return { ...base, fix, alternative_fix: scheduleFix(), state: 'parked',
+      message: `Upkeep inside serve parked ${named}; the scheduled run or gbrain maintain --unattended finishes it.${purgeNote}${spendNote}` };
   }
   const ran = record.steps.filter((s) => s.status === 'ok' || s.status === 'warn').length;
   const due = Date.parse(record.next_due_at) - nowMs;

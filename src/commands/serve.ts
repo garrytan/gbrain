@@ -3,6 +3,7 @@ import { PoolStallWatch } from '../core/postgres-engine/pool-stall-watch.ts';
 import { installRestartRequiredExit, recordServeTransport, resolveRestartRequiredExitSeconds, SERVE_RESTART_REQUIRED_EXIT_ENV } from './serve-health.ts';
 import { SERVE_UNHEALTHY_EXIT_CODE } from '../core/exit-codes.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import type { IdleUpkeep } from '../core/maintenance/idle.ts';
 // C10: `--fail-fast` / GBRAIN_SERVE_FAIL_FAST=1 — exit with the classified envelope instead of status-only/degraded mode (decided in src/cli.ts's connect path; F4's status mode consults it too).
 export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serve-fail-fast.ts';
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
@@ -80,11 +81,11 @@ function idleSweepIntervalMs(): number {
 }
 
 /** GBRA-438: idle upkeep, skipped while a delegated sync owns the event loop (the sweep's rule); loaded lazily, off the boot path. */
-function defaultIdleUpkeep(log: (line: string) => void): (engine: BrainEngine, signal: AbortSignal) => Promise<unknown> {
-  return async (engine, signal) => {
+function defaultIdleUpkeep(log: (line: string) => void): IdleUpkeep {
+  return async (engine, signal, retryParked) => {
     if ((await loadSyncRunner()).isDelegatedSyncRunning()) return;
     const { runIdleUpkeep } = await import('../core/maintenance/idle.ts');
-    await runIdleUpkeep(engine, { runner: 'serve', signal, log });
+    await runIdleUpkeep(engine, { runner: 'serve', signal, retryParked, log });
   };
 }
 
@@ -92,8 +93,9 @@ function defaultIdleUpkeep(log: (line: string) => void): (engine: BrainEngine, s
  * GBRA-438: the stdio serve's idle upkeep, one run at a time. abort() (stdin data), a foreground request or stop()
  * (shutdown) aborts the run in flight. run() never throws.
  */
-function idleUpkeepSlot(upkeep: (engine: BrainEngine, signal: AbortSignal) => Promise<unknown>): { run(engine: BrainEngine): Promise<void>; abort(): void; stop(): void } {
+function idleUpkeepSlot(upkeep: IdleUpkeep): { run(engine: BrainEngine): Promise<void>; abort(): void; stop(): void } {
   let running: AbortController | null = null;
+  let first = true;
   const abort = (): void => { running?.abort(); };
   const unsubscribe = onForegroundRequest(abort);
   return {
@@ -101,7 +103,9 @@ function idleUpkeepSlot(upkeep: (engine: BrainEngine, signal: AbortSignal) => Pr
       if (running) return;
       const controller = new AbortController();
       running = controller;
-      try { await upkeep(engine, controller.signal); } catch { /* idle upkeep is best-effort; never kill serve */ } finally { running = null; }
+      const retryParked = first;
+      first = false;
+      try { await upkeep(engine, controller.signal, retryParked); } catch { /* idle upkeep is best-effort; never kill serve */ } finally { running = null; }
     },
     abort,
     stop() { unsubscribe(); abort(); },
@@ -183,8 +187,8 @@ export interface ServeOptions {
   sweep?: (engine: BrainEngine) => Promise<unknown>;
   // Test seam for idle upkeep (GBRA-438): one run with the abort signal stdin
   // data or a foreground request trips. Defaults to runIdleUpkeep as runner
-  // 'serve' (on and due only, small budget, never at boot).
-  upkeep?: (engine: BrainEngine, signal: AbortSignal) => Promise<unknown>;
+  // 'serve' (on and due only, small budget, never at boot); retryParked is true on the process's first run.
+  upkeep?: IdleUpkeep;
   // Kill switch seam for the idle sweep. Defaults to
   // `process.env.GBRAIN_SWEEP !== '0'` when omitted.
   sweepEnabled?: boolean;

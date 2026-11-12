@@ -341,6 +341,7 @@ async function runStatusCli(engine: BrainEngine, opts: MaintainOptions): Promise
   }
   console.log(status.message);
   if (status.last_run) console.log(`Last run: ${status.last_run} (${status.runner}), next due: ${status.next_due_at}`);
+  for (const p of status.parked) console.log(`Parked: ${p.key} since ${p.since} (${p.slices} slices)`);
   if (status.held.length) console.log(`Held back on this brain (they would call a provider): ${status.held.join(', ')}`);
   console.log(`Left for you (paid, opt-in; gbrain dream or an autopilot runs them): ${status.paid_phases_opt_in.join(', ')}`);
   if (fix) console.log(`Fix: ${fix.argv!.join(' ')}: ${fix.why}`);

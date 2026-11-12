@@ -45,6 +45,12 @@ export const UPKEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 /** A step failing with the same code this many runs in a row backs off to once a week. */
 export const UPKEEP_BACKOFF_FAILURES = 3;
 export const UPKEEP_BACKOFF_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * A budgeted (serve) run parks an item that started and did not finish in this many slices of one round: the round
+ * settles without it, budgeted runs skip it, and an unbudgeted run (`gbrain maintain --unattended`, the schedule) or a
+ * serve's first idle run (`retryParked`) runs it again.
+ */
+export const UPKEEP_PARK_AFTER_SLICES = 30;
 /** An autopilot whose global pass is younger than this owns upkeep. */
 export const AUTOPILOT_OWNS_WITHIN_MS = 48 * 60 * 60 * 1000;
 
@@ -131,8 +137,14 @@ export interface UpkeepRecord {
   status: 'ok' | 'partial' | 'failed';
   steps: UpkeepStep[];
   held: CyclePhase[];
-  /** Items already done in an unfinished round; null once the round finished. */
-  cursor: { round_started_at: string; done: string[] } | null;
+  /**
+   * Items already settled in an unfinished round; null once the round finished. `attempts` counts a budgeted run's
+   * unfinished slices per item, `retry` names parked items this round runs again, and `due_at` is the due time a
+   * round that only reruns parked items keeps.
+   */
+  cursor: { round_started_at: string; done: string[]; attempts?: Record<string, number>; retry?: string[]; due_at?: string } | null;
+  /** Items budgeted runs gave up on (UPKEEP_PARK_AFTER_SLICES), with their total unfinished slices. */
+  parked?: Array<{ key: string; since: string; slices: number }>;
   next_due_at: string;
   consecutive_failures: UpkeepFailure[];
   embed?: { spent_today_usd: number; cap_usd: number };
@@ -155,6 +167,8 @@ export interface UpkeepOpts {
   /** Wall-clock budget for the whole run; an unfinished round resumes on the next run. */
   budgetMs?: number;
   signal?: AbortSignal;
+  /** A serve's first idle run: parked items get one more set of UPKEEP_PARK_AFTER_SLICES slices. */
+  retryParked?: boolean;
   /** Test seams. */
   providers?: SafePhaseProviders;
   capacityPaused?: (engine: BrainEngine) => Promise<{ command: string; config_key: string } | null>;
@@ -356,24 +370,54 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
       if (prior && refused.code) await engine.setConfig(MAINTENANCE_LAST_RUN_KEY, JSON.stringify({ ...prior, last_skip: { at: now.toISOString(), code: refused.code } }));
       return refused;
     }
-    if (!upkeepDue(prior, now)) {
+    const budgeted = opts.budgetMs !== undefined;
+    const sources = (await engine.listAllSources()).sort((a, b) => a.id.localeCompare(b.id));
+    const keys = ['global', ...sources.map((source) => `source:${source.id}`)];
+    const parked = (prior?.parked ?? []).filter((p) => keys.includes(p.key)).map((p) => ({ ...p }));
+    const retrying = !budgeted || opts.retryParked ? parked.map((p) => p.key) : [];
+    const retryOnly = !upkeepDue(prior, now);
+    if (retryOnly && retrying.length === 0) {
       return { status: 'not_due', exit: 0, message: `Upkeep already ran at ${prior!.at}; next due at ${prior!.next_due_at}.`, record: prior! };
     }
     const plan = unattendedPlan(opts.providers ?? await readSafePhaseProviders(engine));
-    const sources = (await engine.listAllSources()).sort((a, b) => a.id.localeCompare(b.id));
-    const round = prior?.cursor ?? { round_started_at: now.toISOString(), done: [] as string[] };
+    const round = prior?.cursor ?? (retryOnly
+      ? { round_started_at: now.toISOString(), done: keys.filter((key) => !retrying.includes(key)), due_at: prior!.next_due_at }
+      : { round_started_at: now.toISOString(), done: [] as string[] });
+    const attempts: Record<string, number> = { ...round.attempts };
+    const retry = new Set([...(round.retry ?? []), ...retrying]);
+    for (const key of retrying) delete attempts[key];
+    const done = round.done.filter((key) => !retrying.includes(key));
     const failures = prior?.consecutive_failures ?? [];
     const items: WorkItem[] = [
       { key: 'global', phases: plan.global },
       ...sources.map((source) => ({ key: `source:${source.id}`, sourceId: source.id, phases: plan.source })),
-    ].filter((item) => !round.done.includes(item.key));
-    const deadline = opts.budgetMs !== undefined ? Date.now() + opts.budgetMs : Infinity;
+    ].filter((item) => !done.includes(item.key));
+    const deadline = budgeted ? Date.now() + opts.budgetMs! : Infinity;
     const steps: UpkeepStep[] = [];
-    const done = [...round.done];
     let lockBusy = false;
     for (const item of items) {
       if (Date.now() >= deadline || opts.signal?.aborted) break;
       const scope = item.sourceId ?? 'global';
+      if (budgeted && !retry.has(item.key) && parked.some((p) => p.key === item.key)) {
+        steps.push({ name: 'cycle', scope, status: 'skipped', reason: 'parked' });
+        done.push(item.key);
+        continue;
+      }
+      const settle = (): void => {
+        done.push(item.key);
+        delete attempts[item.key];
+        retry.delete(item.key);
+      };
+      const unfinished = (): void => {
+        if (!budgeted) return;
+        const slices = (attempts[item.key] ?? 0) + 1;
+        if (slices < UPKEEP_PARK_AFTER_SLICES) { attempts[item.key] = slices; return; }
+        const entry = parked.find((p) => p.key === item.key);
+        if (entry) entry.slices += slices;
+        else parked.push({ key: item.key, since: now.toISOString(), slices });
+        steps.push({ name: 'cycle', scope, status: 'skipped', reason: 'parked' });
+        settle();
+      };
       const phases = item.phases.filter((phase) => !backedOff(failures, phase, scope, now));
       for (const phase of item.phases) if (!phases.includes(phase)) steps.push({ name: phase, scope, status: 'skipped', reason: 'backed_off' });
       const source = item.sourceId ? sources.find((s) => s.id === item.sourceId) : undefined;
@@ -391,13 +435,16 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
           const report = await (opts.cycle ?? runCycle)(engine, cycleOpts);
           if (report.status === 'skipped' && report.reason === 'cycle_already_running') { lockBusy = true; break; }
           steps.push(...stepsFrom(report, scope));
-          if (report.reason === 'aborted' || report.reason === 'lock_stolen') break;
+          if (report.reason === 'aborted') { unfinished(); break; }
+          if (report.reason === 'lock_stolen') break;
         }
-        done.push(item.key);
+        settle();
+        const at = parked.findIndex((p) => p.key === item.key);
+        if (at >= 0) parked.splice(at, 1);
       } catch (error) {
-        if (combined?.signal.aborted) break;
+        if (combined?.signal.aborted) { unfinished(); break; }
         steps.push({ name: 'cycle', scope, status: 'fail', code: (error as { code?: string } | null)?.code ?? 'cycle_failed' });
-        done.push(item.key);
+        settle();
       } finally {
         combined?.dispose();
       }
@@ -418,7 +465,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     if (finished && engine.kind === 'pglite' && !opts.signal?.aborted) steps.push(await checkpointStep(engine));
     const failed = steps.filter((step) => step.status === 'fail');
     const nextFailures: UpkeepFailure[] = failures
-      .filter((f) => !steps.some((s) => s.name === f.step && s.scope === f.scope && s.status !== 'fail' && s.reason !== 'backed_off'));
+      .filter((f) => !steps.some((s) => s.name === f.step && s.scope === f.scope && s.status !== 'fail' && s.reason !== 'backed_off' && s.reason !== 'parked'));
     for (const step of failed) {
       const entry = nextFailures.find((f) => f.step === step.name && f.scope === step.scope);
       if (entry && entry.code === step.code) { entry.count += 1; entry.last_at = now.toISOString(); }
@@ -431,9 +478,13 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
       status: failed.length === 0 ? 'ok' : failed.length === steps.filter((s) => s.status !== 'skipped').length ? 'failed' : 'partial',
       steps,
       held: plan.held,
-      cursor: finished ? null : { round_started_at: round.round_started_at, done },
-      next_due_at: new Date(finished ? now.getTime() + UPKEEP_INTERVAL_MS : now.getTime()).toISOString(),
+      cursor: finished ? null : {
+        round_started_at: round.round_started_at, done,
+        ...(Object.keys(attempts).length ? { attempts } : {}), ...(retry.size ? { retry: [...retry] } : {}), ...(round.due_at ? { due_at: round.due_at } : {}),
+      },
+      next_due_at: finished ? round.due_at ?? new Date(now.getTime() + UPKEEP_INTERVAL_MS).toISOString() : now.toISOString(),
       consecutive_failures: nextFailures,
+      ...(parked.length ? { parked } : {}),
       ...(embed ? { embed } : {}),
     };
     await engine.setConfig(MAINTENANCE_LAST_RUN_KEY, JSON.stringify(record));

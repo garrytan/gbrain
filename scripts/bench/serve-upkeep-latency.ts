@@ -13,6 +13,12 @@
  *
  *   bun scripts/bench/serve-upkeep-latency.ts --pages 1401 --out ~/upkeep-latency [--calls 150] [--links 3]
  *     [--interval-ms 1000] [--gap-ms 1200-3200] [--baseline-calls 150] [--max-copies 8]
+ *     [--small-source-pages 0] [--quiet-ms 0]
+ *
+ * --small-source-pages adds a second source (zz-small, after default in item order) so a default source too big for
+ * the slice budget shows the give-up rule: it parks and zz-small still finishes. --quiet-ms adds a quiet arm: a fresh
+ * copy served with no tool calls for that long, then served again after a restart (its first idle run retries parked
+ * items), reporting the upkeep slices per serve process, when the last one ended, and the parked record.
  *
  * Writes calls.jsonl and summary.json under --out and prints p50/p95/p99/max per arm and tag.
  */
@@ -26,6 +32,7 @@ const CALLS = Number(flag('calls', '150')), BASELINE_CALLS = Number(flag('baseli
 const INTERVAL_MS = Number(flag('interval-ms', '1000')), MAX_COPIES = Number(flag('max-copies', '8'));
 const [GAP_MIN, GAP_MAX] = flag('gap-ms', '1200-3200').split('-').map(Number) as [number, number];
 const OUT = resolve(flag('out', join(process.cwd(), 'upkeep-latency')));
+const SMALL_PAGES = Number(flag('small-source-pages', '0')), QUIET_MS = Number(flag('quiet-ms', '0'));
 const CLI = join(import.meta.dir, '..', '..', 'src', 'cli.ts');
 const WORDS = ['alpha', 'harbor', 'ledger', 'orbit', 'meadow', 'signal', 'copper', 'lantern', 'summit', 'river', 'quartz', 'falcon'];
 
@@ -36,10 +43,11 @@ function keylessEnv(home: string, extra: Record<string, string> = {}): Record<st
   return { ...env, HOME: home, GBRAIN_HOME: home, GBRAIN_SKIP_STARTUP_HOOKS: '1', ...extra };
 }
 
-async function gbrain(home: string, args: string[]): Promise<void> {
+async function gbrain(home: string, args: string[]): Promise<string> {
   const p = Bun.spawn([process.execPath, '--no-env-file', CLI, ...args], { cwd: home, env: keylessEnv(home), stdout: 'pipe', stderr: 'pipe' });
-  const [code, err] = await Promise.all([p.exited, new Response(p.stderr).text()]);
+  const [code, out, err] = await Promise.all([p.exited, new Response(p.stdout).text(), new Response(p.stderr).text()]);
   if (code !== 0) throw new Error(`gbrain ${args.join(' ')} exited ${code}: ${err.slice(-2000)}`);
+  return out;
 }
 
 const quantile = (xs: number[], q: number) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.ceil(q * s.length) - 1)]! : NaN; };
@@ -61,6 +69,19 @@ async function buildPristine(): Promise<string> {
     writeFileSync(join(home, 'notes', `${name(i)}.md`), `---\ntitle: Page ${i}\ntype: concept\n---\n# Page ${i}\n\nPage ${i} is about ${words}. It relates to ${links}.\n\n## Timeline\n\n- **2026-${month}-${day}** | Notes — Page ${i} was reviewed.\n`);
   }
   await gbrain(home, ['import', join(home, 'notes'), '--no-embed']);
+  if (SMALL_PAGES > 0) {
+    mkdirSync(join(home, 'small'), { recursive: true });
+    for (let i = 0; i < SMALL_PAGES; i++) writeFileSync(join(home, 'small', `s${i}.md`), `---
+title: Small ${i}
+type: concept
+---
+# Small ${i}
+
+Small ${i} relates to [[s${(i + 1) % SMALL_PAGES}]].
+`);
+    await gbrain(home, ['sources', 'add', 'zz-small', '--path', join(home, 'small'), '--force']);
+    await gbrain(home, ['import', join(home, 'small'), '--source', 'zz-small', '--no-embed']);
+  }
   cpSync(join(home, '.gbrain'), join(OUT, 'snapshot', '.gbrain'), { recursive: true });
   writeFileSync(join(OUT, 'snapshot', 'built'), `${Date.now() - started}\n`);
   console.log(`built ${PAGES} pages in ${Math.round((Date.now() - started) / 1000)} s`);
@@ -69,14 +90,19 @@ async function buildPristine(): Promise<string> {
 
 interface Call { arm: string; copy: number; tag: 'upkeep' | 'sweep' | 'idle'; ms: number; ok: boolean }
 
-async function runCopy(arm: 'upkeep' | 'baseline', copy: number, home: string, want: () => boolean, record: (c: Call) => void): Promise<{ upkeepFinished: number[]; roundDone: boolean }> {
-  rmSync(join(home, '.gbrain'), { recursive: true, force: true });
-  cpSync(join(OUT, 'snapshot', '.gbrain'), join(home, '.gbrain'), { recursive: true });
+async function runCopy(arm: 'upkeep' | 'baseline' | 'quiet', copy: number, home: string, want: () => boolean, record: (c: Call) => void,
+  opts: { restore?: boolean; quietMs?: number } = {}): Promise<{ upkeepFinished: number[]; roundDone: boolean; lastUpkeepAt: number | null; servedMs: number; parked: unknown }> {
+  if (opts.restore !== false) {
+    rmSync(join(home, '.gbrain'), { recursive: true, force: true });
+    cpSync(join(OUT, 'snapshot', '.gbrain'), join(home, '.gbrain'), { recursive: true });
+  }
+  const servedAt = Date.now();
   if (arm === 'baseline') await gbrain(home, ['config', 'set', 'maintenance.auto', 'false']);
   const serve = Bun.spawn([process.execPath, '--no-env-file', CLI, 'serve'], { cwd: home, env: keylessEnv(home, { GBRAIN_SWEEP_IDLE_INTERVAL_MS: String(INTERVAL_MS) }), stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' });
   let log = '';
   const pending = new Map<number, (ok: boolean) => void>();
-  const errReader = (async () => { for await (const chunk of serve.stderr) { const text = new TextDecoder().decode(chunk); log += text; appendFileSync(join(OUT, `${arm}-${copy}.serve.log`), text); } })();
+  const upkeepEnds: number[] = [];
+  const errReader = (async () => { for await (const chunk of serve.stderr) { const text = new TextDecoder().decode(chunk); log += text; for (const _ of text.matchAll(/idle upkeep: finished/g)) upkeepEnds.push(Date.now() - servedAt); appendFileSync(join(OUT, `${arm}-${copy}.serve.log`), text); } })();
   const outReader = (async () => {
     let buf = '';
     for await (const chunk of serve.stdout) {
@@ -102,6 +128,7 @@ async function runCopy(arm: 'upkeep' | 'baseline', copy: number, home: string, w
     await send('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'upkeep-latency', version: '1' } });
     serve.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
     for (let w = 0; w < 5; w++) await send('tools/call', { name: 'search', arguments: { query: WORDS[w]! } });
+    if (opts.quietMs) await sleep(opts.quietMs);
     let quietSince = Date.now(), lastStarts = count(/idle upkeep: started/g), i = 0;
     while (want()) {
       await sleep(GAP_MIN + Math.random() * (GAP_MAX - GAP_MIN));
@@ -121,7 +148,8 @@ async function runCopy(arm: 'upkeep' | 'baseline', copy: number, home: string, w
     await Promise.allSettled([errReader, outReader]);
   }
   const upkeepFinished = [...log.matchAll(/idle upkeep: finished in (\d+) ms/g)].map((m) => Number(m[1]));
-  return { upkeepFinished, roundDone };
+  const status = JSON.parse(await gbrain(home, ['maintain', '--status', '--json'])) as { state: string; parked: unknown };
+  return { upkeepFinished, roundDone, lastUpkeepAt: upkeepEnds.length ? upkeepEnds[upkeepEnds.length - 1]! : null, servedMs: Date.now() - servedAt, parked: { state: status.state, parked: status.parked } };
 }
 
 mkdirSync(OUT, { recursive: true });
@@ -136,7 +164,15 @@ let baselineCalls = 0;
 await runCopy('baseline', 0, home, () => baselineCalls++ < BASELINE_CALLS, record);
 for (let copy = 0; copy < MAX_COPIES && duringUpkeep() < CALLS; copy++) {
   const r = await runCopy('upkeep', copy, home, () => duringUpkeep() < CALLS, record);
-  runs.push({ copy, round_done: r.roundDone, upkeep_slices: r.upkeepFinished.length, slice_ms: stats(r.upkeepFinished) });
+  runs.push({ copy, round_done: r.roundDone, upkeep_slices: r.upkeepFinished.length, slice_ms: stats(r.upkeepFinished), status: r.parked });
+}
+const quiet: Record<string, unknown>[] = [];
+if (QUIET_MS > 0) {
+  for (const restart of [false, true]) {
+    const r = await runCopy('quiet', 0, home, () => false, record, { restore: !restart, quietMs: QUIET_MS });
+    quiet.push({ restart, served_ms: r.servedMs, upkeep_slices: r.upkeepFinished.length, slice_ms: stats(r.upkeepFinished),
+      last_upkeep_ended_ms: r.lastUpkeepAt, quiet_tail_ms: r.servedMs - (r.lastUpkeepAt ?? 0), status: r.parked });
+  }
 }
 
 const pick = (arm: string, tag?: string) => calls.filter((c) => c.arm === arm && (!tag || c.tag === tag)).map((c) => c.ms);
@@ -149,6 +185,7 @@ const summary = {
   added_vs_baseline_ms: { p95: during.p95 - base.p95, p99: during.p99 - base.p99, max: during.max - base.max },
   failed_calls: calls.filter((c) => !c.ok).length,
   copies: runs,
+  ...(quiet.length ? { quiet } : {}),
 };
 writeFileSync(join(OUT, 'summary.json'), JSON.stringify(summary, null, 2) + '\n');
 console.log(JSON.stringify(summary, null, 2));
