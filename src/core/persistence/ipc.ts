@@ -1,9 +1,11 @@
 /** Dedicated, bounded local persistence transport. Hook IPC keeps its own small frame budget. */
 import net, { type Server, type Socket } from 'node:net';
+import { randomUUID } from 'node:crypto';
 import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import type { Action } from '../agent-output.ts';
 import type { ProjectionBacklog } from '../page-state/projections.ts';
 import { resolveSocketPathForConfig, socketHasLiveListener } from '../context/resolve-ipc.ts';
@@ -167,10 +169,23 @@ const clientBug = (message: string): OperationError => opError('invalid_params',
   'This gbrain build produced a malformed local persistence request, so nothing was sent to the owner. It is a client fault, not a caller mistake: run gbrain doctor --json on this host and report it to the user with the command that failed.',
   { fix: readFix('Checks this installation and its persistence owner without changing anything.', { argv: ['gbrain', 'doctor', '--json'] }) });
 
-function publicError(error: unknown): Record<string, unknown> {
+/**
+ * #9224: an owner fault that is not an OperationError crosses the socket as `internal_error` with an incident ID,
+ * how to recover and a read-only fix naming the owner; the cause itself goes only to the owner's own stderr.
+ */
+function publicError(error: unknown, requestId?: string): Record<string, unknown> {
   if (error instanceof OperationError) return error.toJSON();
-  // Never reflect driver errors, SQL, credentials, or private payloads.
-  return { error: 'storage_error', message: 'The persistence owner could not complete this request.' };
+  const incident = randomUUID();
+  // Never reflect driver errors, SQL, credentials, or private payloads: the cause stays on this host's owner log.
+  try {
+    const cause = error instanceof Error ? error.stack ?? `${error.name}: ${error.message}` : String(error);
+    process.stderr.write(`[gbrain persistence] request failed in this owner (incident ${incident}): ${redactConnectionInfo(cause)}\n`);
+  } catch { /* stderr gone */ }
+  return opError('internal_error', `The persistence owner failed while running this request (incident ${incident}); the request itself was not at fault.`,
+    `The process that holds this brain (the command in fix names it) hit an internal fault and wrote the cause to its own stderr under incident ${incident}; nothing about it crosses the local socket. ${requestId
+      ? `The write may have partly run: inspect request ${requestId} with gbrain write-request ${requestId} before resubmitting it. `
+      : ''}Restart that owner (for a gbrain serve an agent app launched, restart its MCP server or the agent session), then run the same command again; with no owner running, the CLI opens the brain itself. If it fails again after a restart, tell the user and give them the incident ID.`,
+    { detail: 'owner_internal', fix: writerStatusFix('Names the process that owns this brain (its PID, lane and gbrain version), read-only, so it can be restarted.') }).toJSON();
 }
 
 function responseFrame(value: unknown): string {
@@ -279,7 +294,7 @@ export async function startPersistenceIpcServer(
             error.requestId = mutation.requestId;
             if (mutation.receipt) error.writeRequest = publicWriteReceipt(mutation.receipt);
           }
-          if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: false, error: publicError(error) }));
+          if (!socket.destroyed) socket.end(responseFrame({ version: 1, ok: false, error: publicError(error, mutation?.requestId) }));
         } finally {
           if (admitted) active--;
         }
@@ -351,7 +366,7 @@ export function restoreRecoveryContract(error: OperationError, body: Record<stri
   if (typeof body.code === 'string' && body.code !== error.code) error.canonical = body.code as OperationError['canonical'];
   if (typeof body.detail === 'string') error.detail = body.detail;
   if (typeof body.retryable === 'boolean') error.retryable = body.retryable;
-  if (record(body.fix) && body.code === 'worktree_refreshing') { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
+  if (record(body.fix) && (body.code === 'worktree_refreshing' || body.code === 'internal_error' && body.detail === 'owner_internal')) { const { next: _next, command: _command, ...fix } = body.fix; error.fix = fix as unknown as Action; }
 }
 
 function remoteOperationError(value: unknown): OperationError {
