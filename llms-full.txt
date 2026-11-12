@@ -9306,6 +9306,7 @@ Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/tro
 | Doctor `links_extraction_lag` or sync says "N page(s) have un-extracted edges" | `gbrain extract --stale --dry-run --json`, then on the host `gbrain extract --stale --catch-up [--source-id <id>]` | user above 120 s, else agent | none | dry run: `actionable: 0` |
 | Doctor `links_extraction_lag` says "N page(s) failed link extraction 3 runs in a row and are held", or `extract --stale` lists failed pages | Read each page's code (`unknown_source`: the page's source row is gone; restore the source or delete the page), fix the cause, then `gbrain extract --stale [--source-id <id>] --retry-held` | agent | none | `gbrain extract --stale --dry-run --json`: `held: 0` |
 | `gbrain apply-migrations --yes` or `gbrain upgrade` stops with `Migration <N> … exhausted retries` / SQLSTATE 57014 and the schema stays behind (`migrations_pending`, reason `still_behind`) | upgrade first (#7108: long backfills run in committed batches), then follow the error's or doctor `schema_version`'s `fix` ([migration statement timeout](#migration-statement-timeout)) | agent; a longer `--statement-timeout` or ending a session only after the user agrees | none for a rerun | `gbrain doctor --only schema_version --json` |
+| `gbrain apply-migrations`, `gbrain upgrade` or `gbrain init` stops with `foreign_table` ("`<schema>.<table>.<column>` is `<type>`, but gbrain's `<table>` needs `<type>`"), or an older release stopped at v210 with `operator does not exist: timestamp with time zone > bigint` | a table another application created under one of gbrain's names (`oauth_tokens`, `oauth_clients`, `oauth_codes`) is in the same schema; nothing was changed. Ask the user, then move that table or give gbrain its own database ([foreign table](#foreign-table)) and run `gbrain apply-migrations --force-schema --yes` | user (the other application's table); agent for the rerun | none for the rerun | `gbrain doctor --only schema_version --json` |
 | A gbrain call failed with a code you don't recognize | follow `fix.next` ([protocol](../protocol/AGENT_OPERATOR_v1.md)); `gbrain errors <code>` | agent | as the fix's `consent` | the fix's `verify` |
 | A graph read omits a relationship you know existed, or says someone still works somewhere they left | the default read returns relationships true today: repeat with `status: "all"` or `as_of`; to record an end, add a dated timeline line (`Ended works_at [[companies/x]]`) or `add_link ... valid_until` ([temporal edges](temporal-edges.md)) | agent | none | `gbrain doctor --only edge_validity --json` |
 | A command exited 3 (`confirmation_required`) | relay `user_message`; run `fix.command` only after the user agrees | agent, after the user agrees | the payload's `effects` | the fix's `verify` |
@@ -9927,6 +9928,43 @@ and doctor then name it and give the fix for the case:
 the budget for migration SQL and for the batches above. It doesn't lift the
 30-second caps that v160, v200 and v234 set on themselves, or the timeouts of
 migration handlers.
+
+## A table gbrain did not create is in the way
+
+<a id="foreign-table"></a>
+
+gbrain creates its tables with `CREATE TABLE IF NOT EXISTS` in the brain's schema
+(usually `public`). When another application shares the database and already has a
+table with one of gbrain's generic names (`oauth_tokens`, `oauth_clients`,
+`oauth_codes`), older releases adopted it, added their own columns to it and then
+stopped partway through an upgrade on the first statement that compared the wrong
+type, for example v210 with `operator does not exist: timestamp with time zone > bigint`
+(#9190). Schema setup now checks those tables before the schema replay and before any
+migration, and stops with `foreign_table`, naming the table, the column, the type it
+found and the type gbrain needs. Nothing was changed.
+
+The table holds the other application's data, so ask the user before touching it:
+
+1. Give gbrain a database of its own, or move the other table to a schema of its own.
+   Moving takes its indexes and constraints along:
+   ```sql
+   CREATE SCHEMA other_app_example;
+   ALTER TABLE public.oauth_tokens SET SCHEMA other_app_example;
+   ```
+   Then point that application at the new schema (for example
+   `ALTER ROLE other_app_role SET search_path = other_app_example, public`).
+2. Run `gbrain apply-migrations --force-schema --yes`. It replays the schema, which
+   creates gbrain's own table, and then applies the pending migrations. Since #9191
+   this works on a rerun too: the rerun used to skip the replay, so a table the replay
+   creates stayed missing (`relation "oauth_tokens" does not exist`).
+   `gbrain init --migrate-only --non-interactive` does the same.
+3. Verify with `gbrain doctor --only schema_version --json`.
+
+A brain an older release stopped at v210 recovers with the same steps after
+`gbrain upgrade`. That release had already added gbrain's columns (`token_type`,
+`scopes`, `resource`) to the other table and may have turned on row-level security
+for it. Tell the user, so the other application's owner can check: a role that does
+not own the table sees no rows while row-level security is on and no policy admits it.
 
 ## Global maintenance timeouts
 

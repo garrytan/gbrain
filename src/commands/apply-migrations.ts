@@ -43,7 +43,7 @@ import { clearRepoPathWedge } from './migrations/v0_11_0-install.ts';
 import { shellQuote, type Effect } from '../core/agent-output.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { consentGate } from '../core/consent-cli.ts';
-import { opError, type OperationError } from '../core/ops/contract.ts';
+import { opError, OperationError } from '../core/ops/contract.ts';
 import { exitCliError, usageError, writeCliError } from '../cli/cli-error.ts';
 import {
   checkSchemaAfterOrchestrators,
@@ -641,13 +641,13 @@ async function runLockedMigrations(
 ): Promise<number | undefined> {
   const { doc } = report;
   const fail = (status: string, failure: OperationError): void => { doc.status = status; report.failure = failure; };
-  // Without the orchestration lease (a schema too old for it), schema work goes
-  // through initSchema(), which serializes on the schema lock.
+  // Schema work goes through initSchema(), lease or not: it takes the schema migration lock and replays the
+  // idempotent schema blob before the pending migrations, so a blob-owned table that is missing is back first (#9191).
   const migrateSchema = async (eng: BrainEngine, from: number): Promise<{ applied: number; current: number }> => {
-    if (heldLock()) { const { runMigrations } = await import('../core/migrate.ts'); return runMigrations(eng); }
     await eng.initSchema();
     const current = parseInt(await eng.getConfig('version') || String(from), 10);
-    return { applied: Math.max(0, current - from), current };
+    const { MIGRATIONS } = await import('../core/migrate.ts');
+    return { applied: MIGRATIONS.filter(m => m.version > from && m.version <= current).length, current };
   };
   // Bug 3 — --force-retry: write an explicit reset marker for a wedged
   // migration, then return. User re-runs `gbrain apply-migrations --yes`
@@ -710,6 +710,7 @@ async function runLockedMigrations(
       await eng.disconnect();
     } catch (err) {
       console.error(`--force-schema failed: ${(err as Error).message}`);
+      if (err instanceof OperationError && err.code === 'foreign_table') { fail('failed', err); return 1; }
       fail('failed', opError('migration_failed', `--force-schema failed: ${(err as Error).message}`,
         'Fix the database error above, then run `gbrain apply-migrations --force-schema` again.', { reason: 'schema_failed' }));
       return 1;

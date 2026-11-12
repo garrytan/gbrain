@@ -10,6 +10,18 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [Unreleased]
+
+**An upgrade no longer adopts another application's OAuth table and then stops halfway, and rerunning `gbrain apply-migrations --force-schema` now recovers a brain that stopped.** gbrain creates `oauth_tokens`, `oauth_clients` and `oauth_codes` with `CREATE TABLE IF NOT EXISTS`, so when another application sharing the Postgres database already had a table with one of those names, gbrain took it over, added its own columns to it, and a later upgrade stopped at v210 with `operator does not exist: timestamp with time zone > bigint`. That error named neither the table nor the column, and it came after earlier migrations in the same run had already applied. The documented recovery, rerunning the same command, then could not create gbrain's own table.
+
+### Itemized changes
+
+- **Schema setup refuses a table gbrain did not create, before changing anything.** Before the schema replay (`gbrain init`, every engine start that applies migrations) and before any migration in a run, gbrain checks that each OAuth table that already exists has the key column and the column types gbrain has always given it. When one does not, it stops with the new `foreign_table` error, which names the table, the column, the type it found, the type gbrain needs and the fix: give gbrain its own database, or move the other table with `ALTER TABLE <table> SET SCHEMA <other_schema>`, then run `gbrain apply-migrations --force-schema --yes`. A correctly shaped brain runs exactly as before, and v210 is unchanged. Guide: [foreign table](docs/guides/troubleshooting.md#foreign-table).
+- **`gbrain apply-migrations` replays the schema before the pending migrations on every path.** With the migration lease held (every PGLite brain, and every Postgres brain whose schema has the lease table) it ran the pending migrations without the schema replay, so a table the replay creates that was missing stayed missing and the next migration failed with `relation "<table>" does not exist`. It now goes through the same schema setup as `gbrain init --migrate-only` on every path. A brain an older release stopped at v210 recovers with `gbrain upgrade` and the steps the guide lists.
+- Tests: `test/upgrade-foreign-oauth-table.test.ts` runs on PGLite and Postgres: the refusal on an upgrade (a foreign `oauth_tokens`) and on a fresh install (a foreign `oauth_codes` or `oauth_clients`), the rerun that recreates a missing table, and the full recovery of a brain stopped at v210.
+
+Reported by @jonahberg (#9190, #9191); first fixed by @Masashi-Ono0611 in #9195 and #9193.
+
 ## [0.60.691.0] - 2026-11-12
 
 **A privacy label repair on a database-only page now sticks, and a supported command stops tracking a folder's files without deleting their pages.** Pages under a folder declared `storage.db_only` in `gbrain.yml` live in the database. Some of those folders still had files Git tracked from before the declaration, and on a git-canonical source every sync put the committed file back over the database, undoing a `gbrain repair visibility` that had made the page private. Sync now keeps the database version there, a commit to such a file can no longer widen who reads the page, and `gbrain git commit-push --untrack` takes the old files out of Git safely so the problem cannot come back.
