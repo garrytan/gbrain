@@ -6473,7 +6473,7 @@
           "addAttachment: (jobId: number, input: AttachmentInput) => Promise<Attachment>",
           "cancelJob: (id: number, opts?: { ownerClientId?: string; ownerActor?: JobActor; }) => Promise<MinionJob | null>",
           "cancelJobs: (ids: number[], opts?: { reason?: string; rootStatuses?: MinionJobStatus[]; ownerClientId?: string; ownerActor?: JobActor; }) => Promise<MinionJob[]>",
-          "claim: (lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts?: { excludeWatchdogSuspects?: boolean; excludeNames?: string[]; }) => Promise<MinionJob | null>",
+          "claim: (lockToken: string, lockDurationMs: number, queue: string, registeredNames: string[], opts?: { excludeWatchdogSuspects?: boolean; suspectWaitMs?: number; excludeNames?: string[]; }) => Promise<MinionJob | null>",
           "classifyPrivateQueueForRecovery: (queueName: string) => Promise<\"orphan\" | \"live\" | \"unowned\" | \"not_orphan\">",
           "completeJob: (id: number, lockToken: string, result?: Record<string, unknown>) => Promise<MinionJob | null>",
           "deferJob: (id: number, lockToken: string, note: string, delayMs: number) => Promise<MinionJob | null>",
@@ -6638,7 +6638,8 @@
           "shortJobReservedSlots?: number | undefined",
           "stallExitAfterMs?: number | undefined",
           "stallWarnAfterMs?: number | undefined",
-          "stalledInterval?: number | undefined"
+          "stalledInterval?: number | undefined",
+          "watchdogSuspectWaitMs?: number | undefined"
         ],
         "name": "MinionWorkerOpts"
       },
