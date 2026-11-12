@@ -335,9 +335,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // GBRA-248 W0: writes waiting on a long-quiet owner host, and a file plane that disables embeddings over a database with vectors.
   ownerHostStaleEntry,
   embeddingPlaneDisagreementEntry,
-  fenceIntegrityEntry,
   // #6770: MCP request-log size and the opt-in retention prune (read-only; the enable fix asks the user).
   mcpRequestLogRetentionEntry,
+  fenceIntegrityEntry,
   searchModeEntry,
 ];
 

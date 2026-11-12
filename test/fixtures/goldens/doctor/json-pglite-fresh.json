@@ -3617,6 +3617,54 @@
           "status": "ok"
         },
         {
+          "category": "ops",
+          "details": {
+            "bytes": 32768,
+            "docs": "docs/mcp/ADMIN.md#request-log-retention",
+            "retention_days": null,
+            "rows": 0,
+            "rows_exact": true
+          },
+          "elapsed_ms": "<volatile>",
+          "fix": {
+            "actor": "agent",
+            "argv": [
+              "gbrain",
+              "config",
+              "set",
+              "cycle.purge.mcp_request_log_retention_days",
+              "90",
+              "--brain",
+              "host"
+            ],
+            "command": "gbrain config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
+            "consent": [
+              "destructive"
+            ],
+            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
+            "next": "ask_user",
+            "requires_exclusive": false,
+            "user_message": "Your MCP request log holds 0 row(s) (0.0 MB) and nothing prunes it. Turn on 90-day retention? Request details older than 90 days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.",
+            "verify": {
+              "argv": [
+                "gbrain",
+                "doctor",
+                "--only",
+                "mcp_request_log_retention",
+                "--json",
+                "--brain",
+                "host"
+              ]
+            },
+            "why": "Turns on the request-log prune: the next cycle purge phase (or, on a PGLite brain, a live serve within the hour) deletes request rows older than 90 days. Per-client lifetime totals and the audit rows (surface, memory-setting and access changes) are kept."
+          },
+          "message": "The MCP request log holds 0 row(s) (0.0 MB); request-log retention is off, so it keeps every request.",
+          "name": "mcp_request_log_retention",
+          "readiness_state": "disabled_by_choice",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "brain",
           "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
@@ -3696,54 +3744,6 @@
           "elapsed_ms": "<volatile>",
           "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (1 source(s) scanned).",
           "name": "fence_integrity",
-          "status": "ok"
-        },
-        {
-          "category": "ops",
-          "details": {
-            "bytes": 32768,
-            "docs": "docs/mcp/ADMIN.md#request-log-retention",
-            "retention_days": null,
-            "rows": 0,
-            "rows_exact": true
-          },
-          "elapsed_ms": "<volatile>",
-          "fix": {
-            "actor": "agent",
-            "argv": [
-              "gbrain",
-              "config",
-              "set",
-              "cycle.purge.mcp_request_log_retention_days",
-              "90",
-              "--brain",
-              "host"
-            ],
-            "command": "gbrain config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
-            "consent": [
-              "destructive"
-            ],
-            "docs": "https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
-            "next": "ask_user",
-            "requires_exclusive": false,
-            "user_message": "Your MCP request log holds 0 row(s) (0.0 MB) and nothing prunes it. Turn on 90-day retention? Request details older than 90 days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.",
-            "verify": {
-              "argv": [
-                "gbrain",
-                "doctor",
-                "--only",
-                "mcp_request_log_retention",
-                "--json",
-                "--brain",
-                "host"
-              ]
-            },
-            "why": "Turns on the request-log prune: the next cycle purge phase (or, on a PGLite brain, a live serve within the hour) deletes request rows older than 90 days. Per-client lifetime totals and the audit rows (surface, memory-setting and access changes) are kept."
-          },
-          "message": "The MCP request log holds 0 row(s) (0.0 MB); request-log retention is off, so it keeps every request.",
-          "name": "mcp_request_log_retention",
-          "readiness_state": "disabled_by_choice",
-          "severity": "info",
           "status": "ok"
         },
         {
