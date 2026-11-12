@@ -1,6 +1,6 @@
 /**
  * `gbrain trust`: the memory-trust noun (#5575, DX-7). This module dispatches
- * `backfill` (A8, DX-5; `--repair-unknown-markers`, #6550 trust/marker-repair.ts), `scan` (DX-6) and `claim-sources` (legacy content, trust/claim.ts),
+ * `backfill` (A8, DX-5; `--repair-unknown-markers`, #6550 trust/marker-repair.ts; `--label-lowerings`, GST-2468 trust/label-lowerings.ts), `scan` (DX-6) and `claim-sources` (legacy content, trust/claim.ts),
  * and hands the owner subcommands (review, confirm,
  * release, drop, revert, explain, allow, disable) to src/commands/trust.ts.
  * The record is startup: 'observational', so `backfill --dry-run` and `claim-sources --dry-run` run on a
@@ -30,6 +30,10 @@ export const TRUST_BACKFILL_USAGE = [
   '  classified for you: apply rewrites only the pages you name with --slug (repeatable), at the revisions of the',
   '  preview whose hash you pass to --expect. The marker becomes the stored tier (none at owner tiers); the tier',
   '  stays. Local CLI only. Docs: docs/guides/memory-trust.md#repair-unknown-markers',
+  '',
+  'Usage: gbrain trust backfill --label-lowerings [--source ID] [--json]',
+  '  Read-only. Lists every lower_page proposal with whether its lowering write changed only privacy labels (visibility,',
+  '  access, confidentiality) and server stamps, counted by proposer. Changes no tier. Docs: docs/guides/memory-trust.md#label-lowerings',
   '',
   'Usage: gbrain trust scan [--batch-size N] [--json]',
   '  Runs the write gate\'s deterministic detector over agent-written and lower rows written before the gate,',
@@ -129,6 +133,20 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
     else console.log([`Trust scan (detector v${scan.detector_version}):`,
       ...scan.tables.map(t => `  ${t.table}: ${t.scanned} row(s) scanned, ${t.flagged} flagged${t.done ? '' : ' (more to scan)'}`),
       scan.complete ? '  Complete. Flagged rows carry their flag wherever they are read (and stay out of proactive context under trust.agent_activation suppress) until confirmed (gbrain trust review).' : `  Continue with: ${scan.resume_command}`].join('\n'));
+    return;
+  }
+  if (rest.includes('--label-lowerings')) {
+    await ctx.completeStartup?.(engine);
+    const at = rest.indexOf('--source');
+    const source = at >= 0 ? rest[at + 1] ?? '' : null;
+    if (source !== null && (!source || source.startsWith('-'))) {
+      await refuse(args, '--source needs a source id.', 'Run gbrain trust backfill --label-lowerings --source <id>, or omit --source to list every source.');
+      return;
+    }
+    const { listLabelLowerings, renderLabelLowerings } = await import('../../core/trust/label-lowerings.ts');
+    const report = await listLabelLowerings(engine, { sourceId: source });
+    if (jsonRequested(args)) await writeStdoutFinal(`${JSON.stringify(report, null, 2)}\n`);
+    else console.log(renderLabelLowerings(report));
     return;
   }
   if (rest.includes('--repair-unknown-markers')) {

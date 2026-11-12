@@ -906,6 +906,8 @@ export interface StaleMention {
   to: string;
   /** `link_kind` as stored; NULL rows (legacy / pre-v98) report as 'plain'. */
   kind: string;
+  /** `link_type` as stored (a verb on typed_ner rows), which `gbrain unlink --link-type` must name. */
+  link_type: string;
 }
 
 export interface StaleMentionsScan {
@@ -1011,11 +1013,11 @@ export async function scanStaleMentions(
 
   const rows = await engine.executeRaw<{
     from_id: number; from_slug: string; to_slug: string;
-    to_source_id: string | null; link_kind: string | null;
+    to_source_id: string | null; link_kind: string | null; link_type: string;
   }>(
     `${scannedCte}
      SELECT l.from_page_id AS from_id, f.slug AS from_slug,
-            t.slug AS to_slug, t.source_id AS to_source_id, l.link_kind
+            t.slug AS to_slug, t.source_id AS to_source_id, l.link_kind, l.link_type
        FROM links l
        JOIN scanned s ON s.id = l.from_page_id
        JOIN pages f ON f.id = l.from_page_id
@@ -1056,7 +1058,7 @@ export async function scanStaleMentions(
       const kind = row.link_kind ?? 'plain';
       staleByKind[kind] = (staleByKind[kind] ?? 0) + 1;
       if (examples.length < STALE_MENTIONS_MAX_EXAMPLES) {
-        examples.push({ from: page.slug, to: row.to_slug, kind });
+        examples.push({ from: page.slug, to: row.to_slug, kind, link_type: row.link_type });
       }
     }
   }

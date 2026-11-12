@@ -619,7 +619,7 @@ export async function reprojectTimelineRow(tx: BrainEngine, pageId: number, body
 }
 
 export function compileCanonicalProjections(page: ParsedPage, slug: string, sourceId: string, factDate: Date | null = null) {
-  const scan=scanCanonicalFences(page);
+  const scan=scanCanonicalFences({ ...page, slug });
   if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
   const fields:Array<[FenceSection,string]>=[['body',page.compiled_truth],['timeline',page.timeline ?? '']];
   return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };

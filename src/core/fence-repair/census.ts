@@ -126,7 +126,7 @@ const PAGE_COLUMNS = `id, slug, type, frontmatter, source_path, content_hash, up
 async function judgePages(engine: Exec, source: CensusSource, rows: readonly PageRow[], at: string): Promise<void> {
   const clean: string[] = [];
   for (const row of rows) {
-    const page = row.live && row.compiled_truth !== null ? { compiled_truth: row.compiled_truth, timeline: row.timeline ?? '' } : null;
+    const page = row.live && row.compiled_truth !== null ? { compiled_truth: row.compiled_truth, timeline: row.timeline ?? '', slug: row.slug } : null;
     const verdict = page && pageHasFenceText(page) ? judgeFences(page, screenFenceCtx({ type: row.type as never, frontmatter: row.frontmatter ?? {} })) : null;
     if (!verdict) { clean.push(row.slug); continue; }
     const finding: PageFinding = { ...verdict, sha256: sha256(`${page!.compiled_truth}\u0000${page!.timeline}`), checked_at: at,

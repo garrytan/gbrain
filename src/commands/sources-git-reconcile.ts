@@ -23,7 +23,7 @@ import { OperationError } from '../core/ops/contract.ts';
 import { classifyItemFailure, type ClassifiedItemFailure } from '../core/item-failure.ts';
 import { existingHostIdFor } from '../core/persistence/identity.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../core/persistence/ownership.ts';
-import { REFRESH_PUBLISH_DIVERGED_KEY, refreshWorktree } from '../core/persistence/worktree-refresh.ts';
+import { REFRESH_PUBLISH_DIVERGED_KEY, publishOptedOut, refreshWorktree } from '../core/persistence/worktree-refresh.ts';
 import { listSources } from '../core/sources-ops.ts';
 
 const USAGE = 'Usage: gbrain sources git-reconcile [<source-id>...] [--dry-run] [--wait <seconds>] [--json]';
@@ -34,6 +34,8 @@ export type SourceReconcileStatus = CheckoutReconcileStatus | 'needs_user' | 'fa
 export interface SourceReconcile {
   sources: string[]; root: string; managed: boolean; status: SourceReconcileStatus; ahead: number; behind: number;
   sha?: string; integrated?: number; reason?: string; refresh_id?: string | null;
+  /** GST-2250: the sources with `sources.auto_reconcile.source.<id>` false, whose local commits are never published here. */
+  publish_off?: string[];
   error?: { code: string; message: string; suggestion?: string; fix?: unknown };
 }
 
@@ -47,11 +49,11 @@ function groupRefusal(error: unknown, failure: ClassifiedItemFailure): Pick<Sour
     error: { code: error.code, message: error.message, ...(error.suggestion ? { suggestion: error.suggestion } : {}), ...(error.fix ? { fix: error.fix } : {}) } };
 }
 
-async function reconcileManaged(engine: BrainEngine, sourceId: string, root: string, publish: boolean, opts: ReconcileOptions): Promise<Omit<SourceReconcile, 'sources' | 'root' | 'managed'>> {
+async function reconcileManaged(engine: BrainEngine, sourceId: string, root: string, publish: boolean, opts: ReconcileOptions, unpublishedReason: string): Promise<Omit<SourceReconcile, 'sources' | 'root' | 'managed'>> {
   const level = await fetchLevel(root, gitReader(root));
   if (!level) return { status: 'no_upstream', ahead: 0, behind: 0 };
   if (!level.ahead && !level.behind) return { status: 'in_sync', ahead: 0, behind: 0, sha: level.target };
-  if (level.ahead && !publish) return { status: 'unpublished', ahead: level.ahead, behind: level.behind, sha: level.target, reason: `automatic publishing is off (${REFRESH_PUBLISH_DIVERGED_KEY} false)` };
+  if (level.ahead && !publish) return { status: 'unpublished', ahead: level.ahead, behind: level.behind, sha: level.target, reason: unpublishedReason };
   if (opts.dryRun) return { status: level.ahead ? 'published' : 'fast_forwarded', ahead: level.ahead, behind: level.behind, sha: level.target, reason: 'dry run: nothing changed' };
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const deadline = Date.now() + (opts.waitMs ?? 300_000);
@@ -71,23 +73,27 @@ async function reconcileManaged(engine: BrainEngine, sourceId: string, root: str
 
 export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptions = {}): Promise<SourceReconcile[]> {
   const explicit = !!opts.sourceIds?.length;
-  const listed = (await listSources(engine)).filter(s => s.local_path && (!explicit || opts.sourceIds!.includes(s.id)));
+  const all = (await listSources(engine)).filter(s => s.local_path);
+  const listed = all.filter(s => !explicit || opts.sourceIds!.includes(s.id));
   const unknown = (opts.sourceIds ?? []).filter(id => !listed.some(s => s.id === id));
   if (unknown.length) throw new OperationError('unknown_source', `No source with a local checkout named ${unknown.join(', ')}.`, 'gbrain sources list shows each source and its local path.');
   const configs = new Map((await engine.executeRaw<{ id: string; config: unknown }>('SELECT id, config FROM sources')).map(row => [row.id, row.config]));
   const managed = await managedPersistenceEnabled(engine);
   const configured = (await engine.getConfig(REFRESH_PUBLISH_DIVERGED_KEY))?.trim();
   const publishSetting = configured ? isTruthy(configured) : null;
-  const groups = new Map<string, { sources: string[]; root: string; managed: boolean; cloned: boolean }>();
-  for (const source of listed) {
-    if (!explicit && isSyncDisabledConfig(configs.get(source.id))) continue;
+  const groups = new Map<string, { sources: string[]; root: string; top: string; managed: boolean; cloned: boolean }>();
+  const sharers = new Map<string, string[]>();
+  for (const source of all) {
     const binding = managed ? await getWorktreeBinding(engine, source.id, existingHostIdFor(engine)) : null;
     if (managed && !binding) continue;
     const root = binding?.local_path ?? source.local_path!;
     if (!existsSync(root) || classifyGitCheckout(root) === 'not_git') continue;
+    const top = gitTopLevel(root) ?? realpathSync(root);
+    sharers.set(top, [...(sharers.get(top) ?? []), source.id]);
+    if (!listed.includes(source) || (!explicit && isSyncDisabledConfig(configs.get(source.id)))) continue;
     const key = binding ? `worktree:${binding.worktree_id}` : `path:${root}`;
-    const cloned = isOwnedClone({ id: source.id, local_path: source.local_path, config: configs.get(source.id) }) && gitTopLevel(root) === realpathSync(root);
-    const group = groups.get(key) ?? { sources: [], root, managed: !!binding, cloned };
+    const cloned = isOwnedClone({ id: source.id, local_path: source.local_path, config: configs.get(source.id) }) && top === realpathSync(root);
+    const group = groups.get(key) ?? { sources: [], root, top, managed: !!binding, cloned };
     group.sources.push(source.id);
     group.cloned &&= cloned;
     groups.set(key, group);
@@ -95,19 +101,23 @@ export async function reconcileSources(engine: BrainEngine, opts: ReconcileOptio
   if (!groups.size) return [{ sources: [], root: '', managed: false, status: 'no_repo', ahead: 0, behind: 0 }];
   const out: SourceReconcile[] = [];
   for (const group of groups.values()) {
+    const { cloned, top, ...entry } = group;
+    let off: { publish_off?: string[] } = {};
     try {
-      const { cloned, ...entry } = group;
-      const publish = group.managed ? publishSetting !== false : publishSetting ?? cloned;
+      const optedOut = await publishOptedOut(engine, sharers.get(top) ?? group.sources);
+      const publish = optedOut.length ? false : group.managed ? publishSetting !== false : publishSetting ?? cloned;
+      if (optedOut.length) off = { publish_off: optedOut };
+      const offReason = `automatic publishing is off for ${optedOut.join(', ')} (sources.auto_reconcile.source.<id> false)`;
       const result = group.managed
-        ? await withReconcileLock(group.root, opts.waitMs ?? 300_000, () => reconcileManaged(engine, group.sources[0], group.root, publish, opts))
+        ? await withReconcileLock(group.root, opts.waitMs ?? 300_000, () => reconcileManaged(engine, group.sources[0], group.root, publish, opts,
+          optedOut.length ? offReason : `automatic publishing is off (${REFRESH_PUBLISH_DIVERGED_KEY} false)`))
         : await reconcileCheckout(group.root, { dryRun: opts.dryRun, publish, ...(opts.waitMs !== undefined ? { waitMs: opts.waitMs } : {}), ...(opts.childTimeoutMs ? { childTimeoutMs: opts.childTimeoutMs } : {}),
-          ...(publishSetting === null && !cloned ? { unpublishedReason: `gbrain sources add --url did not clone this checkout for the source, or the source folder is not the repository root; publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
-      out.push({ ...entry, ...result });
+          ...(optedOut.length ? { unpublishedReason: offReason } : publishSetting === null && !cloned ? { unpublishedReason: `gbrain sources add --url did not clone this checkout for the source, or the source folder is not the repository root; publish it with gbrain git commit-push --push-only --scan-secrets --path ${group.root}, or set ${REFRESH_PUBLISH_DIVERGED_KEY} true to publish such checkouts automatically` } : {}) });
+      out.push({ ...entry, ...result, ...off });
     } catch (error) {
       const failure = classifyItemFailure(error);
       if (!(error instanceof OperationError) && failure.scope === 'run') throw error;
-      const { cloned: _cloned, ...entry } = group;
-      out.push({ ...entry, ahead: 0, behind: 0, ...groupRefusal(error, failure) });
+      out.push({ ...entry, ahead: 0, behind: 0, ...off, ...groupRefusal(error, failure) });
     }
   }
   return out;
@@ -152,6 +162,6 @@ export async function runSourcesReconcile(engine: BrainEngine, args: string[]): 
   const results = await reconcileSources(engine, options);
   const exit = results.some(r => r.status === 'needs_user') ? 1 : results.some(r => r.status === 'failed') ? 4 : 0;
   if (json) console.log(JSON.stringify({ results, exit }, null, 2));
-  else for (const r of results) console.log(line(r));
+  else for (const r of results) console.log(`${line(r)}${r.publish_off && r.status !== 'unpublished' ? ` (automatic publishing is off for ${r.publish_off.join(', ')})` : ''}`);
   if (exit) setCliExitVerdict(exit);
 }

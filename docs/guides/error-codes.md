@@ -1562,6 +1562,18 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 |---|---|---|---|---|---|---|
 | The embedding model cannot produce the width of the brain's vector column; nothing was changed. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### enforced_member_refused
+
+<a id="enforced_member_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The CLI runs under GBRAIN_ENFORCED_MEMBER and refused the command before it read or changed anything: the command or its arguments are not on the enforced member allow-list, the variable names no usable member, a target page or source is outside what the member reads, or the write would change an access or privacy label. | A launcher pins GBRAIN_ENFORCED_MEMBER so a shared agent turn acts as one member: reads show only what that member reads, writes never touch a page it cannot read or change a label, and anything not classified is refused rather than run as the trusted owner. Stderr starts with gbrain: refused under GBRAIN_ENFORCED_MEMBER=<member>: <command> [GBRAIN_ENFORCED_REFUSED]. | Do not retry here; nothing was changed. Ask the brain owner to run the command in a direct session, one without GBRAIN_ENFORCED_MEMBER. | user | `repeat the read that failed` | 3 | no |
+
+Reasons: `command_not_allowed`, `member_not_usable`, `target_not_readable`, `label_change`, `thin_client`, `as_flag`, `arguments_not_allowed`, `remember_needs_entity`.
+
+More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member.md#refused)
+
 ### engine_closed
 
 <a id="engine_closed"></a>
@@ -3354,7 +3366,7 @@ More: [docs/guides/windowed-reads.md#page_body_segmented](../../docs/guides/wind
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The page was deleted or replaced while the operation ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The page was deleted or replaced while the operation ran. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### page_not_found
 
@@ -4356,7 +4368,7 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The target changed since it was read; the expected revision no longer matches. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The target changed since it was read; the expected revision no longer matches. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### revision_required
 
@@ -4364,7 +4376,7 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The target already exists and the write named no revision: supply the expected revision read from the page (or the policy epoch) before replacing it. | Without the revision the write cannot tell an intentional replacement from an overwrite of an edit it never saw; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
+| The target already exists and the write named no revision: supply the expected revision read from the page (or the policy epoch) before replacing it. | Without the revision the write cannot tell an intentional replacement from an overwrite of an edit it never saw; nothing was changed. | Correct the request using the message above, then retry. Run: gbrain get --include-content --source '{source_id}' -- '{slug}' | agent | `repeat the read that failed` | 1 | no |
 
 ### revision_unavailable
 

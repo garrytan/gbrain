@@ -866,14 +866,18 @@ automatic expiry walker still coordinates each expired source separately.
 from a pending or uncertain administrative result and repeat the same command,
 arguments, and `--request-id` after recovery.
 
-Default admission limits are enforced atomically:
+Default admission limits are enforced atomically. The two cumulative ones,
+lifetime request IDs and terminal receipt bytes, are opt-in: gbrain's own
+receipt bookkeeping never refuses, pauses or throttles a write unless the
+operator sets one ([receipt housekeeping](#receipt-housekeeping) keeps the
+storage in check instead).
 
 | Reservation | Per principal | Per brain |
 | --- | ---: | ---: |
 | Outstanding requests | 100 | 1,000 |
-| Queued intent bytes | 32 MiB | 256 MiB |
-| Lifetime request IDs | 2,000,000 | 8,000,000 |
-| Terminal receipt reservation | 16 GiB | 64 GiB |
+| Queued intent bytes | 64 MiB | 256 MiB |
+| Lifetime request IDs | no cap unless set | no cap unless set |
+| Terminal receipt reservation | no cap unless set | no cap unless set |
 | Recovery bytes | — | 1 GiB, also 256 MiB per worktree (with `pages.segmented_storage on`: twice `pages.max_bytes` plus 2 MiB, at least 256 MiB) |
 
 Completion space is reserved at admission. Beforeimage/recovery bytes are
@@ -882,7 +886,11 @@ work; it does not discard an accepted request to make room. Terminal diagnostic
 compaction has a default eligibility threshold of 30 days and preserves replay IDs, digests, terminal
 outcomes, and frozen memory-verb result fields. Pending/recovering requests are
 not evicted, and receipts with unfinished effects stay retained without
-blocking compaction of later receipts. Lifetime IDs and replay protection are
+blocking compaction of later receipts. A caller's refused write that
+`gbrain repair failed-writes` could still replay (a writer-guard or
+`source_changed` refusal of a `put_page`, `add_timeline_entry` or
+`remember` that no later request wrote, removed or repeated) keeps its intent
+at any age; `gbrain repair receipt-compaction --include-failures` drops it explicitly. Lifetime IDs and replay protection are
 not silently reset.
 
 Each admission reserves at least 16 KiB of receipt bytes. When the request
@@ -891,9 +899,10 @@ the same statement to what the receipt keeps (its intent, authority, outcome,
 error, effects and 4 KiB of slack), so a `remember`, a maintenance write or a
 conflict gives most of its 16 KiB back at once; a page write whose embedding or
 Git effect is still queued keeps its reservation until compaction. A compacted
-receipt keeps about 4 KiB. The cumulative defaults cover one principal
-admitting 5,000 writes a day for at least a year ([growth model](#growth-model)).
-Every limit and the retention window are brain-wide database settings:
+receipt keeps about 4 KiB. A cap you set on lifetime IDs or receipt bytes
+refuses at the cap and pauses background producers at 80% of it; the
+[growth model](#growth-model) sizes one. Every limit and the retention window
+are brain-wide database settings:
 
 ```bash
 gbrain config set persistence.limits.principal_lifetime_ids 500000
@@ -901,20 +910,23 @@ gbrain config set persistence.limits.principal_terminal_bytes 3221225472
 gbrain config set persistence.receipt_retention_days 7
 ```
 
-**Say to your agent:** *"Doctor says my brain is near its write capacity. Raise the limit it names."*
+**Say to your agent:** *"Is anything in my brain's write bookkeeping limiting my writes?"*
 
 Keys are `persistence.limits.<limit>` for `principal_outstanding`,
 `brain_outstanding`, `principal_intent_bytes`, `brain_intent_bytes`,
 `principal_lifetime_ids`, `brain_lifetime_ids`, `principal_terminal_bytes`,
 `brain_terminal_bytes`, `brain_recovery_bytes` and `worktree_recovery_bytes`,
-each a nonnegative integer. `gbrain doctor` (`persistence_capacity`) forecasts
+each a nonnegative integer; `gbrain config unset` removes a cumulative cap
+again. With no cumulative cap set, `gbrain doctor` (`persistence_capacity`)
+reports receipt storage against the housekeeping target. With one set, it forecasts
 each cumulative cap from the full last-7-day admission aggregate: it warns when
 a principal or the brain uses 80% of its lifetime IDs or receipt bytes or would
 run out within `persistence.capacity.warn_days` (30) days, and fails at 95% or
 within `persistence.capacity.fail_days` (7) days. Receipt bytes are forecast at
 their compacted (net) size once compaction can start; the finding's `basis`
 says which rate it used. It prints the `gbrain config set` command with a value
-that covers about one more year at that rate; `persistence_request_growth`
+that covers about one more year at the window's mean rate (a bulk day in the
+last 24 hours shortens the days left, but is not projected for a year); `persistence_request_growth`
 uses the same threshold and value, and a `write_quota_exhausted` refusal
 carries the same command. Raising a cap is a mitigation: lifetime IDs remain
 permanent replay protection.
@@ -922,8 +934,9 @@ permanent replay protection.
 <a id="growth-model"></a>
 ### Growth model
 
-The defaults come from this model, sized for an autopilot brain that admits
-5,000 requests a day for 365 days. Configured values are never changed.
+Size a cap you choose to set from this model, which covers an autopilot brain
+that admits 5,000 requests a day for 365 days (the old defaults, before
+GBRA-108 made both caps opt-in). Configured values are never changed.
 
 - **Request IDs** are permanent, so they grow by the admission rate:
   5,000 × 365 = 1,825,000. The principal default is 2,000,000; the brain
@@ -960,6 +973,33 @@ gbrain doctor --only persistence_capacity,persistence_request_growth --json
 
 **Say to your agent:** *"How many days of write capacity does my brain have left?"*
 
+<a id="receipt-housekeeping"></a>
+### Receipt housekeeping
+
+Receipt storage grows with the retention window times the admission rate,
+plus about 4 KiB per compacted receipt, which keeps its request ID replayable.
+While receipts not yet compacted (terminal, held by no recovery) reserve more
+than `persistence.housekeeping.receipt_target_bytes` (default 8 GiB; 0 turns it
+off), the resident consumer's compaction pass also compacts receipts older than
+7 days, oldest first, up to 100 a pass: settled page writes, and the refusals
+of producers that write again from current content (maintenance pages and
+managed sync, file import, reconcile and file repair page writes). Job
+receipts (`submit_job`), a subagent's own page writes (a deferred synthesis
+postprocess compares them with the page), connector writes and every other refusal keep their
+intent until the retention window (a caller's replayable refusal until a
+later write resolves it): `gbrain repair failed-writes` replays a caller's
+refused write from it, conversation facts resubmit a frozen
+extraction, atom retries and connector held-item retries read it. Receipts
+with unfinished effects, an open sync or a recovery are kept as before. An explicit `persistence.receipt_retention_days`
+is the operator's choice, and housekeeping leaves it alone. Compacted
+receipts never count toward the target: nothing can shrink them further, so a
+large brain whose compacted receipts alone pass 8 GiB is not held above it.
+On a brain that several hosts write to, these defaults hold once every one of them runs this version: an older gbrain still enforces its old caps and its 30-day retention, and the `gbrain config set persistence.limits.*` that its `write_quota_exhausted` refusal suggests would turn a cap on for every host, so upgrade the other hosts instead of raising it.
+
+While storage stays above the target, `persistence_capacity` warns the brain
+host's operator (`actor: host_admin`) with the read-only
+`gbrain repair receipt-compaction --json` preview. Writes are not affected.
+
 <a id="counter-drift"></a>
 ### Counter drift and compaction health
 
@@ -988,8 +1028,8 @@ Two read-only doctor checks watch the receipt-bytes accounting:
 <a id="quota-near-exhaustion"></a>
 ### Quota near exhaustion
 
-When `persistence_capacity` warns or fails, or a write is refused with
-`write_quota_exhausted`:
+This applies only to a cap the operator set. When `persistence_capacity`
+names one, or a write is refused with `write_quota_exhausted`:
 
 1. Read the finding: `gbrain doctor --only persistence_capacity --json`.
    `details.resources[]` names the scope, resource, days left and `basis`;
@@ -1005,11 +1045,18 @@ When `persistence_capacity` warns or fails, or a write is refused with
 
 Raising a receipt-bytes cap is safe: the counter tracks bytes that are really
 stored, and compaction frees the window's reservations as receipts age out.
+Check `persistence.receipt_retention_days` first: a window raised for a
+recovery holds every receipt's reservation that much longer and multiplies the
+window part of the recommended value, so `gbrain config unset
+persistence.receipt_retention_days` (back to 30 days) is the smaller step once
+the recovery is done.
 
-**Warnings before the wall.** A cap at or past 80%, or one that runs out
+**Warnings before the wall.** A cap you set that is at or past 80%, or one that runs out
 within `persistence.capacity.warn_days` (default 30), adds the
-`[gbrain notice write_capacity_low]` notice (kind `info`) with the same
-`gbrain config set` command. Write and sync receipts carry it at most once an
+`[gbrain notice write_capacity_low]` notice (kind `info`). It rides
+receipts and status output whatever the call did, so it opens with "This
+notice is not a refusal" and its fix is the read-only `gbrain doctor --only persistence_capacity --json`; the
+`gbrain config set` command stays in doctor's finding for the brain host. Write and sync receipts carry it at most once an
 hour per engine per scope (a remote client sees only the brain and its own
 principal); `gbrain sync status`, doctor and autopilot cycle output carry it
 every time. `gbrain notices mute write_capacity_low` mutes it on receipts;
@@ -1019,7 +1066,7 @@ producers pause and `[gbrain notice write_capacity_backpressure]` (kind
 `degraded`) fires once when the pause starts. Every notice reads a capacity
 snapshot that refreshes at most once a minute; no write computes a forecast.
 
-**Alerting (hosted operators).** The admin `/metrics` endpoint exports
+**Alerting (hosted operators).** For a cap you set, the admin `/metrics` endpoint exports
 `gbrain_write_capacity_used`, `gbrain_write_capacity_limit` and
 `gbrain_write_capacity_days_to_exhaustion`, labelled `scope` and `resource`
 (`lifetime_ids` or `terminal_bytes`), from the same snapshot. The public

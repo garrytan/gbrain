@@ -18,7 +18,7 @@ import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../facts-fence.ts';
 import { TAKES_FENCE_BEGIN, TAKES_FENCE_END } from '../takes-fence.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeText } from '../batch-rows.ts';
-import { serializePageToMarkdown } from '../markdown.ts';
+import { needsEmptyTimelineSentinel, serializePageToMarkdown } from '../markdown.ts';
 import { insertNoNewlineMarkers, splitLines, unifiedDiff } from '../skillpack/diff-text.ts';
 import { redactRetrievalOutput } from '../search/output-redaction.ts';
 import { scanCanonicalFences, targetFenceRefusal } from '../fence-repair/refusal.ts';
@@ -164,7 +164,7 @@ function pageSegments(page: Page, tags: string[], remote: boolean): Segment[] {
   // A remote view whose whole timeline is protected has no sentinel either.
   const sentinelSegment = timeline.some(segment => segment.view.length > 0) ? text(sentinel) : { canonical: sentinel, view: '', editable: false };
   const pieces = [text(head), ...bodySegments(page.compiled_truth ?? '', remote, segmented),
-    ...(page.timeline ? [sentinelSegment, ...timeline] : []), text('\n')];
+    ...(page.timeline ? [sentinelSegment, ...timeline] : needsEmptyTimelineSentinel(page.compiled_truth ?? '') ? [text('\n\n<!-- timeline -->')] : []), text('\n')];
   return pieces.reduce<Segment[]>((out, piece) => {
     const last = out[out.length - 1];
     if (last?.editable && piece.editable) out[out.length - 1] = text(last.canonical + piece.canonical);

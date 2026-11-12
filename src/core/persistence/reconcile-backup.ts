@@ -143,7 +143,7 @@ export async function manageReconcileBackups(engine: BrainEngine, authority: Wri
     }
     const limits = await readJournalLimits(engine);
     return { source_id: authority.sourceId, slug, backups, next_after: rows.length > limit ? rows[limit - 1].request_id : null,
-      capacity: { max_retained_bytes: limits.brainRecoveryBytes, max_retained_count: limits.brainLifetimeIds } };
+      capacity: { max_retained_bytes: limits.brainRecoveryBytes, ...(Number.isFinite(limits.brainLifetimeIds) ? { max_retained_count: limits.brainLifetimeIds } : {}) } };
   }
   const reference = params.backup_reference!;
   if (!backupPattern.test(reference)) throw opError('invalid_params', 'An exact private backup reference is required.',

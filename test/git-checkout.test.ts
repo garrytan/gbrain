@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyGitCheckout } from '../src/core/git-checkout.ts';
+import { classifyGitCheckout, isGitCheckoutRoot } from '../src/core/git-checkout.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const dirs: string[] = [];
@@ -23,6 +23,19 @@ test('a .git directory or gitdir file at or above the directory makes it a check
   const linked = scratch();
   writeFileSync(join(linked, '.git'), 'gitdir: /nowhere\n');
   expect(classifyGitCheckout(linked)).toBe('git');
+});
+
+test('only the directory that holds .git is a checkout root; a folder under it is not', () => {
+  const repo = scratch();
+  mkdirSync(join(repo, '.git'));
+  mkdirSync(join(repo, 'content'));
+  expect(isGitCheckoutRoot(repo)).toBe(true);
+  expect(isGitCheckoutRoot(join(repo, 'content'))).toBe(false);
+  expect(classifyGitCheckout(join(repo, 'content'))).toBe('git');
+  const linked = scratch();
+  writeFileSync(join(linked, '.git'), 'gitdir: /nowhere\n');
+  expect(isGitCheckoutRoot(linked)).toBe(true);
+  expect(isGitCheckoutRoot(join(scratch(), 'missing'))).toBe(false);
 });
 
 test('an inherited Git environment does not make a plain directory a checkout', async () => {

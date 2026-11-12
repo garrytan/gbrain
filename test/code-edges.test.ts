@@ -126,6 +126,26 @@ describe('Layer 5 (A1) — code-edges engine methods', () => {
     expect(incoming.length).toBeGreaterThanOrEqual(1);
   });
 
+  test('getEdgesByChunk both: the edge-type filter covers every arm and each table keeps its own limit (Postgres parity)', async () => {
+    await engine.addCodeEdges([{
+      from_chunk_id: chunkA,
+      to_chunk_id: chunkB,
+      from_symbol_qualified: 'run',
+      to_symbol_qualified: 'helper',
+      edge_type: 'imports',
+    }]);
+    const typed = await engine.getEdgesByChunk(chunkA, { direction: 'both', edgeType: 'imports' });
+    expect(typed.length).toBe(1);
+    expect(typed.every(e => e.edge_type === 'imports')).toBe(true);
+
+    const capped = await engine.getEdgesByChunk(chunkA, { direction: 'both', limit: 1 });
+    expect(capped.filter(e => e.resolved && e.to_chunk_id === chunkB).length).toBe(1);
+    expect(capped.filter(e => e.to_chunk_id === null).length).toBe(1);
+
+    const quoted = await engine.getEdgesByChunk(chunkA, { direction: 'both', edgeType: "calls' OR '1'='1" });
+    expect(quoted).toEqual([]);
+  });
+
   test('deleteCodeEdgesForChunks removes rows in both directions', async () => {
     await engine.deleteCodeEdgesForChunks([chunkA]);
     const after = await engine.getEdgesByChunk(chunkA, { direction: 'both' });

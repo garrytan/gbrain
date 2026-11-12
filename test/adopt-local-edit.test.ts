@@ -36,9 +36,11 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { ledgerFiles, readLedger, recordIntent } from '../src/core/git/commit-ledger.ts';
 import { isTerminal, requestPrincipal, type WriteRequest } from '../src/core/persistence/model.ts';
 import { cancelWriteRequest } from '../src/core/persistence/control.ts';
+import { recoverPublication } from '../src/core/persistence/coordinator.ts';
 import { encodedPostgres, isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { waitFor } from './helpers/wait-for.ts';
 import { commitFile, git, page, withRefreshFixture, type RefreshFixture } from './helpers/worktree-refresh-fixture.ts';
 
 const backends = testBackends();
@@ -737,6 +739,78 @@ test('#8767: a terminal failure after the adoption\'s commit leaves a receipt na
   const listing = await readTerminalFailures(f.engine, { sourceId: f.alpha, state: 'all' });
   expect(listing.status).toBe('ok');
   expect((listing as { rows?: Array<{ request_id: string }> }).rows?.map(row => row.request_id)).toContain(done.request_id);
+}), 180_000);
+
+test('#8869: adoption recovery reads its commit ledger before the recovery transaction, never inside it', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const transaction = f.engine.transaction, read = fs.readFileSync;
+  let depth = 0, observing = false, fired = 0;
+  const depths: number[] = [];
+  f.engine.transaction = (function (this: BrainEngine, fn: Parameters<BrainEngine['transaction']>[0], opts?: Parameters<BrainEngine['transaction']>[1]) {
+    return transaction.call(this, async tx => { depth++; try { return await fn(tx); } finally { depth--; } }, opts);
+  }) as BrainEngine['transaction'];
+  const reads = spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+    if (observing && String(path).endsWith('commit-ledger.jsonl')) depths.push(depth);
+    return (read as (...args: unknown[]) => unknown)(path, ...rest);
+  }) as typeof fs.readFileSync);
+  installFaultHook((point, detail) => {
+    if (point !== 'publication:before_commit' || detail.operation !== 'put_page' || detail.sourceId !== f.alpha || fired++ > 0) return;
+    observing = true;
+    throw new Error('example terminal failure after the adoption commit');
+  });
+  try { await timeline(f)().catch(() => undefined); }
+  finally { observing = false; installFaultHook(undefined); reads.mockRestore(); f.engine.transaction = transaction; }
+  expect(fired).toBe(1);
+  const landed = adoptCommit(f, 'one.md');
+  expect(landed).toHaveLength(1);
+  const [adoption] = await adoptionRows(f);
+  const done = await settled(f.engine, adoption!);
+  expect(done.state).toBe('failed');
+  expect((done.outcome as { persistence?: unknown }).persistence).toEqual({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
+  expect(depths.length).toBeGreaterThan(0);
+  expect(depths).toEqual(depths.map(() => 0));
+}), 180_000);
+
+test('#8869: a HEAD that moves after the adoption proof was read leaves the recovery pending with no file touched; a fresh recovery names the commit', () => each(async f => {
+  const { installFaultHook } = await import('../src/core/persistence/fault-points.ts');
+  writeFileSync(join(f.root, 'alpha', 'one.md'), EDITED);
+  const transaction = f.engine.transaction, read = fs.readFileSync, target = join(f.root, 'alpha', 'one.md');
+  let proved = false, moved = false, fired = 0;
+  const refusals: Array<{ code?: string; recovering: boolean; unchanged: boolean }> = [];
+  const reads = spyOn(fs, 'readFileSync').mockImplementation(((path: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+    if (fired > 0 && String(path).endsWith('commit-ledger.jsonl')) proved = true;
+    return (read as (...args: unknown[]) => unknown)(path, ...rest);
+  }) as typeof fs.readFileSync);
+  f.engine.transaction = (async function (this: BrainEngine, fn: Parameters<BrainEngine['transaction']>[0], opts?: Parameters<BrainEngine['transaction']>[1]) {
+    if (!proved || moved) return transaction.call(this, fn, opts);
+    moved = true;
+    git(f.root, 'commit', '-q', '--allow-empty', '-m', 'A foreign commit');
+    const bytes = read(target, 'utf8');
+    try { return await transaction.call(this, fn, opts); }
+    catch (error) {
+      refusals.push({ code: (error as { code?: string }).code, recovering: (await adoptionRows(f))[0]!.recovery !== null, unchanged: read(target, 'utf8') === bytes });
+      throw error;
+    }
+  }) as BrainEngine['transaction'];
+  installFaultHook((point, detail) => {
+    if (point === 'publication:before_commit' && detail.operation === 'put_page' && detail.sourceId === f.alpha && fired++ === 0) throw new Error('example terminal failure after the adoption commit');
+  });
+  // The caller waits on the pending adoption; the owner's next recovery (the resident consumer's, run here) finishes it.
+  const write = timeline(f)().catch(() => undefined);
+  try {
+    await waitFor(() => refusals.length > 0, { timeoutMs: 30_000, label: 'the recovery refusal' });
+    const [pending] = await adoptionRows(f);
+    await waitFor(async () => (await recoverPublication(f.engine, pending!.id, localHostId())).recovery === null, { timeoutMs: 30_000, intervalMs: 200, label: 'a fresh recovery' });
+    await write;
+  } finally { installFaultHook(undefined); reads.mockRestore(); f.engine.transaction = transaction; }
+  expect(refusals).toEqual([{ code: 'recovery_required', recovering: true, unchanged: true }]);
+  const landed = adoptCommit(f, 'one.md');
+  expect(landed).toHaveLength(1);
+  expect(git(f.root, 'rev-parse', 'HEAD^')).toBe(landed[0]!);
+  const [done] = await adoptionRows(f);
+  expect(done!.state).toBe('failed');
+  expect((done!.outcome as { persistence?: unknown }).persistence).toEqual({ git_state: 'committed', git_commit: landed[0], landed_before_row: true });
 }), 180_000);
 
 test('#8824: an adoption whose commit line never reached the ledger is still published, proved by its intent line', () => each(async f => {

@@ -51,7 +51,11 @@ const whoami: Operation = {
     const { accessView, appliedAccessSummary, credentialAccessView, stdioAccessView } = await import('../access/caller.ts');
     // GBRA-231: the view this call is answered under (the shared-agent audience when the harness asserted one), so a
     // model can check it when its harness does not forward _meta.access.
-    const withApplied = async <T extends object>(view: T) => ({ ...view, applied: await appliedAccessSummary(ctx.engine, ctx.auth, [ctx.sourceId, ...(ctx.localFederatedSourceIds ?? [])]) });
+    // GST-2490: and, while the owner opt-in is on, that the owner reads the pages kept to this caller; GBRA-108: and,
+    // while access.members_read_lineage is on, that members read the derived pages of pages listed to them.
+    const withApplied = async <T extends object>(view: T) => ({ ...view, applied: await appliedAccessSummary(ctx.engine, ctx.auth, [ctx.sourceId, ...(ctx.localFederatedSourceIds ?? [])]),
+      ...await (await import('../access/owner.ts')).ownerReadsRestrictedNotice(ctx.engine),
+      ...await (await import('../access/lineage.ts')).membersReadLineageNotice(ctx.engine) });
     if (ctx.remote === false) {
       // GBRA-218: a local --as <member> preview reports the member it reads as; the plain local CLI reads every page.
       const access = ctx.applyRemoteReadPolicy && ctx.accessIdentity?.length ? accessView(ctx.accessIdentity, 'as')

@@ -504,6 +504,11 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
     } : {}),
   };
   const stamped = (result: RecallVerbResult, stamp: RecallVerbResult['degraded'] | null): RecallVerbResult => (stamp ? { ...result, degraded: stamp } : result);
+  if (process.env.GBRAIN_ENFORCED_MEMBER !== undefined) { // GST-2476 G2: read as the enforced member's stdio server would answer
+    const { enforcedRead } = await import('../cli/enforced-member.ts');
+    const result = await enforcedRead(engine, 'recall', 'recall', params, { sourceId: ctx.sourceId, config: ctx.config }) as RecallVerbResult;
+    return stamped(result, degradedStampFor('recall', result, null, []));
+  }
   if (!oneShot || !isThinClient(ctx.config)) {
     const result = await op.handler(ctx, params) as RecallVerbResult;
     return stamped(result, degradedStampFor('recall', result, { retrieval }, notices));
@@ -708,14 +713,19 @@ async function runRecallOnce(
   const resolvedSince: Date | null = cursor ? cursor.since : flags.since;
   // #6945: only the local cursor read can page (oldest first, by keyset);
   // thin-client and --supersessions keep the newest-N window.
-  const pageable = cursor !== null && !thinClient && !flags.supersessions;
+  const enforced = process.env.GBRAIN_ENFORCED_MEMBER !== undefined; // GST-2476 G2: the remote arm, answered in process as the member
+  const pageable = cursor !== null && !thinClient && !enforced && !flags.supersessions;
 
   let rows: FactRow[];
   let pendingCount: number | undefined;
 
-  if (thinClient) {
+  if (thinClient || enforced) {
     const cfg = loadConfig();
     const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
+    const { enforcedRead } = await import('../cli/enforced-member.ts');
+    const fetchRecall = async <T>(p: Record<string, unknown>): Promise<T> => (enforced
+      ? await enforcedRead(engine, 'recall', 'recall', p, { sourceId }) as T
+      : unpackToolResult<T>(await callRemoteTool(cfg!, 'recall', p, { timeoutMs: 30_000 })));
     const params: Record<string, unknown> = {
       limit: flags.limit,
       include_expired: flags.includeExpired,
@@ -732,12 +742,11 @@ async function runRecallOnce(
     // explicit `--source default` silently queried a different source.
     if (sourceId !== 'default' || flags.sourceExplicit) params.source_id = sourceId;
 
-    const raw = await callRemoteTool(cfg!, 'recall', params, { timeoutMs: 30_000 });
-    const unpacked = unpackToolResult<{
+    const unpacked = await fetchRecall<{
       facts: Array<Record<string, unknown>>;
       total: number;
       pending_consolidation_count?: number;
-    }>(raw);
+    }>(params);
     rows = unpacked.facts.map(remoteFactToRow);
     pendingCount = unpacked.pending_consolidation_count;
 
@@ -748,12 +757,11 @@ async function runRecallOnce(
     if (entityTextFallbackApplies(flags, rows.length)) {
       const fbParams: Record<string, unknown> = { ...params, grep: flags.entity!.toLowerCase() };
       delete fbParams.entity;
-      const fbRaw = await callRemoteTool(cfg!, 'recall', fbParams, { timeoutMs: 30_000 });
-      const fb = unpackToolResult<{
+      const fb = await fetchRecall<{
         facts: Array<Record<string, unknown>>;
         total: number;
         pending_consolidation_count?: number;
-      }>(fbRaw);
+      }>(fbParams);
       if (fb.facts.length > 0) {
         noteEntityTextFallback(flags.entity!, fb.facts.length);
         rows = fb.facts.map(remoteFactToRow);

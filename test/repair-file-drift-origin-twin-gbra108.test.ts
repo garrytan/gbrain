@@ -184,3 +184,41 @@ test('an origin twin under a declared db_only path reads db_only_slug_path even 
   ambiguousSlugPath(root);
   expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject({ still_present: null, reason: 'db_only_slug_path' });
 }, { setup: ({ root }) => { setupRepo({ root }); writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - notes/\n'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'db_only'); } }), 120000);
+
+/** The twin's slug-path file leaves Git's index (still on disk) and is optionally gitignored, then gains a bullet and a full sync runs. */
+async function untrackedEdit(engine: BrainEngine, root: string, ignored: boolean): Promise<void> {
+  git(root, 'rm', '-q', '--cached', PATH);
+  if (ignored) {
+    writeFileSync(join(root, '.gitignore'), `${PATH}\n`);
+    git(root, 'add', '.gitignore');
+  }
+  git(root, 'commit', '-qm', 'untrack the file');
+  appendFileSync(join(root, PATH), `${BULLET}\n`);
+  expect((await performManagedSync(engine, { ...OPTS, full: true })).status).toBe('synced');
+}
+
+test('an origin twin whose slug-path file Git does not track stays database-only, and sync holds nothing for it', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  await untrackedEdit(engine, root, false);
+  expect(await holds(engine)).toEqual([]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+  const planned = await preview(engine, 'file');
+  expect(planned.affected).toBe(0);
+}, { setup: setupRepo }), 120000);
+
+test('an origin twin whose slug-path file is gitignored stays database-only even when sync reads the working tree', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  await engine.setConfig('sync.include_working_tree', 'true');
+  await untrackedEdit(engine, root, true);
+  expect(await holds(engine)).toEqual([]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject(DATABASE_ONLY);
+}, { setup: setupRepo }), 120000);
+
+test('an origin twin whose untracked slug-path file sync reads from the working tree still reads drift while sync holds it', () => managedBrain(async ({ engine, root }) => {
+  await legacyTwin(engine);
+  await engine.setConfig('sync.include_working_tree', 'true');
+  await untrackedEdit(engine, root, false);
+  expect(await holds(engine)).toEqual([{ code: 'file_drift', path: PATH }]);
+  expect(await liveFileDrift(engine, 'default', SLUG)).toMatchObject({ still_present: true, reason: 'file_database_drift', path: PATH });
+}, { setup: setupRepo }), 120000);
+

@@ -61,7 +61,6 @@ method	src/core/postgres-engine.ts	PostgresEngine.getIngestLog
 method	src/core/postgres-engine.ts	PostgresEngine.getOntology
 method	src/core/postgres-engine.ts	PostgresEngine.getRawData
 method	src/core/postgres-engine.ts	PostgresEngine.getStats
-method	src/core/postgres-engine.ts	PostgresEngine.initSchema
 method	src/core/postgres-engine.ts	PostgresEngine.listConfigKeys
 method	src/core/postgres-engine.ts	PostgresEngine.listEvalCandidates
 method	src/core/postgres-engine.ts	PostgresEngine.listEvalCaptureFailures
@@ -78,4 +77,3 @@ method	src/core/postgres-engine.ts	PostgresEngine.setConfig
 method	src/core/postgres-engine.ts	PostgresEngine.sweepDreamVerdicts
 method	src/core/postgres-engine.ts	PostgresEngine.unsetConfig
 method	src/core/postgres-engine/init-schema-lock.ts	acquireInitSchemaAdvisoryLock
-method	src/core/postgres-engine/init-schema-lock.ts	lockHolderPid

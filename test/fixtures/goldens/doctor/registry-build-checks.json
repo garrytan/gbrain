@@ -399,6 +399,22 @@
       },
       {
         "category": "brain",
+        "name": "access_owner_reads_restricted"
+      },
+      {
+        "category": "brain",
+        "name": "access_raw_only_rules"
+      },
+      {
+        "category": "brain",
+        "name": "access_audience_members"
+      },
+      {
+        "category": "brain",
+        "name": "access_members_read_lineage"
+      },
+      {
+        "category": "brain",
         "name": "attest_read_shared_scope"
       },
       {
@@ -512,6 +528,10 @@
       {
         "category": "brain",
         "name": "timeline_history"
+      },
+      {
+        "category": "brain",
+        "name": "privacy_label_ignored"
       },
       {
         "category": "brain",

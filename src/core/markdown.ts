@@ -1007,6 +1007,9 @@ export function bareTimelineSectionLine(raw: string, datedBullets: number): 'end
   return 'other';
 }
 
+/** #7738: a timeline-less body whose own dated '## Timeline …' section the bare-section fallback would split off; it ends with an empty sentinel. */
+export const needsEmptyTimelineSentinel = (body: string): boolean => { const lines = body.split('\n'); return findTimelineSplitIndex(lines) === -1 && findBareTimelineSection(lines) !== null; };
+
 /**
  * Serialize a page back to markdown format.
  * Produces: frontmatter + compiled_truth + --- + timeline
@@ -1029,10 +1032,8 @@ export function serializeMarkdown(
 
   const yamlContent = matter.stringify('', fullFrontmatter).trim();
 
-  let body = compiled_truth;
-  if (timeline) {
-    body += '\n\n<!-- timeline -->\n\n' + timeline;
-  }
+  const body = compiled_truth
+    + (timeline ? '\n\n<!-- timeline -->\n\n' + timeline : needsEmptyTimelineSentinel(compiled_truth) ? '\n\n<!-- timeline -->' : '');
 
   return yamlContent + '\n\n' + body + '\n';
 }

@@ -132,7 +132,7 @@ import { assertEmbeddedEmbedding, embeddedSchemaEmbedding, embeddedSettingsRecor
 import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from './engine-constants.ts';
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
-import { acquireInitSchemaAdvisoryLock } from './postgres-engine/init-schema-lock.ts';
+import { holdSchemaMigrationSessionLock, holdSchemaMigrationTransactionLock } from './postgres-engine/init-schema-lock.ts';
 import { isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
@@ -374,7 +374,7 @@ export class PostgresEngine implements BrainEngine {
     // Flag off + no pre-existing transaction need: call through on the
     // shared pool exactly as master does. No tx round-trip, no pool slot
     // held for the duration of the read.
-    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge);
+    if (deadlineAt !== undefined && !this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) return await runDeadlineRead(this.sql, deadlineAt, callback, this.checkoutGauge, cancelSettleMs());
     if (!this.rlsScopeBindingEnabled && !opts?.alwaysTransaction) {
       return await callback(this.sql);
     }
@@ -606,51 +606,44 @@ export class PostgresEngine implements BrainEngine {
     }
     let sqlText = getPostgresSchema(dims, model);
 
-    // Advisory lock prevents concurrent initSchema() calls from deadlocking
-    // on DDL statements (DROP TRIGGER + CREATE TRIGGER acquire AccessExclusiveLock).
-    //
-    // pg_advisory_lock(42) is session-scoped but ddl() returns a POOL, so on a
-    // pool of more than one backend the acquire, DDL and unlock are pinned to
-    // one reserved backend (no long-hold permit: migrations reserve their own,
-    // and a pool of one is already a single backend).
-    const pinned = pool.options.max > 1;
-    if (pinned) this.checkoutGauge.acquire('reserved');
-    const conn: postgres.Sql = pinned ? await pool.reserve().catch((e) => { this.checkoutGauge.release('reserved'); throw e; }) : pool;
-    if (pinned) this.checkoutGauge.checkedOut();
+    // GBRA-467: the schema migration lock covers the bootstrap, the replay and the migrations (holdSchemaMigrationLock).
+    const { runMigrations, withSchemaMigrationLock } = await import('./migrate.ts'); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
+    const t0 = Date.now();
+    logConnectionEvent({
+      pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
+      op: 'acquire',
+      caller: 'PostgresEngine.initSchema',
+    });
     try {
-      const t0 = Date.now();
-      logConnectionEvent({
-        pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
-        op: 'acquire',
-        caller: 'PostgresEngine.initSchema',
-      });
-      // Lock-census (PR6 D5): INTENTIONALLY brain-global (session lock, fixed key 42) — initSchema DDL mutates the whole database; a per-source key would let two initSchema calls deadlock on shared DDL.
-      // #2898: deadlined pg_try_advisory_lock loop + stderr heartbeat instead of
-      // an unbounded pg_advisory_lock — a leaked pooler session holding key 42
-      // hung every gbrain invocation forever with no output. On timeout the
-      // error names the holder pid with pg_terminate_backend recovery guidance.
-      await acquireInitSchemaAdvisoryLock((q) => conn.unsafe(q));
-      try {
+      await withSchemaMigrationLock(this, async () => {
         // Another initSchema may have recorded an identity between the read above and this lock: check it again here.
         const lockedIdentity = storedIdentity ? null : await readStoredEmbeddingIdentity(this);
         if (lockedIdentity?.model) {
           if (embedded) assertEmbeddedEmbedding(embedded, lockedIdentity);
           if (lockedIdentity.dimensions !== dims || lockedIdentity.model !== model) sqlText = getPostgresSchema(lockedIdentity.dimensions, lockedIdentity.model);
         }
-        // Pre-schema bootstrap: add forward-referenced state the embedded schema
-        // blob requires but that older brains don't have yet (issues #366/#375/
-        // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
-        // Threads the DDL connection (same one holding the advisory lock above)
-        // so bootstrap probes run on the locked connection — without this, the
-        // probes ran through `this.sql` (the pooler/instance pool) outside the
-        // lock, opening a concurrent-bootstrap race for Supabase users on the
-        // transaction pooler. Codex P1 finding from v0.36 dreamy-thompson wave.
-        await this.applyForwardReferenceBootstrap(conn);
+        // The bootstrap and the replay share one backend: withSchemaLockTimeout sets a session lock_timeout on it.
+        // On a pool of more than one it is a reserved backend (checkout gauge only, no long-hold permit: migrations
+        // reserve their own); a pool of one is already a single backend.
+        const pinned = pool.options.max > 1;
+        if (pinned) this.checkoutGauge.acquire('reserved');
+        const conn: postgres.Sql = pinned ? await pool.reserve().catch((e) => { this.checkoutGauge.release('reserved'); throw e; }) : pool;
+        if (pinned) this.checkoutGauge.checkedOut();
+        try {
+          // Pre-schema bootstrap: add forward-referenced state the embedded schema
+          // blob requires but that older brains don't have yet (issues #366/#375/
+          // #378/#396 + #266/#357). Idempotent on fresh installs and modern brains.
+          // Threads the DDL connection so the bootstrap probes run inside the schema
+          // lock, not on the pooler outside it (Codex P1 finding, v0.36 dreamy-thompson wave).
+          await this.applyForwardReferenceBootstrap(conn);
 
-        await retrySchemaReplayOnDeadlock(() => withSchemaLockTimeout(conn, () => conn.unsafe(sqlText), { step: 'replay', diagnostic: schemaDiagnosticConnection(this._savedConfig?.database_url) })); // #5227: bounded wait, typed schema_lock_blocked; #6143: a deadlock victim runs again
+          await retrySchemaReplayOnDeadlock(() => withSchemaLockTimeout(conn, () => conn.unsafe(sqlText), { step: 'replay', diagnostic: schemaDiagnosticConnection(this._savedConfig?.database_url) })); // #5227: bounded wait, typed schema_lock_blocked; #6143: a deadlock victim runs again
+        } finally {
+          if (pinned) { (conn as postgres.ReservedSql).release(); this.checkoutGauge.release('reserved'); }
+        }
 
         // Run any pending migrations automatically
-        const { applied } = await (await import('./migrate.ts')).runMigrations(this); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
+        const { applied } = await runMigrations(this);
         if (applied > 0) {
           process.stderr.write(`  ${applied} migration(s) applied\n`);
         }
@@ -673,17 +666,34 @@ export class PostgresEngine implements BrainEngine {
             process.stderr.write(`  HNSW sweep: dropped ${result.dropped.length} zombie index(es)\n`);
           }
         } catch { /* best-effort */ }
-      } finally {
-        await conn`SELECT pg_advisory_unlock(42)`;
-        logConnectionEvent({
-          pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
-          op: 'release',
-          caller: 'PostgresEngine.initSchema',
-          duration_ms: Date.now() - t0,
-        });
-      }
+      });
     } finally {
-      if (pinned) { (conn as postgres.ReservedSql).release(); this.checkoutGauge.release('reserved'); }
+      logConnectionEvent({
+        pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
+        op: 'release',
+        caller: 'PostgresEngine.initSchema',
+        duration_ms: Date.now() - t0,
+      });
+    }
+  }
+
+  /**
+   * GBRA-467: the schema migration lock (key 42, brain-global), transaction-scoped on a backend reserved from the
+   * DDL pool, or from the statement pool when the DDL pool has one connection (a short-lived command's direct pool,
+   * left idle by the migrations until its idle timeout drops it). Session lock only when every pool has one.
+   */
+  async holdSchemaMigrationLock<T>(fn: (assertHeld: () => Promise<void>) => Promise<T>): Promise<T> {
+    const ddl = this.connectionManager ? await this.connectionManager.ddl() : this.sql;
+    const pool = ddl.options.max > 1 ? ddl : this.sql.options.max > 1 ? this.sql : null;
+    if (!pool) return holdSchemaMigrationSessionLock(ddl, fn);
+    this.checkoutGauge.acquire('reserved');
+    const conn = await pool.reserve().catch((e) => { this.checkoutGauge.release('reserved'); throw e; });
+    this.checkoutGauge.checkedOut();
+    try {
+      return await holdSchemaMigrationTransactionLock(conn, fn);
+    } finally {
+      conn.release();
+      this.checkoutGauge.release('reserved');
     }
   }
 

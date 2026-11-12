@@ -60,6 +60,6 @@ describe('revision_backfill_pending at publication', () => {
       const [row] = await engine.executeRaw<{ state: string; error_code: string | null; error_message: string | null }>(
         'SELECT state, error_code, error_message FROM persistence_requests WHERE request_id=$1::uuid', [requestId]);
       expect(row).toMatchObject({ state: 'conflict', error_code: 'revision_backfill_pending' });
-      expect(row!.error_message).toContain('gbrain apply-migrations --yes');
+      expect(row!.error_message).toContain('gbrain apply-migrations --force-schema');
     }), 60_000);
 });
