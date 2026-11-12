@@ -87,6 +87,8 @@ for (const kind of testBackends()) {
     });
 
     afterAll(async () => {
+      _resetCliExitVerdictForTests();
+      process.exitCode = 0;
       stopObserving();
       __setEmbedTransportForTests(null);
       resetGateway();
