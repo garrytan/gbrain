@@ -27,6 +27,8 @@ import { extractStaleFromDB } from './extract.ts';
 import { resolveCyclePhases, runCycle, type CycleReport, type CyclePhase } from '../core/cycle.ts';
 import { ItemRun } from '../core/item-failure.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
+import { skillHealthSummary } from '../core/skill-health.ts';
 
 type ActionStatus = 'ok' | 'would_apply' | 'applied' | 'blocked' | 'skipped';
 
@@ -122,6 +124,16 @@ async function readSafePhaseProviders(engine: BrainEngine): Promise<SafePhasePro
 async function buildDoctorReport(engine: BrainEngine): Promise<DoctorReport> {
   const checks = await buildChecks(engine, ['--json', '--scope=brain']);
   return computeDoctorReport(checks);
+}
+
+/** Read-only: skill size, growth and drift for the active skills folder; never edits a skill. */
+async function reportSkillHealth(): Promise<MaintenanceAction> {
+  const dir = autoDetectSkillsDirReadOnly().dir;
+  if (!dir) return { name: 'skill_health', status: 'skipped', message: 'no skills folder found' };
+  const { skillHealthFor } = await import('./skillpack/health.ts');
+  const report = skillHealthFor(dir);
+  const message = skillHealthSummary(report) + (report.findings.length ? '; run `gbrain skillpack health` for the fixes' : '');
+  return { name: 'skill_health', status: 'ok', message, details: { scope: report.scope, totals: report.totals } };
 }
 
 async function runStaleExtraction(
@@ -247,6 +259,7 @@ Conservative self-healing maintenance.
 Modes:
   --dry-run   Preview safe actions without writes. Default when --safe is absent.
   --safe      Apply safe actions: stale extraction and source cycle freshness.
+              Skill health (size, growth, drift) is reported, never applied.
   --json      Emit a structured before/action/after report.
 
 Not auto-applied:
@@ -264,6 +277,7 @@ Not auto-applied:
 
   actions.push(await runStaleExtraction(engine, beforeHealth, opts.dryRun, opts.json));
   actions.push(...await runCycleFreshnessMaintenance(engine, beforeDoctor, opts.dryRun));
+  actions.push(await reportSkillHealth());
 
   const afterHealth = await engine.getHealth();
   const afterDoctor = await buildDoctorReport(engine);

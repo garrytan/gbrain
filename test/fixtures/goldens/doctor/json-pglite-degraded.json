@@ -176,6 +176,24 @@
           "status": "ok"
         },
         {
+          "category": "skill",
+          "details": {
+            "scope": "managed",
+            "totals": {
+              "bytes": 100,
+              "drift": 0,
+              "invocations": 0,
+              "size": 0,
+              "skills": 1,
+              "subcommands_unverified": 0
+            }
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "1 skill(s), 0 KB, 0 gbrain invocation(s) (0 with undeclared subcommands, flags checked); no findings",
+          "name": "skill_health",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "details": {
             "enabled": false,

@@ -1038,6 +1038,7 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   if (skills && skillsOutcomeShown(skills)) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
   if (resolver) for (const line of describeResolverSetup(resolver, flags.dryRun)) say(out, line);
   if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
+  if (harness === 'openclaw' && turnHook && !off) say(out, `  note     ${'route'.padEnd(7)} the per-turn rule is OpenClaw's primary route to the brain. Skills from \`gbrain skillpack scaffold --harness openclaw\` are an optional fallback: agents seldom open a listed skill on their own.`);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
