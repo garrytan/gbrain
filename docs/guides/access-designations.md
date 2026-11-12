@@ -139,10 +139,15 @@ except the owner's, whose new pages stay shared (`POST /ingest` still refuses bo
 ### Fact visibility (`private` | `world`)
 
 Each fact row has its own visibility. `remember` defaults to `world`, except into a private page or under an
-explicit private `facts.default_visibility`. A remote credential bound to a member, the owner's included, saves
-`private` on its own member page (`memory/members/<member>`) unless the call passes `share: true`, and its
-`visibility: "world"` is refused; it withdraws only facts on that page, and the brain host withdraws the rest
-(`gbrain forget <id>`). Extracted facts follow `facts.default_visibility` (private when unset)
+explicit private `facts.default_visibility`. A remote credential bound to a member saves `private` on its own member
+page (`memory/members/<member>`) unless the call passes `share: true`, and its `visibility: "world"` is refused; it
+withdraws only facts on that page, and the brain host withdraws the rest (`gbrain forget <id>`). The owner's own
+credential (or a stdio server started with `--stdio-member <owner>`), speaking for itself (no audience, not a
+subagent job, no slug fence), saves like a credential bound to no member: shared on the subject's page, or `private` on its member page when it passes `visibility: "private"` or the
+page or `facts.default_visibility` keeps facts private (the reply names the `page` and `visibility`; an explicit
+`visibility: "world"` onto a page whose facts are kept private is refused, `share_target_restricted`), and its
+`forget` withdraws a shared fact it reads. The trade-off: an owner agent that follows a planted instruction can share a fact
+without passing any flag, so pass `visibility: "private"` for a fact that must stay with the owner. Extracted facts follow `facts.default_visibility` (private when unset)
 and are never wider than their page. Remote fact reads return private facts to the owner only.
 
 ### The owner (`gbrain access owner`)

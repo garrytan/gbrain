@@ -1,10 +1,10 @@
 /**
  * #9101: a remote member's forget names who can withdraw a fact it can see but cannot withdraw.
  *
- * 1. Protects: a member-bound or owner-bound credential that forgets a fact it reads (a fact it shared, or another
- *    member's shared fact) gets scope_denied naming the brain host, and the fact stays active; a fact the caller
- *    cannot read (another member's private fact) still answers not_found, so the reply never confirms a hidden fact;
- *    the caller's own private fact is still withdrawn.
+ * 1. Protects: a member-bound credential that forgets a fact it reads (a fact it shared, or another member's shared
+ *    fact) gets scope_denied naming the brain host, and the fact stays active; a fact the caller cannot read (another
+ *    member's private fact) still answers not_found, so the reply never confirms a hidden fact; the caller's own
+ *    private fact is still withdrawn. GST-2346 D1: an owner-bound credential withdraws a fact it shared.
  * 2. Fails when: forget answers not_found for a fact the caller just saved or reads, or the refusal leaks a fact the
  *    caller cannot read.
  * 3. Existing coverage: test/access-member-facts.test.ts (GST-359 D) pins forget on the member page.
@@ -99,18 +99,17 @@ for (const kind of testBackends()) {
       expect(await active(kept)).toBe(true);
     }, 120_000);
 
-    test("an owner-bound credential forgetting a fact it shared is refused naming the brain host; a member's private fact stays not_found to it", async () => {
+    test("an owner-bound credential withdraws a fact it shared (GST-2346 D1); a member's private fact stays not_found to it", async () => {
       const shared = await saved('owner', 'Acme moved its HQ canaryownershared', { share: true });
+      const recalled = await call('owner', 'recall', { entity: ACME });
       const out = await call('owner', 'forget', { id: shared });
-      expect([out.isError, out.json.error]).toEqual([true, 'scope_denied']);
-      expect(out.text).toContain('brain host');
-      expect(await active(shared)).toBe(true);
+      expect(out.isError ? out.text : 'ok').toBe('ok');
+      expect(await active(shared)).toBe(false);
       const bobs = await saved('bob', 'Acme lunch plans canarybobprivate');
       const hidden = await call('owner', 'forget', { id: bobs });
       expect([hidden.isError, hidden.json.error]).toEqual([true, 'not_found']);
       expect(await active(bobs)).toBe(true);
-      const recalled = await call('owner', 'recall', { entity: ACME });
-      expect([recalled.text.includes('canaryownershared'), recalled.text.includes('canarybobprivate')]).toEqual([true, false]);
+      expect([recalled.text.includes('canaryownershared'), (await call('owner', 'recall', { entity: ACME })).text.includes('canarybobprivate')]).toEqual([true, false]);
     }, 120_000);
 
     test("a member still withdraws its own private fact", async () => {

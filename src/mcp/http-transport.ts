@@ -36,6 +36,7 @@ import { MCP_SERVER_DESCRIPTION, readInstructionContent, resolveMcpInstructions 
 import { httpInstructionTools } from './initialize-context.ts';
 import { ambientOptsFrom, writebackCaller } from '../core/facts/writeback-config.ts';
 import { resolveAgentWriteback } from '../core/facts/writeback-settings.ts';
+import { OWNER_MEMBER_KEY } from '../core/search/private-visibility.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
@@ -473,7 +474,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
               capabilities: { tools: {}, resources: {} },
               // #4748: contract (+ opt-in writeback section) + deployment identity.
               instructions: resolveMcpInstructions(fileConfig, process.env, {
-                writeback: ambientOptsFrom(writeback, { remember: canWriteOp('remember'), extractFacts: canWriteOp('extract_facts'), ...writebackCaller(auth.auth) }),
+                writeback: ambientOptsFrom(writeback, { remember: canWriteOp('remember'), extractFacts: canWriteOp('extract_facts'), ...writebackCaller(auth.auth, writeback.enabled ? await engine.getConfig(OWNER_MEMBER_KEY).catch(() => null) : null) }),
                 tools: await httpInstructionTools(engine, fileConfig, { ops: surfacedOps, surface, auth: auth.auth!, allowedOps: surfaceAllowedOps }), // F1
                 ...await readInstructionContent(engine),
               }),

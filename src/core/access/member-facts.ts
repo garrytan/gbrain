@@ -52,6 +52,19 @@ export function memberFactPage(ctx: Pick<OperationContext, 'remote'>): string | 
 }
 
 /**
+ * GST-2346 D1: whether the caller is the brain owner's own credential speaking for itself: CallerAccess.owner with no
+ * attested actor and no asserted audience, outside a subagent and every slug-prefix fence. Its facts then save as a
+ * caller with no member page saves them, on the subject's page, and its forget reaches a fact off its member page the
+ * same way; a fact it asks to keep private, or one the page or the brain's default keeps private, stays on its member
+ * page. Every other member caller keeps its member page (GST-359 C2).
+ */
+export function ownerSpeaksForItself(ctx: Pick<OperationContext, 'remote' | 'viaSubagent' | 'allowedSlugPrefixes' | 'auth'>): boolean {
+  const access = currentCallerAccess();
+  return ctx.remote !== false && access.owner && !access.actor && access.audience === null && ctx.viaSubagent !== true
+    && !ctx.allowedSlugPrefixes?.length && !ctx.auth?.boundSlugPrefixes && !ctx.auth?.fenceProjectionDegraded;
+}
+
+/**
  * GST-2249 W1: a save made for an attested person (x-qm-actor) stays on that person's member page. Sharing it would be
  * a write every reader of the source sees, made with no owner approval, so remember refuses share: true (and an explicit
  * visibility "world") at the call, and a stored write that carries it is refused when it is prepared.
