@@ -362,7 +362,7 @@ Override: reason `transient`: retryable, exit 11, retryable.
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain autopilot --install refused on a PGLite brain: a daemon would hold the single-writer lock all day and block every other gbrain process. | PGLite has one writer. gbrain serve owns the lock and runs the resident sweep; free upkeep runs through gbrain maintain --unattended. | Run gbrain serve, check upkeep with gbrain maintain --status, or re-run with --force for a dedicated-brain daemon. | agent | `repeat the read that failed` | 1 | no |
+| gbrain autopilot --install refused on a PGLite brain: a daemon would hold the single-writer lock all day and block every other gbrain process. | PGLite has one writer. gbrain serve owns the lock and runs the resident sweep; free upkeep runs through gbrain maintain --unattended. | Run gbrain serve. Check upkeep with gbrain maintain --status. For a dedicated-brain daemon, re-run gbrain autopilot --install --force. | agent | `repeat the read that failed` | 1 | no |
 
 ### backup_dump_failed
 
