@@ -49,6 +49,7 @@ const WRITER_LINE = 'A line only gbrain\'s own writer committed.';
 const WRITER = `---\ntype: concept\ntitle: A\n---\n\nThe first body.\n\n${WRITER_LINE}\n`;
 const setup = ({ root }: { root: string }) => {
   mkdirSync(join(root, 'notes'), { recursive: true }); git(root, 'init', '-q');
+  git(root, 'config', 'user.name', 'Example'); git(root, 'config', 'user.email', 'example@example.invalid'); git(root, 'config', 'commit.gpgsign', 'false');
   writeFileSync(join(root, 'notes/a.md'), FIRST); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'first');
 };
 const backendOpts = (backend: string) => ({ ...(backend === 'postgres' ? { databaseUrl: process.env.DATABASE_URL } : {}), setup });
