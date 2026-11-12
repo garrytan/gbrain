@@ -434,6 +434,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'postgres_cancellation_driver',
   'plugin_lane_collision',
   'pool_budget',
+  // GBRA-133: session connections across every process vs the pooler's per-role limit (doctor/checks/session-lane.ts).
+  'session_lane_budget',
   'progressive_batch_audit_health',
   'queue_health',
   // Wakeshift PR 1: report-back key, enabled state and dead/id_reused watches (doctor/checks/wakeshift.ts).
