@@ -59,7 +59,7 @@ import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
 import { factsFenceHeld } from '../generations/fence-evidence.ts';
 import { readFenceBlocks } from '../generations/fence.ts';
-import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, UNATTRIBUTED_MEMORY_SLUG, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
 import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
@@ -365,9 +365,9 @@ export async function heldFenceFactRows(engine: BrainEngine, sourceId: string, s
     .map(r => heldEntityCell(slug, r.entity_slug, fenceRowOf(r, Number(r.row_num), r.fact)));
 }
 
-/** GST-2492: on memory/unattributed a row whose entity has no page names it in the `entity` cell; every other page renders no such cell. */
+/** GST-2492: on a holding page a row whose entity has no page names it in the `entity` cell; every other page renders no such cell. */
 function heldEntityCell(slug: string, entity: string | null, row: ParsedFact): ParsedFact {
-  return slug === UNATTRIBUTED_MEMORY_SLUG && entity && entity !== slug ? { ...row, entity } : row;
+  return isHoldingSlug(slug) && entity && entity !== slug ? { ...row, entity } : row;
 }
 
 /**
@@ -413,8 +413,8 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
   // same source and visibility (the projection's identity), or that an
   // earlier row of this group plans, is not adopted a second time. A private
   // and a world row with one text are two facts and both adopt, as before.
-  // GST-2492: on memory/unattributed a row also names its entity, and two entities' rows with one claim are two facts.
-  const cellEntity = (entity: string | null | undefined) => entitySlug === UNATTRIBUTED_MEMORY_SLUG && entity && entity !== entitySlug ? entity : '';
+  // GST-2492: on a holding page a row also names its entity, and two entities' rows with one claim are two facts.
+  const cellEntity = (entity: string | null | undefined) => isHoldingSlug(entitySlug) && entity && entity !== entitySlug ? entity : '';
   const dupKey = (claim: string, source: string | undefined, visibility: string, entity: string) => `${claim}\u0000${source || FENCE_SOURCE_DEFAULT}\u0000${visibility}\u0000${entity}`;
   const planned = new Set<string>();
   const ownedKeys = new Set(existingFence.facts.filter(f => {
@@ -517,7 +517,7 @@ export async function planPageFence(engine: BrainEngine, sourceId: string, slug:
 }
 
 export async function planManagedPage(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, entitySlug: string, group: UnfencedFactRow[],
-  move?: { note: string; from_entity?: string }): Promise<ManagedPagePlan> {
+  move?: { note: string; from_entity?: string; from_slug?: string }): Promise<ManagedPagePlan> {
   const planned = await planPageFence(engine, sourceId, entitySlug, group);
   if (!planned) return { kind: 'no_page' };
   const { snapshot, fence } = planned;

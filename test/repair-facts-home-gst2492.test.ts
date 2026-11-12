@@ -110,7 +110,7 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     await seeded(b);
     const before = { head: git(root, 'rev-parse', 'HEAD'), pageless: await factRow(engine, PAGELESS), subjectless: await factRow(engine, SUBJECTLESS) };
     const preview = await repair(engine);
-    expect(classes(preview)).toEqual(['cannot_render', 'entity_page_exists', 'entity_page_missing', 'folder_restricted', 'held_over_30_days', 'no_entity']);
+    expect(classes(preview)).toEqual(['cannot_render', 'entity_page_exists', 'entity_page_missing', 'entity_page_missing', 'held_over_30_days', 'no_entity']);
     const old = preview.listing.find((entry: { class: string }) => entry.class === 'held_over_30_days');
     expect(old.detail).toContain('people/dana-example');
     expect(git(root, 'rev-parse', 'HEAD')).toBe(before.head);
@@ -125,8 +125,10 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     expect(lineOf(file, PAGELESS)).toContain('notes/kitchen-remodel');
     expect(lineOf(file, SUBJECTLESS)).toContain(SUBJECTLESS);
     for (const text of [PAGED, UNRENDERABLE, RESTRICTED, 'secret/project-x']) expect(file).not.toContain(text);
-    expect(await factRow(engine, RESTRICTED)).toMatchObject({ row_num: null });
-    expect(classes(await repair(engine))).toEqual(['cannot_render', 'entity_page_exists', 'folder_restricted', 'held_over_30_days']);
+    // An entity under a folder access rule is held on its folder's holding page, never on the shared one.
+    expect(await factRow(engine, RESTRICTED)).toMatchObject({ entity_slug: 'secret/project-x', source_markdown_slug: 'secret/memory/unattributed' });
+    expect(lineOf(head(root, 'secret/memory/unattributed.md'), RESTRICTED)).toContain('secret/project-x');
+    expect(classes(await repair(engine))).toEqual(['cannot_render', 'entity_page_exists', 'held_over_30_days']);
     expect(await rebuild(root, databaseUrl, [PAGELESS, SUBJECTLESS])).toEqual({ [PAGELESS]: 'notes/kitchen-remodel', [SUBJECTLESS]: null });
   }), 240_000);
 

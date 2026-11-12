@@ -32,6 +32,7 @@ const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonica
 import { isMissingSchemaObject } from '../utils.ts';
 import { privatePagesFilterForCaller, privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -166,7 +167,7 @@ const NAME_NOISE_TOKENS = new Set(['the', 'inc', 'llc', 'ltd', 'co', 'corp', 'co
 
 /** True for pages that name one real-world person, company, fund or organization. */
 export function isIdentityEntity(slug: string, type?: string | null): boolean {
-  return (type != null && IDENTITY_TYPES.has(type)) || IDENTITY_DIRS.some(dir => slug.startsWith(dir));
+  return !isHoldingSlug(slug) && ((type != null && IDENTITY_TYPES.has(type)) || IDENTITY_DIRS.some(dir => slug.startsWith(dir)));
 }
 
 const FACT_ENTITY_TYPES = new Set(['concept', 'project', 'deal']);
@@ -174,8 +175,8 @@ const FACT_ENTITY_DIRS = ['hosts/', 'projects/', 'concepts/', 'deals/'];
 
 /** Pages a fuzzy fact attribution may land on: entities, never meetings, notes or other documents. */
 export function isFactEntityPage(slug: string, type: string | null): boolean {
-  return isIdentityEntity(slug, type) || (type != null && FACT_ENTITY_TYPES.has(type))
-    || FACT_ENTITY_DIRS.some(dir => slug.startsWith(dir));
+  return !isHoldingSlug(slug) && (isIdentityEntity(slug, type) || (type != null && FACT_ENTITY_TYPES.has(type))
+    || FACT_ENTITY_DIRS.some(dir => slug.startsWith(dir)));
 }
 
 function nameTokens(value: string): string {

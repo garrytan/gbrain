@@ -46,7 +46,8 @@ import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { withPendingFenceRows } from '../eligibility/fence-overlay.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import type { TrustTier } from '../trust/tier.ts';
-import { extractFactsFromFenceText, UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
+import { extractFactsFromFenceText } from './extract-from-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 import { rememberAcceptsPageCreatedSince } from '../persistence/page-identity.ts';
 import { fenceRowOf, withHeldFactsFence, type FenceRowInput } from './unfenced-facts.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
@@ -91,9 +92,9 @@ async function insertFenceFactRow(tx: BrainEngine, row: WriteRequest, rowNum: nu
     { fix: requestReceiptFix(row) });
 }
 
-/** One fact as its fence cell at `rowNum` (`fenceRowOf`, the one renderer); on memory/unattributed a held fact names its entity (GST-2492). */
+/** One fact as its fence cell at `rowNum` (`fenceRowOf`, the one renderer); on a holding page a held fact names its entity (GST-2492). */
 function fenceCellFor(fact: FenceFactAppendInput['fact'], rowNum: number, slug: string): ReturnType<typeof fenceRowOf> {
-  const entity = slug === UNATTRIBUTED_MEMORY_SLUG && fact.entity_slug ? { entity: fact.entity_slug } : {};
+  const entity = isHoldingSlug(slug) && fact.entity_slug ? { entity: fact.entity_slug } : {};
   return { ...entity, ...fenceRowOf({ kind: (fact.kind ?? 'fact') as FenceRowInput['kind'], visibility: fact.visibility ?? 'private', context: fact.context ?? null, valid_from: fact.valid_from,
     valid_until: fact.valid_until ?? null, source: fact.source, claim_metric: fact.claim_metric ?? null, claim_value: fact.claim_value ?? null,
     claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null,
@@ -129,7 +130,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   input: FenceFactAppendInput, signal?: AbortSignal): Promise<FenceFactAppend> {
   const { fact } = input;
   const page = { sourceId: row.source_id, slug: row.slug };
-  if (!snapshot && (row.slug !== UNATTRIBUTED_MEMORY_SLUG || input.mode === 'index-existing')) {
+  if (!snapshot && (!isHoldingSlug(row.slug) || input.mode === 'index-existing')) {
     throw opError('storage_error', 'The facts fence target page does not exist.',
       `Request ${row.request_id} writes a facts row on ${row.slug} in source ${row.source_id}, which has no page, so nothing was written. Inspect the request; if it repeats, run gbrain doctor --json and report it to the user.`,
       { fix: requestReceiptFix(row) });

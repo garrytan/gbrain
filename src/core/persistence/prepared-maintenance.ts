@@ -10,7 +10,7 @@ import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
-import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
 import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
@@ -457,12 +457,13 @@ export type FactFenceAdoptionPlan =
  * every cycle, so the page waits a day or a planner change.
  */
 export async function planFactFenceAdoption(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
-  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string } }): Promise<FactFenceAdoptionPlan> {
+  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string; from_slug?: string } }): Promise<FactFenceAdoptionPlan> {
   const current = await readFacts(engine, authority.writer.sourceId, options.assignments.map(a => a.id));
   const facts: FactFenceAssignment[] = options.assignments.map(a => ({ ...a, hash: digest(current.find(f => f.id === a.id)?.value ?? null) }));
   const intent = { kind: options.move ? HELD_FACT_MOVE : 'managed_maintenance_adopt_fact_fence', expected_revision: options.expectedRevision,
     source_incarnation: authority.writer.sourceIncarnation, content: options.content, facts, planner: FACT_FENCE_PLANNER,
-    ...(options.move ? { note: options.move.note, ...(options.move.from_entity ? { from_entity: options.move.from_entity } : {}) } : {}) };
+    ...(options.move ? { note: options.move.note, ...(options.move.from_entity ? { from_entity: options.move.from_entity } : {}),
+      ...(options.move.from_slug ? { from_slug: options.move.from_slug } : {}) } : {}) };
   for (let attempt = 0; ; attempt++) {
     const requestId = maintenanceRequestId({ authority: authority.writer, slug, intent, ...(attempt ? { attempt } : {}) });
     const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
@@ -515,8 +516,11 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   enterClaimStep(clock, 'adoption_parse_fence');
   const fence = new Map(parseFactsFenceFor(p.content as string, { slug: row.slug }).facts.map(f => [f.rowNum, f]));
   // GST-2492 PR 2 (gbrain repair facts-home): a database-only fact with no entity, or whose entity has no page, is adopted
-  // onto memory/unattributed; its cell must name the fact's entity (none for a fact with no entity), so the projection keeps it.
-  const holdingAdoption = !held && row.slug === UNATTRIBUTED_MEMORY_SLUG;
+  // onto a holding page; its cell must name the fact's entity (none for a fact with no entity), so the projection keeps it.
+  // A held move onto a holding page (a held row whose entity a folder rule now covers) keeps its entity the same way.
+  const holdingAdoption = isHoldingSlug(row.slug);
+  // The holding page a held row moves off (`from_slug`, memory/unattributed when absent).
+  const fromSlug = held && typeof p.from_slug === 'string' && isHoldingSlug(p.from_slug) ? p.from_slug : UNATTRIBUTED_MEMORY_SLUG;
   // A held row keyed by a bare name (`from_entity`) moves to the page that name resolved to, and is re-keyed to it.
   const fromEntity = held && typeof p.from_entity === 'string' ? p.from_entity : null;
   const ownsRow = (value: Record<string, unknown>, rowNum: number) => holdingAdoption
@@ -529,7 +533,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
     for (const assignment of facts) {
       const fact = current.find(f => f.id === assignment.id);
       if (!fact || digest(fact.value) !== assignment.hash || !ownsRow(fact.value, assignment.row_num) || fact.value.expired_at !== null
-        || (held ? fact.value.source_markdown_slug !== UNATTRIBUTED_MEMORY_SLUG || fact.value.row_num === null : fact.value.row_num !== null)) {
+        || (held ? fact.value.source_markdown_slug !== fromSlug || fact.value.row_num === null : fact.value.row_num !== null)) {
         throw opError('revision_conflict', 'A legacy fact changed, was already adopted or moved to another owner before adoption.',
           `A legacy fact on ${row.slug} in ${row.source_id} changed before fact-fence adoption request ${row.request_id} published; nothing was written. The next fact backfill run re-reads the facts and plans a fresh request.`,
           { fix: receiptFix(row) });
@@ -554,7 +558,7 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   await check(engine, false);
   const pageRow = { ...row, intent: { kind: 'managed_maintenance_page', content: p.content, expected_revision: p.expected_revision } };
   const prepared = await preparePageMutation(unbounded, pageRow, config, undefined, undefined, { clock });
-  const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, UNATTRIBUTED_MEMORY_SLUG, { note: String(p.note), remove: p.note === 'moved',
+  const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, fromSlug, { note: String(p.note), remove: p.note === 'moved',
     rowNum: (await readFacts(engine, row.source_id, facts.map(f => f.id))).map(f => Number(f.value.row_num)), validUntil: null }) : null;
   return { ...prepared, ...(holding ? { companions: [holding] } : {}), validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
     // Runs ahead of the page import and its canonical projection, so the
@@ -562,14 +566,14 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
     // The fence cell's parsed text is written back with the row number: the
     // projection expires any row whose (row_num, fact, visibility) differs from
     // its fence row and inserts a new one, which would lose the legacy id.
-    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2,fact=a.fact${held ? ',entity_slug=$2' : ''}
+    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2,fact=a.fact${held && !holdingAdoption ? ',entity_slug=$2' : ''}
       FROM jsonb_to_recordset($3::text::jsonb) AS a(id integer,row_num integer,fact text)
       WHERE f.source_id=$1 AND f.id=a.id AND ${held ? 'f.source_markdown_slug=$4' : 'f.row_num IS NULL'} RETURNING f.id`,
-    [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num, fact: fence.get(row_num)!.claim }))), ...(held ? [UNATTRIBUTED_MEMORY_SLUG] : [])]);
+    [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num, fact: fence.get(row_num)!.claim }))), ...(held ? [fromSlug] : [])]);
     if (adopted.length !== facts.length) throw opError('revision_conflict', 'A legacy fact was adopted by another run.',
       `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.request_id} was publishing, so its transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} for the final state before planning any new adoption.`,
       { fix: receiptFix(row) });
-    if (held) noteBelief({ kind: 'transferred', fromSlug: UNATTRIBUTED_MEMORY_SLUG, table: 'facts', ids: facts.map(f => f.id) });
+    if (held) noteBelief({ kind: 'transferred', fromSlug, table: 'facts', ids: facts.map(f => f.id) });
     const outcome = await prepared.apply(tx);
     return { ...outcome, facts_adopted: facts.length };
   } };

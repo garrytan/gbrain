@@ -123,6 +123,7 @@ test/fence-first-generation-8819.test.ts
 test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
+test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/g4-forget-fence-edit.test.ts

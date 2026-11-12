@@ -5,12 +5,14 @@
  * Groups, one per row:
  * - `entity_page_exists`: a database-only fact (or a fact held on memory/unattributed) whose entity now has a page; the
  *   extract_facts upkeep step moves it there.
- * - `entity_page_missing`: a database-only fact for an entity with no page; the repair writes it to memory/unattributed
- *   as a held row that names the entity.
+ * - `entity_page_missing`: a database-only fact for an entity with no page; the repair writes it to its holding page
+ *   (`home`: memory/unattributed, or under a folder access rule the holding page of the entity's folder) as a held row
+ *   that names the entity.
  * - `no_entity`: a database-only fact with no entity; the repair writes it to memory/unattributed.
  * - `cannot_render`: a database-only fact the Facts table cannot render as it stands (its class says why); stays, listed.
- * - `folder_restricted`: a database-only fact for an entity under a folder access rule; it is never named on the
- *   world-readable holding page, so it stays, listed.
+ * - `folder_restricted`: a database-only fact for an entity no holding page can carry: an exact page rule on its slug
+ *   (`page_rule`; create the page and the upkeep step fences it) or an access state this role cannot read
+ *   (`access_unreadable`); it stays, listed.
  * - `entity_page_deleted`: a database-only fact whose entity page is soft-deleted (it may be private, and its purge would
  *   not reach a row on the holding page); restore or purge that page; stays, listed.
  * - `held_fact_unmovable`: a held row whose entity has a page that cannot take it, or whose bare name matches two or more
@@ -22,12 +24,12 @@
  *   row on any page's Facts table; the census counts it, so it is listed, never moved.
  */
 import type { BrainEngine } from '../engine.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { folderHoldingSlug, holdingSlugSql, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { folderRestricted } from '../search/private-visibility.ts';
 import { adoptableClaim, pageHasFile, planPageFence, type UnfencedFactRow } from './unfenced-facts.ts';
-import { ambiguousHeldReason, heldFactTarget } from './held-fact-move.ts';
+import { ambiguousHeldReason, heldFactTarget, holdingHome } from './held-fact-move.ts';
 
 export const FACTS_HOME_DOCS = 'docs/guides/repair.md#facts-home';
 export const HELD_TOO_LONG_DAYS = 30;
@@ -47,6 +49,8 @@ export interface FactsHomeRow {
   nearest?: string | null;
   /** held_over_30_days: when the row was written. */
   held_since?: string;
+  /** entity_page_missing and no_entity: the holding page the repair writes it to. */
+  home?: string;
 }
 
 export interface FactsHomeScan {
@@ -54,8 +58,8 @@ export interface FactsHomeScan {
   strict: boolean;
   rows: FactsHomeRow[];
   counts: Record<FactsHomeGroup, number>;
-  /** entity_page_missing and no_entity rows, as the repair writes them to memory/unattributed. */
-  homeable: UnfencedFactRow[];
+  /** entity_page_missing and no_entity rows, as the repair writes them to their holding page (`home`). */
+  homeable: Array<UnfencedFactRow & { home: string }>;
 }
 
 const ROW_COLUMNS = `f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
@@ -79,16 +83,20 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
     if (row.dimension != null) { add({ ...base, group: 'ontology_observation', reason: row.dimension }); continue; }
     if (row.entity_slug !== null && row.page_exists) { add({ ...base, group: 'entity_page_exists' }); continue; }
     if (row.entity_slug !== null && row.page_deleted) { add({ ...base, group: 'entity_page_deleted' }); continue; }
-    if (row.entity_slug !== null && row.entity_slug !== UNATTRIBUTED_MEMORY_SLUG && await folderRestricted(engine, sourceId, row.entity_slug)) { add({ ...base, group: 'folder_restricted', reason: 'folder_rule' }); continue; }
+    const entity = row.entity_slug === UNATTRIBUTED_MEMORY_SLUG ? null : row.entity_slug;
+    // The holding page every fact writer uses (held-fact-move.ts holdingHome); with write-through off, the one it would use.
+    const found = await holdingHome(engine, sourceId, entity);
+    const home = found ?? (entity !== null && await folderRestricted(engine, sourceId, entity) ? { slug: folderHoldingSlug(entity) } : { slug: UNATTRIBUTED_MEMORY_SLUG });
+    if ('refused' in home) { add({ ...base, group: 'folder_restricted', reason: home.refused }); continue; }
     const oracle = adoptableClaim(row);
     if ('rejected' in oracle) { add({ ...base, group: 'cannot_render', reason: oracle.rejected }); continue; }
-    add({ ...base, group: row.entity_slug === null || row.entity_slug === UNATTRIBUTED_MEMORY_SLUG ? 'no_entity' : 'entity_page_missing' });
-    out.homeable.push(row);
+    add({ ...base, group: entity === null ? 'no_entity' : 'entity_page_missing', home: home.slug });
+    out.homeable.push({ ...row, home: home.slug });
   }
-  const held = await engine.executeRaw<UnfencedFactRow & { held_since: string; old: boolean }>(`SELECT ${ROW_COLUMNS}, ${pageLive} AS page_exists,
-      to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($3 || ' days')::interval AS old
-     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND f.entity_slug <> $2 ORDER BY f.entity_slug, f.id`, [sourceId, UNATTRIBUTED_MEMORY_SLUG, String(HELD_TOO_LONG_DAYS)]);
+  const held = await engine.executeRaw<UnfencedFactRow & { held_since: string; old: boolean; from_slug: string }>(`SELECT ${ROW_COLUMNS}, ${pageLive} AS page_exists, f.source_markdown_slug AS from_slug,
+      to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
+     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')}) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
+      AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')} ORDER BY f.entity_slug, f.id`, [sourceId, String(HELD_TOO_LONG_DAYS)]);
   const waiting = new Map<string, typeof held>();
   const targets = new Map<string, Awaited<ReturnType<typeof heldFactTarget>>>();
   for (const row of held) {
@@ -120,12 +128,19 @@ async function nearestPage(engine: BrainEngine, sourceId: string, slug: string):
 }
 
 /** Each held row of `slug` with why its page cannot take it (null: the upkeep move takes it), planned read-only as the move plans it. */
-async function heldUnmovable(engine: BrainEngine, sourceId: string, slug: string, group: UnfencedFactRow[]): Promise<Array<[number, string | null]>> {
+async function heldUnmovable(engine: BrainEngine, sourceId: string, slug: string, group: Array<UnfencedFactRow & { from_slug: string }>): Promise<Array<[number, string | null]>> {
   const planned = await planPageFence(engine, sourceId, slug, group);
   if (!planned) return group.map(row => [Number(row.id), null]);
-  if (!await pageHasFile(engine, sourceId, slug, planned.snapshot.page)) return group.map(row => [Number(row.id), 'entity_page_database_only']);
+  // A held row in Git does not move into a page kept out of Git (a row a database-only holding page holds does).
+  const filed = new Set<string>();
+  if (!await pageHasFile(engine, sourceId, slug, planned.snapshot.page)) {
+    for (const from of new Set(group.map(row => row.from_slug))) {
+      const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>('SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, from]);
+      if (page && await pageHasFile(engine, sourceId, from, page)) filed.add(from);
+    }
+  }
   const plan = planned.fence;
-  if ('warnings' in plan) return group.map(row => [Number(row.id), `entity_fence_malformed: ${plan.warnings.join('; ')}`]);
-  const rejected = new Map(plan.rejected.map(record => [record.fact_id, record.class]));
-  return group.map(row => [Number(row.id), rejected.get(Number(row.id)) ?? null]);
+  const rejected = 'warnings' in plan ? null : new Map(plan.rejected.map(record => [record.fact_id, record.class]));
+  return group.map(row => [Number(row.id), filed.has(row.from_slug) ? 'entity_page_database_only'
+    : 'warnings' in plan ? `entity_fence_malformed: ${plan.warnings.join('; ')}` : rejected!.get(Number(row.id)) ?? null]);
 }

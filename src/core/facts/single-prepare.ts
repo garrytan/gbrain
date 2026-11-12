@@ -15,7 +15,7 @@ import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
 import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
 import { ownedPageWithdrawalSubject, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from './extract-from-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 import { sameClaimSlot } from './typed-claim.ts';
 
 export type FactCandidate = FactRow & { source_markdown_slug: string | null; row_num: number | null };
@@ -267,7 +267,7 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
   }
   // GBRA-190 G4: a fact saved without an entity is a row of memory/unattributed; linking it strikes that row in the same write.
   // GST-2492: so does replacing a fact a strict source held there for the same entity (checked above).
-  const linking = input.entity_slug != null && candidate.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG;
+  const linking = input.entity_slug != null && isHoldingSlug(candidate.source_markdown_slug);
   if (candidate.source_markdown_slug && candidate.source_markdown_slug !== opts.pageSlug && !linking) {
     const derived = String(candidate.source ?? '').startsWith('cli:extract-conversation-facts');
     throw verbError('invalid_params', `replaces_cross_page: fact #${targetId} lives on page ${candidate.source_markdown_slug}${derived ? ', extracted from that conversation page' : ''}.`,
