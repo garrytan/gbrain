@@ -16,6 +16,12 @@ identifiers and attribution are available in the pre-removal Git revision
 
 Now `serve-restart-attempt.json` under the brain's `.gbrain` directory remembers the build the restart was tried on, so each build gets one attempt across relaunches. The autopilot restarts the serve service only when its plist or unit starts this brain's own serve wrapper, and audits any other case as `skipped` / `manual`. The restart command runs asynchronously with a 120-second cap.
 
+**On macOS, an autopilot for a brain on an external volume now starts under launchd instead of exiting 78, and an autopilot pause no longer makes the worker restart itself every ten minutes or makes doctor call the held queue wedged.** launchd opens a job's program and its log files before the job runs. When those sat on a volume other than the home folder, as they do for a brain on an external `GBRAIN_HOME`, launchd ended every spawn with exit code 78 (`EX_CONFIG`) and no pid, even though the same wrapper ran fine by hand. `gbrain autopilot --install` now detects a brain home on another volume, has launchd start the wrapper through `/bin/bash`, and writes the job's logs to `~/Library/Logs/gbrain/<label>.log` and `.err`. The wrapper and every brain file stay under `GBRAIN_HOME`, and `--status` reads the new log path. A brain on the home volume gets the same plist as before. Re-run `--install` to move an existing job onto the new layout.
+
+An autopilot pause (`gbrain autopilot pause`, or the marker a migration sets) stops the worker's job claims. The worker's own no-progress watchdog didn't know that: with jobs waiting and nothing completing, it emitted `stalled` and the autopilot restarted its worker about every ten minutes for as long as the pause lasted. Now the watchdog restarts its clock while either marker is present, so a long pause can't trip it the moment the pause clears. The database liveness probe keeps running, and a real stall after resume is still caught. Doctor's `wedged_queue` reports a queue held by a pause as a warning that says which pause holds it and how it clears, instead of failing with advice to restart the worker.
+
+Contributed by @Masashi-Ono0611 (reports #8017 and #7966, and the approaches in #8018 and #7968).
+
 ### Itemized changes
 
 - `src/commands/upgrade-restart.ts`: the per-build attempt marker in `restartServeAfterSelfUpgrade`; the ownership check before `restartStaleServeService` collects processes; `hostExecutor` spawns asynchronously and kills a command past its timeout (120 s for the autopilot's serve restart, 600 s for `gbrain upgrade --restart-only` as before).
@@ -23,6 +29,12 @@ Now `serve-restart-attempt.json` under the brain's `.gbrain` directory remembers
 - `src/core/upgrade-restart.ts`: `RestartExecutor.run` may return a promise, and `runRestartSteps` awaits each command.
 - Docs: the Restart section of `docs/guides/upgrades-auto-update.md` and the `upgrade-restart.ts` key-files entry.
 - Tests: `test/autopilot-serve-restart-8013.test.ts`.
+- `src/core/autopilot-paths.ts`: `autopilotLaunchdHostPaths` compares the brain home's volume with the home folder's; on macOS `resolveAutopilotJob` takes its log paths from it and sets `launchdViaBash` for a brain on another volume.
+- `src/commands/autopilot.ts` and `src/commands/autopilot/jobs.ts`: `generateLaunchdPlist` writes `/bin/bash` before the wrapper when `launchdViaBash` is set; `installLaunchd` creates the log directory; `plistWrapperPath` reads the wrapper after `/bin/bash`, so job ownership, status and uninstall keep working.
+- `src/core/minions/worker.ts`: the non-supervised stall watchdog treats `autopilotPaused()` as a hold.
+- `src/commands/doctor/checks/queue-jobs.ts`: `wedged_queue` returns `warn` with `details.paused` (`operator` or `cooperative`) while a pause marker is present.
+- Docs: `docs/guides/live-sync.md` (log location for an external brain on macOS), `docs/guides/queue-operations-runbook.md` (a paused queue), and the `worker.ts` key-files entry.
+- Tests: `test/autopilot-launchd-external-home-8017.test.ts` and `test/autopilot-pause-watchdog-7966.test.ts`.
 
 ## [0.60.699.0] - 2026-11-12
 
