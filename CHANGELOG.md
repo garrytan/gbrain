@@ -31,6 +31,29 @@ identifiers and attribution are available in the pre-removal Git revision
 - Docs: `git-canonical.md`, `entity-scoped-facts.md`, `access-designations.md`, `repair.md`, `write-refusals.md`, `memory-boundaries.md`, `MEMORY_VERBS_v1.md`, `error-codes.md` (regenerated).
 - Tests: new `test/folder-holding-page-gst2492.test.ts` (held in Git before the reply and kept by a rebuild from a clone; three nested rules plus a pending one; no existence leak on get_page, search, query, recall, list_pages and find_pages; a raw-only rule; the rule apply's preview and move; the owner with the opt-in on and off; the page-rule and unreadable refusals locally and over MCP; database-only folders; background writers and repair; non-strict and repo-less unchanged; a segmented saved version named by the preview and reported incomplete by the apply, the sync path and maintenance; the preview's destination for a bare-name row equal to where the apply puts it; an exact page rule over a folder-held row, by CLI and by sync; the preview equal to the apply and its receipts; struck rows and a struck-only entity; a pending move; a NULL timeline kept); updated GST-2492 suites; PGLite and Postgres.
 
+## [0.60.701.0] - 2026-11-12
+
+### Flaky and slow tests fixed at their cause
+
+**Four tests that failed at random in CI now pass reliably, one E2E file is back under its time limit, and one of the fixes is a real bug: a cycle could re-read pages it had already handled.** Each fix was proven with a forced probe that reproduces the CI failure before the fix and passes after it. No assertion, timeout or retry limit was loosened.
+
+- `src/core/cycle/source-window.ts`: the cycle's page-listing cursor steps back to before the oldest transaction still open on another connection, so a page written by that transaction can't be missed. That count included Postgres autovacuum workers, which never write pages. An autovacuum pass open while the cycle listed pages made the next cycle read the pages written since that pass began a second time. Autovacuum workers no longer move the cursor (`test/sync-disabled-cycle-window.test.ts`).
+- `test/facts-entity-moved-7602.test.ts`: the test created and killed the page write's facts-absorb job before the write's own background effect had queued it. When the effect ran later, it found a dead job under its key and queued a fresh one, so the preview reported a waiting job. The test now waits for the effect to finish before it touches the job.
+- `test/persistence-index-lock-reclaim-6932.test.ts`: cleanup killed a helper shell whose `rm -rf` kept running after the shell died (dash forks a script's last command instead of replacing itself with it), and then ran `chmod -R` over the tree that `rm` was still deleting. Cleanup now waits for each helper to exit.
+- `test/e2e/worktree-refresh-postgres.test.ts` ran six refresh suites in one file and took 139 to 156 s on CI against the 180 s per-file limit. Its crash-recovery, orphan and diverged-publish suites moved to `test/e2e/worktree-refresh-recovery-postgres.test.ts`; all 95 cases still run, and each file takes about 100 s on a 4-vCPU machine.
+- `scripts/postgres-arm-weights.json`: the two PostgreSQL arm weights that were estimates now hold measured medians.
+- `test/docs-repo-paths.test.ts` (the scripts/ and test/ paths named in docs must exist) runs in `bun run verify` as `check:docs-repo-paths`. Before, it ran only in the full suite and in `scripts/ci-doc-checks.sh`, so a pull request's own checks never ran it, and a doc edit could name a missing path and pass.
+
+## [0.60.700.0] - 2026-11-12
+
+### A gbrain commit no longer reverts someone else's commit of the same file
+
+**When a script, an agent or a person commits their edit of a page file while gbrain is committing the same file, their commit now stays.** If that commit landed between gbrain reading HEAD and moving the branch, gbrain's one retry used to rebuild its commit on top of it with the bytes gbrain had staged earlier. HEAD silently went back to gbrain's version, the next sync reported success with nothing imported, the index kept the other version staged, and later edits to the page could be refused as an uncoordinated local edit. The other writer's bytes survived only in their own commit.
+
+- A managed brain's Git effect now checks, before each commit attempt, that no commit since it staged its files changed any of them and that the index still holds what it staged. When one did, it commits nothing over it. A file whose edit the other writer committed completes `superseded` (reason `committed_by_another_writer`), the next sync imports the other version, and gbrain's write stays in the page's history. Every other file in the group is put back and retried on the new HEAD, so a file that still holds gbrain's bytes is committed on top.
+- A strict (`canonical: git`) source's write refuses `git_target_changed` in the same case instead of rebuilding over the other commit, so recovery handles it the way it handles an edit made during the write.
+- To find edits a brain already lost this way, [docs/guides/shared-checkout-git.md](docs/guides/shared-checkout-git.md#effect-reverted-edits) has a read-only loop over the history.
+
 ## [0.60.699.0] - 2026-11-12
 
 ### The Ubicloud gate VMs run a current git
