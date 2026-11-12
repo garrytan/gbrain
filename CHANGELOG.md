@@ -12,7 +12,7 @@ identifiers and attribution are available in the pre-removal Git revision
 
 ## [Unreleased]
 
-**Gmail threads you purged stay purged, forwarded emails keep their body, live facts stay in recall, and more fixes across connectors, transcripts, fact capture, takes, timelines and links.**
+**Gmail threads you purged stay purged, forwarded emails keep their body, live facts stay in recall, the MCP request log can be capped without losing its totals, a remote `think` runs on the host's own model, a moved brain folder names its way back, and more fixes across connectors, transcripts, facts, takes, links and code search.**
 
 Gmail's change feed reports a thread whenever anything on it changes, a label or a read flag, however old the mail is. gbrain imported every one of them, so a mailbox set to 90 days of history could gain years of old threads. Those threads now stay out, the same way the first backfill keeps them out. A purged Gmail thread that the change feed delivers again no longer writes its subject and quoted text back into open loops, on managed and unmanaged sources alike. Forwarded emails used to be saved with only the note typed above the "Forwarded message" line, or empty, because that line was read as the start of a quoted reply. The forwarded message is now kept. Two unmanaged Google cases that ended as held items only a person could clear now sync cleanly. One is a page whose checkout file was missing only gbrain's Facts table after one of its facts was forgotten, and the other is an item whose page the owner purged while Google kept listing it (it is skipped and stays purged).
 
@@ -24,6 +24,31 @@ Paging through takes no longer repeats or skips takes that were written together
 
 Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain transcripts ingest --all` keeps each file's discovered format. A managed `gbrain import` with `sync.write_through` off refuses once before admitting anything, `gbrain connectors sync --dry-run` writes no state, and a connector re-render keeps the `trust_tier` marker that `gbrain repair provenance` stamped, so doctor stops listing those pages again after every import. Open loops no longer gain a twin when the model rewords a loop's text over the same quoted line, `withheld_noise` lists every sender in JSON, more no-reply sender spellings count as noise, and `gbrain google status` probes Contacts with a call the read-only Contacts permission covers. Doctor's `atom_provenance_drift` no longer flags an edit that left the page body unchanged.
 
+Ten contributor bug fixes from community wave 1 (#8149) and the #8128 follow-up waves A (#8323) and C (#8328) are rebuilt on current master: atoms follow a renamed origin page, a tombstone purge never removes a root sync metafile, nested config credentials stay hidden, a very long tag gets a clear refusal, the DB link path keeps links to child pages, and code search finds top-level callers and Elixir definitions. Each fix keeps its regression test, and the contributor credits stay with the people who found and diagnosed each problem.
+
+**You can now cap the MCP request log's size without losing the dashboard's totals or the audit trail.** `gbrain serve --http` writes one `mcp_request_log` row for every call, `tools/list` included, and nothing ever deleted them, so a busy brain's log grew without limit. Retention is opt-in and off by default, so nothing changes until you run `gbrain config set cycle.purge.mcp_request_log_retention_days 90` (30 to 3650 days; 1 to 29 is refused because the built-in usage reports look back 30 days). Then the nightly cycle deletes request rows older than the window, and a PGLite brain held by a live `gbrain serve` prunes itself once an hour in short batches. The `surface_change`, `memory_setting_change` and `access_admin` audit rows are never deleted, and each pruned row is counted per client first, so the Agents page's total requests and last-used times stay exact. A usage report whose window reaches back past deleted history says so: `gbrain auth clients --usage` names the `--days` that is complete, the advisor skips its "starter op unused for 90 days" half, and `scripts/derive-starter-ops.ts` refuses. Deleted request detail cannot be restored. `gbrain doctor` reports the log's size and suggests turning retention on once it passes about 1M rows or 1 GiB, asking you first. Proposed and first implemented by @lubosxyz (#6770).
+
+**A remote `think` now runs on the brain host's own think model unless the host allows the model the caller asked for.** Every `think` answer is a paid call on the host's key, and before this change any MCP or HTTP client (or a thin-client `gbrain think --model`) could pick the most expensive model the host could reach. Now the requested `model` runs only when it is the host's think model (`models.think`, then `models.default`) or the host lists it in the new `think.remote_models` key (comma-separated, empty by default). Any other model, or a listed one the host cannot run (no key for its provider, or no chat support), no longer fails the call: the host model answers, `warnings` carries `MODEL_OVERRIDE_IGNORED:not_allowed` or `MODEL_OVERRIDE_IGNORED:unusable`, and the result carries a `model_override_ignored` notice that says how the owner can allow it. Remote `rounds` runs one round. The local CLI `--model` is unchanged and still exits 1 on an unusable model. A keyless brain answers a remote think the same way with or without `model`.
+
+**Moved your brain folder? gbrain now tells you how to bring it back.** When a managed checkout was moved to a new path, or a folder above it was renamed, `gbrain sources set-path` and `gbrain sources add` used to refuse with a generic "identity changed" or "checkout missing" error that offered no way out, and their `--dry-run` said everything was fine. Now the preview and the real command refuse the same way, name where gbrain recorded the folder and where it is now, and give the exact commands that get you back without losing the folder's ownership or Git history. Nothing new can rebind ownership. The commands are the ones that already worked, and gbrain still checks everything they do.
+
+### A moved brain folder: how to get it back
+
+Run the command you were going to run, with `--dry-run`:
+
+```bash
+gbrain sources set-path notes /Users/alice-example/Brain --dry-run
+```
+
+The refusal (`recovery_required`, detail `physical_root_moved`) carries its exit as a `fix` the agent asks you about first, because it moves your folders:
+
+| What happened | The exit it names |
+|---|---|
+| Folder moved, its source still registered | `ln -s <new> <old>`, `gbrain sources set-path <source> <new>`, `rm <old>` |
+| Folder moved after `gbrain sources remove` | `mv <new> <old>`, then `gbrain sources add <id> --path <old>`, which reattaches the folder's history |
+| A parent folder renamed | the same, on the parent folder |
+| Copied to another disk and the original deleted | restore the original, or switch to classic mode (`gbrain sources writer deactivate --dry-run`); a copy cannot be reattached |
+
 ### Things to watch
 
 - Existing pages of forwarded emails keep their cut body until the thread changes again. Nothing is rewritten on upgrade.
@@ -33,6 +58,11 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 - Duplicate open loops written before this change and person-to-company links already typed from a machine-written section stay as they are until their thread or page is processed again.
 - `gbrain takes list --status <x>` used to be ignored silently and now exits 1, pointing to `--expired` and `gbrain takes propose --json`.
 - A `POST /ingest` capture whose credential's write source is archived or removed before the capture lands now fails its job with `source_changed` (`detail: webhook_source_unavailable`) and writes nothing, where it used to be written under `default`, a source the credential may not be granted. Restore the source and run `gbrain jobs retry` on the job. Captures that do not come from a webhook keep the `default` fallback.
+- TypeScript, TSX, JavaScript, Python, Ruby and Elixir code files re-chunk once on the next sync (#5001, #7080). On a brain with an embedding provider that is one paid re-embedding pass over their changed chunks; `gbrain embed --stale --dry-run` counts them first.
+- MCP request log retention is off until you set `cycle.purge.mcp_request_log_retention_days`. A remote `think` that asks for a model the host has not listed in `think.remote_models` now gets the host model and a `model_override_ignored` notice instead of the model it asked for.
+- A moved brain folder: `gbrain sources add --dry-run` and `gbrain sources writer claim --dry-run` now refuse a folder that holds a copied ownership stamp, and `gbrain sources set-path --dry-run` refuses a missing checkout, as their real runs always did. They still write nothing.
+- A moved brain folder: a remote agent whose page write reaches such a folder sees only the detail, never a path.
+- A moved brain folder: a brain without a Git repository is unaffected, and the default keyless brain's `gbrain sources set-path` stays a plain path update.
 
 ### Itemized changes
 
@@ -89,9 +119,8 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 
 - `src/core/minions/handlers/ingest-capture.ts`: a webhook capture (`untrusted_payload`, `source_kind: webhook`) whose write source is archived, unregistered or removed mid-write refuses `source_changed` (`detail: webhook_source_unavailable`) instead of writing under `default`, on managed and unmanaged brains. Test: `test/ingest-capture-no-default-fallback.test.ts`.
 - `src/core/minions/handlers/ingest-capture.ts`: the job normalizes its slug once (`validateSlug`) before its snapshot, applied-record and writer lookups, so a mixed-case `X-Gbrain-Slug` naming an existing page on a managed brain replaces that page instead of dead-lettering with `revision_required`. A trusted local tombstone for a mixed-case slug now deletes the lowercase page instead of skipping it. Test: `test/ingest-capture-mixed-case-slug.test.ts`.
-#### Ingest and facts salvage wave (#8921)
 
-**An ingest/facts salvage wave: ten contributor bug fixes from community wave 1 (#8149) and the #8128 follow-up waves A (#8323) and C (#8328), rebuilt on current master.** Each fix keeps its regression test, and the contributor credits stay with the people who found and diagnosed each problem.
+#### Ingest and facts salvage wave (#8921)
 
 - **Atoms follow a renamed origin page, and the privacy filter follows it too (#7462).** After a sync rename, stale-atom repair, provenance drift, derived visibility, the private-visibility filter and visibility repair used to treat an atom's origin page as gone. They now follow the rename alias. An atom is private when either the old or the renamed page is private, so this only tightens; `source_slug` is never rewritten.
 - **A tombstone purge never removes a root sync metafile (#7613).** AGENTS.md and the other sync metafiles at the root of a checkout could match a tombstone and be deleted.
@@ -108,42 +137,7 @@ Hermes transcript snapshots no longer fail while Hermes is writing, and `gbrain 
 - **Advisors and repair give advice that works (#7281, #7282, #7137).** The stale-sync advisor skips archived sources. The timeline-coverage advisor counts meeting, conversation and calendar pages by their own date. An auto-tier `gbrain db-repair --yes` that can't reach a database that keeps refusing connections tells you to check the database server instead of running the same repair again.
 - **Smaller fixes.** Link reads count hidden former relationships in SQL instead of fetching them (#7075). Autopilot logs `auto_drain_window_clamped` when it shortens an atom drain (#7076). `loops list` and `open_loops` say when a list was cut short and how many matched (#7291). A null `api_error_status` counts as no status in the Claude CLI output-cap match (#7273). The Hermes turn rule names gbrain's tools `mcp__gbrain__recall` (#8068). `gbrain init --help` names starter as the default registration surface (#7983). The 0.53.0 migration's refusal for an unclaimed or inactive source names the preview to run first (#7915). The ci:local runner installs curl (#7765). Docs: the topologies guide (#7733) and the AlphaClaw/OpenClaw onboarding known issue (#7965).
 
-#### Opt-in MCP request log retention, host-model remote think, moved brain folders (#9145)
-
-**You can now cap the MCP request log's size without losing the dashboard's totals or the audit trail.** `gbrain serve --http` writes one `mcp_request_log` row for every call, `tools/list` included, and nothing ever deleted them, so a busy brain's log grew without limit. Retention is opt-in and off by default, so nothing changes until you run `gbrain config set cycle.purge.mcp_request_log_retention_days 90` (30 to 3650 days; 1 to 29 is refused because the built-in usage reports look back 30 days). Then the nightly cycle deletes request rows older than the window, and a PGLite brain held by a live `gbrain serve` prunes itself once an hour in short batches. The `surface_change`, `memory_setting_change` and `access_admin` audit rows are never deleted, and each pruned row is counted per client first, so the Agents page's total requests and last-used times stay exact. A usage report whose window reaches back past deleted history says so: `gbrain auth clients --usage` names the `--days` that is complete, the advisor skips its "starter op unused for 90 days" half, and `scripts/derive-starter-ops.ts` refuses. Deleted request detail cannot be restored. `gbrain doctor` reports the log's size and suggests turning retention on once it passes about 1M rows or 1 GiB, asking you first. Proposed and first implemented by @lubosxyz (#6770).
-
-**A remote `think` now runs on the brain host's own think model unless the host allows the model the caller asked for.** Every `think` answer is a paid call on the host's key, and before this change any MCP or HTTP client (or a thin-client `gbrain think --model`) could pick the most expensive model the host could reach. Now the requested `model` runs only when it is the host's think model (`models.think`, then `models.default`) or the host lists it in the new `think.remote_models` key (comma-separated, empty by default). Any other model, or a listed one the host cannot run (no key for its provider, or no chat support), no longer fails the call: the host model answers, `warnings` carries `MODEL_OVERRIDE_IGNORED:not_allowed` or `MODEL_OVERRIDE_IGNORED:unusable`, and the result carries a `model_override_ignored` notice that says how the owner can allow it. Remote `rounds` runs one round. The local CLI `--model` is unchanged and still exits 1 on an unusable model. A keyless brain answers a remote think the same way with or without `model`.
-
-**Moved your brain folder? gbrain now tells you how to bring it back.** When a managed checkout was moved to a new path, or a folder above it was renamed, `gbrain sources set-path` and `gbrain sources add` used to refuse with a generic "identity changed" or "checkout missing" error that offered no way out, and their `--dry-run` said everything was fine. Now the preview and the real command refuse the same way, name where gbrain recorded the folder and where it is now, and give the exact commands that get you back without losing the folder's ownership or Git history. Nothing new can rebind ownership. The commands are the ones that already worked, and gbrain still checks everything they do.
-
-### A moved brain folder: how to use it
-
-Run the command you were going to run, with `--dry-run`:
-
-```bash
-gbrain sources set-path notes /Users/alice-example/Brain --dry-run
-```
-
-The refusal (`recovery_required`, detail `physical_root_moved`) carries its exit as a `fix` the agent asks you about first, because it moves your folders:
-
-| What happened | The exit it names |
-|---|---|
-| Folder moved, its source still registered | `ln -s <new> <old>`, `gbrain sources set-path <source> <new>`, `rm <old>` |
-| Folder moved after `gbrain sources remove` | `mv <new> <old>`, then `gbrain sources add <id> --path <old>`, which reattaches the folder's history |
-| A parent folder renamed | the same, on the parent folder |
-| Copied to another disk and the original deleted | restore the original, or switch to classic mode (`gbrain sources writer deactivate --dry-run`); a copy cannot be reattached |
-
-### A moved brain folder: things to watch
-
-- `gbrain sources add --dry-run` and `gbrain sources writer claim --dry-run` now refuse a folder that holds a copied ownership stamp, and `gbrain sources set-path --dry-run` refuses a missing checkout, as their real runs always did. They still write nothing.
-- A remote agent whose page write reaches such a folder sees only the detail, never a path.
-- A brain without a Git repository is unaffected, and the default keyless brain's `gbrain sources set-path` stays a plain path update.
-
-Proposed and first implemented by @Kkkkkuro (#8625).
-
-### Itemized changes
-
-Request log retention (#8952):
+#### Request log retention (#8952, from #9145)
 
 - `src/core/mcp-request-log-retention.ts` (new): `pruneMcpRequestLog` deletes rows past the cutoff in batches of 2,000 (at most 200 per run, 400,000 rows), each batch one statement that picks the oldest rows in `created_at` order with `FOR UPDATE SKIP LOCKED`, skips `AUDIT_LOG_OPERATIONS`, deletes them and adds them to `mcp_request_log_rollup`, so a failed tally deletes nothing and two prunes at once never double-count. `runMcpLogRetention` reads `cycle.purge.mcp_request_log_retention_days` and records each run under `cycle.purge.mcp_request_log_last_prune`. `startMcpLogPruneTicker` is the hourly PGLite prune with a 3-second budget that yields between batches. `lifetimeUsage` adds kept rows and the tally.
 - `access_admin`, the owner access administration audit row (GST-1094), is in `AUDIT_LOG_OPERATIONS` too, so retention never prunes it and usage reports never count it.
@@ -158,7 +152,7 @@ Request log retention (#8952):
 - Docs: `docs/mcp/ADMIN.md` ("Request log retention"), `docs/operations/mcp-surface-runbook.md`, `docs/architecture/system-of-record.md`.
 - Tests: `test/mcp-request-log-retention.test.ts` (PGLite and Postgres, repo-less: off by default, every row class tallied exactly, audit rows kept, capped runs resume, a failed tally deletes nothing, a missing tally table skips, `config set` refusals, the PGLite ticker under a live `serve --http`, two prunes at once on Postgres), `test/serve-http-admin-request-log-retention.test.ts`, `test/doctor-mcp-request-log-retention.test.ts`, `test/mcp-request-log-retention-cli.serial.test.ts` (`auth clients` and `derive-starter-ops` through the real entry points), and new cases in `test/mcp-usage.test.ts` and `test/advisor-mcp-client-fit.test.ts`.
 
-Remote `think` model (#9050):
+#### Remote `think` model (#9050, from #9145)
 
 - `src/core/ops/takes.ts`: `remoteThinkModel` resolves the requested model, the host think model and each `think.remote_models` entry through the same alias resolution and normalization, then runs the requested model only when it is the host model, or when it is listed, passes `probeChatModel` and has its provider's key. For remote callers, the #1698 explicit-model error no longer applies and `rounds` is 1.
 - `src/core/interop-notices.ts`, `src/core/error-registry.ts`: the `model_override_ignored` info notice (per session for each reason); for `not_allowed` its fix is `gbrain config set think.remote_models <models>` on the brain host (paid consent).
@@ -167,7 +161,7 @@ Remote `think` model (#9050):
 - `src/core/behavior-change-notice.ts`: one row for the remote `think` model rule. Docs: `docs/guides/remote-mcp.md` security posture.
 - Tests: `test/think-remote-model.test.ts` (PGLite and Postgres, remote MCP dispatch on a repo-less brain): an unlisted model, a listed model, a listed model the host cannot run, a listed model whose provider key the host lacks, the host model named explicitly, remote `rounds`, the local operation keeping #1698, and a keyless brain with and without `model`; `test/think-remote-model-thin-client.serial.test.ts`: the thin-client `--model` notice; `test/think-pipeline.test.ts` pins the #1698 error on the local caller and no error for a remote one.
 
-A moved brain folder (#8950):
+#### A moved brain folder (#8950, from #9145)
 
 - `src/core/persistence/physical-root-record.ts`: `describeMovedPhysicalRoot` (read-only file evidence: the stamp's recorded root is gone, and the reservation of that root, beside it or beside the new root after a parent rename, carries the stamp's token, brain and worktree; `sameDirectory` from device, inode and birth time), `physicalRootMovedError` (path-free) and `physicalRootMovedRefusal` (the local CLI refusal with an `ask_user` fix chain in argv form, paths shell-quoted in the prose). An ownership stamp other users can read at the new path now refuses `ownership_record_not_private` instead of the generic error.
 - `src/core/persistence/physical-root.ts`: `movedPhysicalRoot` accepts the evidence only for this brain, a worktree this host owns and a host binding still at the recorded root; `reservePhysicalRoot` raises the path-free refusal on its copied-marker branch.
@@ -175,6 +169,8 @@ A moved brain folder (#8950):
 - `src/core/persistence/verb-errors.ts`, `src/core/error-registry.ts`: the `physical_root_moved` reason and its explanation; `docs/guides/error-codes.md` regenerated.
 - Docs: `docs/architecture/topologies.md#moved-root`, `docs/guides/write-refusals.md#moved-root`.
 - Tests: `test/physical-root-moved-8625.test.ts` (PGLite and Postgres: leaf and parent moves, bound and removed sources, Git and plain directories, a copy on a new inode, two sources in one worktree, `writer claim --dry-run`, five lookalikes that keep the generic refusal, a readable stamp, the classic keyless set-path, and a remote `put_page` whose refusal carries no path or worktree id, before activation and on an activated brain with a moved checkout under the unbound source's folder).
+
+Proposed and first implemented by @Kkkkkuro (#8625).
 
 ## [0.60.699.0] - 2026-11-12
 ### The Ubicloud gate VMs run a current git
