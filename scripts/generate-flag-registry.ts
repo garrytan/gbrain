@@ -97,8 +97,12 @@ const DELEGATED_MODULES: Record<string, string[]> = {
  * argv to pick the process's pool profile (`sync --watch`, `serve --access`):
  * serve imports it for the read-only check, and its `--watch` made
  * `gbrain serve --watch` pass validation.
+ * behavior-change-notice.ts is a disclosure data table (BEHAVIOR_CHANGES):
+ * its rows quote other commands' flags and git arguments (`git merge
+ * --squash`) as changelog prose — no command parses a flag from it, so
+ * scanning it handed doctor and init a --squash neither reads (#8867).
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts', 'behavior-change-notice.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in
