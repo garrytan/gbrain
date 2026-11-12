@@ -23,6 +23,7 @@ import { setCliExitVerdict } from '../cli-force-exit.ts';
 import { laneTurnSettings, validateMinMatch, validatePinned, validateSessionTokenBudget, validateTopK } from '../skills/resolver/config.ts';
 
 const CONFIG_CAP_BYTES = 1024 * 1024;
+const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
 /** A JSON object file, or null when it is missing, unreadable or not an object. */
 export function readJsonObjectSafe(path: string): Record<string, unknown> | null {
@@ -111,8 +112,10 @@ function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean
 /**
  * `gbrain config set|unset|get skills.resolver.<leaf>`, engine-free (before
  * any brain connection, on a brainless install and on a thin client alike):
- * the file plane is the only plane these keys have. Returns false for a
- * key or action this does not own.
+ * the file plane is the only plane these keys have. A per_harness entry that
+ * is not an object (a hand-edited null, list or scalar) reads as unset, and
+ * set or unset replaces it with {}. Returns false for a key or action this
+ * does not own.
  */
 export function runSkillResolverConfigKey(args: string[], home: string): boolean {
   const [action, key, ...rest] = args;
@@ -127,7 +130,9 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   const doc = read.state === 'ok' ? structuredClone(read.doc) : {};
   const section = resolverSection(doc);
   const perHarness = (section.per_harness && typeof section.per_harness === 'object' && !Array.isArray(section.per_harness) ? section.per_harness : {}) as Record<string, Record<string, unknown>>;
-  const holder: Record<string, unknown> = nested ? (Object.hasOwn(perHarness, nested[1]!) ? perHarness[nested[1]!]! : (perHarness[nested[1]!] = {})) : section;
+  const stored: unknown = nested && Object.hasOwn(perHarness, nested[1]!) ? perHarness[nested[1]!] : undefined;
+  const replaced = !!nested && stored !== undefined && !isPlainObject(stored);
+  const holder: Record<string, unknown> = !nested ? section : isPlainObject(stored) ? stored : (perHarness[nested[1]!] = {});
   const field = nested ? nested[2]! : leaf;
   if (action === 'get') {
     if (holder[field] === undefined) return fail(`Config key not found: ${key}`);
@@ -135,7 +140,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
     return true;
   }
   if (action === 'unset') {
-    if (!(field in holder)) return fail(`Config key not found: ${key}`);
+    if (!(field in holder) && !replaced) return fail(`Config key not found: ${key}`);
     delete holder[field];
   } else {
     const value = rest.find((a) => !a.startsWith('-'));
@@ -145,7 +150,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
     holder[field] = parsed.value;
   }
   if (nested) {
-    for (const [h, o] of Object.entries(perHarness)) if (Object.keys(o).length === 0) delete perHarness[h];
+    for (const [h, o] of Object.entries(perHarness)) if (isPlainObject(o) && Object.keys(o).length === 0) delete perHarness[h];
     if (Object.keys(perHarness).length) section.per_harness = perHarness; else delete section.per_harness;
     try { laneTurnSettings(section, nested[1]!); } catch (e) { return fail(`${(e as Error).message} Nothing was written.`); }
   }

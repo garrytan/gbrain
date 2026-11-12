@@ -101,6 +101,8 @@ for (const kind of testBackends()) {
             FROM persistence_requests t, generate_series(1,$2) WHERE t.id=$1::uuid`, [template.id, count]);
         }
       });
+      // GBRA-108: the forecast covers a cap the operator set.
+      await engine.setConfig('persistence.limits.principal_lifetime_ids', '2000000');
       const row = await principalIds(engine);
       expect(row.per_day_7d).toBe(Math.round(10_499 / 7));
       expect(row.max_day_7d).toBeGreaterThanOrEqual(10_000);
@@ -114,6 +116,7 @@ for (const kind of testBackends()) {
         await declarePersistenceProtocol(tx);
         await tx.executeRaw(`UPDATE persistence_requests SET state='failed',completed_at=now(),intent=jsonb_build_object('body',repeat('x',100000)) WHERE id=$1::uuid`, [admitted.id]);
       });
+      await engine.setConfig('persistence.limits.principal_terminal_bytes', String(16 * 1024 ** 3));
       const bytes = (await readCapacityForecast(engine)).rows.find(r => r.scope.startsWith('principal:') && r.resource === 'terminal_bytes')!;
       expect(bytes.under_reserved_receipts).toBe(1);
       expect(bytes.basis).toContain(':legacy_under_reserved');

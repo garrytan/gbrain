@@ -101,6 +101,9 @@ function retryDelayS(attempts: number, err?: WakeshiftError): number {
   return WAKE_RETRY_SCHEDULE_S[attempts - 1] ?? cap;
 }
 
+/** GST-363: the local_stdio principal id of a watch from a stdio server started with --stdio-member. */
+export const STDIO_REGISTRATION_PRINCIPAL = 'registration';
+
 /** The subscribing credential still exists and, when it was bound to a member, that member is still live. */
 export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id' | 'member_id'>): Promise<boolean> {
   if (row.principal_kind === 'oauth_client') {
@@ -111,7 +114,9 @@ export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'pri
     if (live.length === 0) return false;
   }
   if (!row.member_id) return true;
-  const identity = await memberIdentityFor(engine, { principal: { kind: row.principal_kind, id: row.principal_id } });
+  // GST-363: a watch from a stdio server started with --stdio-member re-checks that member, not config mcp.stdio_member.
+  const registered = row.principal_kind === 'local_stdio' && row.principal_id === STDIO_REGISTRATION_PRINCIPAL;
+  const identity = await memberIdentityFor(engine, { principal: { kind: row.principal_kind, id: row.principal_id }, ...(registered ? { stdioMember: row.member_id } : {}) });
   return identity.includes(`member:${row.member_id}`);
 }
 

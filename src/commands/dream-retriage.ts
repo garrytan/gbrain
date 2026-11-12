@@ -55,6 +55,7 @@ import { discoverTranscripts, conversationPagesOptedIn, withConversationPages } 
 import { passesTriageGate, rescueConfigOf } from '../core/cycle/triage-rescue.ts';
 import { estimateTriageDecideUsd, resolveTriageDecide } from '../core/cycle/triage-decide.ts';
 import { jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
+import { printHelpText } from '../cli/help/render.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
 import { usageError, writeCliRefusal } from '../cli/cli-error.ts';
 import { MinionQueue } from '../core/minions/queue.ts';
@@ -161,8 +162,8 @@ function parseRetriageArgs(args: string[]): RetriageArgs {
   return out;
 }
 
-function printRetriageHelp(): void {
-  console.log(`gbrain dream retriage — re-score the corpus, reconcile the synth backlog
+function printRetriageHelp(args: string[]): Promise<void> {
+  return printHelpText('dream retriage', `gbrain dream retriage — re-score the corpus, reconcile the synth backlog
 
 USAGE
   gbrain dream retriage [flags]
@@ -211,7 +212,7 @@ the same passesTriageGate the synthesize fan-out reads)
   legacy dream:synth: (v1) keys                 never touched
 
 Cancelled rows release their idempotency slot, so lowering the threshold
-later cleanly re-submits the work.`);
+later cleanly re-submits the work.`, args);
 }
 
 interface QueueCandidate {
@@ -303,7 +304,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
   }
   // IRON RULE: --help short-circuits before any engine-bearing work.
   if (parsed.help) {
-    printRetriageHelp();
+    await printRetriageHelp(args);
     return;
   }
   if (engine === null) {

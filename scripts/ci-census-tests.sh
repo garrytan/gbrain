@@ -24,7 +24,7 @@ cd "$(dirname "$0")/.."
 
 ENUMERATION='registry|inventory|catalog|coverage-ledger|operations-|behavior-change-notice|error-|exit-codes|fix-wave-5-integration|repair-explicit-only|cli-flag-validation|allowlist-drift|mcp-tool-defs|cli-flag-equals|remote-privacy-sweep|tool-catalog'
 
-WALKERS='test-reads-source-smell|canonical-migration-command|db-guard-coverage|env-trust-protected-keys|no-valid-until-write|page-row-deleters-guard|persistence-mode-reader-guard|query-embed-call-sites|readiness-advice-lint|refresh-barrier-state-audit|scripts/serial-files|write-refusals-coverage|scripts/ci-census-tests'
+WALKERS='test-reads-source-smell|canonical-migration-command|db-guard-coverage|env-trust-protected-keys|no-valid-until-write|page-row-deleters-guard|persistence-mode-reader-guard|query-embed-call-sites|readiness-advice-lint|refresh-barrier-state-audit|scripts/serial-files|write-refusals-coverage|scripts/ci-census-tests|chronicle-upgrade-notice-5876|cli-cold-start-registries|cli-exit-verdict-pin|cli-socket\.test|connector-kind-routing|cycle-date-consistency|doctor-default-budget-6803|generations-deprecated-fact-writers|persistence-pipeline-first|persistence-true-up-sites|pg-tls\.test|postgres-inflight-budget-6543|query-expansion-phrasing-guard|receipt-coverage\.test|remediation-command-resolution|git-env-guard|engine-surface-coverage|run-unit-shard'
 
 list() {
   {

@@ -490,7 +490,10 @@ What one purge does, in one transaction:
 - drops the row (not a strike) from the page's facts or takes fence, from the
   stored page body and from every saved page version, then rebuilds that page's
   chunks; the canonical file is rewritten by the owner and committed as
-  `gbrain: purge fact <hash8>` (no claim text in the commit);
+  `gbrain: purge fact <hash8>` (no claim text in the commit). A purge of a
+  fact held on `memory/unattributed` for an entity with no page also drops
+  every copy of the same claim text on that page, whether it is held for
+  another entity or has no entity;
 - redacts stored write intents that carry the claim (a write that is running
   or recovering blocks the purge with `purge_blocked_pending_recovery` until it
   finishes; retry with the same request id; a write still queued, or deferred
@@ -504,7 +507,10 @@ What one purge does, in one transaction:
 - records a text-free tombstone: the claim's fingerprint, its source,
   visibility, entity, request id and reason. Any later write of the same
   normalized claim is refused with `purged_content`, and a stale file, re-sync
-  or revert drops the row on import.
+  or revert drops the row on import. The tombstone applies to the whole brain:
+  it refuses a member's save on its own member page too, even when that member
+  could never read the purged fact, so a member who saves matching text learns
+  that a purge exists.
 
 On a terminal the CLI prints the dry-run receipt and asks you to type the
 fact's 8-character token; without a terminal it needs `--yes` and

@@ -1322,6 +1322,8 @@ export function knobsHash(
     if (access.identity.length) parts.push(`xid=${createHash('sha256').update(access.identity.join(',')).digest('hex').slice(0, 16)}`);
     if (access.audienceIdentities.length) parts.push(`xau=${createHash('sha256').update(JSON.stringify(access.audienceIdentities)).digest('hex').slice(0, 16)}`);
     if (!access.hidePrivate) parts.push('xhp=0');
+    if (access.lineage) parts.push(!access.owner ? 'xol=3' : access.ownerReadsRestricted ? 'xol=2' : 'xol=1');
+    if (access.audienceKindMembers.length) parts.push(`xak=${createHash('sha256').update(access.audienceKindMembers.join(',')).digest('hex').slice(0, 16)}`);
   }
   const h = createHash('sha256');
   h.update(parts.join('|'));

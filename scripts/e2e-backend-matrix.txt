@@ -46,6 +46,8 @@ test/e2e/projection-recovery-parity.test.ts
 test/e2e/takes-scorecard-parity.test.ts
 test/e2e/evidence-delivery-parity.test.ts
 test/e2e/apply-migrations-orchestration-lock.test.ts
+test/e2e/schema-migration-lock-postgres.test.ts
+test/e2e/member-page-withdrawal-scope-migration.test.ts
 test/e2e/postgres-poisoned-connection.test.ts
 test/e2e/write-attribution-postgres.test.ts
 test/e2e/write-attribution-timeline-10k-postgres.test.ts

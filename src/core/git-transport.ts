@@ -105,3 +105,17 @@ export function durableSsrfFlags(): string[] {
     '-c', 'protocol.ext.allow=never',
   ];
 }
+
+/**
+ * Transport flags for a checkout's OWN configured remotes: no redirects, no
+ * external helpers, no submodule fetch surface. The file protocol keeps git's
+ * default (`user`): a bare repo on the same host is a supported brain topology
+ * (the pre-#6530 helper pushed to it with plain git), and the URL is the
+ * operator's own config, not remote-supplied input. GBRAIN_GIT_ALLOW_FILE_TRANSPORT
+ * still forces `always` for tests.
+ */
+export function ownRemoteTransportFlags(): string[] {
+  return durableSsrfFlags().flatMap((flag, i, all) =>
+    all[i - 1] === '-c' && flag.startsWith('protocol.file.allow=') && process.env.GBRAIN_GIT_ALLOW_FILE_TRANSPORT !== '1'
+      ? ['protocol.file.allow=user'] : [flag]);
+}

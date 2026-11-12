@@ -25,7 +25,7 @@ import type { FactRow } from '../engine.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
 import { currentReadMode, SCOPE_READ_ACCESS } from '../access/scope-read.ts';
-import { callerMember, memberPageSlug, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
+import { callerMember, memberPageSlug, ownMemberFactIds, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { markedScopeSources, sourceNotAttested, withoutScopeSources } from '../access/attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
 import { folderAccessFor } from '../access/caller.ts';
@@ -60,8 +60,12 @@ export const QM_MEMORY_REQUEST_NAMESPACE = '6b3e9f2a-41c7-4d58-9a0e-2f7c5d1b8e63
 
 const actorParam: ParamDef = { type: 'string', description: `Set by the trusted system: equal to the ${ACTOR_HEADER} header, or omit.`, fullSurfaceOnly: true };
 
-/** GST-1158 F5: `arm` says which read found the fact: the person's own recent facts, or the query ranking. */
-export interface RecallFact { id: string; text: string; date: string; kind: string; arm: 'own' | 'ranked' }
+/**
+ * GST-1158 F5: `arm` says which read found the fact: the person's own recent facts, or the query ranking. GST-2407:
+ * `own_page` says the fact sits on the person's own member page in the connection's source, the one test forget_fact
+ * applies to ownership (ownMemberFactIds), whichever arm found it.
+ */
+export interface RecallFact { id: string; text: string; date: string; kind: string; arm: 'own' | 'ranked'; own_page: boolean }
 
 /** Fact text as one plain line: fence and heading markers and rules removed, every line break and control character a space. */
 export function plainFactText(text: string): string {
@@ -163,7 +167,8 @@ async function recallFacts(ctx: OperationContext, query: string, maxChars: numbe
   // The date as the database writes it: a driver's timestamp parse reads years 1-99 as 19xx.
   const written = new Map(rows.length ? (await ctx.engine.executeRaw<{ id: number | string; d: string }>(
     `SELECT id, to_char(COALESCE(valid_from, created_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS d FROM facts WHERE id = ANY($1::bigint[])`, [rows.map(r => r.id)])).map(r => [Number(r.id), r.d]) : []);
-  const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind), arm: r.arm }));
+  const owned = remote ? await ownMemberFactIds(ctx.engine, ctx.sourceId ?? 'default', rows.map(r => Number(r.id))) : new Set<number>();
+  const plain = rows.map(r => ({ id: String(r.id), text: plainFactText(r.fact), date: isoDate(written.get(Number(r.id)) ?? r.valid_from ?? r.created_at), kind: String(r.kind), arm: r.arm, own_page: owned.has(Number(r.id)) }));
   const { redactRetrievalOutput } = await import('../search/output-redaction.ts');
   const facts: RecallFact[] = (remote ? redactRetrievalOutput(plain, {}, { uncapped: true }).results : plain).filter(f => f.text);
   const { kept, text } = boundFactLines(facts.map(f => `- ${f.text} (${f.date}; ${f.kind})`), maxChars);
@@ -300,7 +305,7 @@ const memory_write: Operation = {
       const intent = scopeSource === undefined
         ? { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'private' as const, entity_slug: null, page_slug: memberPageSlug(actor.member) }
         : { fact: item.fact as string, kind: (item.kind ?? 'fact') as never, visibility: 'world' as const, entity_slug: null, page_slug: SCOPE_PAGE_SLUG };
-      try { await assertFactNotWithdrawn(ctx.engine, writeCtx.sourceId ?? 'default', intent, { excludePrivate }); } catch (e) {
+      try { await assertFactNotWithdrawn(ctx.engine, writeCtx.sourceId ?? 'default', intent, { excludePrivate, remote: ctx.remote !== false }); } catch (e) {
         if (e instanceof OperationError) e.message = `facts[${index}]: ${e.message} Nothing was saved.`;
         throw e;
       }
@@ -313,6 +318,14 @@ const memory_write: Operation = {
         saved.push({ request_id: item.request_id, ...(out?.id !== undefined ? { fact_id: String(out.id) } : {}) });
       } catch (e) {
         if (e instanceof OperationError && e.writeError === 'write_pending') { saved.push({ request_id: item.request_id, pending: true }); continue; }
+        // memory_write takes no request_id: a retryable refusal names the idempotency_key that replays this write.
+        if (e instanceof OperationError && e.requestId === item.request_id) {
+          const theirs = `request_id ${item.request_id}`, own = `idempotency_key ${key}`;
+          e.message = e.message.replaceAll(theirs, () => own);
+          e.suggestion = e.suggestion?.replaceAll(theirs, () => own);
+          if (e.fix) e.fix = { ...e.fix, why: e.fix.why.replaceAll(theirs, () => own) };
+          e.requestId = undefined;
+        }
         if (e instanceof OperationError && index > 0) e.message = `facts[${index}]: ${e.message} The ${index} fact(s) before it were saved; the same idempotency_key replays them.`;
         throw e;
       }

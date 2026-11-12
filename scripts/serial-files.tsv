@@ -2,8 +2,11 @@
 # class: R1 (process.env mutation) | R2 (mock.module) | global-state (other process-wide state) | exclusive (EXCLUSIVE_FILES in scripts/run-serial-tests.sh).
 # Before adding a row, run: bash scripts/check-test-isolation.sh --as-parallel <file>  (docs/TESTING.md#when-to-quarantine-instead-of-fix)
 path	class	reason
+test/unmanaged-push-every-site-gst2456.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME, PATH and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real commit-push, hook, helper and sources pushes to local bare remotes
+test/unmanaged-push-history-scan-8902.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real policy, scaffolding, sources push and bootstrap pushes to local bare remotes
 test/http-db-config.serial.test.ts	global-state	global-state: binds HTTP listeners; drains process-wide pending eval capture registry; withEnv scopes GBRAIN_HOME and GBRAIN_CONTRIBUTOR_MODE
 test/access-as.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --as) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the cases seed and read that one brain in order
+test/enforced-member.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts under GBRAIN_ENFORCED_MEMBER) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME, or one isolated Postgres database; the cases seed and read that one brain in order
 test/access-binding.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (auth create|rescope|register-client, access member) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; later cases read the bindings earlier ones wrote
 test/admin-grant-outcome.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; binds local servers/ports
 test/advisor-backup-coverage.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
@@ -398,6 +401,7 @@ test/spawn-seam-batch1-4992.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HO
 test/stdio-stderr-redirect.serial.test.ts	global-state	global-state: patches process stdout/stderr/console
 test/subagent-put-page-rejection.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests; configureGateway changes the process-wide AI gateway; spyOn putPage.handler
 test/sync-convergence.serial.test.ts	global-state	global-state: binds local servers/ports (two latency proxies per scenario) and spawns serve/sync/put/call processes against each scenario's brain; its oracle tests read the chaos scenario their describe's beforeAll ran, across it() boundaries
+test/busy-agent-soak.serial.test.ts	global-state	global-state: binds local servers/ports (two latency proxies per scenario) and spawns serve/sync/put/sources/git/doctor processes against each scenario's brain; its mode tests read the scenario their describe's beforeAll ran, across it() boundaries
 test/sync-cost-gate.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; patches process stdout/stderr/console
 test/sync-default-write-guard.serial.test.ts	global-state	global-state: spyOn console.error, console.log, process.exit
 test/sync-delegated-options-6696.serial.test.ts	global-state	global-state: process-wide test seams __resetDelegatedSyncForTests and the embedding transport; binds local servers/ports; patches process stdout/stderr/console

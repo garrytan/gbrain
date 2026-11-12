@@ -51,6 +51,31 @@ export function memberFactPage(ctx: Pick<OperationContext, 'remote'>): string | 
   return slug;
 }
 
+/**
+ * GST-2346 D1: whether the caller is the brain owner's own credential speaking for itself: CallerAccess.owner with no
+ * attested actor and no asserted audience, outside a subagent and every slug-prefix fence. Its facts then save as a
+ * caller with no member page saves them, on the subject's page, and its forget reaches a fact off its member page the
+ * same way; a fact it asks to keep private, or one the page or the brain's default keeps private, stays on its member
+ * page. Every other member caller keeps its member page (GST-359 C2).
+ */
+export function ownerSpeaksForItself(ctx: Pick<OperationContext, 'remote' | 'viaSubagent' | 'allowedSlugPrefixes' | 'auth'>): boolean {
+  const access = currentCallerAccess();
+  return ctx.remote !== false && access.owner && !access.actor && access.audience === null && ctx.viaSubagent !== true
+    && !ctx.allowedSlugPrefixes?.length && !ctx.auth?.boundSlugPrefixes && !ctx.auth?.fenceProjectionDegraded;
+}
+
+/**
+ * GST-2249 W1: a save made for an attested person (x-qm-actor) stays on that person's member page. Sharing it would be
+ * a write every reader of the source sees, made with no owner approval, so remember refuses share: true (and an explicit
+ * visibility "world") at the call, and a stored write that carries it is refused when it is prepared.
+ */
+export function attestedShareRefused(make: (code: 'invalid_params', message: string, suggestion: string) => OperationError): OperationError {
+  return Object.assign(make('invalid_params',
+    'remember: a fact saved for a person (x-qm-actor) stays on that person\'s own member page and is never shared with every reader of the source; nothing was saved.',
+    'Retry with no share and no visibility to keep the fact on the person\'s own member page. Knowledge for the whole team waits for the brain owner: propose it as a dated timeline entry or a link with memory_propose, which holds it until the owner approves.'),
+  { reason: 'attested_share_refused' });
+}
+
 /** Whether a member page is that member's own: its readers are exactly the member (a squatted or widened page is not). */
 export function memberPageIsOwn(slug: string, frontmatter: unknown): boolean {
   const readers = normalizeReaders(frontmatter);
@@ -119,6 +144,17 @@ export function memberFactAdmitSql(alias: string): string {
       AND ${privatePagesFilterForCaller('member_page')}))`;
 }
 
+/**
+ * GST-2407: the facts among `ids` in `sourceId` that sit on the current caller's own member page, by memberFactAdmitSql.
+ * forget_fact withdraws a remote member's fact only when it is in this set, and memory_recall reports the same set as
+ * own_page, so the two never disagree. Empty outside a member caller record.
+ */
+export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, ids: readonly number[]): Promise<Set<number>> {
+  if (!ids.length || !callerMember()) return new Set();
+  const rows = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM facts WHERE id = ANY($1::bigint[]) AND source_id = $2 AND ${memberFactAdmitSql('facts')}`, [[...ids], sourceId]);
+  return new Set(rows.map(r => Number(r.id)));
+}
+
 /** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql. */
 export function factVisibilitySql(alias: string, visibility: readonly string[]): string {
   const known = (['world', 'private'] as const).filter(v => visibility.includes(v));
@@ -145,8 +181,19 @@ export function factWithdrawalSubjectSql(alias: string): string {
   return `CASE WHEN ${onOwnedMemoryPageSql(alias)} THEN ${alias}.source_markdown_slug ELSE COALESCE(${alias}.entity_slug, '*') END`;
 }
 
-/** Whether withdrawal row `w` covers fact `f`, as SQL: every subject ('*'), the fact's entity, or the owned memory page it sits on. */
+/**
+ * Whether withdrawal row `w` covers fact `f`, as SQL: every subject ('*'), the fact's entity, or the owned memory page it
+ * sits on. GST-2346: a fact on a member page is covered by that page's own withdrawals alone, as the insert guards
+ * judge it (facts/withdrawal-schema.ts): a withdrawal of another subject expired it when it was made, or the row is one
+ * its member saved since, checked against the claims that member reads.
+ */
 export function withdrawalCoversFactSql(w: string, f: string): string {
+  return `(CASE WHEN starts_with(COALESCE(${f}.source_markdown_slug, ''), '${MEMBER_PAGE_PREFIX}') THEN ${w}.subject = ${f}.source_markdown_slug
+    ELSE ${withdrawalReachedFactSql(w, f)} END)`;
+}
+
+/** Whether withdrawal row `w` expired fact `f` when it was made (recordFactWithdrawal's reach), as SQL: every subject ('*'), the fact's entity, or the owned memory page it sits on. */
+export function withdrawalReachedFactSql(w: string, f: string): string {
   return `(${w}.subject = '*' OR ${w}.subject = COALESCE(${f}.entity_slug, '*') OR (${onOwnedMemoryPageSql(f)} AND ${w}.subject = ${f}.source_markdown_slug))`;
 }
 
@@ -171,7 +218,9 @@ export function readersSourcedFactSql(alias: string): string {
 export function callerIdentityKey(): string {
   const access = currentCallerAccess();
   if (!access.actor && !access.identity.length && !access.audienceIdentities.length && !access.audience) return '';
-  const parts = { actor: access.actor ? [access.actor.system, access.actor.member] : null, identity: access.identity, audience: access.audienceIdentities, entries: access.audience };
+  const parts = { actor: access.actor ? [access.actor.system, access.actor.member] : null, identity: access.identity, audience: access.audienceIdentities, entries: access.audience,
+    ...(access.lineage ? { owner_reads: access.owner ? (access.ownerReadsRestricted ? 'restricted' : 'lineage') : 'member_lineage' } : {}),
+    ...(access.audienceKindMembers.length ? { audience_kind: access.audienceKindMembers } : {}) };
   return createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16);
 }
 

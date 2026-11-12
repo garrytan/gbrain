@@ -663,6 +663,31 @@
         {
           "handlers": [
             "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/memory-proposals"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/memory-proposals/:request_id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/memory-proposals/:request_id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
             "jsonParser",
             "<anonymous>"
           ],
@@ -1428,6 +1453,31 @@
           ],
           "method": "post",
           "path": "/admin/api/access/attest"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/memory-proposals"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "<anonymous>"
+          ],
+          "method": "get",
+          "path": "/admin/api/memory-proposals/:request_id"
+        },
+        {
+          "handlers": [
+            "requireAdmin#4",
+            "jsonParser",
+            "<anonymous>"
+          ],
+          "method": "post",
+          "path": "/admin/api/memory-proposals/:request_id"
         },
         {
           "handlers": [

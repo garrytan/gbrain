@@ -110,6 +110,8 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
         ...(out?.id !== undefined ? { id: out.id } : {}),
         ...(out?.entity_slug !== undefined ? { entity_slug: out.entity_slug } : {}),
         ...(out?.page !== undefined ? { page: out.page } : {}), ...(out?.visibility !== undefined ? { visibility: out.visibility } : {}),
+        // GST-2446: where the item landed (a page file, or the database alone and why), as the single form reports it.
+        ...(out?.persistence !== undefined ? { persistence: out.persistence } : {}), ...(out?.write_through !== undefined ? { write_through: out.write_through } : {}),
         ...(out?.superseded_fact_id !== undefined ? { superseded_fact_id: out.superseded_fact_id } : {}), ...claimColumns(out),
         ...(Array.isArray(out?.warnings) && out.warnings.length ? { warnings: out.warnings } : {}),
         ...(out?.valid_until ? { valid_until: out.valid_until } : {}),
@@ -134,6 +136,15 @@ export async function runRememberBatch(ctx: OperationContext, p: Record<string, 
   // unknown) keeps the per-item envelope so its child request_id is never lost.
   if (failures.length && failed === results.length && failures.every(f => !f.error.writeRequest && f.error.writeError !== 'write_outcome_unknown')) {
     const [{ index, error }] = failures as [{ index: number; error: OperationError }];
+    // A fence refusal names the batch's request_id, never an item's derived id: a retry under an item's id derives new
+    // item ids, so retrying it and the batch's own id would save every item twice.
+    if (error.requestId === childRequestId(rootId, index)) {
+      const child = error.requestId;
+      error.message = error.message.replaceAll(child, () => rootId);
+      error.suggestion = error.suggestion?.replaceAll(child, () => rootId);
+      if (error.fix) error.fix = { ...error.fix, why: error.fix.why.replaceAll(child, () => rootId) };
+      error.requestId = rootId;
+    }
     error.message = `items[${index}]: ${error.message} None of the ${results.length} item(s) was saved.`;
     throw error;
   }

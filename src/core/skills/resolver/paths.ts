@@ -21,6 +21,8 @@ import { isAbsolute, join, resolve, sep } from 'node:path';
 import { ResolverError } from './errors.ts';
 
 export const CATALOG_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+/** The catalog setup claude-code builds from Claude Code's enabled plugins. */
+export const CLAUDE_PLUGINS_CATALOG = 'claude-code-plugins';
 const RESERVED = new Set(['sessions', 'logs']);
 
 /** The gbrain config directory (configDir() in src/core/config.ts). */

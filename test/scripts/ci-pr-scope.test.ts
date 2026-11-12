@@ -225,7 +225,7 @@ esac
     for (const path of ['src/core/persistence/sync-run.ts', 'src/core/persistence/fault-points.ts', 'src/commands/sync/run.ts', 'src/commands/sync.ts',
       'src/core/sync-holds.ts', 'src/core/page-state/projections.ts', 'src/core/engine-sql/links.ts', 'src/core/storage/local.ts', 'src/core/storage-config.ts',
       'src/core/import-file.ts', 'src/core/markdown.ts', 'src/core/write-through.ts', 'src/core/postgres-engine.ts',
-      'test/sync-convergence.serial.test.ts', 'test/fixtures/convergence-fault-kill.ts', 'scripts/ci-convergence-scope.sh', '.github/workflows/persistence-validation.yml',
+      'test/sync-convergence.serial.test.ts', 'test/fixtures/convergence-fault-kill.ts', 'test/helpers/convergence-brain.ts', 'scripts/ci-convergence-scope.sh', '.github/workflows/persistence-validation.yml',
       '.github/workflows/convergence-nightly.yml', 'bun.lock', 'vendor/postgres/src/connection.js']) {
       expect(convergenceScope(`README.md\n${path}\n`), path).toBe('run');
     }
@@ -306,6 +306,8 @@ esac
     expect([...new Set(pinned)]).toEqual([primary]);
     expect(/oven\/bun:\$\{GBRAIN_CI_BUN_TAG:-([^}]+)\}/.exec(read('docker-compose.ci.yml'))?.[1]).toBe(primary);
     expect(/BUN_VERSION="\$\{BUN_VERSION:-([^}]+)\}"/.exec(read('scripts/ubicloud/setup-ci-vm.sh'))?.[1]).toBe(primary);
+    // A gate VM's Node is CI's pinned Node: apt's Node 18 cannot import the .ts file the packaging test imports.
+    expect(/NODE_VERSION="\$\{NODE_VERSION:-([^}]+)\}"/.exec(read('scripts/ubicloud/setup-ci-vm.sh'))?.[1]).toBe(/node-version:\s*(\S+)/.exec(read('.github/workflows/native-locks.yml'))?.[1]);
     expect(/\?\? "([\d.]+)";/.exec(read('scripts/ci-ubicloud.ts'))?.[1]).toBe(primary);
     expect(/^gbrain_bun_version=(\S+)$/m.exec(read('scripts/setup-in-agent.sh'))?.[1]).toBe(primary);
     expect(/ARG BUN_IMAGE=oven\/bun:(\S+)/.exec(read('tests/docker/Dockerfile'))?.[1]).toBe(primary);

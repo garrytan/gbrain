@@ -265,7 +265,20 @@ const PER_ITEM_HTTP_STATUSES = new Set([400, 408, 413, 422]);
 // halts an entire cycle phase, so a stray word inside a raw-output slice
 // must not trip it. Only specific provider phrasings qualify.
 export const BILLING_MESSAGE_RE =
-  /insufficient_quota|quota exceeded|exceeded your (?:current )?quota|credit balance is too low|spend limit|billing_not_active|billing hard limit|payment required/i;
+  /insufficient_quota|quota exceeded|exceeded your (?:current )?quota|credit balance is too low|no credits remaining|spend limit|billing_not_active|billing hard limit|payment required/i;
+// #8385: the provider's structured error type or code, read from a parsed
+// response body, so a 429 whose message names no billing phrase still halts.
+const BILLING_ERROR_CODES = new Set(['insufficient_quota', 'credit_balance_exhausted', 'billing_not_active']);
+
+function billingErrorBody(responseBody: unknown): boolean {
+  if (typeof responseBody !== 'string') return false;
+  try {
+    const error = JSON.parse(responseBody)?.error;
+    return [error?.type, error?.code].some(v => typeof v === 'string' && BILLING_ERROR_CODES.has(v));
+  } catch {
+    return false;
+  }
+}
 const AUTH_MESSAGE_RE =
   /authentication_error|permission_error|invalid (?:x-)?api[-_ ]?key|api key (?:is )?(?:invalid|expired|missing)|unauthorized|failed to authenticate|oauth session expired/i;
 export const RATE_MESSAGE_RE = /rate[-_ ]?limit(?:ed|_error)?\b|too many requests/i;
@@ -414,7 +427,7 @@ export function classifyGlobalLlmError(err: unknown): GlobalLlmErrorClass | null
   const rawIdx = message.indexOf('--- raw ---');
   const phraseText = rawIdx === -1 ? message : message.slice(0, rawIdx);
 
-  if (BILLING_MESSAGE_RE.test(phraseText)) return 'billing';
+  if ([...wrappedErrorLayers(err)].some(layer => billingErrorBody(layer.responseBody)) || BILLING_MESSAGE_RE.test(phraseText)) return 'billing';
   if (MODEL_NOT_FOUND_MESSAGE_RE.test(phraseText)) return 'model_not_found';
   if (status !== undefined) {
     const byStatus = statusToClass(status);

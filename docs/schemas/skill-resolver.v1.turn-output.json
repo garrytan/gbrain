@@ -187,6 +187,10 @@
     "budget_exhausted": {
       "type": "boolean"
     },
+    "block_reason": {
+      "description": "Why the block is empty; null when it has a suggestion.",
+      "enum": ["ack", "no_match", "filtered", "deduped", "paced", "budget_exhausted", "shadow", "error", null]
+    },
     "suggestions": {
       "type": "array",
       "maxItems": 8,

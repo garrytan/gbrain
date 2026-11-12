@@ -34,8 +34,9 @@ import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { WRITE_REQUEST_STATES } from '../src/core/persistence/types.ts';
 import { DELETION_INVENTORY_BY_TABLE } from '../src/core/deletion-inventory.ts';
 import {
-  approveMemoryProposal, denyMemoryProposal, listMemoryProposals, pendingProposalSummary, proposalRequestId, runMemoryProposalUpkeep, PROPOSAL_LIMIT_KEYS, PROPOSAL_STATES,
+  approveMemoryProposal, denyMemoryProposal, listMemoryProposals, pendingProposalSummary, proposalRequestId, runMemoryProposalUpkeep, PROPOSAL_LIMIT_KEYS, PROPOSAL_RETRY_AFTER_MS, PROPOSAL_STATES,
 } from '../src/core/persistence/memory-proposals.ts';
+import { QM_CONTRACT_PATHS } from '../scripts/build-qm-memory-contract.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { deleteSourceRow } from '../src/core/source-delete.ts';
 import { currentExitCode, setCliExitVerdict } from '../src/core/cli-force-exit.ts';
@@ -335,6 +336,25 @@ for (const kind of testBackends()) {
       expect(out.json).toMatchObject({ request_id: id, state: 'cancelled' });
       await expect(approve(id)).rejects.toMatchObject({ code: 'proposal_closed' });
       expect(await timelineRows('canarycancel')).toHaveLength(0);
+    }, 60_000);
+
+    test('the answers match contract v4: the held result, the proposal receipt, and the cancel that answers JSON in content alone (GST-2407)', async () => {
+      const contract = JSON.parse(readFileSync(QM_CONTRACT_PATHS[4], 'utf8')).memory_propose;
+      const held = await timeline(alice, 'Contract shape canarycontractshape');
+      expect(Object.keys(held.structured!).sort()).toEqual(Object.keys(contract.awaiting.structuredContent).sort());
+      expect(JSON.parse(held.text)).toEqual(held.structured);
+      const id = held.structured!.request_id as string;
+      const waiting = await receipt(alice, id);
+      for (const key of Object.keys(contract.receipt.structured_content)) expect(waiting.structured).toHaveProperty(key);
+      expect(Object.keys(waiting.structured!).filter(k => !(k in contract.receipt.structured_content) && !(k in contract.receipt.optional))).toEqual([]);
+      expect(Object.keys(waiting.structured!.proposal).sort()).toEqual(Object.keys(contract.receipt.structured_content.proposal).sort());
+      expect(contract.receipt.states.known).toContain(waiting.structured!.state);
+      expect(waiting.structured!.retry_after_ms).toBeLessThanOrEqual(PROPOSAL_RETRY_AFTER_MS);
+      for (const _ of [0, 1]) {
+        const out = await call(alice, 'cancel_write_request', { request_id: id });
+        expect({ isError: out.isError, state: out.json.state, structured: out.structured }).toEqual({ isError: false, state: 'cancelled', structured: undefined });
+        expect(out.json).toMatchObject({ decision: { reason: expect.any(String) } });
+      }
     }, 60_000);
 
     test('another member under the same credential gets not_found for get and cancel', async () => {

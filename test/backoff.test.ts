@@ -1,4 +1,5 @@
-import { describe, test, expect, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, spyOn } from 'bun:test';
+import * as os from 'os';
 import { shouldProceed, preflight, complete, getThrottleState, _resetForTest } from '../src/core/backoff.ts';
 
 describe('backoff', () => {
@@ -34,6 +35,24 @@ describe('backoff', () => {
     const blocked = shouldProceed(allPermissive);
     expect(blocked.proceed).toBe(false);
     expect(blocked.reason).toContain('batch processes active');
+  });
+
+  test('#8913: no load data (loadavg all zero, as on Windows) skips only the CPU checks', async () => {
+    const loadavg = spyOn(os, 'loadavg').mockReturnValue([0, 0, 0]);
+    try {
+      const cpuOnly = { loadStopPct: 0, loadSlowPct: 0, memoryStopPct: Infinity };
+      expect(shouldProceed(cpuOnly)).toMatchObject({ proceed: true, delay: 0 });
+      const memoryFull = shouldProceed({ memoryStopPct: 0 });
+      expect(memoryFull.proceed).toBe(false);
+      expect(memoryFull.reason).toContain('Memory');
+      expect(await preflight('a', cpuOnly)).toBe(true);
+      expect(await preflight('b', cpuOnly)).toBe(true);
+      expect(await preflight('c', cpuOnly)).toBe(false);
+      expect(shouldProceed(cpuOnly).reason).toContain('batch processes active');
+    } finally {
+      loadavg.mockRestore();
+      _resetForTest();
+    }
   });
 
   test('complete decrements active process count', async () => {

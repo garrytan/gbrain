@@ -111,6 +111,7 @@ import {
 import { verifyWorkspace, resolveVerifySourceId, deriveWorkspaceSourceId } from '../core/bootstrap/verify.ts';
 import { auditWritebackContract, repairWritebackContract } from '../core/bootstrap/contract.ts';
 import { INSTALL_PIN } from '../core/install-ref.ts';
+import { OperationError } from '../core/ops/contract.ts';
 
 export const BOOTSTRAP_HELP = `gbrain bootstrap — paste-in agent install (Claude Code / Codex / opencode)
 
@@ -200,9 +201,10 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     'gbrain bootstrap contract [--repair]\n' +
     '  Audit AGENTS.md for the same-turn GBrain write-back contract. --repair appends a marker-owned block and backs up the original.',
   repo:
-    'gbrain bootstrap repo\n' +
+    'gbrain bootstrap repo [--scan-timeout <seconds>]\n' +
     '  Create the dedicated PRIVATE GitHub repo (or adopt an EMPTY private repo you created\n' +
-    '  under your own account), verify the privacy bit via the API, push.',
+    '  under your own account), verify the privacy bit via the API, push. The push scans the\n' +
+    '  whole history for secrets first; --scan-timeout gives a long history more time (default 300).',
   hooks:
     'gbrain bootstrap hooks [--harness claude-code|codex|opencode] [--repair] [--no-hooks] [--gbrain-bin <path>]\n' +
     '                       [--seat <label> | --no-seat] [--surface verbs|starter|full] [--adopt [--name <server>]]\n' +
@@ -980,9 +982,13 @@ async function runRender(ws: string, rest: string[], home: string): Promise<numb
 }
 
 async function runRepo(ws: string, rest: string[], home: string, runner: ExecRunner): Promise<number> {
-  void rest;
+  const scanTimeout = rest.includes('--scan-timeout') ? flagValue(rest, '--scan-timeout') ?? '' : undefined;
+  if (scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(scanTimeout)) {
+    console.error('Usage: gbrain bootstrap repo [--scan-timeout <seconds>]');
+    return 2;
+  }
   return withLock(ws, async () => {
-    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home });
+    const result = await createPrivateRepo(ws, { runner, gbrainHomeDir: home, ...(scanTimeout ? { scanTimeoutMs: Number(scanTimeout) * 1000 } : {}) });
     const line =
       result.disposition === 'created'
         ? `created private repo: ${result.url}`
@@ -2143,6 +2149,11 @@ export async function runBootstrap(args: string[], opts: RunBootstrapOpts = {}):
     if (e instanceof BootstrapRenderError) {
       console.error(e.message);
       console.error(SUPPORT_HINT);
+      logPhase(logCtx, logPhaseName, 'error', t0);
+      return 1;
+    }
+    if (e instanceof OperationError) {
+      console.error(`bootstrap ${sub} refused: ${e.code}: ${e.message}${e.suggestion ? `\nNext: ${e.suggestion}` : ''}`);
       logPhase(logCtx, logPhaseName, 'error', t0);
       return 1;
     }

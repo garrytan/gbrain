@@ -6,7 +6,7 @@ import type { AudiencePrincipal } from '../access/audience.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
 import { ACCESS_ID_RE, hasReaders, normalizePrincipal, normalizeReaders, readersAllow, NOBODY } from '../access/principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
-import type { SqlEngine, WriteAuthority } from './model.ts';
+import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 
@@ -31,8 +31,9 @@ export async function excludesPrivateWritesAtAdmission(engine: SqlEngine, remote
  * member disabled or unbound after submission (a queued job, a replay) loses the page before commit, and the
  * member-access part applies even when an operator relaxed privacy.
  */
-export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, slug: string): Promise<void> {
+export async function authorizePageVisibility(engine: SqlEngine, authority: WriteAuthority, page: string): Promise<void> {
   if (!authority.remote) return;
+  const slug = authorizedSlug(authority, page);
   if (authority.excludePrivate ?? true) {
     // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
     // opens a page that names readers or sits under a folder rule), so a page visible with none needs no policy read
@@ -203,6 +204,17 @@ export async function defaultSourceWriterIsOwner(engine: SqlEngine, writer: stri
   if (!owner || !ACCESS_ID_RE.test(owner) || writer !== `member:${owner}`) return false;
   const [live] = await engine.executeRaw<{ id: string }>('SELECT id FROM access_members WHERE id = $1 AND disabled_at IS NULL AND tombstoned_at IS NULL', [owner]);
   return !!live;
+}
+
+/**
+ * GST-2346 D1: whether a stored remote write came from the brain owner's own credential speaking for itself, judged
+ * live from the stored authority (the request-time twin is ownerSpeaksForItself): no attested actor, no audience, no
+ * subagent and no slug fence, and the principal's member is the enabled owner now. A credential unbound, a member
+ * disabled or an owner changed after submission is not the owner here.
+ */
+export async function storedOwnerSpeaksForItself(engine: SqlEngine, authority: WriteAuthority): Promise<boolean> {
+  if (!authority.remote || authority.actingFor || authority.restrictedNamespace || authority.slugPrefixes != null) return false;
+  return defaultSourceWriterIsOwner(engine, (await memberIdentityFor(engine, authority)).find(p => p.startsWith('member:')) ?? null);
 }
 
 /**

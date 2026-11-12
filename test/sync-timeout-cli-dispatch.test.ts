@@ -43,7 +43,8 @@ describe('CLI integration: sync --timeout reaches the sync handler (#3013)', () 
   // argv BEFORE connectEngine, so its stderr banner proves (a) dispatch fell
   // through to the sync branch instead of dispatchReadOnlyCommand, (b) the
   // handed-back --timeout was parsed with sync's SECONDS semantics (60s, not
-  // the 60ms the global parser used to produce for a bare "60").
+  // the 60ms the global parser used to produce for a bare "60"); the backstop
+  // arms one 30s grace window after it (#7819), so the banner reads 90s.
   const run = (args: string[]) =>
     spawnSync('bun', [CLI, ...args], {
       encoding: 'utf-8',
@@ -59,7 +60,7 @@ describe('CLI integration: sync --timeout reaches the sync handler (#3013)', () 
     const all = `${res.stdout}\n${res.stderr}`;
     expect(all).not.toContain('dispatchReadOnlyCommand');
     expect(all).not.toContain('connect timed out');
-    expect(res.stderr).toContain('hard deadline armed: 60s');
+    expect(res.stderr).toContain('hard deadline armed: 90s');
     expect(res.stderr).toContain('(flag:--timeout)');
   });
 
@@ -68,7 +69,7 @@ describe('CLI integration: sync --timeout reaches the sync handler (#3013)', () 
     const all = `${res.stdout}\n${res.stderr}`;
     expect(all).not.toContain('dispatchReadOnlyCommand');
     expect(all).not.toContain('connect timed out');
-    expect(res.stderr).toContain('hard deadline armed: 60s');
+    expect(res.stderr).toContain('hard deadline armed: 90s');
     expect(res.stderr).toContain('(flag:--timeout)');
   });
 });

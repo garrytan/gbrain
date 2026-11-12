@@ -869,6 +869,8 @@ export {
   renameReconcileErrorMessage,
   parseRenameReconcileFrom,
   DEFAULT_AUTOSKIP_AFTER,
+  STRICT_REQUIRES_MANAGED,
+  strictRequiresManagedAdvice,
 } from './sync-failure-ledger.ts';
 export type {
   SyncFailure,

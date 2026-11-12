@@ -20,6 +20,7 @@
  *   gbrain sources unfederate <id> — sources.config.federated = false
  *   gbrain sources mirror-readonly|mirror-writable <id> — sources.config.mirror_read_only (#5409)
  *   gbrain sources refresh <id> — drained worktree-wide ff-only refresh on a managed brain (F0)
+ *   gbrain sources git-reconcile [<id>...] — idempotent publish/fast-forward of every source checkout (sources-git-reconcile.ts)
  *   gbrain sources git-gap <id> — read-only census of the database against the commit at HEAD (sources-git-gap.ts)
  *   gbrain sources reindex <id> --from-git — a strict source's re-derive from Git, preview then apply (sources-reindex.ts)
  *   gbrain sources canonical <id> --to git|mixed — convert a source to git-canonical or back, preview then apply (sources-canonical.ts)
@@ -604,7 +605,7 @@ function deriveBrainId(created: OpsSourceRow, localPath: string): string {
 // wrapper only parses args, resolves <id> → local_path, and maps statuses
 // to exit codes:
 //   0  pushed / skipped (push already in flight — clean single-flight skip)
-//   5  blocked (secrets / tracked deny-glob) or refused (unverified remote)
+//   5  blocked (secrets / tracked deny-glob / the commits it would push) or refused (unverified remote)
 //   1  pull conflict / push failure / other error
 
 async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
@@ -614,10 +615,12 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
   let message: string | undefined;
   let allowUnverified = false;
   let json = false;
+  let scanTimeout: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === '--path') { path = args[++i]; continue; }
+    if (a === '--scan-timeout') { scanTimeout = args[++i] ?? ''; continue; }
     if (a === '--branch') { branch = args[++i]; continue; }
     if (a === '--message') { message = args[++i]; continue; }
     if (a === '--allow-unverified-remote') { allowUnverified = true; continue; }
@@ -627,8 +630,8 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     process.exit(2);
   }
 
-  if ((!id && !path) || (id && path)) {
-    console.error('Usage: gbrain sources push [<id> | --path <dir>] [--branch <b>] [--message <m>] [--allow-unverified-remote] [--json]');
+  if ((!id && !path) || (id && path) || (scanTimeout !== undefined && !/^[1-9]\d{0,5}$/.test(scanTimeout))) {
+    console.error('Usage: gbrain sources push [<id> | --path <dir>] [--branch <b>] [--message <m>] [--allow-unverified-remote] [--scan-timeout <seconds>] [--json]');
     process.exit(2);
   }
 
@@ -656,6 +659,7 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     pullStrategy,
     commitMessage: message,
     allowUnverifiedRemote: allowUnverified,
+    ...(scanTimeout ? { scanTimeoutMs: Number(scanTimeout) * 1000 } : {}),
     logger: (l) => console.error(`[gbrain] ${l}`),
   });
 
@@ -705,6 +709,13 @@ async function runPush(engine: BrainEngine, args: string[]): Promise<void> {
     case 'refused_visibility':
       if (!json) {
         console.error(`PUSH REFUSED: ${res.reason}`);
+      }
+      process.exit(5);
+      break;
+    case 'blocked_history':
+      if (!json) {
+        console.error(`Error [${res.code}]: ${res.reason?.replace(/^\S+: /, '')}`);
+        if (res.suggestion) console.error(`Fix: ${res.suggestion}`);
       }
       process.exit(5);
       break;
@@ -1288,9 +1299,11 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   const movementView = await import('../core/persistence/sync-movement.ts');
   const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
   const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)])); const watermarkView = await import('../core/persistence/applied-watermark.ts'), watermarks = new Map(await Promise.all(sources.map(async source => [source.id, await watermarkView.readAppliedWatermark(engine, source.id).catch(() => null)] as const)));
+  const publishOff = new Set(await (await import('../core/persistence/worktree-refresh.ts')).publishOptedOut(engine, sources.map(source => source.id)));
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
+      ...(publishOff.has(m.source_id) ? { auto_reconcile: false } : {}),
       sync_running: syncRunning.has(m.source_id),
       sync_holder: syncRunning.get(m.source_id) ?? null,
       ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
@@ -1343,6 +1356,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
   for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); } for (const w of watermarks.values()) if (w) console.log(`  ${watermarkView.formatAppliedWatermark(w)}`);
   for (const [sourceId, notices] of uncommitted) for (const line of uncommittedView.uncommittedFenceRepairLines(sourceId, notices)) console.log(line);
+  for (const id of publishOff) console.log(`  ${id}: automatic publishing is off (sources.auto_reconcile.source.${id} false): git-reconcile and refresh never push its local commits; sync goes on`);
   for (const view of sharedSkills.values()) if (view && (only || view.configured === false || view.parked)) for (const line of sharedSkillsView.sharedSkillsStatusLines(view)) console.log(`  ${line}`);
   for (const m of metrics) {
     const warns: string[] = [];
@@ -1937,6 +1951,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
+    case 'git-reconcile': return (await import('./sources-git-reconcile.ts')).runSourcesReconcile(engine, rest);
     case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
     case 'host-repo':  return (await import('./sources-host-repo.ts')).runHostRepo(engine, rest);
     case 'guard':      return (await import('./sources-guard.ts')).runSourcesGuard(engine, rest);
@@ -2052,6 +2067,10 @@ Subcommands:
                                     Managed brains: drain writes to the source's worktree, fast-forward
                                     it to its upstream (git merge --ff-only) and sync every source bound
                                     to it. --dry-run fetches and previews only.
+  git-reconcile [<id>...] [--dry-run] [--wait <s>] [--json]
+                                    Bring every source checkout level with its upstream: publish local
+                                    commits (merged in memory, secret-scanned) and fast-forward; in sync
+                                    is a no-op. Safe to run concurrently and repeatedly.
   git-gap <id> [--sample <n>] [--json]
                                     Read-only: how far the database is from the commit at HEAD, page by page.
   reindex <id> --from-git [--dry-run | --apply --expect <hash>] [--json]
@@ -2095,9 +2114,11 @@ Subcommands:
                                     Divergence-safe rebase-pull (skip-on-dirty).
                                     --path is DB-free (the harden cron's entry).
   push <id> | --path <dir> [--branch <b>] [--message <m>]
-       [--allow-unverified-remote] [--json]
+       [--allow-unverified-remote] [--scan-timeout <s>] [--json]
                                     Scan-gated add→commit→pull→push of a workspace
-                                    repo. Blocks on secret-scan findings (override
+                                    repo; every commit it pushes is scanned
+                                    (--scan-timeout: the scan's budget, default
+                                    300 s). Blocks on secret-scan findings (override
                                     per finding via .gbrain-scan-allow) and on
                                     tracked deny-list files (*.pglite, .env*,
                                     *.pem, *.key, .gbrain/**). Refuses remotes not

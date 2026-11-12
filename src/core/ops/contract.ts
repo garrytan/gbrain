@@ -560,6 +560,12 @@ export interface OperationContext {
   /** The stdio session's surface (stdio MCP only): `request_tools` widens it for this session, `whoami` reports it. */
   stdioSurface?: StdioSurfaceState;
   /**
+   * GST-363: the member this stdio server was started with (`gbrain serve --stdio-member <id>`, written into one
+   * harness's own MCP entry). Set only by the stdio server from its process argv, never from a request; it wins over
+   * config mcp.stdio_member, and a named member that is not enabled reads as nobody.
+   */
+  stdioMember?: string;
+  /**
    * Set by transports that can widen a session's listed tools (stdio): when
    * `request_tools` returns schemas, the named tools join this session's
    * tools/list and the client is notified (tools/list_changed).

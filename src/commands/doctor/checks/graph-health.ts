@@ -362,6 +362,7 @@ export const timelineHistoryEntry: DoctorEntry = {
   name: 'timeline_history',
   emits: [
     'timeline_history',
+    'privacy_label_ignored',
     'safe_index_pending',
     'credential_projection_pending',
     'connector_checkpoints',

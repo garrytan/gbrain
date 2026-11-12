@@ -93,7 +93,9 @@ import { factClaimDatesRepair } from './fact-claim-dates.ts';
 import { provenanceRepair } from './provenance.ts';
 import { secretSpansRepair } from './secret-spans.ts';
 import { rowsBehindRepair } from './rows-behind.ts';
+import { factsHomeRepair } from './facts-home.ts';
 import { privateLabelsRepair, type PrivateLabelsLedger } from './private-labels.ts';
+import type { ReadersRequest } from './readers.ts';
 import { generationsRepair, generationsSelectionArgv, type GenerationsSelection } from '../generations/repair.ts';
 import { lostFenceRowsRepair } from './lost-fence-rows.ts';
 import { restoreDaysHint } from '../generations/config.ts';
@@ -653,6 +655,15 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'page, then re-scans it. Database only: no file write, no Git commit, and a sync hold stays, so held pages are redacted where they are stored. '
       + 'History (page versions, receipts, Git) is kept. Trusted local CLI only; runs only when named; never on upgrade.',
   },
+  'facts-home': {
+    handler: factsHomeRepair, embeds: 'none', checks: ['strict_facts_outside_git'], explicit_only: true, preview_bound: true,
+    summary: 'Give the facts of a strict source (pages canonical in Git) that live in the database alone a home in Git (GST-2492). Needs --source; '
+      + 'a source that is not strict lists nothing. The preview lists every such fact by group and writes nothing: a fact with no entity, or for an '
+      + 'entity with no page, is written to memory/unattributed (a held row names its entity and moves to the page of its entity once that page exists); a fact whose '
+      + 'entity has a page is left to the extract_facts upkeep step; facts the Facts table cannot render, facts for an entity under a folder access rule, '
+      + 'held rows their page cannot take and held rows older than 30 days (with the nearest existing page) are listed and left alone. --apply --expect '
+      + '<hash> writes exactly the previewed set in one commit; the facts rows move in place. Runs only when named; never on upgrade.',
+  },
   'rows-behind': {
     handler: rowsBehindRepair, embeds: 'effect', checks: ['sync_rows_behind_checkpoint'], explicit_only: true, preview_bound: true,
     summary: 'Re-import the rows a managed sync\'s checkpoint moved past (#8071): the page holds an older version of its file than the commit '
@@ -795,18 +806,20 @@ export async function repairRunner(engine: BrainEngine, opts: { apply: boolean; 
       slugs?: string[]; noLlm?: boolean; maxLlmUsd?: number; deadline?: number; stop?: AbortSignal; recordDatabaseStops?: boolean;
       prefer?: 'file' | 'database'; requests?: string[]; allDrifted?: boolean; driftClass?: string; since?: string; held?: boolean; side?: string; state?: string; provenance?: string; cursor?: string; progress?: ProgressReporter;
       keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures?: boolean; force?: boolean; from?: string; close?: boolean; afterPage?: number; generations?: GenerationsSelection; day?: string; rules?: string[];
-      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger } = {}): Promise<RepairResult> {
+      cwdPrefixes?: string[]; sessions?: string[]; principal?: string; privateLabelsLedger?: PrivateLabelsLedger; readers?: ReadersRequest } = {}): Promise<RepairResult> {
       const ctx = { engine, config, logger, dryRun: !opts.apply, remote: false, sourceId: scope.source_ids[0], writeWaitMs } as OperationContext;
       const spec = repairSpec(kind, opts.registry);
       return runRepair(ctx, spec.handler, scope, { apply: opts.apply, limit: run.limit, embeddingModel, sourceFlag: run.sourceFlag, spec,
         embed: !opts.noEmbed && embeddingModel !== undefined, applyArgs: [...(opts.noEmbed && spec.embeds === 'inline' ? ['--no-embed'] : []),
           ...(run.olderThan ? ['--older-than', run.olderThan] : []), ...(run.includeFailures ? ['--include-failures'] : []), ...(run.force ? ['--force'] : []),
           ...(run.afterPage !== undefined ? ['--after', String(run.afterPage)] : []), ...(run.generations ? generationsSelectionArgv(run.generations) : []), ...(run.day ? ['--day', run.day] : []), ...(run.rules?.length ? ['--rules', run.rules.join(',')] : []),
-          ...(kind === 'agent-session-facts' ? agentSessionFlagArgs(run).map(arg => shellQuote(arg)) : [])],
+          ...(kind === 'agent-session-facts' ? agentSessionFlagArgs(run).map(arg => shellQuote(arg)) : []),
+          ...(run.readers ? [...(run.readers.slugsFile ? ['--slugs-file', run.readers.slugsFile.path] : []), '--readers', run.readers.readers,
+            ...(run.readers.allowWithoutOwner ? ['--allow-without-owner'] : [])].map(arg => shellQuote(arg)) : [])],
         explicit: run.explicit, expect: run.expect, includeAmbiguous: run.includeAmbiguous, includeCrossEntity: run.includeCrossEntity, only: run.only, skip: run.skip, slugs: run.slugs, noLlm: run.noLlm,
         maxLlmUsd: run.maxLlmUsd, deadline: run.deadline, ...(run.stop ? { stop: run.stop } : {}), ...(run.recordDatabaseStops ? { recordDatabaseStops: true } : {}), prefer: run.prefer, requests: run.requests, allDrifted: run.allDrifted, driftClass: run.driftClass, since: run.since,
         held: run.held, side: run.side, state: run.state, provenance: run.provenance, cursor: run.cursor, progress: run.progress, keep: run.keep, requestId: run.requestId, olderThan: run.olderThan, includeFailures: run.includeFailures, force: run.force, from: run.from, close: run.close, afterPage: run.afterPage, generations: run.generations, day: run.day, rules: run.rules,
-        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, privateLabelsLedger: run.privateLabelsLedger });
+        cwdPrefixes: run.cwdPrefixes, sessions: run.sessions, principal: run.principal, privateLabelsLedger: run.privateLabelsLedger, readers: run.readers });
     },
   };
 }

@@ -42,7 +42,7 @@ import { runSyncTrigger } from './trigger.ts';
 import { drainJsonFields, formatDrainSummary, syncOutcome } from '../../core/persistence/sync-drain.ts';
 import { readManagedMode } from '../../core/persistence/ownership.ts';
 import { writeJsonDocument } from '../../core/cli-force-exit.ts';
-import { cliRenderContext, renderNotice } from '../../core/agent-output.ts';
+import { cliRenderContext, renderNotice, type Notice } from '../../core/agent-output.ts';
 
 /** D2: under the `--json` guard only writeStdoutFinal reaches fd 1 (writeJsonDocument). */
 const emitJson = (text: string): void => { void writeJsonDocument(text); };
@@ -62,6 +62,11 @@ type PerSourceResult = {
   localPath?: string;
 };
 
+/** A sync result's own notices: a degraded tail, the change-reason scan, and ignored privacy labels (GST-2462). */
+function runNotices(result: SyncResult): Notice[] {
+  return [...(result.tail?.notice ? [result.tail.notice] : []), ...(result.reason_notices ?? []), ...(result.privacy_label_notice ? [result.privacy_label_notice] : [])];
+}
+
 /**
  * #6696 (A4): a sync receipt carries the capacity notices (60 s snapshot, at most once an hour per process per
  * scope): under `--json` as rendered `notices`, otherwise as stderr lines.
@@ -70,14 +75,14 @@ async function syncCapacityNotices(engine: BrainEngine, json: boolean, result?: 
   const { capacityNotices, CAPACITY_READ_WAIT_MS } = await import('../../core/persistence/capacity-snapshot.ts');
   // #6712 PR 2 (L5): a degraded post-checkpoint tail rides the same notices. #6803 C4: the snapshot wait is bounded.
   const capacity = await capacityNotices(engine, { throttle: true, deadlineAt: Date.now() + CAPACITY_READ_WAIT_MS }).catch(() => []);
-  const notices = [...(result?.tail?.notice ? [result.tail.notice] : []), ...(result?.reason_notices ?? []), ...capacity].map(notice => renderNotice(notice, cliRenderContext()));
+  const notices = [...(result ? runNotices(result) : []), ...capacity].map(notice => renderNotice(notice, cliRenderContext()));
   if (!json) for (const notice of notices) process.stderr.write(`[gbrain notice ${notice.code}] ${notice.why}\n`);
   return notices.length ? { notices } : {};
 }
 
 /** #6712 PR 2 (L5): one source's post-checkpoint tail in a `sync --all` receipt: its report and its rendered degraded notice. */
 function syncTailJsonFields(result: SyncResult): { tail?: Omit<NonNullable<SyncResult['tail']>, 'notice'>; notices?: unknown[] } {
-  const notices = [...(result.tail?.notice ? [result.tail.notice] : []), ...(result.reason_notices ?? [])].map(n => renderNotice(n, cliRenderContext()));
+  const notices = runNotices(result).map(n => renderNotice(n, cliRenderContext()));
   const rendered = notices.length ? { notices } : {};
   if (!result.tail) return rendered;
   const { notice: _notice, ...tail } = result.tail;
@@ -85,7 +90,7 @@ function syncTailJsonFields(result: SyncResult): { tail?: Omit<NonNullable<SyncR
 }
 
 function printTailNotice(result: SyncResult): void {
-  for (const notice of [...(result.tail?.notice ? [result.tail.notice] : []), ...(result.reason_notices ?? [])]) process.stderr.write(`[gbrain notice ${notice.code}] ${notice.why}\n`);
+  for (const notice of runNotices(result)) process.stderr.write(`[gbrain notice ${notice.code}] ${notice.why}\n`);
 }
 
 export async function runSyncInner(engine: BrainEngine, args: string[]) {

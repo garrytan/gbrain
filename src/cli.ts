@@ -34,7 +34,7 @@ export function cliFastPath(argv: string[], env: NodeJS.ProcessEnv = process.env
   const command = rest[0];
   if (!command || command === '--help' || command === '-h') return 'help';
   if (command === '--version' || command === 'version') return 'version';
-  if (env.GBRAIN_HOOK_LANE === 'skill-resolver' && command === 'hook' && (rest[1] === 'user-prompt' || rest[1] === 'session-start')
+  if (env.GBRAIN_HOOK_LANE === 'skill-resolver' && env.GBRAIN_ENFORCED_MEMBER === undefined && command === 'hook' && (rest[1] === 'user-prompt' || rest[1] === 'session-start')
     && !rest.some(a => a === '--help' || a === '-h')) return 'skill-resolver-lane';
   return null;
 }
@@ -53,7 +53,8 @@ async function runSkillResolverLaneFastPath(): Promise<void> {
   if (process.env.GBRAIN_HOOKS === '0') return;
   (await import('./core/session-cwd.ts')).captureHookSessionCwd();
   const h = rest.indexOf('--harness');
-  await (await import('./core/skills/resolver/hook-lane.ts')).runSkillResolverLane(event, h >= 0 && rest[h + 1] === 'codex' ? 'codex' : 'claude-code');
+  const harness = h >= 0 ? rest[h + 1] : undefined;
+  await (await import('./core/skills/resolver/hook-lane.ts')).runSkillResolverLane(event, harness === 'codex' || harness === 'hermes' ? harness : 'claude-code');
 }
 
 async function runFastPath(path: 'help' | 'version' | 'skill-resolver-lane'): Promise<void> {

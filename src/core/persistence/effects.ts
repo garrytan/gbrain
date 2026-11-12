@@ -346,7 +346,8 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
   const root = binding.local_path;
   if (!targetedWithdrawalEffect(effect) && !effect.data.source_scan) {
     const target = await singleFileGitTarget(engine, effect, { ...binding, local_path: root }, attempt);
-    if (target !== null) await completeEffect(engine, effect, await publishGitEffect(root, target, opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner));
+    if (target !== null) await completeEffect(engine, effect, await publishGitEffect(root, target, opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner,
+      effect.data.expected_hash));
     return;
   }
   // Only a page walk reads snapshots; a single-file effect completes by its recorded hash.
@@ -395,12 +396,16 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
   // hash the mirror recorded writing at this revision, else the rendering measured now (a segmented page's from its
   // segments, unreadPageFile, never held as one string).
   const mirrored = attempt.gate?.files.get(snapshot.page.slug);
-  if (verdict === 'evidence' && (snapshot.page.deleted_at || persistenceFileHash(path) !== (mirrored?.revision === snapshot.revision ? mirrored.hash
-    : content === null ? (await unreadPageFile(engine, snapshot, keep)).hash : fileContentHash(content)))) {
+  const rendered = verdict !== 'evidence' || snapshot.page.deleted_at ? undefined : mirrored?.revision === snapshot.revision ? mirrored.hash
+    : content === null ? (await unreadPageFile(engine, snapshot, keep)).hash : fileContentHash(content);
+  if (verdict === 'evidence' && (snapshot.page.deleted_at || persistenceFileHash(path) !== rendered)) {
     await skipTarget(engine, effect, snapshot, 'withdrawal_not_mirrored');
     return;
   }
-  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner);
+  // #8896: the bytes this walk expects, so its commit is a page write the secret scan skips when the file holds them.
+  const expected = effect.data.approved_file?.slug === snapshot.page.slug ? effect.data.approved_file.expected_sha256
+    : rendered ?? (content === null ? undefined : fileContentHash(content));
+  const result = await publishGitEffect(root, relative(root, path).split(sep).join('/'), opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner, expected);
   if (result.reason === 'durability_not_enabled') await completeEffect(engine, effect, result);
   else await finishPage(engine, effect, snapshot, result);
 }
@@ -885,8 +890,12 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       await engine.transaction(async tx => {
         await guardEffectSource(tx, effect, opts.hostId);
         if (effect.worktree_id) {
-          const blocked = await tx.executeRaw('SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL LIMIT 1', [effect.worktree_id]);
-          if (blocked.length) throw recoveryFirst(effect);
+          // GST-1644: an effect that runs without the worktree lock can meet another writer's publication in flight (its
+          // claim live, or committed with its record not yet cleared); that is contention, not a recovery.
+          const [blocked] = await tx.executeRaw<{ publishing: boolean | null }>(`SELECT bool_and(state='running' AND claim_expires_at>now()
+            OR state IN ('committed','conflict','failed','cancelled')) AS publishing FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL`, [effect.worktree_id]);
+          if (blocked?.publishing === true && !lock) throw writerBusy(effect);
+          if (blocked && blocked.publishing !== null) throw recoveryFirst(effect);
         }
       }, { pipelineFirst: isPersistenceDeclaration });
       effect = await upgradeWithdrawalEffect(engine, effect, opts.hostId);
@@ -908,7 +917,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   //
   // #5530: a claimed single-file git effect brings up to 99 more ready
   // single-file git effects of its worktree. Under the worktree lock each path
-  // is validated as before, the group makes one `commit --only`, and every
+  // is validated as before, the group makes one commit, and every
   // root pushes once at the end of the pass. A path failure fails only its
   // effect; a push failure leaves the whole group retryable (the next pass
   // finds nothing to commit and pushes once). Nothing holds a lock or a
@@ -973,7 +982,8 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       const notes = new Map<string, GitCommitNote>();
       for (const { effect, path } of targets) { const note = await gitCommitNote(engine, effect); if (note) notes.set(path, note); }
       const outcomes = targets.length ? await commitGitTargets(binding.local_path, targets.map(t => t.path), opts.signal, notes,
-        { writerLock: lock, onReclaim: () => { reclaimed = true; } }) : new Map();
+        { writerLock: lock, onReclaim: () => { reclaimed = true; } },
+        new Map(targets.flatMap(t => t.effect.data.expected_hash === undefined ? [] : [[t.path, t.effect.data.expected_hash] as const]))) : new Map();
       const pending = unpushed.get(binding.local_path) ?? { binding, items: [] };
       // #7089: an absent target whose removal an earlier attempt committed (its push failed) joins the push like an
       // unchanged one while the root is ahead of its upstream; on a root that is not ahead it completes without a push.
@@ -1005,7 +1015,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     const roots = new Map<string, unknown>();
     const guards = new Map<string, unknown>();
     const mirrors = new Map<string, boolean>();
-    const recorded: PersistenceEffect[] = [];
+    const recorded: { effect: PersistenceEffect; target?: string }[] = [];
     let gates: Map<string, MirrorGate>;
     try { gates = await mirrorGates(engine, effects.map(effect => effect.request_id)); }
     catch (error) { for (const effect of effects) await recordFailure(engine, effect, error, opts.signal); return; }
@@ -1033,12 +1043,12 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         if (!binding.local_path) { await completeEffect(engine, effect, { git: 'skipped', reason: 'no_repo_configured' }); continue; }
         if (!mirrors.has(effect.source_id)) mirrors.set(effect.source_id, await sourceMirrorReadOnly(engine, effect.source_id));
         if (mirrors.get(effect.source_id)) { await completeEffect(engine, effect, { git: 'skipped', reason: 'mirror_read_only' }); continue; }
-        if (await singleFileGitTarget(engine, effect, { ...binding, local_path: binding.local_path }, attempt) !== null) recorded.push(effect);
+        if (await singleFileGitTarget(engine, effect, { ...binding, local_path: binding.local_path }, attempt) !== null) recorded.push({ effect, target: attempt.target });
       } catch (error) { await recordFailure(engine, effect, error, opts.signal, attempt.target); }
     }
     if (!recorded.length) return;
     try {
-      for (const effect of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
+      for (const { effect } of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
       await engine.executeRaw(`UPDATE persistence_effects e SET
         state=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'failed' ELSE 'committed' END,
         error_code=CASE WHEN jsonb_array_length(COALESCE(e.data->'parked','[]'::jsonb))>0 THEN 'targets_parked' END,
@@ -1046,8 +1056,8 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         outcome=$2::text::jsonb,updated_at=now()
         FROM jsonb_to_recordset($1::text::jsonb) AS t(id bigint,token uuid)
         WHERE e.id=t.id AND e.execution_token=t.token AND e.recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-      [JSON.stringify(recorded.map(effect => ({ id: String(effect.id), token: effect.execution_token }))), JSON.stringify(DURABILITY_NOT_ENABLED)]);
-    } catch (error) { for (const effect of recorded) await recordFailure(engine, effect, error, opts.signal); }
+      [JSON.stringify(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token }))), JSON.stringify(DURABILITY_NOT_ENABLED)]);
+    } catch (error) { for (const { effect, target } of recorded) await recordFailure(engine, effect, error, opts.signal, target); }
   };
   // A deferred effect that requeues itself (a page walk advancing its cursor,
   // or work unblocked by an earlier effect) is claimable again after the flush.

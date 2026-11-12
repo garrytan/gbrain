@@ -91,14 +91,16 @@ import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { fenceRepairCommit } from './effect-model.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { POLICY_KEYS } from './reconcile-additive.ts';
+import { readLabelEdit, spliceLabelLines, type LabelEdit } from './label-edit.ts';
 import { protectedReconcileKey } from './reconcile-merge.ts';
 import { PROTECTED_FRONTMATTER_KEYS } from '../frontmatter-recovery.ts';
 import { preparePagePurge, purgePageInTransaction, type PreparedPagePurge } from './page-purge.ts';
 import { originCommitted } from './sync-markers.ts';
 import { syncDeleteOrigin } from './sync-delete-tombstones.ts';
 import { withTrustKeep } from './context.ts';
-import { isFenceEditWrite, pageGateTrust, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier } from '../trust/page-write.ts';
-import { compareTrust, type WriteTrust } from '../trust/tier.ts';
+import { holdPrivacyLabels, isFenceEditWrite, labelGuardApplies, labelGuardOwner, labelGuardTier, pageGateTrust, privacyLabelGuard, pageWriteTrust, recordAgentPageLowering, stampPageTrustMarker, storedPageTier,
+  type HeldPrivacyLabels, type LabelGuard } from '../trust/page-write.ts';
+import { compareTrust, maxTrust, type TrustTier, type WriteTrust } from '../trust/tier.ts';
 import { suppliedTrustMarkerView } from '../trust/channel.ts';
 import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
@@ -122,6 +124,21 @@ export function pageRefusal(code: RegistryCode, message: string, row: WriteReque
     { fix: fix ?? (row.principal_kind === 'local_cli'
       ? readFix(`Reads request ${row.request_id}'s durable receipt: its state and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
       : ownerStatusFix(row.source_id)) });
+}
+
+/**
+ * GST-2521: under the publication's page lock, a write whose label guard (its tier, or the owner it keeps as a reader)
+ * moved since preparation refuses `revision_conflict`: a guard raised over labels that already match, or an owner set,
+ * enabled or opted out after preparation, moves no page revision. The write publishes nothing; submitted again, it is
+ * prepared against the current guard and held.
+ */
+async function assertLabelGuardUnchanged(tx: BrainEngine, row: WriteRequest, trust: WriteTrust | undefined, page: PageSnapshot['page'] | null,
+  stored: TrustTier | null, incoming: Record<string, unknown> | null, prepared: LabelGuard | null): Promise<void> {
+  if (!labelGuardApplies(row, trust, page, stored)) return;
+  const [tier, owner] = await Promise.all([labelGuardTier(tx, trust!, page, stored!), labelGuardOwner(tx, page.frontmatter ?? {}, incoming)]);
+  if (tier === (prepared?.tier ?? null) && JSON.stringify(owner) === JSON.stringify(prepared?.owner ?? null)) return;
+  throw pageRefusal('revision_conflict', 'The page\'s label guard changed while this write was being prepared.', row,
+    `The label guard of page ${row.slug} (the labels and the owner reader it keeps) changed after this write was prepared, so it published nothing; the page itself is unchanged. Submit the same write again: it is prepared against the current guard.`);
 }
 
 /**
@@ -270,6 +287,26 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
     && check.compiled_truth === incoming.compiled_truth && (check.timeline ?? '') === (incoming.timeline ?? '') ? spliced : null;
 }
 /**
+ * GST-2468: the file a label-only maintenance write publishes over a canonical file that holds the page (fileMatchesSnapshot):
+ * the file's own bytes with only its label lines edited (label-edit.ts spliceLabelLines), keeping its body when it reads as
+ * the write's body, else its head over the write's body (a fact row's visibility cell in the fence). Either must read back
+ * as `content`, the file the write would otherwise render; a label line that cannot be edited as a line refuses, so the
+ * file is never re-rendered under a label edit.
+ */
+export function labelEditFile(slug: string, before: Buffer | FileBytes, content: string, edit: LabelEdit, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): string {
+  const read = (text: string, file: boolean) => {
+    const parsed = parseMarkdown(text, slug, { activePack });
+    return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type: file ? importedFileType(parsed, snapshot.page, false) : parsed.type }, parsed.tags));
+  };
+  const spliced = before instanceof Buffer ? spliceLabelLines(before.toString('utf8'), edit) : null;
+  const contentHead = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/.exec(content);
+  const expected = read(content, false);
+  const fits = spliced ? [spliced.text, ...(contentHead ? [spliced.head + content.slice(contentHead[0].length)] : [])].find(text => read(text, true) === expected) : undefined;
+  if (fits !== undefined) return fits;
+  throw opError('invalid_params', 'The label edit cannot be made to the page\'s file line by line.',
+    `Nothing was written for ${slug}: its file cannot take the change without being re-rendered (a label key with a block or multi-line value or a duplicate key, no frontmatter block, a body that no longer reads as the page once its facts row is changed, or a file too large to edit in memory), so the label-only write refuses. Make the change in the file by hand, commit it, and run gbrain sync for the source.`);
+}
+/**
  * GST-1601: whether a local edit changes what an adoption must never take without a person: the title, the type, or a
  * policy, protected, access, lineage or trust-lowering frontmatter key (the keys frontmatterDriftWrite never splices).
  */
@@ -341,7 +378,9 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     /** Runs between the pieces of a segmented page's file comparison (an effect's claim renewal). */
     between?: () => Promise<void>;
     /** #7436: the preparation's clock, so its stamp says `waiting_on=git` while a Git check runs. */
-    clock?: ClaimPhaseClock } = {}): Promise<PreparedMutation['file']> {
+    clock?: ClaimPhaseClock;
+    /** GST-2468: a label-only maintenance write edits only the label lines of the file it matches (labelEditFile). */
+    labelEdit?: LabelEdit } = {}): Promise<PreparedMutation['file']> {
   if (!row.worktree_id) return undefined;
   // An in-memory canonical file over the 25 MiB push-scan cap is refused (only a page over the 24 MiB single-string
   // ceiling renders one). That page's file is streamed instead (restore_page of a page whose body was not read back,
@@ -401,6 +440,11 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
       options = { ...options, deleting: true };
     } else await assertLfsTarget(engine, row, root, path, options.remote === true);
   }
+  // GST-2519: the live file check (liveFileDrift: no content) of a strict page declared git_ignored, whose path Git still
+  // ignores, finds no file target, as its publication does; a page whose ignore rule is gone is still checked for its file.
+  if (binding.canonical_git === true && content === null && options.deleting !== true && snapshot && !snapshot.page.deleted_at && !snapshot.page.source_path && !existsSync(path)
+    && (await engine.executeRaw<{ reason: string | null }>('SELECT database_only_reason AS reason FROM pages WHERE id=$1', [snapshot.page.id]))[0]?.reason === 'git_ignored'
+    && await waitingOnWhile(options.clock, 'git', () => ignoredTarget(root, path))) return undefined;
   if (options.newPageIgnoredDatabaseOnly && !snapshot && content !== null && !existsSync(path) && !isSourceDbOnlySlug(root, row.slug, 'not_db_only') && await waitingOnWhile(options.clock, 'git', () => gitIgnoresUntracked(root, relative(root, path).split(sep).join('/')))
     && !(await gitDurabilityPolicy(binding, root)).durable) return undefined;
   if (options.excludeTombstone && snapshot?.page.deleted_at) {
@@ -459,7 +503,7 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
     }
     // #6696 (A12): tagged, so a producer can refuse this before admission and the receipt says which refusal it was.
     throw opError('source_changed', 'The canonical file was removed outside coordinated publication.',
-      'Import the local deletion or recover the canonical file before editing this page.', { detail: CANONICAL_FILE_MISSING });
+      `Import the local deletion or recover the canonical file before editing this page. To narrow who reads it without restoring its file, add a page rule: gbrain access rule add --slug ${row.slug} --readers <member> --source ${row.source_id} (it previews; --yes applies).`, { detail: CANONICAL_FILE_MISSING });
   }
   // A normal edit may replace only the bytes represented by its read snapshot.
   // Unknown local edits require explicit import/recovery, even for force writes.
@@ -499,6 +543,9 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
         { detail: 'file_database_drift', fix: readFix(`Previews how page ${row.slug}'s canonical file and database copy reconcile; a preview never changes canonical content.`,
           { argv: ['gbrain', 'sources', 'reconcile', row.source_id, row.slug, '--brain', 'host', '--preview', ...adopt] }) }),
         adopt.length || options.deleting === true ? {} : { localEdit: { root, path } });
+    }
+    if (matches && options.labelEdit && typeof content === 'string') {
+      return { path, root, content: labelEditFile(row.slug, before, content, options.labelEdit, snapshot, options.activePack), expectedBeforeHash: beforeHash() };
     }
   } else if (before && !snapshot && content !== null && beforeHash() !== fileContentHash(content)
     && !(options.capture && beforeHash() === options.capture.hash)) {
@@ -707,7 +754,8 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...snapshot.page, source_path: null, source_uri: null } }, preparedPurge);
       if (preparedPurge) return purgePageInTransaction(tx, row, snapshot, preparedPurge);
-      if (!noop) { await tx.createVersion(row.slug, source); await tx.softDeletePage(row.slug, source); }
+      // GST-2518: a soft delete authors no content, so the tombstone keeps its tier (and a write over it the page's label guard).
+      if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }
       return { status: 'soft_deleted', slug: row.slug, source_id: row.source_id, noop,
         recoverable_until: 'now + 72h via restore_page (remove immediately instead: gbrain delete <slug> --purge, local CLI only)' };
     } };
@@ -877,6 +925,19 @@ function assertPrivateRequestAllowed(row: WriteRequest, content: string, frontma
   assertPrivateRequestKept(row, frontmatter);
 }
 
+/**
+ * Core marking is owner-only: a remote write that omits always_load or
+ * core_priority keeps the stored values instead of silently un-coring the page.
+ */
+function remoteCoreMarkingKept(row: WriteRequest, snapshot: PageSnapshot | null, content: string, activePack: ParseOpts['activePack']): string {
+  if (!row.authority.remote || !snapshot || snapshot.page.deleted_at || typeof content !== 'string'
+    || (snapshot.page.frontmatter?.always_load === undefined && snapshot.page.frontmatter?.core_priority === undefined)) return content;
+  const parsed = parseMarkdown(content, row.slug, { activePack });
+  const carried = carryCoreMarking(snapshot.page.frontmatter, parsed.frontmatter ?? {});
+  if (carried.always_load === parsed.frontmatter?.always_load && carried.core_priority === parsed.frontmatter?.core_priority) return content;
+  return serializePageToMarkdown({ ...snapshot.page, ...parsed, frontmatter: carried }, parsed.tags);
+}
+
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
   preparedIntent: Parameters<typeof preparePageMutation>[3], signal: AbortSignal | undefined,
   options: NonNullable<Parameters<typeof preparePageMutation>[5]>): Promise<PreparedMutation> {
@@ -960,16 +1021,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     if (compiled_truth!==parsed.compiled_truth || timeline!==(parsed.timeline??'')) content=serializePageToMarkdown({
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
   }
-  // Core marking is owner-only: a remote write that omits always_load or
-  // core_priority keeps the stored values instead of silently un-coring the page.
-  if (row.authority.remote && snapshot && !snapshot.page.deleted_at && typeof content === 'string'
-    && (snapshot.page.frontmatter?.always_load !== undefined || snapshot.page.frontmatter?.core_priority !== undefined)) {
-    const parsed = parseMarkdown(content, row.slug, { activePack });
-    const carried = carryCoreMarking(snapshot.page.frontmatter, parsed.frontmatter ?? {});
-    if (carried.always_load !== parsed.frontmatter?.always_load || carried.core_priority !== parsed.frontmatter?.core_priority) {
-      content = serializePageToMarkdown({ ...snapshot.page, ...parsed, frontmatter: carried }, parsed.tags);
-    }
-  }
+  content = remoteCoreMarkingKept(row, snapshot, content, activePack);
   const projected = !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
   const writer = replacesTombstone || ((row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
     && (preparedIntent !== undefined || typeof p.expected_revision === 'string')) ? 'editing' : 'preserving';
@@ -1004,8 +1056,12 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   let provenance: CanonicalProvenance | undefined;
   let suppliedTrustMarker: unknown;
   // #5575: the page's tier, computed once before import so the write gate sees exactly it (ENG-18).
-  const trust = provenanceWriteTrust(row, typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null, snapshot?.page.frontmatter);
+  const incoming = typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null;
+  const trust = provenanceWriteTrust(row, incoming, snapshot?.page.frontmatter);
   const gateTrust = pageGateTrust(row, trust, storedTier);
+  // GST-2518: a lower-tier local write keeps the page's privacy labels it would widen (GST-2521: and the owner as a reader); its proposal carries the request.
+  const labelGuard = await privacyLabelGuard(engine, row, trust, snapshot?.page ?? null, storedTier, incoming);
+  let heldLabels: HeldPrivacyLabels | null = null;
   const defaultSourceWriter = row.operation === 'restore_page' || row.operation === 'revert_version' ? null : await defaultSourceMemberWriter(engine, row.authority), defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter);
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
@@ -1027,6 +1083,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     prepareFrontmatter: page => {
       provenance = putProvenance(row, snapshot, page);
       suppliedTrustMarker = page.frontmatter.trust_tier;
+      if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
@@ -1085,7 +1142,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
     async () => !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
       ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,
-    () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock }),
+    () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock, labelEdit: row.operation === 'submit_job' && p.kind === 'managed_maintenance_page' ? readLabelEdit(p.label_edit) : undefined }),
     // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
     async () => noop ? null : prepareCoreGuard(engine, { row, snapshot, incoming: targetDeleted ? null : ready.parsedPage }),
   ]) as [Awaited<ReturnType<typeof prepareCanonicalProjections>> | undefined, Record<string, unknown>,
@@ -1105,7 +1162,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const pinMode = sourcePath && mintMode && scannerSourcePath(file!.root, file!.root) && !await readSlugRootMode(engine, row.source_id) ? mintMode : undefined;
   const publication: PreparedMutation = { observedRevision, noop, additionalPageKeys:links?.pageKeys, file, ...databaseOnly,
     ...(core ? { exclusiveSources: core.exclusiveSources } : {}), ...(trust ? { trust } : {}), ...(ready.afterCommit ? { afterCommit: ready.afterCommit } : {}),
-    validate: async tx => { await ready.validate(tx); await core?.validate(tx); }, apply: async (tx, preimage) => {
+    validate: async tx => { await ready.validate(tx); await core?.validate(tx); await assertLabelGuardUnchanged(tx, row, trust, snapshot?.page ?? null, storedTier, incoming, labelGuard); },
+    apply: async (tx, preimage) => {
     let autoLinks: Awaited<ReturnType<NonNullable<typeof links>['apply']>> | undefined;
     let removedTimeline: TimelineRowsRemoved | null = null;
     let lowered: { proposal_ref: string } | null = null;
@@ -1118,7 +1176,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       const applied = await (isFenceEditWrite(row) ? withTrustKeep(tx, ['pages'], () => ready.apply(tx, lean ? preimage : undefined)) : ready.apply(tx, lean ? preimage : undefined));
       projectionPending = applied?.segmented?.complete === false || applied?.projectionPending === true;
       segmentedWrite = applied?.segmented !== undefined;
-      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: prior, revision: snapshot!.revision }) : null;
+      lowered = prior ? await recordAgentPageLowering(tx, row, { tier: heldLabels && labelGuard?.tier ? maxTrust(prior, labelGuard.tier) : prior, revision: snapshot!.revision, pageTier: prior }, undefined, heldLabels) : null;
       // Mandatory metadata shares publication rollback; exact no-ops never heal it. These, and the
       // projections (facts, takes, timeline rows of the page the import just wrote live), are independent and sent together.
       const [, pinned] = await pipelined(tx, [
@@ -1157,6 +1215,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
         else if (!applied?.projectionPending && !(applied?.sealed && row.operation !== 'restore_page' && !versionTags && !links && !targetDeleted)) await sealPageTextProjection(tx, row.slug, row.source_id);
         if (core) await core.record(tx, (await tx.readPageSnapshot(row.slug, source))?.revision ?? null);
       }
+    } else if (heldLabels && snapshot && labelGuard) {
+      // GST-2518: a write that only widened labels publishes nothing once they are kept; its request still reaches the owner.
+      lowered = await recordAgentPageLowering(tx, row, { tier: labelGuard.tier ?? storedTier!, revision: snapshot.revision, pageTier: storedTier }, undefined, heldLabels);
     }
     const coreUsage = core?.usage();
     const gate = noop ? undefined : gateField(ready.result.gate, `p:${row.source_id}/${row.slug}`, null);
@@ -1175,7 +1236,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       ...(!noop && quarantineOutcome(ready.parsedPage.frontmatter) ? { quarantined: quarantineOutcome(ready.parsedPage.frontmatter) } : {}),
       ...(row.operation === 'capture' ? { channel: 'capture', content_hash: p.capture_hash } : {}),
       ...(edited ? editDiff(row.slug, edited.before, edited.after) : {}), ...fencesNormalized, ...fenceRepairOutcome,
-      ...(lowered ? { trust_lowered: lowered } : {}), ...(gate ? { gate } : {}),
+      ...(lowered ? { trust_lowered: lowered } : {}), ...(lowered && heldLabels ? { privacy_labels_kept: { keys: heldLabels.keys, proposal_ref: lowered.proposal_ref } } : {}), ...(gate ? { gate } : {}),
       // DX-1: a guarded supersession reports contested (the first proposal; every one when the write contested several rows).
       ...(contested.length ? { contested: { proposal_ref: contested[0], ...(contested.length > 1 ? { proposal_refs: contested } : {}) } } : {}) };
   } };

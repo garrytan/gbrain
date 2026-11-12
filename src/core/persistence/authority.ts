@@ -8,7 +8,7 @@ import { hasScope } from '../scope.ts';
 import { normalizeTokenScopes } from '../legacy-token-scope.ts';
 import { authSourcesFromGrant, grantFromTokenRow, tokenGrantRowSelect, type TokenGrantRow } from '../grants/model.ts';
 import { readLocalWriter, currentVerifiedLocalWriter, takeRegisteredWriterRow, verifyLocalWriter, type LocalGrant } from './identity.ts';
-import type { Principal, SqlEngine, WriteAuthority, WriteRequest } from './model.ts';
+import { authorizedSlug, type Principal, type SqlEngine, type WriteAuthority, type WriteRequest } from './model.ts';
 import { authorizePageVisibility, excludesPrivateWritesAtAdmission } from './page-visibility.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { parseStoredActor, storedActorIdentity } from '../access/actor.ts';
@@ -70,6 +70,9 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
     // GBRA-231: a channel audience (anything but one member) never relaxes privacy, so its ceiling hides private pages.
     excludePrivate: (actingFor !== undefined && currentCallerAccess().hidePrivate) || await excludesPrivateWritesAtAdmission(ctx.engine, ctx.remote !== false),
     ...(actingFor ? { actingFor } : {}),
+    // GST-363: a stdio server started with --stdio-member stamps that member, so preparation and publication re-resolve
+    // the same member (live) instead of whatever config mcp.stdio_member names then.
+    ...(principal.kind === 'local_stdio' && ctx.stdioMember !== undefined ? { stdioMember: ctx.stdioMember } : {}),
     ...(access?.actor && ctx.attestedOp ? { attestedOp: ctx.attestedOp } : {}),
     ...(perCallWriteSource(ctx, sourceId, slug) ? { attestedSource: sourceId } : {}),
     autoLinkTrusted: ctx.remote === false || ctx.viaSubagent === true && !ctx.auth && !!ctx.allowedSlugPrefixes?.length,
@@ -145,7 +148,8 @@ export async function slugDisclosable(engine: SqlEngine, a: WriteAuthority, slug
   return authorizePageVisibility(engine, a, slug).then(() => true, () => false);
 }
 /** Caller holds source guards first. FOR SHARE serializes publication against revocation. */
-export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, operation: string, slug: string, lock = false): Promise<void> {
+export async function authorizeWrite(engine: SqlEngine, a: WriteAuthority, operation: string, page: string, lock = false): Promise<void> {
+  const slug = authorizedSlug(a, page);
   if (a.version !== 1 || !a.principal || !a.sourceId || !a.sourceIncarnation) deny('Missing durable write authority.');
   assertSkillWriteScopes(a.scopes, operation, a.remote);
   // GST-359: an attested write is granted by the public operation the person's system called (memory_write runs remember).

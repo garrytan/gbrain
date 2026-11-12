@@ -135,6 +135,7 @@ export const GRADUATION_INVENTORY: Inventory = {
     carry('page_extraction_state', 'operational', 'Extraction watermarks and partial-input receipts per page and pipeline; without them the next extraction of a large page reads its head again and records the receipt anew.'),
     carry('page_facts_reconcile', 'operational', 'Facts reconcile watermark: per-page revision extract_facts last reconciled; without it every page is due again.'),
     carry('page_generation_clock', 'operational', 'Page generation clock (derived side table, verified equal).'),
+    carry('page_label_guards', 'security', 'The tier the owner\'s label repairs set on a page (GST-2521); dropping it would let an agent write at the page\'s own tier widen the labels the owner set.'),
     carry('page_mention_state', 'operational', 'Entity mention index: per-page mention watermark; without it every page is due for a rescan.'),
     carry('page_projection_jobs', 'operational', 'Pending page projection work (derived side table, verified equal).'),
     carry('page_purges', 'user_data', 'Text-free page purge tombstones (#5575); dropping them would let purged pages re-import.'),

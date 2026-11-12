@@ -79,6 +79,7 @@ import { scanTextStream } from './secret-scan-stream.ts';
 import { shellQuote } from './mcp-registration.ts';
 import { gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
+import { stagedScanPublishRefusal } from './git/range-secret-scan.ts';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -88,6 +89,7 @@ export type WorkspacePushStatus =
   | 'blocked_tracked_deny'  // a TRACKED file matches the deny globs [G6]
   | 'blocked_secrets'       // unallowlisted secret-scan findings [D6]
   | 'blocked_unscannable'   // a staged blob could not be scanned — fail CLOSED
+  | 'blocked_history'       // the range scan of the commits it would push refused (publish_secret_found / publish_scan_unreadable)
   | 'refused_visibility'    // remote not verifiably private [G8]
   | 'pull_conflict'         // divergenceSafePull aborted a conflicted rebase
   | 'push_failed'           // push rejected / origin unreachable
@@ -111,6 +113,10 @@ export interface WorkspacePushResult {
   findings?: PushSecretFinding[];
   /** Staged paths the secret scan could not read (fail-closed block reason). */
   unscannable?: string[];
+  /** blocked_history: the refusal's code, what to do (a longer `--scan-timeout` after a timeout) and its findings JSON (never a value). */
+  code?: string;
+  suggestion?: string;
+  detail?: string;
 }
 
 /** Troubleshooting section for push refusals (DX-8 in docs/guides/write-refusals.md). */
@@ -158,6 +164,8 @@ export interface WorkspacePushOpts {
   allowUnverifiedRemote?: boolean;
   commitMessage?: string;
   logger?: (line: string) => void;
+  /** The range secret scan's time budget (`--scan-timeout`; default 300 s). */
+  scanTimeoutMs?: number;
   /**
    * TEST SEAM: hold the lock for N ms after acquisition, before any git work.
    * Lets a concurrency test make "N callers, 1 winner" deterministic.
@@ -882,6 +890,43 @@ export function managedPushRefusal(dir: string, root: string | null | undefined,
   return error;
 }
 
+type PushFailure = Pick<WorkspacePushResult, 'reason' | 'code' | 'suggestion' | 'detail'> & { status: 'error' | 'push_failed' | 'blocked_history' };
+
+/**
+ * Step 7 of {@link workspacePush}: the push carries every local commit origin lacks, including ones a script made with
+ * plain `git commit` that the staged scan never saw, so the exact commit pushed is range-scanned against origin's tip,
+ * read from origin itself (the pull may have fetched another upstream remote) and leased on (#8902). Tags never ride
+ * along. Returns the failure (blocked_history for a scan refusal), or null when pushed.
+ */
+function pushScannedHead(root: string, branch: string, log: (line: string) => void, scanTimeoutMs?: number): PushFailure | null {
+  const target = tryGit(root, ['rev-parse', '--verify', 'HEAD^{commit}']);
+  if (!target) return { status: 'error', reason: 'HEAD names no commit; nothing to push' };
+  const heads = tryGit(root, [...pushSsrfFlags(), 'ls-remote', '--heads', 'origin', `refs/heads/${branch}`], { timeoutMs: 120_000, auth: true });
+  if (heads === null) return { status: 'push_failed', reason: `could not read origin's ${branch}; nothing pushed` };
+  const fetched = !heads || tryGit(root, [...pushSsrfFlags(), 'fetch', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--no-tags', 'origin',
+    `+refs/heads/${branch}:refs/remotes/origin/${branch}`], { timeoutMs: 120_000, auth: true }) !== null;
+  if (!fetched) return { status: 'push_failed', reason: `could not fetch origin's ${branch}; nothing pushed` };
+  const base = heads ? tryGit(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}^{commit}`]) ?? '' : '';
+  if (heads && !base) return { status: 'push_failed', reason: `could not read origin's ${branch} after fetching it; nothing pushed` };
+  if (base && tryGit(root, ['merge-base', '--is-ancestor', base, target]) === null) {
+    return { status: 'push_failed', reason: `local ${branch} does not contain origin/${branch}; nothing pushed (rerun to pull first)` };
+  }
+  const refusal = stagedScanPublishRefusal(root, base, target, { timeoutMs: scanTimeoutMs, progress: log, retryArgv: ['gbrain', 'sources', 'push', '--path', root] });
+  if (refusal) {
+    log(`PUSH BLOCKED: ${refusal.code}: ${refusal.message}`);
+    return { status: 'blocked_history', code: refusal.code, reason: `${refusal.code}: ${refusal.message}`, suggestion: refusal.suggestion,
+      ...(refusal.detail !== undefined ? { detail: String(refusal.detail) } : {}) };
+  }
+  try {
+    git(root, [...pushSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--no-follow-tags', '--recurse-submodules=no', `--force-with-lease=refs/heads/${branch}:${base}`, 'origin', `${target}:refs/heads/${branch}`], {
+      timeoutMs: 120_000, auth: true,
+    });
+    return null;
+  } catch (e) {
+    return { status: 'push_failed', reason: `git push failed: ${(e as Error).message.slice(0, 200)}` };
+  }
+}
+
 export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspacePushResult> {
   const log = (line: string) => opts.logger?.(line);
 
@@ -926,6 +971,7 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     writePushStatus({
       ts: new Date().toISOString(),
       ok: r.ok,
+      ...(r.code !== undefined ? { code: r.code } : {}),
       ...(r.reason !== undefined ? { reason: r.reason } : {}),
       ...(r.ahead !== undefined ? { ahead: r.ahead } : {}),
       repoRoot: root,
@@ -1158,17 +1204,8 @@ export async function workspacePush(opts: WorkspacePushOpts): Promise<WorkspaceP
     }
 
     // 7. push — even with no new commit (a prior failure may have left local ahead).
-    try {
-      git(root, [...pushSsrfFlags(), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, 'origin', `HEAD:${branch}`], {
-        timeoutMs: 120_000, auth: true,
-      });
-    } catch (e) {
-      return finish({
-        ok: false, status: 'push_failed', repoRoot: root, branch, committed,
-        ahead: aheadCount(root, branch),
-        reason: `git push failed: ${(e as Error).message.slice(0, 200)}`,
-      });
-    }
+    const failed = pushScannedHead(root, branch, log, opts.scanTimeoutMs);
+    if (failed) return finish({ ok: false, ...failed, repoRoot: root, branch, committed, ahead: aheadCount(root, branch) });
 
     const ahead = aheadCount(root, branch) ?? 0;
     log(`pushed ${root} → origin/${branch}${committed ? ' (new commit)' : ''}`);

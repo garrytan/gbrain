@@ -19,6 +19,8 @@ import {
   isSkippablePath,
   resolveAutoSkipThreshold,
   summarizeFailuresByCode,
+  STRICT_REQUIRES_MANAGED,
+  strictRequiresManagedAdvice,
   isEmbeddingInfraCode,
   DEFAULT_SOURCE_ID,
   RENAME_SENTINEL_PREFIX,
@@ -137,6 +139,7 @@ export async function performFullSync(
       // issue #1939: performFullSync owns the failure ledger + bookmark via the
       // shared gate below; don't let runImport double-record or write its own.
       managedBookmark: true,
+      noticeRun: 'sync',
       // #5988: a held rename destination whose old page changed is held, never imported as a new page.
       heldPaths: new Set(holds?.heldPaths),
       // #5988: content refusals are held, not failed (never gating the bookmark).
@@ -268,6 +271,7 @@ export async function performFullSync(
     ...(result.malformedSkipped ? { malformedSkipped: result.malformedSkipped } : {}),
     ...(result.type_warnings ? { type_warnings: result.type_warnings } : {}),
     ...(result.resealed ? { resealed: result.resealed } : {}),
+    ...(result.privacy_label_notice ? { privacy_label_notice: result.privacy_label_notice } : {}),
     ...(reexportFailures.length ? { reexport_failures: reexportFailures } : {}),
   }, reasons, opts.sourceId);
 }
@@ -322,6 +326,7 @@ async function reportBlockedFullSync(
   fullGate: Awaited<ReturnType<typeof applySyncFailureGate>>,
 ): Promise<SyncResult> {
   const codeBreakdown = formatCodeBreakdown(result.failures);
+  const strictRefused = summarizeFailuresByCode(result.failures).some(c => c.code === STRICT_REQUIRES_MANAGED);
   if (fullGate.sentinelBlocked) {
     // #3479 review — say WHICH sentinel fired: a `<rename:…>` block here
     // used to print the history-changed message, pointing the operator at
@@ -346,7 +351,9 @@ async function reportBlockedFullSync(
     // #3875: code-aware copy — provider-infra failures must not be routed
     // to --skip-failed (same rationale as the incremental gate above).
     const infraCodes = summarizeFailuresByCode(result.failures).filter(c => isEmbeddingInfraCode(c.code));
-    if (infraCodes.length > 0) {
+    if (strictRefused) {
+      serr(`\nFull sync blocked: ${fileFailCount} file(s) failed (${STRICT_REQUIRES_MANAGED}):\n${codeBreakdown}\n${formatFailedFileList(result.failures)}\n\n${strictRequiresManagedAdvice(opts.sourceId)}`);
+    } else if (infraCodes.length > 0) {
       serr(
         `\nFull sync blocked: ${fileFailCount} file(s) failed — embedding provider errors:\n` +
         `${codeBreakdown}\n\n` +
@@ -376,6 +383,7 @@ async function reportBlockedFullSync(
     pagesAffected: [],
     failedFiles: result.failures.length,
     failureCodes: summarizeFailuresByCode(result.failures),
+    ...(strictRefused ? { failureAdvice: strictRequiresManagedAdvice(opts.sourceId) } : {}),
   };
 }
 

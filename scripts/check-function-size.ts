@@ -253,6 +253,7 @@ function baseBaselineText(): { text: string | null; source: string } {
   return { text, source: text === null ? `${source}: no baseline yet (seed)` : source };
 }
 
+const repoRelative = (abs: string) => relative(ROOT, abs).replace(/\\/g, '/');
 const keyOf = (path: string, name: string) => `${path}\t${name}`;
 const normalized = (s: string) => s.replace(/\s+/g, ' ').trim();
 
@@ -265,7 +266,7 @@ const normalized = (s: string) => s.replace(/\s+/g, ' ').trim();
  */
 function moveNormalized(text: string, path: string): string {
   const resolved = text.replace(/(['"])(\.\.?\/[^'"\n]*)\1/g, (_m, q: string, spec: string) =>
-    `${q}@${relative(ROOT, resolve(dirname(join(ROOT, path)), spec))}${q}`);
+    `${q}@${repoRelative(resolve(dirname(join(ROOT, path)), spec))}${q}`);
   return normalized(resolved).replace(/^export /, '');
 }
 
@@ -286,7 +287,7 @@ function preambleOf(text: string): string {
 function main(): number {
   const t0 = performance.now();
   const args = process.argv.slice(2);
-  const measured = srcFiles(ROOT).flatMap((f) => measureSource(relative(ROOT, f), readFileSync(f, 'utf8')));
+  const measured = srcFiles(ROOT).flatMap((f) => measureSource(repoRelative(f), readFileSync(f, 'utf8')));
   const byKey = new Map(measured.map((m) => [keyOf(m.path, m.name), m]));
   const problems: string[] = [];
   if (!existsSync(BASELINE)) {

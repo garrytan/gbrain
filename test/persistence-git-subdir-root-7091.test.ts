@@ -135,7 +135,7 @@ for (const kind of testBackends()) describe(`#7091 a source root below the Git t
     writeFileSync(join(top.root, 'outside.md'), 'outside\n');
     git(top.root, 'add', 'outside.md'); git(top.root, 'commit', '-q', '-m', 'Local commit');
     const ahead = await gitConvergenceCheck(engine);
-    expect(ahead).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', top.root], actor: 'agent' } });
+    expect(ahead).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', top.root], actor: 'agent' } });
     expect((ahead!.details as { roots: unknown[] }).roots).toEqual([expect.objectContaining({ root: top.root, ahead: 1, stranded: true })]);
     git(top.root, 'push', '-q');
 
@@ -146,7 +146,7 @@ for (const kind of testBackends()) describe(`#7091 a source root below the Git t
     writeFileSync(join(top.root, page), edited(1));
     const dirty = await gitConvergenceCheck(engine);
     expect(dirty).toMatchObject({ status: 'warn', fix: { ask_user: true, actor: 'user', argv: ['gbrain', 'git', 'commit-push', '--path', top.root, '-m', 'gbrain: persist canonical memory update', '--', page],
-      then: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--path', top.root] } } });
+      then: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', top.root] } } });
     expect((dirty!.details as { roots: unknown[] }).roots).toEqual([expect.objectContaining({ root: top.root, stranded: true, uncommitted_pages: [page] })]);
 
     const fixed = commitAndPush({ repo: top.root, cwd: top.root, paths: [page], message: 'gbrain: persist canonical memory update' });

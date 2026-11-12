@@ -215,7 +215,7 @@ if [ ! -x "$_cli" ]; then
   exit 0
 fi
 # Detach so the commit returns instantly; the CLI logs its own outcome.
-( "$_cli" git commit-push --push-only --require-clean ) </dev/null >/dev/null 2>&1 &
+( "$_cli" git commit-push --push-only --require-clean --scan-secrets ) </dev/null >/dev/null 2>&1 &
 disown 2>/dev/null || true
 exit 0
 `;
@@ -230,10 +230,10 @@ ${PROTOCOL_LINE}
 #   scripts/brain-commit-push.sh "message" <path> [path ...]
 #   scripts/brain-commit-push.sh --push-only
 #   scripts/brain-commit-push.sh --pull
-# Delegates to \`gbrain git commit-push\` (lock, path-scoped commit, in-memory
+# Delegates to a gbrain whose \`git commit-push\` scans every push (lock, path-scoped commit, in-memory
 # merge, fast-forward-only checkout). Without a capable gbrain it only commits
-# the paths under the lock and pushes; a rejected push fails loudly. It never
-# runs pull --rebase, stash or reset. Guide: docs/guides/shared-checkout-git.md
+# the paths under the lock and pushes nothing (only gbrain scans the unpublished
+# commits for secrets first), exiting 4. It never runs pull --rebase, stash or reset. Guide: docs/guides/shared-checkout-git.md
 set -euo pipefail
 unset $(git rev-parse --local-env-vars) 2>/dev/null || true
 
@@ -252,7 +252,7 @@ fi
 _gbrain_cli() {
   local c
   for c in "$(command -v gbrain 2>/dev/null || true)" "$(git config --local --get gbrain.cliPath 2>/dev/null || true)"; do
-    [ -n "$c" ] && [ -x "$c" ] && "$c" git commit-push --help >/dev/null 2>&1 && { printf '%s' "$c"; return 0; }
+    [ -n "$c" ] && [ -x "$c" ] && "$c" git commit-push --help 2>&1 | grep -q -e '--scan-timeout' && { printf '%s' "$c"; return 0; }
   done
   return 1
 }
@@ -268,7 +268,7 @@ _run() {
 }
 if _cli="$(_gbrain_cli)"; then
   case "\${1:-}" in
-    --push-only) if [ -n "\${2:-}" ]; then _run --push-only --branch "$2"; else _run --push-only; fi ;;
+    --push-only) if [ -n "\${2:-}" ]; then _run --push-only --scan-secrets --branch "$2"; else _run --push-only --scan-secrets; fi ;;
     --pull) _run --pull ;;
   esac
   _msg="\${1:?usage: brain-commit-push.sh <message> <path> [paths...]}"; shift
@@ -325,10 +325,10 @@ _report_skipped() {
 }
 _finish() {
   [ -z "$_skipped" ] && exit 0
-  _report_skipped "committed and pushed"
+  _report_skipped "committed, and already on the remote"
   exit 1
 }
-echo "[brain-commit-push] gbrain git commit-push unavailable; using the minimal locked commit + push" >&2
+echo "[brain-commit-push] gbrain git commit-push unavailable; using the minimal locked commit, which pushes nothing" >&2
 _log="\${GBRAIN_HOME:-$HOME}/.gbrain/brain-push.log"
 mkdir -p "$(dirname "$_log")" 2>/dev/null || true
 # The absolute lock path, as gbrain spells it: the marker below must name this exact lock.
@@ -360,18 +360,14 @@ case "\${1:-}" in
     _skipped="$(_unstaged "$@" | sort -u)" ;;
 esac
 _head="$(git rev-parse HEAD)"
-# Never hold the commit lock across the network: release it and push under the publish lock, like gbrain.
 exec 9>&- 8>&-
 unset BRAIN_COMMIT_LOCK_HELD GBRAIN_COMMIT_VIA
-if command -v flock >/dev/null 2>&1; then
-  exec 7>"$_gd/brain-publish.lock"
-  flock -w "\${GBRAIN_PUBLISH_LOCK_WAIT_SECONDS:-300}" 7 || { echo "PUSH FAILED: another push held this checkout's publish lock; the commit is local-only. Run: gbrain git commit-push --push-only" >&2; _report_skipped "committed locally, not pushed"; exit 4; }
+# Never push without gbrain: its push scans every unpublished commit for secrets first, and this script cannot.
+if [ "$(git ls-remote origin "refs/heads/$_branch" 2>/dev/null | cut -f1)" = "$_head" ]; then
+  echo "$(date -u +%FT%TZ) [push] ok-already-on-remote $_branch $(git rev-parse --short "$_head")" >>"$_log"; _finish
 fi
-if git push origin "$_head:refs/heads/$_branch" >>"$_log" 2>&1; then
-  echo "$(date -u +%FT%TZ) [push] ok $_branch $(git rev-parse --short "$_head")" >>"$_log"; _finish
-fi
-echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short "$_head") push rejected; run gbrain git commit-push --push-only" >>"$_log"
-echo "PUSH FAILED — the commit is local-only. Install gbrain, then run: gbrain git commit-push --push-only (it merges remote commits safely). Never git pull --rebase here." >&2
+echo "$(date -u +%FT%TZ) [push] LOCAL-ONLY, NEEDS ATTENTION: $_branch @ $(git rev-parse --short "$_head") not pushed: gbrain is not installed, and only gbrain scans the commits before it pushes. Run: gbrain git commit-push --push-only" >>"$_log"
+echo "NOT PUSHED — the commit is local-only. Install gbrain, then run: gbrain git commit-push --push-only (it scans the unpublished commits for secrets, then merges remote commits safely and pushes). Never git pull --rebase here." >&2
 _report_skipped "committed locally, not pushed"
 exit 4
 `;
@@ -733,7 +729,7 @@ export interface PushLogOutcome {
 const PUSH_LOG_OK = /^(\S+) \[push\] (?:ok|ok-after-rebase|ok-after-merge|ok-already-on-remote) (\S+)\b/;
 const PUSH_LOG_LOCAL_ONLY = /^(\S+) \[push\] (?:LOCAL-ONLY|CONFLICT), NEEDS ATTENTION: (\S+) /;
 
-export type PushLogKind = 'ok' | 'ok-after-merge' | 'nothing' | 'local-only' | 'conflict' | 'lock-timeout' | 'checkout-lagging';
+export type PushLogKind = 'ok' | 'ok-after-merge' | 'nothing' | 'local-only' | 'refused' | 'conflict' | 'lock-timeout' | 'checkout-lagging';
 
 /**
  * #6530: one `brain-push.log` line per `gbrain git commit-push` outcome, in the
@@ -750,6 +746,7 @@ export function appendPushLog(kind: PushLogKind, branch: string, sha: string, de
       : kind === 'nothing' ? `[push] ok-already-on-remote ${branch} ${short}`
       : kind === 'lock-timeout' ? `[push] lock-timeout ${branch}`
       : kind === 'checkout-lagging' ? `[push] checkout-lagging ${branch} ${short} ${clean}`
+      : kind === 'refused' ? `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} the push was refused (${clean}). Run: gbrain git commit-push --push-only`
       : kind === 'conflict' ? `[push] CONFLICT, NEEDS ATTENTION: ${branch} local and remote changed the same file. Run: gbrain git commit-push --push-only --resolve <path>=ours|theirs`
       : `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} could not reach the remote. Run: gbrain git commit-push --push-only`;
     const p = pushLogPath();
@@ -1295,12 +1292,13 @@ function commitScaffolding(repoPath: string, branch: string, redact: (s: string)
   const resolver = findResolverFile(repoPath);
   if (resolver) paths.push(relative(repoPath, resolver));
   try {
-    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(gbrain): install brain durability scaffolding', allowOutsideSourceRoot: true });
+    const r = commitAndPush({ repo: repoPath, paths, cwd: repoPath, message: 'chore(gbrain): install brain durability scaffolding', allowOutsideSourceRoot: true, scanSecrets: true });
     if (r.branch !== branch) return { status: 'needs_attention', detail: `checkout is on ${r.branch}, not ${branch}` };
     if (r.outcome === 'nothing_to_commit') return { status: 'ok', detail: 'scaffolding already committed' };
     return { status: 'fixed', detail: `committed + pushed durability scaffolding${r.checkout === 'lagging' ? ` (checkout lagging: ${r.lagging_reason})` : ''}` };
   } catch (e) {
-    return { status: 'needs_attention', detail: redact(`scaffolding commit/push failed: ${(e as Error).message.slice(0, 140)}`) };
+    const code = (e as { code?: unknown }).code;
+    return { status: 'needs_attention', detail: redact(`scaffolding commit/push failed${typeof code === 'string' ? ` (${code})` : ''}: ${(e as Error).message.slice(0, 140)}`) };
   }
 }
 

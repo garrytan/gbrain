@@ -28,6 +28,8 @@ import { sizeStateField } from '../page-embedding-budget.ts';
 import { readPageBodyPolicy } from '../page-body/limits.ts';
 import { importStreamedMarkdownFile, type StreamedPreparedImport } from '../page-body/streamed-import.ts';
 import { ownerImportTrust } from '../trust/channel.ts';
+import { isSourceDbOnlySlug } from './source-storage.ts';
+import { storedLabelsToKeep } from './label-edit.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { sealSegmentedPage } from './segmented-apply.ts';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
@@ -110,6 +112,12 @@ export async function prepareManagedSyncStreamed(engine: BrainEngine, row: Write
   if (!ready) throw result.refusal ? ctx.contentRefusal(result.refusal) : refuse('invalid_params', result.error ?? 'The sync file could not be prepared.',
     `The file could not be prepared as page ${row.slug}.`);
   const prepared: StreamedPreparedImport = ready;
+  // GST-2519: a streamed import cannot carry the db_only label keep (sync-prepare.ts withStoredLabels), so a file that
+  // would drop a privacy label its page holds is held until the file states it.
+  const kept = base && !base.page.deleted_at && isSourceDbOnlySlug(ctx.root, row.slug, 'not_db_only')
+    ? storedLabelsToKeep(base.page.frontmatter as Record<string, unknown>, prepared.frontmatter as Record<string, unknown>) : [];
+  if (kept.length) throw ctx.contentRefusal({ code: 'visibility_noncanonical',
+    message: `Page ${row.slug} sits under a declared storage.db_only directory and holds privacy labels (${kept.join(', ')}) that ${p.sourcePath} does not state; a file this large imports without keeping them, so it is held instead of widening the page. State those labels in the file's frontmatter and commit.` });
   if (prepared.observedRevision !== (base?.revision ?? null)) throw refuse('revision_conflict', 'The page changed during sync preparation.',
     `Page ${renamed?.slug ?? row.slug} changed while this sync was being prepared.`);
   const source = { sourceId: row.source_id };

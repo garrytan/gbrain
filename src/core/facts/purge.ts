@@ -48,6 +48,7 @@ import { rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { liveStagingSql } from '../page-body/schema.ts';
 import { escapeFenceCell } from '../fence-shared.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { carriesClaimSql, claimNeedles, purgeCompletion, reasonNeedle, verifyFactPurge, type PurgeReceipt, type StoreCount } from './purge-verify.ts';
 import { noteBelief, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
@@ -530,6 +531,11 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
         VALUES ($1,$2,$3,$4,$5::uuid,$6,$7) ON CONFLICT DO NOTHING`,
       [p.sourceId, current.visibility, plan.subject, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason]);
+      // GST-2492: a fact memory/unattributed holds for an entity with no page is purged from the holding page as well.
+      if (plan.subject !== '*') await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
+        SELECT $1::text,$2::text,$3::text,$4::text,$5::uuid,$6::text,$7::text WHERE EXISTS (SELECT 1 FROM facts
+          WHERE id=ANY($8::bigint[]) AND source_id=$1 AND source_markdown_slug=$3 AND entity_slug IS NOT NULL) ON CONFLICT DO NOTHING`,
+      [p.sourceId, current.visibility, UNATTRIBUTED_MEMORY_SLUG, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason, plan.factIds]);
       await tx.executeRaw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING`,
         [p.sourceId, plan.subject, current.fact_hash, admitted.id]);
       const takes = plan.takes.length ? (await tx.executeRaw('DELETE FROM takes WHERE id=ANY($1::bigint[]) RETURNING id', [plan.takes.map(t => t.id)])).length : 0;
@@ -558,7 +564,10 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
         .then(() => recordDerivationPurge(tx, admitted.id, p.sourceId, pageIds, [current.fact, escapeFenceCell(current.fact)])), current.id, p.sourceId);
       // A segmented page's flip already retired only the chunks of the occurrences it rewrote.
       const inline = pageIds.filter(id => !bodies.segmented.includes(id));
-      const chunks = inline.length ? (await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING 1', [inline])).length : 0;
+      // Deleting a page's chunks voids the seal that certified them (#8502), also on a page whose body held no purged row.
+      const chunks = inline.length ? (await tx.executeRaw(`WITH gone AS (DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING page_id),
+        unsealed AS (UPDATE pages SET text_projection_revision=NULL WHERE id IN (SELECT page_id FROM gone) AND text_projection_revision IS NOT NULL)
+        SELECT 1 FROM gone`, [inline])).length : 0;
       const versions = await redactPageVersions(tx, p.sourceId, current.fact, pageIds);
       const ledger = await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, p.sourceId, { needles: [current.fact] });
       prose = versions.prose;

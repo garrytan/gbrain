@@ -208,6 +208,28 @@ describeE2E('openEngine on Postgres', () => {
     expect(await codeOf(oldDirect`SELECT 1`)).not.toBe('resolved');
   }, 60_000);
 
+  test('#8478: a direct pool still opening when a reconnect retires its manager is ended, not leaked', async () => {
+    const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
+    const manager = internals(engine).connectionManager as unknown as { ddl(): Promise<postgres.Sql>; initDirectPool(): Promise<postgres.Sql> };
+    const open = manager.initDirectPool.bind(manager);
+    let opened!: (pool: postgres.Sql) => void;
+    const probed = new Promise<postgres.Sql>(resolve => { opened = resolve; });
+    let release!: () => void;
+    const handoff = new Promise<void>(resolve => { release = resolve; });
+    manager.initDirectPool = async () => { const pool = await open(); opened(pool); await handoff; return pool; };
+    const waiting = codeOf(manager.ddl());
+    try {
+      const late = await probed;
+      await engine.reconnect();
+      release();
+      expect(await waiting).toBe('CONNECTION_ENDED');
+      expect(await codeOf(late`SELECT 1`)).not.toBe('resolved');
+    } finally {
+      release();
+      await engine.disconnect();
+    }
+  }, 60_000);
+
   test('a reconnect lets in-flight work on the superseded direct pool finish before that pool ends', async () => {
     const engine = await openEngine({ embedded_core: true, engine: 'postgres', database: { url: urls[0]!, directUrl: urls[0]! }, pool: { max: 2 }, host: { id: randomUUID() } });
     try {

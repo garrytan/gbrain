@@ -5,7 +5,8 @@
  * frontmatter, no YAML), so the hook lane's worker loads only what a turn
  * needs; build.ts and sources.ts take these from here.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, readlinkSync, statSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { readBounded } from './fsutil.ts';
 import { catalogFile, skillIndexRoot, validCatalogName } from './paths.ts';
@@ -29,10 +30,25 @@ export function listCatalogs(home: string): string[] {
   } catch { return []; }
 }
 
-/** Recheck a directory fingerprint by stat only (the turn-path freshness tier). */
+/** Entries a skills scan never reads: dot-entries (harness-owned state such as Codex's .system/ or Hermes's .usage.json, and .git) and node_modules. */
+export const skippedEntry = (name: string) => name.startsWith('.') || name === 'node_modules';
+
+/** A hash of the directory entries that can change a catalog: subdirectories, symlinks (with their targets, so a retarget in place counts) and SKILL.md, never a skipped entry. */
+export function listingKey(dir: string, entries: readonly Dirent[]): string {
+  const target = (name: string) => { try { return readlinkSync(join(dir, name)); } catch { return ''; } };
+  const names = entries.filter(e => !skippedEntry(e.name) && (e.isDirectory() || e.isSymbolicLink() || e.name === 'SKILL.md')).map(e => e.isSymbolicLink() ? `${e.name}\u0001${target(e.name)}` : e.name).sort();
+  return createHash('sha256').update(names.join('\0')).digest('hex').slice(0, 16);
+}
+
+/**
+ * Recheck a directory fingerprint by stat only (the turn-path freshness
+ * tier). A directory whose mtime moved is re-listed, and counts as changed
+ * only when its listing key did (a fingerprint from before the key existed
+ * counts any mtime move).
+ */
 export function fingerprintChanged(fp: DirFingerprint, routing?: [string, number, number]): boolean {
   try {
-    for (const [d, m] of fp.dirs) if (statSync(d).mtimeMs !== m) return true;
+    for (const [d, m, key] of fp.dirs) if (statSync(d).mtimeMs !== m && (key === undefined || listingKey(d, readdirSync(d, { withFileTypes: true })) !== key)) return true;
     for (const [f, size, m] of fp.files) { const st = statSync(f); if (st.size !== size || st.mtimeMs !== m) return true; }
     if (routing) { const st = statSync(routing[0]); if (st.size !== routing[1] || st.mtimeMs !== routing[2]) return true; }
     return false;

@@ -14,7 +14,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "remember",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Save {fact, provenance (required: source), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
+    "description": "Save {fact, provenance (required), `entity` (subject; recall needs it)} or items[]. Branch on `status`; write_pending: poll get_write_request.",
     "callShape": "A valid call: {\"fact\": \"<one claim>\", \"entity\": \"<subject-slug>\", \"provenance\": \"<where you learned it, with the date>\"}; several: items: [{fact, entity, provenance}, ...]. provenance (where the fact came from) is required.",
     "params": {
       "source_id": {
@@ -89,7 +89,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "share": {
         "type": "boolean",
-        "description": "Members save privately; true: all source readers recall it. Share team work, not facts about a person."
+        "description": "Members save privately, owner shared; true: all source readers recall it. Not for facts about a person."
       },
       "visibility": {
         "type": "string",

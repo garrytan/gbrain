@@ -197,8 +197,8 @@ export interface GitPolicyReceipt {
 /**
  * Writes one policy file under the checkout's commit lock (held across the read, the edit and the commit) and commits it
  * through the door. commit_lock_busy is retried once; integrate_conflict and writer_coordinator_required propagate (the
- * first needs the user's choice, the second a managed write on the brain host); a commit whose push is unconfirmed is a
- * success with a note.
+ * first needs the user's choice, the second a managed write on the brain host); a commit whose push is unconfirmed, or
+ * whose push the secret scan refused (publish_secret_found / publish_scan_unreadable), is committed_not_pushed with a note.
  */
 export async function commitPolicyFile(root: string, relPath: string, edit: (current: string | null) => string, message: string): Promise<GitPolicyReceipt> {
   const file = join(root, relPath);
@@ -212,12 +212,17 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
       const next = edit(current);
       writeFileSync(file, next);
       try {
-        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message });
+        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message, scanSecrets: true });
         return { outcome: r.outcome, commit: r.committed ?? r.sha, path: relPath,
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {
         if (e instanceof OperationError && (e.code === 'push_unconfirmed' || (e as { canonical?: string }).canonical === 'push_unconfirmed') && e.detail) {
-          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only to publish it.' };
+          return { outcome: 'committed_not_pushed', commit: String(e.detail), path: relPath, note: 'Committed locally; the push is unconfirmed. Rerun gbrain git commit-push --push-only --scan-secrets to publish it.' };
+        }
+        if (e instanceof OperationError && (e.code === 'publish_secret_found' || e.code === 'publish_scan_unreadable') && gitShow(root, 'HEAD', relPath) === next) {
+          const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8', env: gitChildEnv() }).stdout.trim();
+          return { outcome: 'committed_not_pushed', commit: head || null, path: relPath,
+            note: `Committed locally; nothing was pushed. ${e.code}: ${e.message} Fix: ${e.suggestion}` };
         }
         if (gitShow(root, 'HEAD', relPath) !== next) {
           if (current === null) rmSync(file, { force: true }); else writeFileSync(file, current);

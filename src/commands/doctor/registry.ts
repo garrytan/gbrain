@@ -137,12 +137,16 @@ import { storageManifestEntry } from './checks/storage-manifest.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
+import { strictFactsOutsideGitEntry } from './checks/strict-facts-outside-git.ts';
 import { localEditAdoptionsEntry } from './checks/local-edit-adoptions.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
 import { folderAccessEntry } from './checks/folder-access.ts';
+import { unlabeledPeopleFoldersEntry } from './checks/unlabeled-people-folders.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
+import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
+import { accessLineageEntry } from './checks/access-lineage.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
@@ -227,7 +231,10 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   derivedVisibilityEntry,
   memberAccessEntry,
   folderAccessEntry,
+  unlabeledPeopleFoldersEntry,
   sharedAgentAccessEntry,
+  ownerReadsRestrictedEntry,
+  accessLineageEntry,
   attestReadAccessEntry,
   rlsEntry,
   postgresTlsEntry,
@@ -328,6 +335,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   dbAheadOfGitEntry,
   // Git-canonical G3: how far each strict source's index trails the commit at HEAD.
   gitIndexLagEntry,
+  strictFactsOutsideGitEntry,
   // GST-1601: the one-sided local edits adopted in the last 24 h per source (informational, always ok).
   localEditAdoptionsEntry,
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).
