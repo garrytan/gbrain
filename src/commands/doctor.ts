@@ -532,7 +532,7 @@ export async function runDoctor(
   if (args.includes('--probe') && !(await (await import('./doctor/probe-consent.ts')).authorizeProviderProbe(engine, args, jsonOutput))) return;
   const checks = await buildChecks(engine, args, dbSource, connectError, deadline, { lastKnown: 'cli' });
   const run = doctorRunSummary(args, deadline);
-  const extras = { engine: engine?.kind, db_url_source: dbSource ?? null, run, alertRan: alertRanChecks(checks, parseDoctorTier(args)) };
+  const extras = { engine: engine?.kind, db_url_source: dbSource ?? null, run, alertRan: alertRanChecks(checks, parseDoctorTier(args), parseOnlyChecks(args)) };
   if (args.includes('--alert')) return setCliExitVerdict(printAlertReport(computeDoctorReport(checks, extras), jsonOutput));
   const hasFail = outputResults(checks, jsonOutput, extras);
 

@@ -44,7 +44,7 @@ export async function runRemoteDoctorTier(ctx: OperationContext, p: Record<strin
     const deadline = startDoctorDeadline(args);
     const raw = await buildChecks(ctx.engine, args, undefined, undefined, deadline, { sourceIds, remote: ctx.remote !== false });
     const checks = transport === 'cli' ? raw : redactForTransport(raw, 'http');
-    return computeDoctorReport(checks, { engine: ctx.engine.kind, render, alertRan: alertRanChecks(checks, 'standard') });
+    return computeDoctorReport(checks, { engine: ctx.engine.kind, render, alertRan: alertRanChecks(checks, 'standard', new Set(only)) });
   }
   const report = await doctorReportRemote(ctx.engine, { sourceIds, remote: ctx.remote, render });
   const kept = report.checks.filter((c) => only!.includes(c.name));

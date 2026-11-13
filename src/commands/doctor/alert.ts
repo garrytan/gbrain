@@ -88,11 +88,12 @@ export function alertRunArgs(args: readonly string[]): string[] {
 
 /**
  * The page-class checks this run executed: none when the database checks did not run (no connection check that is
- * ok), else every page-class check whose entry runs at tier. A page-class check missing from such a run did not apply.
+ * ok), else every page-class check whose entry runs at tier and that `only` (--only) names, when given. A page-class
+ * check missing from such a run did not apply.
  */
-export function alertRanChecks(checks: readonly Pick<Check, 'name' | 'status'>[], tier: DoctorTier): Set<string> {
+export function alertRanChecks(checks: readonly Pick<Check, 'name' | 'status'>[], tier: DoctorTier, only?: ReadonlySet<string> | null): Set<string> {
   if (!checks.some((c) => c.name === 'connection' && c.status === 'ok')) return new Set();
-  return new Set([...PAGE_CHECK_NAMES].filter((name) => DOCTOR_CHECK_REGISTRY.some((e) => e.emits.includes(name) && entryRunsAt(e.tier, tier))));
+  return new Set([...PAGE_CHECK_NAMES].filter((name) => (!only || only.has(name)) && DOCTOR_CHECK_REGISTRY.some((e) => e.emits.includes(name) && entryRunsAt(e.tier, tier))));
 }
 
 function unknownReason(c: Check): AlertUnknownReason | null {

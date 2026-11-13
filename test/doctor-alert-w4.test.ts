@@ -146,6 +146,15 @@ describe('alert verdict per page-class check', () => {
     expect(ran.has('jsonb_integrity')).toBe(false);
     expect(alertRanChecks([ok('connection')], 'standard')).toEqual(ALL);
   });
+
+  test('--alert --only <subset>: page checks outside the subset did not run, so a healthy subset is unknown, never none', () => {
+    const ran = alertRanChecks([ok('connection')], 'standard', new Set(['connection']));
+    expect([...ran]).toEqual(['connection']);
+    const alert = computeDoctorReport([ok('connection')], { alertRan: ran }).alert!;
+    expect(alert.level).toBe('unknown');
+    expect(alert.unknown.map((u) => u.check)).toContain('rls');
+    expect(alertRanChecks([ok('connection')], 'standard', new Set(PAGE_CHECK_NAMES))).toEqual(ALL);
+  });
 });
 
 describe('remote alert items', () => {
