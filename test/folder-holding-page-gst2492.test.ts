@@ -303,11 +303,42 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
         const error = await caught(moveRuledSharedHeld(engine, 'default'));
         return { code: error?.code, ms: performance.now() - started };
       });
-      expect(ended.code).toBe('57014');
+      expect(ended.code).toBe('preparation_deadline');
       expect(ended.ms).toBeLessThan(budget + 3_000);
     } finally { await holder.end(); resetSyncPreparationBudget(); }
     expect(await moveRuledSharedHeld(engine, 'default')).toMatchObject({ rehomed: 1, unmovable: [], write_errors: 0 });
     expect(await factRows(engine, claim)).toMatchObject([{ entity_slug: entity, source_markdown_slug: 'clients/acme-example/memory/unattributed' }]);
+  }), 300_000);
+
+  test.skipIf(backend !== 'postgres')('on the sync path a bare-name held row\'s resolution ends at the plan\'s deadline while another session locks page_aliases; once the lock drops the move completes', () => strict(async ({ engine, ctx }) => {
+    const entity = 'clients/acme-example/brief';
+    const claim = 'The acme-example brief carries an alias-locked clause.';
+    const bare = 'Kofi Example takes calls on Fridays.';
+    expect(await remember(ctx, claim, entity)).toMatchObject({ page: HOLD });
+    expect(await remember(ctx, bare, 'Kofi Example')).toMatchObject({ page: HOLD });
+    policySeams.afterInstall = () => { throw new Error('interrupted'); };
+    await expect(rules(engine, [rule('clients', 'clients/acme-example/', ['alice-example'])])).rejects.toThrow('interrupted');
+    policySeams.afterInstall = undefined;
+    __resetPrivateVisibilityCacheForTests();
+    const budget = 1_000;
+    await engine.setConfig('persistence.sync_preparation_ms', String(budget));
+    resetSyncPreparationBudget();
+    const [{ db }] = await engine.executeRaw<{ db: string }>('SELECT current_database() AS db');
+    const url = new URL(databaseUrl!); url.pathname = `/${db}`;
+    const holder = postgres(url.toString(), { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      const ended = await holder.begin(async sql => {
+        await sql.unsafe('LOCK TABLE page_aliases IN ACCESS EXCLUSIVE MODE');
+        const started = performance.now();
+        const error = await caught(moveRuledSharedHeld(engine, 'default'));
+        return { code: error?.code, ms: performance.now() - started };
+      });
+      expect(ended.code).toBe('preparation_deadline');
+      expect(ended.ms).toBeLessThan(budget + 3_000);
+    } finally { await holder.end(); resetSyncPreparationBudget(); }
+    expect(await moveRuledSharedHeld(engine, 'default')).toMatchObject({ rehomed: 1, unmovable: [], write_errors: 0 });
+    expect(await factRows(engine, claim)).toMatchObject([{ entity_slug: entity, source_markdown_slug: 'clients/acme-example/memory/unattributed' }]);
+    expect(await factRows(engine, bare)).toMatchObject([{ entity_slug: 'kofi-example', source_markdown_slug: HOLD }]);
   }), 300_000);
 
   const versionBodies = (engine: BrainEngine, slug: string) => engine.executeRaw<{ id: number; body: string }>(
