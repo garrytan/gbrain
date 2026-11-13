@@ -46,7 +46,12 @@ describe('legacy bearer token vs mcp.default_surface_dcr', () => {
     const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
     const inbound = new PassThrough();
     const outbound = new PassThrough();
-    const socket = Duplex.from({ readable: inbound, writable: outbound }) as Duplex & { remoteAddress?: string };
+    const socket = new Duplex({
+      read() {},
+      write(chunk, _enc, cb) { outbound.write(chunk); cb(); },
+      final(cb) { outbound.end(); cb(); },
+    }) as Duplex & { remoteAddress?: string };
+    inbound.on('data', d => socket.push(d));
     socket.remoteAddress = '127.0.0.1';
     server.emit('connection', socket);
     inbound.write(`POST /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nAuthorization: Bearer ${TOKEN}\r\n`
