@@ -84,6 +84,7 @@ test/db-only-labels-gst2519.test.ts
 test/db-wins-unimported-gst2579.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
+test/degraded-engine-recovered-surface-9224.test.ts
 test/derived-link-reconciliation.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
@@ -281,6 +282,8 @@ test/large-pages/segmented-timeline-retract-versions.test.ts
 test/large-pages/segmented-versions.test.ts
 test/large-pages/segmented-withdrawal-mirror.test.ts
 test/large-pages/segmented-withdrawn-fence-delete.test.ts
+test/large-pages/segmented-write-sweep-over-ceiling.slow.test.ts
+test/large-pages/segmented-write-sweep.test.ts
 test/large-pages/streamed-import-drift.test.ts
 test/large-pages/streamed-sync-origin-b14.test.ts
 test/large-pages/stuck-recovery-large.slow.test.ts
@@ -542,6 +545,7 @@ test/refresh-write-barrier.test.ts
 test/remediation-manual-only.test.ts
 test/remember-batch-entity-7432.test.ts
 test/remember-pageless-entity-gst2446.test.ts
+test/remember-segmented-entity-9213.test.ts
 test/remember-share-gst2243.test.ts
 test/remember-strict-held-gst2492.test.ts
 test/repair-apply-pending-6543.test.ts

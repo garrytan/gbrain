@@ -12,7 +12,7 @@
  * sites): the runtime getters and `scripts/check-page-body-readers.ts` are the
  * enforcement, not the type checker.
  */
-import { opError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import type { Page } from '../types.ts';
 import type { BodyStorage } from './types.ts';
@@ -77,6 +77,26 @@ export function pageBodyOverCeilingError(page: { slug?: string; source_id?: stri
     { fix: { argv: ['gbrain', 'get', '--source', sourceId, '--body', 'auto', '--', slug],
       mcp: { tool: 'get_page', arguments: { slug, source_id: sourceId, body: 'auto' } },
       consent: [], actor: 'agent', requires_exclusive: false, why: "Returns the page's outline and its first window, with next_cursor to read on." } });
+}
+
+/** True when `fix` is the read step pageBodySegmentedError and pageBodyOverCeilingError give: get_page reading the page in pieces. */
+export function readsPageInPieces(fix: { mcp?: { tool?: string } } | undefined): boolean {
+  return fix?.mcp?.tool === 'get_page';
+}
+
+/**
+ * A write refused `page_body_segmented` whose next step reads the page in pieces (its own or, with no fix, the code's
+ * registry default), which changes nothing for a writer: the same refusal with no step to run (next: report), and a
+ * writer's suggestion unless it carries one of its own. A refusal with a write fix of its own (remember's unattributed
+ * save) is left as it is.
+ */
+export function asSegmentedWriteRefusal(error: unknown): void {
+  if (!(error instanceof OperationError) || error.canonicalCode !== 'page_body_segmented') return;
+  if (error.fix && !readsPageInPieces(error.fix)) return;
+  if (error.fix || !error.suggestion) error.suggestion = 'This write needs the page\'s whole body as one string, which it cannot get from a page stored in segments, so retrying refuses the same way and nothing was changed. '
+    + 'On such a page edit_page and append_page change its text, and add_tag and remove_tag its tags.';
+  error.fix = { consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'No retry of this write can change this page; tell the user which change could not be made, or make it with edit_page, append_page, add_tag or remove_tag.' };
 }
 
 /** Throws `page_body_segmented` for a segmented page; `site` names the caller. Inline pages pass. */
