@@ -20,6 +20,7 @@ import { ALLOWED_SCOPES_LIST, isScope, localCliOnlyScopeViolation } from '../cor
 import { isValidSourceId } from '../core/source-id.ts';
 import { isValidHolder } from '../core/takes-fence.ts';
 import { mintLegacyToken, revokeLegacyTokenById, TOKEN_ID_RE } from '../core/token-mint.ts';
+import { assertCredentialScoped } from '../core/access/requester-scope.ts';
 
 export const API_KEY_NAME_MAX = 128;
 export const API_KEY_DEFAULT_SCOPES: readonly string[] = ['read', 'write'];
@@ -142,6 +143,7 @@ export function mountAdminApiKeys(app: Express, requireAdmin: RequestHandler, en
     let request: ApiKeyMintRequest;
     try {
       request = await parseApiKeyMintRequest(engine, req.body);
+      await assertCredentialScoped(engine, null, 'token', request.name);
     } catch (e) {
       sendError(res, 400, e);
       return;

@@ -464,6 +464,6 @@ export class ConceptDriftSkips {
       }
     }
     return this.skipped.length ? [`List them: ${auditConflictsCommand(this.sourceId)}`,
-      `Preview the resolution: ${fileDriftRepairCommand(this.sourceId)} (or --prefer database); apply with the --expect hash it prints.`] : [];
+      `Preview the resolution: ${fileDriftRepairCommand(this.sourceId)} (or --prefer database); its apply needs the user's consent (it asks; add --yes only after they agree).`] : [];
   }
 }

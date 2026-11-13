@@ -60,7 +60,9 @@ describe('selected-e2e job wiring', () => {
       expect(line).not.toContain('|| true');
       expect(line).not.toContain('|| echo');
     }
-    expect(job).not.toContain('continue-on-error');
+    const checkoutFirstAttempt = /- id: checkout\n\s+uses: actions\/checkout@\S+.*\n\s+timeout-minutes: \d+\n\s+continue-on-error: true\n/;
+    expect(job).toMatch(checkoutFirstAttempt);
+    expect(job.replace(checkoutFirstAttempt, '')).not.toContain('continue-on-error');
   });
 
   test('status gates on the job', () => {

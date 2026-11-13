@@ -1257,6 +1257,11 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // The labelled-only migration (GBRA-108 design 1). Same posture: access_members exists only through migrations, so no
   // index or function in either blob references labelled_only.
   'access_members.labelled_only',
+  // GST-363 (migration v309) - a credential the operator marked to read unscoped on a brain that serves several people.
+  // Absent from both schema blobs, so no index or function there references it; only the requester-scope gate, access
+  // check and bindCredential read it, all after migrations have run.
+  'access_tokens.reads_unscoped',
+  'oauth_clients.reads_unscoped',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',
