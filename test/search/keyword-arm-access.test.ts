@@ -87,5 +87,23 @@ for (const kind of testBackends()) {
       });
     }
 
+    const armFilters: Array<[string, SearchOpts, string[]]> = [
+      ['an excluded slug', { exclude_slugs: ['notes/open-b'] }, ['notes/open-a', SIDE_OPEN]],
+      ['a type no page has', { type: 'person' }, []],
+      ['a date no page passes', { afterDate: '2999-01-01' }, []],
+    ];
+
+    for (const [name, filter, open] of armFilters) {
+      test(`remote keyword arm with ${name} applies it`, async () => {
+        const arm = await engine.searchKeyword(TERM, { ...filter, excludePrivate: true, requireSafeChunks: true, limit: 50 });
+        expect(arm.map(r => r.slug).sort()).toEqual([...open].sort());
+      });
+    }
+
+    test('remote keyword arm OR fallback returns only open pages', async () => {
+      const arm = await engine.searchKeyword(`${TERM} zzvorquent`, { excludePrivate: true, requireSafeChunks: true, orFallback: true, limit: 50 });
+      expect(arm.map(r => r.slug).sort()).toEqual([...OPEN, SIDE_OPEN].sort());
+    });
+
   });
 }
