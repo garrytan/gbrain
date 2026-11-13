@@ -138,7 +138,7 @@ async function seed(): Promise<void> {
       await tx.executeRaw("INSERT INTO page_versions (page_id,compiled_truth,frontmatter,knowledge_revision,timeline,title,type,tags,is_deleted,source_path) "
         + "SELECT p.id,p.compiled_truth,p.frontmatter,p.knowledge_revision,p.timeline,p.title,p.type,(SELECT COALESCE(jsonb_agg(t.tag ORDER BY t.tag),'[]'::jsonb) FROM tags t WHERE t.page_id=p.id),false,p.source_path "
         + "FROM pages p WHERE p.id IN (" + ahead + ") AND COALESCE(p.body_storage,'inline')='inline'", [AHEAD]);
-      const ids = await tx.executeRaw<{ id: string }>("UPDATE pages SET type='concept', frontmatter=frontmatter || jsonb_build_object('type','concept','legacy_type',type,'subtype','imported'), "
+      const ids = await tx.executeRaw<{ id: string }>("UPDATE pages SET type='concept', frontmatter=frontmatter || jsonb_build_object('type','concept','legacy_type',type,'subtype','imported','probe_label','database-ahead'), "
         + "knowledge_revision=gen_random_uuid(), revision_write_request_id=NULL WHERE source_id='default' AND id IN (" + ahead + ") RETURNING id::text", [AHEAD]);
       await tx.executeRaw("DELETE FROM op_checkpoints WHERE op='sync-import-provenance' AND split_part(fingerprint, ':', 3) = ANY($1::text[])", [ids.map(row => row.id)]);
       // Pages an older gbrain imported: equal to their files, with no import record.

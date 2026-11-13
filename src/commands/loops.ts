@@ -165,8 +165,8 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
   if (noise) {
     process.stdout.write(`\n${noise.loop_count} open reply-owed loop(s) come from ${noise.sender_count} sender(s) whose mail is automated; `
       + `the detector would not open them now. Preview closing them, sender by sender:\n`
-      + noise.senders.map((x) => `  ${x.preview_command}   (${x.open_loops})`).join('\n') + '\n'
-      + (noise.sender_count > noise.senders.length ? `  … and ${noise.sender_count - noise.senders.length} more sender(s)\n` : ''));
+      + noise.senders.slice(0, 10).map((x) => `  ${x.preview_command}   (${x.open_loops})`).join('\n') + '\n'
+      + (noise.sender_count > 10 ? `  … and ${noise.sender_count - 10} more sender(s); every sender: gbrain waiting --json\n` : ''));
   }
   if (result.groups.length > 0 || result.no_counterparty) {
     process.stdout.write(
@@ -309,7 +309,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       'open_loops',
       { group_by: 'none', limit: 200, ...narrowing },
       readScope,
-    )) as { loops: Array<Record<string, unknown>>; count: number };
+    )) as { loops: Array<Record<string, unknown>>; count: number; truncated: boolean };
     if (json) {
       process.stdout.write(JSON.stringify({ ok: true, status: 'ok', ...result }, null, 2) + '\n');
       return;
@@ -322,6 +322,7 @@ export async function runLoops(engine: BrainEngine, args: string[]): Promise<voi
       const due = l.due_at ? `  due ${String(l.due_at).slice(0, 10)}` : '';
       process.stdout.write(`#${String(l.id).padEnd(5)} [${String(l.loop_type)}]${due}  ${String(l.summary)}\n`);
     }
+    if (result.truncated) process.stdout.write(`Showing the ${result.loops.length} most recently active of ${result.count}${result.count >= 500 ? '+' : ''} matching loops.\n`);
     return;
   }
 

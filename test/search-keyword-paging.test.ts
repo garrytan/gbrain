@@ -26,7 +26,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { dispatchToolCall, type ToolResult } from '../src/mcp/dispatch.ts';
 import { errorCodeRow } from '../src/core/error-docs.ts';
-import { countKeywordMatches, searchCountLine } from '../src/core/search/keyword-paging.ts';
+import { countKeywordMatches, readKeywordPage, searchCountLine } from '../src/core/search/keyword-paging.ts';
 import { safeChunksFilter } from '../src/core/search/safe-chunks.ts';
 import { withEnv } from './helpers/with-env.ts';
 import {
@@ -329,6 +329,21 @@ describe('count unavailable: a degraded stage, never a number', () => {
     const count = await countKeywordMatches(delayed(engine, 150, seen), TERM, {}, 50, after(400));
     expect('total' in count ? count.total : -1).toBeGreaterThan(0);
   });
+
+  test('#8500: match: "keyword" keeps a count that lands past the floor while its rows are still loading', async () => {
+    const slow = new Proxy(engine, {
+      get(target, prop, receiver) {
+        if (prop === 'countKeywordPages') return async (...a: Parameters<BrainEngine['countKeywordPages']>) => { await after(2_200); return target.countKeywordPages(...a); };
+        if (prop === 'searchKeywordPages') return async (...a: Parameters<BrainEngine['searchKeywordPages']>) => { await after(2_500); return target.searchKeywordPages(...a); };
+        const v = Reflect.get(target, prop, receiver);
+        return typeof v === 'function' ? v.bind(target) : v;
+      },
+    });
+    const page = await readKeywordPage(slow, { query: TERM, match: 'keyword' }, {}, { match: 'keyword', offset: 0, cursor: null }, 5);
+    expect(page.degraded).toBeUndefined();
+    expect(page.meta.total).toBe(await engine.countKeywordPages(TERM, {}));
+    expect(page.rows).toHaveLength(5);
+  }, 15_000);
 
   test('#6632: a count still running after the search and its grace is given up, not waited on', async () => {
     const started = Date.now();

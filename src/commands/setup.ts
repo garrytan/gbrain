@@ -27,11 +27,14 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { removeHermesTurnHook, syncHermesTurnHook } from '../core/setup/hermes-turn-hook.ts';
 import { removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../core/setup/openclaw-turn-plugin.ts';
 import { describeOpenclawSkill, readOpenclawSkillState, removeOpenclawSkillPlugin, syncOpenclawSkillPlugin, type OpenclawSkillResult } from '../core/setup/openclaw-skill-plugin.ts';
+import { describePiSkill, readPiSkillState, removePiSkillExtension, syncPiSkillExtension } from '../core/setup/pi-skill-extension.ts';
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
 import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
-import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
+import { cliRenderContext, docsUrl, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
+import { BOT_HARNESSES, renderedExposure, sharedTokenNotice, writeExposureNotice, type ExposureServes } from '../core/grants/shared-exposure.ts';
+import { claudeCodeChannelPlugins } from './shared-exposure-local.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
 import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
@@ -42,7 +45,9 @@ import { parseStdioMemberFlag } from '../core/stdio-member-flag.ts';
 import { isRegistrationSurface, isValidName, REGISTRATION_SURFACE, registrationAdvertise, stdioServeArgv } from '../core/mcp-registration.ts';
 import { hookLauncherPath } from '../core/setup/hook-launcher.ts';
 import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
+import { describeCursorPins, readCursorPinsState, removeCursorSkillPins, syncCursorSkillPins, type CursorPinsResult } from '../core/setup/cursor-skill-pins.ts';
 import { describeResolverSetup, removeSkillResolverSetup, syncSkillResolverSetup, type ResolverSetupResult } from '../core/setup/skill-resolver-setup.ts';
+import type { ResolverHarness } from '../core/setup/skill-resolver-hook.ts';
 import { isValidSourceId } from '../core/source-id.ts';
 import { peekLock } from '../core/pglite-lock.ts';
 import { claudePluginProvidesName, codexPluginProvidesName } from '../core/bootstrap/plugin-lanes.ts';
@@ -181,10 +186,17 @@ Flags:
                        gbrain's bundled skills beside the brain-first block (about
                        1.5k tokens) and loads a skill's full text only when a task
                        matches (gbrain bundled-skill <name>, from this gbrain).
-                       resolve (claude-code, codex) indexes the harness's own skills
-                       (~/.claude/skills; Codex: ~/.agents/skills, CODEX_HOME/skills)
-                       and adds a separate per-turn hook that names the few skills
-                       that fit each prompt (word match; nothing leaves the machine).
+                       resolve (claude-code, codex, hermes) indexes the harness's own
+                       skills (~/.claude/skills; Codex: ~/.agents/skills,
+                       CODEX_HOME/skills; Hermes: $HERMES_HOME/skills) and adds a
+                       separate per-turn hook that names the few skills that fit
+                       each prompt (word match; nothing leaves the machine).
+                       gbrain setup pi --skill-loading resolve does the same for
+                       Pi with an extension in $PI_CODING_AGENT_DIR/extensions.
+                       gbrain setup cursor --skill-loading resolve, run in a project,
+                       gives Cursor that project's pinned skills only (gbrain skills
+                       pin) in .cursor/rules/gbrain-pinned-skills.mdc, kept out of
+                       commits; Cursor has no per-turn hook gbrain can use.
                        off removes what an earlier run wrote. The
                        choice is remembered; GBRAIN_SKILL_LOADING sets it too.
   --skills-index-only  Refresh every skills index recorded for this harness (its
@@ -300,8 +312,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   const envLoading = process.env[SKILL_LOADING_ENV]?.trim();
   if (flagLoading === undefined && envLoading && envLoading !== 'resolve' && !isSkillLoading(envLoading)) return new InvalidSkillLoadingEnv(envLoading).message;
   const openclaw = positionals[0] === 'openclaw';
-  const resolverHarness = positionals[0] === 'claude-code' || positionals[0] === 'codex' || openclaw;
-  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code, Codex and OpenClaw (claude-code, codex, openclaw); other harnesses call gbrain skills resolve from their own adapter (docs/guides/skill-resolver.md)';
+  const resolverHarness = positionals[0] === 'claude-code' || positionals[0] === 'codex' || positionals[0] === 'hermes' || positionals[0] === 'pi' || positionals[0] === 'cursor' || openclaw;
+  if (flagLoading === 'resolve' && !resolverHarness) return '--skill-loading resolve wires Claude Code, Codex, Hermes, OpenClaw and Pi, and pinned skills for Cursor (claude-code, codex, cursor, hermes, openclaw, pi); other harnesses call gbrain skills resolve from their own adapter (docs/guides/skill-resolver.md)';
   if (flagLoading === 'shadow' && !openclaw) return '--skill-loading shadow is for openclaw only (it resolves and logs each turn without showing the model anything)';
   const agentFlags = args.flatMap((a, i) => (a === '--agent' ? [args[i + 1] ?? ''] : []));
   if (agentFlags.some((a) => !/^[\w.@:-]{1,128}$/.test(a))) return '--agent needs an OpenClaw agent id';
@@ -316,9 +328,10 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (owners.some((o) => !/^[\x21-\x7e]{1,128}$/.test(o))) return '--owner-sender needs a sender id';
   const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}) };
   const chosenLoading = flagLoading ?? (envLoading || undefined);
-  const skillResolver = !resolverHarness || chosenLoading === undefined ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
-  // resolve replaces the spring index: the skills block is decided as off, explicitly, so GBRAIN_SKILL_LOADING=resolve is never read as a block mode.
-  const skillLoading = skillResolver === 'on' || skillResolver === 'shadow' ? 'off' : flagLoading;
+  const cursor = positionals[0] === 'cursor';
+  const skillResolver = !resolverHarness || chosenLoading === undefined || (cursor && chosenLoading === 'spring') ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
+  // resolve replaces the spring index (on Cursor the pins sit beside it, so neither run removes the other): the skills block is decided as off, explicitly, so GBRAIN_SKILL_LOADING=resolve is never read as a block mode.
+  const skillLoading = skillResolver === 'on' || skillResolver === 'shadow' ? (cursor ? undefined : 'off') : flagLoading;
   return {
     harness: positionals[0],
     dryRun: args.includes('--dry-run'),
@@ -455,6 +468,7 @@ export async function runSetup(args: string[]): Promise<number> {
   const flags = parsed;
   const adapter = HARNESS_ADAPTERS.find((a) => a.id === flags.harness);
   const mcpWired = flags.harness === 'claude-code' || flags.harness === 'codex';
+  if (flags.harness === 'pi') return runPiSetup(flags, out);
   if (flags.skillsIndexOnly) return runSkillsIndexOnly(flags, out);
   if ((flags.instructionsOnly && (isBrainFirstHarness(flags.harness) || adapter)) || (isBrainFirstHarness(flags.harness) && !mcpWired)) {
     return runInstructionsOnly(flags, out);
@@ -578,7 +592,7 @@ export async function runSetup(args: string[]): Promise<number> {
       const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
-      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions, skills, resolver, serves });
+      return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: [], notes, instructions, skills, resolver, serves, launcher });
     }
 
     let notices: Notice[] = [];
@@ -603,7 +617,7 @@ export async function runSetup(args: string[]): Promise<number> {
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices, notes,
-      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves });
+      preserved: Object.keys(result.edited).map((event) => ({ kind: 'hook', event, reason: 'edited' })), instructions, skills, turnHook, resolver, serves, launcher });
     if (turnHook && !turnHook.ok) return out.json ? 1 : refuse(turnHookNotLoaded('claude-code', turnHook, ['gbrain', 'setup', 'claude-code', ...(scope === 'project' ? ['--scope', 'project'] : [])]), out);
     return verify.ok || pluginOwner ? code : 1;
   } catch (e) {
@@ -885,6 +899,7 @@ function removeBrainFirstFor(harness: BrainFirstHarness, where: { scope?: Wiring
  * It sits beside the brain-first block, so declining that block (--no-instructions) removes the index too.
  */
 function skillsFor(harness: BrainFirstHarness, flags: SetupFlags, launcher: string, where: { scope?: WiringScope; projectDir?: string }, brainFirst: BrainFirstOutcome | null): SkillsBlockOutcome | null {
+  if (harness === 'cursor' && flags.skillResolver === 'on' && brainFirst?.decision.value !== 'declined') return null;
   const target = brainFirstTarget(harness, { ...where, workspace: flags.workspace });
   if ('error' in target) return null;
   return installerSkillsBlock({ target, launcher, writer: `gbrain setup ${harness}`, brainFirstDeclined: brainFirst?.decision.value === 'declined', skillLoading: flags.skillLoading, audience: isThinClient(loadConfig()) ? 'downstream' : 'owner', dryRun: flags.dryRun });
@@ -902,12 +917,12 @@ function removeSkillsFor(harness: BrainFirstHarness, where: { scope?: WiringScop
 }
 
 /**
- * The skill-resolver lane for this run (claude-code, codex): --skill-loading
+ * The skill-resolver lane for this run (claude-code, codex, hermes): --skill-loading
  * resolve turns it on, off or spring turns it off, and with no choice a lane
  * that is on is refreshed. Null when there is nothing to do, so an install
  * that never turned it on gets no new output.
  */
-async function resolverFor(harness: SetupHarnessId, flags: SetupFlags, launcher: string): Promise<ResolverSetupResult | null> {
+async function resolverFor(harness: ResolverHarness, flags: SetupFlags, launcher: string): Promise<ResolverSetupResult | null> {
   const home = configDir();
   if (flags.skillResolver === 'off' || (flags.remove && flags.skillResolver !== 'on')) return removeSkillResolverSetup({ harness, home, dryRun: flags.dryRun });
   const cfg = readResolverConfig(home);
@@ -959,6 +974,17 @@ function describeInstructions(o: BrainFirstOutcome, dryRun: boolean): string {
   return `${describeBrainFirstOutcome(o, dryRun)} [${o.decision.source}; ${how}]`;
 }
 
+/** Whom the brain behind this launcher serves, for the shared-token warning; null when it cannot be read (the warning stays on). */
+function exposureServesVia(launcher: string | null | undefined): ExposureServes {
+  if (!launcher || !launcher.startsWith('/')) return null;
+  try {
+    const read = readServesStatus(launcher);
+    return 'status' in read ? read.status.serves : null;
+  } catch {
+    return null;
+  }
+}
+
 /** --serves several on the instructions alone: the brain must serve several people and its stdio server be bound. */
 function servesBound(flags: SetupFlags): boolean {
   const launcher = flags.gbrainBin ?? resolveGbrainBin();
@@ -981,14 +1007,18 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   const surface = flags.surface ?? (isRegistrationSurface(envSurface) ? envSurface : undefined);
   const access: BrainFirstAccess = { kind: 'mcp', server: flags.name, ...(surface ? { surface } : {}), ...(flags.serves === 'several' && servesBound(flags) ? { serves: 'several' as const } : {}) };
   const mcp = { setup: flags.instructionsOnly ? 'unchanged' as const : 'manual' as const, docs: adapter.guide };
+  const exposure = flags.remove || !BOT_HARNESSES.includes(harness) ? null
+    : sharedTokenNotice({ kind: 'stdio', harness }, { harness, serves: exposureServesVia(flags.gbrainBin ?? resolveGbrainBin()) });
+  const notices = renderedExposure(exposure);
   if (!isBrainFirstHarness(harness)) {
     const pasted: BrainFirstAccess = adapter.connection === 'thin-cli' ? { kind: 'cli', launcher: flags.gbrainBin ?? 'gbrain' } : access;
     const snippet = renderBrainFirstSnippet(harness, pasted, 'delete this block');
     if (out.json) {
       await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true,
-        instructions: { action: 'print', snippet, where: `${adapter.label}'s custom or system instructions` }, mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
+        instructions: { action: 'print', snippet, where: `${adapter.label}'s custom or system instructions` }, mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
       return 0;
     }
+    writeExposureNotice(exposure);
     console.log(`${adapter.label} has no instruction file gbrain can write. Paste this block into its custom or system instructions (keep the markers so a later paste replaces it):\n`);
     console.log(snippet);
     console.log(adapter.connection === 'thin-cli'
@@ -1025,26 +1055,79 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
   // Loud failure: an accepted install whose per-turn hook does not load exits non-zero and names the harness's own check.
   // A 'print' outcome installed nothing and already names the step that does, so it is reported, not verified.
   const check = !off && !flags.dryRun && instructions?.decision.value === 'accepted' && !flags.noHooks && process.env.GBRAIN_HOOKS !== '0' && turnHook && turnHook.action !== 'print' && turnHook.action !== 'remove' ? verifyTurnHook(harness, { projectDir }) : null;
-  const resolver = harness === 'claude-code' || harness === 'codex' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
+  const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags) : null;
-  const code = instructions?.action === 'preserve' || skillsFailed(skills) || (check && !check.ok) || resolver?.error ? 1 : 0;
+  const cursorPins = harness === 'cursor' && projectDir ? await cursorPinsFor(flags, projectDir) : null;
+  const code = instructions?.action === 'preserve' || skillsFailed(skills) || (check && !check.ok) || resolver?.error || cursorPins?.error ? 1 : 0;
   if (out.json) {
-    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}), mcp }, null, 2)}\n`, (t) => process.stdout.write(t));
+    await writeJsonDocument(`${JSON.stringify({ harness, dry_run: flags.dryRun, remove: flags.remove, instructions_only: true, instructions, ...(turnHook ? { turn_hook: turnHook } : {}), ...(check ? { turn_hook_check: check } : {}), skills, ...(resolver ? { skill_resolver: resolver } : {}), ...(skillPlugin ? { skill_resolver: skillPlugin } : {}), ...(cursorPins ? { skill_pins: cursorPins } : {}), mcp, notices }, null, 2)}\n`, (t) => process.stdout.write(t));
     return skillPlugin?.error ? exitCodeForCode(skillPlugin.error.code) : code;
   }
+  writeExposureNotice(exposure);
   if (instructions) say(out, flags.remove ? describeBrainFirstOutcome(instructions, flags.dryRun) : describeInstructions(instructions, flags.dryRun));
   if (turnHook) say(out, `  ${(flags.dryRun && (turnHook.action === 'write' || turnHook.action === 'remove') ? `would ${turnHook.action}` : turnHook.action).padEnd(8)} ${'turn hook'.padEnd(7)} ${turnHook.detail}${'snippet' in turnHook && turnHook.snippet ? `:\n${turnHook.snippet.replace(/^/gm, '    ')}` : ''}${'commands' in turnHook && turnHook.commands ? `:\n${turnHook.commands.map((c) => `    ${c}`).join('\n')}` : ''}${'next' in turnHook && turnHook.next ? `; wire it with: ${turnHook.next}` : ''}`);
   else if (!off && placed) say(out, `  note     ${'turn hook'.padEnd(7)} ${adapter.label} has no per-turn hook gbrain can install; the rule reaches it through ${target.path} only.`);
   if (skills && skillsOutcomeShown(skills)) say(out, describeSkillsBlockOutcome(skills, flags.dryRun));
   if (resolver) for (const line of describeResolverSetup(resolver, flags.dryRun)) say(out, line);
   if (skillPlugin) for (const line of describeOpenclawSkill(skillPlugin, flags.dryRun)) say(out, line);
+  if (cursorPins) for (const line of describeCursorPins(cursorPins, flags.dryRun)) say(out, line);
   if (check?.ok) say(out, `  verify   ${'turn hook'.padEnd(7)} ${check.message}`);
   if (mcp.setup === 'manual' && !flags.remove) say(out, `MCP: setup does not register ${adapter.label}'s MCP server. Follow ${adapter.guide} (one command), then start a new session.`);
   if (!flags.remove && instructions?.decision.value === 'accepted') say(out, 'Next: start a new session; the harness reads its instruction file at session start.');
   if (resolver?.error) return refuse(resolverRefusal(resolver), out);
   if (skillPlugin?.error) return refuse(openclawSkillRefusal(skillPlugin), out);
+  if (cursorPins?.error) {
+    const e = cursorPins.error;
+    return refuse(opError(e.code, e.message, 'Fix the cause named above, then preview with gbrain setup cursor --skill-loading resolve --dry-run from the project directory.', {
+      docs: `docs/guides/skill-resolver.md#${e.code}`,
+      fix: { argv: ['gbrain', 'setup', 'cursor', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the Cursor pinned-skills setup would make in this project; changes nothing.' } }), out);
+  }
   if (check && !check.ok) return refuse(turnHookNotLoaded(harness, check, rerun), out);
   return code;
+}
+
+/**
+ * Cursor's pinned skills for the project setup runs in (cursor-skill-pins.ts):
+ * --skill-loading resolve turns them on, off or --remove takes them out, and
+ * a bare run refreshes a project that already has them.
+ */
+async function cursorPinsFor(flags: SetupFlags, projectDir: string): Promise<CursorPinsResult | null> {
+  const home = configDir();
+  if (flags.remove || flags.skillResolver === 'off') return removeCursorSkillPins({ home, project: projectDir, dryRun: flags.dryRun });
+  if (flags.skillResolver !== 'on' && !readCursorPinsState(home).projects[projectDir]) return null;
+  return syncCursorSkillPins({ home, project: projectDir, dryRun: flags.dryRun });
+}
+
+/**
+ * gbrain setup pi: the skill resolver only (pi-skill-extension.ts). Setup
+ * does not register an MCP server or write instructions for Pi.
+ * --skill-loading resolve turns the extension on, off (or --remove) takes it
+ * out, --skills-index-only refreshes the library, catalog and state, and a
+ * bare run refreshes an extension that is on.
+ */
+async function runPiSetup(flags: SetupFlags, out: Out): Promise<number> {
+  const home = configDir();
+  const off = flags.skillResolver === 'off' || (flags.remove && flags.skillResolver !== 'on');
+  if (!off && flags.skillResolver !== 'on' && !readPiSkillState(home)) {
+    return refuse(opError('invalid_params', 'gbrain setup pi wires only the skill resolver, and it is not on. Pass --skill-loading resolve to turn it on.', 'Run gbrain setup pi --skill-loading resolve --dry-run to preview it.',
+      { docs: 'docs/guides/skill-resolver.md#pi-extension', fix: { argv: ['gbrain', 'setup', 'pi', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the Pi resolver setup would make; changes nothing.' } }), out);
+  }
+  const result = off ? removePiSkillExtension({ home, dryRun: flags.dryRun })
+    : await syncPiSkillExtension({ home, gbrainBin: flags.gbrainBin ?? resolveGbrainBin() ?? '', gbrainHomeEnv: process.env.GBRAIN_HOME?.trim() || null, dryRun: flags.dryRun, refreshOnly: flags.skillsIndexOnly });
+  if (out.json) {
+    await writeJsonDocument(`${JSON.stringify({ harness: 'pi', dry_run: flags.dryRun, remove: off, skill_resolver: result }, null, 2)}\n`, (t) => process.stdout.write(t));
+    return result?.error ? exitCodeForCode(result.error.code) : 0;
+  }
+  if (!result) say(out, 'The Pi skill resolver is not installed; nothing to remove.');
+  else for (const line of describePiSkill(result, flags.dryRun)) say(out, line);
+  if (result?.error) {
+    const e = result.error;
+    return refuse(opError(e.code, e.message, 'Fix the cause named above, then preview with gbrain setup pi --skill-loading resolve --dry-run.', {
+      docs: `docs/guides/skill-resolver.md#${e.code}`,
+      fix: { argv: ['gbrain', 'setup', 'pi', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the Pi resolver setup would make; changes nothing.' } }), out);
+  }
+  if (result && !off) say(out, 'Next: start a new Pi session; Pi loads extensions when it starts.');
+  return 0;
 }
 
 /** --skills-index-only: refresh (or, with --skill-loading off, remove) the recorded skills indexes for one harness; nothing else is touched. */
@@ -1054,7 +1137,7 @@ async function runSkillsIndexOnly(flags: SetupFlags, out: Out): Promise<number> 
     return refuse(opError('invalid_params', `--skills-index-only needs a harness with an instruction file: ${BRAIN_FIRST_HARNESSES.join(', ')}`, 'Pass the harness whose skills index to refresh, e.g. gbrain setup claude-code --skills-index-only.'), out);
   }
   const outcomes = refreshSkillsIndexes(harness, { mode: flags.skillLoading, launcher: flags.gbrainBin, dryRun: flags.dryRun });
-  const resolver = harness === 'claude-code' || harness === 'codex' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
+  const resolver = harness === 'claude-code' || harness === 'codex' || harness === 'hermes' ? await resolverFor(harness, flags, flags.gbrainBin ?? resolveGbrainBin() ?? '') : null;
   const skillPlugin = harness === 'openclaw' ? await openclawSkillFor(flags, true) : null;
   const code = outcomes.some((o) => o.action === 'preserve') || resolver?.error ? 1 : 0;
   if (out.json) {
@@ -1098,10 +1181,14 @@ async function finish(out: Out, doc: {
   turnHook?: TurnHookVerdict | null;
   resolver?: ResolverSetupResult | null;
   serves?: ServesOutcome | null;
+  launcher?: string;
 }): Promise<number> {
   const harness = doc.harness ?? 'claude-code';
   const state = doc.states.at(-1) ?? null;
   const code = skillsFailed(doc.skills ?? null) || doc.resolver?.error || !servesOk(doc.serves ?? null) ? 1 : 0;
+  const plugins = harness === 'claude-code' && !doc.remove ? claudeCodeChannelPlugins() : [];
+  const exposure = plugins.length ? sharedTokenNotice({ kind: 'stdio', harness }, { channelPlugins: plugins, serves: exposureServesVia(doc.launcher) }) : null;
+  const notices = exposure ? [...doc.notices, exposure] : doc.notices;
   if (out.json) {
     await writeJsonDocument(`${JSON.stringify({
       harness, dry_run: doc.dryRun, remove: doc.remove ?? false,
@@ -1109,7 +1196,7 @@ async function finish(out: Out, doc: {
       steps: doc.steps, preserved: doc.preserved ?? [], instructions: doc.instructions ?? null, skills: doc.skills ?? null, ...(doc.resolver ? { skill_resolver: doc.resolver } : {}), ...(doc.turnHook ? { turn_hook_check: doc.turnHook } : {}), states: doc.states, state, verify: doc.verify,
       ...(doc.serves ? { serves: doc.serves } : {}),
       capability: capabilityRows(harness)[0], capability_table_version: SETUP_CAPABILITY_TABLE_VERSION,
-      notes: doc.notes, notices: doc.notices.map((n) => renderNotice(n, cliRenderContext())),
+      notes: doc.notes, notices: notices.map((n) => renderNotice(n, cliRenderContext())),
     }, null, 2)}\n`, (t) => process.stdout.write(t));
     return code;
   }
@@ -1125,7 +1212,8 @@ async function finish(out: Out, doc: {
     : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
   if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
-  writeCliNotices(doc.notices.filter((n) => n.code !== 'hosted_option'));
+  if (state && !doc.remove) say(out, `Opt-ins (nothing is on until you turn it on): keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel: ${docsUrl('INSTALL_FOR_AGENTS.md#opt-ins')}`);
+  writeCliNotices(notices.filter((n) => n.code !== 'hosted_option'));
   if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
   if (doc.resolver?.error) return refuse(resolverRefusal(doc.resolver), out);
   return code;

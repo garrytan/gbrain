@@ -17,6 +17,18 @@ to host authorization. Local PGLite launchers retain their host/source binding.
 The generic `gbrain call` dispatcher is host-only and refuses before opening a
 local engine; use the named CLI command or an authorized MCP tool instead.
 
+**Requester scope:** on a host brain that serves several people (two or more
+enabled members, or `access.serves = several`), every remote read op except the
+identity and health calls (`src/core/access/requester-scope.ts`) must come from a
+connection bound to a member, naming an audience, or attested; a thin client's
+unbound OAuth client is refused `requester_scope_required` with a host-side fix
+(`gbrain auth rescope --client <id> --member <id>`), after a 14-day grace for
+clients older than the brain's `access.serves_since`. The gate runs in
+`dispatchToolCall` after access resolves and inside agent jobs; it reads only the
+request's config snapshot and the verifier's AuthInfo (`readsUnscoped`,
+`createdAt`). `access.requester_scope_enforce false` (hosted) turns it into the
+`_meta.access.requester_scope` notice.
+
 **Surface posture:** thin CLI clients use the full MCP surface for remote
 command compatibility. Bootstrap pins `--surface starter --advertise verbs`; managed thin CLI grants
 for OpenClaw, Grok Bot, and Muse also select `full`. Surface visibility does not

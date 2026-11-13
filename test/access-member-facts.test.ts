@@ -40,6 +40,7 @@ import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const DIMS = 1536;
 function vectorFor(text: string): number[] {
@@ -109,6 +110,7 @@ for (const kind of testBackends()) {
       const bob = await register('bob');
       await bindCredential(engine, { kind: 'client', id: bob.id }, { member: 'bob-example' });
       const plain = await register('plain');
+      for (const c of [qm, plain]) await readsUnscopedOnPurpose(engine, c.id, 'client');
       for (const [name, c] of [['qm', qm], ['bob', bob], ['plain', plain]] as const) tokens[name] = (await provider().exchangeClientCredentials(c.id, c.secret)).access_token;
       await linkMember(engine, 'alice-example', 'qm', ALICE_ID);
       await linkMember(engine, 'bob-example', 'qm', BOB_ID);
@@ -341,6 +343,7 @@ for (const kind of testBackends()) {
       const reg = await provider().registerClientManual('c2-agent-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
       await engine.executeRaw("UPDATE oauth_clients SET scope = 'read write agent', bound_tools = $2, bound_source_id = source_id, federated_read = ARRAY[source_id], delegated_namespace = 'job', delegated_slug_prefixes = NULL, bound_max_concurrent = 5 WHERE client_id = $1", [reg.clientId, ['get_page', 'search']]);
       await bindCredential(engine, { kind: 'client', id: reg.clientId }, { attestActor: 'qm', attestOps: ['get_agent_job', 'get_page', 'submit_agent'] });
+      await readsUnscopedOnPurpose(engine, reg.clientId, 'client');
       tokens.agent = (await provider().exchangeClientCredentials(reg.clientId, reg.clientSecret!)).access_token;
       const as = { alice: { token: 'agent', actor: ALICE_ID }, bob: { token: 'agent', actor: BOB_ID }, bare: { token: 'agent' } };
       const prompt = 'Summarize the harbor ledger notes';

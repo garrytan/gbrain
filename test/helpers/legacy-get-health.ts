@@ -46,7 +46,9 @@ export async function legacyGetHealth(
               / count(*) FILTER (WHERE NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip'))::float
          END
          FROM content_chunks cc
-         JOIN scoped_pages p ON p.id = cc.page_id) as embed_coverage,
+         JOIN scoped_pages p ON p.id = cc.page_id
+         -- #7212 (W3): the one intended divergence from v0.60.34.0; coverage counts live pages only, like missing_embeddings.
+        WHERE p.deleted_at IS NULL) as embed_coverage,
         (SELECT count(*) FROM links l
          WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id = l.to_page_id)
            AND ($1::text[] IS NULL

@@ -122,9 +122,16 @@ column names the entity, before the reply returns. The reply then names
 has a page, the next maintenance cycle moves the row into it in one commit
 and strikes the held row (`moved to <entity>`; a restricted page's held row is
 removed instead); a page kept out of Git does not take it, and the run warns
-`HELD_FACT_UNMOVABLE`. An entity under a folder access rule is not held: its
-fact stays in the database, as on other sources. Forgetting or replacing a held fact strikes its row
-too. A brain with no Git
+`HELD_FACT_UNMOVABLE`. An entity under a folder access rule is held on its
+folder's own holding page instead (`partners/memory/unattributed` for
+`partners/acme-example`): the rules covering the entity cover that page by
+path, so the fact has exactly the readers the entity's page would have, and a
+folder kept out of Git keeps the page database-only. A rule added later moves
+the held rows it covers there in its own apply; the shared page's row is then
+removed, so the shared page never names the ruled entity. An entity under an
+exact page rule is refused with `git_home_required` (reason `facts_lane`):
+create its page with `put_page`, then remember the fact again. Forgetting or
+replacing a held fact strikes its row too. A brain with no Git
 repository gets no notice: there the database is the record, and the fact is
 as safe as everything else in it.
 

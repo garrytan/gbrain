@@ -20,7 +20,7 @@ import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { setCliExitVerdict } from '../cli-force-exit.ts';
-import { laneTurnSettings, validateMinMatch, validatePinned, validateSessionTokenBudget, validateTopK } from '../skills/resolver/config.ts';
+import { laneTurnSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateSessionTokenBudget, validateTopK } from '../skills/resolver/config.ts';
 
 const CONFIG_CAP_BYTES = 1024 * 1024;
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -89,8 +89,8 @@ export function setResolverHarness(read: Exclude<ResolverConfigRead, { state: 'u
 
 export const SKILL_RESOLVER_KEY_PREFIX = 'skills.resolver.';
 /** The leaves `gbrain config set|unset|get` accepts (harnesses is setup's: --skill-loading resolve|off). */
-export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match'] as const;
-const PER_HARNESS_LEAF = /^per_harness\.([a-z-]+)\.(top_k|min_match)$/;
+export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.hermes.owner_sender_ids'] as const;
+const PER_HARNESS_LEAF = /^per_harness\.([a-z-]+)\.(top_k|min_match|owner_sender_ids)$/;
 
 function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean | number | string | string[] } | { ok: false; error: string } {
   const turnKey = leaf.match(PER_HARNESS_LEAF)?.[2] ?? leaf;
@@ -99,6 +99,7 @@ function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean
     if (turnKey === 'top_k') return { ok: true, value: validateTopK(/^\d+$/.test(value) ? Number(value) : NaN, key) };
     if (turnKey === 'min_match') return { ok: true, value: validateMinMatch(value, key) };
     if (leaf === 'pinned') return { ok: true, value: validatePinned(value.split(',').map(s => s.trim()).filter(Boolean), key) };
+    if (turnKey === 'owner_sender_ids') return { ok: true, value: validateOwnerSenders(value.split(',').map(s => s.trim()).filter(Boolean), key) };
   } catch (e) { return { ok: false, error: (e as Error).message.slice(key.length + 1) }; }
   if (leaf === 'enabled' || leaf === 'auto_rebuild') {
     if (value === 'true' || value === 'false') return { ok: true, value: value === 'true' };
@@ -122,7 +123,7 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   if (!key?.startsWith(SKILL_RESOLVER_KEY_PREFIX) || !['set', 'unset', 'get'].includes(action ?? '')) return false;
   const leaf = key.slice(SKILL_RESOLVER_KEY_PREFIX.length);
   const fail = (msg: string): true => { console.error(`[config] ${msg}`); setCliExitVerdict(1); return true; };
-  if (leaf === 'harnesses') return fail(`${key} is written by gbrain setup <claude-code|codex> --skill-loading resolve (and removed by --skill-loading off); nothing was written.`);
+  if (leaf === 'harnesses') return fail(`${key} is written by gbrain setup <claude-code|codex|hermes> --skill-loading resolve (and removed by --skill-loading off); nothing was written.`);
   const nested = leaf.match(PER_HARNESS_LEAF);
   if (!nested && !(SKILL_RESOLVER_CONFIG_LEAVES as readonly string[]).includes(leaf)) return fail(`Unknown config key "${key}". skills.resolver keys: ${SKILL_RESOLVER_CONFIG_LEAVES.join(', ')}. Nothing was written.`);
   const read = readResolverConfig(home);

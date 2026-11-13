@@ -28,6 +28,7 @@ import { readReceiptRetentionDays, DEFAULT_RECEIPT_RETENTION_DAYS } from './limi
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
 import { SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import type { PublicCategory } from './public-category.ts';
+import { GRANDFATHER_RETIRED } from './publication-failure.ts';
 import { classifyTerminal, dispositionOf, driftSinceAction, faultOperation, TERMINAL_FIXED_IN, supersessionOrderSql, supersessionSql, terminalInspectArgv, terminalKnockOnSql, type TerminalCategory,
   type TerminalDisposition, type TerminalVerdict, CONNECTION_MESSAGE_PATTERN, LEGACY_PUBLICATION_PREFIX } from './terminal-classify.ts';
 
@@ -77,6 +78,7 @@ export const TERMINAL_HISTORICAL_SQL: Readonly<Record<keyof typeof TERMINAL_FIXE
   knock_on: b => `(${b}.knock_on AND NOT ${b}.has_recovery AND ${OLDER_THAN(`${b}.build`, TERMINAL_FIXED_IN.knock_on)})`,
   legacy_publication_refusal: b => `(NOT ${b}.has_recovery AND NOT ${b}.knock_on AND ${b}.routed_message = '${LEGACY_PUBLICATION_PREFIX}' AND ${b}.origin IS NULL AND ${b}.error_code IN ('storage_error','writer_coordinator_required'))`,
   fence_unrenderable: b => `(NOT ${b}.has_recovery AND NOT ${b}.knock_on AND ${b}.origin IS NULL AND ${b}.error_code = 'fence_unrenderable' AND ${OLDER_THAN(`${b}.build`, TERMINAL_FIXED_IN.fence_unrenderable)})`,
+  retired_operation: b => `(NOT ${b}.has_recovery AND NOT ${b}.knock_on AND ${b}.error_code = 'revision_conflict' AND (${b}.origin IS NOT DISTINCT FROM '${GRANDFATHER_RETIRED}' OR ${b}.intent_kind IS NOT DISTINCT FROM 'managed_grandfather'))`,
 };
 const HISTORICAL_BY_BUILD = (b: string) => `COALESCE(${Object.values(TERMINAL_HISTORICAL_SQL).map(sql => sql(b)).join(' OR ')}, false)`;
 const BUILD = (r: string) => `COALESCE(${r}.error_detail->'attempt'->>'consumer_version', ${r}.admitter_version)`;
@@ -378,7 +380,7 @@ export async function readTerminalFailures(engine: BrainEngine, q: TerminalFailu
     const key = `${row.code}\0${row.origin ?? ''}\0${row.category}${operation === undefined ? '' : `\0${operation}`}`;
     let g = groups.get(key);
     if (!g) {
-      const filter = { code: row.code, origin: row.origin, category: row.category, ...(operation === undefined ? {} : { operation }) };
+      const filter = { code: row.code, origin: row.origin, category: row.category, ...(operation ?? q.operation ? { operation: operation ?? q.operation } : {}) };
       groups.set(key, g = { code: row.code, origin: row.origin, category: row.category, ...(operation === undefined ? {} : { operation }), public_category: row.public_category, rows: 0, class: row.class, needs_human: row.needs_human,
         ...(row.human_reason ? { human_reason: row.human_reason } : {}), filter, fix: row.fix, samples: [],
         drill_down: terminalFailuresArgv({ sourceId: q.sourceId, state: q.state, sinceDays: q.sinceDays, category: row.category, code: row.code, origin: row.origin ?? NO_ORIGIN, operation: operation ?? q.operation }) });

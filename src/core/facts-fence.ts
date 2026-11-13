@@ -58,13 +58,28 @@ import { isOpPageSlug } from './page-slug-grammar.ts';
 export const UNATTRIBUTED_MEMORY_SLUG = 'memory/unattributed';
 
 /**
- * Which page a fence is parsed for: only `memory/unattributed` reads the `entity` column, so on every other page an
- * `entity` header stays an unsupported column. `reader` is for a body-only reader that decides nothing about what a page
- * may hold (the withdrawal overlay, the remote-read strip): every write and import is parsed for its page, so only
- * `memory/unattributed` can carry the column, and such a reader reads it wherever it finds it.
+ * GST-2492: the holding pages, `memory/unattributed` and each folder's `<folder>/memory/unattributed`. An entity under a
+ * folder access rule holds its fact on the page of its own folder (`partners/alice-example/deal-notes` on
+ * `partners/alice-example/memory/unattributed`), so every prefix rule that covers the entity covers its holding page.
+ */
+export const isHoldingSlug = (slug: string | null | undefined): boolean =>
+  slug === UNATTRIBUTED_MEMORY_SLUG || typeof slug === 'string' && slug.endsWith(`/${UNATTRIBUTED_MEMORY_SLUG}`);
+
+/** SQL twin of isHoldingSlug over a text expression. */
+export const holdingSlugSql = (column: string): string => `(${column} = '${UNATTRIBUTED_MEMORY_SLUG}' OR ${column} LIKE '%/${UNATTRIBUTED_MEMORY_SLUG}')`;
+
+/** The holding page of `entity`'s own folder (memory/unattributed for an entity with no folder). */
+export const folderHoldingSlug = (entity: string): string =>
+  entity.includes('/') ? `${entity.slice(0, entity.lastIndexOf('/'))}/${UNATTRIBUTED_MEMORY_SLUG}` : UNATTRIBUTED_MEMORY_SLUG;
+
+/**
+ * Which page a fence is parsed for: only a holding page (isHoldingSlug) reads the `entity` column, so on every other page
+ * an `entity` header stays an unsupported column. `reader` is for a body-only reader that decides nothing about what a page
+ * may hold (the withdrawal overlay, the remote-read strip): every write and import is parsed for its page, so only a
+ * holding page can carry the column, and such a reader reads it wherever it finds it.
  */
 export interface FactsFenceParseOpts { slug?: string | null; reader?: boolean }
-const readsEntity = (opts?: FactsFenceParseOpts): boolean => opts?.reader === true || opts?.slug === UNATTRIBUTED_MEMORY_SLUG;
+const readsEntity = (opts?: FactsFenceParseOpts): boolean => opts?.reader === true || isHoldingSlug(opts?.slug);
 
 // HTML-comment fence markers — verbatim per spec. Same shape as the takes
 // fence markers so anyone who's seen one immediately recognizes the other.
@@ -379,16 +394,18 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
     }
 
     // GST-2492: a held row's entity is a page slug; any other cell is a fence problem, so the page is held, never misfiled.
+    // A folder's holding page holds only entities of that folder.
     const entity = entityRaw.trim();
-    if (entity && (!isOpPageSlug(entity) || entity === UNATTRIBUTED_MEMORY_SLUG)) {
+    if (entity && (!isOpPageSlug(entity) || isHoldingSlug(entity)
+      || isHoldingSlug(opts?.slug) && opts?.slug !== UNATTRIBUTED_MEMORY_SLUG && folderHoldingSlug(entity) !== opts?.slug)) {
       warnings.push(`FACTS_TABLE_MALFORMED: invalid entity "${entity}" in row ${rowNumStr} (expected a page slug such as people/alice-example)`);
       continue;
     }
 
     const { text: claimText, struck } = stripStrikethrough(claimRaw);
     const context = parseStringCell(contextRaw);
-    const supersededBy = parseSupersededByFromContext(context);
-    const forgotten    = parseForgottenFromContext(context);
+    const supersededBy = struck ? parseSupersededByFromContext(context) : undefined;
+    const forgotten    = struck && parseForgottenFromContext(context);
 
     facts.push({
       rowNum,
@@ -403,7 +420,7 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
       context,
       active: !struck,
       supersededBy,
-      forgotten: struck ? forgotten : false,
+      forgotten,
       // v0.35.4 — typed-claim fields, all optional.
       claimMetric: parseStringCell(claimMetricRaw),
       claimValue,

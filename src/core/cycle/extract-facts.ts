@@ -82,7 +82,7 @@ import {
 } from '../facts/supersede-resolve.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unfenced-facts.ts';
-import { moveHeldFacts } from '../facts/held-fact-move.ts';
+import { heldMoveIncomplete, moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
 import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
@@ -105,7 +105,7 @@ import { embed, getEmbeddingDimensions, getEmbeddingModel, isAvailable } from '.
 import { isAborted } from '../abort-check.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
-import { urlCloneReadOnly } from '../url-clone.ts';
+import { readOnlyCheckout } from '../persistence/mirror-read-only.ts';
 import { acquirePageLock } from '../page-lock.ts';
 import {
   lockReconcileRevision,
@@ -741,7 +741,7 @@ export interface ExtractFactsResult {
   legacyPages: string[];
   /** Unfenced rows this run appended to their page's fence and stamped with a row number (#5299). */
   unfencedRowsFenced: number;
-  /** GST-2492: facts held on memory/unattributed this run moved into their new entity page (present only when it moved any). */
+  /** GST-2492: held facts this run moved into their new entity page or their folder's holding page (present only when it moved any). */
   heldFactsMoved?: number;
   /** Active fence-owned rows expired because their page was soft-deleted. */
   factsExpiredForDeletedPages: number;
@@ -861,12 +861,13 @@ export async function runExtractFacts(
       fenceStepFailed = !isFenceHold(e);
       result.warnings.push(`FACTS_FENCE_FAILED: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
     }
-    // GST-2492: facts a strict source held on memory/unattributed move into their entity page once it exists.
+    // GST-2492: facts a strict source holds move into their entity page once it exists, and a fact held on
+    // memory/unattributed whose entity a folder rule now covers moves to that folder's holding page. A move still pending is reported, not counted.
     try {
       const held = await moveHeldFacts(engine, sourceId);
-      if (held.moved) result.heldFactsMoved = held.moved;
+      if (held.moved + held.rehomed) result.heldFactsMoved = held.moved + held.rehomed;
       result.pagesFailed += held.write_errors;
-      for (const row of held.unmovable) result.warnings.push(`HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`);
+      result.warnings.push(...held.unmovable.map(row => `HELD_FACT_UNMOVABLE: ${row.slug} facts ${row.fact_ids.join(',')} (${row.reason})`), ...heldMoveIncomplete(held).map(w => `${w.code}: ${w.text}`));
     } catch (e) {
       fenceStepFailed ||= !isFenceHold(e);
       result.warnings.push(`HELD_FACT_UNMOVABLE: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
@@ -878,10 +879,10 @@ export async function runExtractFacts(
   // the destructive reconciliation pass; the other pages reconcile.
   // #6610: rows the unbound-source policy keeps unfenced on database-only pages stay held out of reconciliation
   // but never gate the run; doctor fence_integrity names the opt-in that fences them.
-  // #6946: so do the database-only rows of a clone gbrain owns, which is never fenced.
+  // #6946, #7098: so do the database-only rows of a clone gbrain owns or a read-only mirror, which is never fenced.
   const pending = await pendingLegacyRows(engine, sourceId);
   const legacySlugs = new Set(pending.keys());
-  const gating = await urlCloneReadOnly(engine, sourceId) ? [] : [...pending].filter(([slug]) => !unboundRefused.has(slug));
+  const gating = await readOnlyCheckout(engine, sourceId) ? [] : [...pending].filter(([slug]) => !unboundRefused.has(slug));
   const legacyCount = gating.reduce((sum, [, n]) => sum + n, 0);
   result.legacyRowsPending = legacyCount;
   result.legacyPages = gating.map(([slug]) => slug).sort();

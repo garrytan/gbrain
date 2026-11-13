@@ -760,6 +760,7 @@
         "makeResolver",
         "normalizeBasename",
         "orientCanonicalAttendance",
+        "pageRelativeMarkdownSlugs",
         "parseInlineCitationTimelineEntries",
         "parseTimelineEntries",
         "queryBasenameIndex",
