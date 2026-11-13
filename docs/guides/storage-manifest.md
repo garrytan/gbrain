@@ -61,8 +61,8 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
 3. `gbrain storage adopt --finalize` previews soft-deleting the tagged originals; its `--expect <plan_hash>` run deletes
    them (restorable for 72 hours with `gbrain restore`), only when every adopted card is on the shelf and matches its
    original's mapped card. A restore recorded with `storage-update` since adoption is not a difference. The preview
-   names any `##` section of an original other than `## Record` (notes the card does not carry, which go with the
-   page) and flags an original longer than the 64 KiB it reads, so you read the rest first. The plan_hash binds each
+   names any `##` section in an original's body other than `## Record` (notes the card does not carry, which go with
+   the page; a timeline section gbrain stores apart from the body is not listed) and flags an original longer than the 64 KiB it reads, so you read the rest first. The plan_hash binds each
    original's whole content, checked again just before each delete, so an original edited after the preview refuses
    `preview_changed`.
 

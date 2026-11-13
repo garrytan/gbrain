@@ -128,12 +128,14 @@ function strip(value: unknown, path: string, refused: RefusedField[]): unknown {
   return out;
 }
 
-/** The first string value with a credential shape, by dotted path; the value itself is never returned. */
+/** The first string value or object key with a credential shape, by dotted path; the value or key itself is never returned. */
 function credentialAt(value: unknown, path: string): { field: string; shape: string } | null {
   if (typeof value === 'string') { const shape = credentialShape(value); return shape ? { field: path || '(record)', shape } : null; }
   if (!value || typeof value !== 'object') return null;
   const items: Array<readonly [string, unknown]> = Array.isArray(value) ? value.map((item, i) => [String(i), item] as const) : Object.entries(value);
   for (const [key, item] of items) {
+    const keyShape = Array.isArray(value) ? null : credentialShape(key);
+    if (keyShape) return { field: `${path || '(record)'} (a key)`, shape: keyShape };
     const found = credentialAt(item, path ? `${path}.${key}` : key);
     if (found) return found;
   }
@@ -154,7 +156,7 @@ export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontma
   const refused: RefusedField[] = [];
   const stripped = strip(record, '', refused) as Record<string, unknown>;
   const secret = credentialAt(record, '');
-  if (secret) return { card: null, refused, problem: { code: 'storage_record_secret', reason: secret.shape, message: `field ${secret.field} has a credential shape (${secret.shape}); the value is not shown` } };
+  if (secret) return { card: null, refused: [], problem: { code: 'storage_record_secret', reason: secret.shape, message: `field ${secret.field} has a credential shape (${secret.shape}); the value is not shown` } };
   const frontmatter = (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter ?? {}) as Record<string, unknown>;
   const aliases = Array.isArray(frontmatter.aliases) ? frontmatter.aliases.filter((a): a is string => typeof a === 'string') : [];
   const mapped = { ...stripped, id: stripped.id ?? row.slug.slice(prefix.length).replace(/\//g, '-'), title: stripped.title ?? row.title, aliases: stripped.aliases ?? aliases };
@@ -333,5 +335,5 @@ export async function applyFinalize(ctx: OperationContext, opts: AdoptOptions & 
   return { action: 'finalize', dry_run: false, source_id: opts.sourceId, prefix: opts.prefix, plan_hash: plan.plan_hash,
     side_effects: failure ? (deleted.length ? 'partial' : 'none') : deleted.length ? 'complete' : 'none', deleted,
     skipped: plan.entries.filter((e) => e.state !== 'delete').map((e) => e.slug),
-    ...(failure ? { failure, rerun: [...adoptArgv(opts), '--finalize', '--expect', plan.plan_hash] } : {}) };
+    ...(failure ? { failure, rerun: failure.code === 'preview_changed' ? previewFix(opts, true).argv! : [...adoptArgv(opts), '--finalize', '--expect', plan.plan_hash] } : {}) };
 }

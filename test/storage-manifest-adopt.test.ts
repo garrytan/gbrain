@@ -5,7 +5,7 @@
  *   - the apply needs the preview's plan_hash (a stale one refuses preview_changed) and each refused field named with
  *     --drop-field (storage_adopt_field_refused otherwise); it registers each card with origin adopt and tags the
  *     original storage-manifest-adopted, and never soft-deletes anything;
- *   - a credential-shaped value refuses storage_record_secret whatever else is dropped, without echoing the value;
+ *   - a credential-shaped value or record key refuses storage_record_secret whatever else is dropped, without echoing it;
  *   - idempotent: a card already on the shelf that matches is tagged only, a rerun writes nothing, and the plan_hash a
  *     half-finished run printed still applies; a differing card is a conflict, never overwritten, its original untagged;
  *   - finalize previews, then soft-deletes only the tagged originals whose card matches (storage_adopt_unverified when
@@ -134,6 +134,11 @@ describe('storage adopt on a repo-less brain', () => {
     expect(refused!.message).not.toContain('fake-key-value');
     expect(JSON.stringify(plan)).not.toContain('fake-key-value');
     expect(await engine.executeRaw("SELECT 1 FROM sources WHERE id='storage'")).toEqual([]);
+
+    await interim('storage-manifest/dataset-k', { ...record('dataset-k'), AKIAIOSFODNN7EXAMPLE: 'x' });
+    const keyed = (await previewAdopt(ctx(), opts)).entries.find((e) => e.slug === 'storage-manifest/dataset-k')!;
+    expect(keyed).toMatchObject({ state: 'blocked', refused: [], problem: { code: 'storage_record_secret', reason: 'secret_scanner' } });
+    expect(JSON.stringify(await previewAdopt(ctx(), opts))).not.toContain('AKIAIOSFODNN7EXAMPLE');
   }, 60_000);
 
   test('an unreadable record and a duplicate card id block the apply', async () => {
