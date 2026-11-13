@@ -8,6 +8,7 @@ import { MinionQueue } from '../queue.ts';
 export function makeExtractHandler(engine: BrainEngine): MinionHandler {
   return async (job) => {
     const { runExtractCore, extractStaleFromDB, STALE_TIME_BUDGET_MS } = await import('../../../commands/extract.ts');
+    const { staleExtractionCounts } = await import('../../extraction-lag.ts');
     // #2849: stale mode — the durable follow-up for extraction deferred by
     // performSync's size gate (totalChanges > 100). Runs the same DB-source
     // watermark sweep as `gbrain extract --stale`, scoped to the source the
@@ -26,8 +27,11 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
       // Internal 30-min budget hit with work remaining → chain a
       // continuation job so a very large deferred backlog converges without
       // waiting for the next sync. Forward-progress guard (pagesProcessed >
-      // 0) prevents an infinite chain if the sweep can't advance.
-      if (!job.data.dryRun && r.staleRemaining > 0 && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)) {
+      // 0) prevents an infinite chain if the sweep can't advance. #8672: the raw
+      // stale count includes attendance-blocked and held pages, which no rerun
+      // clears, so a sweep that left only those chains nothing.
+      if (!job.data.dryRun && r.staleRemaining > 0 && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)
+        && !(await staleExtractionCounts(engine, sourceIdFilter)).complete) {
         try {
           const queue = new MinionQueue(engine);
           // NO maxWaiting: with an unscoped (NULL-sourceId) payload the
