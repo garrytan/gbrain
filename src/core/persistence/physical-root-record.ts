@@ -343,6 +343,7 @@ export function physicalRootMovedRefusal(moved: MovedPhysicalRoot, exit: { sourc
       then: user(`Re-registers source ${exit.sourceId} at the recorded path, which reattaches worktree ${worktreeId}.`, readd, `May I register source ${exit.sourceId} at ${recorded}?`,
         exit.operation === 'claim' ? { inputs: [{ name: 'admin_state', how: 'admin_state from gbrain sources writer status --json on the brain host' }] } : {}) });
   return error;
+}
 const DIRECTORY_CHANGED_MESSAGE = 'The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
   + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.';
 /** A stored refusal message (a write receipt keeps code and message only) that is the #5914 directory-changed refusal. */

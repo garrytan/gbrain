@@ -15,8 +15,8 @@ import type { Migration } from './types.ts';
 // RLS is enabled here (v275's list is frozen). No schema.sql mirror: like
 // v282-v301, it exists only through migrations. Provisional number:
 // renumbered at the merge slot.
-export const v308: Migration = {
-  version: 308,
+export const v310: Migration = {
+  version: 310,
   name: 'mcp_request_log_rollup',
   idempotent: true,
   sql: `
