@@ -33,6 +33,7 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const MiB = 1024 ** 2;
 const PART_CHARS = 3_900_000;
@@ -94,6 +95,7 @@ for (const kind of testBackends()) {
         tokens[name] = minted.token;
         tokenIds[name] = minted.id;
         if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
+        else await readsUnscopedOnPurpose(engine, minted.id);
       }
     }, 240_000);
     afterAll(async () => { await close?.(); }, 60_000);

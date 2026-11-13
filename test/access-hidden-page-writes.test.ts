@@ -29,6 +29,7 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { getBrainHotMemoryMeta, __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
@@ -119,6 +120,7 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(engine, { name, scopes: [...scopes], takesHolders: ['world'], sourceGrant: [SRC] });
         tokens[name] = minted.token;
         if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
+        else await readsUnscopedOnPurpose(engine, minted.id);
       }
     }, 240_000);
     afterAll(async () => { __setEmbedTransportForTests(null); resetGateway(); await close?.(); }, 60_000);

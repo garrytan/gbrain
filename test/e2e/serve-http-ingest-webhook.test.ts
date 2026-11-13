@@ -64,7 +64,7 @@ describeE2E('serve-http POST /ingest webhook (v0.38)', () => {
   function registerClientForRescope(name: string, sourceId?: string): { clientId: string; clientSecret: string } {
     const sourceArg = sourceId ? ` --source "${sourceId}"` : '';
     const regOutput = execSync(
-      `bun run src/cli.ts auth register-client "${name}" --grant-types client_credentials --scopes "read write"${sourceArg}`,
+      `bun run src/cli.ts auth register-client "${name}" --grant-types client_credentials --scopes "read write" --reads-unscoped --yes${sourceArg}`,
       { cwd: process.cwd(), encoding: 'utf8', env: { ...process.env } },
     );
     const idMatch = regOutput.match(/Client ID:\s+(gbrain_cl_\S+)/);

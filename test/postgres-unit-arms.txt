@@ -20,6 +20,8 @@ test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
 test/access-hidden-page-writes.test.ts
+test/access-labelled-only-fail-closed.test.ts
+test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members-read-lineage.test.ts
@@ -79,6 +81,7 @@ test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
 test/db-only-labels-gst2519.test.ts
+test/db-wins-unimported-gst2579.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
@@ -558,6 +561,7 @@ test/repair-rename-identity-6729.test.ts
 test/repair-secret-spans.test.ts
 test/repair-unwithdrawn-facts-8819.test.ts
 test/request-tools-combined-gbra449.test.ts
+test/requester-scope.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
