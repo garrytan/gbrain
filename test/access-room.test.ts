@@ -33,7 +33,7 @@ import { addGroup, addMember, bindCredential } from '../src/core/access/members.
 import { setOwner } from '../src/core/access/owner.ts';
 import { setMemberLabelledOnly } from '../src/core/access/labelled-only.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
-import { readRoomDeclaration, ROOM_COVERED_OPS } from '../src/core/access/room.ts';
+import { __setRoomDeadlineForTests, readRoomDeclaration, ROOM_COVERED_OPS } from '../src/core/access/room.ts';
 import { EGRESS_CAP_MIN, encodedFrameBytes } from '../src/core/egress-budget.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -301,6 +301,52 @@ for (const kind of testBackends()) {
         await engine.unsetConfig('mcp.max_result_bytes_http');
       }
     }, 120_000);
+
+    test('saved facts in a search answer are marked too, in _meta.retrieval and in the block the model reads', async () => {
+      const params = { query: 'harbor ledger note', match: 'keyword', limit: 20 };
+      const plain = await call('owner', 'search', params);
+      const plainFacts = ((plain.meta?.retrieval as { saved_facts?: Array<Record<string, unknown>> })?.saved_facts) ?? [];
+      expect(plainFacts.length).toBeGreaterThan(0);
+      expect(plainFacts.some(f => 'room_access' in f)).toBe(false);
+      expect(plain.blocks.some(b => b.includes('; room: '))).toBe(false);
+      const marked = await call('owner', 'search', params, { room: { header: 'group:team-a' } });
+      expect(unmarked(marked.json)).toEqual(unmarked(plain.json));
+      const facts = (marked.meta?.retrieval as { saved_facts: Array<Record<string, unknown>> }).saved_facts;
+      expect(facts.map(f => f.fact)).toEqual(plainFacts.map(f => f.fact));
+      for (const f of facts) expect(f.room_access).toBeDefined();
+      const markOf = (text: string) => facts.find(f => String(f.fact).includes(text))?.room_access;
+      expect(markOf('Harbor ledger world note')).toEqual({ readable: true });
+      const block = marked.blocks.find(b => b.startsWith('Saved facts'))!;
+      expect(block).toContain('Harbor ledger world note');
+      expect(block).toContain('; room: readable]');
+      expect((marked.meta?.room as { counts: { items: number } }).counts.items).toBe(Object.keys(marks(marked.json)).length + facts.length);
+    }, 60_000);
+
+    test('rule 1 at the deadline: when marking cannot finish in time the read goes out whole, on time, with the degraded stamp', async () => {
+      const params = { query: 'harbor ledger note', match: 'keyword', limit: 20 };
+      const plain = await call('owner', 'search', params);
+      __setRoomDeadlineForTests({ ms: 50, delay: () => new Promise(r => setTimeout(r, 5_000)) });
+      try {
+        const started = Date.now();
+        const late = await call('owner', 'search', params, { room: { header: 'group:team-a' } });
+        expect(Date.now() - started).toBeLessThan(4_000);
+        expect(late.isError).toBe(false);
+        expect(unmarked(late.json)).toEqual(unmarked(plain.json));
+        const items = Object.values(marks(late.json));
+        expect(items.length).toBeGreaterThan(0);
+        for (const a of items) expect(a).toEqual({ readable: 'unknown', reason: 'deadline' });
+        expect(late.meta?.room).toMatchObject({ complete: false, unavailable: 'deadline' });
+        expect(late.blocks.some(b => b.startsWith('[gbrain notice room_hints_unavailable kind=degraded]'))).toBe(true);
+        expect(late.blocks.some(b => b.startsWith('[gbrain degraded:') && b.includes('room'))).toBe(true);
+        expect((late.meta?.degraded as { reasons: string[] }).reasons).toContain('room_hints_unavailable');
+        const facts = (late.meta?.retrieval as { saved_facts: Array<Record<string, unknown>> }).saved_facts;
+        expect(facts.length).toBeGreaterThan(0);
+        for (const f of facts) expect(f.room_access).toEqual({ readable: 'unknown', reason: 'deadline' });
+        expect(late.blocks.find(b => b.startsWith('Saved facts'))).toContain('; room: unknown (deadline)]');
+      } finally {
+        __setRoomDeadlineForTests(null);
+      }
+    }, 60_000);
 
     test('whoami advertises room support', async () => {
       const out = await call('owner', 'whoami', {});

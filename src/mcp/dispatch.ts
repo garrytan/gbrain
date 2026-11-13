@@ -453,7 +453,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   const r = retrieval as {
     type_filter_notice?: unknown;
     other_names?: Array<{ name: string; alias: string; slug: string }>;
-    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string }>;
+    saved_facts?: Array<{ fact: string; entity_slug: string | null; valid_from: string; source: string; linked_from?: string; corrected_by?: number; quoted?: string; room_access?: { readable: unknown; reason?: string } }>;
     answer_id?: unknown;
     feedback?: { rateable?: boolean; how_to_rate?: string };
   };
@@ -466,7 +466,7 @@ export function retrievalNoticeBlocks(result: unknown, retrieval: unknown): stri
   }
   if (r.saved_facts?.length) {
     const { text, more } = wholeItemsWithin('Saved facts (remember): about the entity this query names (newest first), then facts those point to, then matches for its words; recall returns more:\n',
-      r.saved_facts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}]`),
+      r.saved_facts.map(f => `- ${f.fact}${f.quoted ? '\n' : ''} [entity: ${f.entity_slug ?? 'none'}; saved ${String(f.valid_from).slice(0, 10)}; provenance: ${f.source}${f.linked_from ? `; named in a saved fact about ${f.linked_from}` : ''}${f.corrected_by ? '; corrected by a newer saved fact above' : ''}${f.room_access ? `; room: ${f.room_access.readable === true ? 'readable' : f.room_access.readable === false ? `not readable (${f.room_access.reason})` : `unknown (${f.room_access.reason})`}` : ''}]`),
       '\n', SAVED_FACTS_NOTICE_MAX_CHARS);
     blocks.push(more ? `${text}\n(+${more} more; recall returns them)` : text);
   }
@@ -1161,9 +1161,9 @@ async function runMetaHook(hook: NonNullable<DispatchOpts['metaHook']>, name: st
  * GBRA-498: an answer going into a room is marked for it on a detached copy (hot memory too, so the hook runs first),
  * before the notices, the degraded stamp and the frame are built. Marking never fails the call.
  */
-async function markForRoom(engine: BrainEngine, opts: DispatchOpts, name: string, result: unknown, ctx: OperationContext, hook: ReturnType<typeof runMetaHook> | undefined) {
+async function markForRoom(engine: BrainEngine, opts: DispatchOpts, name: string, result: unknown, retrieval: unknown, ctx: OperationContext, hook: ReturnType<typeof runMetaHook> | undefined) {
   const hookOut = hook ? await hook : undefined;
-  const room = await assessRoom(engine, { op: name, result, hotMemory: hookOut?.meta, declaration: opts.roomDeclaration!, sourceId: ctx.sourceId,
+  const room = await assessRoom(engine, { op: name, result, hotMemory: hookOut?.meta, retrieval, declaration: opts.roomDeclaration!, sourceId: ctx.sourceId,
     caller: { access: currentCallerAccess(), auth: ctx.auth, transport: ctx.transport, stdioMember: opts.stdioMember, privateSources: opts.roomPrivateSources, attested: opts.roomAttested } });
   return { hookOut, room: room as Awaited<ReturnType<typeof assessRoom>> | null };
 }
@@ -1178,11 +1178,12 @@ async function roomCapFallback(build: (meta: Record<string, unknown>) => ToolRes
 }
 
 function assembleToolResult(
-  call: { name: string; result: unknown; batchError: boolean; evidenceBlocks: string[]; tail: ToolTail | undefined; opts: DispatchOpts },
+  call: { name: string; result: unknown; batchError: boolean; evidence: (retrieval: unknown) => string[]; tail: ToolTail | undefined; opts: DispatchOpts },
   body: unknown, shown: Notice[], stamped: Notice[], meta: Record<string, unknown>, hook: Record<string, unknown> | undefined,
 ): ToolResult {
   const built: ToolResult = call.batchError ? toolErrorResult(body as never) : toolResultWithNotices(body, shown, dispatchRenderContext(call.opts));
-  if (call.evidenceBlocks.length > 0) built.content.splice(1, 0, ...call.evidenceBlocks.map(text => ({ type: 'text' as const, text })));
+  const evidenceBlocks = call.evidence(meta.retrieval);
+  if (evidenceBlocks.length > 0) built.content.splice(1, 0, ...evidenceBlocks.map(text => ({ type: 'text' as const, text })));
   // _meta assembly (WP2 amendment 9): one producer per top-level key,
   // each isolated — handler-emitted keys (retrieval, warnings) attach
   // BEFORE and independently of the metaHook, so a hot-memory hook
@@ -1427,7 +1428,7 @@ async function dispatchResolvedCall(
     if (emptyBlock) notices.push({ code: 'empty_retrieval', kind: emptyBlock.includes('degraded:') ? 'degraded' : 'info', why: emptyBlock });
     // Cat 40 (#5932) evidence blocks (type-filter notice, other names, saved facts) are retrieval
     // data, not advice: they stay plain extra text blocks right after content[0], as measured.
-    const evidenceBlocks = retrievalNoticeBlocks(result, responseMeta.retrieval).slice(emptyBlock ? 1 : 0);
+    const evidence = (retrieval: unknown) => retrievalNoticeBlocks(result, retrieval).slice(emptyBlock ? 1 : 0);
     // Lane F (F3): degraded recall and a source binding that narrowed an empty read.
     const rerankDegradedCalls = recordRerankDegradation(responseMeta, opts);
     notices.push(...recallInteropNotices(name, result, responseMeta, safeParams,
@@ -1453,10 +1454,10 @@ async function dispatchResolvedCall(
     if (opts.transport === 'stdio' && opts.remote !== false && !batchError) notices.push(...await mcpOnboardingNotices({ engine, op: name, result, meta: responseMeta, config: ctx.config, render: dispatchRenderContext(opts) }));
     if (opts.transport === 'stdio' && opts.remote !== false && !batchError) { const drain = takeFactsDrainNotice(); if (drain) notices.push(drain); } // Lane D facts drain
     if (!batchError) notices.push(...await sessionSafetyNotices(engine, opts, ctx.config), ...await grantBlockedNotices(engine, opts, false));
-    let { hookOut, room } = opts.roomDeclaration && ctx.remote !== false && !batchError ? await markForRoom(engine, opts, name, result, ctx, metaHook && (earlyMeta ?? runMetaHook(metaHook, name, ctx))) : { hookOut: undefined, room: null };
+    let { hookOut, room } = opts.roomDeclaration && ctx.remote !== false && !batchError ? await markForRoom(engine, opts, name, result, responseMeta.retrieval, ctx, metaHook && (earlyMeta ?? runMetaHook(metaHook, name, ctx))) : { hookOut: undefined, room: null };
     const admitted = admitNotices(room ? [...notices, ...room.notices] : notices, opts);
     const assemble = (body: unknown, shown: Notice[], stamped: Notice[], meta: Record<string, unknown>, hook: Record<string, unknown> | undefined) =>
-      assembleToolResult({ name, result, batchError, evidenceBlocks, tail, opts }, body, shown, stamped, meta, hook);
+      assembleToolResult({ name, result, batchError, evidence, tail, opts }, body, shown, stamped, meta, hook);
     if (opts.transport === 'stdio') {
       maybeRefreshBackupStatusInProcess(engine);
     }
@@ -1468,7 +1469,7 @@ async function dispatchResolvedCall(
     if (hookOut?.failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${hookOut.failure}; degrading to no hook keys`);
     const cap = (built: ToolResult) => op.mutating ? Promise.resolve(null) : frameOverCap(built, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
     const out = room
-      ? assemble(room.result, admitted, [...notices, ...room.notices], { ...responseMeta, room: room.meta }, (room.hotMemory ?? hookOut?.meta) as Record<string, unknown> | undefined)
+      ? assemble(room.result, admitted, [...notices, ...room.notices], { ...responseMeta, ...(room.retrieval ? { retrieval: room.retrieval } : {}), room: room.meta }, (room.hotMemory ?? hookOut?.meta) as Record<string, unknown> | undefined)
       : assemble(result, admitted, notices, responseMeta, hookOut?.meta);
     // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
     const over = await cap(out);

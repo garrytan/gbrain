@@ -69,7 +69,11 @@ safety notice, so a model that never sees `_meta` still sees the warning.
 `counts` (`items`, `readable`, `above`, `unknown`), `by_reason` and
 `above` (each page or fact the room could not read, or that could not be
 judged, by `source_id` and `slug`, `page_id` or `fact_id`, with its reason). Hot-memory
-facts in `_meta.brain_hot_memory` are marked the same way.
+facts in `_meta.brain_hot_memory` and the saved facts a search or query returns
+(`_meta.retrieval.saved_facts`) are marked the same way, and each line of the
+"Saved facts" block the model reads ends with its mark (`room: readable`,
+`room: not readable (<reason>)` or `room: unknown (<reason>)`). With a room
+declared, treat anything in an answer that carries no mark as unknown.
 
 Covered tools: `get_page`, `search`, `query`, `list_pages`, `find_pages`,
 `get_chunks`, `get_timeline`, `get_backlinks`, `recall` and `entity`. Every
@@ -95,9 +99,11 @@ asked by someone other than the owner, the harness names that audience with
 
 ## When marks are unavailable
 
-If the room cannot be judged, the answer is still complete and every item is
-marked `{readable: "unknown", reason}`, `_meta.room.complete` is false and the
-`room_hints_unavailable` degraded notice explains why:
+If the room cannot be judged, the answer is still complete and on time: every
+item is marked `{readable: "unknown", reason}`, `_meta.room.complete` is false,
+the `room_hints_unavailable` degraded notice explains why, and the degraded
+stamp (`_meta.degraded.reasons` and the `[gbrain degraded: …]` block) names
+`room_hints_unavailable`:
 
 | Reason | Cause | Fix |
 |---|---|---|

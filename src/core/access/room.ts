@@ -247,6 +247,10 @@ async function roomAccessFor(engine: BrainEngine, caller: RoomCaller, principals
   return audienceCallerAccess(engine, caller.auth, caller.privateSources, caller.transport, principals, identities, caller.stdioMember, true);
 }
 
+let deadlineForTests: { ms: number; delay: () => Promise<void> } | null = null;
+/** Test seam: a shorter deadline and a slow judgment, so the deadline path runs through dispatch. */
+export function __setRoomDeadlineForTests(v: { ms: number; delay: () => Promise<void> } | null): void { deadlineForTests = v; }
+
 function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new RoomUnavailable('deadline')), ms); });
@@ -276,7 +280,7 @@ function emptyMeta(d: RoomDeclaration): RoomMeta {
  * result holds apart from adding room_access to its items: on any failure the items are marked unknown and a
  * room_hints_unavailable notice says why. Writes one count-only audit row.
  */
-export async function assessRoom(engine: BrainEngine, input: { op: string; result: unknown; hotMemory?: unknown; declaration: RoomDeclaration; caller: RoomCaller; sourceId: string; deadlineMs?: number }): Promise<RoomOutcome & { hotMemory?: unknown }> {
+export async function assessRoom(engine: BrainEngine, input: { op: string; result: unknown; hotMemory?: unknown; retrieval?: unknown; declaration: RoomDeclaration; caller: RoomCaller; sourceId: string; deadlineMs?: number }): Promise<RoomOutcome & { hotMemory?: unknown; retrieval?: unknown }> {
   const { op, declaration: d, caller } = input;
   const meta = emptyMeta(d);
   const extractor = EXTRACTORS[op];
@@ -284,6 +288,9 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
   const hot = input.hotMemory === undefined ? undefined : structuredClone(input.hotMemory);
   const slots: Slot[] = extractor ? extractor(result, input.sourceId).filter((s): s is Slot => !!s) : [];
   if (isObj(hot) && isObj(hot.brain_hot_memory)) for (const f of arr(hot.brain_hot_memory.facts)) { const s = factSlot(f); if (s) slots.push(s); }
+  // search and query: the saved facts that ride _meta.retrieval (and the model-visible saved-facts block) are items too.
+  const retrieval = isObj(input.retrieval) && Array.isArray(input.retrieval.saved_facts) ? structuredClone(input.retrieval) as Record<string, unknown> : undefined;
+  if (retrieval) for (const f of arr(retrieval.saved_facts)) { const s = factSlot(f); if (s) slots.push(s); }
   let unavailable: RoomUnavailable | null = !extractor ? new RoomUnavailable('op_not_covered')
     : d.invalid ? new RoomUnavailable('invalid', d.invalid) : null;
   let decisions = new Map<string, RoomAccess>();
@@ -291,7 +298,7 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
   for (const s of slots) if (s.ref && refs.size < ROOM_MAX_REFS) refs.set(refKey(s.ref), s.ref);
   if (!unavailable && slots.length) {
     try {
-      decisions = await withDeadline((async () => decide(engine, await roomAccessFor(engine, caller, d.principals), [...refs.values()]))(), input.deadlineMs ?? ROOM_DEADLINE_MS);
+      decisions = await withDeadline((async () => { await deadlineForTests?.delay(); return decide(engine, await roomAccessFor(engine, caller, d.principals), [...refs.values()]); })(), deadlineForTests?.ms ?? input.deadlineMs ?? ROOM_DEADLINE_MS);
     } catch (e) {
       unavailable = e instanceof RoomUnavailable ? e : new RoomUnavailable('mark_failed');
     }
@@ -330,5 +337,5 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
     principal: caller.auth?.principal ? `${caller.auth.principal.kind}:${caller.auth.principal.id}` : caller.transport === 'stdio' ? 'local_stdio' : 'unknown',
     room: { readable: meta.counts.readable, above: meta.counts.above, unknown: meta.counts.unknown, by_reason: { ...meta.by_reason }, declared_by: d.declared_by,
       ...(meta.unavailable ? { unavailable: meta.unavailable } : {}) } });
-  return { result, meta, notices, ...(hot !== undefined ? { hotMemory: hot } : {}) };
+  return { result, meta, notices, ...(hot !== undefined ? { hotMemory: hot } : {}), ...(retrieval ? { retrieval } : {}) };
 }
