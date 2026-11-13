@@ -1921,7 +1921,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   quarantine: '`quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.',
   advisor: 'advisor ranks next actions from the host brain. Use the `advisor` MCP tool from your agent (when the host publishes it), or run `gbrain advisor` on the host.',
   export: 'export dumps the host brain to disk and has no MCP equivalent. Run `gbrain export` on the host, or read pages with the `get_page` MCP tool.',
-  wakeshift: '`wakeshift watch job|write|cron` routes to the brain host automatically (watch_job / watch_write_request / watch_cron MCP tools). enable, disable, status and test read or change the brain host\'s Wakeshift key and settings: run those on the brain host.',
+  wakeshift: '`wakeshift watch job|write|cron` and `wakeshift accept-terms` route to the brain host automatically (watch_job / watch_write_request / watch_cron / accept_wakeshift_terms MCP tools). enable, disable, status and test read or change the brain host\'s Wakeshift key and settings: run those on the brain host.',
   recall: '`recall --query`/`--budget-tokens` without `--budget-policy` runs the recall op locally. Add `--budget-policy facts_first` to send it to the brain host (`recall` MCP op).',
 };
 

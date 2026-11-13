@@ -45,6 +45,9 @@ Commands:
   watch job <id> | write <request_id> | cron <name>
                              from a thin client or agent shell: wake this conversation when it finishes
                              (gbrain wakeshift watch --help)
+  accept-terms <terms_version>
+                             from a thin client or agent shell: record the user's agreement to a shared
+                             brain's agreement step (accept_wakeshift_terms), then run the watch again
 
 The key is read from WAKESHIFT_API_KEY (e.g. in ~/.gbrain/.env) or ~/.gbrain/wakeshift.key.
 gbrain never creates a Wakeshift account or key. Guide: docs/guides/wakeshift.md`;
@@ -303,7 +306,7 @@ export function printWakeshiftGate(): void {
 export async function runWakeshift(engine: BrainEngine, args: string[]): Promise<void> {
   const sub = args[0];
   const json = args.includes('--json');
-  if (sub === 'watch') return (await import('./wakeshift-watch.ts')).runWakeshiftWatch(engine, args.slice(1));
+  if (sub === 'watch' || sub === 'accept-terms') return (await import('./wakeshift-watch.ts')).runWakeshiftWatch(engine, sub === 'watch' ? args.slice(1) : args);
   if (!sub || args.includes('--help') || args.includes('-h')) { console.log(HELP); return; }
   if (sub === 'status') return status(engine, json);
   if (sub === 'enable') return enable(engine, args.slice(1));

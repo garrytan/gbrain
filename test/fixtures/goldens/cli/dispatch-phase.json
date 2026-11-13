@@ -2098,7 +2098,8 @@
         "preConnectRules": [],
         "thinClient": "route-then-refuse",
         "thinClientRoutedSubcommands": [
-          "watch"
+          "watch",
+          "accept-terms"
         ]
       },
       "watch": {
@@ -2344,7 +2345,8 @@
         "supersede"
       ],
       "wakeshift": [
-        "watch"
+        "watch",
+        "accept-terms"
       ]
     }
   },

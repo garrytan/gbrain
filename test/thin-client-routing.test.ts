@@ -352,6 +352,13 @@ describe('routeThinClientCommand — wakeshift watch (Wakeshift report-back over
     expect(JSON.parse(logs[0]!)).toEqual(watching);
   });
 
+  test('accept-terms routes to accept_wakeshift_terms with the terms_version and prints what to do next', async () => {
+    respond({ accepted: true, terms_version: '0123456789abcdef', next: 'Call the watch tool again.' }, []);
+    expect(await routeThinClientCommand(cfg, 'wakeshift', ['accept-terms', '0123456789abcdef'])).toBe(true);
+    expect(soleCall()).toEqual({ tool: 'accept_wakeshift_terms', args: { terms_version: '0123456789abcdef' } });
+    expect(logs.join('\n')).toContain('Run the watch again');
+  });
+
   test('only watch routes: every other wakeshift subcommand is host-bound', async () => {
     for (const sub of ['status', 'enable', 'disable', 'test']) {
       expect(await routeThinClientCommand(cfg, 'wakeshift', [sub])).toBe(false);

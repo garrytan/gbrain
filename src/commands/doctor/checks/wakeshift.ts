@@ -9,7 +9,8 @@
  * when a queued Wakeshift forget is older than a day or died in the last 30
  * days, when forgets are queued while reporting back is off (nothing sends
  * them then), and when the published
- * manifest is older than this build. Shows the key's kid fingerprint only,
+ * manifest is older than this build. A brain behind the Wakeshift migration
+ * (doctor --no-migrate) reads as off when off, and warns when enabled. Shows the key's kid fingerprint only,
  * never the key. Guide: docs/guides/wakeshift.md.
  */
 import { loadConfigFileOnly } from '../../../core/config.ts';
@@ -24,6 +25,17 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 const DOCS = 'docs/guides/wakeshift.md#troubleshooting';
 
 async function runWakeshiftCheck(ctx: DoctorContext): Promise<Check[]> {
+  try {
+    return await wakeshiftChecks(ctx);
+  } catch (e) {
+    if ((e as { code?: string } | null)?.code !== '42P01') throw e;
+    return [wakeshiftFileConfig(loadConfigFileOnly()).enabled === true
+      ? { name: 'wakeshift', status: 'warn', message: 'Wakeshift is enabled but this brain has no Wakeshift tables yet (migrations pending), so no watch can be recorded. Fix: gbrain apply-migrations --yes', details: { enabled: true, docs: DOCS } }
+      : { name: 'wakeshift', status: 'ok', severity: 'info', readiness_state: 'disabled_by_choice', message: 'Reporting back through Wakeshift is off (gbrain wakeshift enable turns it on).', details: { enabled: false, docs: DOCS } }];
+  }
+}
+
+async function wakeshiftChecks(ctx: DoctorContext): Promise<Check[]> {
   const checks: Check[] = [];
   const file = wakeshiftFileConfig(loadConfigFileOnly());
   const enabled = file.enabled === true;

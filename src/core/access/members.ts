@@ -326,7 +326,10 @@ export async function previewRemoveMember(engine: BrainEngine, rawId: unknown): 
 
 export async function removeMember(engine: BrainEngine, rawId: unknown): Promise<MemberRemovalPreview> {
   const preview = await previewRemoveMember(engine, rawId);
-  if (preview.member.status === 'removed') return preview;
+  if (preview.member.status === 'removed') {
+    await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+    return preview;
+  }
   await engine.transaction(async tx => {
     await tx.executeRaw('UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), email = NULL, updated_at = now() WHERE id = $1', [preview.member.id]);
     await tx.executeRaw('DELETE FROM access_group_members WHERE member_id = $1', [preview.member.id]);

@@ -68,6 +68,9 @@ describe('gbrain wakeshift watch on the brain host', () => {
     expect(parseWatchArgs(['cron', 'nightly-digest', '--harness', 'openclaw', '--json'])).toEqual({ tool: 'watch_cron', params: { name: 'nightly-digest', harness: 'openclaw' }, json: true });
     expect(parseWatchArgs(['write', 'req-1', '--conversation-id', 'c-1'])).toEqual({ tool: 'watch_write_request', params: { request_id: 'req-1', conversation_id: 'c-1' }, json: false });
     expect(typeof parseWatchArgs(['job', '0'])).toBe('string');
+    expect(parseWatchArgs(['accept-terms', '0123456789abcdef', '--json'])).toEqual({ tool: 'accept_wakeshift_terms', params: { terms_version: '0123456789abcdef' }, json: true });
+    expect(typeof parseWatchArgs(['accept-terms'])).toBe('string');
+    expect(typeof parseWatchArgs(['accept-terms', 'v', '--session-key', 'k'])).toBe('string');
   });
 
   test('text output names the cron and says an already-settled write wakes now, from the ops\' real result shapes', () => {

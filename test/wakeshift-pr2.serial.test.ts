@@ -397,6 +397,20 @@ describe('forget on remove', () => {
     expect(new Set(paths('/users/forget').map(c => c.body.user)).size).toBe(2);
   });
 
+  test('removing an already-removed member queues its forget again, so a forget lost after the tombstone is recovered', async () => {
+    await addMember('alice-example');
+    await addClient('client-r', 'alice-example');
+    writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
+    const step = body(await call('watch_job', { id: await seedJob() }, client('client-r')));
+    await call('accept_wakeshift_terms', { terms_version: step.terms_version }, client('client-r'));
+    expect(body(await call('watch_job', { id: await seedJob() }, client('client-r')))).toMatchObject({ watching: true });
+    await removeMember(engine, 'alice-example');
+    await engine.executeRaw('DELETE FROM wake_forgets');
+    expect((await removeMember(engine, 'alice-example')).member.status).toBe('removed');
+    expect(await engine.executeRaw('SELECT state FROM wake_forgets')).toEqual([{ state: 'pending' }]);
+    expect(await drain()).toMatchObject({ forgotten: 1 });
+  });
+
   test('a refused forget is retried on the schedule and then dies', async () => {
     await engine.executeRaw("INSERT INTO wake_forgets (wake_user) VALUES ('0123456789abcdef0123456789abcdef')");
     fake.respond.set('/users/forget', () => ({ status: 503, body: { error: { code: 'unavailable', message: 'down' } } }));
@@ -410,7 +424,40 @@ describe('forget on remove', () => {
   });
 });
 
+describe('watch ownership', () => {
+  test('two --stdio-member servers share one principal but list and end only their own watches', async () => {
+    await addMember('alice-example');
+    await addMember('bob-example');
+    writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
+    const as = (member: string) => ({ ...stdio, stdioMember: member });
+    const ids: Record<string, number> = {};
+    for (const m of ['alice-example', 'bob-example']) {
+      const job = await seedJob();
+      const step = body(await call('watch_job', { id: job }, as(m)));
+      expect(body(await call('accept_wakeshift_terms', { terms_version: step.terms_version }, as(m)))).toMatchObject({ accepted: true });
+      const watched = body(await call('watch_job', { id: job }, as(m)));
+      expect(watched).toMatchObject({ watching: true });
+      ids[m] = watched.watch;
+    }
+    expect(body(await call('list_watches', {}, as('alice-example'))).watches.map((w: { watch: number }) => w.watch)).toEqual([ids['alice-example']]);
+    expect(body(await call('unwatch', { watch: ids['bob-example']! }, as('alice-example')))).toMatchObject({ ended: 0 });
+    expect(body(await call('unwatch', { watch: ids['alice-example']! }, as('alice-example')))).toMatchObject({ ended: 1 });
+    expect(await engine.executeRaw("SELECT member_id FROM wake_subscriptions WHERE state = 'open'")).toEqual([{ member_id: 'bob-example' }]);
+  });
+});
+
 describe('status, doctor and the gate', () => {
+  test('doctor on a brain behind the Wakeshift migration reads as off when off, and warns when enabled', async () => {
+    const behind = { kind: 'pglite', executeRaw: async () => { throw Object.assign(new Error('relation "wake_forgets" does not exist'), { code: '42P01' }); } };
+    const run = () => inHome(async () => wakeshiftEntry.run({ engine: behind, args: [], jsonOutput: true, fastMode: false, doFix: false, dryRun: false } as unknown as DoctorContext));
+    writeConfig({ enabled: false, url: fake.url });
+    expect(await run()).toEqual([expect.objectContaining({ status: 'ok', readiness_state: 'disabled_by_choice' })]);
+    writeConfig({ enabled: true, url: fake.url, manifest_hash: wakeshiftManifestHash() });
+    const on = await run() as Array<{ status: string; message: string }>;
+    expect(on[0]).toMatchObject({ status: 'warn' });
+    expect(on[0]!.message).toContain('gbrain apply-migrations --yes');
+  });
+
   test('status and doctor say when the published manifest is older than this build', async () => {
     writeConfig({ enabled: true, url: fake.url, manifest_hash: 'feedfacefeedface' });
     const st = JSON.parse((await cli(['status', '--json'])).out);

@@ -349,8 +349,8 @@ async function ownRows(ctx: OperationContext, extra: string, params: unknown[]):
   if (!principal) return [];
   return ctx.engine.executeRaw(
     `SELECT id, event, target, state, attempts, last_error, created_at, expires_at, wake_user, ws_subscription_id FROM wake_subscriptions
-      WHERE principal_kind = $1 AND principal_id = $2 ${extra} ORDER BY created_at DESC, id DESC LIMIT 50`,
-    [principal.kind, principal.id, ...params]);
+      WHERE principal_kind = $1 AND principal_id = $2 AND member_id IS NOT DISTINCT FROM $3 ${extra} ORDER BY created_at DESC, id DESC LIMIT 50`,
+    [principal.kind, principal.id, principal.member, ...params]);
 }
 
 const list_watches: Operation = {
@@ -371,7 +371,7 @@ const list_watches: Operation = {
   },
 };
 
-/** The one target an unwatch names, as a row filter. */
+/** The one target an unwatch names, as a row filter after ownRows' three principal params. */
 function unwatchFilter(p: Record<string, unknown>): { key: Record<string, unknown>; extra: string; params: unknown[] } {
   const given = (['job', 'request_id', 'cron', 'watch'] as const).filter(k => p[k] !== undefined && p[k] !== null);
   const usage = () => opError('invalid_params', 'unwatch: pass exactly one of job, request_id, cron or watch.', 'Pass the id you watched; list_watches shows your watches and their ids.');
@@ -381,17 +381,17 @@ function unwatchFilter(p: Record<string, unknown>): { key: Record<string, unknow
     const n = p[k] as number;
     if (!Number.isSafeInteger(n) || n <= 0) throw usage();
     return k === 'job'
-      ? { key: { job: n }, extra: 'AND event = $3 AND target = $4', params: [JOB_FINISHED, String(n)] }
-      : { key: { watch: n }, extra: 'AND id = $3', params: [n] };
+      ? { key: { job: n }, extra: 'AND event = $4 AND target = $5', params: [JOB_FINISHED, String(n)] }
+      : { key: { watch: n }, extra: 'AND id = $4', params: [n] };
   }
   if (k === 'request_id') {
     const id = parseWriteRequestId(p.request_id);
     if (!id) throw usage();
-    return { key: { request_id: id }, extra: 'AND event = $3 AND target = $4', params: [WRITE_SETTLED, id] };
+    return { key: { request_id: id }, extra: 'AND event = $4 AND target = $5', params: [WRITE_SETTLED, id] };
   }
   const name = cronName(p.cron);
   if (!name) throw usage();
-  return { key: { cron: name }, extra: 'AND event = $3 AND target = $4', params: [CRON_FINISHED, name] };
+  return { key: { cron: name }, extra: 'AND event = $4 AND target = $5', params: [CRON_FINISHED, name] };
 }
 
 const unwatch: Operation = {

@@ -1,6 +1,7 @@
 /**
  * `gbrain wakeshift watch job <id> | write <request_id> | cron <name>` (Wakeshift plan D8): have gbrain wake
- * this conversation when a job, a pending write or a cron run finishes, from a shell. On a thin client
+ * this conversation when a job, a pending write or a cron run finishes, from a shell. `gbrain wakeshift
+ * accept-terms <terms_version>` records the user's agreement to a shared brain's agreement step (accept_wakeshift_terms). On a thin client
  * (`gbrain init --mcp-only`: Muse, Grok Bot) it calls the brain host's watch_job, watch_write_request or
  * watch_cron over MCP; on a brain host it calls the op with the trusted local context, whose refusal names the
  * local wait (gbrain jobs wait <id>), because a CLI run has no conversation to wake. The result prints as text or
@@ -17,6 +18,9 @@ Usage:
   gbrain wakeshift watch job <id>              a job (submit_job, submit_agent, gbrain jobs submit)
   gbrain wakeshift watch write <request_id>    a pending write (exit 10, write_pending)
   gbrain wakeshift watch cron <name>           a scheduled run registered with gbrain wakeshift cron add
+  gbrain wakeshift accept-terms <terms_version>
+                                               after the user agreed to the agreement step a watch returned
+                                               (agreement_required), record it; then run the watch again
 
 Flags:
   --session-key K       this conversation's session_key from an earlier result (a secret: never logged or saved)
@@ -55,6 +59,11 @@ export function parseWatchArgs(args: readonly string[]): WatchCall | string {
     positionals.push(a);
   }
   const [kind, target, extra] = positionals;
+  if (kind === 'accept-terms') {
+    if (!target || extra !== undefined) return 'accept-terms takes exactly one terms_version (from the agreement step)';
+    if (Object.keys(params).length > 0) return 'accept-terms takes no --session-key, --harness or --conversation-id';
+    return { tool: 'accept_wakeshift_terms', params: { terms_version: target }, json: args.includes('--json') };
+  }
   if (!kind || !(kind in TARGETS)) return 'name what to watch: job <id>, write <request_id> or cron <name>';
   if (!target || extra !== undefined) return `watch ${kind} takes exactly one ${TARGETS[kind as keyof typeof TARGETS].param}`;
   const spec = TARGETS[kind as keyof typeof TARGETS];
@@ -82,6 +91,8 @@ export function printWatchResult(result: unknown, tail: string | undefined, json
       if (r.already_finished === true || r.already_settled === true) console.log('It has already finished, so the wake goes out now.');
       if (typeof r.note === 'string') console.log(r.note);
       if (typeof r.fallback === 'string') console.log(r.fallback);
+    } else if (r.accepted === true) {
+      console.log(`Recorded the user's agreement (terms version ${String(r.terms_version)}). Run the watch again.`);
     } else {
       console.log(JSON.stringify(result, null, 2));
     }
