@@ -2152,9 +2152,7 @@ export async function extractStaleFromDB(
   const versionTs = linkExtractorWatermarkFor(grammar.generation);
 
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
-  // #9295: a body-only sweep counts only body wanted rows; it cannot settle a frontmatter row. The managed sweep re-resolves both.
-  const managed = await managedPersistenceEnabled(engine);
-  const wantedProducers = managed || includeFrontmatter ? undefined : ['body'];
+  const managed = await managedPersistenceEnabled(engine), wantedProducers = managed || includeFrontmatter ? undefined : ['body']; // #9295
   const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs, wantedProducers });
   if (dryRun) {
     const m = await previewMentionPass(engine, sourceIdFilter), counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);

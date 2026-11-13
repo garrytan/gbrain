@@ -7,7 +7,7 @@
  * PGLite always; PostgreSQL when DATABASE_URL is set (test/postgres-unit-arms.txt). A managed brain re-resolves both
  * producers, so its sweep settles the page.
  */
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -61,12 +61,13 @@ beforeAll(() => setCliOptions({ quiet: true, progressJson: false, progressInterv
 for (const kind of testBackends()) {
   describe(`stale extract continuations, unmanaged repo-less brain (${kind}) (#9295)`, () => {
     let engine: BrainEngine;
-    let close: () => Promise<void>;
+    let close: (() => Promise<void>) | undefined;
     beforeEach(async () => {
       if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
       else { const lite = new PGLiteEngine(); await lite.connect({}); await lite.initSchema(); engine = lite; close = () => lite.disconnect(); }
     }, 120_000);
-    afterEach(async () => { await close?.(); });
+    afterEach(async () => { await close?.(); close = undefined; });
+    afterAll(async () => { await close?.(); });
 
     test('a frontmatter reference to a page written later does not chain the sweep without end', async () => {
       await frontmatterLoop(engine, ctxOf(engine));
