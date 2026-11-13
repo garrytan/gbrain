@@ -636,9 +636,10 @@ function flaggedEntries(root: string, rel: string[]): string[] {
  * skip-worktree file that is on disk; it is left to the skipped-path check, so the other paths still commit. #7984: a
  * tracked path stages with `add -u`, because `add -A` refuses a deletion whose only match left is an ignored path;
  * visible untracked files stage with `add -A`; a path already staged as deleted is staged. Any other path keeps git's own
- * refusal (missing, or only an ignored untracked file). `dryRun` (#7752) asks git with `add -n` against `env`'s index.
+ * refusal (missing, or only an ignored untracked file). `indexCopy` (#7752) stages into the index copy `env` names, with
+ * no index-lock retry, so a dry run sees the rename pairs the real staging makes.
  */
-function stagePaths(root: string, rel: string[], before: string[], flagged: string[], env?: NodeJS.ProcessEnv, dryRun = false): Set<string> {
+function stagePaths(root: string, rel: string[], before: string[], flagged: string[], env?: NodeJS.ProcessEnv, indexCopy = false): Set<string> {
   const skipWorktree = new Set(flagged.filter(entry => /^[sS] /.test(entry)).map(entry => entry.slice(2)));
   const sparse = new Set([...skipWorktree].filter(p => rel.includes(p) && existsSync(join(root, p))));
   const live = rel.filter(p => !sparse.has(p));
@@ -651,8 +652,8 @@ function stagePaths(root: string, rel: string[], before: string[], flagged: stri
   const unmatched = live.filter(spec => !matched.has(spec));
   for (const [mode, specs] of [['-u', matching(tracked)], ['-A', matching(untracked)], ['-A', unmatched]] as const) {
     if (!specs.length) continue;
-    const args = ['add', mode, ...(dryRun ? ['-n'] : []), '--', ...literalPathspecs(specs)];
-    const add = dryRun ? git(root, args, { env }) : withIndexRetry(root, args, 'git add', env);
+    const args = ['add', mode, '--', ...literalPathspecs(specs)];
+    const add = indexCopy ? git(root, args, { env }) : withIndexRetry(root, args, 'git add', env);
     if (add.code !== 0) throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
   }
   return sparse;
@@ -771,9 +772,9 @@ function previewRoots(root: string, allowOutsideSourceRoot?: boolean): { managed
 
 /**
  * #7752: `--dry-run` of a commit runs the real run's path checks in its order: the source roots, `--base` and files
- * another writer staged (admitPaths), the real run's staging (stagePaths, as `git add -n`) and the source roots of a staged
- * rename's other side. Git is asked against a copy of the index, so the preview takes no lock and writes nothing; each
- * refusal carries the real run's code and text.
+ * another writer staged (admitPaths), the real run's staging (stagePaths) and the source roots of a staged rename's other
+ * side. Staging goes into a temporary copy of the index, so the preview takes no lock and leaves the real index and the
+ * worktree as they were (git may add loose objects for the staged files); each refusal carries the real run's code and text.
  */
 export function previewPaths(root: string, rel: string[], opts: { allowOutsideSourceRoot?: boolean; bases?: Map<string, string>; cwd?: string } = {}): void {
   const { roots } = previewRoots(root, opts.allowOutsideSourceRoot);

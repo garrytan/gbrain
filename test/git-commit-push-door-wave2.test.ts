@@ -158,6 +158,18 @@ describe('#7752: the dry run refuses what the real run refuses before staging (s
     expect(await envelope(root, ['-m', 'm', '--', 'brain'])).toEqual(swept);
     expect(status(root)).toEqual([' M brain/page.md', 'A  brain/theirs.md']);
   });
+
+  test('a named new file that staging pairs with another writer\'s staged deletion outside the source root: the dry run refuses like the real run and leaves the real index untouched', async () => {
+    const { root } = rooted();
+    git(root, 'rm', '-q', 'x.md');
+    put(root, 'brain/x.md', 'outside v1\n');
+    const index = () => readFileSync(join(root, '.git', 'index'));
+    const before = { index: index(), status: status(root) };
+    const preview = await envelope(root, ['--dry-run', '-m', 'm', '--', 'brain/x.md']);
+    expect({ index: index().equals(before.index), status: status(root) }).toEqual({ index: true, status: before.status });
+    expect(preview).toMatchObject({ exit: 1, body: { code: 'commit_outside_source_root', message: expect.stringContaining('A staged rename would commit x.md') } });
+    expect(await envelope(root, ['-m', 'm', '--', 'brain/x.md'])).toEqual(preview);
+  });
 });
 
 describe('#7793 item 2: printed fix and verify commands read each path literally', () => {
