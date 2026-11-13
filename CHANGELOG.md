@@ -10,6 +10,46 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.713.0] - 2026-11-13
+
+### A write killed in the middle no longer holds up its source
+
+**When a gbrain process dies while it holds the write at the head of a source's queue, the next write clears it at once instead of waiting.** A crash or `kill -9` used to leave that write's claim running with nobody renewing it, and every later write to the source waited behind it (`write_pending`) for the rest of its lease: 30 s while the write was preparing, about 6 minutes while it was publishing. On PGLite that wait happened on every such kill.
+
+- On a PGLite brain, the next gbrain process that opens the brain releases every claim written before it started and runs those writes again. The brain admits one process at a time, so their owners have exited. A process that cannot open the brain releases nothing.
+- On Postgres, a process killed on the same machine was already released at once; that is unchanged. A process on another machine, in another container or from before a reboot still waits out its lease, because gbrain cannot prove it is gone.
+- `gbrain sources writer status` now says so. A claim whose owner has provably exited reads `owner_exited: true`, `resumes_on_its_own: true` and `owner_live: false`, and its `next` is `claim_owner_exited` (nothing to do) instead of `claim_running` ("the owner is still renewing").
+- [docs/guides/troubleshooting.md](docs/guides/troubleshooting.md#stuck-write-head) lists how long each case takes and what status prints meanwhile.
+
+### A write receipt says when its Git commit landed
+
+**A receipt read after the write (`gbrain write-request <id>`, `get_write_request`, `list_write_requests`) now reports where Git is.** For a page on an ordinary (not `canonical: git`) checkout, `persistence.git_state` used to stay `queued` forever, even after the background Git effect committed the file, and no commit was named anywhere. It now comes from the Git effect: `committed` with the commit in `persistence.git_commit`, or `superseded`, `skipped`, `failed` or `retrying` with the cause in `persistence.git_reason`, and `queued` only while the effect is queued. Nothing stored is rewritten, so a Git effect from an earlier build, or one whose commit landed but whose push had to be retried, reads `committed` with no commit. Receipts of `canonical: git` sources are unchanged.
+
+Reported by @ethanbeard (#9227).
+
+<!-- behavior-change: stuck_head_released_9227 -->
+<!-- behavior-change: receipt_git_state_live_9227 -->
+
+### Label repairs no longer refuse pages over gbrain's own stamps
+
+**`gbrain repair visibility` and `gbrain repair private-labels` now label a page whose file differs from the database only by stamps gbrain keeps in the database, and they hold the pages they can't edit instead of failing the run (GST-2603).** A page retyped by a schema pack, a page with the `validate: false` grandfather stamp, or a page with a `legacy_type` retype record used to refuse every label repair, either as "cannot be made to the page's file line by line" or as `source_changed`. Enough of them in one window stopped the whole run as `item_failures_systemic`.
+- Those stamps no longer count as a difference. The page is labelled and its file still gains only the `visibility` line. A real difference (a date, the tags, the title, the body) still blocks the edit.
+- The preview checks every page in the window. A page whose file differs in a real key, or whose label line can't be edited as one line, is listed as held under `details.held` with the key that blocks it and its next step: `gbrain sources reconcile <id> <slug> --preview` for a file edited outside gbrain, or the line to fix. Held pages stay out of the preview hash and the approved set, so the rest of the window applies.
+- A page that starts refusing after the preview is declined with the new `label_edit_refused` code and nothing written. It never counts toward `item_failures_systemic`, the run exits 0, and the receipt names the pages that applied.
+- A brain without a repository writes the label to the database only, as before.
+- Labels and folder rules apply per source, so a page with the same slug in another source stayed readable after you labelled or ruled one copy, and a reader with no source filter found it by slug and in search. The previews of `gbrain repair visibility`, `gbrain repair private-labels --class restore` and `gbrain access rule add` / `import` now list those copies under `open_twins`: each same-slug page in another source that isn't private and that a caller outside the change could read, with their count and the command that covers them (the same repair or rule with `--source <other>`). The list is read-only and bounded, isn't part of the preview hash, and changes no copy for you.
+
+<!-- behavior-change: label_repairs_hold_refusals_gst2603 -->
+
+**Captured session files that mention a large entity page are extracted again instead of being stopped and later deleted.**
+
+### Fixed
+- The session sweep no longer fails every window whose facts name an entity page stored in segments (a page over about 1 MiB). Facts the extractor left without an entity and that mention such a page were checked against the page's whole body, which a segmented page refuses (`page_body_segmented`) after the model call; the window failed five times, stopped, and the session file was deleted at the un-ingested retention limit. The check now reads the page the way its writer does, so the window commits its facts onto the page's `## Facts` table, on a Git source and on a repo-less brain. Reported by @dvasselin (#9279).
+- A refusal that retrying cannot change now stops its window after the one paid attempt instead of five, retention keeps the session file it holds, and `gbrain doctor` (`memory_writeback`) counts these files as held. The first sweep after an upgrade retries each such window once, so a brain with files stopped by this bug recovers with no command.
+- A Gmail thread you purged while its import was still waiting to commit no longer leaves its open loops behind. `gbrain waiting` could keep listing the thread's subject and evidence quote after the purge; the sync now drops loops for threads it refused as purged in the same run when no page for them exists (#9011).
+
+<!-- behavior-change: corpus_segmented_entity_9279 -->
+
 ## [0.60.712.0] - 2026-11-13
 
 ### A page left behind when its file moved can be folded into the moved page
