@@ -1875,7 +1875,8 @@ export async function embedQuery(
   const cfg = requireConfig();
   const { recipe, modelId } = await resolveEmbeddingProvider(opts?.embeddingModel ?? getEmbeddingModel());
   const dims = opts?.dimensions ?? cfg.embedding_dimensions ?? DEFAULT_EMBEDDING_DIMENSIONS;
-  const key = queryEmbedCacheKey(recipe.id, modelId, gw().cacheTag + (cfg.base_urls?.[recipe.id] ?? ''), dims, input);
+  const state = gw();
+  const key = queryEmbedCacheKey(recipe.id, modelId, state.cacheTag + (cfg.base_urls?.[recipe.id] ?? ''), dims, input);
   const cached = hasAIInvocationGuard() ? undefined : cachedQueryEmbedding(key);
   if (cached) return cached;
   const generation = queryEmbedGeneration();
@@ -1888,7 +1889,7 @@ export async function embedQuery(
     // default via withDefaultTimeout (shorter wins).
     abortSignal: opts?.abortSignal,
   });
-  if (v) storeQueryEmbedding(key, v, generation);
+  if (v && !state.released) storeQueryEmbedding(key, v, generation);
   return v;
 }
 
