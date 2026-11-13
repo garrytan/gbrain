@@ -3352,7 +3352,10 @@ lists each newer change the database copy overwrites and each file a
 `source_changed` (detail `unimported_file_edit`) when a decision takes the
 database copy over what such a file says (`take_database`, `delete` or
 `set_value`); decide `take_file` for those paths, or preview the page alone with
-`--slug` as above. A `never_committed` `file_gone` page resolved
+`--slug` as above. That covers an unbound collision too (a page an unbound
+write left database-only, and a different file at its slug path): `--slug
+<slug> --prefer database` reads it as drift, names the file's commit, asks for
+consent and records the file as the page's origin. A `never_committed` `file_gone` page resolved
 `--prefer database` writes no file, so it is unaffected. The keep_db policy is
 unchanged.
 
@@ -3427,9 +3430,44 @@ One preview resolves one Decision, so a selection that spans several sides or
 deleted states refuses [`file_drift_mixed_selection`](error-codes.md#file_drift_mixed_selection),
 and a deleted side refuses without `--state`
 ([`file_drift_state_required`](error-codes.md#file_drift_state_required)):
-the two `--prefer` values do opposite things in each state. `--held`, `--side`,
-`--state`, `--cursor` and `--provenance` always need `--prefer`: without it
-the command refuses with the usage line instead of running the bare survey.
+the two `--prefer` values do opposite things in each state. Those two refusals
+apply to a `--prefer` preview only.
+
+<a id="file-drift-compare"></a>**Compare before you pick a side** (GST-2568). Any selection (`--slug`,
+`--request`, `--all-drifted` or `--held`, with its narrowing flags) without
+`--prefer` compares each page with its file and writes nothing. Each page
+lists what differs (`frontmatter` with the keys, `body`, `both`, or `none`
+once gbrain's own normalisation is read), which side is newer (the file's last
+commit time at HEAD against the page's `updated_at`; `unknown` when the file
+has uncommitted bytes or a time is missing) and what a repair would do:
+`release_hold` or `no_drift` (they agree), `prefer_file` (the file was
+committed after the page last changed, so the file side is the repair),
+`needs_human` (the page is newer, a page whose file is gone, or a deleted page
+whose file differs) or `unknown`. A held comparison may span several sides and
+states, and is windowed like a held preview. The comparison prints no apply
+command; its `next_actions` names the `--prefer file` preview when some files
+are newer. A `--prefer` preview without a side names this comparison as its
+`fix`.
+
+```bash
+gbrain repair file-drift --source <id> --held --json           # compare every held page, no winner named
+```
+
+<a id="file-drift-kept-newer"></a>`--prefer file` never drops a page edited after its file's last commit in
+bulk. A `--held`, `--all-drifted` or `--request` preview lists such a page
+`kept_newer_page`, with the edit's time, the file's commit time and the two ways
+to settle it (`--prefer database` for that page, or carry the edit into the
+file, commit it and sync), and leaves its hold in place. Naming the page with
+`--slug` still resolves it file-wins, and the preview's warning says which
+database edit the apply drops. A page whose file is gone is never deleted by a
+comparison or by `--prefer file` unless you select its deleted state.
+
+Every `--prefer` preview also counts what the apply drops from the side it
+overwrites: each page's listing line ends "drops N line(s) the file holds" (or
+"the page holds"), a warning gives the total across the run, and `--json`
+carries `details.pages[].lost_lines` and `details.lost_lines_total`. A line
+counts when the result doesn't carry it; blank lines and trailing spaces don't
+count. Read those lines before you agree to the apply.
 
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|
@@ -3451,13 +3489,19 @@ hold the preview observed, and answers `changed_since_preview` when any of
 them changed. A preview that finds nothing still prints an apply command; it
 applies nothing. Page and
 file agree when they differ only in formatting sync does not import (frontmatter
-key order or quoting). An apply refused before it published reserves no request
+key order or quoting, or a retype's database-only `legacy_type` stamp on a file that
+still names the old type). An apply refused before it published reserves no request
 id, so the apply a fresh preview prints goes through. A page with
 no recorded file origin (no source path, and a source URI that is not a
 `file:` URI) is compared with, and adopts, the file at its slug path, spelled
 as sync imports it (`README.md` for slug `readme`); the apply records that
 path. A sync re-screens a held page that changed since it was held even when
-Git did not move. A page a read-only mirror stored database-only (`mirror_read_only`)
+Git did not move. A gbrain that compares file drift differently (GST-2568) has
+the next sync re-screen every held `file_drift` page that is not a deletion
+once: a page that now agrees with its file is released with no commit and no
+change to its body, type or stamps (a stale stored copy of the `type` key is
+normalised away), and the sync prints `Released N held file(s) that no longer need a
+decision.` (JSON `holds_released`). A page a read-only mirror stored database-only (`mirror_read_only`)
 is compared with the file at its slug path once its source is writable again;
 the apply records that path and clears the stamp.
 

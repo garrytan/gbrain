@@ -79,7 +79,7 @@ test('a held origin twin is listed by the preview with an apply command, and --p
   expect(planned.affected).toBe(1);
   // GST-2579: the external commit was never imported, so the listing names the commit the repair discards.
   expect(planned.listing).toEqual([{ item: `default:${SLUG}`, class: 'prefer_database',
-    detail: expect.stringMatching(new RegExp(`^discards commit ${git(root, 'rev-parse', 'HEAD').slice(0, 12)} by Example on \\S+ to ${PATH}, which sync never recorded importing; exactly the preferred side; adopts the file at its slug path$`)) }]);
+    detail: expect.stringMatching(new RegExp(`^discards commit ${git(root, 'rev-parse', 'HEAD').slice(0, 12)} by Example on \\S+ to ${PATH}, which sync never recorded importing; exactly the preferred side; adopts the file at its slug path; drops 1 line\\(s\\) the file holds$`)) }]);
   expect((await preview(engine, 'database', planned.preview_hash!)).outcomes).toEqual({ repaired: 1 });
   await settleManagedGitEffects(engine);
   git(root, 'commit', '-qam', 'commit the repaired file');

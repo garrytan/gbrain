@@ -9,7 +9,7 @@ export const OUTPUT_REDACTION_LIMIT = '<REDACTED:output_limit>';
 const IDENTITY_FIELDS = new Set([
   'id', 'slug', 'source_id', 'page_id', 'chunk_id', 'message_id', 'thread_id',
   'graph_session_prefix', 'relational_seed', 'relational_path', 'superseded_by',
-  'fact_id', 'entity_slug',
+  'fact_id', 'entity_slug', 'from_slug', 'to_slug', 'origin_slug', 'from_source_id', 'to_source_id', 'origin_source_id',
 ]);
 const MAX_DEPTH = 24;
 const MAX_TEXT_FIELDS = 8192;

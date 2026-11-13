@@ -875,6 +875,10 @@
       },
       {
         "category": "ops",
+        "name": "unscoped_multi_user_token"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
@@ -1184,6 +1188,10 @@
       {
         "category": "ops",
         "name": "search_mode"
+      },
+      {
+        "category": "brain",
+        "name": "synopsis_tier_coverage"
       },
       {
         "category": "brain",

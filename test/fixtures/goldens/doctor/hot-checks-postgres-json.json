@@ -2725,6 +2725,15 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (0 enabled member(s)), so every credential reads that person's own pages.",
+            "name": "unscoped_multi_user_token",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No image assets indexed yet",
@@ -4578,6 +4587,19 @@
             "elapsed_ms": "<volatile>",
             "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
             "name": "search_mode",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "configured": false,
+              "global_tier": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the configured contextual-retrieval tier is none, not per_chunk_synopsis.",
+            "name": "synopsis_tier_coverage",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {
@@ -7930,6 +7952,15 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (0 enabled member(s)), so every credential reads that person's own pages.",
+            "name": "unscoped_multi_user_token",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No image assets indexed yet",
@@ -9795,6 +9826,19 @@
             "elapsed_ms": "<volatile>",
             "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
             "name": "search_mode",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "configured": false,
+              "global_tier": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the configured contextual-retrieval tier is none, not per_chunk_synopsis.",
+            "name": "synopsis_tier_coverage",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {

@@ -14,6 +14,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { KNOWN_CONFIG_KEYS, loadConfigWithEngine } from '../src/core/config.ts';
 import { runConfig } from '../src/commands/config.ts';
+import { searchConfigValueRefusal } from '../src/core/search/config-values.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
 function stubEngine(): { engine: BrainEngine; setCalls: Array<[string, string]>; unsetCalls: string[] } {
@@ -134,4 +135,25 @@ test('every key loadConfigWithEngine reads under search.* or content_sanity.* is
   const underPrefix = [...read].filter((k) => k.startsWith('search.') || k.startsWith('content_sanity.'));
   expect(underPrefix.some((k) => k.startsWith('content_sanity.'))).toBe(true);
   expect(underPrefix.filter((k) => !KNOWN_CONFIG_KEYS.includes(k))).toEqual([]);
+});
+
+describe('config set: the qualified search switches take a boolean', () => {
+  for (const key of ['search.qualified_aliases', 'search.title_qualified']) {
+    test(`${key} maybe: refused (exit 2, invalid_params), nothing written`, async () => {
+      const { engine, setCalls } = stubEngine();
+      const { errs, exit } = await runConfigCapture(engine, ['set', key, 'maybe']);
+      expect(exit).toBe(2);
+      expect(setCalls).toEqual([]);
+      expect(errs).toContain(`Error [invalid_params]: ${key} must be true or false (got 'maybe'). Nothing was written.`);
+      expect(errs).toContain(`Fix: gbrain config get ${key}`);
+      expect(searchConfigValueRefusal(key, 'maybe')?.example).toBe('true');
+    });
+
+    test(`${key} true is written`, async () => {
+      const { engine, setCalls } = stubEngine();
+      const { exit } = await runConfigCapture(engine, ['set', key, 'true']);
+      expect(exit).toBeNull();
+      expect(setCalls).toEqual([[key, 'true']]);
+    });
+  }
 });
