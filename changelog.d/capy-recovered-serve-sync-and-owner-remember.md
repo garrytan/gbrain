@@ -1,3 +1,7 @@
+---
+important: regression
+---
+
 **A `gbrain serve` that recovers from status-only mode can sync again, and the brain owner's `remember` works on an entity page stored in segments.**
 
 ### Fixed
