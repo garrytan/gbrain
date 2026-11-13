@@ -188,6 +188,11 @@ export function removeHermesHook(opts: { hermesHome: string; lane: HermesHookLan
     const probe = probeBlock(MARKERS, text);
     const entries = probe.state === 'present' ? entriesIn(probe.interior) : {};
     const command = entries[opts.lane];
+    const pasted = probe.state === 'absent' && opts.lane === 'skill-resolver' ? inspectHermesResolverHook(opts.hermesHome).command : undefined;
+    if (pasted) {
+      if (!opts.dryRun) revoke(opts.hermesHome, pasted);
+      return { action: 'skip', path, detail: `the ${what} you pasted under your own hooks: in ${path} is not gbrain's to edit, so delete it there; its approval in ${ALLOWLIST} is withdrawn` };
+    }
     if (probe.state !== 'present' || (!command && (opts.lane === 'skill-resolver' || Object.keys(entries).length > 0))) return { action: 'skip', path, detail: `no ${what} in ${path}` };
     const rest = { ...entries, [opts.lane]: undefined };
     const left = Object.values(rest).some(Boolean);
