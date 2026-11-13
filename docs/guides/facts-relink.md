@@ -95,6 +95,12 @@ gbrain facts relink --source default --fact-id 123 --entity people/alice-example
 gbrain facts relink --source default --apply-plan relink-plan.json
 ```
 
+On Postgres, run apply on the brain host while a compatible Serve owns the
+writer. The CLI admits the reviewed request and waits for Serve to publish it.
+A compatible Serve heartbeat is required to admit a new plan. Only a compatible
+Serve on the admitting host can claim it; if Serve stops after admission, the
+request waits for that host. Keep the plan and replay it to read the same receipt.
+
 The plan records a digest of the evidence. The fact context records the
 operator action without copying the evidence text. Apply keeps the same fact
 ID and returns the durable request ID. Applying the

@@ -24,7 +24,7 @@ export async function run(args: string[], ctx: CliDispatchContext): Promise<void
       return;
     }
     const config = ctx.SELECTED_CONFIG_BY_ENGINE.get(eng) ?? ({ engine: eng.kind } as never);
-    setCliExitVerdict(await facts.runFactsCommand(eng, args, config, sourceId));
+    setCliExitVerdict(await facts.runFactsCommand(eng, args, config, sourceId, { residentOnly: eng.kind === 'postgres' }));
   } finally {
     await finishCliTeardown({ engine: eng });
   }

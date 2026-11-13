@@ -46,6 +46,7 @@ gbrain facts relink --fact-id <id> --entity <slug> --evidence <text> --dry-run -
 gbrain facts relink --apply-plan <file> [--source <id>]
   Move one reviewed fact by ID on the brain host. The preview pins the source,
   fact and target revision. Apply may enqueue the target page's usual embedding.
+  On Postgres, apply requires a running Serve on the brain host.
 
 Relink never creates pages and never supersedes a fact. Exact duplicates are
 retired (expired, kept in history). Linked facts are queued for the System One
@@ -221,7 +222,7 @@ async function runRetryDead(engine: BrainEngine, args: string[]): Promise<number
 }
 
 /** Exit code: 0 for complete and partial runs (limit or budget), 1 for usage errors. */
-export async function runFactsCommand(engine: BrainEngine, args: string[], config: GBrainConfig, sourceId: string): Promise<number> {
+export async function runFactsCommand(engine: BrainEngine, args: string[], config: GBrainConfig, sourceId: string, opts: { residentOnly?: boolean } = {}): Promise<number> {
   const sub = args[0];
   if (!sub || sub === '--help' || sub === '-h') {
     console.log(factsHelpText());
@@ -238,7 +239,7 @@ export async function runFactsCommand(engine: BrainEngine, args: string[], confi
     return 0;
   }
   if (rest.some(arg => ['--fact-id', '--entity', '--evidence', '--plan-out', '--apply-plan'].includes(arg))) {
-    return runExplicitRelink(engine, config, sourceId, rest);
+    return runExplicitRelink(engine, config, sourceId, rest, opts);
   }
   if (rest.includes('--conversation')) return runConversation(engine, rest, config, sourceId);
   const parsed = parseRelinkArgs(rest, sourceId);
@@ -256,7 +257,7 @@ export async function runFactsCommand(engine: BrainEngine, args: string[], confi
   return 0;
 }
 
-async function runExplicitRelink(engine: BrainEngine, config: GBrainConfig, sourceId: string, args: string[]): Promise<number> {
+async function runExplicitRelink(engine: BrainEngine, config: GBrainConfig, sourceId: string, args: string[], opts: { residentOnly?: boolean }): Promise<number> {
   const flags = new Map<string, string>();
   for (let i = 0; i < args.length; i++) {
     const flag = args[i]!;
@@ -279,7 +280,7 @@ async function runExplicitRelink(engine: BrainEngine, config: GBrainConfig, sour
     let saved: unknown;
     try { saved = JSON.parse(readFileSync(apply, 'utf8')); }
     catch { throw opError('invalid_params', 'The relink plan could not be read.', 'Check the path and use the original JSON preview file.'); }
-    const result = await applyExplicitRelink(engine, config, source, saved);
+    const result = await applyExplicitRelink(engine, config, source, saved, opts);
     console.log(JSON.stringify(result));
     return result.ok ? 0 : 1;
   }

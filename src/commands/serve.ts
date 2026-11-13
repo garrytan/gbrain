@@ -251,6 +251,7 @@ async function serveBrain(
   // — the OAuth provider in serve-http.ts handles bearer auth via
   // verifyAccessToken with legacy access_tokens fallback (so v0.22.7 callers
   // that used `gbrain auth create` keep working unchanged).
+  (await import('../core/persistence/claim-phase.ts')).markServeOwnerCommand();
   const isHttp = args.includes('--http');
   // Wakeshift (docs/guides/wakeshift.md): the 5 s wake drainer for stdio and HTTP alike; a no-op tick while reporting back is off.
   (await import('../core/wakeshift/drain.ts')).startWakeDrain(engine);

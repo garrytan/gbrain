@@ -242,13 +242,13 @@ export type WriteWait =
  * The waiter never owns a provider, database connection, or kernel lock.
  */
 export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config: GBrainConfig,
-  opts: { waitMs?: number; signal?: AbortSignal; whileHeldMs?: number } = {}): Promise<WriteWait> {
+  opts: { waitMs?: number; signal?: AbortSignal; whileHeldMs?: number; residentOnly?: boolean } = {}): Promise<WriteWait> {
   if (isTerminal(row)) return { kind: 'terminal', row };
   // PR B: a write deferred behind a refresh still running (GST-1582: or an import not landed) cannot publish before it ends,
   // so its pending receipt is returned at once.
   if (row.state === 'deferred' && await deferredWaiting(engine, row)) return { kind: 'pending', row };
-  const consumer = startPersistenceConsumer(engine, config);
-  const service = services.get(engine)!;
+  const consumer = opts.residentOnly ? undefined : startPersistenceConsumer(engine, config);
+  const service = services.get(engine);
   const id = row.id;
   let handed: WriteRequest | undefined;
   let wake: (() => void) | undefined;
@@ -257,8 +257,8 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   const listeners = waiters.get(id) ?? new Set();
   const listener = (settled: WriteRequest) => { handed = settled; wake?.(); };
   listeners.add(listener); waiters.set(id, listeners);
-  // The admission transaction has committed: publish now, not after the idle backoff.
-  consumer.wake(true);
+  // In-process consumers can wake immediately. A resident-only caller observes the journal without starting one.
+  consumer?.wake(true);
   const waitMs = opts.waitMs ?? 5000;
   const started = performance.now();
   // `whileHeldMs`: past `waitMs`, keep waiting (to that total) while this process's consumer is executing the request or it
@@ -270,7 +270,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   // shorter wait is extended to that budget); waiters on one worktree share the read and reuse its answer (sharedOwnerRead).
   let ownerRead: SharedOwnerRead | undefined;
   try {
-    while (!service.stopping && !opts.signal?.aborted) {
+    while (!service?.stopping && !opts.signal?.aborted) {
       if (handed) {
         row = handed; handed = undefined;
         if (isTerminal(row)) return { kind: 'terminal', row };
@@ -280,7 +280,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
       if (!ownerRead && row.worktree_id && remaining <= OWNER_READ_BUDGET_MS) ownerRead = sharedOwnerRead(engine, row.worktree_id);
       if (remaining <= 0) {
         if (opts.whileHeldMs && opts.whileHeldMs > waitMs && deadline === started + waitMs
-          && (consumer.holds(id) || row.state === 'queued' && !row.blocked_reason)) { deadline = started + opts.whileHeldMs; continue; }
+          && (consumer?.holds(id) || row.state === 'queued' && !row.blocked_reason)) { deadline = started + opts.whileHeldMs; continue; }
         break;
       }
       await new Promise<void>(resolve => {
@@ -288,9 +288,9 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
         const timer = setTimeout(done, Math.min(delay, remaining));
         wake = done; opts.signal?.addEventListener('abort', done, { once: true });
       });
-      if (handed || service.stopping || opts.signal?.aborted || performance.now() >= deadline) continue;
+      if (handed || service?.stopping || opts.signal?.aborted || performance.now() >= deadline) continue;
       delay = delay === firstPoll ? 50 : Math.min(250, delay * 2);
-      if (consumer.holds(id)) continue;
+      if (consumer?.holds(id)) continue;
       const read = await readProgress(engine, id, deadline - performance.now());
       if ('cancelled' in read) continue;
       if ('error' in read) {
@@ -308,7 +308,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
     // A stopped wait settles only what this process can settle at once: one consumer tick (it claims and publishes the
     // request when nothing holds it back) and the request this consumer is still executing. A write that cannot move
     // (another owner's lock, a consumer that defers to another process) is left queued under its request id.
-    if (opts.signal?.aborted && !service.stopping && !handed) {
+    if (opts.signal?.aborted && !service?.stopping && !handed && consumer) {
       const left = () => deadline - performance.now();
       await Promise.race([consumer.tick().catch(() => undefined), new Promise<void>(resolve => setTimeout(resolve, Math.max(0, left())))]);
       while (!handed && consumer.holds(id) && left() > 0) {
@@ -325,7 +325,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   }
   if (handed) row = handed;
   // A stopped wait then reads the receipt once, so a write that committed meanwhile is banked rather than reported pending.
-  if (!isTerminal(row) && opts.signal?.aborted && !service.stopping) {
+  if (!isTerminal(row) && opts.signal?.aborted && !service?.stopping) {
     const latest = await getWriteRequestProgress(engine, id).catch(() => null);
     if (latest) row = { ...row, ...latest };
     if (isTerminal(row)) return { kind: 'terminal', row: await getWriteRequestById(engine, id).catch(() => null) ?? row };

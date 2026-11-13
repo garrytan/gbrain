@@ -140,9 +140,13 @@ export function isOwnerThisProcess(owner: Pick<ClaimOwner, 'pid' | 'nonce'> | nu
 
 export const OWNER_COMMANDS: ReadonlySet<string> = new Set(['sync', 'serve', 'jobs', 'autopilot', 'mcp', 'dream', 'cycle', 'sources', 'migrate-graduation', 'put', 'import']);
 let ownerOverride: ClaimOwner | undefined;
+let serveOwnerCommand = false;
+/** Called by the dispatched Serve command after global option parsing. */
+export function markServeOwnerCommand(): void { serveOwnerCommand = true; }
 /** The gbrain command this process runs (`cli` when none is recognisable). */
 export function claimOwnerKind(): string {
   if (ownerOverride) return ownerOverride.kind;
+  if (serveOwnerCommand) return 'serve';
   const command = process.argv.slice(2).find(arg => !arg.startsWith('-'));
   return command && OWNER_COMMANDS.has(command) ? command : 'cli';
 }

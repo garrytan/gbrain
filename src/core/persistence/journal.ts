@@ -22,7 +22,7 @@ import { writerStamp } from './writer-versions.ts';
 import { intentCarriesContent, intentCarriesPurgedContent, PURGE_PRESENCE_COLUMNS } from './purged-intent.ts';
 import { hostname } from 'node:os';
 import { claimOwner, claimOwnerKind, claimPhaseStamp, startClaimPhase } from './claim-phase.ts';
-import { CONSUMER_LIVE_MS, consumerIdentity, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
+import { CONSUMER_LIVE_MS, EXPLICIT_RELINK_CAPABILITY, consumerIdentity, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
 import { classifyHolderLiveness, syncLockId } from '../db-lock.ts';
 import { publicFailureDetail } from './publication-failure.ts';
 import { catalogueError } from '../error-catalogue.ts';
@@ -748,7 +748,19 @@ const PASSES_QUEUED_SYNC = (earlier: string, r: string, priority: string, laneRo
  * run in the claiming process: there a foreground write also passes running lane groups that do not name its
  * page and publishes beside them on the process's shared worktree lock (group-publish.ts).
  */
-export const claimableWriteSql = (priority: string, laneRoots = "'{}'::text[]") => `(r.state='queued' OR ${RELEASED_DEFERRED('r')}) AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
+/** Same heartbeat as the v309 claim guard. A claim locks that heartbeat row until its UPDATE. */
+const serveRelinkHeartbeat = (host: string) => {
+  const { pid, nonce } = consumerIdentity();
+  return `c.host_id=${host} AND c.pid=${pid} AND c.nonce='${nonce}'
+    AND c.kind='serve' AND c.mode='full' AND NOT c.restart_required
+    AND c.renewed_at>now()-interval '${CONSUMER_LIVE_MS} milliseconds' AND '${EXPLICIT_RELINK_CAPABILITY}'=ANY(c.capabilities)`;
+};
+const serveRelinkClaim = () => claimOwnerKind() === 'serve'
+  ? ` OR (r.state='deferred' AND r.operation='relink_fact_by_id' AND r.intent->>'serve_only'='true' AND r.admitter_host_id=$1::uuid
+    AND r.deferred_refresh_id IS NULL AND r.deferred_import_from IS NULL
+    AND EXISTS (SELECT 1 FROM persistence_consumers c WHERE ${serveRelinkHeartbeat('$1::uuid')}))`
+  : '';
+export const claimableWriteSql = (priority: string, laneRoots = "'{}'::text[]") => `(r.state='queued' OR ${RELEASED_DEFERRED('r')}${serveRelinkClaim()}) AND (r.worktree_id IS NULL OR (w.owner_host_id=$1::uuid AND w.state='active'))
       AND (r.worktree_id IS NULL OR ${refreshFenceClear('r')})
       AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($2::text[]))
       AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
@@ -865,6 +877,11 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     // `passed_sync`: the claimed row went ahead of a queued sync row of its root.
     // #6278: the claim stamps its own `preparing` phase, so a kill before the first renewal is charged like any other.
     const token = randomUUID();
+    if (claimOwnerKind() === 'serve' && row.operation === 'relink_fact_by_id' && row.intent?.serve_only === true) {
+      const [live] = await tx.executeRaw(`SELECT 1 FROM persistence_consumers c WHERE ${serveRelinkHeartbeat('$1::uuid')} FOR SHARE`, [hostId]);
+      if (!live) return null;
+      await tx.executeRaw("SELECT set_config('gbrain.explicit_relink_serve', '1', true)");
+    }
     const [claimed] = await tx.executeRaw<WriteRequest & { passed_sync: boolean; seen_sequence: string | null }>(`UPDATE persistence_requests SET state='running',
       execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
       updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *,EXISTS (SELECT 1 FROM persistence_requests earlier

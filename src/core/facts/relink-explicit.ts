@@ -56,7 +56,7 @@ export async function previewExplicitRelink(engine: BrainEngine, source: string,
   });
 }
 
-export async function applyExplicitRelink(engine: BrainEngine, config: GBrainConfig, sourceId: string, input: unknown) {
+export async function applyExplicitRelink(engine: BrainEngine, config: GBrainConfig, sourceId: string, input: unknown, opts: { residentOnly?: boolean } = {}) {
   if (!input || typeof input !== 'object') return invalid('A saved explicit relink preview is required.');
   const { plan, checksum } = input as { plan?: ExplicitRelinkPlan; checksum?: string };
   if (!plan || plan.version !== 1 || !isWriteRequestId(plan.runId) || plan.source !== sourceId
@@ -75,5 +75,5 @@ export async function applyExplicitRelink(engine: BrainEngine, config: GBrainCon
   if (!scope || scope.brain_id !== pin.brainId || scope.incarnation !== pin.sourceIncarnation) {
     return invalid('The preview belongs to another brain or source incarnation.');
   }
-  return submitRelinkGroup(engine, config, plan.source, plan.target, relinkIntent(plan));
+  return submitRelinkGroup(engine, config, plan.source, plan.target, { ...relinkIntent(plan), ...(opts.residentOnly ? { serve_only: true } : {}) }, opts);
 }

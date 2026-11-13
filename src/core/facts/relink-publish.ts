@@ -54,7 +54,7 @@ export const EXPLICIT_RELINK_OPERATION = 'relink_fact_by_id';
 /** One fact in a relink request: its pinned row hash and how its subject was found. */
 export interface RelinkIntentFact { id: number; hash: string; tier: string; model: string | null; note: string }
 export interface ExplicitRelinkPin { brainId: string; sourceIncarnation: string; pageId: number; revision: string; factHash: string; evidenceHash: string }
-export interface RelinkIntent { kind: 'relink_facts'; run_id: string; queue_conflict: boolean; facts: RelinkIntentFact[]; explicit?: ExplicitRelinkPin }
+export interface RelinkIntent { kind: 'relink_facts'; run_id: string; queue_conflict: boolean; facts: RelinkIntentFact[]; explicit?: ExplicitRelinkPin; serve_only?: true }
 
 export interface RelinkGroupOutcome {
   linked: Array<{ id: number; row_num: number }>;
@@ -408,20 +408,31 @@ export type RelinkGroupResult =
  * inside one run replays its receipt and a later run never reuses it.
  */
 export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfig, sourceId: string, slug: string,
-  intent: RelinkIntent): Promise<RelinkGroupResult> {
+  intent: RelinkIntent, opts: { residentOnly?: boolean } = {}): Promise<RelinkGroupResult> {
   const { initializeLocalPersistence, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
   const { authorizeStoredRequest, submissionAuthority } = await import('../persistence/authority.ts');
   const { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } = await import('../persistence/journal.ts');
-  const { assertPersistenceAccepting, waitForWrite, writeResponse } = await import('../persistence/service.ts');
+  const { assertPersistenceAccepting, awaitWrite, writeResponse } = await import('../persistence/service.ts');
   const { resolveFactWriteTarget } = await import('../persistence/fact-write-target.ts');
   const ctx = { engine, sourceId, remote: false as const, config, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
   assertPersistenceAccepting(engine);
-  await initializeLocalPersistence(ctx);
+  if (!opts.residentOnly) await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
   const operation = intent.explicit ? EXPLICIT_RELINK_OPERATION : RELINK_OPERATION;
   const key = digest(intent.explicit ? { operation, run: intent.run_id } : { sourceId, slug, run: intent.run_id, facts: intent.facts.map(f => [f.id, f.hash]) });
   const requestId = `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
   const existing = await getWriteRequest(engine, principal, requestId);
+  const wait = async (row: WriteRequest) => {
+    const result = await awaitWrite(engine, row, config, { waitMs: 60_000, residentOnly: opts.residentOnly });
+    if (opts.residentOnly && result.kind === 'read_failed') {
+      const error = opError('unavailable', 'The relink was admitted but its current state could not be read.',
+        `Read gbrain write-request ${requestId} --json or retry the same saved plan when the database is reachable. Do not make a new plan yet.`,
+        { fix: { argv: ['gbrain', 'write-request', requestId, '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Reads the current state of the original relink request without resubmitting it.' } });
+      error.requestId = requestId;
+      throw error;
+    }
+    return result.row;
+  };
   const callerIntent = intent as unknown as Record<string, unknown>;
   const committed = (row: WriteRequest): RelinkGroupResult => ({ ok: true, outcome: row.outcome as unknown as RelinkGroupOutcome,
     ...(intent.explicit ? { requestId } : {}) });
@@ -429,7 +440,7 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
     await submissionAuthority(ctx, existing.operation, existing.source_id, existing.source_incarnation, existing.slug);
     await authorizeStoredRequest(engine, existing);
     assertReplayIntent(existing, intentDigest({ operation, sourceId, slug, callerIntent }));
-    const finished = existing.state === 'committed' ? existing : await waitForWrite(engine, existing, config, 60_000);
+    const finished = existing.state === 'committed' ? existing : await wait(existing);
     writeResponse(finished);
     return committed(finished);
   }
@@ -451,13 +462,27 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
   if (target.kind === 'unbound') return { ok: false, reason: 'unfenceable', message: `source ${sourceId} writes through to ${target.root} but has no canonical owner` };
   const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug);
   if (target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
+  if (opts.residentOnly && !existing) {
+    const { CONSUMER_LIVE_MS, EXPLICIT_RELINK_CAPABILITY } = await import('../persistence/consumer-heartbeat.ts');
+    const { hostIdFor } = await import('../persistence/identity.ts');
+    const hostId = hostIdFor(engine);
+    const [owner] = await engine.executeRaw<{ ready: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_consumers
+      WHERE host_id=$1::uuid AND kind='serve' AND mode='full' AND NOT restart_required
+        AND renewed_at > now()-($2::integer*interval '1 millisecond') AND $3=ANY(capabilities)) AS ready`,
+    [hostId, CONSUMER_LIVE_MS, EXPLICIT_RELINK_CAPABILITY]);
+    if (!owner?.ready || target.binding && target.binding.owner_host_id !== hostId) {
+      throw opError('owner_unavailable', 'Explicit relink needs a compatible running Serve owner.',
+        'Start or upgrade Serve on the canonical brain host, then retry the same saved preview. No request was accepted.');
+    }
+  }
   try {
     const row = existing ?? await admitWrite(engine, {
       principal, operation, sourceId, sourceIncarnation: source.incarnation, slug, pageId: snapshot.page.id,
       requestId, callerIntent, intent: callerIntent, authority,
+      brainId: intent.explicit?.brainId,
       worktreeId: target.binding?.worktree_id ?? null, topologyGeneration: target.binding?.topology_generation ?? null,
     });
-    const finished = await waitForWrite(engine, row, config, 60_000);
+    const finished = await wait(row);
     writeResponse(finished);
     return committed(finished);
   } catch (error) {

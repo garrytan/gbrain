@@ -217,7 +217,8 @@ type DirectEngine = SqlEngine & Partial<Pick<BrainEngine, 'kind' | 'executeRawDi
  * What this binary's consumer can drain: `refresh_barrier_1` (v292) claims writes deferred behind a worktree refresh,
  * `refresh_barrier_import_1` (v294) writes held for an import.
  */
-export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1'] as const;
+export const EXPLICIT_RELINK_CAPABILITY = 'explicit_fact_relink_1';
+export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1', EXPLICIT_RELINK_CAPABILITY] as const;
 const RENEW_SQL = `WITH purged AS (
     DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3))
   INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader,capabilities)

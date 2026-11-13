@@ -186,6 +186,7 @@ export async function expireDeferredWrites(engine: BrainEngine, hostId: string, 
  * (`sources.last_commit` still the commit it was held at). A read that fails counts as waiting.
  */
 export async function deferredWaiting(engine: SqlEngine, row: Pick<WriteRequest, 'source_id' | 'deferred_refresh_id' | 'deferred_import_from'>): Promise<boolean> {
+  if (row.deferred_refresh_id == null && row.deferred_import_from == null) return false;
   const [held] = await engine.executeRaw<{ waiting: boolean }>(`SELECT
     ($1::uuid IS NOT NULL AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes WHERE id=$1::uuid AND released_at IS NOT NULL))
     OR ($2::text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM sources WHERE id=$3 AND COALESCE(last_commit,'')<>$2::text)) AS waiting`,
@@ -197,7 +198,8 @@ export async function deferredWaiting(engine: SqlEngine, row: Pick<WriteRequest,
 export async function deferredBacklog(engine: SqlEngine): Promise<{ count: number; oldest_age_ms: number }> {
   const [row] = await engine.executeRaw<{ count: number; oldest_age_ms: number | null }>(`SELECT count(*)::int AS count,
     (EXTRACT(EPOCH FROM now()-min(created_at))*1000)::bigint AS oldest_age_ms FROM persistence_requests
-    WHERE (deferred_refresh_id IS NOT NULL OR deferred_import_from IS NOT NULL) AND state IN ('deferred','queued','running','recovering')`);
+    WHERE (deferred_refresh_id IS NOT NULL OR deferred_import_from IS NOT NULL
+      OR (operation='relink_fact_by_id' AND intent->>'serve_only'='true')) AND state IN ('deferred','queued','running','recovering')`);
   return { count: Number(row?.count ?? 0), oldest_age_ms: Number(row?.oldest_age_ms ?? 0) };
 }
 
