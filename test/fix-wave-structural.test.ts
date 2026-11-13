@@ -350,6 +350,7 @@ describe('v0.42.43.0 #2095 — volunteer-events sink + cycle purge wiring (struc
     const src = readFileSync('src/core/cycle/bookkeeping-gc.ts', 'utf8');
     expect(src).toMatch(/purgeStaleVolunteerEvents\(engine\)/);
     expect(src).toMatch(/purged_volunteer_events_count/);
+    // test-reads-source-ok[structural]: dropping the phase's call from runCycle would silently stop the GC with no behavioral test failing, the same pin class as the drainer registrations above.
     expect(readFileSync('src/core/cycle.ts', 'utf8')).toMatch(/runPhaseBookkeepingGc\(engine/);
   });
 });
