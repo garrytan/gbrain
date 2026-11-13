@@ -58,7 +58,7 @@ import { filesInCheckout, writeLabelFile, writeLabelPage } from './label-write.t
 import { applyReaders, planReaders, raiseGuardOnly, raiseReadersGuard, readersBatch, readersGitCounts, readersGuardOnly, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
 
@@ -516,7 +516,7 @@ export const visibilityRepair: RepairHandler = {
     const item = entry as VisibilityItem;
     const target = item.target ?? item.cursor;
     if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, { ...item, cursor: target }, snapshot, content, edit, batch));
-    try {
+    return retireAfterLastItem(ctx.engine, 'visibility', item.hash, !!item.last, async () => {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });
       if (!snapshot || !item.change || Number(snapshot.page.id) !== target.id) return false;
@@ -527,9 +527,7 @@ export const visibilityRepair: RepairHandler = {
       if (item.change.from === item.change.to) return await raiseGuardOnly(ctx.engine, { ...item, target }, frontmatter => frontmatter.visibility === item.change!.to);
       const page = { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, visibility: item.change.to } };
       return await labelWrite(ctx, item, snapshot, serializePageToMarkdown(page, snapshot.tags), { set: { visibility: item.change.to }, remove: [] }) ?? true;
-    } finally {
-      if (item.last && item.hash) await clearApprovedSet(ctx.engine, { command: 'visibility', hash: item.hash });
-    }
+    });
   },
 };
 

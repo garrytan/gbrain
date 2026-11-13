@@ -1659,6 +1659,7 @@
   "test/fts-cjk-boundary-search.test.ts": 1036,
   "test/fts-cjk-boundary.test.ts": 1456,
   "test/function-search-path-pglite.test.ts": 440,
+  "test/function-search-path-upgrade-parity.test.ts": 4700,
   "test/funnel-cli.test.ts": 8386,
   "test/funnel-ops.test.ts": 2526,
   "test/funnel.test.ts": 4,

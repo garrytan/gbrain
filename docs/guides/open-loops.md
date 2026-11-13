@@ -380,7 +380,10 @@ instead: the answer covered only the sources the call read (named, all inside
 the grant), pass `source_id` for a granted google source, and the fix lists
 them.
 The notice never names a source outside the grant, so it reads the same
-whether or not one exists.
+whether or not one exists. When the sources table cannot be read at all, the
+answer carries `no_google_sources: null` and `completeness: "partial"` with
+a `loops_source_read_failed` notice (no database error text): presence, sync
+ages and held mail are unknown, so an empty answer is not "inbox clean".
 
 Memory verbs: entity cards' `open_threads[]` entries backed by loop rows
 carry additive optional fields (`direction`, `due`, `counterparty`,

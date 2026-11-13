@@ -143,6 +143,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'content_hash_duplicates',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
+  // #8744: configured per_chunk_synopsis tier vs the chunks that carry it.
+  'synopsis_tier_coverage',
   'contradictions',
   'conversation_facts_backlog',
   'conversation_format_coverage',
@@ -367,6 +369,9 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'brainstorm_health',
   'connectors',
   'dream_paid_loop',
+  // W3 (GBRA-224): self-heals that reached their bound (doctor/checks/dream-write-deferred.ts, embedding-restamp.ts).
+  'dream_write_deferred',
+  'embedding_restamp_stalled',
   'connection',
   'db_only_collector_collision',
   'federation_health',
@@ -439,6 +444,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'postgres_cancellation_driver',
   'plugin_lane_collision',
   'pool_budget',
+  // GBRA-133: session connections across every process vs the pooler's per-role limit (doctor/checks/session-lane.ts).
+  'session_lane_budget',
   'progressive_batch_audit_health',
   'queue_health',
   // Wakeshift PR 1: report-back key, enabled state and dead/id_reused watches (doctor/checks/wakeshift.ts).
@@ -460,6 +467,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'legacy_token_null_scope',
   // D4: grants whose operation snapshot or stored surface keeps operations their scopes allow out of reach.
   'grant_new_ops_available',
+  // GST-363: credentials or local bot agents reading chat from several channels the same way for everyone who talks to their agent.
+  'unscoped_multi_user_token',
   'reranker_health',
   'rls',
   // The session's TLS state on a non-loopback Postgres host (doctor/checks/postgres-tls.ts).
@@ -571,3 +580,29 @@ export function categorizeCheck(name: string): CheckCategory {
  * categorization and the per-check categorization aligned.
  */
 export const SKILL_CHECK_GROUP_NAMES: ReadonlySet<string> = SKILL_CHECK_NAMES;
+
+/**
+ * W4: the page class of `DoctorReport.alert`. Each name is an existing check that, at the status given or worse,
+ * means the brain needs someone now; every other check (skill checks included) never pages. `warn`: a warning
+ * pages too; `fail`: only a failure pages (that check's warning is an early or advisory state). Drift-guarded in
+ * test/doctor-categories.test.ts against the emitted check names.
+ */
+export const PAGE_CHECK_LEVELS: ReadonlyMap<string, 'warn' | 'fail'> = new Map([
+  ['connection', 'fail'],
+  ['schema_version', 'warn'],
+  ['schema_missing_tables', 'fail'],
+  ['minions_migration', 'warn'],
+  ['persistence_terminal_failures', 'warn'],
+  ['persistence_write_stall', 'warn'],
+  ['runtime_build_skew', 'fail'],
+  ['managed_sync_blocked', 'fail'],
+  ['managed_sync_not_moving', 'fail'],
+  ['global_maintenance_stalled', 'fail'],
+  ['jsonb_integrity', 'warn'],
+  ['rls', 'fail'],
+  ['dream_paid_loop', 'warn'],
+  ['dream_write_deferred', 'warn'],
+  ['embedding_restamp_stalled', 'warn'],
+]);
+
+export const PAGE_CHECK_NAMES: ReadonlySet<string> = new Set(PAGE_CHECK_LEVELS.keys());

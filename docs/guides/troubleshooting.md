@@ -12,6 +12,9 @@
 
 | Symptom | Next step | Who acts | Consent | Verify |
 |---|---|---|---|---|
+| `gbrain doctor --alert` exits 17 (`doctor_alert_act`, `alert.level: act`) | follow each `alert.items[].fix` in the `--json` document; it is that check's own fix, with its consent and actor ([doctor alert](#doctor-alert-act)) | the item's `fix.actor` | the item's `fix.consent` | `gbrain doctor --alert --json` exits 0 |
+| `gbrain doctor --alert` exits 18 (`doctor_alert_unknown`, `alert.level: unknown`), or an agent cron pages "health unknown twice in a row" | run each `alert.unknown[].fix` (it measures that check alone); a check that keeps running out of time needs `--budget-ms` raised or `gbrain doctor --alert --tier standard --json` ([doctor alert](#doctor-alert-unknown)) | agent | none | `gbrain doctor --alert --json` exits 0 and `alert.consecutive_unknown` is 0 |
+| Doctor's score drops (resolver_health fails, skill_currency warns "new built-in skill(s) available") only when run from an agent's own workspace | nothing to fix: since the W4 scoping both report `not a gbrain skills folder (<path>)` for a skills folder gbrain did not install; to grade it on purpose pass `--skills-dir <path>` ([doctor alert](#doctor-alert)) | agent | none | `gbrain doctor --only resolver_health --json` |
 | A withdrawal committed but a large page's file still shows the withdrawn row; writer status lists its mirror parked with [`segmented_mirror_writer_gate`](write-refusals.md#segmented_mirror_writer_gate), or an effect retrying with [`recovery_version_unsupported`](write-refusals.md#recovery_version_unsupported) (or `effect_unavailable` on v0.60.290.0) holds every write on the worktree | `gbrain upgrade` on the hosts the refusal or a doctor `segmented_storage` warning names (for `recovery_version_unsupported`, the owner host; doctor's information case, this host's own superseded pre-upgrade writes, does not hold the mirror), then restart their serve, sync and worker processes. A gated mirror resumes by itself once the older writes are 7 days old; never delete a recovery record or its staging file | brain host | none | `gbrain sources writer status --source <source> --json` shows no parked or retrying mirror |
 | The dream cycle's purge phase fails every night with `managed_purge_failed` (`42P01`, relation `query_cache` does not exist), or doctor `schema_missing_tables` warns | upgrade (#6911: the purge skips a missing rebuildable cache), then preview recreating it: `gbrain repair missing-tables` ([missing tables](repair.md#missing-tables)); apply the printed `--apply --expect <hash>` command. Pages parked by the earlier failures: `gbrain pages purge-deleted --retry-parked --dry-run`, then without `--dry-run` | agent, after the user agrees | `destructive` (the parked-page retry purges them) | `gbrain doctor --only schema_missing_tables --json` reports ok |
 | A managed source's autopilot freshness `sync` jobs each land about one page, or `sources status` says `parked` while a sync job runs | upgrade (#6706: sync jobs drain to their deadline and count as the source's live drain), then restart `gbrain jobs work` / the supervisor so the worker loads the handler; a job result with `incomplete: true` names its follow-up (`continuation_job_id`) or the next step in `next` | agent | none | `gbrain sync status --source <id> --json` shows `live_job_id` or a cursor at `done`; `gbrain jobs get <id> --json` shows `outcome` |
@@ -85,8 +88,11 @@
 | Writes fail with `connection_inherited_read_only` (SQLSTATE 25006) | [reset the pooler's server connections, stop session-level `SET`, check role defaults](write-refusals.md#connection_inherited_read_only) | brain host | none | `gbrain doctor --json` |
 | [Doctor warns `persistence_session_timeouts` (`session_timeouts_not_applied`)](#session-timeouts-not-applied) | `ALTER ROLE <gbrain role> SET statement_timeout = '5min'` on the database, or accept it: preparation reads carry their own bound | brain host | none (a role default; `destructive` only in that it changes a server setting) | `gbrain doctor --only persistence_session_timeouts --json` |
 | `gbrain init` or `gbrain upgrade` stops with `schema_lock_blocked` naming a pid (or, before #5227, sat in `wait_event_type=Lock` with no output) | let the named session finish, or with the user's agreement end it on the database host: `SELECT pg_terminate_backend(<pid>)`; then rerun the same command ([ENGINES.md](../ENGINES.md#schema-lock-blocked)) | brain host, after the user agrees | `destructive` when it ends another session | the rerun completes; `gbrain doctor --json` shows the schema at head |
+| Doctor `function_search_path` fails: a gbrain function's search_path does not end in `pg_temp` | follow the check's `fix`: below schema v277 it is `gbrain apply-migrations --yes`; past it, run the printed `ALTER FUNCTION` statements as the role that owns each function ([function search path](#function-search-path)) | agent below v277; brain host past it | none | `gbrain doctor --only function_search_path --json` |
 | [`queue_capacity`, `persistence_capacity` or `persistence_request_growth`](#write-capacity) | run the printed `gbrain config set persistence.limits.<limit> <value>` | brain host | none | `gbrain doctor --only persistence_capacity,persistence_request_growth --json` |
 | [`dream_paid_loop`, or dream keeps skipping one transcript](#dream-paid-loop) | fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'` | agent, after the user agrees | `paid` (the key is retried) | `gbrain doctor --only dream_paid_loop --json` |
+| [`dream_write_deferred`](#dream-write-deferred) | `gbrain write-request -- <id>`, then `gbrain sources writer status --source <id> --json` | agent | none | `gbrain doctor --only dream_write_deferred --json` |
+| [`embedding_restamp_stalled`](#embedding-restamp-stalled) | fix the named error, then `gbrain dream --phase embed --json` | agent | `paid` for stale chunks only | `gbrain doctor --only embedding_restamp_stalled --json` |
 | [A page exists (`gbrain get <slug>` returns it) but search never finds text from it](memory-boundaries.md#large-pages) | `gbrain reindex --oversized --dry-run --json` lists pages stored before the upgrade with a size-based `embed_skip` marker (without `--dry-run` it keyword-indexes them, free); a page above an operator-lowered `content_sanity.bytes_block` keeps its marker until it is raised; a page the content-quality gate quarantined shows in `gbrain quarantine list` (`gbrain quarantine clear <slug>` re-checks it once the user agrees); a file over the 24 MiB page ceiling was never stored ([`file_too_large`](write-refusals.md#file_too_large)). Its chunks waiting for embedding approval (doctor `partial_embedding`) are a paid step: `gbrain embed --held --dry-run`, then `gbrain embed --held --source <id> --max-usd <N>` as printed | agent for the reindex; the user decides embedding spend, a `bytes_block` change and a quarantine clear | none for the reindex; `paid` for `gbrain embed` | `gbrain reindex --oversized --dry-run --json` lists nothing; `gbrain search "<phrase from deep in the page>"` returns the page |
 | [Search answers look keyword-only on a large Postgres brain](#hybrid-search-returns-only-keyword-hits) | read doctor's `vector_plan`; run the index command it prints | brain host | none | `gbrain doctor --only vector_plan --json` |
 | [Broad keyword queries take about 8 s and come back vector-only (`keyword_arm_failed`, or `skipped_after_timeout` for 10 minutes after a timeout) on a large Postgres brain](#keyword-search-times-out-on-a-large-postgres-brain) | read doctor's `keyword_plan`; narrow with `--source-id`, or raise `search.keyword_statement_timeout_ms` on the brain host and restart the serving process | brain host | none | `gbrain doctor --only keyword_plan --json` |
@@ -295,6 +301,10 @@ A running sync is not one of these: `gbrain repair fences` now runs during a cat
 
 <a id="dream-paid-loop"></a>**Dream keeps skipping one transcript, or doctor warns `dream_paid_loop`?** A dream key died `dream.breaker.max_dead_submissions` times (default 3) in 24 hours and is refused so it stops billing you. Fix the cause, then `gbrain dream reset-key --list` and `gbrain dream reset-key '<key>'`. See [the paid-loop breaker](../operations/spend-controls.md#dream-paid-loop-breaker-dreambreakermax_dead_submissions).
 
+<a id="dream-write-deferred"></a>**Doctor warns `dream_write_deferred`?** A purge or consolidate write is still pending 3 passes after its publish wait; each pass re-reads its receipt before submitting more for that source. Read the named receipt; `dream.write_deferral.enabled false` restores the failing phase.
+
+<a id="embedding-restamp-stalled"></a>**Doctor warns `embedding_restamp_stalled`?** The free signature restamp the embed phase runs first failed 3 runs in a row; the message names the error. `embed.restamp.enabled false` turns it off.
+
 **Hourly cron sync keeps timing out on a federated brain?** Switch your
 cron to a per-source loop with shell `timeout(1)` doing the OS-level kill
 and gbrain self-terminating gracefully half-a-minute earlier:
@@ -438,7 +448,7 @@ derived from the rows against the active embedding column (no stored status):
 | `keyword_only` | The page carries `embed_skip`: the import gate found its body over `content_sanity.bytes_block` (info, by design; its chunks still feed keyword search and are never purged). Removing the marker alone is undone on the next import. | A marker under the current `bytes_block` (written by an older release under its 500 KB default): `gbrain reindex --oversized --source <id>` clears it for free. Otherwise split the page, or, after the operator approves, `gbrain config set content_sanity.bytes_block <bytes>` then `gbrain sync --source <id> --full`, which re-imports and embeds it. |
 | `quarantined` | The content-quality gate hid the page as junk; it has no searchable chunks. Doctor `quarantined_pages` owns its warning. | Review with `gbrain quarantine list --json`; clear a false positive with `gbrain quarantine clear <slug> --source-id <id> --force` (the owner's call). |
 | `empty` | A live page with nothing to index: no body text, or a body its writer chunked to nothing at the current revision (for example one holding only a protected takes fence). | Nothing for a page whose content is kept out of search on purpose. For a blank stub: write content to it, or delete it (`gbrain delete <slug> --source <id> --force`, restorable) after the user agrees. |
-| `deleted_page_chunks` | Chunks of a soft-deleted page. Search never reads them; the purge lifecycle removes them after 72 h (info until then, a warning past it, code `deleted_page_chunks_overdue`). | `gbrain pages purge-deleted --dry-run --json`, then `gbrain pages purge-deleted --yes` once the user agrees (brain-wide, irreversible). |
+| `deleted_page_chunks` | Chunks of a soft-deleted page. Search never reads them; the purge lifecycle removes them after 72 h (info until then, a warning past it, code `deleted_page_chunks_overdue`). Chunks the purge holds stay info past 72 h: a derived retirement for `generations.restore_days` (30 days by default), a restorable atom, an open rename-identity pair or an archived source. | `gbrain pages purge-deleted --dry-run --json`, then `gbrain pages purge-deleted --yes` once the user agrees (brain-wide, irreversible). |
 | `chunkless_healable` | A live page with body text but no chunk rows (written without the chunking step, or an `embed_skip` page an older gbrain stored without chunks or whose `reindex --oversized` rewrite failed). Keyword search cannot find it. Doctor warns on a keyed brain (code `chunkless_pages_healable`). | `gbrain embed --stale --catch-up --source <id> --yes` chunks and embeds it (paid); an `embed_skip` page gets chunks and no vectors. The cycle's embed phase runs the same safety net. |
 
 `unsearchable` sums `pending`, `quarantined`, `empty` and `chunkless_healable`;
@@ -765,6 +775,70 @@ the phase, its blocker key and back-off, or the last failed job.
 3. Confirm with `gbrain doctor --only global_maintenance_stalled`: it is `ok`
    after a pass completes with the phase passing.
 
+## Doctor alert
+
+<a id="doctor-alert"></a>
+
+**What should an agent cron page on?** `gbrain doctor --alert`, never
+`health_score`. The score is 100 − 20 per failing check − 5 per warning check
+over every check, so an advisory skill-routing warning costs as much as an
+outage, and a healthy brain can read 30. `--alert` runs only the page-class
+checks, fresh, under a 30 s budget (`--budget-ms` overrides it; `--tier
+standard` grades a full run instead), and prints one verdict in
+`alert.level`:
+
+| Exit | `alert.level` | Meaning |
+|---|---|---|
+| 0 | `none` | every page-class check ran fresh and none needs anyone |
+| 17 | `act` | a page-class check needs someone now; `alert.items` carry its fix |
+| 18 | `unknown` | nothing to act on, but a page-class check did not run fresh; `alert.consecutive_unknown` counts the runs in a row |
+
+`act` wins over `unknown`; both lists are always kept. Page on 17, and on 18
+from the second run in a row. Exit 1 means doctor itself failed. The counter
+lives per brain in `doctor-alert-state.json` under the gbrain home; a
+read-only home still gets a verdict (`consecutive_unknown: null` when the
+state can be neither read nor written). Remote reports (`run_doctor`) omit
+check messages and name a host-admin step instead of local commands.
+
+The page class (`PAGE_CHECK_LEVELS` in `src/core/doctor-categories.ts`); every
+other check, skill checks included, never pages:
+
+| Condition | Check | Pages on |
+|---|---|---|
+| database unreachable | `connection` | fail |
+| migrations pending or wedged (not the opt-in autopilot install suggestion) | `schema_version`, `minions_migration` | warn |
+| tables the applied migrations created hold user data and are missing | `schema_missing_tables` | fail |
+| writes failing | `persistence_terminal_failures` | warn |
+| writes wedged | `persistence_write_stall` | warn |
+| more than one gbrain build running | `runtime_build_skew` | fail |
+| managed sync stopped or not moving past its window | `managed_sync_blocked`, `managed_sync_not_moving` | fail |
+| brain-wide maintenance stalled a week | `global_maintenance_stalled` | fail |
+| double-encoded JSONB rows | `jsonb_integrity` | warn |
+| public schema readable with the anon key | `rls` | fail |
+| a tripped paid-loop breaker | `dream_paid_loop` | warn |
+| a dream write still pending past its replay bound | `dream_write_deferred` | warn |
+| the embedding signature restamp failing run after run | `embedding_restamp_stalled` | warn |
+
+<a id="doctor-alert-act"></a>
+
+**Exit 17 (`act`).** Each item has `check`, a stable `code`, `status`, the
+check's `message`, `docs` and the check's own rendered `fix` (`next`,
+`command` or MCP call, `consent`, `actor`, `verify`). Follow `fix.next` as
+everywhere else: run it, ask the user first, or tell the user or brain host to
+run it. Then re-run `gbrain doctor --alert --json`.
+
+<a id="doctor-alert-unknown"></a>
+
+**Exit 18 (`unknown`).** Each item names the `check`, the `reason` it is not
+fresh (`budget`, `bound`, `errored`, `last_known`, `not_run`), the
+`budget_ms` it ran under and a `fix` that measures it alone. `not_run` on
+every database check means the database checks did not run: read the
+`connection` check (a live `gbrain serve` holding a PGLite brain is the
+common case: run the alert where the serve's brain is reachable, or stop the
+serve first). A check that keeps hitting its budget on a large brain needs a
+larger `--budget-ms` in the cron line. A thin client refuses `--alert`
+(`doctor_tier_unavailable`): schedule it on the brain host.
+
 ## Content-drift sweep
 
 **Doctor reports `content_drift_sweep` as a warning, or an embed run prints
@@ -946,3 +1020,22 @@ decides what to undo: the folder's new `.git` directory and the pages imported
 from it are theirs to review before anything is removed.
 Verify with `gbrain sources status <id> --json` and
 `gbrain doctor --only default_source_local_path --json`.
+
+## Function search path
+
+<a id="function-search-path"></a>
+
+Every gbrain function that pins a `search_path` ends it with `pg_temp`, so a session's temporary table or view named
+like a purge or withdrawal ledger cannot hide that ledger from the guard that reads it (#7632). Migration v277 and the
+end of every migration run append it to each function the migrating role owns; doctor's `function_search_path` check
+names any function whose pinned path still lacks it.
+
+- **Below schema v277**, the check's fix is `gbrain apply-migrations --yes`, which runs v277. Check again afterwards:
+  what is left is owned by another role.
+- **A function another role owns** cannot be altered by the migrating role, so the migration leaves it and names it
+  on stderr during runs that apply migrations. Run the `ALTER FUNCTION public.<function>(<argument types>) SET
+  search_path = …, pg_temp;` statements the check prints (also in its `details.sql`) on the database host, connected
+  to this brain's database as the role that owns each function. `ALTER FUNCTION … SET` changes neither the owner nor
+  the body, so the next boot's `CREATE OR REPLACE` still succeeds.
+
+Verify with `gbrain doctor --only function_search_path --json`.

@@ -342,19 +342,21 @@ function renderNoCounterparty(lines: string[], none: NoCounterpartyLoops | null,
   if (none.loops_omitted > 0) lines.push(`+${none.loops_omitted} more`);
 }
 
-function renderText(groups: CounterpartyGroup[], none: NoCounterpartyLoops | null, stale: boolean, noGoogleSources: boolean,
+function renderText(groups: CounterpartyGroup[], none: NoCounterpartyLoops | null, stale: boolean, noGoogleSources: boolean | null,
   coverage: { completeness: 'complete' | 'partial'; held: HeldItemView[] }, nowMs: number,
   partialStaleSources: string[]): string {
   const lines: string[] = [];
   const { held } = coverage;
-  if (stale) lines.push('⚠ google sources have not synced recently — this may be out of date.');
+  if (noGoogleSources === null) lines.push('⚠ the sources could not be read — whether a google source exists and when it last synced are unknown.');
+  else if (stale) lines.push('⚠ google sources have not synced recently — this may be out of date.');
   else if (partialStaleSources.length > 0) {
     lines.push(
       `⚠ some google sources have not synced recently — this may be out of date: ${partialStaleSources.join(', ')}.`,
     );
   }
   const partial = coverage.completeness === 'partial';
-  const what = held.length ? `${held.length} held item(s) could not be imported:` : 'the held-item state could not be read.';
+  const what = noGoogleSources === null ? 'the sources could not be read, so held mail is unknown.'
+    : held.length ? `${held.length} held item(s) could not be imported:` : 'the held-item state could not be read.';
   if (partial && groups.length === 0 && !none) {
     lines.push(`No open loops found, but coverage is partial: ${what}`, ...partialLines(held));
     return lines.join('\n');
@@ -405,7 +407,8 @@ const open_loops: Operation = {
     'deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get ' +
     'redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, ' +
     'entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and ' +
-    'completeness: when it is "partial", some mail in the window is held after repeated import failures; present the ' +
+    'completeness: when it is "partial", some mail in the window is held after repeated import failures (or, with ' +
+    'no_google_sources: null, the sources could not be read); present the ' +
     'answer as partial and name the held items and their retry command. The grouped view also returns withheld_noise ' +
     '(null when none): open reply-owed loops from senders whose mail the detector now treats as automated, with a ' +
     'per-sender preview_command for closing them.',
@@ -488,10 +491,12 @@ const open_loops: Operation = {
     const capped = loops.length > OPEN_LOOPS_ROW_CAP;
     if (capped) loops.length = OPEN_LOOPS_ROW_CAP;
     const freshness = await googleSourceFreshness(ctx, scope);
-    const noGoogleSources = freshness.sources.length === 0;
-    if (!trusted && noGoogleSources && !freshness.failed && loops.length === 0) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
+    // #8452: a failed sources read proves neither that no google source exists nor that coverage is complete.
+    const noGoogleSources = freshness.failed ? null : freshness.sources.length === 0;
+    if (freshness.failed) ctx.emitNotice?.(SOURCES_UNREADABLE_NOTICE);
+    else if (!trusted && noGoogleSources && loops.length === 0) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
     const partialStaleSources = freshness.stale ? [] : freshness.staleSources;
-    const coverage = await heldCoverage(ctx, freshness.sources, trusted);
+    const coverage = freshness.failed ? { completeness: 'partial' as const, held: [] } : await heldCoverage(ctx, freshness.sources, trusted);
     const deepLinks = trusted ? await deepLinksFor(ctx, loops) : new Map<string, string>();
 
     if (groupBy === 'none') {
@@ -640,6 +645,14 @@ function grantedSources(ctx: OperationContext): string[] {
 function sourcesFix(why: string): Action {
   return readFix(why, { argv: ['gbrain', 'sources', 'list', '--json'], mcp: { tool: 'sources_list', arguments: {} } });
 }
+
+/** #8452: carries no database error text; the answer is partial until a read succeeds. */
+const SOURCES_UNREADABLE_NOTICE: Notice = {
+  code: 'loops_source_read_failed',
+  kind: 'degraded',
+  why: 'open_loops could not read the sources table, so whether a google source is in scope, when it last synced and which mail is held ' +
+    'are unknown (no_google_sources: null, completeness: "partial"). An empty answer is not "inbox clean"; repeat the call.',
+};
 
 /** #7286: names only the sources this read covered, all inside the grant, so the text is the same whether or not a google source exists outside it. */
 function noGoogleInScopeNotice(readSources: string[]): Notice {

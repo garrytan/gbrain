@@ -9,11 +9,17 @@ import { pageLeadSource, projectedLead } from '../page-window/bounded-lead.ts';
 import { isIdentityEntity } from '../entities/resolve.ts';
 import { normalizeAlias } from './alias-normalize.ts';
 import { isPrivatePageForCaller } from './private-visibility.ts';
+import { contentTokenCount } from './title-match.ts';
 
 // T3 — free-text alias hop tuning.
 const ALIAS_HOP_PRESENT_BOOST = 1.10; // bounded boost when canonical already in results
 const MAX_ALIAS_QUERY_TOKENS = 6;     // skip long queries (clearly not a chosen name)
 const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision safety)
+// Opt-in qualified hop (`search.qualified_aliases`): sub-phrase windows of a query up to this many tokens.
+const MAX_QUALIFIED_QUERY_TOKENS = 14;
+const MIN_QUALIFIED_WINDOW_TOKENS = 3;
+const MAX_QUALIFIED_WINDOW_TOKENS = 6;
+const MIN_QUALIFIED_CONTENT_TOKENS = 3;
 
 /**
  * T3 — free-text alias hop (retrieval-maxpool incident, the named-thing fix).
@@ -27,6 +33,8 @@ const MAX_ALIAS_INJECT = 3;           // cap injected pages per query (collision
  * Precision guards (Codex#7/#10):
  *   - FULL normalized-query exact match only (not substring / not n-grams) —
  *     "light" won't fire unless the whole query normalizes to a stored alias.
+ *     The opt-in qualified hop (`search.qualified_aliases`) is the one
+ *     sub-phrase path: one visible claimant, 3+ content tokens, own stamp.
  *   - skip queries longer than MAX_ALIAS_QUERY_TOKENS (clearly prose, not a name).
  *   - bounded: present-boost is 1.10x; inject score is top-of-organic + ε,
  *     never an absolute 1.0 (D3 — aliases are not a ranking sledgehammer).
@@ -62,31 +70,60 @@ export function isExcludedIdentity(slug: string, opts: Pick<IdentityTierOpts, 'e
 
 /**
  * A54 — the immutable half of the alias hop: the alias table read for the
- * normalized query (plus its tokens under `tokenHop`). It never touches a
- * result list, so the rerank gate can read it before reranking and the apply
- * step reuses it after, and the alias table is read once per search.
+ * normalized query (plus its tokens under `tokenHop`, and its qualified
+ * windows under `qualified`). It never touches a result list, so the rerank
+ * gate can read it before reranking and the apply step reuses it after, and
+ * the alias table is read once per search.
  * `null` means the hop is a no-op for this query (empty, too long, or the
- * table is missing / the read failed — fail-open, D9).
+ * table is missing / the read failed — fail-open, D9). `fullQuery` is false
+ * for a query over MAX_ALIAS_QUERY_TOKENS: only its qualified windows were
+ * probed, so the full-query and token hops (and the rerank gate's alias
+ * grades) keep the 6-token cap.
  */
 export interface AliasHopLookup {
   qNorm: string;
+  fullQuery: boolean;
   tokens: string[];
+  qualified: string[];
   aliasMap: Map<string, Array<{ slug: string; source_id: string }>>;
+}
+
+/**
+ * Sub-phrase windows of the normalized query for the qualified hop: 3 to
+ * min(6, n - 1) tokens, longest first, then leftmost, each with at least 3
+ * content tokens, for a query of 3 to 14 tokens. At most 42 windows.
+ */
+export function qualifiedAliasCandidates(qNorm: string): string[] {
+  const tokens = qNorm.split(' ');
+  const n = tokens.length;
+  if (n < MIN_QUALIFIED_WINDOW_TOKENS || n > MAX_QUALIFIED_QUERY_TOKENS) return [];
+  const out = new Set<string>();
+  for (let len = Math.min(MAX_QUALIFIED_WINDOW_TOKENS, n - 1); len >= MIN_QUALIFIED_WINDOW_TOKENS; len--) {
+    for (let i = 0; i + len <= n; i++) {
+      const phrase = tokens.slice(i, i + len).join(' ');
+      if (contentTokenCount(phrase) >= MIN_QUALIFIED_CONTENT_TOKENS) out.add(phrase);
+    }
+  }
+  return [...out];
 }
 
 export async function lookupAliasHop(
   engine: import('../engine.ts').BrainEngine,
   query: string,
-  opts: IdentityTierOpts & { tokenHop?: boolean },
+  opts: IdentityTierOpts & { tokenHop?: boolean; qualified?: boolean },
 ): Promise<AliasHopLookup | null> {
   if (!query) return null;
   const qNorm = normalizeAlias(query);
-  if (!qNorm || qNorm.split(' ').length > MAX_ALIAS_QUERY_TOKENS) return null;
-  const tokens = opts.tokenHop
+  if (!qNorm) return null;
+  const fullQuery = qNorm.split(' ').length <= MAX_ALIAS_QUERY_TOKENS;
+  const qualified = opts.qualified ? qualifiedAliasCandidates(qNorm) : [];
+  if (!fullQuery && qualified.length === 0) return null;
+  const tokens = fullQuery && opts.tokenHop
     ? [...new Set(qNorm.split(' '))].filter((t) => t.length >= 2 && t !== qNorm)
     : [];
+  const probe = fullQuery ? [qNorm, ...tokens, ...qualified] : qualified;
   try {
-    return { qNorm, tokens, aliasMap: await engine.resolveAliases([qNorm, ...tokens], opts) };
+    return { qNorm, fullQuery, tokens, qualified, aliasMap: await engine.resolveAliases(probe, opts) };
   } catch {
     return null; // pre-v110 table-missing OR transient error -> fail-open
   }
@@ -94,6 +131,7 @@ export async function lookupAliasHop(
 
 /** The full-query alias canonicals the hop would boost or inject: excludes applied, deterministic order, capped. */
 export function aliasHopCanonicals(lookup: AliasHopLookup, opts: IdentityTierOpts): Array<{ slug: string; source_id: string }> {
+  if (!lookup.fullQuery) return [];
   return [...(lookup.aliasMap.get(lookup.qNorm) ?? [])]
     .filter(ref => !isExcludedIdentity(ref.slug, opts))
     .sort((a, b) => (a.source_id === b.source_id ? a.slug.localeCompare(b.slug) : a.source_id.localeCompare(b.source_id)))
@@ -104,7 +142,7 @@ export async function applyAliasHop(
   engine: import('../engine.ts').BrainEngine,
   results: SearchResult[],
   query: string,
-  opts: IdentityTierOpts & { tokenHop?: boolean },
+  opts: IdentityTierOpts & { tokenHop?: boolean; qualified?: boolean },
 ): Promise<SearchResult[]> {
   return applyAliasHopLookup(engine, results, await lookupAliasHop(engine, query, opts), opts);
 }
@@ -117,8 +155,10 @@ export async function applyAliasHopLookup(
   opts: IdentityTierOpts,
 ): Promise<SearchResult[]> {
   if (!lookup) return results;
-  const refs = lookup.aliasMap.get(lookup.qNorm);
+  const refs = lookup.fullQuery ? lookup.aliasMap.get(lookup.qNorm) : undefined;
   if (!refs || refs.length === 0) {
+    const led = await applyQualifiedAliasHop(engine, results, lookup, opts);
+    if (led) return led;
     return lookup.tokens.length > 0 ? applyAliasTokenHop(engine, results, lookup.tokens, lookup.aliasMap, opts) : results;
   }
 
@@ -151,6 +191,47 @@ export async function applyAliasHopLookup(
     out.unshift(await aliasInjectedRow(engine, page, ref, injectScore));
   }
   return out;
+}
+
+/**
+ * The page the qualified hop leads with: the first window (longest, then
+ * leftmost) that has a claimant after excludes decides. One claimant leads;
+ * two or more suppress the hop. Claimants come from the caller's read policy,
+ * so a page the caller cannot read never counts.
+ */
+function qualifiedAliasCanonical(lookup: AliasHopLookup, opts: IdentityTierOpts): { slug: string; source_id: string } | null {
+  for (const phrase of lookup.qualified) {
+    const refs = (lookup.aliasMap.get(phrase) ?? []).filter((ref) => !isExcludedIdentity(ref.slug, opts));
+    if (refs.length > 0) return refs.length === 1 ? refs[0] : null;
+  }
+  return null;
+}
+
+/**
+ * Opt-in qualified alias hop (`search.qualified_aliases`): moves the one page
+ * whose alias is a sub-phrase of the query to the front at top-of-organic + ε,
+ * or injects it when absent, stamped `qualified_alias_hit` (never
+ * `alias_hit`: evidence does not read a mention as an identity match).
+ * Returns null when it does not fire, so the token hop runs as before.
+ */
+async function applyQualifiedAliasHop(
+  engine: import('../engine.ts').BrainEngine,
+  results: SearchResult[],
+  lookup: AliasHopLookup,
+  opts: IdentityTierOpts,
+): Promise<SearchResult[] | null> {
+  const ref = qualifiedAliasCanonical(lookup, opts);
+  if (!ref) return null;
+  const score = topOrganicScore(results) + 1e-6;
+  const idx = results.findIndex((r) => r.slug === ref.slug && (r.source_id ?? 'default') === ref.source_id);
+  if (idx >= 0) {
+    const out = [...results];
+    const [hit] = out.splice(idx, 1);
+    return [{ ...hit, score, qualified_alias_hit: true }, ...out];
+  }
+  const page = await fetchAliasCanonical(engine, ref, opts);
+  if (!page) return null;
+  return [await aliasInjectedRow(engine, page, ref, score, 'qualified_alias_hit'), ...results];
 }
 
 /** Cap on pages the single-token alias hop moves or injects per query. */
@@ -223,7 +304,10 @@ async function fetchAliasCanonical(
   return page;
 }
 
-async function aliasInjectedRow(engine: import('../engine.ts').BrainEngine, page: import('../types.ts').Page, ref: { source_id: string }, score: number): Promise<SearchResult> {
+async function aliasInjectedRow(
+  engine: import('../engine.ts').BrainEngine, page: import('../types.ts').Page, ref: { source_id: string }, score: number,
+  stamp: 'alias_hit' | 'qualified_alias_hit' = 'alias_hit',
+): Promise<SearchResult> {
   return {
     // #2339-sibling: include page_id. The `as SearchResult` cast hid its
     // absence, so any consumer reading page_id off an alias-injected result got
@@ -240,6 +324,6 @@ async function aliasInjectedRow(engine: import('../engine.ts').BrainEngine, page
     chunk_id: 0,
     score,
     base_score: score,
-    alias_hit: true,
+    ...(stamp === 'alias_hit' ? { alias_hit: true } : { qualified_alias_hit: true }),
   } as SearchResult;
 }

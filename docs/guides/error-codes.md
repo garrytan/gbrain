@@ -1344,7 +1344,7 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Chunks of pages soft-deleted longer than the purge window (72h) are still stored. | Search never reads them; the purge lifecycle (`gbrain pages purge-deleted`, the autopilot purge phase) hard-deletes such pages and their chunks. The purge is brain-wide and irreversible, so it needs the user. | Preview with `gbrain pages purge-deleted --dry-run --json`, then run `gbrain pages purge-deleted --yes` once the user agrees. Run: gbrain pages purge-deleted --dry-run --json | agent | `gbrain doctor --only embedding_state --json` | 1 | no |
+| Chunks of pages soft-deleted longer than the purge window (72h), which the purge would remove, are still stored. | Search never reads them; the purge lifecycle (`gbrain pages purge-deleted`, the autopilot purge phase) hard-deletes such pages and their chunks. Pages its holds keep (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair, an archived source) are not counted. The purge is brain-wide and irreversible, so it needs the user. | Preview with `gbrain pages purge-deleted --dry-run --json`, then run `gbrain pages purge-deleted --yes` once the user agrees. Run: gbrain pages purge-deleted --dry-run --json | agent | `gbrain doctor --only embedding_state --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/troubleshooting.md#embedding-state)
 
@@ -1405,6 +1405,28 @@ More: [docs/guides/ambient-recall.md#replay-after-a-degraded-wake](../../docs/gu
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Commit or stash canonical skill edits before optimization. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### doctor_alert_act
+
+<a id="doctor_alert_act"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain doctor --alert` found a page-class check that needs someone now (database unreachable, writes failing or stalled, migrations pending or wedged, more than one build running, sync or maintenance stalled, corrupt rows, a public schema exposed, or a tripped paid-loop breaker). | Only page-class checks page; skill, advisory and coaching checks never do, so health_score warnings alone exit 0. Each item in --json alert.items keeps that check's own fix, consent, actor and verify. | Read alert.items in the --json document and follow each fix.next; page the operator for items whose fix needs them. Run: gbrain doctor --alert --json | agent | `gbrain doctor --json` | 17 | no |
+
+More: [docs/guides/troubleshooting.md#doctor-alert-act](../../docs/guides/troubleshooting.md#doctor-alert-act)
+
+### doctor_alert_unknown
+
+<a id="doctor_alert_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain doctor --alert` found nothing to act on, but at least one page-class check did not run fresh in this run, so the brain's health is unknown, not clear. | A check that timed out, errored, was reported from its last known result or was skipped by the tier proves nothing; reading it as healthy would hide an outage. alert.consecutive_unknown counts the alert runs in a row that ended unknown, and agent crons page on the second. | Run each alert.unknown item fix (it measures that check alone); if a check keeps running out of time, raise --budget-ms or run gbrain doctor --alert --tier standard --json. Run: gbrain doctor --alert --budget-ms 0 --json | agent | `repeat the read that failed` | 18 | yes |
+
+Reasons: `budget`, `bound`, `errored`, `last_known`, `not_run`.
+
+More: [docs/guides/troubleshooting.md#doctor-alert-unknown](../../docs/guides/troubleshooting.md#doctor-alert-unknown)
 
 ### doctor_tier_unavailable
 
@@ -5146,7 +5168,7 @@ Reasons: `missing`, `not_directory`, `permission_denied`, `symlink_loop`, `unrea
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page (for recall and query, no world fact either), while other sources on the brain hold pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
+| An unscoped search, query, recall or list_pages came back empty and was refused: every source this connection can read (the default source and federated sources) holds no page search returns (for recall and query, no active world fact either), while other sources on the brain hold such pages it cannot read (not federated, and no source grant). | Answering would return an empty result that reads like a clean miss. The check is one yes/no about the whole brain, independent of the query: whether another source holds pages; it never says another source matches the question. Quarantined pages count on neither side, nor private pages when remote reads exclude them. The refusal names the host command that federates a source or grants this connection the sources it should read; it never names a hidden source and never widens access. A scope that holds pages but matched nothing, a granted token, an OAuth client, a bound connection and a read that names a source are never refused. | Ask the user which source these connections should read; the brain host runs `gbrain sources federate <source>`, or grants the token its sources with `gbrain auth rescope --token <name> --sources <ids>`. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages](../../docs/guides/multi-source-brains.md#an-unscoped-connection-whose-sources-hold-no-pages)
 

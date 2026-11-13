@@ -762,7 +762,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
     apply: async tx => {
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
-      if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...snapshot.page, source_path: null, source_uri: null } }, preparedPurge);
+      if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...(bodyUnread(snapshot.page) ? withoutBody(snapshot.page) : snapshot.page), source_path: null, source_uri: null } as Page }, preparedPurge);
       if (preparedPurge) return purgePageInTransaction(tx, row, snapshot, preparedPurge);
       // GST-2518: a soft delete authors no content, so the tombstone keeps its tier (and a write over it the page's label guard).
       if (!noop) { await tx.createVersion(row.slug, source); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(row.slug, source)); }

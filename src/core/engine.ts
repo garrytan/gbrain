@@ -373,6 +373,9 @@ export interface TakeHit {
   kind: TakeKind;
   holder: string;
   weight: number;
+  since_date: string | null;
+  until_date: string | null;
+  source: string | null;
   score: number;            // search rank score (ts_rank for keyword, 1-cos_dist for vector)
 }
 

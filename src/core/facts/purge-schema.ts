@@ -115,7 +115,7 @@ ${FACT_PURGES_ALL_SUBJECTS_INDEX.sql};
 
 export const MEMORY_PURGE_GUARD_SQL = `
 CREATE OR REPLACE FUNCTION gbrain_refuse_purged_fact() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   BEGIN
     PERFORM id FROM sources WHERE id = NEW.source_id FOR SHARE;
     IF EXISTS (SELECT 1 FROM fact_purges
@@ -133,7 +133,7 @@ DROP TRIGGER IF EXISTS facts_refuse_purged ON facts;
 CREATE TRIGGER facts_refuse_purged BEFORE INSERT OR UPDATE OF fact, source_id, visibility, entity_slug ON facts
   FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purged_fact();
 CREATE OR REPLACE FUNCTION gbrain_refuse_purged_take() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   DECLARE src TEXT; subj TEXT;
   BEGIN
     SELECT p.source_id, p.slug INTO src, subj FROM pages p WHERE p.id = NEW.page_id;
@@ -151,7 +151,7 @@ DROP TRIGGER IF EXISTS takes_refuse_purged ON takes;
 CREATE TRIGGER takes_refuse_purged BEFORE INSERT OR UPDATE OF claim, page_id ON takes
   FOR EACH ROW EXECUTE FUNCTION gbrain_refuse_purged_take();
 CREATE OR REPLACE FUNCTION gbrain_refuse_purged_page() RETURNS trigger
-  LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+  LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
   BEGIN
     -- No column list on the trigger: a column-scoped trigger would pin pages.source_id and content_hash.
     IF NEW.content_hash IS NOT NULL
