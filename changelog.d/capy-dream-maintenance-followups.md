@@ -1,0 +1,14 @@
+---
+important: blocker
+---
+**Background extraction no longer loops forever on a default brain, and seven dream and maintenance jobs that stopped or double-charged now finish cleanly.**
+
+### Fixed
+- **The stale extract job stops chaining itself without end (#9295).** On the default config (frontmatter link sweep off), a page whose frontmatter named a page written later stayed "stale" after every sweep, because the check counted frontmatter references the sweep never re-resolves. The `extract` job then queued a new continuation every run. The sweep and `doctor`'s extraction-lag count now count only the references the configured sweep re-resolves, and a continuation chains again only when it left fewer pages stale than the run before it. The frontmatter reference is left unchecked, not marked done, so turning `autopilot.incremental_extract_include_frontmatter` on still finds and links it. A brain already looping simply stops at its next run; nothing to run on upgrade. Managed brains re-resolve both kinds of reference and were not affected.
+- **A released managed-atoms run can be resumed (#9079).** Resuming a release after an interruption reused the original run's request id for a different write and failed with "This request_id was used for a different write". The release now has its own run key.
+- **An edited managed page is resubmitted, not kept, when its activation is replayed (#9275).** Activations now record the page's prior content, so a replay can tell an operator's edit from the run's own write. Activations recorded before this release settle the old way once.
+- **A nested AI call that is refused before anything is sent no longer charges the outer budget (#9086).** The outer hold now settles at zero usage when the inner guard refuses, and the reported remaining budget subtracts live holds, so a group no longer reads full while it still has room. A call that was actually sent and then failed still books its usage.
+- **`gbrain repair agent-session-facts` works on segmented pages (#9027).** It reads the page whole (up to 24 MiB) and writes it back bound to that revision, instead of reporting `changed_since_preview` on every apply. Larger pages are declined with `page_body_segmented`.
+- **A Claude CLI reply that uses native tool-call markup is retried instead of read as a final answer (#9085).** Tool calls the model wrote in a form gbrain cannot run used to end the turn as plain prose. The reply is now treated as a transient failure, so the job's normal retry limit (at most two more attempts) applies.
+- **An extract job left with only blocked or held pages chains nothing (#8672).**
+- **`doctor`'s stale-mention check reads segmented pages (#9121).** It used to report links on segmented pages as stale because it never read their body.
