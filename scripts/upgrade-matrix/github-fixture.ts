@@ -69,12 +69,13 @@ export function createMirror(source: string, dir: string): string {
   return dir;
 }
 
-/** Per-run CA and a leaf certificate for the GitHub hosts (openssl, valid 2 days). */
+/** Per-run CA and a leaf certificate for the GitHub hosts (openssl, valid 2 days); a cached pair is reused only while both stay valid for another day. */
 export function createCertificates(dir: string): { ca: string; cert: string; key: string } {
   mkdirSync(dir, { recursive: true });
   const ca = join(dir, 'ca.pem'), caKey = join(dir, 'ca.key'), key = join(dir, 'leaf.key'), csr = join(dir, 'leaf.csr'), cert = join(dir, 'leaf.pem'), ext = join(dir, 'leaf.ext');
-  if (existsSync(cert)) return { ca, cert, key };
   const ssl = (args: string[]) => execFileSync('openssl', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const validForADay = (pem: string) => { try { ssl(['x509', '-checkend', '86400', '-noout', '-in', pem]); return true; } catch { return false; } };
+  if (existsSync(cert) && existsSync(ca) && validForADay(cert) && validForADay(ca)) return { ca, cert, key };
   ssl(['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', caKey, '-out', ca, '-days', '2', '-subj', '/CN=gbrain upgrade matrix fixture CA',
     '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign,cRLSign']);
   ssl(['req', '-newkey', 'rsa:2048', '-nodes', '-keyout', key, '-out', csr, '-subj', '/CN=github fixture']);

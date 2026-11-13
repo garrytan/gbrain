@@ -10,7 +10,7 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveFromVersions, type Release } from '../../scripts/upgrade-matrix/versions.ts';
-import { parseFixturePath, startGithubFixture } from '../../scripts/upgrade-matrix/github-fixture.ts';
+import { createCertificates, parseFixturePath, startGithubFixture } from '../../scripts/upgrade-matrix/github-fixture.ts';
 import { CELL_RELEASE_CHANNEL_ENV, compareInstalledTree, upgradeRefs } from '../../scripts/upgrade-matrix/cell.ts';
 import { diffCatalog, diffContent, takeSnapshot, type Query } from '../../scripts/upgrade-matrix/snapshot.ts';
 import { CHECKS, doctorVerdict, judgeCell, loadKnownExceptions, summarize, validateKnownExceptions, type CellSummary } from '../../scripts/upgrade-matrix/verdict.ts';
@@ -70,6 +70,23 @@ async function curl(args: string[]): Promise<{ status: number; stdout: string }>
 }
 
 describe('GitHub fixture', () => {
+  test('a cached certificate directory whose certificates expire within a day is regenerated, not reused', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'um-certs-'));
+    const validForADay = (args: string[]) => execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', ...args], { stdio: 'ignore' });
+    const expiresWithinADay = (pem: string) => { try { execFileSync('openssl', ['x509', '-checkend', '86400', '-noout', '-in', pem], { stdio: 'ignore' }); return false; } catch { return true; } };
+    try {
+      validForADay(['-keyout', join(dir, 'ca.key'), '-out', join(dir, 'ca.pem'), '-subj', '/CN=stale ca']);
+      validForADay(['-keyout', join(dir, 'leaf.key'), '-out', join(dir, 'leaf.pem'), '-subj', '/CN=stale leaf']);
+      expect(expiresWithinADay(join(dir, 'leaf.pem'))).toBe(true);
+      const certs = createCertificates(dir);
+      expect(expiresWithinADay(certs.cert)).toBe(false);
+      expect(expiresWithinADay(certs.ca)).toBe(false);
+      execFileSync('openssl', ['verify', '-CAfile', certs.ca, certs.cert], { stdio: 'ignore' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test('parses the tarball, codeload and raw paths it serves, and nothing else', () => {
     expect(parseFixturePath('loopback', '/repos/garrytan/gbrain/tarball/v1.2.3.4')).toEqual({ kind: 'tarball', ref: 'v1.2.3.4' });
     expect(parseFixturePath('api.github.com', '/repos/garrytan/gbrain/tarball')).toEqual({ kind: 'tarball', ref: 'HEAD' });
