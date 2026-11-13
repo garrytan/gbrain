@@ -5,10 +5,9 @@ import { PAGE_INLINE_MAX_BYTES, isLargePageBytes } from '../page-size-policy.ts'
 import { LARGE_PAGE_VERSIONS_KEPT, readPageBodyPolicy } from '../page-body/limits.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { isHoldingSlug } from '../facts-fence.ts';
 
 export { LARGE_PAGE_VERSIONS_KEPT };
-/** GST-2497: the most saved versions of a holding page one write removes, so a page with a long history drains over later saves. */
+/** GST-2497: the most saved versions of a holding page one save removes, so a page with a long history drains over later saves. */
 export const HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE = 100;
 
 /**
@@ -36,12 +35,6 @@ export async function createPageVersion(engine: BrainEngine, slug: string, sourc
       const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE page_id = $1 AND id IN (SELECT id FROM page_versions WHERE page_id = $1
         AND octet_length(compiled_truth) + octet_length(COALESCE(timeline, '')) > $2 ORDER BY id DESC OFFSET $3) RETURNING id`,
       [page.id, PAGE_INLINE_MAX_BYTES, LARGE_PAGE_VERSIONS_KEPT]);
-      await markPrunedHistory(tx, page.id, pruned.map(row => Number(row.id)));
-    }
-    if (isHoldingSlug(page.slug)) {
-      const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE id IN (SELECT id FROM (SELECT id FROM page_versions
-        WHERE page_id = $1 AND body_storage IS DISTINCT FROM 'segmented' ORDER BY id DESC OFFSET $2) excess ORDER BY id LIMIT $3) RETURNING id`,
-      [page.id, LARGE_PAGE_VERSIONS_KEPT, HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE]);
       await markPrunedHistory(tx, page.id, pruned.map(row => Number(row.id)));
     }
     return { ...rows[0], snapshot_at: new Date(rows[0].snapshot_at) };
@@ -104,6 +97,19 @@ export async function pruneSegmentedVersions(tx: BrainEngine, pageId: number): P
     RETURNING id`, [pageId, policy.versionsMaxPerPage, policy.versionsMaxPinnedBytes]);
   await markPrunedHistory(tx, pageId, deleted.map(row => Number((row as { id: number }).id)));
   return deleted.length;
+}
+
+/**
+ * GST-2497: a save that adds a fact to a holding page keeps that page's newest LARGE_PAGE_VERSIONS_KEPT inline saved
+ * versions, removing at most HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE older ones, and records the gap. It runs only from
+ * the fence append, after its version is saved: writes that edit saved versions themselves (a held move, purge) never
+ * prune, so the versions they count are the versions they edit. Segmented versions keep their own retention.
+ */
+export async function pruneHoldingPageVersions(tx: BrainEngine, pageId: number): Promise<void> {
+  const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE id IN (SELECT id FROM (SELECT id FROM page_versions
+    WHERE page_id = $1 AND body_storage IS DISTINCT FROM 'segmented' ORDER BY id DESC OFFSET $2) excess ORDER BY id LIMIT $3) RETURNING id`,
+  [pageId, LARGE_PAGE_VERSIONS_KEPT, HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE]);
+  await markPrunedHistory(tx, pageId, pruned.map(row => Number(row.id)));
 }
 
 /**
