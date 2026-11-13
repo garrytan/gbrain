@@ -4574,9 +4574,9 @@ More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/trou
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain maintain --schedule installed nothing: on Windows and in containers it has no installer. | Windows gets the schtasks line to add by hand (minimal Windows support). In a container an operating-system schedule does not survive a redeploy, so the resident gbrain serve is the upkeep runner there. | On Windows, add the printed schtasks line yourself. In a container, keep gbrain serve running; it runs free upkeep while idle. | agent | `repeat the read that failed` | 1 | no |
+| gbrain maintain --schedule installed nothing: on Windows and in containers it has no installer, and it schedules the host brain only. | Windows gets the schtasks line to add by hand (minimal Windows support). In a container an operating-system schedule does not survive a redeploy, so the resident gbrain serve is the upkeep runner there. The scheduled job runs without --brain, so a mounted brain gets no schedule. | On Windows, add the printed schtasks line yourself. In a container, keep gbrain serve running; it runs free upkeep while idle. For a mounted brain, schedule gbrain --brain <id> maintain --unattended yourself. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `windows`, `container`.
+Reasons: `windows`, `container`, `mount`.
 
 ### schema_lock_blocked
 

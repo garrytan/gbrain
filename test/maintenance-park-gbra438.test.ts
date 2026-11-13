@@ -19,7 +19,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { runCycle, type CycleOpts } from '../src/core/cycle.ts';
+import { runCycle, type CycleOpts, type CycleReport } from '../src/core/cycle.ts';
 import { UPKEEP_PARK_AFTER_SLICES, readUpkeepRecord, runUnattendedMaintenance, type SafePhaseProviders } from '../src/core/maintenance/run.ts';
 import { runIdleUpkeep } from '../src/core/maintenance/idle.ts';
 import { readUpkeepStatus } from '../src/core/maintenance/status.ts';
@@ -125,4 +125,57 @@ describe('budgeted upkeep parks an item that cannot finish inside its slices (PG
     expect(cleared.steps.some((s) => s.scope === 'default' && s.name === 'extract_facts' && s.status === 'ok')).toBe(true);
     expect((await readUpkeepStatus(engine)).state).toBe('ok');
   }, 180_000);
+});
+
+describe('parking counts only the budget, and a new round tries a parked item again (PGLite, counted fake cycle)', () => {
+  let engine: BrainEngine;
+  const ok = { status: 'ok', phases: [] } as unknown as CycleReport;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ engine: 'pglite' } as never);
+    await engine.initSchema();
+  }, 60_000);
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('a tool call that stops a slice never counts toward parking', async () => {
+    for (let n = 0; n < UPKEEP_PARK_AFTER_SLICES + 5; n++) {
+      const foreground = new AbortController();
+      await runUnattendedMaintenance(engine, {
+        runner: 'serve', budgetMs: 60_000, signal: foreground.signal, providers: KEYLESS,
+        cycle: async (_e, o) => {
+          if (o.sourceId !== 'default') return ok;
+          foreground.abort();
+          throw new Error('stopped by a request');
+        },
+      });
+    }
+    const record = (await readUpkeepRecord(engine))!;
+    expect(record.parked ?? []).toEqual([]);
+    expect(record.cursor?.attempts?.['source:default']).toBeUndefined();
+  });
+
+  test('a new round gives a parked item a fresh set of slices', async () => {
+    await engine.executeRaw("DELETE FROM config WHERE key LIKE 'maintenance.%'");
+    const calls: string[] = [];
+    const slow = async (_e: BrainEngine | null, o: CycleOpts): Promise<CycleReport> => {
+      calls.push(o.sourceId ?? 'global');
+      if (o.sourceId !== 'default') return ok;
+      if (!o.signal!.aborted) await new Promise<void>((resolve) => o.signal!.addEventListener('abort', () => resolve()));
+      throw new Error('stopped by the budget');
+    };
+    const slice = (now?: Date) => runUnattendedMaintenance(engine, {
+      runner: 'serve', budgetMs: 5, signal: new AbortController().signal, providers: KEYLESS, cycle: slow, ...(now ? { now: () => now } : {}),
+    });
+    for (let n = 0; n < UPKEEP_PARK_AFTER_SLICES + 5; n++) {
+      await slice();
+      if ((await readUpkeepRecord(engine))?.cursor === null) break;
+    }
+    const parked = (await readUpkeepRecord(engine))!;
+    expect(parked.parked).toEqual([{ key: 'source:default', since: expect.any(String), slices: UPKEEP_PARK_AFTER_SLICES }]);
+    calls.length = 0;
+    await slice(new Date(Date.parse(parked.next_due_at) + 60_000));
+    expect(calls).toContain('default');
+    expect((await readUpkeepRecord(engine))!.cursor?.attempts?.['source:default']).toBe(1);
+  });
 });

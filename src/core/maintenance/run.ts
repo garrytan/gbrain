@@ -33,6 +33,7 @@ import { readDecideConfig } from '../ai/decide/config.ts';
 import { hasTypesafeKey } from '../ai/decide/index.ts';
 import { isEngineDegraded } from '../degraded-marker.ts';
 import { hasPendingMigrations } from '../migrate-pending.ts';
+import { tryAcquireDbLock } from '../db-lock.ts';
 
 export const MAINTENANCE_LAST_RUN_KEY = 'maintenance.last_run';
 export const MAINTENANCE_AUTO_KEY = 'maintenance.auto';
@@ -46,11 +47,13 @@ export const UPKEEP_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const UPKEEP_BACKOFF_FAILURES = 3;
 export const UPKEEP_BACKOFF_MS = 7 * 24 * 60 * 60 * 1000;
 /**
- * A budgeted (serve) run parks an item that started and did not finish in this many slices of one round: the round
- * settles without it, budgeted runs skip it, and an unbudgeted run (`gbrain maintain --unattended`, the schedule) or a
- * serve's first idle run (`retryParked`) runs it again.
+ * A budgeted (serve) run parks an item that its budget stopped this many times in one round: the round settles without
+ * it and budgeted runs skip it until the next round, an unbudgeted run (`gbrain maintain --unattended`, the schedule) or
+ * a serve's first idle run (`retryParked`) runs it again. A foreground request's abort never counts as a slice.
  */
 export const UPKEEP_PARK_AFTER_SLICES = 30;
+/** One runner embeds at a time, so two serves finishing a round together never both spend the day's cap. */
+export const MAINTENANCE_EMBED_LOCK_ID = 'gbrain-maintenance-embed';
 /** An autopilot whose global pass is younger than this owns upkeep. */
 export const AUTOPILOT_OWNS_WITHIN_MS = 48 * 60 * 60 * 1000;
 
@@ -374,8 +377,8 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     const sources = (await engine.listAllSources()).sort((a, b) => a.id.localeCompare(b.id));
     const keys = ['global', ...sources.map((source) => `source:${source.id}`)];
     const parked = (prior?.parked ?? []).filter((p) => keys.includes(p.key)).map((p) => ({ ...p }));
-    const retrying = !budgeted || opts.retryParked ? parked.map((p) => p.key) : [];
     const retryOnly = !upkeepDue(prior, now);
+    const retrying = !budgeted || opts.retryParked || (!retryOnly && !prior?.cursor) ? parked.map((p) => p.key) : [];
     if (retryOnly && retrying.length === 0) {
       return { status: 'not_due', exit: 0, message: `Upkeep already ran at ${prior!.at}; next due at ${prior!.next_due_at}.`, record: prior! };
     }
@@ -409,7 +412,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
         retry.delete(item.key);
       };
       const unfinished = (): void => {
-        if (!budgeted) return;
+        if (!budgeted || opts.signal?.aborted) return;
         const slices = (attempts[item.key] ?? 0) + 1;
         if (slices < UPKEEP_PARK_AFTER_SLICES) { attempts[item.key] = slices; return; }
         const entry = parked.find((p) => p.key === item.key);
@@ -458,9 +461,17 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     const finished = items.every((item) => done.includes(item.key));
     let embed: UpkeepRecord['embed'];
     if (finished && plan.embedding && !opts.signal?.aborted) {
-      const result = await runEmbedStep(engine, now, opts.signal);
-      steps.push(result.step);
-      embed = result.embed;
+      const lock = await tryAcquireDbLock(engine, MAINTENANCE_EMBED_LOCK_ID);
+      if (!lock) steps.push({ name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' });
+      else {
+        try {
+          const result = await runEmbedStep(engine, now, opts.signal);
+          steps.push(result.step);
+          embed = result.embed;
+        } finally {
+          await lock.release();
+        }
+      }
     }
     if (finished && engine.kind === 'pglite' && !opts.signal?.aborted) steps.push(await checkpointStep(engine));
     const failed = steps.filter((step) => step.status === 'fail');

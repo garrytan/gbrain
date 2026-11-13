@@ -19,7 +19,9 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { runCycle, type CycleOpts } from '../src/core/cycle.ts';
-import { readUpkeepRecord, unattendedPlan, type SafePhaseProviders } from '../src/core/maintenance/run.ts';
+import { MAINTENANCE_EMBED_LOCK_ID, readUpkeepRecord, runUnattendedMaintenance, unattendedPlan, type SafePhaseProviders } from '../src/core/maintenance/run.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
+import type { CycleReport } from '../src/core/cycle.ts';
 import { runIdleUpkeep } from '../src/core/maintenance/idle.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { checkUnattendedMaintenance } from '../src/commands/doctor/checks/unattended-maintenance.ts';
@@ -43,6 +45,19 @@ for (const kind of testBackends()) {
     beforeEach(async () => {
       await engine.executeRaw("DELETE FROM config WHERE key LIKE 'maintenance.%' OR key = 'autopilot.last_global_at'");
       await engine.executeRaw('DELETE FROM pages');
+    });
+
+    test('one runner embeds at a time: while another holds the embed lock, a finished round skips embed as embed_running and spends nothing', async () => {
+      const lock = (await tryAcquireDbLock(engine, MAINTENANCE_EMBED_LOCK_ID))!;
+      try {
+        const outcome = await runUnattendedMaintenance(engine, {
+          runner: 'cli', providers: { ...KEYLESS, embedding: true }, cycle: async () => ({ status: 'ok', phases: [] }) as unknown as CycleReport,
+        });
+        expect(outcome.record?.steps).toContainEqual({ name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' });
+        expect(await engine.getConfig('maintenance.embed_spend')).toBeNull();
+      } finally {
+        await lock.release();
+      }
     });
 
     test('maintenance.auto=false: nothing runs and nothing is recorded', async () => {

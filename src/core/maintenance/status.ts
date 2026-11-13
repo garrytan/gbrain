@@ -120,7 +120,7 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
   if (base.parked.length) {
     const named = base.parked.map((p) => `${p.key} after ${p.slices} slices`).join(', ');
     return { ...base, fix, alternative_fix: scheduleFix(), state: 'parked',
-      message: `Upkeep inside serve parked ${named}; the scheduled run or gbrain maintain --unattended finishes it.${purgeNote}${spendNote}` };
+      message: `Upkeep inside serve parked ${named}; serve tries it again next round, and gbrain maintain --unattended finishes it now.${purgeNote}${spendNote}` };
   }
   const ran = record.steps.filter((s) => s.status === 'ok' || s.status === 'warn').length;
   const due = Date.parse(record.next_due_at) - nowMs;

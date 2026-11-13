@@ -176,6 +176,48 @@ describe('gbrain maintain --schedule', () => {
     expect(existsSync(wrapper)).toBe(false);
   });
 
+  test('a crontab -l that fails for any reason but "no crontab" leaves the crontab alone: install and --unschedule write nothing', async () => {
+    const failing: CommandRunner = async (argv) => {
+      calls.push(argv);
+      if (argv[0] === 'crontab' && argv[1] === '-l') return { status: 1, stdout: '', stderr: 'crontab: cannot open your crontab: permission denied' };
+      return run(argv);
+    };
+    const before = crontab;
+    await runMaintainSchedule(['--schedule', '--yes', '--json'], { ...env('linux'), run: failing });
+    expect(currentExitCode()).toBe(exitCodeForCode('schedule_install_failed'));
+    expect([...out, ...errOut].join('\n')).toContain('crontab -l failed');
+    _resetCliExitVerdictForTests();
+    await runMaintainSchedule(['--unschedule', '--json'], { ...env('linux'), run: failing });
+    expect(currentExitCode()).toBe(1);
+    expect(calls.filter((c) => c[0] === 'crontab' && c[1] !== '-l')).toEqual([]);
+    expect(crontab).toBe(before);
+  });
+
+  test('"no crontab for user" reads as an empty crontab, and an install keeps the other lines exactly, blank ones included', async () => {
+    const none: CommandRunner = async (argv) => {
+      if (argv[0] === 'crontab' && argv[1] === '-l') { calls.push(argv); return { status: 1, stdout: '', stderr: 'no crontab for user' }; }
+      return run(argv);
+    };
+    await runMaintainSchedule(['--schedule', '--yes', '--json'], { ...env('linux'), run: none });
+    expect(currentExitCode()).toBe(0);
+    expect(crontab.split('\n').filter(Boolean)).toHaveLength(1);
+    expect(crontab).toEndWith('# gbrain-maintain\n');
+    crontab = 'MAILTO=""\n\n0 1 * * * /usr/bin/true\n';
+    out.length = 0;
+    await runMaintainSchedule(['--schedule', '--yes', '--json'], env('linux'));
+    expect(crontab.startsWith('MAILTO=""\n\n0 1 * * * /usr/bin/true\n')).toBe(true);
+  });
+
+  test('a mounted brain gets no schedule: --schedule refuses with schedule_unsupported (reason mount) and writes nothing', async () => {
+    await runMaintainSchedule(['--schedule', '--yes', '--json'], { ...env('linux'), brainId: 'work' });
+    expect(currentExitCode()).toBe(exitCodeForCode('schedule_unsupported'));
+    const text = [...out, ...errOut].join('\n');
+    expect(text).toContain('mount');
+    expect(text).toContain('gbrain --brain work maintain --unattended');
+    expect(existsSync(join(root, 'home', '.gbrain', 'maintain-run.sh'))).toBe(false);
+    expect(calls.filter((c) => c[0] === 'crontab')).toEqual([]);
+  });
+
   test('--yes on a systemd host writes the service and timer and enables the timer', async () => {
     await runMaintainSchedule(['--schedule', '--yes', '--json'], { ...env('linux'), systemdBooted: true });
     expect(json()).toMatchObject({ status: 'installed', target: 'linux-systemd' });

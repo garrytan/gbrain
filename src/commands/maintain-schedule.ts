@@ -31,6 +31,9 @@ import { isConsentRefusal, printConsentRefusal, requireConsent } from '../core/c
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { opError } from '../core/ops/contract.ts';
+import { resolveBrainId } from '../core/brain-resolver.ts';
+import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 
 export const SCHEDULE_INTERVAL_HOURS = 6;
 /** What the job runs: one unattended upkeep run, recorded with runner `schedule`. */
@@ -158,6 +161,8 @@ export interface ScheduleEnv {
   gbrainCommand: string[];
   gbrainHome?: string;
   runtimeDir?: string;
+  /** The brain this command selects (--brain, GBRAIN_BRAIN_ID, a mount); the schedule covers the host brain only. */
+  brainId?: string;
   run: CommandRunner;
   /** `/run/systemd/system` exists (the host booted with systemd); the user manager is probed through `run`. */
   systemdBooted: boolean;
@@ -177,6 +182,7 @@ export function defaultScheduleEnv(): ScheduleEnv {
     gbrainCommand: resolveServeGbrainCommand(),
     ...(process.env.GBRAIN_HOME ? { gbrainHome: process.env.GBRAIN_HOME } : {}),
     runtimeDir: runtimeDir === '.' ? '' : runtimeDir,
+    brainId: resolveBrainId(getCliOptions().brain),
     run: defaultCommandRunner,
     systemdBooted: existsSync('/run/systemd/system'),
   };
@@ -221,9 +227,11 @@ function writeFile(path: string, content: string, mode: number, what: string): v
 
 const describe = (r: { status: number | null; stdout: string; stderr: string }) => (r.stderr || r.stdout).trim() || `exit ${r.status}`;
 
-async function readCrontab(run: CommandRunner): Promise<string> {
+async function readCrontab(run: CommandRunner): Promise<{ lines: string[] } | { error: string }> {
   const r = await run(['crontab', '-l'], { timeoutMs: 15_000 });
-  return r.status === 0 ? r.stdout : '';
+  if (r.status === 0) return { lines: r.stdout ? r.stdout.replace(/\n$/, '').split('\n') : [] };
+  if (r.status === 1 && /no crontab|no such file/i.test(`${r.stderr}${r.stdout}`)) return { lines: [] };
+  return { error: `crontab -l failed (${describe(r)}), so the crontab was left unchanged` };
 }
 
 async function writeCrontab(env: ScheduleEnv, lines: string[]): Promise<{ status: number | null; stdout: string; stderr: string }> {
@@ -258,7 +266,12 @@ export async function installSchedule(target: 'macos' | 'linux-systemd' | 'linux
     out.notes.push('The timer runs while your user manager runs; for runs after logout turn on lingering (loginctl enable-linger "$USER", which may need an admin).');
     return out;
   }
-  const kept = (await readCrontab(env.run)).split('\n').filter((l) => l.trim() !== '' && !isScheduleCronLine(l, env.names.cronMarker));
+  const current = await readCrontab(env.run);
+  if ('error' in current) {
+    out.error = current.error;
+    return out;
+  }
+  const kept = current.lines.filter((l) => !isScheduleCronLine(l, env.names.cronMarker));
   const write = await writeCrontab(env, [...kept, scheduleCronLine({ wrapperPath: paths.wrapper, logPath: paths.log, marker: env.names.cronMarker })]);
   if (write.status !== 0) out.error = `crontab failed: ${describe(write)}`;
   else out.written.push('crontab: one gbrain-maintain line');
@@ -279,7 +292,9 @@ export async function uninstallSchedule(target: ScheduleTarget, env: ScheduleEnv
     remove(paths.service);
     await env.run(['systemctl', '--user', 'daemon-reload'], { timeoutMs: 15_000 });
   } else if (target === 'linux-cron') {
-    const lines = (await readCrontab(env.run)).split('\n').filter((l) => l.trim() !== '');
+    const current = await readCrontab(env.run);
+    const lines = 'error' in current ? [] : current.lines;
+    if ('error' in current) out.error = current.error;
     const kept = lines.filter((l) => !isScheduleCronLine(l, env.names.cronMarker));
     if (kept.length !== lines.length) {
       const write = await writeCrontab(env, kept);
@@ -322,6 +337,11 @@ export async function runMaintainSchedule(args: string[], env: ScheduleEnv = def
   if (target === 'container') {
     setCliExitVerdict(writeCliError(opError('schedule_unsupported', 'This looks like a container or cloud sandbox, where an operating-system schedule does not survive a redeploy, so nothing was installed.',
       'Keep gbrain serve running in the container (gbrain serve --http for a hosted brain): it runs free upkeep on its own while idle.', { reason: 'container' }), 'maintain', { json }));
+    return;
+  }
+  if (env.brainId && env.brainId !== HOST_BRAIN_ID && !args.includes('--unschedule')) {
+    setCliExitVerdict(writeCliError(opError('schedule_unsupported', `gbrain maintain --schedule covers the host brain only, and this command selects the mounted brain ${env.brainId}, so nothing was installed.`,
+      `Run gbrain maintain --schedule without --brain for the host brain. For ${env.brainId}, add gbrain --brain ${env.brainId} maintain --unattended to a scheduler yourself.`, { reason: 'mount', detail: env.brainId }), 'maintain', { json }));
     return;
   }
   if (args.includes('--unschedule')) {
