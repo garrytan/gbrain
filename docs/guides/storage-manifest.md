@@ -33,8 +33,10 @@ carry commands or credentials, and gbrain never contacts a store. After the rest
 On a repo-less brain, including a fresh keyless install whose content directory (created by `gbrain init`) holds no
 Git checkout, the database is the record: the first `storage-register` (or `gbrain storage init`) creates the
 `storage` source, database-only and not federated, and every verb works there. If that first creation stopped part
-way (a crash, two first registers at once), the next register or `gbrain storage init` finishes it. A `storage` source
-that already holds someone else's pages is never taken over: the verbs refuse `storage_manifest_missing`.
+way (a crash, two first registers at once), the next register or `gbrain storage init` finishes it, so an empty
+`storage` source with no directory of its own counts as the shelf. A `storage` source that holds pages, or (on a
+repo-less brain) has its own directory, is never taken over: the verbs refuse `storage_manifest_missing`, as they do while the shelf is archived (until
+`gbrain sources restore storage`).
 
 On a brain with a Git checkout, Git stays the parent. `gbrain storage init --dir <absolute path> --dry-run` previews a
 hosted Git repository for the shelf, and the printed `--expect <plan_hash>` command creates it after the user agrees

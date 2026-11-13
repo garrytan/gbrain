@@ -168,6 +168,15 @@ describe('storage shelf on a repo-less brain', () => {
     expect(await role()).toMatchObject({ role: 'storage_manifest', federated: 'false' });
     expect((await call('storage_get', { id: 'after-crash' })).card.title).toBe('Dataset after-crash');
 
+    await engine.executeRaw("UPDATE sources SET archived = true WHERE id = 'storage'");
+    const archivedConfig = (await engine.executeRaw<{ config: unknown }>("SELECT config FROM sources WHERE id='storage'"))[0]!.config;
+    for (const attempt of [call('storage_register', { card: card('while-archived') }), initStorageSource(engine, { dryRun: false })]) {
+      const r = await refusal(attempt);
+      expect(r?.code).toBe('storage_manifest_missing');
+      expect(r!.message).toContain('archived');
+    }
+    expect((await engine.executeRaw<{ config: unknown }>("SELECT config FROM sources WHERE id='storage'"))[0]!.config).toEqual(archivedConfig);
+
     await resetPgliteState(engine);
     await addSource(engine, { id: 'storage', name: 'Someone else', federated: false });
     await call('put_page', { slug: 'notes', source_id: 'storage', content: '---\ntype: note\ntitle: Notes\n---\nKept.\n', request_id: randomUUID() });

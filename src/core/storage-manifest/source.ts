@@ -24,7 +24,7 @@ export function isStorageRole(config: unknown): boolean {
 }
 
 /** `ours`: an empty source a shelf creation started and did not finish marking (hosted by storage init, or database-only). */
-export interface StorageSourceState { exists: boolean; repoBrain: boolean; role: boolean; hosted: boolean; ours: boolean }
+export interface StorageSourceState { exists: boolean; archived: boolean; repoBrain: boolean; role: boolean; hosted: boolean; ours: boolean }
 
 /**
  * A repo brain is one with any active source that has a directory (or the legacy sync.repo_path of default); mixed
@@ -41,7 +41,7 @@ export async function storageSourceState(engine: BrainEngine): Promise<StorageSo
     'SELECT s.config, s.archived, s.local_path, EXISTS (SELECT 1 FROM pages p WHERE p.source_id = s.id) AS pages FROM sources s WHERE s.id=$1', [STORAGE_SOURCE_ID]);
   const config = row ? parseSourceConfig(row.config) : {};
   const hosted = !!config.hosted_repo;
-  return { exists: !!row && !row.archived, repoBrain: await isRepoBrain(engine), role: config.role === STORAGE_ROLE, hosted,
+  return { exists: !!row && !row.archived, archived: !!row?.archived, repoBrain: await isRepoBrain(engine), role: config.role === STORAGE_ROLE, hosted,
     ours: !!row && !row.pages && (hosted || !row.local_path) };
 }
 
@@ -51,6 +51,11 @@ const unfinished = (state: StorageSourceState) => state.exists && !state.role &&
 function notOurs() {
   return opError('storage_manifest_missing', `Source ${STORAGE_SOURCE_ID} exists but is not a storage manifest; nothing was written.`,
     `The storage shelf needs the source ID ${STORAGE_SOURCE_ID}. Ask the user what that source holds before anything else; gbrain sources list shows it. Its pages stay where they are.`);
+}
+
+function archivedShelf() {
+  return opError('storage_manifest_missing', `Source ${STORAGE_SOURCE_ID} is archived; nothing was written.`,
+    `Ask the user whether to bring it back with gbrain sources restore ${STORAGE_SOURCE_ID} (gbrain sources archived shows when it would be purged).`);
 }
 
 function initFix() {
@@ -73,6 +78,7 @@ async function markRole(engine: BrainEngine): Promise<void> {
  */
 export async function shelfWritable(engine: BrainEngine): Promise<{ creates: boolean; exists: boolean }> {
   const state = await storageSourceState(engine);
+  if (state.archived) throw archivedShelf();
   if (state.exists && state.role) return { creates: false, exists: true };
   if (unfinished(state)) return { creates: true, exists: true };
   if (state.exists) throw notOurs();
@@ -89,7 +95,7 @@ export async function ensureStorageSource(engine: BrainEngine): Promise<void> {
   if (!exists) {
     try { await addSource(engine, { id: STORAGE_SOURCE_ID, name: 'Storage manifest', federated: false }); } catch (error) {
       const now = await storageSourceState(engine);
-      if (!now.role && !unfinished(now)) throw error;
+      if (!now.exists || (!now.role && !unfinished(now))) throw error;
     }
   }
   await markRole(engine);
@@ -100,6 +106,7 @@ export interface StorageInitResult { action: 'none' | 'create_database_source' |
 /** `gbrain storage init`: preview, then apply. Repo-less: a database-only source. Repo brain: hostRepo, then the role. */
 export async function initStorageSource(engine: BrainEngine, opts: { dir?: string; pushRemote?: string; dryRun: boolean; expect?: string }): Promise<StorageInitResult> {
   const state = await storageSourceState(engine);
+  if (state.archived) throw archivedShelf();
   if (state.exists && state.role && (!state.repoBrain || state.hosted)) {
     return { action: 'none', dry_run: opts.dryRun, repo_brain: state.repoBrain, summary: [`The storage shelf (source ${STORAGE_SOURCE_ID}) already exists${state.hosted ? ' as a hosted Git repository' : ''}.`] };
   }

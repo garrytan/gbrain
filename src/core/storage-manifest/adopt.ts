@@ -179,7 +179,7 @@ async function assertInterimSource(ctx: OperationContext, opts: AdoptOptions): P
 /** Preview: what apply would do. Writes nothing; refuses storage_manifest_missing on a brain with a Git checkout until storage init has run. */
 export async function previewAdopt(ctx: OperationContext, opts: AdoptOptions): Promise<AdoptPlan> {
   await assertInterimSource(ctx, opts);
-  const { creates } = await shelfWritable(ctx.engine);
+  const { creates, exists } = await shelfWritable(ctx.engine);
   const shelf = new Map((await readShelfCards(ctx.engine)).map((row) => [row.id, row.card]));
   const seen = new Set<string>();
   const entries: AdoptEntry[] = (await listInterim(ctx, opts, false)).map((row): AdoptEntry => {
@@ -201,13 +201,14 @@ export async function previewAdopt(ctx: OperationContext, opts: AdoptOptions): P
     slug: e.slug, card: e.card ? cardDigest(e.card) : null, refused: e.refused.map((f) => `${f.field}:${f.reason}`),
     problem: e.problem ? `${e.problem.code}:${e.problem.reason}` : null, conflict: e.state === 'conflict' })) }));
   const summary = [`${entries.length} interim record(s) under ${opts.prefix} in source ${opts.sourceId}: ${counts.register} to register, ${counts.retag} already on the shelf to tag, ${counts.adopted} already adopted, ${counts.conflict} conflict(s), ${counts.blocked} blocked.`];
-  if (creates && counts.register) summary.push(`The first card creates the storage shelf (source ${STORAGE_SOURCE_ID}, database-only: this brain has no Git checkout, so the database is the record).`);
+  if (creates && counts.register) summary.push(exists ? `The first card finishes the storage shelf (source ${STORAGE_SOURCE_ID}) that an earlier creation left without its role.`
+    : `The first card creates the storage shelf (source ${STORAGE_SOURCE_ID}, database-only: this brain has no Git checkout, so the database is the record).`);
   if (drop_fields.length) summary.push(`Fields a card refuses, left out only when each is named with --drop-field: ${drop_fields.join(', ')}. The original pages keep them until finalize.`);
   if (counts.conflict) summary.push('A conflict is a card already on the shelf that differs from the record: it is never overwritten, and its original is not tagged.');
   if (counts.blocked) summary.push('Blocked pages need their record fixed on the page first; apply refuses until then.');
   const apply = counts.blocked || !(counts.register + counts.retag) ? undefined
     : [...adoptArgv(opts), ...drop_fields.flatMap((f) => ['--drop-field', f]), '--apply', '--expect', plan_hash];
-  return { action: 'adopt', dry_run: true, source_id: opts.sourceId, prefix: opts.prefix, shelf: creates ? 'creates' : 'exists', entries, counts, drop_fields, plan_hash, summary, ...(apply ? { apply } : {}) };
+  return { action: 'adopt', dry_run: true, source_id: opts.sourceId, prefix: opts.prefix, shelf: creates && !exists ? 'creates' : 'exists', entries, counts, drop_fields, plan_hash, summary, ...(apply ? { apply } : {}) };
 }
 
 function staleHash(opts: AdoptOptions, expected: string, finalize: boolean): OperationError {
