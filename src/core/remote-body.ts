@@ -38,7 +38,10 @@ export function sanitizeRemoteBody(body: string, opts: { includeWithdrawn?: bool
 export function renderFactsRegion(region: string, includeWithdrawn = false): string {
   try {
     const parsed = parseFactsFenceFor(region, { reader: true });
-    if (parsed.warnings.length === 0) return renderFactsTable(parsed.facts.filter(row => row.visibility === 'world' && (includeWithdrawn || !row.forgotten)));
+    if (parsed.warnings.length === 0) {
+      const visible = parsed.facts.filter(row => row.visibility === 'world' && (includeWithdrawn || !row.forgotten));
+      return parsed.facts.length > 0 && visible.length === 0 ? '' : renderFactsTable(visible);
+    }
   } catch {
     // A protected block that cannot be parsed is omitted, never echoed.
   }

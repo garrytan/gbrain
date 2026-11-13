@@ -646,13 +646,13 @@ export type NewFactRow = Omit<ParsedFact, 'rowNum' | 'active' | 'supersededBy' |
  * the same row. Throws `FenceRewriteRefusal` when the existing fence does
  * not parse cleanly: re-rendering it would drop the rows the parser skipped.
  */
-export function upsertFactRow(body: string, newRow: NewFactRow, opts?: FactsFenceParseOpts): { body: string; rowNum: number } {
+export function upsertFactRow(body: string, newRow: NewFactRow, opts?: FactsFenceParseOpts & { omitSectionHeading?: boolean }): { body: string; rowNum: number } {
   const parsed = parseFactsFenceFor(body, opts);
   assertFenceRewritable('facts', parsed);
   const { facts } = parsed;
   const nextRowNum = newRow.rowNum
     ?? (facts.length > 0 ? Math.max(...facts.map(f => f.rowNum)) + 1 : 1);
-  return { body: replaceOrInsertFactsFence(body, renderFactsTable([...facts, factRow(newRow, nextRowNum)])), rowNum: nextRowNum };
+  return { body: replaceOrInsertFactsFence(body, renderFactsTable([...facts, factRow(newRow, nextRowNum)]), opts), rowNum: nextRowNum };
 }
 
 function factRow(newRow: NewFactRow, rowNum: number): ParsedFact {
@@ -857,12 +857,12 @@ export function strikeFactRowInPage<T extends { compiled_truth: string; timeline
   return page;
 }
 
-export function replaceOrInsertFactsFence(body: string, fenceBlock: string): string {
+export function replaceOrInsertFactsFence(body: string, fenceBlock: string, opts?: { omitSectionHeading?: boolean }): string {
   const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
   if (beginIdx !== -1 && endIdx !== -1) {
     return body.slice(0, beginIdx) + fenceBlock + body.slice(endIdx + FACTS_FENCE_END.length);
   }
-  const section = `## Facts\n\n${fenceBlock}\n`;
+  const section = `${opts?.omitSectionHeading ? '' : '## Facts\n\n'}${fenceBlock}\n`;
   const sentinelAt = timelineSentinelOffset(body);
   const codeAt = unclosedCodeFenceStart(sentinelAt === -1 ? body : body.slice(0, sentinelAt));
   const insertAt = codeAt !== -1 ? codeAt : sentinelAt;

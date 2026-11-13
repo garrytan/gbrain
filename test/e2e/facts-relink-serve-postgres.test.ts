@@ -11,6 +11,7 @@ import { claimNextWrite } from '../../src/core/persistence/journal.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
 import { serializePageToMarkdown } from '../../src/core/markdown.ts';
+import { importFromContent } from '../../src/core/import-file.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase } from '../helpers/test-backends.ts';
 import { waitFor } from '../helpers/wait-for.ts';
@@ -44,7 +45,7 @@ test('Postgres: a reviewed relink waits for Serve, survives a released claim, an
     mkdirSync(join(home, '.gbrain')); mkdirSync(join(root, 'companies'), { recursive: true });
     writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'postgres', database_url: databaseUrl, embedding_disabled: true }), { mode: 0o600 });
     await withEnv({ GBRAIN_HOME: home, GBRAIN_BRAIN_ID: 'host' }, async () => {
-      await engine.putPage(slug, { type: 'company', title: 'Fixture Example', compiled_truth: 'Independent fixture.', timeline: '', frontmatter: {} });
+      await importFromContent(engine, slug, '---\ntitle: Fixture Example\ntype: company\n---\n\nIndependent fixture.\n', { sourceId: 'default', noEmbed: true });
       const snapshot = await engine.readPageSnapshot(slug, { sourceId: 'default' });
       writeFileSync(join(root, slug + '.md'), serializePageToMarkdown(snapshot!.page, snapshot!.tags));
       await engine.setConfig('sync.repo_path', root);
@@ -52,6 +53,7 @@ test('Postgres: a reviewed relink waits for Serve, survives a released claim, an
       await claimWorktree(engine, 'default', root);
       await registerLocalWriter(engine, 'cli');
       await activatePersistence(engine, { confirmQuiesced: true });
+      const chunksBefore = (await engine.getChunks(slug, { sourceId: 'default' })).map(chunk => chunk.chunk_text);
       const fact = await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () =>
         tx.insertFact({ fact: claim, kind: 'fact', visibility: 'private', source: 'fixture', valid_from: new Date('2026-01-01T12:08:23.885Z') }, { source_id: 'default' }), TEST_WRITE_ATTRIBUTION));
       const preview = await exit(start(['facts', 'relink', '--source', 'default', '--fact-id', String(fact.id), '--entity', slug, '--evidence', 'synthetic source evidence', '--dry-run', '--plan-out', plan]));
@@ -120,7 +122,9 @@ test('Postgres: a reviewed relink waits for Serve, survives a released claim, an
       const text = readFileSync(join(root, slug + '.md'), 'utf8');
       expect(text).toContain(claim);
       expect(text).not.toContain('synthetic source evidence');
-      expect((await engine.getChunks(slug, { sourceId: 'default' })).every(chunk => !chunk.chunk_text.includes(claim))).toBe(true);
+      const chunksAfter = (await engine.getChunks(slug, { sourceId: 'default' })).map(chunk => chunk.chunk_text);
+      expect(chunksAfter).toEqual(chunksBefore);
+      expect(chunksAfter.every(text => !text.includes(claim))).toBe(true);
       expect(await engine.executeRaw("SELECT kind FROM persistence_effects WHERE request_id=$1 AND kind IN ('git','embedding')", [accepted!.id])).toEqual([]);
       serve.kill('SIGTERM');
       await serve.exited;

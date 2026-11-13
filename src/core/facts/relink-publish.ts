@@ -312,7 +312,8 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
       rowNums.set(link.id, rowNum);
       // #6385 R12: a fence that does not parse cleanly refuses typed (`fence_malformed` below) instead of losing rows.
       body = refuseUnparsedRewrite({ compiled_truth: body, timeline }, row.slug, row.source_id,
-        () => upsertFactRow(body, fenceRow(v, rowNum, appendContextNote(v.context as string | null, byId.get(link.id)!.note))).body);
+        () => upsertFactRow(body, fenceRow(v, rowNum, appendContextNote(v.context as string | null, byId.get(link.id)!.note)),
+          { omitSectionHeading: Boolean(intent.explicit && v.visibility === 'private') }).body);
     }
   }
   // Adopted rows are still unpositioned when page preparation chunks the fence.
