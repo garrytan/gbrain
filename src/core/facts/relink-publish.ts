@@ -21,7 +21,7 @@
  * transaction.
  */
 
-import type { BrainEngine } from '../engine.ts';
+import type { BrainEngine, FactAttribution } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
@@ -43,12 +43,18 @@ import { withPendingFenceRows } from '../eligibility/fence-overlay.ts';
 import { activationSuppressedSql } from '../eligibility/sql.ts';
 import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { storedPageTier } from '../trust/page-write.ts';
+import { resolveStrictEntityReference } from '../entities/resolve.ts';
+import { entityLinkable } from './attribution.ts';
+import { dirname } from 'node:path';
+import { nativePathMayBeGitCheckout } from '../persistence/native-file-target.ts';
 
 export const RELINK_OPERATION = 'relink_facts';
+export const EXPLICIT_RELINK_OPERATION = 'relink_fact_by_id';
 
 /** One fact in a relink request: its pinned row hash and how its subject was found. */
 export interface RelinkIntentFact { id: number; hash: string; tier: string; model: string | null; note: string }
-export interface RelinkIntent { kind: 'relink_facts'; run_id: string; queue_conflict: boolean; facts: RelinkIntentFact[] }
+export interface ExplicitRelinkPin { brainId: string; sourceIncarnation: string; pageId: number; revision: string; factHash: string; evidenceHash: string }
+export interface RelinkIntent { kind: 'relink_facts'; run_id: string; queue_conflict: boolean; facts: RelinkIntentFact[]; explicit?: ExplicitRelinkPin }
 
 export interface RelinkGroupOutcome {
   linked: Array<{ id: number; row_num: number }>;
@@ -62,7 +68,7 @@ export function relinkFactHash(snapshot: FactSnapshot): string {
   return digest(snapshot.value);
 }
 
-export type RelinkSkipReason = 'revision_conflict' | 'withdrawn' | 'claim_unfenceable' | 'validity_precision' | 'projection_loss' | 'visibility_conflict';
+export type RelinkSkipReason = 'revision_conflict' | 'withdrawn' | 'claim_unfenceable' | 'validity_precision' | 'projection_loss' | 'visibility_conflict' | 'not_user_attributed';
 
 type Classified =
   | { id: number; action: 'link'; value: Record<string, unknown> }
@@ -138,7 +144,31 @@ function isActiveUnlinked(v: Record<string, unknown>, now: number): boolean {
     && (v.valid_until === null || v.valid_until === 'infinity' || relinkTimestamp(v.valid_until) > now);
 }
 
-async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent, lock: boolean): Promise<Classified[]> {
+/** Keep this additional pin separate from the existing relink request hash. */
+export async function explicitRelinkFact(db: BrainEngine, sourceId: string, id: number) {
+  const [row] = await db.executeRaw<{ value: Record<string, unknown>; visibility: string }>(
+    'SELECT to_jsonb(f) AS value, f.visibility FROM facts f WHERE f.source_id=$1 AND f.id=$2', [sourceId, id]);
+  return row ? { hash: digest(row.value), visibility: row.visibility } : null;
+}
+
+export async function explicitRelinkScope(db: BrainEngine, sourceId: string) {
+  const [scope] = await db.executeRaw<{ brain_id: string; incarnation: string; canonical_git: boolean; local_path: string | null }>(`SELECT b.brain_id,
+      s.incarnation, s.local_path, COALESCE(s.config->>'canonical', '')='git' AS canonical_git
+    FROM persistence_brain b JOIN sources s ON s.id=$1 AND NOT s.archived WHERE b.singleton=1`, [sourceId]);
+  return scope;
+}
+
+export function assertExplicitRelinkPrivacy(git: boolean, visibility: string) {
+  if (git && visibility === 'private') throw opError('permission_denied', 'An explicit private relink cannot write into a Git checkout.',
+    'The private fact stays in the database. Use a target on a non-Git source.');
+}
+
+export async function exactRelinkTarget(engine: BrainEngine, sourceId: string, slug: string): Promise<boolean> {
+  const resolved = await resolveStrictEntityReference(engine, sourceId, slug, { exactOnly: true });
+  return resolved.slug === slug && resolved.arm === 'exact_page';
+}
+
+async function classify(db: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'slug'>, intent: RelinkIntent, lock: boolean): Promise<Classified[]> {
   const current = await readFacts(db, row.source_id, intent.facts.map(f => f.id), lock);
   const now = Date.now();
   const seen = new Map<string, { id: number; visibility: string }>();
@@ -150,6 +180,10 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
       continue;
     }
     const v = snap.value;
+    if (intent.explicit && !entityLinkable(v.attributed_to as FactAttribution | null)) {
+      out.push({ id: f.id, action: 'skip', reason: 'not_user_attributed' });
+      continue;
+    }
     const visibility = v.visibility as 'private' | 'world';
     const fenceLoss = relinkFenceLoss(v, f.note, row.slug, row.source_id);
     if (fenceLoss) {
@@ -206,6 +240,11 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
 const classKey = (c: Classified[]) => JSON.stringify(c.map(x => x.action === 'link' ? [x.id, 'link']
   : x.action === 'retire' ? [x.id, 'retire', x.duplicateOf] : [x.id, 'skip', x.reason]));
 
+export async function explicitRelinkRefusal(db: BrainEngine, sourceId: string, slug: string, intent: RelinkIntent): Promise<string | null> {
+  const [result] = await classify(db, { source_id: sourceId, slug }, intent, false);
+  return result?.action === 'link' ? null : result?.action === 'skip' ? result.reason : 'duplicate';
+}
+
 async function relinkChunkTrust(db: BrainEngine, sourceId: string, rowNums: ReadonlyMap<number, number>) {
   if (!rowNums.size) return new Map<number, { tier: TrustTier; unconfirmed: boolean }>();
   const rows = await db.executeRaw<{ id: number | string; trust_tier: unknown; unconfirmed: boolean }>(
@@ -219,17 +258,37 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
   const rerun = `The next gbrain facts relink --source ${row.source_id} run re-plans from current state; preview it with --dry-run (no model calls, no writes).`;
   const changed = (message: string) => opError('revision_conflict', message,
     `${row.slug} or one of its facts changed while relink request ${row.request_id} was being prepared, so nothing was written. ${rerun}`);
-  if (row.operation !== RELINK_OPERATION || intent?.kind !== 'relink_facts' || !Array.isArray(intent.facts) || row.authority.remote) {
+  if (!intent || row.operation !== (intent.explicit ? EXPLICIT_RELINK_OPERATION : RELINK_OPERATION)
+    || intent.kind !== 'relink_facts' || !Array.isArray(intent.facts) || row.authority.remote) {
     throw opError('permission_denied', 'Unsupported relink intent.',
       `Request ${row.request_id} is not a trusted local relink this gbrain version can publish, so nothing was written. Facts relink runs only from gbrain facts relink on the brain host.`);
   }
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  const current = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  const snapshot = intent.explicit ? await (await import('../persistence/segmented-apply.ts')).wholeBodySnapshot(engine, current, 'facts relink') : current;
   if (!snapshot || snapshot.page.id !== row.page_id) {
     throw opError('page_identity_changed', 'The relink target page changed.',
       `${row.slug} in ${row.source_id} was deleted or replaced after relink request ${row.request_id} was accepted, so nothing was written. ${rerun}`);
   }
   const observedRevision = snapshot.revision;
+  const checkExplicit = async (db: BrainEngine) => {
+    if (!intent.explicit) return;
+    const { brainId, sourceIncarnation, pageId, revision, factHash } = intent.explicit;
+    const scope = await explicitRelinkScope(db, row.source_id);
+    if (scope?.brain_id !== brainId || scope.incarnation !== sourceIncarnation || row.source_incarnation !== sourceIncarnation || snapshot.page.id !== pageId
+      || observedRevision !== revision || !await exactRelinkTarget(db, row.source_id, row.slug)
+      || intent.facts.length !== 1 || intent.queue_conflict) {
+      throw changed('The explicit relink preview is no longer current.');
+    }
+    const fact = await explicitRelinkFact(db, row.source_id, intent.facts[0]!.id);
+    if (!fact || fact.hash !== factHash) throw changed('The explicitly selected fact changed after preview.');
+    const root = scope.local_path ?? (row.source_id === 'default' ? await db.getConfig('sync.repo_path') : null);
+    assertExplicitRelinkPrivacy(scope.canonical_git || (fact.visibility === 'private' && root !== null && nativePathMayBeGitCheckout(root)), fact.visibility);
+  };
+  await checkExplicit(engine);
   const planned = await classify(engine, row, intent, false);
+  if (intent.explicit && planned[0]?.action !== 'link') {
+    throw changed(`The explicit fact cannot be linked (${planned[0]?.action === 'skip' ? planned[0].reason : 'duplicate'}).`);
+  }
   const byId = new Map(intent.facts.map(f => [f.id, f]));
   const links = planned.filter((c): c is Extract<Classified, { action: 'link' }> => c.action === 'link');
 
@@ -271,11 +330,21 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
   const page = pageTier ? await withPendingFenceRows({ sourceId: row.source_id, slug: row.slug, byRow: pendingTrust, pageTier }, prepare)
     : links.length ? await prepare() : undefined;
   if (page && page.observedRevision !== observedRevision) throw changed('The relink target page changed during preparation.');
+  if (intent.explicit && (!page || page.noop)) throw changed('The exact target would not publish the selected fact.');
+
+  const checkFilePrivacy = () => {
+    if (intent.explicit && page?.file && links[0]?.value.visibility === 'private') {
+      assertExplicitRelinkPrivacy(nativePathMayBeGitCheckout(dirname(page.file.path)), 'private');
+    }
+  };
+  checkFilePrivacy();
 
   const validate = async (tx: BrainEngine) => {
     if (classKey(await classify(tx, row, intent, true)) !== classKey(planned)) {
       throw changed('A relinked fact changed during preparation.');
     }
+    await checkExplicit(tx);
+    checkFilePrivacy();
     if (pageTier && await storedPageTier(tx, row.source_id, row.slug) !== pageTier) {
       throw changed('The relink target page changed trust during preparation.');
     }
@@ -325,11 +394,12 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     return { ...published, status: 'relinked', slug: row.slug, ...outcome, ...normalized };
   };
   if (!page) return { observedRevision, validate, apply };
-  return { ...page, exclusiveSources: page.exclusiveSources, validate, apply };
+  return { ...page, exclusiveSources: page.exclusiveSources,
+    ...(intent.explicit && links[0]?.value.visibility === 'private' ? { skipGitEffect: true } : {}), validate, apply };
 }
 
 export type RelinkGroupResult =
-  | { ok: true; outcome: RelinkGroupOutcome }
+  | { ok: true; outcome: RelinkGroupOutcome; requestId?: string }
   | { ok: false; reason: 'revision_conflict' | 'fence_malformed' | 'page_file_missing' | 'unfenceable' | 'no_page'; message: string };
 
 /**
@@ -340,14 +410,29 @@ export type RelinkGroupResult =
 export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfig, sourceId: string, slug: string,
   intent: RelinkIntent): Promise<RelinkGroupResult> {
   const { initializeLocalPersistence, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
-  const { submissionAuthority } = await import('../persistence/authority.ts');
-  const { admitWrite, getWriteRequest } = await import('../persistence/journal.ts');
+  const { authorizeStoredRequest, submissionAuthority } = await import('../persistence/authority.ts');
+  const { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } = await import('../persistence/journal.ts');
   const { assertPersistenceAccepting, waitForWrite, writeResponse } = await import('../persistence/service.ts');
   const { resolveFactWriteTarget } = await import('../persistence/fact-write-target.ts');
   const ctx = { engine, sourceId, remote: false as const, config, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
   assertPersistenceAccepting(engine);
   await initializeLocalPersistence(ctx);
   const principal = await requestPrincipalForContext(ctx);
+  const operation = intent.explicit ? EXPLICIT_RELINK_OPERATION : RELINK_OPERATION;
+  const key = digest(intent.explicit ? { operation, run: intent.run_id } : { sourceId, slug, run: intent.run_id, facts: intent.facts.map(f => [f.id, f.hash]) });
+  const requestId = `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
+  const existing = await getWriteRequest(engine, principal, requestId);
+  const callerIntent = intent as unknown as Record<string, unknown>;
+  const committed = (row: WriteRequest): RelinkGroupResult => ({ ok: true, outcome: row.outcome as unknown as RelinkGroupOutcome,
+    ...(intent.explicit ? { requestId } : {}) });
+  if (intent.explicit && existing) {
+    await submissionAuthority(ctx, existing.operation, existing.source_id, existing.source_incarnation, existing.slug);
+    await authorizeStoredRequest(engine, existing);
+    assertReplayIntent(existing, intentDigest({ operation, sourceId, slug, callerIntent }));
+    const finished = existing.state === 'committed' ? existing : await waitForWrite(engine, existing, config, 60_000);
+    writeResponse(finished);
+    return committed(finished);
+  }
   const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation, archived, local_path, config->>'kind' AS kind FROM sources WHERE id = $1", [sourceId]);
   if (!source || source.archived) {
@@ -364,21 +449,20 @@ export async function submitRelinkGroup(engine: BrainEngine, config: GBrainConfi
     throw error;
   }
   if (target.kind === 'unbound') return { ok: false, reason: 'unfenceable', message: `source ${sourceId} writes through to ${target.root} but has no canonical owner` };
-  const authority = await submissionAuthority(ctx, RELINK_OPERATION, sourceId, source.incarnation, slug);
+  const authority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug);
   if (target.databaseOnlyReason) authority.databaseOnlyReason = target.databaseOnlyReason;
-  const key = digest({ sourceId, slug, run: intent.run_id, facts: intent.facts.map(f => [f.id, f.hash]) });
-  const requestId = `${key.slice(0, 8)}-${key.slice(8, 12)}-4${key.slice(13, 16)}-a${key.slice(17, 20)}-${key.slice(20, 32)}`;
   try {
-    const row = await getWriteRequest(engine, principal, requestId) ?? await admitWrite(engine, {
-      principal, operation: RELINK_OPERATION, sourceId, sourceIncarnation: source.incarnation, slug, pageId: snapshot.page.id,
-      requestId, callerIntent: intent as unknown as Record<string, unknown>, intent: intent as unknown as Record<string, unknown>, authority,
+    const row = existing ?? await admitWrite(engine, {
+      principal, operation, sourceId, sourceIncarnation: source.incarnation, slug, pageId: snapshot.page.id,
+      requestId, callerIntent, intent: callerIntent, authority,
       worktreeId: target.binding?.worktree_id ?? null, topologyGeneration: target.binding?.topology_generation ?? null,
     });
     const finished = await waitForWrite(engine, row, config, 60_000);
     writeResponse(finished);
-    return { ok: true, outcome: finished.outcome as unknown as RelinkGroupOutcome };
+    return committed(finished);
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
+    if (intent.explicit && error.writeRequest) throw error;
     const message = error.message;
     if (error.canonicalCode === 'invalid_fence' || /fence_malformed/.test(message)) return { ok: false, reason: 'fence_malformed', message };
     if (error.code === 'owner_unavailable') return { ok: false, reason: 'unfenceable', message };

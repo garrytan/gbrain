@@ -5,6 +5,8 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import type { GBrainConfig } from '../core/config.ts';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { opError } from '../core/ops/contract.ts';
 import { RELINK_DEFAULT_LIMIT, RELINK_DEFAULT_MAX_USD, runFactsRelink, type RelinkOptions, type RelinkReport } from '../core/facts/relink.ts';
 import { RELINK_REASONS, type RelinkReason } from '../core/facts/relink-reasons.ts';
 import { CONVERSATION_RELINK_PAGES, runConversationRelink, type ConversationRelinkReport } from '../core/facts/conversation-relink.ts';
@@ -39,6 +41,11 @@ gbrain facts relink --conversation [--source <id>] [--slugs <a,b>] [--dry-run] [
   ${CONVERSATION_RELINK_PAGES} pages with the most untried unlinked facts. Facts it cannot
   resolve are recorded, and the report prints the paid re-extraction for
   their pages.
+
+gbrain facts relink --fact-id <id> --entity <slug> --evidence <text> --dry-run --plan-out <file> [--source <id>]
+gbrain facts relink --apply-plan <file> [--source <id>]
+  Move one reviewed fact by ID on the brain host. The preview pins the source,
+  fact and target revision. Apply may enqueue the target page's usual embedding.
 
 Relink never creates pages and never supersedes a fact. Exact duplicates are
 retired (expired, kept in history). Linked facts are queued for the System One
@@ -230,6 +237,9 @@ export async function runFactsCommand(engine: BrainEngine, args: string[], confi
     console.log(factsHelpText());
     return 0;
   }
+  if (rest.some(arg => ['--fact-id', '--entity', '--evidence', '--plan-out', '--apply-plan'].includes(arg))) {
+    return runExplicitRelink(engine, config, sourceId, rest);
+  }
   if (rest.includes('--conversation')) return runConversation(engine, rest, config, sourceId);
   const parsed = parseRelinkArgs(rest, sourceId);
   if (parsed.error) {
@@ -244,4 +254,42 @@ export async function runFactsCommand(engine: BrainEngine, args: string[], confi
   });
   console.log(parsed.json ? JSON.stringify({ ...report, next_command: continuation(report, rest) }, null, 2) : formatRelinkReport(report, rest));
   return 0;
+}
+
+async function runExplicitRelink(engine: BrainEngine, config: GBrainConfig, sourceId: string, args: string[]): Promise<number> {
+  const flags = new Map<string, string>();
+  for (let i = 0; i < args.length; i++) {
+    const flag = args[i]!;
+    const value = flag === '--dry-run' || flag === '--json' ? 'true' : args[++i];
+    if (flags.has(flag) || !value || value.startsWith('--') ||
+      !['--dry-run', '--json', '--source', '--fact-id', '--entity', '--evidence', '--plan-out', '--apply-plan'].includes(flag)) {
+      console.error('Invalid explicit relink arguments. See gbrain facts relink --help.');
+      return 1;
+    }
+    flags.set(flag, value);
+  }
+  const { applyExplicitRelink, previewExplicitRelink } = await import('../core/facts/relink-explicit.ts');
+  const source = flags.get('--source') ?? sourceId;
+  const apply = flags.get('--apply-plan');
+  const path = flags.get('--plan-out');
+  const entity = flags.get('--entity');
+  const evidence = flags.get('--evidence');
+  const fact = flags.get('--fact-id');
+  if (apply && [...flags.keys()].every(flag => ['--apply-plan', '--source', '--json'].includes(flag))) {
+    let saved: unknown;
+    try { saved = JSON.parse(readFileSync(apply, 'utf8')); }
+    catch { throw opError('invalid_params', 'The relink plan could not be read.', 'Check the path and use the original JSON preview file.'); }
+    const result = await applyExplicitRelink(engine, config, source, saved);
+    console.log(JSON.stringify(result));
+    return result.ok ? 0 : 1;
+  }
+  if (flags.has('--dry-run') && path && entity && evidence && fact && /^\d+$/.test(fact) && !apply) {
+    const result = await previewExplicitRelink(engine, source, entity, Number(fact), evidence);
+    try { writeFileSync(path, JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 }); }
+    catch { throw opError('invalid_params', 'The private relink plan could not be created.', 'Choose a new writable path. Existing files are never overwritten.'); }
+    console.log(JSON.stringify({ status: 'preview', plan: path, embedding: 'may_be_queued' }));
+    return 0;
+  }
+  console.error('Preview one fact with --dry-run and --plan-out, or apply an exact saved preview with --apply-plan.');
+  return 1;
 }

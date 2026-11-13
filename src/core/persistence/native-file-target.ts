@@ -1,10 +1,30 @@
 import { lstatSync, readdirSync, realpathSync, statSync, type BigIntStats } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError, opError } from '../ops/contract.ts';
 import { catalogueError } from '../error-catalogue.ts';
 
 /** The longest file or directory name, in bytes, the supported file systems store (NAME_MAX). */
 const NATIVE_NAME_MAX_BYTES = 255;
+
+/** Check the physical path for Git ancestry. An unreadable path may be in a checkout. */
+export function nativePathMayBeGitCheckout(path: string): boolean {
+  if (!isAbsolute(path)) return true;
+  let directory = path;
+  for (;;) {
+    try { directory = realpathSync(directory); break; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(directory) === directory) return true;
+      directory = dirname(directory);
+    }
+  }
+  for (;;) {
+    try { lstatSync(join(directory, '.git')); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') return true; }
+    const parent = dirname(directory);
+    if (parent === directory) return false;
+    directory = parent;
+  }
+}
 
 /**
  * A name the file system cannot store (over NAME_MAX bytes, or ENAMETOOLONG):

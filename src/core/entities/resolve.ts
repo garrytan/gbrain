@@ -488,7 +488,7 @@ export async function resolveStrictEntityReference(
   engine: BrainEngine,
   source_id: string,
   raw: string,
-  opts: { sameName?: boolean; excludePrivate?: boolean; forCaller?: boolean } = {},
+  opts: { sameName?: boolean; excludePrivate?: boolean; forCaller?: boolean; exactOnly?: boolean } = {},
 ): Promise<StrictResolution> {
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
@@ -517,10 +517,11 @@ export async function resolveStrictEntityReference(
     return await isEntity(rows[0]) ? { slug: rows[0].slug, arm } : { slug: null, miss: 'not_entity' };
   };
 
-  if (looksLikeSlug(trimmed)) {
+  if (opts.exactOnly || looksLikeSlug(trimmed)) {
     const exact = await pick(await live([trimmed]), 'exact_page');
     if (exact) return exact;
   }
+  if (opts.exactOnly) return { slug: null, miss: 'no_page' };
   const token = slugify(trimmed);
   if (!trimmed.includes('/') && token.includes('-')) {
     const basename = await pick(await live(BASENAME_DIRS.map(dir => `${dir}/${token}`)), 'basename');

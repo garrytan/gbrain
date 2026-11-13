@@ -38,10 +38,10 @@ export async function queuePublicationEffects(tx: BrainEngine, row: EffectReques
   const queued: { kind: EffectKind; data: Record<string, unknown>; gated?: boolean }[] = [];
   const queue = (kind: EffectKind, extra: Record<string, unknown> = {}) => { queued.push({ kind, data: { ...data, ...extra } }); };
   const companionFiles = (prepared?.companions ?? []).some(companion => companion.file);
-  if (opts.pageTargets && (prepared?.file || companionFiles) && row.worktree_id) {
+  if (!prepared?.skipGitEffect && opts.pageTargets && (prepared?.file || companionFiles) && row.worktree_id) {
     queue('git', { version: 2, targets: opts.pageTargets, ...(opts.pushOnly ? { push_only: true } : {}) });
     if (!opts.pushOnly && outcome.persistence && typeof outcome.persistence === 'object') Object.assign(outcome.persistence, { git_state: 'queued' });
-  } else if (prepared?.file && row.worktree_id) {
+  } else if (!prepared?.skipGitEffect && prepared?.file && row.worktree_id) {
     const [binding] = await tx.executeRaw<{ local_path: string }>(`SELECT h.local_path FROM persistence_host_bindings h
       JOIN persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id WHERE w.id=$1::uuid`, [row.worktree_id]);
     if (!binding?.local_path) throw opError('owner_unavailable', 'Cannot record the canonical Git target without its owner binding.',

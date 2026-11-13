@@ -81,6 +81,30 @@ deleted. Relink never creates pages and never supersedes a fact.
 Preview and apply both report a fact that cannot survive the fence round trip
 without changing its stored fields or validity timestamps.
 
+### Link one fact to a verified entity
+
+On the brain host, use an explicit ID when you have checked the original
+evidence and know the exact entity page. The preview does not call a model or
+write to the brain. It saves a new private plan file with the fact's current
+state and the destination revision.
+
+```bash
+gbrain facts relink --source default --fact-id 123 --entity people/alice-example \
+  --evidence 'The source notes identify Alice Example as the speaker.' \
+  --dry-run --plan-out relink-plan.json
+gbrain facts relink --source default --apply-plan relink-plan.json
+```
+
+The plan records a digest of the evidence. The fact context records the
+operator action without copying the evidence text. Apply keeps the same fact
+ID and returns the durable request ID. Applying the
+same plan again reads the existing receipt. If the fact or destination changes,
+review the evidence and preview again. An exact duplicate is refused in this
+mode. A private fact can be written to a non-Git local file without a Git
+effect. A Git checkout is refused. Keep a directory containing private facts
+out of Git when changing the source's storage later.
+The usual embedding effect for the destination page can run after publication.
+
 ### Large brains: continue where you stopped
 
 Each run examines `--limit` facts (default 1000), walking by fact id. When more

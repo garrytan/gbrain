@@ -34,7 +34,7 @@ import {
 export const AGENT_WRITE_OPERATIONS: readonly string[] = [
   'put_page', 'put_pages', 'capture', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version', 'remember',
   'add_tag', 'remove_tag', 'add_timeline_entry', 'add_link', 'remove_link', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve',
-  'takes_remove', 'loops_close', 'relink_facts', 'decide_proposal',
+  'takes_remove', 'loops_close', 'relink_facts', 'relink_fact_by_id', 'decide_proposal',
 ];
 
 /**

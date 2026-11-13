@@ -117,7 +117,7 @@ async function prepareByOperation(e: BrainEngine, row: WriteRequest, cfg: GBrain
   if (row.operation === 'decide_proposal') return (await import('../facts/proposal-supersede.ts')).prepareProposalMutation(e, row, cfg);
   if (row.operation === 'trust_owner_page') return (await import('../trust/page-handlers.ts')).prepareTrustOwnerPageMutation(e, row, cfg);
   if (row.operation === 'trust_release') return (await import('../trust/release-publish.ts')).prepareTrustReleaseMutation(e, row, cfg);
-  if (row.operation === 'relink_facts') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
+  if (row.operation === 'relink_facts' || row.operation === 'relink_fact_by_id') return (await import('../facts/relink-publish.ts')).prepareRelinkMutation(e, row, cfg);
   if (['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(row.operation)) return (await import('./takes-prepare.ts')).prepareTakesMutation(e,row,cfg);
   if (['add_tag','remove_tag','add_timeline_entry'].includes(row.operation)) return prepareSemanticPageMutation(e, row, cfg);
   if (row.operation === 'add_link' || row.operation === 'remove_link') return (await import('./manual-links.ts')).prepareManualLinkMutation(e, row, cfg);
