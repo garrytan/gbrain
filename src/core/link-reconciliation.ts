@@ -5,7 +5,7 @@ import { fetchSource, isSourceFederated } from './sources-load.ts';
 import { parseMarkdown } from './markdown.ts';
 import { isValidSourceId } from './source-id.ts';
 import { buildSourceLocalReferenceIndex } from './source-local-reference-index.ts';
-import { collectWantedLinks, isWantedPagesEnabled } from './wanted-links.ts';
+import { collectWantedLinks, isWantedPagesEnabled, wantedReadAt } from './wanted-links.ts';
 import { readLineGrammarSettings } from './line-grammar.ts';
 import { DerivedLinkSettingsChangedError } from './derived-links.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
@@ -77,6 +77,7 @@ export async function reconcileSourceLinks(
     const sourceIncarnation = sources[0].incarnation;
     // #4680: every source's live pages, so the source policy can resolve a target into another
     // source (names still resolve within the origin's source: makeIndexedLinkResolver filters).
+    const readAt = await wantedReadAt(engine);
     const pages = await loadLinkPageMetadata(engine);
     const metadata = new Map(pages.map(page => [`${page.source_id}\0${page.slug}`, page]));
     const endpoints = indexLinkSources(pages);
@@ -131,7 +132,7 @@ export async function reconcileSourceLinks(
       try {
         written = await engine.replaceDerivedLinks({ slug: page.slug, sourceId,
           expectedRevision: snapshot.revision, sourceIncarnation }, rows, { lineGrammar: grammar,
-          wanted: { producers: ['body', 'frontmatter'], rows: wanted }, expectedEndpoints: capturedLinkEndpoints(rows, metadata),
+          wanted: { producers: ['body', 'frontmatter'], rows: wanted, readAt }, expectedEndpoints: capturedLinkEndpoints(rows, metadata),
           ...(extracted.temporalBody ? { temporalBody: extracted.temporalBody } : {}) });
       } catch (error) {
         if (!(error instanceof DerivedLinkSettingsChangedError)) throw error;

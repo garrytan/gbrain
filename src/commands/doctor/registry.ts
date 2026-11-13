@@ -148,6 +148,7 @@ import { sharedStdioBindingEntry } from './checks/shared-stdio-binding.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
 import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
+import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
@@ -238,6 +239,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   sharedAgentAccessEntry,
   ownerReadsRestrictedEntry,
   accessLineageEntry,
+  accessLabelledOnlyEntry,
   attestReadAccessEntry,
   rlsEntry,
   postgresTlsEntry,

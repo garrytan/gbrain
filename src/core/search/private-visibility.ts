@@ -360,6 +360,14 @@ export interface CallerAccess {
    * facts as if its readers named the owner. Ids pass ACCESS_ID_RE, so they embed as literals; empty otherwise.
    */
   audienceKindMembers: readonly string[];
+  /**
+   * GBRA-108 design 1 (labelled-only grant): the caller's member carries access_members.labelled_only (the labelled-only migration), so every
+   * credential bound to it reads only pages that name it: its member id or one of its groups in readable_by, or a folder
+   * or page rule that lists it (labelledOnlySql). An unlabelled page its source grant would otherwise open is hidden; a
+   * derived page or fact with no readers and no rule of its own is hidden too, except under access.members_read_lineage
+   * where every origin is labelled for the caller (gbrain_access_origin_labelled_for). Never on the owner.
+   */
+  labelledOnly: boolean;
   applyRemoteReadPolicy: boolean;
   restricted: boolean;
   /** The fresh remote policy (readRemotePolicyNow) a remote request read when it started; null outside one. */
@@ -370,7 +378,7 @@ const callerAccessStore = new AsyncLocalStorage<CallerAccess>();
 
 /** The current read's caller-access record (see CallerAccess). */
 export function currentCallerAccess(): CallerAccess {
-  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, lineage: false, ownerReadsRestricted: false, audienceKindMembers: [], applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
+  return callerAccessStore.getStore() ?? { identity: [], audience: null, audienceIdentities: [], actor: null, satisfiedRuleIds: [], folderCoverage: [], privateReadableSources: [], hidePrivate: !processPrivacyRelaxed(), owner: false, lineage: false, ownerReadsRestricted: false, audienceKindMembers: [], labelledOnly: false, applyRemoteReadPolicy: false, restricted: true, remotePolicy: null };
 }
 
 /** Runs `fn` under `access` merged over the current record; an invalid identity or source id empties that set (fail closed). */
@@ -399,6 +407,7 @@ export function withCallerAccess<T>(access: Partial<CallerAccess>, fn: () => T):
     ...lineageReads(access.owner ?? (fresh ? false : base.owner), audienceIdentities.length <= 1,
       access.lineage ?? (fresh ? false : base.lineage), access.ownerReadsRestricted ?? (fresh ? false : base.ownerReadsRestricted),
       access.audienceKindMembers ?? (fresh ? [] : base.audienceKindMembers)),
+    labelledOnly: access.labelledOnly ?? (fresh ? false : base.labelledOnly),
     applyRemoteReadPolicy: access.applyRemoteReadPolicy ?? base.applyRemoteReadPolicy,
     restricted: access.restricted ?? base.restricted,
     remotePolicy: access.remotePolicy ?? base.remotePolicy,
@@ -471,9 +480,73 @@ export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' 
   const ownPage = ownerOptInPage(access);
   const audience = audiencePages(access);
   const onPage = (test: (pageAlias: string) => string) => row === 'snapshot' ? `EXISTS (SELECT 1 FROM pages sp WHERE sp.id = ${alias}.page_id AND ${test('sp')})` : test(alias);
-  if (ownPage) return `(${readersAllowedSql(alias, access.identity, row)} OR ${onPage(a => notOtherMemberPageSql(a, ownPage, audience))})`;
-  if (audience.length) return `(${readersAllowedSql(alias, access.identity, row)} OR ${onPage(a => audiencePageSql(a, audience))})`;
-  return callerIdentities().map(identity => readersAllowedSql(alias, identity, row)).join(' AND ');
+  const readers = ownPage ? `(${readersAllowedSql(alias, access.identity, row)} OR ${onPage(a => notOtherMemberPageSql(a, ownPage, audience))})`
+    : audience.length ? `(${readersAllowedSql(alias, access.identity, row)} OR ${onPage(a => audiencePageSql(a, audience))})`
+    : callerIdentities().map(identity => readersAllowedSql(alias, identity, row)).join(' AND ');
+  if (!access.labelledOnly) return readers;
+  if (row === 'page') return `(${readers} AND ${labelledOnlySql(alias, access)})`;
+  return `(${readers} AND (COALESCE(gbrain_access_readers(${alias}.frontmatter) && ${textArraySql(labelledIdentity(access))}, false)
+    OR EXISTS (SELECT 1 FROM pages sp WHERE sp.id = ${alias}.page_id AND ${labelledOnlySql('sp', access, false)})))`;
+}
+
+type LabelledRecord = Pick<CallerAccess, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds' | 'lineage' | 'owner'>;
+
+/** GBRA-108 design 1: every principal a labelled-only read may be named by (the identity, or each audience entry's). */
+function labelledIdentity(access: LabelledRecord): string[] {
+  const identity = [...new Set([...access.identity, ...access.audienceIdentities.flat()])].sort();
+  return identity.length && validIdentity(identity) ? identity : [];
+}
+
+/**
+ * GBRA-108 design 1: `alias` names a labelled-only caller (CallerAccess.labelledOnly): its readable_by holds the caller's
+ * member or one of its groups, or one of its folder or page rules lists them (a rule the caller satisfies). Under
+ * access.members_read_lineage (a member read with lineage) a derived page with no label of its own passes only when it
+ * has an origin and every origin names the caller (gbrain_access_origin_labelled_for, the labelled-only migration); with it off a derived page
+ * that names nobody is hidden, whatever its origins say. ANDed with the caller's ordinary access, so it only narrows.
+ * `readers` false tests only the rules (a version snapshot carries its own readers). Ids embed as validated literals.
+ */
+function labelledOnlySql(alias: string, access: LabelledRecord, readers = true): string {
+  const identity = textArraySql(labelledIdentity(access));
+  const satisfied = textArraySql(access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : []);
+  const named = `(${readers ? `COALESCE(${alias}.page_readers && ${identity}, false) OR ` : ''}COALESCE(${alias}.folder_rule_ids && ${satisfied}, false))`;
+  if (!access.lineage || access.owner) return named;
+  return `(${named} OR ((${alias}.type IN ('atom', 'question', 'concept', 'event') OR ${alias}.frontmatter ? 'derived_from')
+    AND gbrain_access_origin_labelled_for(${alias}.id, ${alias}.source_id, ${alias}.type, ${alias}.frontmatter, ${identity}, ${satisfied})))`;
+}
+
+/**
+ * GBRA-108 design 1: the fact conjunct of a labelled-only read. A fact has no readers or rule of its own, so it is hidden,
+ * except on the caller's own member page while that page names the member (the member's own memory), and under
+ * access.members_read_lineage when its provenance page exists and names the caller (labelledOnlySql). Empty for every
+ * other caller.
+ */
+function labelledOnlyFactSql(factAlias: string): string {
+  const access = currentCallerAccess();
+  if (!access.labelledOnly) return '';
+  const lone = access.audienceIdentities.length ? null : access.identity.find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
+  const member = access.actor?.member ?? lone;
+  const own = member && ACCESS_ID_RE.test(member) ? `EXISTS (SELECT 1 FROM pages lp WHERE lp.source_id = ${factAlias}.source_id AND lp.slug = ${factAlias}.source_markdown_slug
+    AND lp.slug = '${MEMBER_PAGE_PREFIX}${member}' AND COALESCE(lp.page_readers && ARRAY['member:${member}']::text[], false))` : 'FALSE';
+  if (!access.lineage || access.owner) return ` AND ${own}`;
+  return ` AND (${own} OR EXISTS (SELECT 1 FROM pages lp WHERE lp.source_id = ${factAlias}.source_id AND lp.slug = ${factAlias}.source_markdown_slug AND ${labelledOnlySql('lp', access)}))`;
+}
+
+/**
+ * GBRA-108 design 1: the floor of a remote read gate that is not caller-aware. For any caller that is not labelled-only
+ * it is exactly privatePagesFilterFragment; a labelled-only caller also gets its labelled-only conjunct, so a page that
+ * does not name it never answers. Write-side, maintenance and derived-visibility decisions keep the plain fragment; test/remote-read-floor.test.ts pins which call sites do.
+ */
+export function remoteReadFloorSql(pageAlias: string, derived = false): string {
+  const plain = privatePagesFilterFragment(pageAlias, derived);
+  const access = currentCallerAccess();
+  return access.labelledOnly ? `(${plain} AND ${labelledOnlySql(pageAlias, access)})` : plain;
+}
+
+/** remoteReadFloorSql for a fact lookup: privateProvenanceFilterFragment, plus the labelled-only fact conjunct for a labelled-only caller. */
+export function remoteProvenanceFloorSql(factAlias: string): string {
+  const plain = privateProvenanceFilterFragment(factAlias);
+  const labelled = labelledOnlyFactSql(factAlias);
+  return labelled ? `(${plain}${labelled})` : plain;
 }
 
 const GUEST_ENTRY = 'guest';
@@ -484,9 +557,19 @@ function validAudienceEntry(entry: string): boolean {
 function callerAccessSql(pageAlias: string): string {
   const access = currentCallerAccess();
   const ownPage = lineageReadPage(access);
-  if (ownPage) return lineageAccessSql(pageAlias, access, ownPage);
-  return access.audienceIdentities.length ? accessAllowedForAllSql(pageAlias, access.audienceIdentities, access.satisfiedRuleIds)
+  const allowed = ownPage ? lineageAccessSql(pageAlias, access, ownPage)
+    : access.audienceIdentities.length ? accessAllowedForAllSql(pageAlias, access.audienceIdentities, access.satisfiedRuleIds)
     : accessAllowedSql(pageAlias, access.identity);
+  return access.labelledOnly ? `(${allowed} AND ${labelledOnlySql(pageAlias, access)})` : allowed;
+}
+
+/**
+ * GBRA-108 design 1: the labelled-only conjunct for a page row checked outside the caller's read (a stored write's writer,
+ * the enforced member CLI): the page names one of `identities` or sits under a rule in `satisfied` (`readers` false: the
+ * rule alone, for a slug with no row yet). No lineage: a write never reads through it.
+ */
+export function labelledOnlyForSql(pageAlias: string, identities: readonly (readonly string[])[], satisfied: readonly string[], readers = true): string {
+  return labelledOnlySql(pageAlias, { identity: [], audienceIdentities: identities, satisfiedRuleIds: satisfied, lineage: false, owner: false }, readers);
 }
 
 /**
@@ -841,17 +924,20 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
   const policy = member && ACCESS_ID_RE.test(member)
     ? `CASE WHEN pp.slug = '${MEMBER_PAGE_PREFIX}${member}' THEN ${readPolicyFragment('pp', access.identity, hide, access.satisfiedRuleIds, true)} ELSE ${otherwise} END`
     : otherwise;
-  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)})`;
+  return `(NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = ${factAlias}.source_id AND pp.slug = ${factAlias}.source_markdown_slug AND NOT (${policy})) AND ${privateEntityFilterForCaller(factAlias)}${labelledOnlyFactSql(factAlias)})`;
 }
 
 /**
  * A fact is never wider than the page it is about: hide a fact whose entity page (`entity_slug`, looked up in the fact's
  * own source) the current caller cannot read under the read policy its page reads use, so a member the page's readers
  * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
- * only ever narrows.
+ * only ever narrows. GBRA-108 design 1: the entity page is judged by the caller's ordinary access, not its labelled-only
+ * grant: a labelled-only caller's fact is already kept to provenance that names it (labelledOnlyFactSql), and the
+ * page a fact is about is not one of its origins.
  */
 export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
-  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${privatePagesFilterForCaller('entity_pp')}${perCandidate ? ' OFFSET 0' : ''})`;
+  const entityPolicy = currentCallerAccess().labelledOnly ? withCallerAccess({ labelledOnly: false }, () => privatePagesFilterForCaller('entity_pp')) : privatePagesFilterForCaller('entity_pp');
+  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})`;
 }
 
 /**
@@ -860,7 +946,7 @@ export function privateEntityFilterForCaller(factAlias: string, perCandidate = f
  * a scan an index serves, such as the saved-fact keyword match, keeps that index.
  */
 export function privateFactFilterForCaller(factAlias: string, perCandidate = false): string {
-  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)})`;
+  return `(${privateProvenanceFilterFragment(factAlias)} AND ${privateEntityFilterForCaller(factAlias, perCandidate)}${labelledOnlyFactSql(factAlias)})`;
 }
 
 /** True only inside a remote caller record whose read an operator relaxed (the env hatch or the config opt-out). */

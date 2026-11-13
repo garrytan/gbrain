@@ -52,7 +52,7 @@
       "PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX": "4759eaf319a6ad8d99aae7648acb6556745ed7cba051175273e2f46927c77d52",
       "PERSISTENCE_SYNC_RUN_INDEXES": "e1b12613c5fd2facb850e6857b0bddcf49b2478ec258fa226fe15e71e55df9c1",
       "PERSISTENCE_SYNC_WATERMARK_INDEX": "93523954a30e8483717f07ec97a3e0cd062b15d8a60cc759281054b06c23bb40",
-      "PINNED_FUNCTION_NAMES": "e1fae0df5d24dc4721ffc1939c661ed377c3da6f8f8eea1913a497893a2a5090",
+      "PINNED_FUNCTION_NAMES": "3fa6f2d0dd5103f72816065470decff94fdc3af11aa0269dee4765b56d0cb4a9",
       "PLANNER_REPAIR_TABLES": "008725595e099adba279d4292661eb4a59930b777c35db43c340220f7f12e093",
       "POSTGRES_15_GATE": "09c990d8c0bd6e4ebeb3b897477748609035b0e695b5b2c6a9bf7539f7352193",
       "TABLES": "3fc77a0fccb525f9b791098f9eae27b19adaa3f5dadbabcff2a719137cbc3ef8",
@@ -5006,10 +5006,10 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "requester_scope",
+        "name": "access_labelled_only",
         "sql": {
-          "length": 2079,
-          "sha256": "fcdb37ee34cc76e6eea960568c1c57d128061d53e8b19d2a8a83470eee414ad2"
+          "length": 5308,
+          "sha256": "95654c03d34eb123551f0dcb816969e40f2fe9d48f70d8a5a07a03c00590315a"
         },
         "sqlFor": "absent",
         "transaction": "absent",

@@ -36,6 +36,8 @@ export interface MemberRecord {
   status: 'enabled' | 'disabled' | 'removed';
   /** GBRA-108 design 2: person (the default) or audience (a group chat, a shared assistant; the owner reads its member page). */
   kind: MemberKind;
+  /** GBRA-108 design 1: reads only pages that name it (access/labelled-only.ts); false by default. */
+  labelled_only: boolean;
   groups: string[];
   created_at: string | null;
 }
@@ -107,12 +109,13 @@ function toRecord(row: Record<string, unknown>): MemberRecord {
     email: (row.email as string | null) ?? null,
     status: row.tombstoned_at != null ? 'removed' : row.disabled_at != null ? 'disabled' : 'enabled',
     kind: row.kind === 'audience' ? 'audience' : 'person',
+    labelled_only: row.labelled_only === true,
     groups: Array.isArray(row.groups) ? (row.groups as string[]) : [],
     created_at: iso(row.created_at),
   };
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.disabled_at, m.tombstoned_at, m.created_at,
+const MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
   COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
 
