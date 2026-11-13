@@ -2348,8 +2348,10 @@ writer's outstanding-request cap is low), and the owner
 publishes them in groups of up to 8, instead of one page and one wait at a time.
 Each page still has its own fate: a page whose write is declined fails alone and
 the rest of its group lands. A decline is the page's own state refusing the
-write: its file differs from the database or is gone (`source_changed`), or its
-body is stored in segments. The page is left unchanged, the result counts it
+write: its file differs from the database or is gone (`source_changed`), its
+body is stored in segments, or its file cannot take the label edit line by line
+([`label_edit_refused`](write-refusals.md#label_edit_refused), which never
+counts toward the systemic-failure stop, even on its first try). The page is left unchanged, the result counts it
 under `declined` by reason, and when every failure of a complete run is a
 decline the command exits 0, so a script working through windows carries on.
 Any other failure, or a stop, still exits 1. The next preview lists pages an
