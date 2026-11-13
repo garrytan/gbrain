@@ -1,3 +1,4 @@
+import { validateMaintenanceInputs, type MaintenanceInputGuard } from './maintenance-input-guard.ts';
 import { realpathSync } from 'node:fs';
 import { enterClaimStep, type ClaimPhaseClock } from './claim-phase.ts';
 import { boundedReads } from './bounded-reads.ts';
@@ -46,6 +47,7 @@ import { factPreimages, recordConsolidationGeneration } from '../generations/ada
 export interface MaintenanceAuthority {
   writer: WriteAuthority;
   binding: WorktreeBinding | null;
+  guardedDatabaseOnly?: true;
   /** #5854: the job's publish wait (one wait per job, bounded by its deadline); a fresh 30 s budget when absent. */
   wait?: MaintenanceWriteWait;
 }
@@ -88,6 +90,17 @@ export async function maintenanceCallerPreflight(engine: BrainEngine, sourceId: 
 
 export async function maintenancePreflight(engine: BrainEngine, sourceId: string, root?: string,
   opts: { deadlineAtMs?: number | null } = {}): Promise<MaintenanceAuthority | null> {
+  return resolveMaintenanceAuthority(engine, sourceId, root, opts.deadlineAtMs);
+}
+
+/** A database-only guarded page still checks the source's registered owner. The producer never opens or writes its worktree. */
+export function guardedDatabasePagePreflight(engine: BrainEngine, sourceId: string,
+  deadlineAtMs?: number | null): Promise<MaintenanceAuthority | null> {
+  return resolveMaintenanceAuthority(engine, sourceId, undefined, deadlineAtMs, true);
+}
+
+async function resolveMaintenanceAuthority(engine: BrainEngine, sourceId: string, root?: string,
+  deadlineAtMs?: number | null, guardedDatabaseOnly?: true): Promise<MaintenanceAuthority | null> {
   if (!await managedPersistenceEnabled(engine)) return null;
   assertPersistenceAccepting(engine);
   const job = currentSubmissionAuthority();
@@ -111,7 +124,7 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
   // (its local_path is the connector's state directory, not a canonical checkout).
   if (!binding && isConnectorSourceKind(source.kind)) {
     writer.databaseOnlyReason = 'connector_database';
-    return { writer, binding: null, wait: new MaintenanceWriteWait(opts.deadlineAtMs) };
+    return { writer, binding: null, guardedDatabaseOnly, wait: new MaintenanceWriteWait(deadlineAtMs) };
   }
   const writeThrough = !/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true');
   const configuredRoot = source.local_path || (sourceId === 'default' ? await engine.getConfig('sync.repo_path') : null);
@@ -124,12 +137,14 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
         `Run maintenance for '${sourceId}' against its registered canonical root (the command in fix shows it), or without a directory argument; nothing was submitted.`,
         { fix: ownerStatusFix(sourceId) });
     }
-    await nativeLockCapability();
-    assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    if (!guardedDatabaseOnly) {
+      await nativeLockCapability();
+      assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    }
   }
   if (!writeThrough) writer.databaseOnlyReason = 'disabled_by_config';
   else if (!binding) writer.databaseOnlyReason = 'no_repo_configured';
-  return { writer, binding: writeThrough ? binding : null, wait: new MaintenanceWriteWait(opts.deadlineAtMs) };
+  return { writer, binding: writeThrough && !guardedDatabaseOnly ? binding : null, guardedDatabaseOnly, wait: new MaintenanceWriteWait(deadlineAtMs) };
 }
 
 async function validateMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, slug: string): Promise<void> {
@@ -162,6 +177,10 @@ function awaitMaintenance(engine: BrainEngine, authority: MaintenanceAuthority, 
 /** Every check a maintenance request passes before it is journaled: the authorized prior request with its id (a replay), or the admission to submit. */
 async function prepareMaintenanceAdmission(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
   intent: Record<string, unknown>, requestId: string, file: boolean): Promise<{ prior: WriteRequest } | { admission: WriteAdmission }> {
+  if (authority.guardedDatabaseOnly && (file ||
+      (intent.kind !== 'managed_maintenance_guarded_page_v1' && intent.kind !== FIDELITY_DREAM_INTENT))) {
+    throw new TypeError('Guarded database-only authority cannot publish this maintenance intent');
+  }
   await validateMaintenance(engine, authority, slug);
   const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
   if (prior) {
@@ -264,6 +283,19 @@ export async function publishMaintenancePage(engine: BrainEngine, authority: Mai
   content: string, options: MaintenancePageOptions): Promise<Record<string, unknown>> {
   const { intent, requestId } = maintenancePageRequest(authority, slug, content, options);
   return submitMaintenance(engine, authority, slug, intent, requestId, options.file);
+}
+
+/** The guard travels with the request, including across a worker restart. */
+export async function publishGuardedMaintenancePage(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
+  content: string, options: Omit<MaintenancePageOptions, 'requestId' | 'file'> & { projectConceptLinks?: boolean },
+  inputGuard: MaintenanceInputGuard): Promise<Record<string, unknown>> {
+  const page = maintenancePageRequest(authority, slug, content, { ...options, file: false });
+  const intent = { ...page.intent,
+    kind: inputGuard.activation ? FIDELITY_DREAM_INTENT : 'managed_maintenance_guarded_page_v1',
+    input_guard: inputGuard,
+    ...(options.projectConceptLinks ? { project_concept_links: true } : {}) };
+  const requestId = maintenanceRequestId({ page: page.requestId, intent });
+  return submitMaintenance(engine, authority, slug, intent, requestId, false);
 }
 
 /**
@@ -585,6 +617,8 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
  * (fail closed) with no input edges. #7917: a page the publication lowered
  * files a `lower_page` proposal the owner sees in `gbrain trust review`.
  */
+export const FIDELITY_DREAM_INTENT = 'managed_maintenance_fidelity_dream_v1';
+
 export async function prepareMaintenanceMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
   const prepared = await prepareMaintenanceKind(engine, row, config, clock);
   const trust = derivationWriteTrust(row.intent);
@@ -627,6 +661,45 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_take_reproject') return (await import('../repair/take-supersession.ts')).prepareTakeReprojection(engine, row);
   if (row.intent?.kind === 'managed_maintenance_timeline_extract') return (await import('../../commands/extract-timeline-db.ts')).prepareTimelineExtract(engine, row);
   if (row.intent?.kind === 'managed_maintenance_meeting_timeline') return (await import('../extract-timeline-from-meetings.ts')).prepareMeetingTimeline(engine, row);
+  if (row.intent?.kind === 'managed_maintenance_guarded_page_v1' || row.intent?.kind === FIDELITY_DREAM_INTENT) {
+    const guard = row.intent.input_guard as MaintenanceInputGuard;
+    if (row.intent.kind === FIDELITY_DREAM_INTENT && !guard?.activation) {
+      throw opError('invalid_params', 'Fidelity Dream publication requires a scope pin.', 'Keep the original receipt and check the scheduled scope.');
+    }
+    const prepared = await preparePageMutation(engine, { ...row, intent: {
+      ...row.intent, kind: 'managed_maintenance_page',
+      expected_revision: row.intent.expected_revision ?? undefined,
+    } }, config, undefined, undefined, { clock });
+    const projectLinks = row.intent.project_concept_links === true;
+    return {
+      ...prepared,
+      additionalPageKeys: [...prepared.additionalPageKeys ?? [],
+        ...[...guard.pages, ...(guard.evidencePages ?? [])].map(page => ({ sourceId: row.source_id, slug: page.slug }))],
+      validate: async tx => {
+        await validateMaintenanceInputs(tx, row.source_id, guard);
+        await prepared.validate?.(tx);
+      },
+      apply: async (tx, preimage) => {
+        const outcome = await prepared.apply(tx, preimage);
+        if (!projectLinks) return outcome;
+        const snapshot = await tx.readPageSnapshot(row.slug, { sourceId: row.source_id });
+        if (!snapshot || snapshot.page.type !== 'concept') {
+          throw opError('invalid_params', 'Concept provenance requires a concept page.', 'Use guarded concept publication for a concept page.');
+        }
+        const { replaceConceptProvenanceLinks } = await import('../cycle/concept-publication.ts');
+        const links = guard.pages.flatMap(page => [
+          { from_slug: row.slug, to_slug: page.slug, link_type: 'synthesized_from' },
+          { from_slug: page.slug, to_slug: row.slug, link_type: 'synthesizes' },
+        ]).map(link => ({ ...link, link_source: 'concept-provenance',
+          from_source_id: row.source_id, to_source_id: row.source_id }));
+        const projected = await replaceConceptProvenanceLinks(tx, row.source_id, row.slug, links, {
+          expectedRevision: snapshot.revision, managed: false,
+        });
+        if (projected === 'moved') throw opError('revision_conflict', 'Concept moved during provenance projection.', 'Read the current concept before retrying.');
+        return outcome;
+      },
+    };
+  }
   if (row.intent?.kind === 'managed_maintenance_page') {
     const page = await preparePageMutation(engine, row.intent.expected_revision === null
       ? { ...row, intent: { ...row.intent, expected_revision: undefined } } : row, config, undefined, undefined, { clock });

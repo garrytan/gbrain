@@ -218,10 +218,14 @@ export async function runPhaseSynthesizeConcepts(
   }
 
   // 2. Group atoms by concept stem (#6161 human redirects, then #5965 spelling folds; see resolveAtomConceptStems); one atom counts once per concept.
-  const { atomStems, foldedSpellings } = await resolveAtomConceptStems(engine, opts.sourceId ?? 'default', atoms);
+  const { readConfiguredDreamFidelityScope } = await import('../../../extensions/fidelity-minion/dream-scope.ts');
+  const sourceId = opts.sourceId ?? 'default';
+  const fidelity = await readConfiguredDreamFidelityScope(engine, sourceId);
+  const { atomStems, foldedSpellings, fidelityStem } = await resolveAtomConceptStems(engine, sourceId, atoms, fidelity?.topic);
   const groups = new Map<string, { slugs: string[]; titles: string[]; bodies: string[]; visibilities: Visibility[] }>();
   for (const [i, atom] of atoms.entries()) {
     for (const conceptSlug of atomStems[i]!) {
+      if (conceptSlug === fidelityStem) continue;
       const existing = groups.get(conceptSlug) ?? { slugs: [], titles: [], bodies: [], visibilities: [] };
       existing.slugs.push(atom.slug);
       existing.titles.push(atom.title);
@@ -638,15 +642,21 @@ export async function runPhaseSynthesizeConcepts(
  * spelling wins, else the most frequent, tie to the hyphenated one; two live
  * spellings are left apart). The folds are reported, never written.
  */
-async function resolveAtomConceptStems(engine: BrainEngine, sourceId: string, atoms: Array<{ concept_refs: string[] }>):
-  Promise<{ atomStems: Set<string>[]; foldedSpellings: Array<{ from: string; to: string }> }> {
+async function resolveAtomConceptStems(engine: BrainEngine, sourceId: string, atoms: Array<{ concept_refs: string[] }>,
+  fidelityTopic?: string): Promise<{ atomStems: Set<string>[]; foldedSpellings: Array<{ from: string; to: string }>; fidelityStem?: string }> {
   const redirects = await loadConceptRedirects(engine, sourceId, conceptStemFor).catch(() => new Map<string, string>());
   const afterHumanHop = atoms.map((atom) => new Set(atom.concept_refs.map(conceptStemFor).filter((s): s is string => s !== null).map((stem) => canonicalConceptStem(stem, redirects))));
   const atomCounts = new Map<string, number>();
   for (const stems of afterHumanHop) for (const stem of stems) atomCounts.set(stem, (atomCounts.get(stem) ?? 0) + 1);
   const liveStems = await loadLiveConceptStems(engine, sourceId, conceptStemFor).catch(() => new Set<string>());
+  const fidelityHumanStem = fidelityTopic ? canonicalConceptStem(fidelityTopic, redirects) : undefined;
+  if (fidelityHumanStem && !atomCounts.has(fidelityHumanStem)) atomCounts.set(fidelityHumanStem, 0);
   const foldedSpellings = addSpellingRedirects(redirects, atomCounts, liveStems);
-  return { atomStems: afterHumanHop.map((stems) => new Set([...stems].map((stem) => canonicalConceptStem(stem, redirects)))), foldedSpellings };
+  return {
+    atomStems: afterHumanHop.map((stems) => new Set([...stems].map((stem) => canonicalConceptStem(stem, redirects)))),
+    foldedSpellings,
+    fidelityStem: fidelityHumanStem ? canonicalConceptStem(fidelityHumanStem, redirects) : undefined,
+  };
 }
 
 /**

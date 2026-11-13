@@ -666,7 +666,7 @@ async function autoDrainUnitsToday(engine: BrainEngine, utcDay: string): Promise
   const rows = await engine.executeRaw<{ cnt: number }>(
     `SELECT COALESCE(sum(CASE WHEN status = 'dead' AND attempts_started <= 1
          AND left(COALESCE(error_text, ''), length($2::text)) = $2::text THEN 0 ELSE GREATEST(attempts_started, 1) END), 0)::int AS cnt
-       FROM minion_jobs WHERE name = 'extract-atoms-drain' AND created_at >= $1::timestamptz`,
+       FROM minion_jobs WHERE name IN ('extract-atoms-drain', 'extract-atoms-fidelity') AND created_at >= $1::timestamptz`,
     [`${utcDay}T00:00:00Z`, STRUCTURAL_REFUSAL_PREFIX],
   );
   return Number(rows[0]?.cnt ?? 0);
@@ -771,8 +771,16 @@ export async function submitAutoDrains(
         [idemKey],
       );
       if (dupe.length > 0) continue; // already queued/drained for this source today
-      const backlog = await countExtractAtomsBacklog(engine, src.id);
-      if (backlog === null || backlog <= threshold) continue;
+      const { readDreamFidelityScope, dreamFidelityScopeKey, fidelityHandoffNeeded } = await import('../../extensions/fidelity-minion/dream-scope.ts');
+      const configuredScope = await readDreamFidelityScope(engine, src.id);
+      const scopedBacklog = configuredScope
+        ? await countExtractAtomsBacklog(engine, src.id, { pageScope: configuredScope.pages })
+        : 0;
+      if (scopedBacklog === null) continue;
+      const fidelityScope = configuredScope && (scopedBacklog > 0 || await fidelityHandoffNeeded(engine, src.id, configuredScope))
+        ? configuredScope : null;
+      const backlog = fidelityScope ? scopedBacklog : await countExtractAtomsBacklog(engine, src.id);
+      if (backlog === null || (!fidelityScope && backlog <= threshold)) continue;
       // #5856: the drain's writer preflight would refuse this source (no
       // active local owner); submitting it would only dead-letter.
       const refusal = await atomDrainOwnerRefusal(engine, src.id);
@@ -782,8 +790,9 @@ export async function submitAutoDrains(
         continue;
       }
       const job = await queue.add(
-        'extract-atoms-drain',
-        { sourceId: src.id, window: bounds.windowSeconds, ...(kind === 'checkout' ? { repoPath: src.local_path } : {}) },
+        fidelityScope ? 'extract-atoms-fidelity' : 'extract-atoms-drain',
+        { sourceId: src.id, window: bounds.windowSeconds, ...(kind === 'checkout' ? { repoPath: src.local_path } : {}),
+          ...(fidelityScope ? { fidelityScopeKey: dreamFidelityScopeKey(fidelityScope) } : {}) },
         {
           queue: 'default',
           idempotency_key: idemKey,
@@ -791,6 +800,8 @@ export async function submitAutoDrains(
           // all-provider-failed batch, so give the queue's
           // backoff a chance (was 1 — dead-lettered instantly).
           max_attempts: 3,
+          // Leave time for the routine source cycle or a Serve restart to finish.
+          ...(fidelityScope ? { backoff_type: 'fixed', backoff_delay: 60_000 } as const : {}),
           timeout_ms: bounds.timeoutMs,
         },
         { allowProtectedSubmit: true },

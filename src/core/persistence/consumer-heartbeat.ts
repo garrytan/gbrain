@@ -74,6 +74,8 @@ export interface ConsumerRow {
   persistence_home: string;
   minted_under: Record<string, unknown> | null;
   version: string;
+  /** Protocol features advertised by the consumer build. */
+  capabilities?: string[];
   /** #6650 (migration v243): the owner's boot id and process start time; null on rows an older consumer wrote. */
   boot_id?: string | null;
   process_start?: string | null;
@@ -135,7 +137,7 @@ export function sameProcess(owner: { pid?: number | null; nonce?: string | null 
 }
 
 const ROW_COLUMNS = `host_id::text AS host_id,pid,nonce,pid_ns,kind,mode,started_at::text AS started_at,renewed_at::text AS renewed_at,restart_required,root_barrier_age_ms,pool,
-  host_json_path,persistence_home,minted_under,version,boot_id,process_start,(EXTRACT(EPOCH FROM (now()-renewed_at))*1000)::bigint::text AS renewed_age_ms,
+  host_json_path,persistence_home,minted_under,version,boot_id,process_start,capabilities,(EXTRACT(EPOCH FROM (now()-renewed_at))*1000)::bigint::text AS renewed_age_ms,
   (EXTRACT(EPOCH FROM (now()-started_at))*1000)::bigint::text AS age_ms`;
 type RawRow = Omit<ConsumerRow, 'pool' | 'minted_under'> & { pool: unknown; minted_under: unknown; renewed_age_ms: string; age_ms: string };
 
@@ -217,7 +219,10 @@ type DirectEngine = SqlEngine & Partial<Pick<BrainEngine, 'kind' | 'executeRawDi
  * What this binary's consumer can drain: `refresh_barrier_1` (v292) claims writes deferred behind a worktree refresh,
  * `refresh_barrier_import_1` (v294) writes held for an import.
  */
-export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1'] as const;
+export const GUARDED_MAINTENANCE_CAPABILITY = 'guarded_maintenance_page_v1';
+export const FIDELITY_DREAM_GUARD_CAPABILITY = 'fidelity_dream_guard_v1';
+export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1',
+  GUARDED_MAINTENANCE_CAPABILITY, FIDELITY_DREAM_GUARD_CAPABILITY] as const;
 const RENEW_SQL = `WITH purged AS (
     DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3))
   INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader,capabilities)

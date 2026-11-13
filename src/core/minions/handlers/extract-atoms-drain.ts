@@ -12,9 +12,9 @@ import type { MinionHandler } from '../types.ts';
  * the per-source lock) the job completes `{ deferred: true }` and retries
  * next tick instead of failing — cooperative interleave (CODEX accepted).
  */
-export function makeExtractAtomsDrainHandler(engine: BrainEngine): MinionHandler {
+export function makeExtractAtomsDrainHandler(engine: BrainEngine, scoped = false): MinionHandler {
   return async (job) => {
-    if (job.data.retryRequestId !== undefined) {
+    if (!scoped && job.data.retryRequestId !== undefined) {
       if (typeof job.data.retryRequestId !== 'string' || typeof job.data.sourceId !== 'string') throw new Error('Atom retry requires sourceId and retryRequestId strings.');
       const { retryManagedAtomBatch } = await import('../../persistence/atom-retry.ts');
       return retryManagedAtomBatch(engine, job.data.sourceId, job.data.retryRequestId, `job:${job.id}`,
@@ -36,12 +36,22 @@ export function makeExtractAtomsDrainHandler(engine: BrainEngine): MinionHandler
     const { deadlineAtMs } = job;
     const pastDeadline = () => deadlineAtMs != null && Date.now() >= deadlineAtMs;
     try {
+      let fidelityScope;
+      if (scoped) {
+        if (!sourceId) throw new UnrecoverableError('Fidelity Dream requires a source');
+        const { readDreamFidelityScope, dreamFidelityScopeKey } = await import('../../../../extensions/fidelity-minion/dream-scope.ts');
+        fidelityScope = await readDreamFidelityScope(engine, sourceId);
+        if (fidelityScope == null || dreamFidelityScopeKey(fidelityScope) !== job.data.fidelityScopeKey) {
+          return { phase: 'extract_atoms', status: 'skipped', reason: 'fidelity_scope_changed' };
+        }
+      }
       const result = await runExtractAtomsDrainForSource(engine, {
         sourceId,
         windowSeconds,
         brainDir: repoPath,
         signal: job.signal,
         deadlineAtMs,
+        fidelity: fidelityScope ? { scope: fidelityScope, ownerJobId: job.id } : undefined,
       });
       const counts = `batches=${result.batches}, extracted=${result.extracted}, remaining=${result.remaining ?? '?'}`;
       if (result.stopped === 'deadline') {
@@ -71,9 +81,15 @@ export function makeExtractAtomsDrainHandler(engine: BrainEngine): MinionHandler
       if (result.status === 'provider_failure') {
         throw new Error(formatDrainProviderFailure(result));
       }
+      if (result.fidelity?.status === 'skipped' && result.fidelity.reason === 'serve_unavailable') {
+        throw new Error('Fidelity Dream needs a compatible HTTP Serve write owner');
+      }
       return result;
     } catch (e) {
       if (e instanceof LockUnavailableError) {
+        // A completed row would occupy the scoped job's daily slot. Retry
+        // the same job within the dispatcher's normal bounded attempt budget.
+        if (scoped && !pastDeadline()) throw new Error('Fidelity Dream is waiting for the source cycle lock', { cause: e });
         return { phase: 'extract_atoms', status: 'skipped', deferred: true, reason: 'cycle_already_running' };
       }
       // #5856: the session preflight refused the writer itself (no owner, untrusted caller); a retry cannot change that.

@@ -100,20 +100,23 @@ export function inputTruncatedLine(originLabel: string, input: ExtractAtomsInput
  * above the current cap stay (the model would read the same text again).
  * Fail-soft: a failed release leaves the items skipped, never re-spent.
  */
-export async function releasePartialDispositions(engine: BrainEngine, sourceId: string, maxInputChars: number): Promise<void> {
+export async function releasePartialDispositions(engine: BrainEngine, sourceId: string, maxInputChars: number, pageScope?: readonly string[]): Promise<void> {
   try {
     await engine.executeRaw(
       `UPDATE extract_atoms_page_state scan SET partial_input_chars=NULL, updated_at=now()
-         FROM sources s WHERE s.id=$1 AND scan.source_incarnation=s.incarnation AND scan.partial_input_chars < $2`,
-      [sourceId, maxInputChars]);
-    await engine.executeRaw(
+         FROM sources s WHERE s.id=$1 AND scan.source_incarnation=s.incarnation AND scan.partial_input_chars < $2
+           AND ($3::text[] IS NULL OR EXISTS (
+             SELECT 1 FROM pages p WHERE p.id=scan.page_id AND p.source_id=$1 AND p.slug=ANY($3::text[])))`,
+      [sourceId, maxInputChars, pageScope ?? null]);
+    if (!pageScope) await engine.executeRaw(
       `UPDATE extract_atoms_transcript_state SET partial_input_chars=NULL, updated_at=now()
         WHERE source_id=$1 AND partial_input_chars < $2`,
       [sourceId, maxInputChars]);
     await engine.executeRaw(
       `DELETE FROM op_checkpoints WHERE op='managed-atoms' AND completed_keys->0->>'sourceId'=$1
-         AND (completed_keys->0->>'partial')::integer < $2`,
-      [sourceId, maxInputChars]);
+         AND (completed_keys->0->>'partial')::integer < $2
+         AND ($3::text[] IS NULL OR (completed_keys->0->>'kind'='page' AND completed_keys->0->>'locator'=ANY($3::text[])))`,
+      [sourceId, maxInputChars, pageScope ?? null]);
   } catch (err) {
     console.error(`[extract_atoms] partial-disposition release failed (cut items stay skipped): ${err instanceof Error ? err.message : String(err)}`);
   }
