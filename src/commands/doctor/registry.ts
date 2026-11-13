@@ -135,8 +135,8 @@ import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
 import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
-import { storageManifestEntry } from './checks/storage-manifest.ts';
 import { mcpRequestLogRetentionEntry } from './checks/mcp-request-log.ts';
+import { storageManifestEntry } from './checks/storage-manifest.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
@@ -357,10 +357,10 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   // GBRA-248 W0: writes waiting on a long-quiet owner host, and a file plane that disables embeddings over a database with vectors.
   ownerHostStaleEntry,
   embeddingPlaneDisagreementEntry,
-  // GST-1943: the storage shelf: cards failing the card schema, interim records not adopted, a hosted shelf directory gone.
-  storageManifestEntry,
   // #6770: MCP request-log size and the opt-in retention prune (read-only; the enable fix asks the user).
   mcpRequestLogRetentionEntry,
+  // GST-1943: the storage shelf: cards failing the card schema, interim records not adopted, a hosted shelf directory gone.
+  storageManifestEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];
