@@ -28,6 +28,7 @@ import { hasScope } from '../scope.ts';
 import { createAuditWriter } from '../audit/audit-writer.ts';
 import { credentialScopeFields } from './token-binding.ts';
 import { stdioBindRoute } from './stdio-bind-route.ts';
+import { classifyPgAccessError } from '../pg-access-classify.ts';
 
 /**
  * Read operations that read no page: the caller's own identity, the brain's identity and health, search mode names,
@@ -148,13 +149,17 @@ function boundToSomeone(access: Partial<CallerAccess>): boolean {
  * The access a requester-scope decision reads: unchanged unless whom the brain serves could not be read (servesUnknown)
  * and the call is from a connection bound to nobody, which gets one targeted re-read of the serves keys. A second
  * failure leaves it unknown, and requesterScopeGate refuses (requester_scope_unknown) rather than read it as one person.
+ * A second failure the database-error envelope already names (the database unreachable, the schema missing) is
+ * rethrown to it instead; a dropped connection or a timeout stays requester_scope_unknown, since the next read succeeds.
  */
 export async function withServesReread<T extends Partial<CallerAccess>>(engine: Pick<BrainEngine, 'executeRaw'>, access: T, auth: Pick<ScopeAuth, 'readsUnscoped'> | undefined): Promise<T> {
   const policy = access.remotePolicy;
   if (!policy?.servesUnknown || boundToSomeone(access) || auth?.readsUnscoped) return access;
   try {
     return { ...access, remotePolicy: { ...policy, serves: await readServesPolicy(engine), servesUnknown: false } };
-  } catch {
+  } catch (e) {
+    const reason = classifyPgAccessError(e).reason;
+    if (reason !== 'unknown' && reason !== 'conn_dropped') throw e;
     return access;
   }
 }
