@@ -1,3 +1,7 @@
+---
+important: security
+---
+
 **A labelled-only member no longer reads and writes as an unbound guest when the database hiccups.** When gbrain looks up which member a token, OAuth client or local server is bound to, a dropped connection, a timeout or a failed statement used to look the same as "bound to nobody". A credential bound to nobody reads and writes every page that names no readers, so during that hiccup a member kept to its labelled pages could read, overwrite or create unlabelled pages. Now the request fails with `access_identity_unavailable`, a retryable error that tells the agent to wait a few seconds and send the same request again; nothing is read or written. A queued write that meets a lock or statement timeout there is still retried by itself, as before. A shared agent's write for a labelled-only member, or a trusted system's write for a person it vouches for, stays labelled-only when the lookup of who it writes for fails. Credentials that really are unbound read exactly as before, and so does every caller on a brain whose database predates member access.
 
 ### Itemized changes
