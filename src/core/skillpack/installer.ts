@@ -40,6 +40,7 @@ import {
   type BundleManifest,
 } from './bundle.ts';
 import { findResolverFile } from '../resolver-filenames.ts';
+import { SKILLPACK_MANAGED_BEGIN } from '../skill-manifest.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -258,7 +259,7 @@ function releaseLock(workspace: string): void {
 // Managed block (AGENTS.md / RESOLVER.md)
 // ---------------------------------------------------------------------------
 
-const MANAGED_BEGIN = '<!-- gbrain:skillpack:begin -->';
+const MANAGED_BEGIN = SKILLPACK_MANAGED_BEGIN;
 const MANAGED_END = '<!-- gbrain:skillpack:end -->';
 
 // Receipt comment embedded inside the fence on every write. Lets the

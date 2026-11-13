@@ -55,6 +55,7 @@ import {
   type FetchImpl,
 } from './google-clients.ts';
 import { renderThreadPage, threadRelPath } from './google-render.ts';
+import { slugifyPath } from '../sync.ts';
 import {
   ALL_GOOGLE_SERVICES,
   isGmailHoldKey,
@@ -173,18 +174,32 @@ async function processThread(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
   seen: { thread?: GmailThreadData } = {},
+  cutoffMs?: number,
 ): Promise<GmailThreadData | null> {
   const thread = await gmail.getThread(threadId, deps.cfg.account, {
     ...(deps.opts.signal ? { signal: deps.opts.signal } : {}),
   });
   seen.thread = thread;
   summary.threadsSeen++;
+  const newestMs = thread.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
+  // #8482: the change feed and held retries name threads of any age; the history window keeps a thread with no page out, as the backfill does.
+  if (cutoffMs !== undefined && newestMs < cutoffMs) {
+    const [page] = await deps.engine.executeRaw('SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL',
+      [deps.sourceId, slugifyPath(threadRelPath(thread))]);
+    if (!page) return null;
+  }
   const rendered = renderThreadPage(thread);
   // Pure noise renders no page AND skips detection — an all-noise thread
   // produces an empty verdict anyway, so nothing opens and nothing closes.
   if (!rendered) return thread;
   const slug = await importRendered(deps, rendered.relPath, rendered.markdown, activePack, summary, countedSlugs,
     { thread_id: thread.threadId, message_ids: thread.messages.map((m) => m.id) });
+  // #8644/#8938: a purged thread is neither detected nor extracted, and its grace hold is dropped, so its text does not
+  // come back through open loops.
+  if (slug === null) {
+    delete deps.loopState?.loop_grace_holds?.[thread.threadId];
+    return thread;
+  }
   for (const message of thread.messages) {
     const state = message.attachmentInspection?.state ?? 'not_inspected';
     summary.attachmentInspection[state] = (summary.attachmentInspection[state] ?? 0) + 1;
@@ -196,7 +211,6 @@ async function processThread(
   if (verdict?.withheld) summary.loopsWithheld[verdict.withheld.reason] = (summary.loopsWithheld[verdict.withheld.reason] ?? 0) + 1;
   // LLM extraction candidates: trickle + the bounded recent window only —
   // the deep historical backfill is never extracted (spend honesty, F9).
-  const newestMs = thread.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
   const windowMs = LOOPS_EXTRACT_WINDOW_DAYS * 86_400_000;
   if (newestMs > 0 && Date.now() - newestMs <= windowMs) {
     // Structural eligibility, not "everything recent": bulk mail the owner
@@ -267,14 +281,14 @@ type ThreadOutcome = { kind: 'landed'; newestMs: number } | { kind: 'gone' | 'sk
  * block the cursor). On a managed brain a write error aborts the run after
  * the abort path publishes the holds.
  */
-async function attemptThread(g: GmailSweep, tid: string, version: string | null): Promise<ThreadOutcome> {
+async function attemptThread(g: GmailSweep, tid: string, version: string | null, cutoffMs?: number): Promise<ThreadOutcome> {
   if (!g.holds.shouldAttempt(tid, version)) {
     g.deps.tick(`thread ${tid} held`);
     return { kind: 'skipped' };
   }
   const seen: { thread?: GmailThreadData } = {};
   try {
-    const thread = await processThread(g.deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs, seen);
+    const thread = await processThread(g.deps, g.gmail, tid, g.activePack, g.summary, g.countedSlugs, seen, cutoffMs);
     g.holds.succeed(tid);
     const newestMs = thread?.messages[thread.messages.length - 1]?.internalDateMs ?? 0;
     if (newestMs > (g.state.gmail_newest_ms ?? 0)) g.state.gmail_newest_ms = newestMs;
@@ -417,7 +431,7 @@ async function sweepGmail(g: GmailSweep, onCurrent?: () => Promise<void>): Promi
   // hold and never blocks the cursor.
   for (const tid of g.holds.dueHeldKeys().filter(isGmailHoldKey)) {
     if (deps.opts.signal?.aborted) return false;
-    await attemptThread(g, tid, null);
+    await attemptThread(g, tid, null, cutoffMs);
   }
   if (await settleGraceHolds(g, cutoffMs) === 'aborted') return false;
   const isCurrent = (): boolean => {
@@ -543,7 +557,7 @@ async function drainGmailDelta(g: GmailSweep, cutoffMs: number): Promise<WalkOut
     }
     // Thread-specific version (the latest history record touching it), so unrelated mail never resets a count.
     const version = fromHistory.has(tid) && versions.get(tid) ? `history:${versions.get(tid)}` : null;
-    const outcome = await attemptThread(g, tid, version);
+    const outcome = await attemptThread(g, tid, version, cutoffMs);
     if (outcome.kind === 'failed' || outcome.kind === 'rate_limited') {
       failed++;
       // Per-user quota: the remaining threads would burn the client's retry

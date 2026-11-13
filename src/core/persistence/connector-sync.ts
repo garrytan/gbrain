@@ -634,10 +634,11 @@ export class ManagedConnectorSync {
       { source_id: this.sourceId, worktree_id: this.binding.worktree_id, slug }, snapshot, serializePageToMarkdown(snapshot.page, snapshot.tags));
     return snapshot?.page ?? null;
   }
-  async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean }> {
+  /** `purged` marks a skip because the content matches a page purge tombstone (#8938), so the caller derives nothing from it. */
+  async importMarkdown(sourcePath: string, content: string): Promise<{ slug: string; chunks: number; status: 'imported' | 'skipped'; created: boolean; purged?: true }> {
     const slug = slugifyPath(sourcePath);
     const done = await this.submit('connector_v2_import', slug, sourcePath, { content });
-    if (!done.row) return { slug, chunks: 0, status: 'skipped', created: false };
+    if (!done.row) return { slug, chunks: 0, status: 'skipped', created: false, ...(done.purged ? { purged: true as const } : {}) };
     if (done.pending) return { slug, chunks: 0, status: 'imported', created: done.created };
     return { slug, chunks: Number(done.row.outcome?.chunks ?? 0), status: done.row.outcome?.noop ? 'skipped' : 'imported', created: done.row.outcome?.status === 'created' };
   }
@@ -921,7 +922,7 @@ export class ManagedConnectorSync {
     }
   }
   private async submit(kind: ConnectorIntentKind, slug: string, sourcePath: string | null, extra: Partial<ConnectorIntent>):
-    Promise<{ row: WriteRequest | null; pending: boolean; created: boolean }> {
+    Promise<{ row: WriteRequest | null; pending: boolean; created: boolean; purged?: true }> {
     await this.awaitPagePending(slug);
     await this.awaitPageMirror(slug);
     await this.recover(slug);
@@ -981,7 +982,7 @@ export class ManagedConnectorSync {
     // #6831: a replayed purged refusal stays skipped (even under --retry-failed) while its tombstone stands; once the
     // owner cleared it, the item gets one automatic retry through the guarded retry path below.
     if (kind === 'connector_v2_import' && row && purgedRefusal(row) && row.request_id === (this.retryApprovals.get(baseRequestId) ?? baseRequestId)) {
-      if (await this.purgedNow(slug, extra.content)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false }; }
+      if (await this.purgedNow(slug, extra.content)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false, purged: true }; }
       this.autoRetry.add(baseRequestId);
     }
     const automatic = this.autoRetry.has(baseRequestId);
@@ -1044,7 +1045,7 @@ export class ManagedConnectorSync {
       }
       if (kind === 'connector_v2_import' && await this.carriesPurgedPage(slug, extra.content)) {
         this.skipPurged(slug, null);
-        return { row: null, pending: false, created: false };
+        return { row: null, pending: false, created: false, purged: true };
       }
       row = await this.engine.transaction(async tx => {
         await this.assertLease(tx);
@@ -1077,7 +1078,7 @@ export class ManagedConnectorSync {
       return { row, pending: false, created: false };
     }
     if (isTerminal(row)) {
-      if (page && purgedRefusal(row)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false }; }
+      if (page && purgedRefusal(row)) { this.skipPurged(slug, row); return { row: null, pending: false, created: false, purged: true }; }
       if (row.state !== 'committed') this.lastFailedItem = { slug, requestId: row.request_id };
       writeResponse(row);
       this.receipts.push(row.id);
@@ -1199,12 +1200,15 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
     ? serializePageToMarkdown({ ...snapshot.page, ...parsed, compiled_truth: fenced, timeline: carried.timeline, type: parsed.typeExplicit ? parsed.type : snapshot.page.type }, parsed.tags)
     : p.content;
   let prepared: PreparedContentImport | undefined;
+  const tier = 'external_untrusted';
   const result = await importFromContent(engine, row.slug, content, { sourceId: row.source_id, sourcePath: p.sourcePath,
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack,
     // #5575 A3: connector free text (mail bodies, invite descriptions, issue text) is external and gated.
-    writeGate: { tier: 'external_untrusted', origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
+    writeGate: { tier, origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
     prepareFrontmatter: page => {
       if (snapshot?.page.frontmatter.visibility === 'private') page.frontmatter.visibility = 'private';
+      // #8052: keep the marker `gbrain repair provenance` stamped, only when it names the tier this import assigns.
+      if (snapshot?.page.frontmatter.trust_tier === tier) page.frontmatter.trust_tier = tier;
     },
     prepare: async value => { prepared = value; return value.result; } });
   if (!prepared || prepared.slug !== row.slug) throw connectorPublicationRefusal('revision_conflict', result.error ?? 'A different page owns this connector content.', row,

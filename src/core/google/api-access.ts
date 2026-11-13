@@ -3,8 +3,10 @@
  * Gmail, Calendar and People APIs it can reach.
  *
  * `probeGoogleAccount` asks each enabled service to name the account (Gmail
- * profile, Calendar primary calendar, People `me`) and, when none can, the
- * OAuth userinfo endpoint (the `email` scope is always requested). Every
+ * profile, Calendar primary calendar) and, when none can, the OAuth userinfo
+ * endpoint (the `email` scope is always requested). People only proves the
+ * token reaches the API by listing one connection (#7490): `people/me`
+ * needs the `profile` scope, which connect never requests. Every
  * per-service failure stays in the result: the managed sync uses the first
  * address it finds, while `gbrain google setup` and `gbrain google status`
  * probe every service and name each disabled API or missing scope at once.
@@ -54,9 +56,8 @@ export async function probeGoogleAccount(clients: GoogleIdentityClients, service
     ['gmail', async () => (await clients.gmail.getProfile(request)).emailAddress],
     ['calendar', async () => (await clients.calendar.fetchJSON<{ id?: string }>('https://www.googleapis.com/calendar/v3/calendars/primary', 'calendar-json', request)).id],
     ['contacts', async () => {
-      const me = await clients.people.fetchJSON<{ emailAddresses?: Array<{ value?: string; metadata?: { primary?: boolean } }> }>(
-        'https://people.googleapis.com/v1/people/me?personFields=emailAddresses', 'people', request);
-      return (me.emailAddresses?.find(address => address.metadata?.primary) ?? me.emailAddresses?.[0])?.value;
+      await clients.people.fetchJSON('https://people.googleapis.com/v1/people/me/connections?pageSize=1&personFields=emailAddresses', 'people', request);
+      return undefined;
     }],
     ['userinfo', clients.userinfo],
   ];

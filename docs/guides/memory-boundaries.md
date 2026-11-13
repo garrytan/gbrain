@@ -406,6 +406,14 @@ Read [brains and sources](../architecture/brains-and-sources.md#what-confines-re
 before choosing a sharing topology. Tests cover specific boundaries, not a
 universal security guarantee.
 
+A brain that serves several people (two or more enabled members, or config
+`access.serves = several`) refuses remote reads from a connection bound to no
+member (`requester_scope_required`, after a 14-day grace for connections that
+already existed), so a shared bot cannot read everyone's unmarked notes for
+whoever is asking. That covers reads only: writes keep their own rules, and a
+page that names no readers is still read by every member.
+[The refusal and its fix](write-refusals.md#requester_scope_required).
+
 <a id="fence-markers-in-code"></a>
 **Fence markers quoted in code.** Since 0.60.97.0 the readers (the fence
 parser, projections, repair) ignore a takes or facts fence marker that sits in
@@ -424,7 +432,7 @@ mention after the real fence. Pinned by `test/fence-marker-code-context.test.ts`
 ("remote privacy boundary" and "remote page replacement").
 
 Markdown export is a portable view of pages, **not a full database backup**.
-DB-only facts and pages, revision history, the belief ledger (what the brain
+DB-only facts and pages (extract receipts included), revision history, the belief ledger (what the brain
 had recorded, and when; `gbrain beliefs`), withdrawal state, jobs, settings,
 and authentication records may not be recoverable from Markdown. Use the engine's
 full backup/restore path and verify a restore into a separate location. Treat
@@ -492,9 +500,10 @@ What one purge does, in one transaction:
   stored page body and from every saved page version, then rebuilds that page's
   chunks; the canonical file is rewritten by the owner and committed as
   `gbrain: purge fact <hash8>` (no claim text in the commit). A purge of a
-  fact held on `memory/unattributed` for an entity with no page also drops
-  every copy of the same claim text on that page, whether it is held for
-  another entity or has no entity;
+  fact held on a holding page (`memory/unattributed`, or a folder's
+  `<folder>/memory/unattributed`) for an entity with no page also drops every
+  copy of the same claim text on that page, whether it is held for another
+  entity or has no entity;
 - redacts stored write intents that carry the claim (a write that is running
   or recovering blocks the purge with `purge_blocked_pending_recovery` until it
   finishes; retry with the same request id; a write still queued, or deferred

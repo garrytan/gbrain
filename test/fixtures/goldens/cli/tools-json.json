@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 292339,
-    "stdoutSha256": "5376ddea6d85a5ca2722571dcb776eef0ea77b24e4435885b731a6244a3cd2a5",
+    "stdoutBytes": 287444,
+    "stdoutSha256": "740b602d25a6b3f9bc25426600bd3eeed9b87c1b0e775167e1396b777bb3d6e9",
     "toolNames": [
       "remember",
       "entity",
@@ -108,9 +108,6 @@
       "get_agent_job",
       "get_job_stats",
       "watch_job",
-      "watch_write_request",
-      "watch_cron",
-      "accept_wakeshift_terms",
       "list_watches",
       "unwatch",
       "find_orphans",
@@ -5004,109 +5001,7 @@
         "scope": "admin"
       },
       {
-        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when your write request settles (committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. The wake names the request and says to call get_write_request; it carries no slug or page text. You can watch only your own receipts. If no wake arrives, call get_write_request.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": true,
-        "name": "watch_write_request",
-        "parameters": {
-          "conversation_id": "string?",
-          "harness": "string?",
-          "request_id": "string",
-          "session_key": "string?"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "conversation_id": {
-              "description": "Your own ID for this conversation, if your program gives you one. Cursor and Grok Bot: the output of `printenv CURSOR_CONVERSATION_ID`. Codex and Antigravity send it automatically; others leave it empty",
-              "type": "string"
-            },
-            "harness": {
-              "description": "The program you're running in: codex, claude-code, cursor (local CLI or IDE), cursor-cloud (Cursor cloud agent), grok-bot, copilot-cli, opencode, antigravity, openclaw (even when it runs your turns in Codex), hermes, chatgpt, or your program's name if it isn't listed",
-              "type": "string"
-            },
-            "request_id": {
-              "description": "The request_id you sent with the write, or the one its receipt shows.",
-              "type": "string"
-            },
-            "session_key": {
-              "description": "This conversation's session_key, from an earlier result (a secret token, or a handle such as claude-code#2). Keep it to this conversation; don't share or log it.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "request_id"
-          ],
-          "type": "object"
-        },
-        "scope": "write"
-      },
-      {
-        "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift the next time the named cron reports its run (ok or failed) with gbrain wakeshift emit. One wake per watch; call it again for the run after. The wake names the cron and the status; read the output where the cron writes it. Only crons the brain owner registered with gbrain wakeshift cron add can be watched.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": true,
-        "name": "watch_cron",
-        "parameters": {
-          "conversation_id": "string?",
-          "harness": "string?",
-          "name": "string",
-          "session_key": "string?"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "conversation_id": {
-              "description": "Your own ID for this conversation, if your program gives you one. Cursor and Grok Bot: the output of `printenv CURSOR_CONVERSATION_ID`. Codex and Antigravity send it automatically; others leave it empty",
-              "type": "string"
-            },
-            "harness": {
-              "description": "The program you're running in: codex, claude-code, cursor (local CLI or IDE), cursor-cloud (Cursor cloud agent), grok-bot, copilot-cli, opencode, antigravity, openclaw (even when it runs your turns in Codex), hermes, chatgpt, or your program's name if it isn't listed",
-              "type": "string"
-            },
-            "name": {
-              "description": "The cron name the owner registered (letters, digits, dot, underscore and dash).",
-              "type": "string"
-            },
-            "session_key": {
-              "description": "This conversation's session_key, from an earlier result (a secret token, or a handle such as claude-code#2). Keep it to this conversation; don't share or log it.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "name"
-          ],
-          "type": "object"
-        },
-        "scope": "admin"
-      },
-      {
-        "description": "Record that the user agreed to the agreement step a watch tool returned (agreement_required): this brain operator's terms and privacy policy and Wakeshift's Connector Terms and Privacy Policy. Call it only after showing the user that step and getting their agreement, then call the watch tool again.",
-        "idempotent": true,
-        "local_only": false,
-        "mutating": true,
-        "name": "accept_wakeshift_terms",
-        "parameters": {
-          "terms_version": "string"
-        },
-        "required_scopes": [],
-        "schema": {
-          "properties": {
-            "terms_version": {
-              "description": "The terms_version from the agreement step.",
-              "type": "string"
-            }
-          },
-          "required": [
-            "terms_version"
-          ],
-          "type": "object"
-        },
-        "scope": "write"
-      },
-      {
-        "description": "List what this connection is watching through Wakeshift (jobs, write requests and crons: open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended.",
+        "description": "List the jobs this connection is watching through Wakeshift (open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -5118,44 +5013,31 @@
           "required": [],
           "type": "object"
         },
-        "scope": "write"
+        "scope": "admin"
       },
       {
-        "description": "Stop watching: ends this connection's open Wakeshift watches on one job, write request or cron (or one watch by its id), so no wake comes for it. Returns how many ended (0 when none was open).",
+        "description": "Stop watching a job: ends this connection's open Wakeshift watches on it, so no wake comes for it. Returns how many ended (0 when none was open).",
         "idempotent": true,
         "local_only": false,
         "mutating": true,
         "name": "unwatch",
         "parameters": {
-          "cron": "string?",
-          "job": "number?",
-          "request_id": "string?",
-          "watch": "number?"
+          "job": "number"
         },
         "required_scopes": [],
         "schema": {
           "properties": {
-            "cron": {
-              "description": "Cron name you passed to watch_cron.",
-              "type": "string"
-            },
             "job": {
               "description": "Job ID you passed to watch_job.",
               "type": "number"
-            },
-            "request_id": {
-              "description": "Request id you passed to watch_write_request.",
-              "type": "string"
-            },
-            "watch": {
-              "description": "A watch id from list_watches.",
-              "type": "number"
             }
           },
-          "required": [],
+          "required": [
+            "job"
+          ],
           "type": "object"
         },
-        "scope": "write"
+        "scope": "admin"
       },
       {
         "description": "Find disconnected pages. Default mode \"islanded\" (no live inbound AND no outbound link) matches get_health.orphan_pages; mode \"inbound\" is the legacy no-inbound-only view. Essential for content enrichment cycles.",
@@ -5423,7 +5305,7 @@
               "type": "string"
             },
             "model": {
-              "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus.",
+              "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus. Remote callers get the host think model unless the host lists this one in think.remote_models.",
               "type": "string"
             },
             "question": {
@@ -8656,7 +8538,7 @@
         "scope": "admin"
       },
       {
-        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command. The grouped view also returns withheld_noise (null when none): open reply-owed loops from senders whose mail the detector now treats as automated, with a per-sender preview_command for closing them.",
+        "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures (or, with no_google_sources: null, the sources could not be read); present the answer as partial and name the held items and their retry command. The grouped view also returns withheld_noise (null when none): open reply-owed loops from senders whose mail the detector now treats as automated, with a per-sender preview_command for closing them.",
         "idempotent": true,
         "local_only": false,
         "mutating": false,
@@ -8705,7 +8587,7 @@
               "type": "boolean"
             },
             "limit": {
-              "description": "Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.",
+              "description": "Grouped: max groups (default 3). Flat: max loops (default 50); `count` is the number matched (at most 500) and `truncated: true` marks a list cut by this limit or by the 500-row internal cap (then `count` is a lower bound).",
               "type": "number"
             },
             "loop_type": {

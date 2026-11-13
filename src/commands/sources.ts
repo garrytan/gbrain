@@ -2052,7 +2052,7 @@ Subcommands:
                                     brain needed. See docs/guides/github-source.md.
   federate <id>                     Make source appear in cross-source default search.
   unfederate <id>                   Isolate source from default search.
-  mirror-readonly <id> [--dry-run]  Read-only mirror (#5409): managed writes never touch its checkout.
+  mirror-readonly <id> [--dry-run]  Read-only mirror (#5409): page and fact writes skip its checkout.
   mirror-writable <id> [--dry-run]  Undo mirror-readonly. --dry-run previews either and writes nothing.
   record-origin <id>... --remote|--local [--apply] [--json]
                                     Record who added older URL sources (doctor url_source_origin); preview unless --apply.

@@ -37,6 +37,8 @@ export interface MemberRecord {
   status: 'enabled' | 'disabled' | 'removed';
   /** GBRA-108 design 2: person (the default) or audience (a group chat, a shared assistant; the owner reads its member page). */
   kind: MemberKind;
+  /** GBRA-108 design 1: reads only pages that name it (access/labelled-only.ts); false by default. */
+  labelled_only: boolean;
   groups: string[];
   created_at: string | null;
 }
@@ -108,12 +110,13 @@ function toRecord(row: Record<string, unknown>): MemberRecord {
     email: (row.email as string | null) ?? null,
     status: row.tombstoned_at != null ? 'removed' : row.disabled_at != null ? 'disabled' : 'enabled',
     kind: row.kind === 'audience' ? 'audience' : 'person',
+    labelled_only: row.labelled_only === true,
     groups: Array.isArray(row.groups) ? (row.groups as string[]) : [],
     created_at: iso(row.created_at),
   };
 }
 
-const MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.disabled_at, m.tombstoned_at, m.created_at,
+const MEMBER_SELECT = `SELECT m.id, m.display_name, m.email, m.kind, m.labelled_only, m.disabled_at, m.tombstoned_at, m.created_at,
   COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
   FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id`;
 
@@ -410,8 +413,9 @@ export function parseMemberFlag(raw: string): string | null {
 
 /** GST-359 C1: attestActor names the system whose actor header this credential may send (null clears it, attestOps and attestRead). */
 /** GST-1113: attestSources lists the scope sources an attested memory_write may name (null clears it; access/attest-sources.ts). */
-export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null; attestSources?: string[] | null; attestRead?: 'person' | 'scope' | null }
-export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; attest_sources?: string[] | null; attest_read?: 'person' | 'scope' | null; changed: boolean }
+/** GST-363: readsUnscoped true sets reads_unscoped (kept when already set), false clears it; undefined leaves it. */
+export interface BindingPatch { member?: string | null; mayActFor?: string[] | null; attestActor?: string | null; attestOps?: string[] | null; attestSources?: string[] | null; attestRead?: 'person' | 'scope' | null; readsUnscoped?: boolean }
+export interface BindingResult { member: string | null; may_act_for: string[] | null; attest_actor?: string; attest_ops?: string[] | null; attest_sources?: string[] | null; attest_read?: 'person' | 'scope' | null; reads_unscoped?: boolean; changed: boolean }
 
 function attestRefused(message: string, suggestion: string): OperationError {
   return opError('invalid_params', message, suggestion, { why: 'Only a credential bound to no member that authenticates as itself (a client-credentials client with a secret, or a legacy token) may name the people a trusted system serves.' });
@@ -429,8 +433,9 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
   // GST-1113: lock the credential row first and read it under the lock (grant rescopes lock it first too), so a
   // concurrent rescope commits before or after this change, never between its checks and its write.
   return engine.transaction(async tx => {
-    const [before] = await tx.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null; attest_read: 'person' | 'scope' | null; grant_types?: string[] | null; confidential?: boolean }>(
-      `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
+    const unscopedPatch = patch.readsUnscoped !== undefined;
+    const [before] = await tx.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null; attest_read: 'person' | 'scope' | null; grant_types?: string[] | null; confidential?: boolean; reads_unscoped?: unknown }>(
+      `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''}${unscopedPatch ? ', reads_unscoped' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
     if (!before) {
       throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
         target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
@@ -471,7 +476,14 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
           [target.id, member, mayActFor, attestActor, attestOps, attestSources, attestRead ?? null]);
       }
     }
-    return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_sources: attestSources ?? null, attest_read: attestRead ?? null } : {}), changed };
+    // GST-363: the opt-out records when it was granted; restating it keeps that time.
+    const readsUnscoped = unscopedPatch ? patch.readsUnscoped! : undefined;
+    if (unscopedPatch && readsUnscoped !== (before.reads_unscoped != null)) {
+      changed = true;
+      if (!opts.dryRun) await tx.executeRaw(`UPDATE ${table} SET reads_unscoped = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE ${key} = $1`, [target.id, readsUnscoped]);
+    }
+    return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_sources: attestSources ?? null, attest_read: attestRead ?? null } : {}),
+      ...(readsUnscoped !== undefined ? { reads_unscoped: readsUnscoped } : {}), changed };
   });
 }
 

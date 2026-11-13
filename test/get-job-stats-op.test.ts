@@ -61,8 +61,9 @@ describe('get_job_stats op', () => {
 
   test('missing minions schema → actionable unavailable, not a raw relation error', async () => {
     const bare = {
-      executeRaw: async () => {
-        throw new Error('relation "minion_jobs" does not exist');
+      executeRaw: async (sql: string) => {
+        if (sql.includes('minion_jobs')) throw new Error('relation "minion_jobs" does not exist');
+        return [];
       },
     } as unknown as BrainEngine;
     const res = await dispatchToolCall(bare, 'get_job_stats', {}, { ...STDIO });

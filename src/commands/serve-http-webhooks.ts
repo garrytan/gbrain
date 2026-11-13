@@ -154,6 +154,9 @@ export function createWebhookLimiters() {
   return { ingestRateLimiter, githubWebhookLimiter };
 }
 
+/** #8799: item refreshes one github-kind source may have waiting before an item event is refused with 429. */
+const GITHUB_ITEM_MAX_WAITING = 50;
+
 /**
  * v0.46: issue/PR event handling for github-kind sources. The payload
  * names a single item (repo + number); we verify the per-source HMAC and
@@ -221,6 +224,11 @@ async function handleGitHubItemEvent(
     return;
   }
 
+  // #8799: the key names the item and its intent, so a deletion never reuses an edit's refresh. The waiting cap is per
+  // source, so a cap hit can return another item's job: unless that job covers this event (the same item and intent, or an
+  // explicit source-wide sync for an edit), it is a refusal, never this event's 202. A busy source defers the job (sync handler).
+  const deleted = eventName === 'issues' && parsed.action === 'deleted';
+  const idempotencyKey = `webhook:item:${source.id}:${ref.repo}:${ref.number}:${deleted ? 'delete' : 'refresh'}:${Math.floor(Date.now() / 30_000)}`;
   try {
     const queue = new MinionQueue(engine);
     const job = await queue.add(
@@ -232,16 +240,27 @@ async function handleGitHubItemEvent(
           repo: ref.repo,
           number: ref.number,
           kind: ref.kind,
-          ...(eventName === 'issues' && parsed.action === 'deleted' ? { deleted: true } : {}),
+          ...(deleted ? { deleted: true } : {}),
         },
         embed_reason: 'webhook',
       },
       {
         priority: -10,
-        idempotency_key: `webhook:item:${source.id}:${ref.repo}:${ref.number}:${Math.floor(Date.now() / 30_000)}`,
-        maxWaiting: 1,
+        idempotency_key: idempotencyKey,
+        maxWaiting: GITHUB_ITEM_MAX_WAITING,
       },
     );
+    const coalesced = job.data as { github_item?: { repo?: unknown; number?: unknown; deleted?: unknown }; embed_reason?: unknown } | null;
+    const coalescedItem = coalesced?.github_item;
+    const covered = job.idempotency_key === idempotencyKey || (coalescedItem
+      ? coalescedItem.repo === ref.repo && coalescedItem.number === ref.number && (coalescedItem.deleted === true) === deleted
+      : !deleted && coalesced?.embed_reason !== 'autopilot_freshness');
+    if (!covered) {
+      res.setHeader('Retry-After', '30');
+      res.status(429).json({ error: 'webhook_backlog_full', source_id: source.id,
+        message: `${GITHUB_ITEM_MAX_WAITING} item refreshes are already waiting for this source; redeliver this event once they drain, or run gbrain sync --source ${source.id}.` });
+      return;
+    }
     res.status(202).json({ job_id: job.id, source_id: source.id, item: ref });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

@@ -1666,7 +1666,7 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
     if (!dryRun && (loadConfig()?.embedding_disabled === true || await engine.getConfig('embedding_disabled') === 'true')) {
       return { phase: 'embed', status: 'skipped', duration_ms: 0, summary: 'embeddings disabled; no provider call made', details: { reason: 'embedding_disabled' } };
     }
-    const { runEmbedCore } = await import('../commands/embed.ts');
+    const [{ runEmbedCore }, restamp] = await Promise.all([import('../commands/embed.ts'), dryRun ? null : import('./embedding-restamp.ts').then(m => m.restampCycleSignatures(engine, signal))]);
     // #1737: thread the cycle's abort signal so the embed phase (the long,
     // 10-15 min one) bails within a batch instead of running to completion
     // after the job was killed — which left gbrain_cycle_locks held and
@@ -1677,7 +1677,7 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
     assertEmbedNotStalled(result); // #4599: a watchdog-aborted drain is a failed phase, not 'ok'
     const embeddedCount = dryRun ? result.would_embed : result.embedded;
     const failed = result.failures > 0 && !result.lock_skipped; // E-A: blocked pages are a warn; another backfill's lock is not
-    const counts = dryRun ? `${result.would_embed} chunk(s) would be embedded (dry-run)` : `${result.embedded} chunk(s) newly embedded (${result.skipped} already had embeddings)`;
+    const counts = (dryRun ? `${result.would_embed} chunk(s) would be embedded (dry-run)` : `${result.embedded} chunk(s) newly embedded (${result.skipped} already had embeddings)`) + (restamp?.pages ? `; restamped ${restamp.pages} page(s) already in the current model's space (no provider call)` : '');
     return {
       phase: 'embed', status: failed ? 'warn' : 'ok', duration_ms: 0,
       summary: failed ? `${counts}; ${result.failures} chunk(s) could not be embedded this run` : counts,
@@ -1692,7 +1692,7 @@ async function runPhaseEmbed(engine: BrainEngine, dryRun: boolean, signal?: Abor
         // In dry-run, this counts pages with stale chunks that would
         // have been processed (same semantic as a real run).
         pages_embedded_count: dryRun ? result.pages_processed : embeddedCount > 0 ? result.pages_processed : 0,
-        failures: result.failures, ...(result.content_drift ? { content_drift: result.content_drift } : {}),
+        failures: result.failures, ...(result.content_drift ? { content_drift: result.content_drift } : {}), ...(restamp ? { restamp } : {}),
         ...(failed ? { failure_samples: result.failure_samples, fix: embedBackfillFix({ backlog: result.failures, verifyCheck: 'embeddings' }) } : {}),
       },
     };
@@ -1825,6 +1825,9 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
     const purgedAppliedCaptures = await (await import('./ingestion/applied-captures.ts')).purgeStaleAppliedCaptures(engine);
     let purgedFeedback = { events: 0, weights: 0 };
     try { purgedFeedback = await (await import('./feedback/store.ts')).pruneRetrievalFeedback(engine, (await (await import('./feedback/settings.ts')).loadFeedbackSettings(engine)).eventRetentionDays); } catch { /* pre-v207 brain */ }
+    // #6770: request-log rows past cycle.purge.mcp_request_log_retention_days, when set (logic in mcp-request-log-retention.ts).
+    let purgedMcpLog = 0;
+    try { purgedMcpLog = (await (await import('./mcp-request-log-retention.ts')).runMcpLogRetention(engine))?.deleted ?? 0; } catch (e) { console.warn(`[cycle] request-log retention skipped: ${e instanceof Error ? e.message : String(e)}`); }
     return {
       phase: 'purge',
       status: purgePhaseStatus(purgedPages), error: purgedPages.error, // #6741: a writer in recovery or a parked page warns
@@ -1840,7 +1843,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
       details: {
         purged_sources_count: purgedSources.length,
         purged_sources_blocked: purgeResult.blocked,
-        purged_pages_count: purgedPages.count, purged_pages_blocked: purgedPages.blocked, purged_pages_deferred: purgedPages.deferred, purged_pages_capacity_deferred: purgedPages.capacity_deferred,
+        purged_pages_count: purgedPages.count, purged_pages_blocked: purgedPages.blocked, purged_pages_deferred: purgedPages.deferred, purged_pages_capacity_deferred: purgedPages.capacity_deferred, ...purgedPages.deferral?.detailFields('purged_pages_write_deferred'),
         purged_orphan_clones_count: purgedClones.count,
         purged_orphan_clone_names: purgedClones.names,
         purged_sources: purgedSources,
@@ -1852,6 +1855,7 @@ async function runPhasePurge(engine: BrainEngine, dryRun: boolean): Promise<Phas
         ...(purgedDecisionReceipts > 0 ? { purged_decision_receipts_count: purgedDecisionReceipts } : {}),
         ...(purgedAppliedCaptures > 0 ? { purged_applied_captures_count: purgedAppliedCaptures } : {}),
         ...(purgedFeedback.events + purgedFeedback.weights > 0 ? { purged_retrieval_feedback_events_count: purgedFeedback.events, purged_retrieval_weights_count: purgedFeedback.weights } : {}),
+        ...(purgedMcpLog > 0 ? { purged_mcp_request_log_count: purgedMcpLog } : {}),
       },
     };
   } catch (e) {

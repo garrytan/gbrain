@@ -11,20 +11,22 @@ import { affectsRecall } from '../core/types.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError, enforceBoundClientOpAllowList, opError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
+import { asSegmentedWriteRefusal } from '../core/page-body/page-shape.ts';
 import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
-import { appliedAccessSummary, folderAccessFor, remoteCallerAccess } from '../core/access/caller.ts';
+import { appliedAccessSummary, folderAccessFor, identityLookupUnavailable, remoteCallerAccess } from '../core/access/caller.ts';
+import { credentialScopeFor, requesterScopeGate, requesterScopeRefuses, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
-import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
+import { attestedReadMode, SCOPE_READ_ACCESS, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
 import { attestedReadScope } from '../core/access/member-sources.ts';
 import { QM_PERSONAL_OPS, qmMemoryToolResult, recallArguments, unlinkedRecallResult } from '../core/ops/qm-memory.ts';
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { VERB_NAMES, MEMORY_VERBS_VERSION } from '../core/verbs.ts';
-import { cliRenderContext, orderNotices, redactForTransport, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
+import { cliRenderContext, orderNotices, redactForTransport, renderAction, renderNotice, toAgentError, toolErrorResult, toolResultWithNotices, type Notice, type RenderContext } from '../core/agent-output.ts';
 import { cliOnlyRefusal, isCallable } from '../core/ops/callable.ts';
 import { hostFix, scopeDeniedError } from '../core/ops/op-fix.ts';
 import { mutedNoticeCodes, processNoticeLedger, __resetProcessNoticeLedgerForTests, type NoticeLedger, type NoticeAudience } from '../core/notice-ledger.ts';
@@ -1015,6 +1017,7 @@ export async function dispatchToolCall(
     let access: Awaited<ReturnType<typeof remoteCallerAccess>>;
     let readMode: ReadMode | null = null;
     let scoped = resolved;
+    let scopeNotice: RequesterScopeNotice | null = null;
     const header = opts.actor?.header ?? undefined;
     const actorNamed = header !== undefined || opts.actor?.audience != null || (!!args && Object.prototype.hasOwnProperty.call(args, ACTOR_ARGUMENT));
     const assertion = (outcome: AudienceAuditEvent['outcome'], reason?: string) => logAudienceAssertion({ outcome, op: name,
@@ -1028,18 +1031,41 @@ export async function dispatchToolCall(
         auth: opts.auth, transport: opts.transport, audienceAsserted: audience !== null });
       // GST-1158 E1: an attested read that names sources reads as the scope (access/scope-read.ts), or as the person on an attest_read person credential.
       readMode = attested?.actor ? attestedReadMode(name, attested.params, attested.read) : null;
+      if (readMode === 'scope' && attested?.access?.labelledOnly) throw scopeReadLabelledOnlyRefused(name);
       access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined, readOnly);
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
-    } catch (e) {
+      // GST-363: on a brain that serves several people, a read from a connection bound to nobody is refused (or, in its grace, noticed) before any work.
+      // An op this connection cannot reach (hidden by its surface, localOnly off stdio, or cliOnly over MCP) keeps its own refusal instead.
+      const reachable = !!op && (!opts.allowedOps || opts.allowedOps.has(name)) && (!op.localOnly || opts.transport === 'stdio') && !op.cliOnly;
+      try {
+        if (!attested?.actor && reachable && requiresRequesterScope(op, opts.auth)) {
+          const credential = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
+          access = await withServesReread(engine, access, credential);
+          scopeNotice = requesterScopeGate(op, access, credential, opts.transport);
+        } else if (!attested?.actor && reachable && scoped.metaHook) {
+          // GST-363: the ops the gate lets through (exempt reads, writes) carry no hot memory to a connection whose reads it refuses.
+          const credential = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
+          if (requesterScopeRefuses(await withServesReread(engine, access, credential), credential, opts.transport)) scoped = { ...scoped, metaHook: undefined };
+        }
+      } catch (dbFailure) {
+        // The serves re-read met a database that is unreachable or missing its schema: its own envelope, nothing read.
+        if (dbFailure instanceof OperationError) throw dbFailure;
+        return errorResult(dbFailure, opts, { op: name });
+      }
+    } catch (thrown) {
+      const e = identityLookupUnavailable(thrown) ?? thrown;
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
-      // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
-      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) {
-        if (!actorNamed) throw e;
-        return withStructuredError(errorResult(e, opts, { op: name }));
+      // envelope QM reads, never a thrown call; a coded refusal (access_identity_unavailable) is an error result, before
+      // anything is admitted; anything else keeps the caller's own error path.
+      if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_|requester_scope_(required|unknown)$)/.test(String(e.code))) {
+        if (actorNamed) return withStructuredError(errorResult(e, opts, { op: name }));
+        if (e instanceof OperationError) return errorResult(e, opts, { op: name });
+        throw e;
       }
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
+      if (e.code === 'requester_scope_required' || e.code === 'requester_scope_unknown') return qmMemoryToolResult(name, withStructuredError(errorResult(e, opts, { op: name })));
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
     }
     if (audience || attested?.actor) assertion('accepted');
@@ -1048,6 +1074,10 @@ export async function dispatchToolCall(
       const out = await withRequestIdentityMemo(() => withReadMode(readMode, () => dispatchResolvedCall(engine, name, callParams, scoped)));
       // _meta.access (MCP_META_CHANNELS.md): the view this call was answered under, for the harness; own producer, isolated.
       try { out._meta = { ...(out._meta ?? {}), access: await appliedAccessSummary(engine, scoped.auth, [scoped.sourceId, ...(scoped.localFederatedSourceIds ?? [])]) }; } catch { /* the key is absent */ }
+      if (scopeNotice) {
+        const applied = (out._meta?.access ?? {}) as Record<string, unknown>;
+        out._meta = { ...(out._meta ?? {}), access: { ...applied, requester_scope: { ...scopeNotice, fix: renderAction(scopeNotice.fix, dispatchRenderContext(opts)) } } };
+      }
       const personal = !!attested?.actor;
       const shaped = qmMemoryToolResult(name, out, personal);
       // GST-1158 F2: a personal read's structuredContent repeats its JSON, so the final frame is measured again.
@@ -1393,7 +1423,9 @@ async function dispatchResolvedCall(
     const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
     if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });
     return out;
-  } catch (e: unknown) {
+  } catch (thrown: unknown) {
+    // A transient failure of the member-identity lookup at submission is the retryable access_identity_unavailable.
+    const e = identityLookupUnavailable(thrown) ?? thrown;
     logVerb(false);
     if (op.mutating) invalidateHotMemoryForEngine(engine); // a failed write may have committed part of its work
     // Agent contract v1 (A1): every failure — OperationError, classified DB
@@ -1403,6 +1435,7 @@ async function dispatchResolvedCall(
     notices.push(...await sessionSafetyNotices(engine, opts, ctx.config));
     notices.push(...await grantBlockedNotices(engine, opts, refusedByGrant(e)));
     attachRetryCall(op, name, safeParams, e);
+    if (op.mutating) asSegmentedWriteRefusal(e);
     return deferredWriteResult(e, notices, opts) ?? errorResult(e, opts, { op: name, mutating: op.mutating === true, idempotent: op.idempotent === true, notices: admitNotices(notices, opts) });
   }
 }

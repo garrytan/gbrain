@@ -8,7 +8,7 @@ import { TAKES_FENCE_BEGIN, TAKES_FENCE_END, parseTakesFence } from '../takes-fe
 import { extractFactsFromFenceText, pageFactDate } from '../facts/extract-from-fence.ts';
 import { takesPreparation } from '../takes-write.ts';
 import { LINK_EXTRACTOR_VERSION_TS, parseTimelineEntries } from '../link-extraction.ts';
-import { eachStoredTimelineRow, extractTimelineFromContent, hasExtractorDetail, supersededCitationTimeline, TimelineKeySet,
+import { eachStoredTimelineRow, extractTimelineFromContent, hasExtractorDetail, supersededTimelineReadings, TimelineKeySet,
   type ExtractedTimelineEntry } from '../timeline-extract.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
@@ -69,9 +69,9 @@ export type ProjectionWriter = 'editing' | 'preserving' | 'file' | 'immutable';
  * `in_body` exactly matches a new bullet, `drifted` matches one only after
  * normalization, `removed` / `removed_marked` had an unmarked / materialized
  * bullet in the prior body that the new body dropped, `superseded` is what
- * the citation reading before #6226 filed for a citation either body still
- * or once carried (with no detail beyond what the extractor writes) and the
- * current reading replaces, `superseded_annotated` is such a row someone gave
+ * an older reading (supersededTimelineReadings) filed for text either body
+ * still or once carried (with no detail beyond what the extractor writes) and
+ * the current reading replaces, `superseded_annotated` is such a row someone gave
  * its own detail, and `database_only` has no bullet in either body.
  */
 export type TimelineRowState = 'in_body' | 'drifted' | 'removed' | 'removed_marked' | 'superseded' | 'superseded_annotated' | 'database_only';
@@ -153,17 +153,17 @@ function markedTimeline(safe: string, slug: string, marked = new Set<string>()):
   return marked;
 }
 
-/** What a body says about timeline rows: its canonical timeline, the tuples a marker still matches, the superseded citation readings. */
+/** What a body says about timeline rows: its canonical timeline, the tuples a marker still matches, the superseded older readings. */
 interface TimelineView { entries: Map<string, ExtractedTimelineEntry>; marked: Set<string>; superseded: Set<string> }
 
 function timelineView(body: CanonicalBody, slug: string): TimelineView {
   const safe = safeBody(body);
-  return { entries: extractTimeline(safe, slug), marked: markedTimeline(safe, slug), superseded: new Set(supersededCitationTimeline(safe).map(t => timelineKey(t))) };
+  return { entries: extractTimeline(safe, slug), marked: markedTimeline(safe, slug), superseded: new Set(supersededTimelineReadings(safe).map(t => timelineKey(t))) };
 }
 
 /**
  * What a prior body says about the stored rows a write classifies, by the row's index in the rows read and its key:
- * a bullet (`entry`), a bullet a marker still matches (`marked`), a superseded citation reading (`superseded`).
+ * a bullet (`entry`), a bullet a marker still matches (`marked`), a superseded older reading (`superseded`).
  */
 export interface PriorRows { entry(i: number, key: string): boolean; marked(i: number, key: string): boolean; superseded(i: number, key: string): boolean }
 
@@ -207,7 +207,7 @@ export async function segmentedPriorView(engine: BrainEngine, page: { id: number
     for (const t of extractTimelineFromContent(safe, slug)) mark(timelineKey(t), PRIOR_ENTRY);
     for (const t of parseTimelineEntries(safe)) mark(timelineKey({ ...t, source: t.source ?? 'markdown' }), PRIOR_ENTRY);
     for (const key of markedTimeline(safe, slug)) mark(key, PRIOR_MARKED);
-    for (const t of supersededCitationTimeline(safe)) mark(timelineKey(t), PRIOR_SUPERSEDED);
+    for (const t of supersededTimelineReadings(safe)) mark(timelineKey(t), PRIOR_SUPERSEDED);
   }
   const fields = [...takes.values()].map(scan => scan.result());
   const view: PriorView = {
@@ -225,14 +225,14 @@ function blockTimeline(text: string, slug: string) {
     extracted: extractTimelineFromContent(safe, slug).map(t => [timelineKey(t), t] as const),
     parsed: parseTimelineEntries(safe).map(t => [timelineKey({ ...t, source: t.source ?? 'markdown' }), { ...t, source: t.source ?? 'markdown', slug }] as const),
     marked: markedTimeline(safe, slug),
-    superseded: supersededCitationTimeline(safe).map(t => timelineKey(t)),
+    superseded: supersededTimelineReadings(safe).map(t => timelineKey(t)),
   };
 }
 
 /**
  * What one run of a segmented body holds for the timeline (spec 8.2): the timelineDigest of the timelineKey of each
  * entry its blocks yield (extracted, parsed; each in block order, repeats kept), of each materialized marker and of each
- * superseded citation. Numbers, not entries, so a row and the read that builds it stay a small fraction of the run's
+ * superseded older reading. Numbers, not entries, so a row and the read that builds it stay a small fraction of the run's
  * text even when forced cuts join a whole timeline into one run.
  */
 interface TimelineRunOutput { x: number[]; p: number[]; m: number[]; s: number[] }
@@ -257,7 +257,7 @@ async function eachTimelineRun(engine: BrainEngine, page: { id: number; slug: st
       for (const t of extractTimelineFromContent(safe, slug)) out.x.push(timelineDigest(timelineKey(t)));
       for (const t of parseTimelineEntries(safe)) out.p.push(timelineDigest(timelineKey({ ...t, source: t.source ?? 'markdown' })));
       for (const key of markedTimeline(safe, slug)) out.m.push(timelineDigest(key));
-      for (const t of supersededCitationTimeline(safe)) out.s.push(timelineDigest(timelineKey(t)));
+      for (const t of supersededTimelineReadings(safe)) out.s.push(timelineDigest(timelineKey(t)));
     },
   }, visit, opts.onBlock);
   return scope;

@@ -8,9 +8,10 @@
  * - the entry is held per path (`page_write_failed`, needs a human, the owner error as its reason) once the run re-froze
  *   it `STOPS_PER_ENTRY` times with the same fault, and the rest of the source imports;
  * - a later sync is not blocked by it.
- * Two triggers: a real 3000-character frontmatter tag (Postgres: btree 54000; PGLite has no such limit, so the PGLite
- * twin injects the same owner exception), and a TypeError thrown at `consumer:preparing` for b.md's requests.
- * Runs on PGLite and, with DATABASE_URL, on Postgres.
+ * Two triggers: the owner exception Postgres raises for an index row over the btree limit (54000), injected inside
+ * b.md's publication, and a TypeError thrown at `consumer:preparing` for b.md's requests. A real 3000-character
+ * frontmatter tag no longer reaches the owner: the content screen holds it `tag_too_long` on the first run (#7052),
+ * pinned below. Runs on PGLite and, with DATABASE_URL, on Postgres.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
@@ -42,14 +43,13 @@ afterEach(() => installFaultHook(undefined));
 
 for (const backend of testBackends()) describe(`[${backend}] GBRA-130 A-6: one page's unclassifiable write failure`, () => {
   const databaseUrl = backend === 'postgres' ? process.env.DATABASE_URL : undefined;
-  for (const trigger of ['long tag', 'TypeError at preparation'] as const) test(`${trigger}: b.md is held page_write_failed, a.md and c.md import, and later syncs are not blocked`, () => managedBrain(async ({ engine, root }) => {
+  for (const trigger of ['owner exception', 'TypeError at preparation'] as const) test(`${trigger}: b.md is held page_write_failed, a.md and c.md import, and later syncs are not blocked`, () => managedBrain(async ({ engine, root }) => {
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
     writeFileSync(join(root, 'notes/a.md'), note('notes/a'));
-    writeFileSync(join(root, 'notes/b.md'), note('notes/b', trigger === 'long tag' ? `tags:\n  - ${LONG_TAG}\n` : ''));
+    writeFileSync(join(root, 'notes/b.md'), note('notes/b'));
     writeFileSync(join(root, 'notes/c.md'), note('notes/c'));
     commit(root, 'a b c');
-    // PGLite has no btree row limit: its twin raises the owner exception Postgres raises, from inside b.md's publication.
-    const injectOwner = trigger === 'long tag' && engine.kind !== 'postgres';
+    const injectOwner = trigger === 'owner exception';
     // b.md's requests, read at claim (outside any transaction: a PGLite read inside the publication transaction would wait on it).
     const bRequests = new Set<string>();
     installFaultHook(async (point, detail) => {
@@ -72,5 +72,19 @@ for (const backend of testBackends()) describe(`[${backend}] GBRA-130 A-6: one p
     expect(statuses.slice(0, 2)).toEqual(['blocked_by_failures', 'blocked_by_failures']);
     expect(statuses.slice(2)).not.toContain('blocked_by_failures');
     installFaultHook(undefined);
+  }, { databaseUrl, setup }), 240_000);
+
+  test('long tag: b.md is held tag_too_long on the first run, a.md and c.md import, and no sync is blocked (#7052)', () => managedBrain(async ({ engine, root }) => {
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    writeFileSync(join(root, 'notes/a.md'), note('notes/a'));
+    writeFileSync(join(root, 'notes/b.md'), note('notes/b', `tags:\n  - ${LONG_TAG}\n`));
+    writeFileSync(join(root, 'notes/c.md'), note('notes/c'));
+    commit(root, 'a b c');
+    const statuses: string[] = [];
+    for (let run = 0; run < 2; run++) statuses.push((await performManagedSync(engine, OPTS)).status);
+    expect(await live(engine)).toEqual(['notes/a', 'notes/c', 'notes/seed']);
+    const [{ incarnation }] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
+    expect(await readGitHold(engine, 'default', incarnation, 'notes/b.md')).toMatchObject({ code: 'tag_too_long' });
+    expect(statuses).not.toContain('blocked_by_failures');
   }, { databaseUrl, setup }), 240_000);
 });

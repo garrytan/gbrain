@@ -43,7 +43,7 @@ Some content deliberately has no file. In strict mode each such class is declare
 | Class | Handling |
 |---|---|
 | Private, alias-private and lineage-private pages | Never committed. Making a page private is a door commit that removes its file, and the row stays database-only; making it public writes the file through the door. Content pushed before it became private stays in git history. Conversion withholds a private page whose committed file differs from it; one whose committed file still equals it keeps that file in HEAD, as before the conversion (see Conversion). |
-| `storage.db_only` prefixes and the derive-phase folders (`DERIVE_PHASE_DB_ONLY_DEFAULTS`, `src/core/storage-config.ts:425`) | The door refuses to commit under them and the indexer ignores them. |
+| `storage.db_only` prefixes and the derive-phase folders (`DERIVE_PHASE_DB_ONLY_DEFAULTS`, `src/core/storage-config.ts:425`) | The door refuses to commit under them and the indexer ignores them. Extract receipts (`extracts/`) are bookkeeping, never content, on every brain with or without a repository: the writer refuses a slug that holds content or a file, and seals the receipt in the transaction that writes it, so it is never exported to Git, never adopted or discarded by conversion, and never counted as database ahead of Git. |
 | Paths the checkout's Git ignores (for example archived images) | Never committed and never given a Git effect, so they cannot park. |
 | Database-only sources (no checkout, `sync.write_through=false`, unbound) | Outside strict mode; the whole source is the class. |
 | Derived data (chunks, embeddings, mention links, rows parsed from fences and timelines, receipts) | Rebuilt from git or kept as metadata; never content of record. |

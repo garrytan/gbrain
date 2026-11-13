@@ -2,7 +2,7 @@
  * advisor/collect-stalled-jobs.ts — stuck background work + stale sync.
  *
  * #14: `minion_jobs` may be ABSENT on older/partial brains, and very old
- * brains lack `sources` or `sources.last_sync_at`: exactly those missing
+ * brains lack `sources`, `sources.last_sync_at` or `sources.archived`: exactly those missing
  * objects yield no finding. Any other read failure is rethrown so runAdvisor
  * reports `collector_failed:stalled-jobs` instead of a clean check. Engine-agnostic
  * SQL via executeRaw (works on Postgres + PGLite); timestamps compared with
@@ -52,6 +52,7 @@ export const collectStalledJobs: AdvisorCollector = {
            FROM sources
           WHERE last_sync_at IS NOT NULL
             AND last_sync_at < now() - interval '7 days'
+            AND NOT archived
           ORDER BY id`,
       );
       for (const r of rows) {
@@ -66,7 +67,7 @@ export const collectStalledJobs: AdvisorCollector = {
         });
       }
     } catch (err) {
-      if (!isMissingSchemaObject(err, 'table', 'sources') && !isMissingSchemaObject(err, 'column', 'last_sync_at')) throw err;
+      if (!isMissingSchemaObject(err, 'table', 'sources') && !isMissingSchemaObject(err, 'column', 'last_sync_at') && !isMissingSchemaObject(err, 'column', 'archived')) throw err;
     }
 
     return findings;

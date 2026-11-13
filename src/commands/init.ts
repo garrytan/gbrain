@@ -861,7 +861,7 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
     }
   } catch (e) {
     // Preserve the CLI's shared retryable busy envelope for migration callers.
-    if (e instanceof PgliteBusyError) throw e;
+    if (e instanceof PgliteBusyError || (e as { code?: unknown }).code === 'client_behind') throw e;
     const isNoConfig = e instanceof MigrateOnlyError && e.message.startsWith('No brain configured');
     const msg = e instanceof Error ? e.message : String(e);
     if (opts.jsonOutput) process.exit(initJsonError({ status: 'error', reason: isNoConfig ? 'no_config' : 'migrate_failed', message: msg },
@@ -1868,7 +1868,7 @@ OPTIONS
                         Default subagent driver (v0.27+)
   --no-embedding        Defer embedding setup (skips the embedding-key check)
   --surface <verbs|starter|full>  Tool surface the printed harness registration pins, listed in full
-                                  (default: full, listing the memory verbs and request_tools)
+                                  (default: starter, listing the memory verbs and request_tools)
   --search-mode <conservative|balanced|tokenmax>  Record the operator's search mode (no first-run ask; an existing brain's mode needs --force)
   --skip-embed-check    Skip the init-time embedding-key validation (config +
                         live test-embed). Also via GBRAIN_INIT_SKIP_EMBED_CHECK=1

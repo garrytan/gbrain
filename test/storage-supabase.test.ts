@@ -259,3 +259,48 @@ describe('SupabaseStorage list', () => {
     expect(JSON.parse(calls[0].init.body as string)).toEqual({ prefix: 'notes', limit: 1000 });
   });
 });
+
+describe('SupabaseStorage auth headers by key format (#7205)', () => {
+  const LEGACY_JWT = 'eyJhbGciOiJIUzI1NiJ9.fixture.fixture';
+
+  /** Every request each operation sends, TUS create, chunk and retry-offset probe included. */
+  async function everyRequest(serviceRoleKey: string): Promise<SeenCall[]> {
+    const uploadUrl = `${PROJECT_URL}/storage/v1/upload/resumable/session-keys`;
+    const { impl, calls } = stubFetch([
+      () => resp(200),                                             // standard upload
+      () => resp(200),                                             // download
+      () => resp(200),                                             // delete
+      () => resp(200),                                             // exists
+      () => json([]),                                              // list
+      () => json({ signedURL: `/object/sign/${BUCKET}/a.txt?token=tok` }), // signed URL
+      () => resp(201, { Location: uploadUrl }),                    // TUS create
+      () => resp(500),                                             // TUS chunk fails
+      () => resp(200, { 'Upload-Offset': '0' }),                   // TUS retry-offset probe
+      () => resp(204, { 'Upload-Offset': String(TUS_THRESHOLD) }), // TUS chunk completes
+    ]);
+    const storage = new SupabaseStorage({ ...CONFIG, serviceRoleKey }, impl);
+    await storage.upload('a.txt', Buffer.from('hello'));
+    await storage.download('a.txt');
+    await storage.delete('a.txt');
+    await storage.exists('a.txt');
+    await storage.list('notes');
+    await storage.getSignedUrl('a.txt');
+    await storage.upload('big.bin', Buffer.alloc(TUS_THRESHOLD));
+    expect(calls.map(c => c.init.method ?? 'GET')).toEqual(['POST', 'GET', 'DELETE', 'HEAD', 'POST', 'POST', 'POST', 'PATCH', 'HEAD', 'PATCH']);
+    return calls;
+  }
+
+  test.each(['sb_secret_fixture', 'sb_publishable_fixture'])('%s goes on apikey only, never as a bearer token', async key => {
+    for (const call of await everyRequest(key)) {
+      expect(hdrs(call)['apikey']).toBe(key);
+      expect(hdrs(call)['Authorization']).toBeUndefined();
+    }
+  }, 10_000); // the TUS retry sleeps a real 1s backoff before the probe
+
+  test('a legacy JWT key keeps the bearer token beside apikey', async () => {
+    for (const call of await everyRequest(LEGACY_JWT)) {
+      expect(hdrs(call)['apikey']).toBe(LEGACY_JWT);
+      expect(hdrs(call)['Authorization']).toBe(`Bearer ${LEGACY_JWT}`);
+    }
+  }, 10_000);
+});

@@ -5,6 +5,8 @@
  * doctor.ts) and buildChecks / doctorReportRemote consume them.
  */
 import type { BrainEngine } from '../../../core/engine.ts';
+import { existsSync } from 'node:fs';
+import { autopilotOperatorPauseMarkerPath, autopilotPaused, autopilotPauseReason } from '../../../core/autopilot-paths.ts';
 import { resolveEnvNumber } from '../../../core/env-number.ts';
 import type { Check } from '../../doctor.ts';
 import { checkError, doctorVerify } from '../check-fix.ts';
@@ -432,6 +434,19 @@ export async function computeWedgedQueueCheck(
     if (process.env.GBRAIN_GRADUATION_RUN) {
       return { name: 'wedged_queue', status: 'warn', message: `Graduation exemption: ${wedged.map(w => w.label).join(', ')} carried from the quiesced source; workers start after cutover.`,
         details: { graduation_exempt: true, run_id: process.env.GBRAIN_GRADUATION_RUN, queues: wedged.map(w => w.queue) } };
+    }
+    // #7966: an autopilot pause stops every worker's claims, so the backlog is the hold, not a wedge: report it
+    // without restart advice (a restart claims nothing while the marker stays).
+    if (autopilotPaused()) {
+      const operator = existsSync(autopilotOperatorPauseMarkerPath());
+      return {
+        name: 'wedged_queue',
+        status: 'warn',
+        message: `Held by ${operator ? 'the operator\'s autopilot pause' : 'the migration pause marker'} (${autopilotPauseReason()}): ${wedged.map(w => w.label).join('; ')}. ` +
+          'Workers claim no jobs while it is present, so a restart does not help; ' +
+          (operator ? '`gbrain autopilot resume` releases the hold.' : 'it clears when the migration that set it finishes.'),
+        details: { wedged_queues: wedged.length, paused: operator ? 'operator' : 'cooperative', threshold_minutes: thresholdMin },
+      };
     }
     // #3063: "worker alive but not claiming work" would be a false claim
     // for a queue no worker process was ever subscribed to. Split the

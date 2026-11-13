@@ -155,6 +155,7 @@ Every hold and error has three fields, from one table
 | `freeze_page_body_rows_unreadable` | page | repair | yes | always: the page's segment rows do not cover its stored body, so no sync can read it |
 | `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
+| `tag_too_long` | page | none | yes | always: only an edit to the file clears it |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |
 | `content_filter_owned` | page | none | yes | always: sync never runs the filter that would turn the file into text |
@@ -435,7 +436,8 @@ it, and a `--full` continues until every path it covers is settled.
   file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back), and `db_ahead` (the page changed in the database and the file
   did not; the sub-labels `pending`, `db_only` and `unproven` are
   informational, and `gbrain repair file-drift --prefer database` writes one
-  back to its file if the owner wants it).
+  back to its file if the owner wants it: its preview names any file change
+  sync never imported, and its apply asks for the owner's consent).
 - `owner`, sync finishes it by itself: `in_flight` (admitted, not yet
   published), `import`, `reparse` (an unchanged file whose page is imported
   again because its parser or schema pack changed, its origin moved, or an

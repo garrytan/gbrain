@@ -50,7 +50,7 @@ import { computeEffectiveDate } from '../effective-date.ts';
  * was. A held row (GST-2492: its entity has no page yet, on a strict source) projects the entity its cell names.
  */
 export { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 
 export const FACT_DATE_SOURCES: ReadonlySet<string> = new Set(['event_date', 'date', 'published', 'filename']);
 
@@ -274,7 +274,7 @@ export function extractFactsFromFenceText(
     const row: FenceExtractedFact = {
       fact: f.claim,
       kind: f.kind as FactKind,
-      entity_slug: slug === UNATTRIBUTED_MEMORY_SLUG ? f.entity ?? null : slug,
+      entity_slug: isHoldingSlug(slug) ? f.entity ?? null : slug,
       visibility: f.visibility as FactVisibility,
       notability: f.notability,
       context: f.context ?? null,

@@ -38,7 +38,7 @@ import { importFile } from '../import-file.ts';
 import { movePageIdReferences } from '../page-state/rename-alias.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { lockedBeliefBatch } from '../belief/writers.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { purgedSlug } from '../../commands/sync/rename-collision.ts';
@@ -202,16 +202,14 @@ export const renameIdentityRepair = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { record, parts, hash } = entry as PairItem;
-    try {
+    return retireAfterLastItem(ctx.engine, 'rename-identity', hash, true, async () => {
       if (parts.disposition === 'close') {
         if (previewHash(await identityRemedyParts(ctx.engine, record, 'close')) !== hash) throw changedSincePreview(record, 'a page of the pair changed');
         if (!await settleIdentityDowngrade(ctx.engine, record.old_page_id, 'closed')) throw changedSincePreview(record, 'its record was settled since the preview');
         return { applied: true, outcome: 'closed', detail: { old_slug: record.old_slug, purge_hold: 'released' } };
       }
       return await carryIdentity(ctx.engine, record, hash);
-    } finally {
-      await clearApprovedSet(ctx.engine, { command: 'rename-identity', hash });
-    }
+    });
   },
   render(details) {
     if (Array.isArray(details.pairs)) return [`  each pair: preview it by name to carry or close it; guide: ${details.docs}`];

@@ -372,9 +372,9 @@ Ship via the `/ship` skill, not by hand. Pass its test lanes the exact commands 
 (CHANGELOG voice, version-locations sync, PR conventions, community-PR-wave) lives in
 [`./docs/RELEASING.md`](./docs/RELEASING.md); read it before shipping.
 
-**Always use PATCH without asking**, including the initial release choice;
-override `/ship`'s MINOR/MAJOR prompts. Auto-allocate past collisions, sync all
-version stamps and the PR title, then report the number. This changes numbering
+**PRs carry no version** ([releases per batch](docs/RELEASING.md#releases-per-batch)):
+/ship writes a `changelog.d` fragment, and the release PR picks the next PATCH
+(never MINOR or MAJOR) and syncs every stamp. This changes numbering
 only: scope, merge, deployment, paid-work and validation approvals still apply.
 
 ## Privacy

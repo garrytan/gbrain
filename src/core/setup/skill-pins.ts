@@ -74,14 +74,20 @@ export function writePins(read: Exclude<ResolverConfigRead, { state: 'unreadable
 
 /** The skill ids a built catalog holds, or null when it has no readable index. */
 export function catalogSkillIds(home: string, catalog: string): Set<string> | null {
+  const paths = catalogSkillPaths(home, catalog);
+  return paths ? new Set(paths.keys()) : null;
+}
+
+/** Each skill id a built catalog holds with its SKILL.md path ('' when the index has none), or null when it has no readable index. */
+export function catalogSkillPaths(home: string, catalog: string): Map<string, string> | null {
   if (!validCatalogName(catalog)) return null;
   const path = catalogFile(home, catalog, 'index.bin');
   if (!existsSync(path)) return null;
   let ix: IndexReader | null = null;
   try {
     ix = IndexReader.open(path);
-    const ids = new Set<string>();
-    for (let d = 0; d < ix.n; d++) ids.add(ix.meta(d).id);
+    const ids = new Map<string, string>();
+    for (let d = 0; d < ix.n; d++) { const m = ix.meta(d); ids.set(m.id, m.path ?? ''); }
     return ids;
   } catch { return null; } finally { ix?.close(); }
 }
@@ -90,13 +96,15 @@ export function catalogSkillIds(home: string, catalog: string): Set<string> | nu
  * The pinned block for one harness. With `known` set, a pin the catalog does
  * not hold is left out and listed in `unknown`; with null (no index yet)
  * nothing renders, because an unchecked name must never reach the model.
+ * With paths, each line also names the skill's SKILL.md, for a harness
+ * that loads a skill by reading its file.
  */
-export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string; known: Set<string> | null; cap?: number }): PinnedBlock {
+export function renderPinnedBlock(pins: readonly Pin[], opts: { harness?: string; known: Set<string> | null; cap?: number; paths?: ReadonlyMap<string, string> }): PinnedBlock {
   const cap = opts.cap ?? PIN_BLOCK_TOKEN_CAP;
   if (!opts.known) return { block: '', tokens: 0, ids: [], unknown: pins.map((p) => p.name), cut: [] };
   const valid = pins.filter((p) => opts.known!.has(p.name));
   const unknown = pins.filter((p) => !opts.known!.has(p.name)).map((p) => p.name);
-  const lines = valid.map((p) => `- id: ${quoted(p.name)}${p.line ? ` when: ${quoted(p.line)}` : ''}`);
+  const lines = valid.map((p) => `- id: ${quoted(p.name)}${p.line ? ` when: ${quoted(p.line)}` : ''}${opts.paths?.get(p.name) ? ` path: ${quoted(opts.paths.get(p.name)!)}` : ''}`);
   const head = `Always-available skills, chosen by this agent's operator, whether or not a skill list shows them. ${loadLine(opts.harness)}`;
   for (let kept = lines.length; kept > 0; kept--) {
     const block = ['<pinned_skills>', head, ...lines.slice(0, kept), '</pinned_skills>'].join('\n');

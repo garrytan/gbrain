@@ -22,7 +22,8 @@
  * skipped) or the source has a `local_path` and the page's canonical file
  * exists on this host. Everything else is counted and left alone: a NULL
  * entity slug, a missing page or file, a source without a checkout here, or
- * (unmanaged, #6946) a clone gbrain owns, whose checkout is never written.
+ * (unmanaged, #6946, #7098) a clone gbrain owns or a read-only mirror, whose
+ * checkout is never written.
  *
  * Adoption oracle (#6278, `adoptableClaim`): the fence codec trims a claim,
  * folds CRLF/CR to LF, reads `~~x~~` as a struck row and `<br>` as a line
@@ -59,7 +60,7 @@ import { sanitizeText } from '../batch-rows.ts';
 import { isDurabilityHardened } from '../brain-repo-durability.ts';
 import { factsFenceHeld } from '../generations/fence-evidence.ts';
 import { readFenceBlocks } from '../generations/fence.ts';
-import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, UNATTRIBUTED_MEMORY_SLUG, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
+import { fenceCellReadBackProblem, formatFenceDate, normalizeClaimWhitespace, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, type FactAttribution, type ParsedFact } from '../facts-fence.ts';
 import { FENCE_SOURCE_DEFAULT } from './extract-from-fence.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { assertSourceFilesystemActive, hasSourceFilesystemLock, withSourceFilesystemLock } from '../minions/source-filesystem.ts';
@@ -69,7 +70,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { assertLifetimeIdHeadroom } from '../persistence/journal.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { maintenancePreflight, planFactFenceAdoption, submitFactFenceAdoption, submitPlannedFactFenceAdoption, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
+import { maintenancePreflight, planFactFenceAdoption, submitFactFenceAdoption, submitPlannedFactFenceAdoption, type HeldDrop, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { resolveFactWriteTarget } from '../persistence/fact-write-target.ts';
 import { submissionAuthority } from '../persistence/authority.ts';
 import { currentVerifiedLocalWriter, registerLocalWriter } from '../persistence/identity.ts';
@@ -82,6 +83,7 @@ import { fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStor
 import { isWriteThroughDisabled, resolvePageWriteTarget } from '../write-through.ts';
 import { commitFactFenceFile, gitPathState } from './fence-write.ts';
 import { isOwnedClone } from '../url-clone.ts';
+import { parseSourceConfig } from '../sources-load.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
 
 export interface UnfencedFactRow {
@@ -115,6 +117,8 @@ export interface UnfencedFactsOutcome {
   skipped_archived: number;
   /** Unmanaged (#6946): rows of a clone gbrain owns (`sources add --url`), kept database-only so its checkout keeps fast-forwarding. */
   skipped_url_clone: number;
+  /** Unmanaged (#7098): rows of a read-only mirror source (`gbrain sources mirror-readonly`), kept database-only for the same reason. */
+  skipped_mirror_read_only: number;
   pages_touched: number;
   /** `<slug> (<reason>)` per page whose fence write failed; its rows stay unfenced. */
   failed_pages: string[];
@@ -293,6 +297,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
     'SELECT id, local_path, archived, config FROM sources',
   );
   const urlClones = new Set(managed ? [] : sources.filter(isOwnedClone).map(s => s.id));
+  const mirrors = new Set(managed ? [] : sources.filter(s => parseSourceConfig(s.config).mirror_read_only === true).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
   const rows = await engine.executeRaw<UnfencedFactRow>(
@@ -309,7 +314,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   );
   const outcome: UnfencedFactsOutcome = {
     scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
-    skipped_archived: 0, skipped_url_clone: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
+    skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
@@ -317,6 +322,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
     // A managed brain publishes through the source's maintenance authority,
     // which an archived source does not grant; it never blocks the others.
     if (managed && archived.has(row.source_id)) { outcome.skipped_archived += 1; continue; }
+    if (mirrors.has(row.source_id)) { outcome.skipped_mirror_read_only += 1; continue; }
     if (urlClones.has(row.source_id)) { outcome.skipped_url_clone += 1; continue; }
     if (!localPathById.get(row.source_id) && !managed) { outcome.skipped_no_local_path += 1; continue; }
     if (!row.page_exists) { outcome.skipped_no_page += 1; continue; }
@@ -365,9 +371,9 @@ export async function heldFenceFactRows(engine: BrainEngine, sourceId: string, s
     .map(r => heldEntityCell(slug, r.entity_slug, fenceRowOf(r, Number(r.row_num), r.fact)));
 }
 
-/** GST-2492: on memory/unattributed a row whose entity has no page names it in the `entity` cell; every other page renders no such cell. */
+/** GST-2492: on a holding page a row whose entity has no page names it in the `entity` cell; every other page renders no such cell. */
 function heldEntityCell(slug: string, entity: string | null, row: ParsedFact): ParsedFact {
-  return slug === UNATTRIBUTED_MEMORY_SLUG && entity && entity !== slug ? { ...row, entity } : row;
+  return isHoldingSlug(slug) && entity && entity !== slug ? { ...row, entity } : row;
 }
 
 /**
@@ -413,8 +419,8 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
   // same source and visibility (the projection's identity), or that an
   // earlier row of this group plans, is not adopted a second time. A private
   // and a world row with one text are two facts and both adopt, as before.
-  // GST-2492: on memory/unattributed a row also names its entity, and two entities' rows with one claim are two facts.
-  const cellEntity = (entity: string | null | undefined) => entitySlug === UNATTRIBUTED_MEMORY_SLUG && entity && entity !== entitySlug ? entity : '';
+  // GST-2492: on a holding page a row also names its entity, and two entities' rows with one claim are two facts.
+  const cellEntity = (entity: string | null | undefined) => isHoldingSlug(entitySlug) && entity && entity !== entitySlug ? entity : '';
   const dupKey = (claim: string, source: string | undefined, visibility: string, entity: string) => `${claim}\u0000${source || FENCE_SOURCE_DEFAULT}\u0000${visibility}\u0000${entity}`;
   const planned = new Set<string>();
   const ownedKeys = new Set(existingFence.facts.filter(f => {
@@ -517,7 +523,7 @@ export async function planPageFence(engine: BrainEngine, sourceId: string, slug:
 }
 
 export async function planManagedPage(engine: BrainEngine, authority: MaintenanceAuthority, sourceId: string, entitySlug: string, group: UnfencedFactRow[],
-  move?: { note: string; from_entity?: string }): Promise<ManagedPagePlan> {
+  move?: { note: string; from_entity?: string; from_slug?: string; drop?: readonly HeldDrop[] }): Promise<ManagedPagePlan> {
   const planned = await planPageFence(engine, sourceId, entitySlug, group);
   if (!planned) return { kind: 'no_page' };
   const { snapshot, fence } = planned;

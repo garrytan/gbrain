@@ -138,7 +138,10 @@ shared brain, and it binds the owner too: the owner reads such a page only when 
 turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; on an existing page the brain host sets or removes it with
 `gbrain repair visibility --slug <page> --readers <list>` (or `--slugs-file`), which keeps the page's trust tier and
-changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. A credential bound to a
+changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. On a git-canonical
+source, a fact held for an entity that has no page yet sits on the holding page of the entity's folder
+(`<folder>/memory/unattributed`), which the folder's rules cover; a new rule's preview lists the held facts it would move
+there (`held_facts_moving`) and its apply moves them (`held_facts` in the result) ([details](git-canonical.md#how-writes-reach-a-strict-source)). A credential bound to a
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).
@@ -221,6 +224,34 @@ member's lineage. It never widens a write, and leaves the owner opt-in to the ow
 operator on the brain host sets it; a remote caller is refused. While it is on, every remote caller's `whoami` says so
 (`members_read_lineage`), `gbrain access check` reports it, `who-can-read` names it on pages it opens, and doctor
 reports `access_members_read_lineage`. `gbrain access members-read-lineage off` is the undo.
+
+### Labelled-only members (`gbrain access member labelled-only`)
+
+Some credentials should see only what someone deliberately labelled for them: a group chat bot, a shared assistant, an
+audience of several people. `gbrain access member labelled-only <id> on` marks a member that way (off by default and
+unchanged on upgrade; `off` is the undo). Every token, OAuth client and stdio binding of that member then reads only
+pages that name it: its id or one of its groups in `readable_by`, or a folder or page rule that lists them. A page with
+no label, which its source grant would otherwise open, is hidden on every read path, `--as <member>` and the enforced
+member CLI included. So is every derived page and fact that names nobody (summaries, atoms, chronicle events,
+`derived_from` pages): they fail closed. With `access.members_read_lineage` on, a derived page or fact passes only when it
+has at least one origin and every origin names the member; one unlabelled origin keeps it hidden. An older version
+counts only if that version itself named the member or a rule over the page lists it, so adding `readable_by` to a
+page does not open its unlabelled history. The member's own memory stays readable: facts on its own member page (the
+ones its `remember` calls saved) pass with lineage on or off. Under a shared agent's audience, the label test uses the
+audience's identities, not the bound member's, so a page must name someone in the audience. An attested read for a
+labelled-only person that names sources would run as the scope, with no member identity and so without the grant, so it
+is refused (`permission_denied`); leave the sources out to read as the person.
+
+The grant lives on the member, not on one credential, so a second key for the same member cannot forget it. Writes
+follow the same rule: the member cannot update a page it cannot read, and a page it creates must name it
+(`access_labelled_only_unnamed`; add `readable_by: [<member>]` or ask for a rule over the folder). A `put_page` to an
+existing slug the member cannot read answers `page_not_found`, and to a new slug `access_labelled_only_unnamed`, the same
+existence pattern pages with readers already have. It never applies to the owner, even if the flag is stored on the
+owner's row: setting it there, or naming a labelled-only member the owner, is refused with exit 3
+(`access_labelled_only_owner`) and asks the user. Only the brain operator on the brain host sets it; a remote caller is
+refused (`permission_denied`). `gbrain access member list` and `gbrain access check` show it, `who-can-read` notes
+which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain
+binary sharing the same database ignores the grant, so upgrade every binary that serves the brain before turning it on.
 
 ## Related
 

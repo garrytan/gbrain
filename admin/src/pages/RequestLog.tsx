@@ -14,7 +14,7 @@ interface LogEntry {
 }
 
 export function RequestLogPage() {
-  const [data, setData] = useState<{ rows: LogEntry[]; total: number; page: number; pages: number }>({
+  const [data, setData] = useState<{ rows: LogEntry[]; total: number; page: number; pages: number; retention_days?: number | null; pruned_before?: string | null }>({
     rows: [], total: 0, page: 1, pages: 1,
   });
   const [page, setPage] = useState(1);
@@ -137,7 +137,10 @@ export function RequestLogPage() {
           </table>
 
           <div className="pagination">
-            <span>Page {data.page} of {data.pages} ({data.total} total)</span>
+            <span>
+              Page {data.page} of {data.pages} ({data.total} total{data.retention_days ? `, details kept for ${data.retention_days} days` : ''})
+              {data.pruned_before ? ` · older requests were pruned before ${new Date(data.pruned_before).toLocaleDateString()}` : ''}
+            </span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button disabled={data.page <= 1} onClick={() => setPage(p => p - 1)}>Previous</button>
               <button disabled={data.page >= data.pages} onClick={() => setPage(p => p + 1)}>Next</button>

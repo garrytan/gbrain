@@ -12,22 +12,27 @@
  *     session is banked; extraction attributes them to that agent, never to
  *     the owner.
  *   - `off`: nothing from the session is banked.
- *   - `owner`: the turns are the owner's; automatic detection is skipped.
+ *   - `owner`: the turns are the owner's; detection still runs, only to note
+ *     (`speaker_owner_override_detected`) a session it finds agent-launched.
  *   - anything else: agent `agent`, reported as `speaker_label_invalid`.
  * Unset: detection (`detectAgentLaunched`) — a headless harness process
  * (claude `-p`/`--print`, codex `exec`) with a claude or codex process
  * among its ancestors. Headless alone is not enough: the owner scripting
- * `claude -p` is still the owner.
+ * `claude -p` is still the owner. A `claude remote-control` server is not such
+ * an ancestor: each session it hosts is headless but typed by the owner.
  *
  * Sidecar `<sessionId>.speaker.json` (0600, tmp+rename) beside the corpus
  * files, written BEFORE any corpus file of the session; the first record is
- * kept. Its absence means the owner.
+ * kept. Its absence means the owner. A resolved speaker that differs from the
+ * record is noted as `speaker_mismatch` (#8080), never rewritten; an agent in
+ * a session the owner already banked banks nothing (`speaker_mismatch`), since
+ * a sidecar would re-attribute the owner's banked turns.
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { spawnSync } from '../spawn.ts';
 import { basename, dirname, join } from 'node:path';
-import { corpusFileSessionId, speakerFileName } from './corpus-segments.ts';
+import { corpusFileSessionId, SPEAKER_SIDECAR_SUFFIX, speakerFileName } from './corpus-segments.ts';
 
 export const SESSION_AGENT_ENV = 'GBRAIN_SESSION_AGENT';
 /** Principal recorded for a session detection marked as agent-launched. */
@@ -73,16 +78,29 @@ function headless(harness: 'claude' | 'codex', args: readonly string[]): boolean
   return args.slice(1).some((a) => a === 'exec' || a === 'e');
 }
 
+/** `claude remote-control` and its aliases, read only right after the native binary or the node entry script. */
+const REMOTE_CONTROL_SUBCOMMANDS = new Set(['remote-control', 'rc', 'remote', 'sync', 'bridge']);
+
+function remoteControlHost(args: readonly string[]): boolean {
+  if (harnessOfArgs(args) !== 'claude') return false;
+  const entry = harnessOfArgs(args.slice(0, 1)) === 'claude' ? 0 : 1;
+  return REMOTE_CONTROL_SUBCOMMANDS.has(args[entry + 1] ?? '');
+}
+
 /**
  * True when the nearest harness process in `ancestry` (nearest first) runs
- * headless and another claude or codex process sits above it.
+ * headless and another claude or codex process sits above it, unless that
+ * process is a `claude remote-control` server hosting it (`--sdk-url`).
  */
 export function detectAgentLaunched(ancestry: readonly AncestorProcess[]): boolean {
   const at = ancestry.findIndex((p) => harnessOfArgs(p.args) !== null);
   if (at < 0) return false;
   const harness = harnessOfArgs(ancestry[at].args)!;
   if (!headless(harness, ancestry[at].args)) return false;
-  return ancestry.slice(at + 1).some((p) => harnessOfArgs(p.args) !== null);
+  const launcher = ancestry.slice(at + 1).find((p) => harnessOfArgs(p.args) !== null);
+  if (!launcher) return false;
+  const hosted = ancestry[at].args.some((a) => a === '--sdk-url' || a.startsWith('--sdk-url='));
+  return !(hosted && remoteControlHost(launcher.args));
 }
 
 function linuxParent(pid: number): AncestorProcess & { ppid: number } | null {
@@ -167,21 +185,49 @@ export function speakerContextNote(principal: string): string {
   return `speaker: agent ${principal}, not the owner`;
 }
 
+/** True when the session already has corpus files in `dir` (banked as the owner's when no sidecar exists). */
+function sessionHasCorpusFiles(dir: string, sessionId: string): boolean {
+  const id = speakerFileName(sessionId).slice(0, -SPEAKER_SIDECAR_SUFFIX.length);
+  try {
+    return readdirSync(dir).some((name) => name.endsWith('.txt') && corpusFileSessionId(name) === id);
+  } catch {
+    return false;
+  }
+}
+
+type BankDecision =
+  { bank: true; reasons: string[] } | { bank: 'skip' | 'failed'; reason: 'capture_opt_out' | 'speaker_write_failed' | 'speaker_mismatch'; reasons: string[] };
+
 /**
  * The hook's banking decision for one event: `bank: true` (an agent speaker
  * is recorded first), `'skip'` (the launcher opted out) or `'failed'` (the
- * marker could not be written, so nothing is banked rather than banking an
- * agent session as the owner's). `reasons` are heartbeat notes.
+ * marker could not be written, or an agent continues a session already banked
+ * as the owner's, so nothing is banked rather than mixing the two). `reasons`
+ * are heartbeat notes; a speaker that differs from the recorded one adds
+ * `speaker_mismatch` (#8080).
  */
-export function bankAsSpeaker(dir: string, sessionId: string, speaker: SessionSpeaker, harness: string):
-  { bank: true; reasons: string[] } | { bank: 'skip' | 'failed'; reason: 'capture_opt_out' | 'speaker_write_failed'; reasons: string[] } {
+export function bankAsSpeaker(dir: string, sessionId: string, speaker: SessionSpeaker, harness: string): BankDecision {
   if (speaker.kind === 'skip') return { bank: 'skip', reason: 'capture_opt_out', reasons: [] };
-  if (speaker.kind === 'owner') return { bank: true, reasons: [] };
+  const recorded = readSpeakerSidecar(dir, sessionId);
+  if (speaker.kind === 'owner') return { bank: true, reasons: recorded ? ['speaker_mismatch'] : [] };
   const reasons = speaker.invalid ? ['speaker_label_invalid'] : [];
+  if (!recorded && sessionHasCorpusFiles(dir, sessionId)) return { bank: 'failed', reason: 'speaker_mismatch', reasons };
+  if (recorded && recorded.principal !== speaker.principal) reasons.push('speaker_mismatch');
   try {
     writeSpeakerSidecar(dir, sessionId, speaker, harness);
   } catch {
     return { bank: 'failed', reason: 'speaker_write_failed', reasons };
   }
   return { bank: true, reasons };
+}
+
+/**
+ * The hook's speaker and banking decision for one event. `owner` from the env
+ * still runs detection, so an inherited override that hides an agent-launched
+ * session is noted (`speaker_owner_override_detected`, #8080).
+ */
+export function hookSpeakerDecision(dir: string, sessionId: string, opts: { env: Env; ancestry?: () => readonly AncestorProcess[] }, harness: string): BankDecision {
+  const decision = bankAsSpeaker(dir, sessionId, resolveSessionSpeaker(opts), harness);
+  const overridden = opts.env[SESSION_AGENT_ENV]?.trim().toLowerCase() === 'owner' && detectAgentLaunched((opts.ancestry ?? readProcessAncestry)());
+  return overridden ? { ...decision, reasons: [...decision.reasons, 'speaker_owner_override_detected'] } : decision;
 }

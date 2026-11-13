@@ -174,6 +174,32 @@ describe('formatTrajectoryBlock — supersession annotation', () => {
     expect(r.rendered).toContain('as of 2026-09-01: 3 — CTO at acme (superseded prior)');
   });
 
+  test('#8547: a value in another unit or period, or at the same time, does not supersede', () => {
+    const points = [
+      mkMetricPoint({ id: 1, date: '2026-01-01', metric: 'mrr', value: 600000, period: 'annual', text: 'annual run rate' }),
+      mkMetricPoint({ id: 2, date: '2026-02-01', metric: 'mrr', value: 50000, text: 'monthly figure' }),
+      mkMetricPoint({ id: 3, date: '2026-02-01', metric: 'mrr', value: 52000, text: 'second report same day' }),
+      mkMetricPoint({ id: 4, date: '2026-03-01', metric: 'mrr', value: 48000, unit: 'EUR', text: 'euro figure' }),
+      mkMetricPoint({ id: 5, date: '2026-04-01', metric: 'mrr', value: 55000, text: 'later monthly figure' }),
+      mkMetricPoint({ id: 6, date: '2026-05-01', metric: 'mrr', value: 60000, text: 'latest monthly figure' }),
+    ];
+    const r = formatTrajectoryBlock(points, 'companies/acme-example', { intent: 'knowledge_update' });
+    for (const text of ['monthly figure', 'second report same day', 'euro figure', 'later monthly figure']) expect(r.rendered).not.toContain(`— ${text} (superseded prior)`);
+    expect(r.rendered).toContain('— latest monthly figure (superseded prior)');
+  });
+
+  test('#8547: a point with no finite valid_from is left out instead of dropping the whole block', () => {
+    const points = [
+      mkMetricPoint({ id: 1, date: '2026-01-01', metric: 'mrr', value: 50000, text: 'monthly figure' }),
+      mkMetricPoint({ id: 2, date: 'infinity', metric: 'mrr', value: 1, text: 'undated figure' }),
+      mkMetricPoint({ id: 3, date: '2026-02-01', metric: 'mrr', value: 55000, text: 'later monthly figure' }),
+    ];
+    const r = formatTrajectoryBlock(points, 'companies/acme-example', { intent: 'knowledge_update' });
+    expect(r.rendered).toContain('— later monthly figure (superseded prior)');
+    expect(r.rendered).not.toContain('undated figure');
+    expect(r.emittedPoints).toBe(2);
+  });
+
   test('temporal intent does NOT annotate supersession', () => {
     const points = [
       mkMetricPoint({ id: 1, date: '2026-01-01', metric: 'role', value: 1, text: 'engineer', unit: null, period: null }),

@@ -82,7 +82,7 @@ describe('postgres-engine / search path timeout isolation', () => {
   test('both search methods bind a transaction-local timeout through the transaction settings', () => {
     const keyword = stripComments(extractMethod(SRC, 'searchKeyword'));
     const attempt = stripComments(SRC).split('private runVectorAttempt(')[1]!.split('async getEmbeddingsByChunkIds(')[0]!;
-    expect(keyword).toMatch(/settings: relaxed \? \{ statement_timeout: statementTimeout, enable_seqscan: 'off', \.\.\.KEYWORD_STATEMENT_SETTINGS \} : \{ statement_timeout: statementTimeout, \.\.\.KEYWORD_STATEMENT_SETTINGS \}/);
+    expect(keyword).toMatch(/settings: relaxed \|\| candidates !== pageJoin \? \{ statement_timeout: statementTimeout, enable_seqscan: 'off', \.\.\.KEYWORD_STATEMENT_SETTINGS \} : \{ statement_timeout: statementTimeout, \.\.\.KEYWORD_STATEMENT_SETTINGS \}/);
     // A thunk: the deadline's remaining budget is read after BEGIN, one round trip before the query.
     expect(attempt).toMatch(/settings: \(\) => vectorScanSettings\(iterative, innerLimit, maxScanTuples, deadline,/);
   });

@@ -127,12 +127,26 @@ written up in [`RETRIEVAL_MAXPOOL_INCIDENT.md`](../incidents/RETRIEVAL_MAXPOOL_I
   inside `page.title` (or an exact full-title match), a floor-ratio-gated,
   bounded multiplier fires (`applyTitleBoost`, `search.title_boost` knob). A
   query that is a phrase from the title can't lose to a body chunk by luck.
+  Opt-in `search.title_qualified` (off by default) covers the reverse case: a
+  person or company title (2+ content words) mentioned inside a longer query
+  ("acme alice example") gets the same multiplier, unfloored, stamped
+  `title_mention_boost`, unless an identity boost already raised the row.
+  Evidence never reads that stamp as an exact title match.
 - **Alias hop** — free-text `aliases:` frontmatter is projected into a
   `page_aliases` table (separate from the `slug_aliases` wikilink redirect) and
   consulted at query time: a full normalized-query match injects/boosts the
   canonical page (`applyAliasHop`). The only layer that bridges true synonyms
   with zero surface overlap ("the Sun Room" → the Helios page). Backfill
-  existing pages with `gbrain reindex --aliases`.
+  existing pages with `gbrain reindex --aliases`. Opt-in
+  `search.qualified_aliases` (off by default) also matches a 3-6 word
+  sub-phrase with 3+ content words inside a query of up to 14 words: when
+  exactly one page the caller can read claims it, that page leads, stamped
+  `qualified_alias_hit`; two claimants suppress the hop. The stamp keeps the
+  row past autocut and the remote page cap but never sets evidence
+  `alias_hit`, and the rerank gate does not grade it. A common three-word
+  alias can lead a query about something else, so confirm on your own eval
+  before turning it on: `gbrain config set search.qualified_aliases true`
+  (`false` turns it back off).
 - **Evidence contract** — every result carries `evidence`
   (`alias_hit | exact_title_match | high_vector_match | keyword_exact |
   weak_semantic`) and `create_safety` (`exists | probable | unknown`). An agent
@@ -251,7 +265,8 @@ relational re-pin (relational-arm rows back above the reranked text rows, in
    reordered — src/core/search/relational-rerank-pin.ts)
        │
        ▼
-alias hop (exact alias match injects/boosts the canonical page; like the
+alias hop (exact alias match injects/boosts the canonical page; opt-in
+   qualified sub-phrase match leads one page; like the
    exact-lookup tier below it never re-sorts, so the reranked order holds)
        │
        ▼
