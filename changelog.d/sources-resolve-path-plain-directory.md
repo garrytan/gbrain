@@ -1,0 +1,1 @@
+- `sources resolve-path` and `sources_resolve_path` now explain when a registered plain directory has no Git history to inspect, and point callers to the next supported read. A missing expected checkout gets a distinct recovery instruction; unexpected Git failures still surface.

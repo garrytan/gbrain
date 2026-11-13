@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, realpathSync, type Stats } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync, type Stats } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import type { BrainEngine } from '../engine.ts';
@@ -113,9 +113,9 @@ export async function syncExcludePatterns(engine: Pick<BrainEngine, 'getConfig'>
     .map(v => v.endsWith('/') ? `${v}**` : v);
 }
 /** GST-2331: one managed-sync Git read, under `HARDENED_GIT_ARGS` and `NO_LAZY_FETCH_ENV`: no repository program runs, and a partial clone fetches nothing (a missing object fails the read). */
-export function syncGit(root: string, args: string[]): string {
+export function syncGit(root: string, args: string[], env: NodeJS.ProcessEnv = {}): string {
   return execFileSync('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, ...args],
-    { env: gitChildEnv(NO_LAZY_FETCH_ENV), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
+    { env: gitChildEnv({ ...env, ...NO_LAZY_FETCH_ENV }), encoding: 'utf8', timeout: 30_000, maxBuffer: 32 * 1024 ** 2, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 /** GST-2331: whether the repository at `gitRoot` is a partial clone (`extensions.partialClone`, or a remote marked `promisor`), whose missing objects sync never fetches. */
 export function syncPartialClone(gitRoot: string): boolean {
@@ -270,16 +270,35 @@ export function readManagedSyncRows(engine: BrainEngine, sourceId: string): Prom
   return Promise.all([engine.executeRaw<ManagedSourceRow>('SELECT incarnation,archived,local_path,last_commit,config FROM sources WHERE id=$1', [sourceId]).then(rows => rows[0]),
     getWorktreeBinding(engine, sourceId)]);
 }
-/** #7973: the checkout's Git top level; a registered root with no Git checkout at or above it is a plain directory, which `gbrain sync` imports without Git. */
-function managedGitTopLevel(root: string, sourceId: string): string {
-  try { return realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim()); }
-  catch (error) {
-    for (let dir = root; ; dir = dirname(dir)) { if (existsSync(join(dir, '.git'))) throw error; if (dir === dirname(dir)) break; }
-    throw opError('sync_not_applicable', `The managed Git sync path does not apply to source ${sourceId}: ${root} is a plain directory, not a Git checkout.`,
-      `Run gbrain sync --source ${sourceId} without --repo or --src-subpath; it imports the directory's files without Git (a file removed from it keeps its page). Nothing was synced.`,
-      { reason: 'plain_directory', fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
-        why: 'Sync imports a plain-directory source the way gbrain import does on a repo-less brain.' } });
+function plainDirectoryGitFailure(root: string, error: unknown): boolean {
+  const failure = error as { status?: number; code?: number; stderr?: string } | null;
+  if ((failure?.status ?? failure?.code) !== 128 || !failure?.stderr?.startsWith('fatal: not a git repository (')) return false;
+  // A damaged .git file, dangling symlink or inaccessible ancestor is a Git error, not a plain directory.
+  for (let dir = root; ; dir = dirname(dir)) {
+    if (lstatSync(join(dir, '.git'), { throwIfNoEntry: false })) return false;
+    if (dir === dirname(dir)) return true;
   }
+}
+
+/** Git top level, or null for a plain directory. Preserve real Git and filesystem errors. */
+export function readSyncGitTopLevel(root: string): string | null {
+  let topLevel: string;
+  try { topLevel = syncGit(root, ['rev-parse', '--show-toplevel'], { LC_ALL: 'C' }).trim(); }
+  catch (error) {
+    if (!plainDirectoryGitFailure(root, error)) throw error;
+    return null;
+  }
+  return realpathSync(topLevel);
+}
+
+/** #7973: sync can import a registered plain directory without Git. */
+function managedGitTopLevel(root: string, sourceId: string): string {
+  const topLevel = readSyncGitTopLevel(root);
+  if (topLevel !== null) return topLevel;
+  throw opError('sync_not_applicable', `The managed Git sync path does not apply to source ${sourceId}: ${root} is a plain directory, not a Git checkout.`,
+    `Run gbrain sync --source ${sourceId} without --repo or --src-subpath; it imports the directory's files without Git (a file removed from it keeps its page). Nothing was synced.`,
+    { reason: 'plain_directory', fix: { argv: ['gbrain', 'sync', '--source', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Sync imports a plain-directory source the way gbrain import does on a repo-less brain.' } });
 }
 /**
  * Validate the current owner and source without enumerating a new manifest. `rows`: `readManagedSyncRows` started by a

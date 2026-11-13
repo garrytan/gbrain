@@ -8,12 +8,13 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { SyncOpts } from '../src/commands/sync.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { persistenceHome } from '../src/core/persistence/identity.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
@@ -73,6 +74,26 @@ async function each(run: (engine: BrainEngine) => Promise<void>) {
     }
   });
 }
+
+test('a registered plain directory gives an actionable source response instead of a Git error', () => each(async engine => {
+  const id = `rslv-plain-${randomUUID().slice(0, 8)}`;
+  const dir = join(home, id);
+  mkdirSync(dir);
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, dir]);
+  const run = () => resolveSourcePaths(engine, id, ['notes/observation.md']);
+  const identity = join(persistenceHome(), 'host.json');
+  const hadIdentity = existsSync(identity);
+  try {
+    await expect(run()).rejects.toMatchObject({ code: 'sync_not_applicable', reason: 'plain_directory', suggestion: expect.stringContaining('get_page') });
+    expect(existsSync(identity)).toBe(hadIdentity);
+    await engine.executeRaw('UPDATE sources SET config=$2::text::jsonb WHERE id=$1', [id, JSON.stringify({ canonical: 'git' })]);
+    await expect(run()).rejects.toMatchObject({ code: 'sync_not_applicable', reason: 'checkout_missing' });
+    writeFileSync(join(dir, '.git'), `gitdir: ${join(dir, 'missing-git-dir')}\n`);
+    await expect(run()).rejects.not.toMatchObject({ code: 'sync_not_applicable' });
+  } finally {
+    await engine.executeRaw('DELETE FROM sources WHERE id=$1', [id]);
+  }
+}));
 
 const HYPHEN = 'articles/outlet-example/a-headline-.md';
 const TWIN_LOWER = 'sources/meetings/2026-10-19-call-abcdefghxyz.md';

@@ -35,10 +35,11 @@ import { parseMarkdownHead } from '../markdown.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
 import { embeddingStateFix, type EmbeddingState } from '../embedding-state.ts';
 import { PAGE_SEARCHABLE, readPageSearchability } from '../page-searchability.ts';
-import { loadSyncEligibility, syncGit } from './sync-discovery.ts';
+import { loadSyncEligibility, readSyncGitTopLevel, syncGit } from './sync-discovery.ts';
 import { readBlobContents } from './sync-blobs.ts';
 import { readGitHold } from './sync-holds.ts';
-import { persistenceEnabledForHealth } from './ownership.ts';
+import { getWorktreeBinding, persistenceEnabledForHealth } from './ownership.ts';
+import { existingHostIdFor } from './identity.ts';
 
 /** Paths one call resolves. */
 export const RESOLVE_PATHS_MAX = 200;
@@ -125,7 +126,18 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   if (!source.local_path || !existsSync(source.local_path)) throw opError('not_found', `Source ${sourceId} has no Git checkout on this host, so its paths cannot be resolved here.`,
     'Run this on the host that holds the checkout (gbrain sources status names its path).', { fix: readFix('Shows where the source checkout lives.', status, status) });
   const root = realpathSync(source.local_path);
-  const gitRoot = realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim());
+  const gitRoot = readSyncGitTopLevel(root);
+  if (gitRoot === null) {
+    const fix = readFix('Shows how this source is registered.', status, status);
+    // A read may inspect an existing binding but must not register this host.
+    const gitRequired = source.last_commit != null || source.config?.canonical === 'git'
+      || (await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine)))?.git_durability === 'enabled';
+    if (gitRequired) throw opError('sync_not_applicable', `Source ${sourceId} expects a Git checkout, but the registered directory has no repository.`,
+      'Restore the registered Git checkout before checking landing paths.', { reason: 'checkout_missing', fix });
+    throw opError('sync_not_applicable', `Source ${sourceId} is a plain directory without Git history to resolve.`,
+      'For a managed page, use get_page with its slug and source. For Git landing checks, choose a registered Git source.',
+      { reason: 'plain_directory', fix });
+  }
   const context = { root, gitRoot, sourceId, source: { last_commit: source.last_commit, config: source.config ?? {} } };
   const { scope, eligible, sourcePath } = await loadSyncEligibility(engine, context);
   const managed = await persistenceEnabledForHealth(engine).catch(() => false);
