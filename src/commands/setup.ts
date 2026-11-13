@@ -31,7 +31,7 @@ import { describePiSkill, readPiSkillState, removePiSkillExtension, syncPiSkillE
 import { hasTurnRuleHook, isTurnRuleHarness, removeTurnRuleHook, syncTurnRuleHook, type TurnHookOutcome, type TurnRuleHarness } from '../core/setup/turn-hook.ts';
 import { inspectTurnHook, TURN_HOOK_NATIVE_INSPECT, turnHookFix, verifyTurnHook, type TurnHookVerdict } from '../core/setup/turn-hook-check.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
-import { cliRenderContext, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
+import { cliRenderContext, docsUrl, renderCliError, renderNotice, type Action, type Notice } from '../core/agent-output.ts';
 import { writeCliNotices } from '../core/interop-notices.ts';
 import { BOT_HARNESSES, renderedExposure, sharedTokenNotice, writeExposureNotice, type ExposureServes } from '../core/grants/shared-exposure.ts';
 import { claudeCodeChannelPlugins } from './shared-exposure-local.ts';
@@ -1212,6 +1212,7 @@ async function finish(out: Out, doc: {
     : 'Next: open a new Claude Code session (config is read at session start) and check that /mcp lists gbrain.');
   if (state && !doc.remove) say(out, 'Memory: save what the user asks you to remember as a fact with gbrain remember "<fact>", naming its entity and provenance (MCP tool: remember). '
     + 'World-visible facts (the default) are pushed into new sessions; a private fact is not (local CLI recall only). capture writes a page, not a fact.');
+  if (state && !doc.remove) say(out, `Opt-ins (nothing is on until you turn it on): keys and embeddings, autopilot, dream schedule, connectors, auto-upgrade, release channel: ${docsUrl('INSTALL_FOR_AGENTS.md#opt-ins')}`);
   writeCliNotices(notices.filter((n) => n.code !== 'hosted_option'));
   if (doc.notices.some((n) => n.code === 'hosted_option')) writeHostedOption('setup', new Set());
   if (doc.resolver?.error) return refuse(resolverRefusal(doc.resolver), out);

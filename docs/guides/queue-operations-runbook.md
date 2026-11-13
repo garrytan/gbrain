@@ -43,7 +43,11 @@ gbrain doctor --json | jq '.checks[] | select(.name == "wedged_queue")'
 ```
 
 `wedged_queue` is a per-queue health **error** (0 active_healthy + waiting > 0 +
-stale completions). Manual fix if you ever need it:
+stale completions). While an autopilot pause is in place (`gbrain autopilot
+pause`, or the marker a migration sets), workers claim nothing, so the check
+reports the held queue as a **warning** that names the resume step, and the
+worker's stall watchdog stays quiet. Restarting a worker doesn't help then.
+Manual fix if you ever need it:
 
 ```bash
 # Restart the supervisor with a fresh pool. `start` alone runs in the
