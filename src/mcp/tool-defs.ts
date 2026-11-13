@@ -74,6 +74,13 @@ function strictPassthroughProperties(op: OperationMeta): Record<string, unknown>
       },
     }),
     ...('dry_run' in op.params ? {} : { dry_run: { type: 'boolean' } }),
+    ...('room' in op.params ? {} : {
+      room: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Set by the harness: who is in the shared chat this answer goes to. Hints only; never changes what is read.',
+      },
+    }),
   };
 }
 

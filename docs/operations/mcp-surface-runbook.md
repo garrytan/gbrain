@@ -178,7 +178,7 @@ gbrain config set mcp.strict_params reject
 
 **Expected outcome (schema emission change):** besides rejecting unknown
 args, tools/list schemas change shape — each `inputSchema` closes with
-`additionalProperties: false` and declares the `_meta`/`dry_run`
+`additionalProperties: false` and declares the `_meta`/`dry_run`/`room`
 passthrough keys (D14.1), keeping schema-validating clients aligned with
 the server's reject posture. Read per request; flipping back to `warn`
 reopens the schemas on the next list. A transient config-read failure
