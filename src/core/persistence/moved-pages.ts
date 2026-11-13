@@ -11,9 +11,11 @@
  *   2. the stale side is untouched: the old page still holds what that blob imports (`fileMatchesSnapshot`, which reads
  *      gbrain's own database-only artefacts as derived: `alignWithStored`). A page edited in the database after the move
  *      is `both_changed`.
- * Exactly one live page of the source may descend from the blob; two or more are `several_candidates`. The file name
+ * Exactly one live page of the source may descend from the blob; two or more are `several_candidates`, and a moved page that
+ * another old page with the same content also claims is `shared_survivor`. A first commit counts only after the old path existed. The file name
  * only explains a result with no candidate (a move can rename the file too), and a frontmatter `id` alone never pairs
- * two pages. A history too shallow to read the move, or one Git cannot answer, keeps the page held and says so.
+ * two pages. A page stored in segments (over 1 MiB) is `segmented_versions`: its versions name body generations of their
+ * own page, so they cannot move to another. A history too shallow to read the move, or one Git cannot answer, keeps the page held and says so.
  */
 import { basename } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
@@ -25,8 +27,8 @@ import { literalPathspecs } from '../git-env.ts';
 
 export interface MovedPageRef { page_id: number; slug: string; revision: string; path: string }
 export type MovedEvidence = 'same_commit' | 'first_commit';
-export const MOVED_HELD_REASONS = ['not_moved', 'several_candidates', 'both_changed', 'first_blob_differs', 'same_id_body_differs', 'evidence_conflicts',
-  'history_shallow', 'history_unknown', 'deletion_not_committed'] as const;
+export const MOVED_HELD_REASONS = ['not_moved', 'several_candidates', 'shared_survivor', 'both_changed', 'first_blob_differs', 'same_id_body_differs', 'evidence_conflicts',
+  'segmented_versions', 'history_shallow', 'history_unknown', 'deletion_not_committed'] as const;
 export type MovedHeldReason = typeof MOVED_HELD_REASONS[number];
 export type MovedPageVerdict =
   | { verdict: 'moved'; survivor: MovedPageRef; old_blob: string; move_commit: string; evidence: MovedEvidence; evidence_commit: string; detail: string }
@@ -36,17 +38,18 @@ const git = (root: string, args: string[]): string | null => { try { return sync
 const shallow = (root: string) => git(root, ['rev-parse', '--is-shallow-repository'])?.trim() === 'true';
 const short = (sha: string) => sha.slice(0, 12);
 
-/** Paths (relative to `root`) that took `blob` in `commit` itself (added or changed to it there). */
-function sameCommitPaths(root: string, commit: string, blob: string): string[] | null {
+/** Paths (relative to `root`) that took `blob` in `commit` itself (added or changed to it there), and those it deleted holding `blob`. */
+function sameCommitPaths(root: string, commit: string, blob: string): { paths: string[]; deleted: string[] } | null {
   const out = git(root, ['diff-tree', '-r', '--no-renames', '--no-commit-id', '--relative', '-z', `${commit}^`, commit]);
   if (out === null) return null;
   const fields = out.split('\0');
-  const paths: string[] = [];
+  const paths: string[] = [], deleted: string[] = [];
   for (let i = 0; i + 1 < fields.length; i += 2) {
-    const [, , , next, status] = fields[i]!.split(' ');
+    const [, , previous, next, status] = fields[i]!.split(' ');
     if (next === blob && status !== 'D') paths.push(fields[i + 1]!);
+    if (previous === blob && status === 'D') deleted.push(fields[i + 1]!);
   }
-  return paths;
+  return { paths, deleted };
 }
 
 /** Paths (relative to `root`) whose first commit in HEAD's history added them with `blob`, with that commit. */
@@ -96,10 +99,16 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
     : held('history_unknown', `Git could not read ${old.path} before commit ${short(commit)}, which deleted it`);
   const same = sameCommitPaths(root, commit, blob);
   const first = firstCommitPaths(root, blob);
-  if (same === null || first === null) return held('history_unknown', `Git could not read which paths took ${old.path}'s content (blob ${short(blob)})`);
+  const added = git(root, ['log', '--no-renames', '--relative', '--diff-filter=A', '--format=%H', '-1', `${commit}^`, '--', ...literalPathspecs([old.path])])?.trim();
+  if (same === null || first === null || !added) return held('history_unknown', `Git could not read which paths took ${old.path}'s content (blob ${short(blob)})`);
   const evidence = new Map<string, { evidence: MovedEvidence; commit: string }>();
-  for (const [path, at] of first) if (path !== old.path) evidence.set(path, { evidence: 'first_commit', commit: at });
-  for (const path of same) if (path !== old.path) evidence.set(path, { evidence: 'same_commit', commit });
+  for (const [path, at] of first) {
+    if (path === old.path || at === added) continue;
+    const base: string | undefined = git(root, ['merge-base', added, at])?.trim();
+    if (!base) return held('history_unknown', `Git could not order ${path}'s first commit ${short(at)} against the commit that added ${old.path}`);
+    if (base === added) evidence.set(path, { evidence: 'first_commit', commit: at });
+  }
+  for (const path of same.paths) if (path !== old.path) evidence.set(path, { evidence: 'same_commit', commit });
   const present = inHead(root, [...evidence.keys()]);
   const rows = present.size ? await engine.executeRaw<{ id: number; slug: string; revision: string; source_path: string }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path
     FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND source_path=ANY($3::text[]) ORDER BY id`, [sourceId, old.page_id, [...present]]) : [];
@@ -119,6 +128,11 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
     return held('not_moved', `no live page of the source started from ${old.path}'s last committed content (blob ${short(blob)}), so commit ${short(commit)} deleted it rather than moving it`);
   }
   const row = rows[0]!;
+  const others = same.deleted.filter(path => path !== old.path);
+  if (others.length) return held('shared_survivor', `commit ${short(commit)} deleted ${[old.path, ...others].join(', ')} with the same content (blob ${short(blob)}), so which of them moved to ${row.source_path} is a person's decision`, [row.slug]);
+  const [storage] = await engine.executeRaw<{ segmented: boolean }>(`SELECT EXISTS (SELECT 1 FROM pages WHERE id=$1 AND body_storage<>'inline')
+    OR EXISTS (SELECT 1 FROM page_versions WHERE page_id=$1 AND body_storage<>'inline') AS segmented`, [old.page_id]);
+  if (storage?.segmented) return held('segmented_versions', `${old.path} moved to ${row.source_path}, but page ${old.slug} or one of its saved versions is stored in segments (over 1 MiB), whose body generations belong to ${old.slug} and cannot move to ${row.slug}; fold it by hand with the user`, [row.slug]);
   const survivor: MovedPageRef = { page_id: Number(row.id), slug: row.slug, revision: String(row.revision), path: row.source_path };
   const proof = evidence.get(row.source_path)!;
   const snapshot = await engine.readPageSnapshot(old.slug, { sourceId });

@@ -248,7 +248,15 @@ for (const backend of testBackends()) {
     await performManagedSync(engine, SYNC);
     expect((await engine.readPageSnapshot('writing/essay', { sourceId: 'default' }))?.page.compiled_truth).toContain('A later line.');
     expect((await page(engine, 'writing/essay'))!.type).toBe('media');
-
+    // The rename is kept as a retype stamp, so a second edit keeps the type too, and the file still matches.
+    const [stamp] = await engine.executeRaw<{ legacy: string | null }>("SELECT frontmatter->>'legacy_type' AS legacy FROM pages WHERE source_id='default' AND slug='writing/essay'");
+    expect(stamp!.legacy).toBe('writing');
+    writeFileSync(join(root, 'writing/essay.md'), `${readFileSync(join(root, 'writing/essay.md'), 'utf8')}\nA second line.\n`); git(root, 'commit', '-qam', 'edit again');
+    await performManagedSync(engine, SYNC);
+    expect((await engine.readPageSnapshot('writing/essay', { sourceId: 'default' }))?.page.compiled_truth).toContain('A second line.');
+    expect((await page(engine, 'writing/essay'))!.type).toBe('media');
+    const after = (await engine.readPageSnapshot('writing/essay', { sourceId: 'default' }))!;
+    expect(await fileMatchesSnapshot(engine, 'writing/essay', readFileSync(join(root, 'writing/essay.md'), 'utf8'), after, 'writing/essay.md')).toBe(true);
   }, opts(backend, { 'writing/essay.md': '---\ntype: writing\ntitle: Essay\n---\n\nAn essay gbrain wrote out.\n', 'notes/beta.md': BETA })), 240_000);
 
   test(`${backend}: a moved page carrying the type rename and the grandfather stamp folds`, () => managedBrain(async ({ engine, root }) => {
@@ -262,4 +270,58 @@ for (const backend of testBackends()) {
     expect(listed(preview, 'writing/essay')).toMatchObject({ class: 'moved_to' });
     expect((await runner(engine, 'moved-pages', { expect: preview.preview_hash })).outcomes).toEqual({ folded: 1 });
   }, opts(backend, { 'writing/essay.md': '---\ntype: writing\ntitle: Essay\n---\n\nAn essay gbrain wrote out.\n', 'notes/beta.md': BETA })), 240_000);
+
+  test(`${backend}: a page edited between the preview and the apply is not folded`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, root, mv(root, 'archive/alpha.md'));
+    const preview = await runner(engine, 'moved-pages', {});
+    expect(preview.affected).toBe(1);
+    await raw(engine, "UPDATE pages SET timeline='An edit after the preview.', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='notes/alpha'");
+    expect((await runner(engine, 'moved-pages', { expect: preview.preview_hash })).outcomes).toEqual({ changed_since_preview: 1 });
+    expect((await page(engine, 'notes/alpha'))!.deleted).toBe(false);
+    expect(await engine.executeRaw("SELECT 1 FROM slug_aliases WHERE source_id='default' AND alias_slug='notes/alpha'")).toEqual([]);
+  }, opts(backend)), 240_000);
+
+  test(`${backend}: --apply without the preview's hash refuses and folds nothing`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, root, mv(root, 'archive/alpha.md'));
+    await expect(cli(engine, async () => (await repairRunner(engine, { apply: true, logger })).run('moved-pages', await resolveRepairScope(engine, 'default'), { explicit: true, sourceFlag: 'default' })))
+      .rejects.toMatchObject({ code: 'invalid_params' });
+    expect((await page(engine, 'notes/alpha'))!.deleted).toBe(false);
+  }, opts(backend)), 240_000);
+
+  test(`${backend}: two old pages with the same content moved to one page stay held (shared survivor)`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    const before = await engine.executeRaw<{ slug: string; timeline: string }>("SELECT slug, timeline FROM pages WHERE source_id='default' AND slug IN ('notes/alpha', 'notes/alpha-copy')");
+    await raw(engine, "UPDATE pages SET timeline='An edit only the database holds.', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug IN ('notes/alpha', 'notes/alpha-copy')");
+    mkdirSync(join(root, 'archive'), { recursive: true }); writeFileSync(join(root, 'archive/alpha.md'), ALPHA);
+    git(root, 'rm', '-q', 'notes/alpha.md', 'notes/alpha-copy.md'); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'merge two into one');
+    await performManagedSync(engine, SYNC);
+    for (const row of before) await raw(engine, "UPDATE pages SET timeline=$1, knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=$2", [row.timeline, row.slug]);
+    const preview = await runner(engine, 'moved-pages', {});
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'held:shared_survivor' });
+    expect(listed(preview, 'notes/alpha-copy')).toMatchObject({ class: 'held:shared_survivor' });
+    const one = await runner(engine, 'moved-pages', { slugs: ['notes/alpha'] });
+    expect(listed(one, 'notes/alpha')).toMatchObject({ class: 'held:shared_survivor' });
+  }, opts(backend, { 'notes/alpha.md': ALPHA, 'notes/alpha-copy.md': ALPHA, 'notes/beta.md': BETA })), 240_000);
+
+  test(`${backend}: a page with a version stored in segments stays held`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, root, mv(root, 'archive/alpha.md'));
+    const old = (await page(engine, 'notes/alpha'))!;
+    await raw(engine, "INSERT INTO page_versions (page_id, compiled_truth, timeline, body_storage, body_generation) VALUES ($1, NULL, NULL, 'segmented', 1)", [old.id]);
+    const preview = await runner(engine, 'moved-pages', {});
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'held:segmented_versions' });
+  }, opts(backend)), 240_000);
+
+  test(`${backend}: an older page that started from the same content is not where the file moved`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, root, () => { git(root, 'rm', '-q', 'notes/alpha.md'); git(root, 'commit', '-qm', 'delete'); });
+    const preview = await runner(engine, 'moved-pages', {});
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'held:not_moved' });
+  }, { ...opts(backend), setup: ({ root }: { root: string }) => {
+    setup({ 'other/stub.md': ALPHA })({ root });
+    for (const [path, content] of Object.entries({ 'notes/alpha.md': ALPHA, 'notes/beta.md': BETA })) { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), content); }
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'later');
+  } }), 240_000);
 }

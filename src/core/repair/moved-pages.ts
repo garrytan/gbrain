@@ -87,7 +87,7 @@ export const movedPagesRepair: RepairHandler = {
     const sourceId = scope.source_ids[0]!;
     const command = shellQuote(movedPagesPreviewArgv(sourceId));
     const slugs = opts?.slugs?.length ? [...new Set(opts.slugs)].sort() : undefined;
-    const scan = await scanGhostSource(engine, sourceId);
+    const scan = await scanGhostSource(engine, sourceId, { candidateLimit: GHOST_REPAIR_LIMIT });
     if (scan.status === 'not_applicable' && scan.reason === 'not_applicable') {
       const hash = previewHash({ kind: 'moved-pages-v1', brain_id: scope.brain_id, selection: { source_ids: scope.source_ids, slugs: slugs ?? null }, empty: true });
       return { items: [], preview_hash: opts?.expect ?? hash, residuals: { moved: 0 },
@@ -96,16 +96,24 @@ export const movedPagesRepair: RepairHandler = {
     const refusal = ghostScanRefusal(scan);
     if (refusal) throw refusal;
     const owner = scan.owner!, root = scan.root!;
-    const ghosts = scan.ghosts.filter(ghost => !slugs || slugs.includes(ghost.slug)).slice(0, GHOST_REPAIR_LIMIT);
+    const named = slugs ? await Promise.all(slugs.map(async slug => (await ghostPageNow(engine, sourceId, slug)).ghost)) : [];
+    const ghosts = slugs ? named.filter(ghost => ghost !== null) : scan.ghosts.slice(0, GHOST_REPAIR_LIMIT);
     const provenance = await readDeletionProvenance(root, ghosts.map(ghost => ghost.path));
     const observedAt = new Date().toISOString();
     const pairs: MovedPair[] = [], held: HeldPage[] = [];
+    const found: MovedPair[] = [];
     for (const ghost of ghosts) {
       const old: MovedPageRef = { page_id: ghost.page_id, slug: ghost.slug, revision: ghost.revision, path: ghost.path };
       const verdict = await readMovedPage(engine, { sourceId, root, old, provenance: provenance.get(ghost.path) ?? { kind: 'unknown' } });
-      if (verdict.verdict === 'moved') pairs.push({ source_id: sourceId, old, survivor: verdict.survivor, old_blob: verdict.old_blob, move_commit: verdict.move_commit,
+      if (verdict.verdict === 'moved') found.push({ source_id: sourceId, old, survivor: verdict.survivor, old_blob: verdict.old_blob, move_commit: verdict.move_commit,
         evidence: verdict.evidence, evidence_commit: verdict.evidence_commit, observed_at: observedAt });
       else held.push({ source_id: sourceId, slug: ghost.slug, path: ghost.path, reason: verdict.reason, detail: verdict.detail, ...(verdict.candidates ? { candidates: verdict.candidates } : {}) });
+    }
+    for (const pair of found) {
+      const claims = found.filter(other => other.survivor.page_id === pair.survivor.page_id);
+      if (claims.length === 1) { pairs.push(pair); continue; }
+      held.push({ source_id: sourceId, slug: pair.old.slug, path: pair.old.path, reason: 'shared_survivor', candidates: [pair.survivor.slug],
+        detail: `${claims.map(other => other.old.path).join(', ')} all moved to ${pair.survivor.path} by their content, so which one it is is a person's decision` });
     }
     const missing = slugs?.filter(slug => !ghosts.some(ghost => ghost.slug === slug)) ?? [];
     const mass = scan.file_backed > MASS_RECONCILE_MIN_PAGES && pairs.length > scan.file_backed * MASS_RECONCILE_RATIO;
@@ -115,7 +123,7 @@ export const movedPagesRepair: RepairHandler = {
       const warnings = [
         ...(missing.length ? [`Not a live page whose file is gone in source ${sourceId}, so nothing to fold: ${missing.join(', ')}.`] : []),
         ...(mass ? [`${pairs.length} fold(s) against ${scan.file_backed} file-backed page(s) (more than ${Math.round(MASS_RECONCILE_RATIO * 100)}%): the apply refuses unless GBRAIN_ALLOW_MASS_RECONCILE=1; check the source first.`] : []),
-        ...(scan.ghosts.length > ghosts.length && !slugs ? [`More pages whose file is gone may exist past the first ${GHOST_REPAIR_LIMIT} listed; apply this set, then preview again.`] : []),
+        ...((scan.truncated || scan.ghosts.length > ghosts.length) && !slugs ? [`More pages whose file is gone may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, then preview again.`] : []),
         ...(held.length ? [`${held.length} page(s) whose file is gone are not proven moved and are never folded by this apply; each lists why.`] : []),
         ...(pairs.length ? [MOVED_PAGES_CONSENT_TEXT.risk] : []),
         ...(!scan.ghosts.length ? [`Source ${sourceId} has no live page whose file is gone; nothing to fold.`] : []),
@@ -124,7 +132,7 @@ export const movedPagesRepair: RepairHandler = {
         residuals: { held: held.length, ...Object.fromEntries([...new Set(held.map(page => page.reason))].map(reason => [reason, held.filter(page => page.reason === reason).length])) },
         listing: [...pairs.map(pair => ({ item: `${pair.source_id}:${pair.old.slug}`, class: 'moved_to', detail: pairLine(pair) })),
           ...held.map(page => ({ item: `${page.source_id}:${page.slug}`, class: `held:${page.reason}`, detail: page.detail }))],
-        details: { pairs, held, mass_fold: mass, purge_fuse_hours: MOVED_PAGES_PURGE_FUSE_HOURS, docs: DOCS } };
+        details: { pairs, held, mass_fold: mass, truncated: scan.truncated, purge_fuse_hours: MOVED_PAGES_PURGE_FUSE_HOURS, docs: DOCS } };
     }
     if (!opts.expect) {
       throw opError('invalid_params', 'gbrain repair moved-pages --apply folds only the set a preview printed.',
