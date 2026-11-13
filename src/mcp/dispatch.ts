@@ -15,7 +15,7 @@ import type { Operation, OperationMeta } from '../core/ops/contract.ts';
 import { loadConfig } from '../core/config.ts';
 import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core/config-snapshot.ts';
 import { withCallerAccess } from '../core/search/private-visibility.ts';
-import { appliedAccessSummary, folderAccessFor, remoteCallerAccess } from '../core/access/caller.ts';
+import { appliedAccessSummary, folderAccessFor, identityLookupUnavailable, remoteCallerAccess } from '../core/access/caller.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { attestedReadMode, SCOPE_READ_ACCESS, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
@@ -1033,12 +1033,15 @@ export async function dispatchToolCall(
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
-    } catch (e) {
+    } catch (thrown) {
+      const e = identityLookupUnavailable(thrown) ?? thrown;
       // GST-359: a call that names a person gets every failure here (a lock timeout reading its link included) in the
-      // envelope QM reads, never a thrown call; anything else keeps the caller's own error path.
+      // envelope QM reads, never a thrown call; a coded refusal (access_identity_unavailable) is an error result, before
+      // anything is admitted; anything else keeps the caller's own error path.
       if (!(e instanceof OperationError) || !/^(on_behalf_of_|actor_)/.test(String(e.code))) {
-        if (!actorNamed) throw e;
-        return withStructuredError(errorResult(e, opts, { op: name }));
+        if (actorNamed) return withStructuredError(errorResult(e, opts, { op: name }));
+        if (e instanceof OperationError) return errorResult(e, opts, { op: name });
+        throw e;
       }
       assertion(e.code as AudienceAuditEvent['outcome'], e.reason);
       return qmMemoryToolResult(name, actorNamed ? actorRefusal(e, opts, name, header, args) : errorResult(e, opts, { op: name }));
@@ -1394,7 +1397,9 @@ async function dispatchResolvedCall(
     const over = op.mutating ? null : await frameOverCap(out, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
     if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });
     return out;
-  } catch (e: unknown) {
+  } catch (thrown: unknown) {
+    // A transient failure of the member-identity lookup at submission is the retryable access_identity_unavailable.
+    const e = identityLookupUnavailable(thrown) ?? thrown;
     logVerb(false);
     if (op.mutating) invalidateHotMemoryForEngine(engine); // a failed write may have committed part of its work
     // Agent contract v1 (A1): every failure — OperationError, classified DB

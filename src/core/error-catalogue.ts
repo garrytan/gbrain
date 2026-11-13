@@ -36,6 +36,7 @@ export const ERROR_CATALOGUE = {
   access_member_invalid: { code: 'access_member_invalid', docs: 'docs/guides/write-refusals.md#access_member_invalid' },
   access_member_id_retired: { code: 'access_member_id_retired', docs: 'docs/guides/write-refusals.md#access_member_id_retired' },
   access_member_disabled: { code: 'access_member_disabled', docs: 'docs/guides/write-refusals.md#access_member_disabled' },
+  access_identity_unavailable: { code: 'access_identity_unavailable', docs: 'docs/guides/write-refusals.md#access_identity_unavailable' },
   // GBRA-231 shared agents: the audience a harness asserts (X-Gbrain-On-Behalf-Of, _meta.on_behalf_of).
   on_behalf_of_invalid_audience: { code: 'on_behalf_of_invalid_audience', docs: 'docs/guides/write-refusals.md#on_behalf_of_invalid_audience' },
   on_behalf_of_unknown_member: { code: 'on_behalf_of_unknown_member', docs: 'docs/guides/write-refusals.md#on_behalf_of_unknown_member' },
