@@ -186,7 +186,7 @@ jobs:
         uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4
         with:
           path: ~/.cache/upgrade-matrix
-          key: upgrade-matrix-v1-${{ matrix.from }}-${{ needs.plan.outputs.candidate_sha }}
+          key: ${{ format('upgrade-matrix-v1-{0}-{1}', matrix.from, needs.plan.outputs.candidate_sha) }}
           restore-keys: |
             upgrade-matrix-v1-${{ matrix.from }}-
             upgrade-matrix-v1-
