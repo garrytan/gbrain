@@ -74,8 +74,8 @@ describe('#9266 mcp.default_surface_dcr applies to OAuth clients only (PGLite + 
 
     const reg = gbrain(['auth', 'register-client', 'oauth-a', '--grant-types', 'client_credentials', '--scopes', 'read write',
       '--token-endpoint-auth-method', 'client_secret_post']);
-    clientId = (reg.match(/Client ID:\s+(\S+)/) ?? ['', ''])[1];
-    clientSecret = (reg.match(/Client Secret:\s+(\S+)/) ?? ['', ''])[1];
+    clientId = /Client ID:\s+(\S+)/.exec(reg)?.[1] ?? '';
+    clientSecret = /Client Secret:\s+(\S+)/.exec(reg)?.[1] ?? '';
     if (!clientId || !clientSecret) throw new Error(`register-client did not yield credentials:\n${reg}`);
 
     gbrain(['config', 'set', 'mcp.default_surface_dcr', 'starter']);
