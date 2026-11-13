@@ -76,10 +76,10 @@ export function printWatchResult(result: unknown, tail: string | undefined, json
     console.log(JSON.stringify(result));
   } else {
     const r = (result ?? {}) as Record<string, unknown>;
-    const target = r.job ?? r.request_id ?? r.name ?? r.target;
+    const target = r.job ?? r.request_id ?? r.cron ?? r.target;
     if (r.watching === true) {
       console.log(`Watching ${String(r.event ?? 'it')}${target !== undefined ? ` for ${String(target)}` : ''}: this conversation wakes when it finishes${r.expires_in ? ` (watch ${String(r.watch)}, lasts ${String(r.expires_in)})` : ''}.`);
-      if (r.already_finished === true) console.log('It has already finished, so the wake goes out now.');
+      if (r.already_finished === true || r.already_settled === true) console.log('It has already finished, so the wake goes out now.');
       if (typeof r.note === 'string') console.log(r.note);
       if (typeof r.fallback === 'string') console.log(r.fallback);
     } else {

@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runWakeshift } from '../src/commands/wakeshift.ts';
-import { parseWatchArgs } from '../src/commands/wakeshift-watch.ts';
+import { parseWatchArgs, printWatchResult } from '../src/commands/wakeshift-watch.ts';
 import { currentExitCode, _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -68,5 +68,12 @@ describe('gbrain wakeshift watch on the brain host', () => {
     expect(parseWatchArgs(['cron', 'nightly-digest', '--harness', 'openclaw', '--json'])).toEqual({ tool: 'watch_cron', params: { name: 'nightly-digest', harness: 'openclaw' }, json: true });
     expect(parseWatchArgs(['write', 'req-1', '--conversation-id', 'c-1'])).toEqual({ tool: 'watch_write_request', params: { request_id: 'req-1', conversation_id: 'c-1' }, json: false });
     expect(typeof parseWatchArgs(['job', '0'])).toBe('string');
+  });
+
+  test('text output names the cron and says an already-settled write wakes now, from the ops\' real result shapes', () => {
+    printWatchResult({ watching: true, watch: 4, cron: 'nightly-digest', event: 'gbrain.cron.finished', expires_in: '7d' }, undefined, false);
+    printWatchResult({ watching: true, watch: 5, request_id: 'req-1', event: 'gbrain.write.settled', already_settled: true, expires_in: '7d' }, undefined, false);
+    expect(out).toContain('Watching gbrain.cron.finished for nightly-digest:');
+    expect(out).toContain('It has already finished, so the wake goes out now.');
   });
 });
