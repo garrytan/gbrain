@@ -9,7 +9,7 @@
  * PGLite ($0): an unmanaged brain (publishSinglePage) and a managed brain
  * (publishMaintenancePage). Synthetic content only.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,11 +20,28 @@ import { _resetBudgetMeterWarningsForTest } from '../src/core/cycle/budget-meter
 import { withWriteTrust } from '../src/core/persistence/context.ts';
 import type { TrustTier } from '../src/core/trust/tier.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 const CYCLE_DATE = '2031-04-14';
 const REPORT = `reports/drift-${CYCLE_DATE}`;
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+let engine: PGLiteEngine;
+
+beforeAll(async () => {
+  engine = new PGLiteEngine();
+  await engine.connect({});
+  await engine.initSchema();
+});
+
+afterAll(async () => {
+  await engine.disconnect();
+});
+
+beforeEach(async () => {
+  await resetPgliteState(engine);
+});
 
 async function seed(engine: BrainEngine, tier: TrustTier) {
   await engine.transaction(tx => withWriteTrust(tx, { tier, origin: { channel: 'sync' } }, async () => {
@@ -58,15 +75,8 @@ const CASES: Array<[TrustTier, TrustTier]> = [['operator_curated', 'agent_writte
 describe('#9208 drift report carries a derive:drift derivation', () => {
   for (const [input, expected] of CASES) {
     test(`unmanaged (publishSinglePage): ${input} judged page -> ${expected}`, async () => {
-      const engine = new PGLiteEngine();
-      await engine.connect({});
-      try {
-        await engine.initSchema();
-        await seed(engine, input);
-        expect(await drift(engine)).toEqual({ tier: expected, channel: 'derive:drift' });
-      } finally {
-        await engine.disconnect();
-      }
+      await seed(engine, input);
+      expect(await drift(engine)).toEqual({ tier: expected, channel: 'derive:drift' });
     }, 120_000);
 
     test(`managed (publishMaintenancePage): ${input} judged page -> ${expected}`, async () => {
