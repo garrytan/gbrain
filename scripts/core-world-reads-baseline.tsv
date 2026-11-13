@@ -378,6 +378,7 @@ src/core/extract-takes-from-pages.ts	fs_import	1	W7: filesystem boundary moves t
 src/core/extract-takes-from-pages.ts	load_config	1	W6: settings plane out of the core
 src/core/extract/rollup-writer.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/extraction-lag.ts	process_env	2	W6: settings plane out of the core
+src/core/facts-fence.ts	module_collection	1	stays (GST-2497): a bounded memo of fence-table parses keyed by the table text and parse options, returning copies; it holds no setting or brain state
 src/core/facts/backstop.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/facts/backstop.ts	load_config	1	W6: settings plane out of the core
 src/core/facts/backstop.ts	module_collection	1	W6: per-engine state, or mark as a constant table
