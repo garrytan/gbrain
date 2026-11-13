@@ -1475,8 +1475,8 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           newMode: value,
           engine,
           isTty: Boolean(process.stdout.isTTY && process.stdin.isTTY),
-          // CLI doesn't thread --yes here today; reserved for /ship-style
-          // automation paths that can opt into auto-submit.
+          // CLI doesn't thread --yes here today; --yes would skip the
+          // prompt and print the preview command (it never spends).
           yesFlag: false,
         });
       } catch (err) {

@@ -181,10 +181,8 @@ export interface KeywordPage {
  */
 export async function readKeywordPage(engine: BrainEngine, p: Record<string, unknown>, opts: SearchOpts, paging: SearchPaging, limit: number, names: string[] | null = null): Promise<KeywordPage> {
   const queryText = String(p.query);
-  const [probe, count] = await Promise.all([
-    engine.searchKeywordPages(queryText, opts, { limit: limit + 1, ...(paging.cursor ? { after: paging.cursor } : { offset: paging.offset }) }),
-    countKeywordMatches(engine, queryText, opts),
-  ]);
+  const rowsRead = engine.searchKeywordPages(queryText, opts, { limit: limit + 1, ...(paging.cursor ? { after: paging.cursor } : { offset: paging.offset }) });
+  const [probe, count] = await Promise.all([rowsRead, countKeywordMatches(engine, queryText, opts, KEYWORD_COUNT_TIMEOUT_MS, rowsRead)]);
   const rows = probe.slice(0, limit);
   const start = paging.cursor ? paging.cursor.shown : paging.offset;
   const truncated = probe.length > limit;

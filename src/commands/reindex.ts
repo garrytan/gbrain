@@ -92,6 +92,7 @@ USAGE
   gbrain reindex --vectors    [--dry-run] [--json]
   gbrain reindex --oversized  [--limit N] [--dry-run] [--json] [--source <id>]
   gbrain reindex --segmented  [--source <id>] [--slug <slug>] [--apply] [--json]
+  gbrain reindex --synopsis   [--source <id>] [--limit N] [--yes] [--max-usd USD] [--json]
 
 TARGETS (exactly one required)
   --markdown        Re-chunk markdown pages whose chunker_version lags the
@@ -121,10 +122,20 @@ TARGETS (exactly one required)
                     only the segments that change, keeps the vectors of
                     unchanged chunk texts and leaves new texts to the embed
                     sweep (gbrain embed --stale). Never runs on upgrade.
+  --synopsis        Put pages whose configured contextual-retrieval tier is
+                    per_chunk_synopsis (search.mode tokenmax) on that tier:
+                    import and sync embed them at the title tier and nothing
+                    else schedules the synopsis sweep. Previews by default
+                    (pages, chunks, tokens and dollars on the configured
+                    synopsis model; spends nothing). --yes queues one
+                    contextual_reindex_per_chunk job per page under one spend
+                    cap (--max-usd, else derived from the estimate) and runs
+                    them in this process. Resumable: run it again to continue.
+                    Inline pages over 1 MiB stay on the title tier.
 
 OPTIONS
   --type <t>        --markdown only: restrict to one page type
-  --limit N         Cap pages/chunks processed this run
+  --limit N         Cap pages/chunks processed this run (--synopsis: pages)
   --workers N       --markdown and --multimodal: parallel writers per batch
                     (--concurrency is an alias). --markdown on Postgres
                     defaults to 4 when more than 100 pages are pending;
@@ -136,8 +147,10 @@ OPTIONS
                     first (exit 3 without approval when not interactive;
                     --dry-run, --no-embed and a keyless brain never ask);
                     --multimodal skips its cost confirm
-  --max-usd USD     --markdown: approve the paid run with this cost cap
-  --source <id>     --aliases, --oversized and --segmented: restrict to one source
+  --max-usd USD     --markdown: approve the paid run with this cost cap;
+                    --synopsis: the cap shared by every queued job (with --yes)
+  --source <id>     --aliases, --oversized, --segmented and --synopsis: restrict
+                    to one source
   --slug <slug>     --segmented only: one page
   --apply           --segmented only: apply the previewed re-chunk
   --repo PATH       --markdown only: brain repo override
@@ -185,6 +198,7 @@ export function validateReindexModeScope(args: string[]): string | null {
   if (args.includes('--aliases')) return '--type is only supported with reindex --markdown, not --aliases';
   if (args.includes('--oversized')) return '--type is only supported with reindex --markdown, not --oversized';
   if (args.includes('--segmented')) return '--type is only supported with reindex --markdown, not --segmented';
+  if (args.includes('--synopsis')) return '--type is only supported with reindex --markdown, not --synopsis';
   return null;
 }
 
