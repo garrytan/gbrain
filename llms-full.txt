@@ -9800,11 +9800,12 @@ seconds and comes back with only vector hits; search metadata carries
 statement timeout` (SQLSTATE 57014). Keyword-mode paging and the strict page
 count rank every matching page, so their cost grows with how common the terms
 are. Hybrid search's keyword arm ranks at most 50,000 matching chunks (its metadata
-carries `keyword_candidates_incomplete` when that bound applies), and when the
-call sets no type, frontmatter or date filter and no source scope narrower than
-every live source, it stops reading matches at that bound. (A remote MCP
-caller's arm used to read every match before the bound applied, so a term in
-most chunks timed out.) An arm that timed out is not evidence of absence: the
+carries `keyword_candidates_incomplete` when that bound applies). A local
+caller's statement usually stops reading matches at that bound. A remote MCP
+caller's arm stops there when the call sets no type, frontmatter or date filter
+and no source scope narrower than every live source; with such a filter it
+can still read every match before ranking. (A remote caller's arm used to read
+every match in all cases, so a term in most chunks timed out.) An arm that timed out is not evidence of absence: the
 pages exist, the arm could not rank them in time.
 
 **Say to your agent:** *"Check whether keyword search is hitting its time
