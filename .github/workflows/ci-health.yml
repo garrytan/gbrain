@@ -41,12 +41,6 @@ concurrency:
   group: ci-health
   cancel-in-progress: false
 
-# A git transfer below 1 KB/s for 120 s fails, so actions/checkout retries its fetch (3 attempts) instead of
-# hanging silent until the job timeout on a stalled connection to github.com.
-env:
-  GIT_HTTP_LOW_SPEED_LIMIT: '1000'
-  GIT_HTTP_LOW_SPEED_TIME: '120'
-
 jobs:
   report:
     runs-on: ubicloud-standard-2-ubuntu-2404
@@ -57,7 +51,18 @@ jobs:
       actions: read
       checks: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 6
+        continue-on-error: true
+        with:
+          persist-credentials: false
+          # git history for the "serial files added this week" line.
+          fetch-depth: 0
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 6
         with:
           persist-credentials: false
           # git history for the "serial files added this week" line.

@@ -32,12 +32,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
-# A git transfer below 1 KB/s for 120 s fails, so actions/checkout retries its fetch (3 attempts) instead of
-# hanging silent until the job timeout on a stalled connection to github.com.
-env:
-  GIT_HTTP_LOW_SPEED_LIMIT: '1000'
-  GIT_HTTP_LOW_SPEED_TIME: '120'
-
 jobs:
   convergence:
     name: Convergence nightly / Bun ${{ matrix.bun }} / seed ${{ inputs.seed || github.run_id }}
@@ -74,7 +68,14 @@ jobs:
     env:
       GBRAIN_TEST_CONVERGENCE_LOG_DIR: ${{ github.workspace }}/.context/convergence
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}
@@ -163,7 +164,14 @@ jobs:
     env:
       GBRAIN_TEST_BUSY_AGENT_LOG_DIR: ${{ github.workspace }}/.context/busy-agent
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
         with:
           bun-version: ${{ matrix.bun }}

@@ -24,12 +24,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# A git transfer below 1 KB/s for 120 s fails, so actions/checkout retries its fetch (3 attempts) instead of
-# hanging silent until the job timeout on a stalled connection to github.com.
-env:
-  GIT_HTTP_LOW_SPEED_LIMIT: '1000'
-  GIT_HTTP_LOW_SPEED_TIME: '120'
-
 jobs:
   semgrep:
     # Named exception (docs/TESTING.md#event-parity): pull requests gate on findings
@@ -40,7 +34,18 @@ jobs:
     container:
       image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 6
+        continue-on-error: true
+        with:
+          # Full history so --baseline-commit can diff against the PR base;
+          # a shallow clone would not contain the base commit.
+          fetch-depth: 0
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 6
         with:
           # Full history so --baseline-commit can diff against the PR base;
           # a shallow clone would not contain the base commit.
@@ -74,7 +79,14 @@ jobs:
     container:
       image: semgrep/semgrep:1.170.0@sha256:c98f8829eea377274ee4b10656458b078b88232469b2ff913f091c2317347c9d
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
       - name: Semgrep full-tree scan (report-only, SARIF)
         run: |
           semgrep scan --config p/default --config p/typescript --sarif-output=semgrep.sarif || true

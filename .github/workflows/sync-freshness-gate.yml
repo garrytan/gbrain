@@ -26,19 +26,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.runs && inputs.runs != '1' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: false
 
-# A git transfer below 1 KB/s for 120 s fails, so actions/checkout retries its fetch (3 attempts) instead of
-# hanging silent until the job timeout on a stalled connection to github.com.
-env:
-  GIT_HTTP_LOW_SPEED_LIMIT: '1000'
-  GIT_HTTP_LOW_SPEED_TIME: '120'
-
 jobs:
   gate:
     name: Sync freshness gate (10k, watch, p50 of 10 vs baseline +25%)
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: ${{ inputs.runs && inputs.runs != '1' && 240 || 60 }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
+        continue-on-error: true
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        timeout-minutes: 3
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
         with:
           bun-version: 1.4.4
