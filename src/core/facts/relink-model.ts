@@ -50,18 +50,26 @@ function render(batch: Array<{ id: number; fact: string }>): string {
   return batch.map((f, i) => `<fact i="${i}">${f.fact.replace(/<\/?fact[^>]*>/gi, ' ')}</fact>`).join('\n');
 }
 
-function parseSubjects(text: string, size: number): Map<number, string | null> | null {
+function parseSubjects(text: string, size: number): Map<number, string | null | undefined> | null {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start < 0 || end <= start) return null;
   try {
-    const parsed = JSON.parse(text.slice(start, end + 1)) as { subjects?: Array<{ i?: unknown; subject?: unknown }> };
+    const parsed = JSON.parse(text.slice(start, end + 1)) as { subjects?: unknown[] };
     if (!Array.isArray(parsed.subjects)) return null;
-    const out = new Map<number, string | null>();
-    for (const s of parsed.subjects) {
-      const i = Number(s.i);
-      if (!Number.isInteger(i) || i < 0 || i >= size || out.has(i)) continue;
-      out.set(i, typeof s.subject === 'string' && s.subject.trim() ? s.subject.trim() : null);
+    const out = new Map<number, string | null | undefined>();
+    for (const row of parsed.subjects) {
+      if (row === null || typeof row !== 'object' || !('i' in row)) continue;
+      const i = row.i;
+      if (typeof i !== 'number' || !Number.isInteger(i) || i < 0 || i >= size) continue;
+      // Keep the index even when its verdict is unknown so no duplicate can replace it.
+      if (out.has(i)) {
+        out.set(i, undefined);
+        continue;
+      }
+      const subject = 'subject' in row ? row.subject : undefined;
+      const name = typeof subject === 'string' ? subject.trim() : '';
+      out.set(i, subject === null ? null : name || undefined);
     }
     return out;
   } catch {
@@ -102,9 +110,9 @@ export async function judgeBatch(engine: BrainEngine, sourceId: string, model: s
   if (!subjects) return batch.map(f => ({ id: f.id, slug: null, reason: 'model_unparseable' as const }));
   const out: ModelVerdict[] = [];
   for (const [i, f] of batch.entries()) {
-    if (!subjects.has(i)) { out.push({ id: f.id, slug: null, reason: 'model_unparseable' }); continue; }
     const subject = subjects.get(i);
-    if (!subject) { out.push({ id: f.id, slug: null, reason: 'no_subject' }); continue; }
+    if (subject === undefined) { out.push({ id: f.id, slug: null, reason: 'model_unparseable' }); continue; }
+    if (subject === null) { out.push({ id: f.id, slug: null, reason: 'no_subject' }); continue; }
     // The answer must quote the fact: an injected or invented name never links.
     if (!quotesWholeName(f.fact, subject)) { out.push({ id: f.id, slug: null, reason: 'unverified_match' }); continue; }
     const r = await resolveStrictEntityReference(engine, sourceId, subject, { sameName: true });
