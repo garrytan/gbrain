@@ -12,6 +12,9 @@
  * on live turns, nothing on shadow, internal or off turns, commits a retried
  * turn once, refuses a library writable by others, gives up on a stuck worker
  * within the deadline and logs each miss; a brainless home stays brainless.
+ * PR 2: a skill OpenClaw hides from the agent's model, or does not list, is
+ * excluded and never suggested; a failed list or one naming none of the
+ * catalog filters nothing.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -45,7 +48,7 @@ case "$1 $2" in
   "config set") node -e 'const f=require("fs"),p=process.argv[1],c=JSON.parse(f.readFileSync(p,"utf8"));const id=process.argv[2].split(".")[2];c.plugins.entries[id].hooks={allowConversationAccess:true};f.writeFileSync(p,JSON.stringify(c))' "$cfg" "$3";;
   "plugins inspect") [ -n "$INSPECT_BROKEN" ] && { echo '{"status":"error"}'; exit 0; }; echo '{"status":"loaded","hooks":["before_prompt_build"]}';;
   "plugins uninstall") ;;
-  "skills list") echo '[]' > /dev/null; exit 1;;
+  "skills list") [ -n "$SKILLS_LIST_JSON" ] && { echo "[plugins] loaded"; cat "$SKILLS_LIST_JSON"; exit 0; }; exit 1;;
 esac
 `;
 
@@ -208,6 +211,51 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     const cfg = existsSync(join(gbrainHome(b), 'config.json')) ? JSON.parse(readFileSync(join(gbrainHome(b), 'config.json'), 'utf8')) : {};
     expect(cfg.engine).toBeUndefined();
     expect(cfg.database_url).toBeUndefined();
+  });
+});
+
+describe.skipIf(!NODE)('the OpenClaw eligibility filter', () => {
+  const listed = (b: Box, skills: object[]) => { const f = join(b.root, 'skills-list.json'); writeFileSync(f, JSON.stringify({ workspaceDir: join(b.state, 'workspace'), skills })); return { SKILLS_LIST_JSON: f }; };
+
+  test('a skill OpenClaw hides from the agent, or does not list, goes into exclude_ids and is never suggested', async () => {
+    const b = box();
+    const env = listed(b, [
+      { name: 'deploy-service', eligible: true, disabled: false, blockedByAgentFilter: false },
+      { name: 'email-triage', eligible: true, disabled: false, blockedByAgentFilter: true, modelVisible: false },
+      { name: 'weather', eligible: false, modelVisible: false },
+    ]);
+    const r = await setup(b, ['--skill-loading', 'resolve'], env);
+    expect(r.exitCode).toBe(0);
+    expect([...readState(b).agents.main.exclude_ids].sort()).toEqual(['calendar-sync', 'email-triage']);
+    expect(r.resolver.agents[0]).toMatchObject({ id: 'main', skills: 1 });
+    const notes = r.resolver.notes.join('\n');
+    expect(notes).toContain('hides from this agent' + "'" + 's model');
+    expect(notes).toContain('email-triage');
+    expect(notes).toMatch(/does not list 1 of openclaw-main's skills.*calendar-sync.*skill_resolver_host_load_cut/);
+    const out = drive(b, [['turn', { text: 'deploy the service to production, triage the email inbox and sync the calendar', id: 'm1' }]]);
+    expect(out[0].appendContext).toContain('deploy-service');
+    expect(out[0].appendContext).not.toContain('email-triage');
+    expect(out[0].appendContext).not.toContain('calendar-sync');
+  });
+
+  test('a list naming none of the catalog' + "'" + 's skills filters nothing and says so', async () => {
+    const b = box();
+    const r = await setup(b, ['--skill-loading', 'resolve'], listed(b, [{ name: 'weather', eligible: true, modelVisible: true }]));
+    expect(r.exitCode).toBe(0);
+    expect(readState(b).agents.main.exclude_ids).toEqual([]);
+    expect(r.resolver.agents[0].skills).toBe(3);
+    expect(r.resolver.notes.join('\n')).toContain('lists none of openclaw-main' + "'" + 's skills for this agent, so the catalog was not filtered');
+  });
+
+  test('a failed list, or no openclaw on PATH, filters nothing', async () => {
+    const b = box();
+    const r = await setup(b, ['--skill-loading', 'resolve']);
+    expect(r.exitCode).toBe(0);
+    expect(readState(b).agents.main.exclude_ids).toEqual([]);
+    expect(r.resolver.notes.join('\n')).toContain('--agent main' + String.fromCharCode(96) + ' failed, so skills OpenClaw hides from this agent were not filtered');
+    const none = box({ openclaw: false });
+    expect((await setup(none, ['--skill-loading', 'resolve'])).exitCode).toBe(3);
+    expect(readState(none).agents.main.exclude_ids).toEqual([]);
   });
 });
 

@@ -25,7 +25,7 @@
  * (#7010; the owner's Git effects publish this way). CLI-only; never exposed
  * over MCP (it pushes with host credentials).
  */
-import { appendFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -388,8 +388,8 @@ function withIndexRetry(root: string, args: string[], what: string, env?: NodeJS
 }
 
 /** A staged rename (`git mv`) commits both sides: committing only the new name would publish a duplicate and leave the deletion staged for another writer's commit. */
-function withRenamePartners(root: string, rel: string[]): string[] {
-  const fields = git(root, ['diff', '--cached', '-M', '--name-status', '-z']).stdout.split('\0');
+function withRenamePartners(root: string, rel: string[], env?: NodeJS.ProcessEnv): string[] {
+  const fields = git(root, ['diff', '--cached', '-M', '--name-status', '-z'], { env }).stdout.split('\0');
   const out = new Set(rel);
   for (let i = 0; i < fields.length;) {
     const status = fields[i];
@@ -601,16 +601,13 @@ function scopeBases(root: string, opts: CommitPushOptions, rel: string[]): Map<s
 }
 
 /**
- * Stage and commit exactly `rel` (the caller holds the commit lock). Refused
- * before anything is staged: a path outside the source root(s), and a file
- * another writer already staged under a named directory (name it to claim
- * it). A commit git refuses leaves the index as it found it. `skipped` lists
- * the named paths git left out (GST-2116); the rest are still committed.
+ * What commitPaths refuses before anything is staged (and the dry run with it): a path outside the source root(s), a
+ * `--base` blob HEAD no longer holds, and a file another writer already staged under a named directory (name it to claim it).
  */
-function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): { sha: string | null; skipped: SkippedPath[] } {
-  const outside = rel.filter(p => !insideSourceRoots(p, scope.roots));
-  if (outside.length) throw outsideRootError(root, scope.roots, outside, 'Refusing to commit');
-  for (const [path, base] of scope.bases ?? []) {
+function admitPaths(root: string, rel: string[], roots: string[], bases?: ReadonlyMap<string, string>): void {
+  const outside = rel.filter(p => !insideSourceRoots(p, roots));
+  if (outside.length) throw outsideRootError(root, roots, outside, 'Refusing to commit');
+  for (const [path, base] of bases ?? []) {
     const head = git(root, ['rev-parse', '--verify', '-q', `HEAD:${path}`]).stdout.trim() || 'absent';
     if (head !== base) throw opError('commit_base_moved', `${path} changed at HEAD since the writer read it (base ${base}, HEAD ${head}).`,
       `Nothing was staged or committed. Read ${path} at HEAD again (git -C ${root} show HEAD:${path}), redo the change on it, and rerun with --base ${path}=${head}.`,
@@ -622,36 +619,59 @@ function commitPaths(root: string, rel: string[], message: string, scope: Commit
     throw opError('commit_prestaged_paths', `${swept.length} file(s) under the named path(s) were already staged by another writer: ${list}.`,
       'Nothing was staged or committed. If they are yours, name each file explicitly; otherwise leave them to the writer that staged them, or unstage them with the user\'s agreement (git restore --staged -- <file>; the working tree keeps its bytes). Files a parked gbrain Git effect left staged are gbrain\'s own: gbrain sources writer status lists the parked effects with their source and request id, and gbrain sources writer retry-effects with that source and --request-id commits them.',
       { detail: JSON.stringify({ paths: swept }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-        argv: ['git', '-C', root, 'restore', '--staged', '--', ...swept],
+        argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(swept)],
         why: 'Another writer staged these files; committing them would publish whatever that writer had in progress, and unstaging them drops its staging.',
         user_message: `Files already staged by another writer sit under the path you asked to commit (${list}). Commit only the files you name, or unstage those (their bytes stay on disk)?`,
         docs: 'docs/guides/shared-checkout-git.md#outcomes' } });
   }
-  const dirtyBefore = directoryStatus(root, rel);
-  const before = indexEntries(root, rel);
-  const flagged = gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v').split('\0').filter(entry => /^[a-zS] /.test(entry));
-  if (scope.untrack) return { sha: untrackPaths(root, rel, message, scope, before, flagged), skipped: [] };
+}
+
+/** The named paths' `ls-files -v` records that carry the assume-unchanged or skip-worktree flag. */
+function flaggedEntries(root: string, rel: string[]): string[] {
+  return gitOk(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs(rel)], 'ls-files -v').split('\0').filter(entry => /^[a-zS] /.test(entry));
+}
+
+/**
+ * Stage `rel` for a commit; returns the named skip-worktree files on disk it left out. GST-2118: git add refuses a named
+ * skip-worktree file that is on disk; it is left to the skipped-path check, so the other paths still commit. #7984: a
+ * tracked path stages with `add -u`, because `add -A` refuses a deletion whose only match left is an ignored path;
+ * visible untracked files stage with `add -A`; a path already staged as deleted is staged. Any other path keeps git's own
+ * refusal (missing, or only an ignored untracked file). `indexCopy` (#7752) stages into the index copy `env` names, with
+ * no index-lock retry, so a dry run sees the rename pairs the real staging makes.
+ */
+function stagePaths(root: string, rel: string[], before: string[], flagged: string[], env?: NodeJS.ProcessEnv, indexCopy = false): Set<string> {
   const skipWorktree = new Set(flagged.filter(entry => /^[sS] /.test(entry)).map(entry => entry.slice(2)));
-  // GST-2118: git add refuses a named skip-worktree file that is on disk; it is left to the skipped-path check, so the other paths still commit.
   const sparse = new Set([...skipWorktree].filter(p => rel.includes(p) && existsSync(join(root, p))));
   const live = rel.filter(p => !sparse.has(p));
-  // #7984: a tracked path stages with `add -u`, because `add -A` refuses a deletion whose only match left is an ignored
-  // path; visible untracked files stage with `add -A`; a path already staged as deleted is staged. Any other path keeps
-  // git's own refusal (missing, or only an ignored untracked file).
-  const listed = (args: string[]) => live.length ? git(root, [...args, '-z', '--', ...literalPathspecs(live)]).stdout.split('\0').filter(Boolean) : [];
+  const listed = (args: string[]) => live.length ? git(root, [...args, '-z', '--', ...literalPathspecs(live)], { env }).stdout.split('\0').filter(Boolean) : [];
   const tracked = before.map(line => line.slice(line.indexOf('\t') + 1)).filter(p => !skipWorktree.has(p));
   const untracked = listed(['ls-files', '--others', '--exclude-standard']);
   const deleted = listed(['diff', '--cached', '--no-renames', '--name-only', '--diff-filter=D']);
   const matching = (paths: string[]) => live.filter(spec => paths.some(p => covers(spec, p)));
   const matched = new Set(matching([...tracked, ...untracked, ...deleted]));
   const unmatched = live.filter(spec => !matched.has(spec));
+  for (const [mode, specs] of [['-u', matching(tracked)], ['-A', matching(untracked)], ['-A', unmatched]] as const) {
+    if (!specs.length) continue;
+    const args = ['add', mode, '--', ...literalPathspecs(specs)];
+    const add = indexCopy ? git(root, args, { env }) : withIndexRetry(root, args, 'git add', env);
+    if (add.code !== 0) throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
+  }
+  return sparse;
+}
+
+/**
+ * Stage and commit exactly `rel` (the caller holds the commit lock), after admitPaths. A commit git refuses leaves the
+ * index as it found it. `skipped` lists the named paths git left out (GST-2116); the rest are still committed.
+ */
+function commitPaths(root: string, rel: string[], message: string, scope: CommitScope): { sha: string | null; skipped: SkippedPath[] } {
+  admitPaths(root, rel, scope.roots, scope.bases);
+  const dirtyBefore = directoryStatus(root, rel);
+  const before = indexEntries(root, rel);
+  const flagged = flaggedEntries(root, rel);
+  if (scope.untrack) return { sha: untrackPaths(root, rel, message, scope, before, flagged), skipped: [] };
   let landed: { committed: boolean; paths: string[]; listed: string[] };
   try {
-    for (const [mode, specs] of [['-u', matching(tracked)], ['-A', matching(untracked)], ['-A', unmatched]] as const) {
-      if (!specs.length) continue;
-      const add = withIndexRetry(root, ['add', mode, '--', ...literalPathspecs(specs)], 'git add');
-      if (add.code !== 0) throw opError('commit_paths_invalid', 'git add refused the given paths.', add.stderr.trim().slice(0, 300) || 'Check the paths exist or are tracked.');
-    }
+    const sparse = stagePaths(root, rel, before, flagged);
     const paths = withRenamePartners(root, rel);
     const partners = paths.filter(p => !insideSourceRoots(p, scope.roots));
     if (partners.length) throw outsideRootError(root, scope.roots, partners, 'A staged rename would commit');
@@ -740,17 +760,45 @@ export function untrackAdmitted(root: string, rel: string[], managed: ManagedFil
   return files;
 }
 
+/** The source roots a dry run checks paths against; a managed canonical worktree refuses --allow-outside-source-root as its real run does. */
+function previewRoots(root: string, allowOutsideSourceRoot?: boolean): { managed: ManagedFilesystemRoot | null; roots: string[] } {
+  const managed = managedFilesystemRootFor(root);
+  if (managed && allowOutsideSourceRoot) {
+    throw opError('commit_paths_invalid', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}: commit-push there only commits the paths you name.`,
+      `Run gbrain git commit-push with only -m and the page paths after --; gbrain sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
+  }
+  return { managed, roots: allowOutsideSourceRoot ? [''] : configuredSourceRoots(root) };
+}
+
+/**
+ * #7752: `--dry-run` of a commit runs the real run's path checks in its order: the source roots, `--base` and files
+ * another writer staged (admitPaths), the real run's staging (stagePaths) and the source roots of a staged rename's other
+ * side. Staging goes into a temporary copy of the index, so the preview takes no lock and leaves the real index and the
+ * worktree as they were (git may add loose objects for the staged files); each refusal carries the real run's code and text.
+ */
+export function previewPaths(root: string, rel: string[], opts: { allowOutsideSourceRoot?: boolean; bases?: Map<string, string>; cwd?: string } = {}): void {
+  const { roots } = previewRoots(root, opts.allowOutsideSourceRoot);
+  admitPaths(root, rel, roots, scopeBases(root, { repo: root, bases: opts.bases, cwd: opts.cwd }, rel));
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-preview-'));
+  try {
+    const index = join(dir, 'index');
+    const live = absGitPath(root, 'index');
+    if (existsSync(live)) copyFileSync(live, index);
+    const env = { GIT_INDEX_FILE: index };
+    stagePaths(root, rel, indexEntries(root, rel), flaggedEntries(root, rel), env, true);
+    const partners = withRenamePartners(root, rel, env).filter(p => !insideSourceRoots(p, roots));
+    if (partners.length) throw outsideRootError(root, roots, partners, 'A staged rename would commit');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /**
  * `--dry-run --untrack`: the real run's path checks (source roots, the files HEAD holds, and in a managed canonical
  * worktree the storage.db_only admission) with no lock taken and nothing written; each refusal is the real run's.
  */
 export function previewUntrack(root: string, rel: string[], opts: { allowOutsideSourceRoot?: boolean } = {}): string[] {
-  const managed = managedFilesystemRootFor(root);
-  if (managed && opts.allowOutsideSourceRoot) {
-    throw opError('commit_paths_invalid', `${root} is the managed canonical worktree${managed.sourceId ? ` of source ${managed.sourceId}` : ''}: commit-push there only commits the paths you name.`,
-      `Run gbrain git commit-push with only -m and the page paths after --; gbrain sources refresh${managed.sourceId ? ` ${managed.sourceId}` : ''} brings remote commits in.`);
-  }
-  const roots = opts.allowOutsideSourceRoot ? [''] : configuredSourceRoots(root);
+  const { managed, roots } = previewRoots(root, opts.allowOutsideSourceRoot);
   const outside = rel.filter(p => !insideSourceRoots(p, roots));
   if (outside.length) throw outsideRootError(root, roots, outside, 'Refusing to commit');
   return managed ? untrackAdmitted(root, rel, managed) : untrackTargets(root, rel);
@@ -870,7 +918,7 @@ function dirtyPaths(root: string, paths: string[]): Set<string> {
 }
 
 /** Drop ledger entries whose file no longer differs from HEAD (the caller holds the commit lock). New lines appended meanwhile go to a fresh ledger file. */
-function settlePending(root: string): void {
+export function settlePending(root: string): void {
   try {
     const file = absGitPath(root, PENDING_NAME);
     const settle = `${file}.settle`;
