@@ -3196,6 +3196,16 @@ Reasons: `not_applied`, `still_behind`, `schema_unreadable`, `wedged`, `schema_b
 |---|---|---|---|---|---|---|
 | A configured model is not allowed under models strict mode. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### moved_pages_mass_fold_refused
+
+<a id="moved_pages_mass_fold_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair moved-pages refused to fold moved pages amounting to more than half of a source's file-backed pages; nothing was changed. | The sync mass-delete valve (#2828) applied to moved pages (GST-2584): that many moved pages at once almost always means a re-import under other paths or the wrong checkout, not a backlog. | Check the source and its checkout first. If folding these pages is genuinely intended, ask the user, then rerun the same apply command with GBRAIN_ALLOW_MASS_RECONCILE=1. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#moved-pages](../../docs/guides/repair.md#moved-pages)
+
 ### movement_unknown
 
 <a id="movement_unknown"></a>

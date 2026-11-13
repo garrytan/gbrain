@@ -1,4 +1,4 @@
-import { resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
+import { inferTypeFromPack, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
 
 /**
  * Aligns a canonical file's parse with what its import over `stored` keeps (#1035, #5521): a file without an explicit
@@ -9,15 +9,15 @@ import { resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
  * content a caller writes with no file behind it (import-file.ts without `sourcePath`: `put_page`) passes `retypeStamp` false and is
  * read as written, so an explicit type there still wins.
  */
-export function alignWithStored(parsed: ParsedMarkdown, stored: { type: string; frontmatter?: Record<string, unknown> | null }, inferred: boolean, retypeStamp = true): void {
-  if (!(retypeStamp && keepRetypeStamp(parsed, stored)) && (inferred || !parsed.typeExplicit)) parsed.type = stored.type as ParsedMarkdown['type'];
+export function alignWithStored(parsed: ParsedMarkdown, stored: { type: string; frontmatter?: Record<string, unknown> | null }, inferred: boolean, retypeStamp = true, write = false): void {
+  if (!(retypeStamp && (keepRetypeStamp(parsed, stored) || keepPackRenamedType(parsed, stored, write))) && (inferred || !parsed.typeExplicit)) parsed.type = stored.type as ParsedMarkdown['type'];
   resolveParsedSubtype(parsed, stored);
   keepGrandfatherStamp(parsed.frontmatter, stored);
 }
 
 /** Sync's reading of a file over the stored page (sync-prepare.ts): the retype stamp, the subtype and the grandfather stamp kept as `alignWithStored` keeps them; an explicit file type is otherwise read as written. */
 export function keepStoredStamps(parsed: ParsedMarkdown, stored?: { type: string; frontmatter?: Record<string, unknown> | null } | null): void {
-  keepRetypeStamp(parsed, stored);
+  if (!keepRetypeStamp(parsed, stored)) keepPackRenamedType(parsed, stored, true);
   resolveParsedSubtype(parsed, stored);
   keepGrandfatherStamp(parsed.frontmatter, stored);
 }
@@ -35,6 +35,24 @@ export function keepRetypeStamp(parsed: ParsedMarkdown, stored?: { type: string;
   if (!stored || typeof legacy !== 'string' || Object.hasOwn(parsed.frontmatter, 'legacy_type') || parsed.type !== legacy) return false;
   parsed.type = stored.type as ParsedMarkdown['type'];
   parsed.frontmatter.legacy_type = legacy;
+  return true;
+}
+
+/**
+ * GST-2584: a page type gbrain itself named and later renamed. Before #6454 an import kept the reserved `type` key in the
+ * stored frontmatter, and gbrain wrote that type into the file, with the name gbrain-base 1.0.0 infers from the path
+ * (`writing/` is `writing`). A later pack infers another type for the same path and the column took it, so the file and the
+ * stored copy still say the 1.0.0 name. A file whose explicit type is that name, equal to the stored copy and to what
+ * gbrain-base 1.0.0 infers for its path, while the column says otherwise, is the page as renamed: it keeps the stored type.
+ * Any other explicit type (a person's) is read as written. A write (`write`) records the rename as a retype stamp
+ * (`legacy_type`: the 1.0.0 name), because the stored copy does not survive the import, so every later import keeps the type
+ * through `keepRetypeStamp`; a comparison only reads it. Returns whether the stored type was kept.
+ */
+export function keepPackRenamedType(parsed: ParsedMarkdown, stored?: { type: string; frontmatter?: Record<string, unknown> | null } | null, write = false): boolean {
+  const copy = stored?.frontmatter?.type;
+  if (!stored || parsed.typeExplicit !== true || typeof copy !== 'string' || parsed.type !== copy || parsed.type === stored.type || inferTypeFromPack(parsed.slug, { page_types: [] }) !== parsed.type) return false;
+  parsed.type = stored.type as ParsedMarkdown['type'];
+  if (write) parsed.frontmatter.legacy_type = copy;
   return true;
 }
 
