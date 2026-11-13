@@ -667,7 +667,7 @@ function extractToolCalls(raw: string): {
     if (firstError !== null) {
       process.stderr.write(`[claude-cli] <use_tools> block failed to parse — tool call discarded: ${firstError}\n`);
     }
-    return { toolCalls: [], beforeText: raw.trim(), afterText: '', nativeMarkup: NATIVE_TOOL_MARKUP.test(raw) };
+    return { toolCalls: [], beforeText: raw.trim(), afterText: '', nativeMarkup: NATIVE_TOOL_MARKUP.test(raw.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '')) };
   }
 
   const beforeText = raw.slice(0, openIdx).trim();

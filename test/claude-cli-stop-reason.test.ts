@@ -105,4 +105,9 @@ describe('claude-cli native tool-call markup without a <use_tools> block (#9085)
     const out = await generate('No pattern meets the evidence bar, so I am not calling put_page or writing a <use_tools> block.');
     expect(out.finishReason).toBe('stop');
   });
+
+  test('markup quoted in a code span or fence is an answer, not a call', async () => {
+    const out = await generate('The model wrote `<function_calls>` here. An example:\n```xml\n<invoke name="search">\n</invoke>\n```\nNothing was called.');
+    expect(out.finishReason).toBe('stop');
+  });
 });
