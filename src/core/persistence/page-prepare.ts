@@ -150,6 +150,15 @@ function canonical(page: Pick<Page, 'type' | 'title' | 'compiled_truth' | 'timel
   return { type: page.type, title: page.title.trim(), compiled_truth: page.compiled_truth, timeline: page.timeline ?? '',
     frontmatter: comparableFrontmatter(page.frontmatter), tags: [...new Set(tags)].sort() };
 }
+/** GST-2603: what two canonical readings differ in, by frontmatter key, then title, type, tags, body and timeline; empty when they are equal. */
+function canonicalDifference(a: ReturnType<typeof canonical>, b: ReturnType<typeof canonical>): string[] {
+  if (digest(a) === digest(b)) return [];
+  const has = (frontmatter: Record<string, unknown>, key: string) => Object.hasOwn(frontmatter, key) && frontmatter[key] !== undefined;
+  const keys = [...new Set([...Object.keys(a.frontmatter), ...Object.keys(b.frontmatter)])].filter(key => has(a.frontmatter, key) !== has(b.frontmatter, key)
+    || has(a.frontmatter, key) && digest(a.frontmatter[key]) !== digest(b.frontmatter[key])).sort();
+  const fields = (['title', 'type', 'tags', 'compiled_truth', 'timeline'] as const).filter(field => digest(a[field]) !== digest(b[field]));
+  return [...keys, ...fields.map(field => field === 'compiled_truth' ? 'body' : field)];
+}
 interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
 /**
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
@@ -239,20 +248,32 @@ export function readCanonicalAsImported(bytes: string, sourcePath: string): { co
  */
 export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
   sourcePath: string | (() => Promise<string>), activePack?: ParseOpts['activePack']): Promise<boolean> {
+  return (await fileSnapshotDifference(engine, slug, bytes, snapshot, sourcePath, activePack)).length === 0;
+}
+/**
+ * GST-2603: what file bytes differ from the snapshot's page in, compared as fileMatchesSnapshot compares them (the stamps
+ * only the database holds are kept on the file side, align-stored.ts), so a stamp is never named: frontmatter keys, then
+ * title, type, tags, body and timeline. Empty when the file holds the page; otherwise the reading closer to the page.
+ */
+export async function fileSnapshotDifference(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
+  sourcePath: string | (() => Promise<string>), activePack?: ParseOpts['activePack']): Promise<string[]> {
   snapshot = (await materializedSnapshot(engine, snapshot))!;
-  const expected = digest(canonical({ ...snapshot.page, frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}) }, snapshot.tags));
-  const matches = async (content: string, inferred: boolean) => {
+  const expected = canonical({ ...snapshot.page, frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}) }, snapshot.tags);
+  const difference = async (content: string, inferred: boolean) => {
     const parsed = parseMarkdown(content, slug, { activePack });
     const type = importedFileType(parsed, snapshot.page, inferred);
     // Withdrawal overlays intentionally precede physical mirroring. The ledger
     // is applied by the import preparation and cannot be undone by this check.
     const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
       parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals, { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges }) }, parsed.tags);
-    return digest(actual) === expected;
+    return canonicalDifference(actual, expected);
   };
-  if (await matches(bytes, false)) return true;
+  const raw = await difference(bytes, false);
+  if (!raw.length) return raw;
   const reading = readCanonicalAsImported(bytes, typeof sourcePath === 'string' ? sourcePath : await sourcePath());
-  return reading.inferred && await matches(reading.content, true);
+  if (!reading.inferred) return raw;
+  const inferred = await difference(reading.content, true);
+  return inferred.length < raw.length ? inferred : raw;
 }
 /**
  * #8109: the file a write publishes over a canonical file that differs from the database only in frontmatter, or null
@@ -294,17 +315,36 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
  * file is never re-rendered under a label edit.
  */
 export function labelEditFile(slug: string, before: Buffer | FileBytes, content: string, edit: LabelEdit, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): string {
+  const fit = labelEditFit(slug, before, content, edit, snapshot, activePack);
+  if (typeof fit === 'string') return fit;
+  const keys = fit.keys.join(', ');
+  throw opError('invalid_params', 'The label edit cannot be made to the page\'s file line by line.', fit.keys.length
+    ? `Nothing was written for ${slug}: with only its label lines edited, its file still differs from the page in ${keys}, so the label-only write refuses rather than re-render the file. Make ${keys} in the file match the page (or make the label change in the file by hand), commit it, and run gbrain sync for the source.`
+    : `Nothing was written for ${slug}: its file cannot take the change without being re-rendered (a label key with a block or multi-line value or a duplicate key, no frontmatter block, or a file too large to edit in memory), so the label-only write refuses. Make the change in the file by hand, commit it, and run gbrain sync for the source.`,
+    { detail: LABEL_EDIT_REFUSED });
+}
+/** GST-2603: the detail of labelEditFile's refusal; repairs count it as the page declining the write (repair/core.ts). */
+export const LABEL_EDIT_REFUSED = 'label_edit_refused';
+/**
+ * labelEditFile without the refusal: the file to publish, or the fields that keep the edited file from reading as `content`
+ * (a frontmatter key, title, type, tags, body or timeline; never a stamp only the database holds, align-stored.ts), empty
+ * when its label lines cannot be edited as lines at all.
+ */
+export function labelEditFit(slug: string, before: Buffer | FileBytes, content: string, edit: LabelEdit, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): string | { keys: string[] } {
   const read = (text: string, file: boolean) => {
     const parsed = parseMarkdown(text, slug, { activePack });
-    return digest(canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type: file ? importedFileType(parsed, snapshot.page, false) : parsed.type }, parsed.tags));
+    // The type first: aligning a file's parse with the stored page also adds the stamps only the database holds to its frontmatter.
+    const type = file ? importedFileType(parsed, snapshot.page, false) : parsed.type;
+    return canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type }, parsed.tags);
   };
   const spliced = before instanceof Buffer ? spliceLabelLines(before.toString('utf8'), edit) : null;
   const contentHead = /^\uFEFF?---\r?\n[\s\S]*?\r?\n---[ \t]*\r?\n/.exec(content);
   const expected = read(content, false);
-  const fits = spliced ? [spliced.text, ...(contentHead ? [spliced.head + content.slice(contentHead[0].length)] : [])].find(text => read(text, true) === expected) : undefined;
-  if (fits !== undefined) return fits;
-  throw opError('invalid_params', 'The label edit cannot be made to the page\'s file line by line.',
-    `Nothing was written for ${slug}: its file cannot take the change without being re-rendered (a label key with a block or multi-line value or a duplicate key, no frontmatter block, a body that no longer reads as the page once its facts row is changed, or a file too large to edit in memory), so the label-only write refuses. Make the change in the file by hand, commit it, and run gbrain sync for the source.`);
+  const candidates = spliced ? [spliced.text, ...(contentHead ? [spliced.head + content.slice(contentHead[0].length)] : [])] : [];
+  const readings = candidates.map(text => ({ text, keys: canonicalDifference(read(text, true), expected) }));
+  const fits = readings.find(reading => !reading.keys.length);
+  if (fits) return fits.text;
+  return { keys: readings.reduce<string[] | null>((best, reading) => best && best.length <= reading.keys.length ? best : reading.keys, null) ?? [] };
 }
 /**
  * GST-1601: whether a local edit changes what an adoption must never take without a person: the title, the type, or a
