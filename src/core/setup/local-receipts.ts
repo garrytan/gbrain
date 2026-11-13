@@ -91,3 +91,20 @@ export function claudeCodeSpawnsServe(cwd: string, home?: string): boolean {
   return localSetupRecords(home).some((r) => r.harness === 'claude-code' && r.status === 'installed'
     && (r.scope !== 'project' || r.projectDir === cwd));
 }
+
+/** Receipt-owned hooks for exactly this settings file and event, including a
+ * crash's pending write. Marker loss does not change the hook's hash. Edited
+ * hooks and receipts for other installs are not ownership evidence. */
+export function setupOwnedHookHashes(harness: string, settingsPath: string, event: string): Set<string> {
+  const hashes = new Set<string>();
+  for (const r of localSetupRecords().filter((x) => x.harness === harness)) {
+    try {
+      const hooks = (JSON.parse(readFileSync(r.path, 'utf8')) as { hooks?: {
+        settings_path?: string; owned?: Record<string, unknown>; pending?: Record<string, unknown>;
+      } }).hooks;
+      if (hooks?.settings_path !== settingsPath) continue;
+      for (const h of [hooks.owned?.[event], hooks.pending?.[event]]) if (typeof h === 'string') hashes.add(h);
+    } catch { /* unreadable or concurrently replaced: no ownership proof */ }
+  }
+  return hashes;
+}
