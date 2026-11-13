@@ -330,7 +330,9 @@ Run `gbrain setup cursor --skill-loading resolve` in the project:
 `gbrain skills pin add|remove` rewrites the rule from any directory, and
 Cursor applies it from its next request. `gbrain setup cursor --skill-loading
 off` in the project removes the rule, its exclude line and the record; pins
-stay in config.json.
+stay in config.json. The pins sit beside the skills index that
+`--skill-loading spring` writes into the brain-first rule: resolve leaves that
+index alone, and spring leaves the pins alone.
 
 ## Pinned skills
 

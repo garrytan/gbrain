@@ -326,9 +326,10 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (owners.some((o) => !/^[\x21-\x7e]{1,128}$/.test(o))) return '--owner-sender needs a sender id';
   const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}) };
   const chosenLoading = flagLoading ?? (envLoading || undefined);
-  const skillResolver = !resolverHarness || chosenLoading === undefined ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
-  // resolve replaces the spring index: the skills block is decided as off, explicitly, so GBRAIN_SKILL_LOADING=resolve is never read as a block mode.
-  const skillLoading = skillResolver === 'on' || skillResolver === 'shadow' ? 'off' : flagLoading;
+  const cursor = positionals[0] === 'cursor';
+  const skillResolver = !resolverHarness || chosenLoading === undefined || (cursor && chosenLoading === 'spring') ? undefined : chosenLoading === 'resolve' ? 'on' as const : chosenLoading === 'shadow' ? 'shadow' as const : 'off' as const;
+  // resolve replaces the spring index (on Cursor the pins sit beside it, so neither run removes the other): the skills block is decided as off, explicitly, so GBRAIN_SKILL_LOADING=resolve is never read as a block mode.
+  const skillLoading = skillResolver === 'on' || skillResolver === 'shadow' ? (cursor ? undefined : 'off') : flagLoading;
   return {
     harness: positionals[0],
     dryRun: args.includes('--dry-run'),
@@ -896,6 +897,7 @@ function removeBrainFirstFor(harness: BrainFirstHarness, where: { scope?: Wiring
  * It sits beside the brain-first block, so declining that block (--no-instructions) removes the index too.
  */
 function skillsFor(harness: BrainFirstHarness, flags: SetupFlags, launcher: string, where: { scope?: WiringScope; projectDir?: string }, brainFirst: BrainFirstOutcome | null): SkillsBlockOutcome | null {
+  if (harness === 'cursor' && flags.skillResolver === 'on') return null;
   const target = brainFirstTarget(harness, { ...where, workspace: flags.workspace });
   if ('error' in target) return null;
   return installerSkillsBlock({ target, launcher, writer: `gbrain setup ${harness}`, brainFirstDeclined: brainFirst?.decision.value === 'declined', skillLoading: flags.skillLoading, audience: isThinClient(loadConfig()) ? 'downstream' : 'owner', dryRun: flags.dryRun });

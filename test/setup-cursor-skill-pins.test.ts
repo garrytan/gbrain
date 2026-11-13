@@ -153,6 +153,16 @@ describe('gbrain setup cursor --skill-loading resolve (pinned skills only)', () 
     expect(r.doc.skill_pins.notes.join('\n')).toContain('not in a git repository');
   });
 
+  test('pin add for a recorded project that no longer exists saves the pin and recreates nothing', async () => {
+    const b = box();
+    const catalog = (await setup(b, ['--skill-loading', 'resolve'])).doc.skill_pins.catalog;
+    rmSync(b.repo, { recursive: true, force: true });
+    const r = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', catalog, '--json'], { env: b.env, cwd: b.home, timeoutMs: 110_000 });
+    expect(JSON.parse(r.stdout).cursor_rule.error).toMatchObject({ code: 'skill_resolver_setup_incomplete' });
+    expect(existsSync(b.project)).toBe(false);
+    expect(JSON.parse(readFileSync(join(gbrainHome(b), 'config.json'), 'utf8')).skills.resolver.pins[catalog]).toEqual([{ name: 'deploy-service' }]);
+  });
+
   test('a rule file gbrain did not write is left as it is and setup exits non-zero', async () => {
     const b = box();
     mkdirSync(join(b.project, '.cursor', 'rules'), { recursive: true });
@@ -182,6 +192,26 @@ describe('gbrain setup cursor --skill-loading resolve (pinned skills only)', () 
     const cfg = JSON.parse(readFileSync(join(gbrainHome(b), 'config.json'), 'utf8'));
     expect(cfg.skills.resolver.pins[catalog]).toEqual([{ name: 'deploy-service' }]);
     expect((await setup(b, ['--skill-loading', 'off'])).doc.skill_pins).toBeUndefined();
+  });
+
+  test('resolve leaves the spring skills index in the brain-first rule, and spring leaves the pins rule', async () => {
+    const b = box();
+    const launcher = join(b.root, 'gbrain');
+    writeFileSync(launcher, `#!/bin/sh\nexec '${process.execPath}' --no-env-file '${join(import.meta.dir, '..', 'src', 'cli.ts')}' "$@"\n`, { mode: 0o755 });
+    const spring = await setup(b, ['--skill-loading', 'spring', '--gbrain-bin', launcher]);
+    expect(spring.exitCode).toBe(0);
+    expect(spring.doc.skills).toMatchObject({ action: 'write', decision: { value: 'spring' } });
+    const index = readFileSync(join(b.project, BRAIN_FIRST), 'utf8');
+    const r = await setup(b, ['--skill-loading', 'resolve', '--gbrain-bin', launcher]);
+    expect(r.exitCode).toBe(0);
+    expect(r.doc.skills?.action).not.toBe('remove');
+    expect(readFileSync(join(b.project, BRAIN_FIRST), 'utf8')).toBe(index);
+    await cli(b, ['skills', 'pin', 'add', 'deploy-service', '--catalog', r.doc.skill_pins.catalog]);
+    const rule = readFileSync(rulePath(b), 'utf8');
+    const again = await setup(b, ['--skill-loading', 'spring', '--gbrain-bin', launcher]);
+    expect(again.exitCode).toBe(0);
+    expect(readFileSync(rulePath(b), 'utf8')).toBe(rule);
+    expect(readFileSync(join(b.project, BRAIN_FIRST), 'utf8')).toBe(index);
   });
 
   test('a plain gbrain setup cursor writes no pins, and a project with no skill directory refuses resolve', async () => {

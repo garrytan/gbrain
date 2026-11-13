@@ -193,7 +193,9 @@ export function refreshCursorPins(home: string, catalog: string): CursorPinsResu
   const state = readCursorPinsState(home);
   const project = Object.keys(state.projects).find((p) => state.projects[p]!.catalog === catalog);
   if (!project) return null;
-  return place(home, { mode: 'pinned', project, catalog, skills: 0, pins: 0, steps: [], notes: [] }, state.projects[project]!.skill_dirs, false);
+  const out: CursorPinsResult = { mode: 'pinned', project, catalog, skills: 0, pins: 0, steps: [], notes: [] };
+  if (!existsSync(project)) return { ...out, error: { code: 'skill_resolver_setup_incomplete', message: project + ' no longer exists, so no rule was written there; the pins are saved in config.json. Recreate the project and run gbrain setup cursor --skill-loading resolve in it.' } };
+  return place(home, out, state.projects[project]!.skill_dirs, false);
 }
 
 /** Remove the project's rule (only gbrain's), its exclude line and its record; pins stay in config.json. Null when none of them exists. */
