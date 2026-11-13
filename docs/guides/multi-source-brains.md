@@ -214,11 +214,21 @@ member's token. This is the supported production setup today: one
 never learns who is asking from the request itself.
 
 ```bash
-gbrain auth create bot-alice-example
+gbrain auth create bot-alice-example --member alice-example
 gbrain auth rescope --token bot-alice-example --sources source-a
 # OAuth client instead of a bearer token:
-gbrain auth rescope --client <client_id> --sources source-a
+gbrain auth rescope --client <client_id> --sources source-a --member alice-example
 ```
+
+Once the brain has two or more enabled members (or config `access.serves` is
+`several`), a remote read through a token, OAuth client or stdio server bound to
+no member is refused with
+[`requester_scope_required`](write-refusals.md#requester_scope_required), and
+`gbrain auth create` refuses an unbound token. A connection that existed when the
+brain started serving several people reads for 14 more days, with a notice on
+every answer (`_meta.access.requester_scope`) naming the date and the command that
+binds it. Bind every member's token with `--member`. A brain for one person sees
+no change, however many sources it holds.
 
 The token's grant is the security boundary: the server scopes every call to
 the grant of the token that made it, whatever the call's arguments say.

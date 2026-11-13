@@ -1065,6 +1065,28 @@ live in the database, so they are the same on a repo-less brain.
 | <a id="on_behalf_of_not_permitted"></a>`on_behalf_of_not_permitted` | The credential's `may_act_for` (for a stdio server, config `mcp.stdio_may_act_for`) does not list every audience entry. The message names the credential and the entries it may not act for. Nothing was read. | The brain operator decides: `fix` carries `gbrain auth rescope --token <name> --may-act-for <list>` (or `--client <id>`, or `gbrain config set mcp.stdio_may_act_for <list>`) with the full list to approve. The agent never runs it; until then, call without the audience. |
 | <a id="on_behalf_of_in_arguments"></a>`on_behalf_of_in_arguments` | A tool call carried `on_behalf_of` in its arguments (top level or an arguments-level `_meta`), where conversation text could set it. Nothing was read. | Remove it from the arguments. Harness code sends the audience as the header or request-level `_meta.on_behalf_of`; a stdio client that cannot set request-level `_meta` uses a credential bound to one member or config `mcp.stdio_member`. |
 
+## Unscoped reads on a brain that serves several people
+
+A brain serves several people when two or more members are enabled, or when config `access.serves` is `several`
+(`gbrain access serves` says which and why; an explicit `one` wins over the member count). On such a brain every
+remote read must say whom it reads for: a credential bound to a member (`--member`, the owner included), a shared
+agent naming its audience per call (`--may-act-for` plus `X-Gbrain-On-Behalf-Of`), or an attested person. A brain
+for one person, with any number of sources, sees no change. Writes are not affected. Everything is database state, so a
+repo-less or keyless brain behaves the same.
+
+A connection that existed when the brain started serving several people (config `access.serves_since`, or the
+upgrade that added it, whichever is later) keeps reading for 14 days; each answer then carries
+`_meta.access.requester_scope` with `state: "grace"`, `refuses_at`, the connection and `fix`. A local stdio
+server and a credential with no recorded creation time count as existing. Hosted brains set
+`access.requester_scope_enforce false` until their control plane binds each connection to a member: the notice then
+reads `state: "not_enforced"` and nothing is refused.
+
+| Code | What happened | What to do |
+|---|---|---|
+| <a id="requester_scope_required"></a>`requester_scope_required` | A remote read came from a connection bound to nobody. `reason` says which: `grace_ended` (the connection is older than the brain's several-people date and its 14 days ran out), `created_after` (it was created after that date, so it had to be scoped at creation) or `since_unknown` (the date could not be read; fail closed). The message names the connection and the operation. Nothing was read; the code is also in `structuredContent.error.code` and the audit trail (`access-audience`). Read-only identity and health calls (`whoami`, `get_brain_identity`, `get_status_snapshot`, `search_modes`, `get_health`, and a non-admin credential's own `get_job` / `wait_job`) still answer. | The brain operator runs `fix` on the brain host: `gbrain auth rescope --token <name> --member <id>` (or `--client <id>`; preview with `gbrain access check --token <name>`), or for a stdio server, when only one person uses that harness, `gbrain setup claude-code|codex --stdio-member <id>`, which binds that one harness entry on that machine, on PGLite or Postgres (setup refuses it where OpenClaw or Hermes is installed); for a harness several people talk to, give each person a key over HTTP instead (`gbrain serve --http` with `gbrain auth create <name> --member <id>` keys). `gbrain doctor` fails `shared_stdio_binding` when `mcp.stdio_member` is set on a host where OpenClaw or Hermes is installed and the brain serves several people. A shared agent instead lists whom it may act for (`--may-act-for`) and names the person on each call. Last resort, for a team that shares everything: `gbrain auth rescope --token <name> --reads-unscoped --yes` lets that one credential read every page no rule restricts for whoever is asking (`--reads-unscoped none` takes it back). |
+| <a id="requester_scope_unknown"></a>`requester_scope_unknown` | A remote read came from a connection bound to nobody, and gbrain could not tell whether the brain serves one person or several: its config read failed (a statement timeout, a lock wait or a dropped pooled connection) and so did one re-read of the serves keys. Nothing was read. The message says the brain's settings could not be read and that this is not an access decision; it does not claim the brain serves several people, because that is what could not be read. This applies on a brain pinned `access.serves one` too, since the pin is one of the settings that failed to read. A connection bound to a member is never refused this way. | Retry the same call after `retry_after_ms` (`fix.next` is `wait`). If it keeps failing, the brain host's operator checks the database with `gbrain doctor --json`; `fix.verify` (`gbrain access serves --json`, read-only) confirms the settings read again. |
+| <a id="credential_scope_required"></a>`credential_scope_required` | `gbrain auth create` or `gbrain auth register-client` was asked for a credential bound to no member on a brain that serves several people. Nothing was created. | Pass `--member <id>` (`gbrain access member list`), or `--may-act-for <members>` for a shared agent. `--reads-unscoped --yes` creates one that reads unscoped on purpose. |
+
 ## Attested-actor refusals
 
 A trusted system (QM) names the person a call serves in the `x-qm-actor` header, as an opaque canonical id that the
