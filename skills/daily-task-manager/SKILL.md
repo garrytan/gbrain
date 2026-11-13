@@ -57,7 +57,7 @@ Map user intent deterministically before touching state:
 
 ## Phases
 
-1. **Load.** `get_page("ops/tasks")`. **First run:** if the page does not exist, create it from the Output Format template, then proceed.
+1. **Load.** `get_page("ops/tasks")`. **First run:** if the page does not exist, look for `ops/tasks.md` (where earlier versions of this skill saved tasks): if it exists, create `ops/tasks` with its tasks and leave the old page in place; otherwise create it from the Output Format template. Then proceed.
 2. **Validate.** Determine the action via Action Routing. If required fields are missing (see per-action rules), ask ONE concise clarification before mutating state. Never fabricate priorities, due dates, or defer reasons.
 3. **Identify the target task** (complete/defer/remove): match by `id` when given; otherwise fuzzy-match description against ACTIVE tasks only. Zero matches → return `not_found`, do not mutate. Multiple matches → list candidates with IDs, return `ambiguous`, do not mutate.
 4. **Execute:**
@@ -70,7 +70,7 @@ Map user intent deterministically before touching state:
 
 ## Edge Cases
 
-- **First run:** page missing → create from template before acting; `status: ok`, note "initialized".
+- **First run:** page missing → carry the tasks over from `ops/tasks.md` if that page exists and leave the old page in place, else create from template, before acting; `status: ok`, note "initialized".
 - **Malformed page:** if `ops/tasks` exists but doesn't match the schema, do NOT rewrite it wholesale. Append/edit within it minimally, preserve unknown content verbatim, and flag the malformation in the reply.
 - **Retry/duplicate add:** if an identical description already exists in active tasks, do not add a duplicate — report the existing task ID instead.
 - **Dates:** ISO 8601 (`YYYY-MM-DD`) everywhere. Compute "today"/"next week" with code/clock, never guess.

@@ -5,6 +5,9 @@
  * skill's first-run rule could then start a second list at slug
  * `ops/tasks.md` that sync, `resolveTodayTasks()` and `gbrain get ops/tasks`
  * never read. Checked in the source skill and both generated copies.
+ * Brains where the old skill already saved tasks at `ops/tasks.md` keep them:
+ * the first-run rule carries that page's tasks over instead of starting an
+ * empty list, and leaves the old page in place.
  */
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
@@ -26,6 +29,11 @@ describe('#7932: daily-task-manager page-tool calls use the slug ops/tasks', () 
       expect(text).toContain('put_page("ops/tasks"');
       expect(text).toContain('page: "ops/tasks"');
       expect(text).not.toMatch(/always `ops\/tasks\.md` \(with extension\) in tool calls/);
+      for (const rule of text.split('\n').filter(l => l.includes('**First run:**'))) {
+        expect(rule).toContain('`ops/tasks.md`');
+        expect(rule).toContain('leave the old page in place');
+      }
+      expect(text.split('\n').filter(l => l.includes('**First run:**')).length).toBe(2);
     });
   }
 });
