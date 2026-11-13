@@ -121,7 +121,7 @@ test('Postgres: a reviewed relink waits for Serve, survives a released claim, an
       expect(text).toContain(claim);
       expect(text).not.toContain('synthetic source evidence');
       expect((await engine.getChunks(slug, { sourceId: 'default' })).every(chunk => !chunk.chunk_text.includes(claim))).toBe(true);
-      expect(await engine.executeRaw("SELECT kind FROM persistence_effects WHERE request_id=$1 AND kind='git'", [accepted!.id])).toEqual([]);
+      expect(await engine.executeRaw("SELECT kind FROM persistence_effects WHERE request_id=$1 AND kind IN ('git','embedding')", [accepted!.id])).toEqual([]);
       serve.kill('SIGTERM');
       await serve.exited;
       const replay = await exit(start(apply));

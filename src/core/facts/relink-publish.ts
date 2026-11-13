@@ -395,7 +395,8 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
   };
   if (!page) return { observedRevision, validate, apply };
   return { ...page, exclusiveSources: page.exclusiveSources,
-    ...(intent.explicit && links[0]?.value.visibility === 'private' ? { skipGitEffect: true } : {}), validate, apply };
+    // The private fence does not add provider input. Keep this local repair out of the effect queue.
+    ...(intent.explicit && links[0]?.value.visibility === 'private' ? { skipGitEffect: true, deferEmbedding: true } : {}), validate, apply };
 }
 
 export type RelinkGroupResult =

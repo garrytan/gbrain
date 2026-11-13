@@ -106,10 +106,10 @@ operator action without copying the evidence text. Apply keeps the same fact
 ID and returns the durable request ID. Applying the
 same plan again reads the existing receipt. If the fact or destination changes,
 review the evidence and preview again. An exact duplicate is refused in this
-mode. A private fact can be written to a non-Git local file without a Git
-effect. A Git checkout is refused. Keep a directory containing private facts
+mode. A private fact can be written to a non-Git local file without queuing Git
+or embedding effects. A Git checkout is refused. Keep a directory containing private facts
 out of Git when changing the source's storage later.
-The usual embedding effect for the destination page can run after publication.
+The usual embedding effect for the destination page can run after publishing a world-visible fact.
 
 ### Large brains: continue where you stopped
 
