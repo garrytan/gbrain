@@ -1254,6 +1254,9 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // exist only through migrations, so no index or function in either blob references covers_derived or kind.
   'access_rules.covers_derived',
   'access_members.kind',
+  // The labelled-only migration (GBRA-108 design 1). Same posture: access_members exists only through migrations, so no
+  // index or function in either blob references labelled_only.
+  'access_members.labelled_only',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',

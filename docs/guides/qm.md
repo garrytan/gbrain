@@ -4,7 +4,7 @@ QM, a trusted system that already knows who each person is, keeps per-person
 memory in a brain through two MCP tools: `memory_recall` reads what the person may
 read, and `memory_write` saves facts only they read back. Both run as the person QM
 names in the `x-qm-actor` header. The wire contract QM vendors is
-[`docs/contracts/qm-memory-provider/v1.json`](../contracts/qm-memory-provider/README.md); `v2.json` adds scope reads and writes, `v3.json` the personal tools for the person's own DM, and `v4.json` owner-approved proposals (`memory_propose`), which personal tools are scope reads, and each recalled fact's `own_page`.
+[`docs/contracts/qm-memory-provider/v1.json`](../contracts/qm-memory-provider/README.md); `v2.json` adds scope reads and writes, `v3.json` the personal tools for the person's own DM, `v4.json` owner-approved proposals (`memory_propose`), which personal tools are scope reads, and each recalled fact's `own_page`, and `v5.json` marks `context_pack` as a scope read.
 
 ## Set up on the brain host
 
@@ -65,10 +65,12 @@ person's restricted pages and their member page read as missing, a source outsid
 the grant is refused, and `__all__` or `all_sources` is refused (`invalid_params`).
 `volunteer_context` refuses `stats: true` there. An agent job submitted for the
 person reads the same way. List the ops a client needs with `--attest-ops`.
-`context_pack` is not a scope read yet: on a client that reads named sources as the
-scope it is refused (`invalid_params`) when it names `source_id`, `source_ids`,
-`all_sources` or `entity_refs`, so keep it off a client that serves shared turns.
-Contract v4 marks each personal tool `scope_read: true` or `false` to match.
+`context_pack` that names `source_id` reads that one source the same way: its entities,
+the core block, the counterparty brief and hot facts all come from that source. Each
+`entity_refs` entry must name the same `source_id`; `entity_refs` without `source_id`,
+an entry in another source, or `session_id` is refused (`invalid_params`) before
+anything is read. Contract v4 marks each personal tool `scope_read: true` or `false`;
+v5 adds `context_pack` to the marked tools.
 
 Set how each client reads named sources with `--attest-read`:
 

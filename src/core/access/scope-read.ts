@@ -17,9 +17,9 @@ export const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
   hidePrivate: true, applyRemoteReadPolicy: false, restricted: true, remotePolicy: { privacyRelaxed: false, restricted: true },
 };
 
-/** GST-1158 E1: the reads an attested call that names sources runs as the scope. context_pack stays out until it is confined to the named sources, so it is refused when it names sources on a scope credential. */
+/** GST-1158 E1: the reads an attested call that names sources runs as the scope. GST-2407: context_pack reads only the source it names (assertPackConfined). */
 export const SCOPE_READ_OPS: ReadonlySet<string> = new Set([
-  'memory_recall', 'get_page', 'entity', 'whois', 'get_backlinks', 'get_timeline', 'find_experts', 'volunteer_context', 'query',
+  'memory_recall', 'get_page', 'entity', 'whois', 'get_backlinks', 'get_timeline', 'find_experts', 'volunteer_context', 'query', 'context_pack',
 ]);
 
 export type ReadMode = 'scope' | 'person';
@@ -46,18 +46,40 @@ function namesSources(params: Record<string, unknown> | undefined): boolean {
  * sources, else null. A scope read that asks for every source (`__all__`, `all_sources`) is refused with invalid_params.
  */
 export function attestedReadMode(op: string, params: Record<string, unknown> | undefined, attestRead: ReadMode | null | undefined): ReadMode | null {
-  if (op === 'context_pack' && attestRead !== 'person' && (namesSources(params) || (Array.isArray(params?.entity_refs) && params.entity_refs.length > 0))) throw contextPackScopeRefused();
-  if (!SCOPE_READ_OPS.has(op) || !namesSources(params)) return null;
+  const refs = op === 'context_pack' && Array.isArray(params?.entity_refs) && params.entity_refs.length > 0;
+  if (!SCOPE_READ_OPS.has(op) || !(namesSources(params) || refs)) return null;
   if (attestRead === 'person') return 'person';
   const ids = params?.source_ids;
   if (params?.source_id === ALL_SOURCES || params?.all_sources === true || (Array.isArray(ids) && ids.includes(ALL_SOURCES))) throw scopeAllSourcesRefused(op);
+  if (op === 'context_pack') assertPackConfined(params!);
   return 'scope';
 }
 
-function contextPackScopeRefused(): OperationError {
-  return opError('invalid_params', 'context_pack: a call that names sources would read them as the person, and this credential reads named sources as their audience, so it is refused. Nothing was read.',
-    'Leave source_id, source_ids, all_sources and entity_refs out to read as the person, or call query, get_page or entity with source_id for the scope.',
-    { why: 'context_pack is not yet confined to the named sources, so it cannot run as a scope read.' });
+/**
+ * GST-2407: a context_pack scope read reads one source, the source_id it names: its entities, every entity_refs entry,
+ * the core block, the pull brief and hot facts (ops/facts.ts reads the scope's source as home). session_id is refused,
+ * since a session's thread rows belong to the person. Each refusal comes before any read.
+ */
+function assertPackConfined(params: Record<string, unknown>): void {
+  const source = params.source_id;
+  const refused = (problem: string, fix: string) => opError('invalid_params', `context_pack: ${problem}, and this credential reads named sources as their audience, so it is refused. Nothing was read.`, fix,
+    { why: 'A scope read must name exactly the one source it reads, so the pack never reads past the scope the turn serves.' });
+  if (typeof source !== 'string' || !source) throw refused('a scope read of the pack names exactly one source in source_id, and this call names none', 'Pass source_id with the one source to read (the source every entity_refs entry names), or leave source_ids and entity_refs out to read as the person.');
+  if ((params.entity_refs as unknown[] | undefined)?.some(ref => (ref as { source_id?: unknown } | null)?.source_id !== source)) {
+    throw refused(`an entity_refs entry names a source other than source_id '${source}'`, 'Name only entities in the source_id the call reads, each with that source_id.');
+  }
+  if (params.session_id !== undefined && params.session_id !== null && params.session_id !== '') throw refused('a scope read cannot read a session\'s thread rows (session_id)', 'Leave session_id out of a call that names source_id.');
+}
+
+/**
+ * GBRA-108 design 1: a scope read takes the member's identity away, and with it the labelled-only grant, so it would
+ * open every unlabelled page of the named sources. An attested read for a labelled-only member that names sources is
+ * refused instead, before anything is read.
+ */
+export function scopeReadLabelledOnlyRefused(op: string): OperationError {
+  return opError('permission_denied', `${op}: this person is labelled-only, so a read that names sources cannot run as their audience. Nothing was read.`,
+    'Leave source_id and source_ids out to read as the person, which shows only the pages labelled for them.',
+    { why: 'A scope read drops the member identity, and the labelled-only grant with it, so it would show pages nobody labelled for this person.' });
 }
 
 function scopeAllSourcesRefused(op: string): OperationError {
