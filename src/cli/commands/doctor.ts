@@ -13,10 +13,11 @@ import {
 import type { BrainEngine } from '../../core/engine.ts';
 import type { CliDispatchContext } from '../command-table.ts';
 
-export async function run(argv: string[], ctx: CliDispatchContext): Promise<void> {
+export async function run(args: string[], ctx: CliDispatchContext): Promise<void> {
   const { connectEngine, dbMarkerBrainId } = ctx;
   // W4: --alert runs the page class alone (the alert tier) under its own budget unless --tier / --only / --budget-ms say otherwise.
-  const args = argv.includes('--alert') ? (await import('../../commands/doctor/alert.ts')).alertRunArgs(argv) : argv;
+  const alert = args.includes('--alert');
+  if (alert) args = (await import('../../commands/doctor/alert.ts')).alertRunArgs(args);
   // Multi-topology v1: thin-client doctor. When `~/.gbrain/config.json`
   // has remote_mcp set, every DB-bound check is irrelevant. Route to the
   // outbound-HTTP probe set in `src/core/doctor-remote.ts` and return
@@ -29,7 +30,7 @@ export async function run(argv: string[], ctx: CliDispatchContext): Promise<void
     const tier = args.find((a, i) => args[i - 1] === '--tier') ?? args.find((a) => a.startsWith('--tier='))?.slice('--tier='.length);
     if (tier !== undefined || (only && only.size > 0 && [...only].every((n) => doctorCheckNames().has(n)))) {
       const { runScopedRemoteDoctor } = await import('../../core/doctor-remote-tier.ts');
-      await runScopedRemoteDoctor(cfgForDoctor!, { tier, only, json: args.includes('--json'), label: args.filter((a) => a !== '--json').join(' '), alert: argv.includes('--alert') });
+      await runScopedRemoteDoctor(cfgForDoctor!, { tier, only, json: args.includes('--json'), label: args.filter((a) => a !== '--json').join(' '), alert });
       return;
     }
     const { runRemoteDoctor } = await import('../../core/doctor-remote.ts');
