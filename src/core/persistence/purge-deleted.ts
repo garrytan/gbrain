@@ -193,7 +193,7 @@ export interface PurgeSelection {
   count: number;
   slugs: string[];
   /** Unmanaged only: the engine's preview rows. */
-  pages?: Array<{ slug: string; deleted_at: Date }>;
+  pages?: Array<{ slug: string; source_id: string; deleted_at: Date }>;
   candidates: PurgeCandidate[];
   /** Tombstones not submitted: their source's writer needs recovery (`writer_not_active`) or they are parked (`purge_parked`). */
   blocked: DeletedPagePurge['blocked'];

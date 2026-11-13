@@ -349,9 +349,8 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
     import('../core/persistence/purge-deleted.ts'), import('../core/sync-reconcile.ts')]);
   const retention = await readPurgeRetentionHours(engine);
   const selection = await selectPurgeCandidates(engine, retention, { automatic: true });
-  const pages: Array<{ source_id?: string; slug: string }> = selection.managed
-    ? selection.candidates.map((c) => ({ source_id: c.source_id, slug: c.slug }))
-    : selection.slugs.map((slug) => ({ slug }));
+  const pages: Array<{ source_id: string; slug: string }> = (selection.managed ? selection.candidates : selection.pages ?? [])
+    .map((p) => ({ source_id: p.source_id, slug: p.slug }));
   const hash = purgePreviewHash(retention, pages);
   const apply = ['gbrain', 'maintain', '--purge', '--yes', '--expect', hash];
   if (!opts.yes) {
@@ -360,7 +359,7 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
         why: `Permanently deletes the ${pages.length} page(s) listed (soft-deleted more than ${retention}h ago); gbrain restore cannot bring them back.` }, cliRenderContext()) } : {}) };
     if (opts.json) { console.log(JSON.stringify(preview, null, 2)); return; }
     console.log(`${pages.length} soft-deleted page(s) are past the ${retention}h recovery window.`);
-    for (const p of pages.slice(0, 50)) console.log(`  ${p.source_id ?? 'default'}/${p.slug}`);
+    for (const p of pages.slice(0, 50)) console.log(`  ${p.source_id}/${p.slug}`);
     if (pages.length > 50) console.log(`  ...and ${pages.length - 50} more`);
     if (pages.length) console.log(`Nothing was deleted. To purge exactly these, run: ${apply.join(' ')}`);
     return;
@@ -371,9 +370,8 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
     setCliExitVerdict(writeCliError(opError('preview_changed', why, 'Preview again: gbrain maintain --purge', { fix, detail: `current hash ${hash}` }), 'maintain', { json: !!opts.json }));
     return;
   }
-  const previewed = new Set(pages.map((p) => p.source_id ? `${p.source_id}/${p.slug}` : p.slug));
-  const result = await purgeDeletedPagesCoordinated(engine, retention, {
-    automatic: true, only: (p) => previewed.has(selection.managed ? `${p.source_id}/${p.slug}` : p.slug) });
+  const previewed = new Set(pages.map((p) => `${p.source_id}/${p.slug}`));
+  const result = await purgeDeletedPagesCoordinated(engine, retention, { automatic: true, only: (p) => previewed.has(`${p.source_id}/${p.slug}`) });
   if (result.error) setCliExitVerdict(1);
   if (opts.json) { console.log(JSON.stringify({ mode: 'applied', purged: result.count, slugs: result.slugs, blocked: result.blocked, deferred: result.deferred, ...(result.error ? { error: result.error } : {}) }, null, 2)); return; }
   console.log(`Purged ${result.count} page(s).${result.blocked.length ? ` ${result.blocked.length} blocked; see --json.` : ''}`);
