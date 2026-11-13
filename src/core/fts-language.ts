@@ -141,7 +141,7 @@ const CJK_CLASS = `[${CJK_SLUG_CHARS}]`;
  * applies it.
  */
 export const FTS_INPUT_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_fts_input(t text) RETURNS text
-  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET search_path = pg_catalog
+  LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE SET search_path = pg_catalog, pg_temp
 AS $fn$
   SELECT regexp_replace(regexp_replace(t, '(${CJK_CLASS})([A-Za-z0-9])', '\\1 \\2', 'g'), '([A-Za-z0-9])(${CJK_CLASS})', '\\1 \\2', 'g')
 $fn$;`;
@@ -223,7 +223,7 @@ $$ LANGUAGE plpgsql;`;
 }
 
 export function chunkSearchVectorTriggerFnSql(lang: string): string {
-  return `CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER SET search_path = pg_catalog, public AS $fn$
+  return `CREATE OR REPLACE FUNCTION update_chunk_search_vector() RETURNS TRIGGER SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   NEW.search_vector :=
     ${chunkSearchVectorSql(lang, 'NEW.')};

@@ -132,6 +132,7 @@ test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
+test/function-search-path-upgrade-parity.test.ts
 test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts

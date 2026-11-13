@@ -1,5 +1,5 @@
 /** The counter function alone: replacing it takes no table lock (#7636). */
-export const GIT_CANONICAL_COUNT_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_count_git_canonical_sources() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+export const GIT_CANONICAL_COUNT_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_count_git_canonical_sources() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 BEGIN
   -- #7636: a count over the rows row-level security lets this role see would undercount and could switch G7a off.
   IF row_security_active('sources') THEN

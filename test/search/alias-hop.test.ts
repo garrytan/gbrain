@@ -123,6 +123,115 @@ describe('applyAliasHop', () => {
   });
 });
 
+describe('applyAliasHop — qualified alias hop (search.qualified_aliases)', () => {
+  const company = async (slug = 'projects/acme-widget-project', alias = 'acme widget project') => {
+    await engine.putPage(slug, { type: 'project', title: slug, compiled_truth: 'Widget project notes.' });
+    await engine.setPageAliases(slug, 'default', [alias]);
+  };
+  const on = { sourceId: 'default', qualified: true };
+
+  test('off by default: a 3-token alias inside a longer query does nothing', async () => {
+    await company();
+    const organic = [res('chats/log', 0.9)];
+    const out = await applyAliasHop(engine, organic, 'status of the acme widget project today', { sourceId: 'default' });
+    expect(out.map(r => r.slug)).toEqual(['chats/log']);
+  });
+
+  test('on: a sole absent claimant is injected, leads, and carries its own stamp', async () => {
+    await company();
+    const out = await applyAliasHop(engine, [res('chats/log', 0.9), res('notes/x', 0.4)], 'status of the acme widget project today', on);
+    expect(out.map(r => r.slug)).toEqual(['projects/acme-widget-project', 'chats/log', 'notes/x']);
+    expect(out[0].qualified_alias_hit).toBe(true);
+    expect(out[0].alias_hit).toBeUndefined();
+    expect(out[0].score).toBeGreaterThan(0.9);
+  });
+
+  test('on: a present claimant leads too; the rest keep their order', async () => {
+    await company();
+    const organic = [res('chats/log', 0.9), res('notes/x', 0.7), res('projects/acme-widget-project', 0.2)];
+    const out = await applyAliasHop(engine, organic, 'status of the acme widget project today', on);
+    expect(out.map(r => r.slug)).toEqual(['projects/acme-widget-project', 'chats/log', 'notes/x']);
+    expect(out[0].qualified_alias_hit).toBe(true);
+    expect(out[0].alias_hit).toBeUndefined();
+    expect(out[0].score).toBeGreaterThan(0.9);
+  });
+
+  test('on: two claimants of the phrase suppress the hop', async () => {
+    await company('projects/acme-widget-project');
+    await company('projects/acme-widget-project-two');
+    const out = await applyAliasHop(engine, [res('chats/log', 0.9)], 'status of the acme widget project today', on);
+    expect(out.map(r => r.slug)).toEqual(['chats/log']);
+  });
+
+  test('on: an alias with two content tokens ("hall of light") never hops', async () => {
+    await company('projects/mingtang', 'hall of light');
+    const out = await applyAliasHop(engine, [res('chats/log', 0.9)], 'notes on the hall of light renovation', on);
+    expect(out.map(r => r.slug)).toEqual(['chats/log']);
+  });
+
+  test('on: a 7-14 token query probes; a 15-token one does not', async () => {
+    await company();
+    const ten = 'please summarize what we decided about the acme widget project';
+    const fourteen = 'please summarize what we decided last week about the acme widget project in detail';
+    const fifteen = 'please summarize what we decided last week about the acme widget project in more detail';
+    expect(fourteen.split(' ').length).toBe(14);
+    expect(fifteen.split(' ').length).toBe(15);
+    expect((await applyAliasHop(engine, [], ten, on)).map(r => r.slug)).toEqual(['projects/acme-widget-project']);
+    expect((await applyAliasHop(engine, [], fourteen, on)).map(r => r.slug)).toEqual(['projects/acme-widget-project']);
+    expect(await applyAliasHop(engine, [], fifteen, on)).toEqual([]);
+  });
+
+  test('on: excludeSlugs and a prefix exclude leave the visible claimant to fire', async () => {
+    await company('projects/acme-widget-project');
+    await company('archive/acme-widget-project');
+    const q = 'status of the acme widget project today';
+    expect((await applyAliasHop(engine, [], q, { ...on, excludeSlugs: ['archive/acme-widget-project'] })).map(r => r.slug))
+      .toEqual(['projects/acme-widget-project']);
+    expect((await applyAliasHop(engine, [], q, { ...on, excludeSlugPrefixes: ['archive/'] })).map(r => r.slug))
+      .toEqual(['projects/acme-widget-project']);
+  });
+
+  test('on: a full-query alias still wins over a qualified one', async () => {
+    await company('projects/acme-widget-project', 'acme widget project');
+    await company('projects/acme-widget-project-review', 'acme widget project review');
+    const out = await applyAliasHop(engine, [], 'acme widget project review', on);
+    expect(out.map(r => r.slug)).toEqual(['projects/acme-widget-project-review']);
+    expect(out[0].alias_hit).toBe(true);
+    expect(out[0].qualified_alias_hit).toBeUndefined();
+  });
+
+  test('on: a query over 6 tokens never fires the full-query alias hop or the token hop', async () => {
+    const long = 'acme quarterly planning notes and minutes from monday morning';
+    await engine.putPage('notes/long-alias', { type: 'note', title: 'Long', compiled_truth: 'x' });
+    await engine.setPageAliases('notes/long-alias', 'default', [long]);
+    await engine.putPage('companies/acme-example', { type: 'company', title: 'Acme Example', compiled_truth: 'y' });
+    await engine.setPageAliases('companies/acme-example', 'default', ['acme']);
+    const out = await applyAliasHop(engine, [res('chats/log', 0.9)], long, { ...on, tokenHop: true });
+    expect(out.map(r => r.slug)).toEqual(['chats/log']);
+  });
+
+  test('one alias-table read per lookup, holding the qualified windows; off probes exactly what it did before', async () => {
+    const calls: string[][] = [];
+    const counting = new Proxy(engine, {
+      get(target, prop, receiver) {
+        if (prop === 'resolveAliases') return (aliases: string[], opts: unknown) => { calls.push(aliases); return target.resolveAliases(aliases, opts as never); };
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    await company();
+    const q = 'status of acme widget project today';
+    await applyAliasHop(counting, [], q, { sourceId: 'default' });
+    expect(calls).toEqual([[q]]);
+    calls.length = 0;
+    const out = await applyAliasHop(counting, [], q, on);
+    expect(calls.length).toBe(1);
+    expect(calls[0][0]).toBe(q);
+    expect(calls[0]).toContain('acme widget project');
+    expect(calls[0].length).toBeLessThanOrEqual(1 + 42);
+    expect(out.map(r => r.slug)).toEqual(['projects/acme-widget-project']);
+  });
+});
+
 describe('ingest projection (importFromContent)', () => {
   test('frontmatter aliases: land in page_aliases on import', async () => {
     const md = `---\ntype: note\ntitle: The Mingtang\naliases:\n  - Hall of Light\n  - 明堂\n---\nIndoor Greek amphitheater.`;

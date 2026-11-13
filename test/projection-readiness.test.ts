@@ -181,6 +181,16 @@ describe('projection readiness cache', () => {
     expect(c.probes()).toBe(scopes.length);
   });
 
+  // #8033: a trust floor filters the probe's pages, so a ready answer under a floor must not answer a caller without one.
+  test('a trust floor is part of the key', async () => {
+    await seed('markdown', 'source-a', 'pending-unknown-tier');
+    const c = counted();
+    expect((await probeProjectionReadiness(c.engine, { sourceId: 'source-a', minTrust: 'user_confirmed' })).status).toBe('ready');
+    expect((await probeProjectionReadiness(c.engine, { sourceId: 'source-a' })).status).toBe('projection_pending');
+    expect((await probeProjectionReadiness(c.engine, { sourceId: 'source-a', minTrust: 'unknown' })).status).toBe('projection_pending');
+    expect(c.probes()).toBe(3);
+  });
+
   test('restoring an archived source with pending pages invalidates a cached ready', async () => {
     await seed('markdown', 'source-b', 'pending');
     await engine.executeRaw("UPDATE sources SET archived=true WHERE id='source-b'");
