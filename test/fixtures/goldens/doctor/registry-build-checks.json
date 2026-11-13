@@ -395,6 +395,14 @@
       },
       {
         "category": "brain",
+        "name": "unscoped_shared_reads"
+      },
+      {
+        "category": "brain",
+        "name": "shared_stdio_binding"
+      },
+      {
+        "category": "brain",
         "name": "access_may_act_for_wildcard"
       },
       {

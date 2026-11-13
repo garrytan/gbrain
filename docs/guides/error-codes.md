@@ -1274,6 +1274,16 @@ Reasons: `not_covered`, `restore`.
 
 More: [docs/guides/repair.md#coverage-gap](../../docs/guides/repair.md#coverage-gap)
 
+### credential_scope_required
+
+<a id="credential_scope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain auth create or gbrain auth register-client was asked for a credential bound to no member on a brain that serves several people, so nothing was created. | A credential bound to nobody on such a brain is refused on every read (requester_scope_required); creating one would hand out a key that cannot work, or one that reads everyone's unmarked notes. | Bind it to the person it serves: gbrain auth create <name> --member <id> (gbrain access member list names the members). A shared agent passes --may-act-for <members> instead; --reads-unscoped --yes creates one that reads every page no rule restricts for any asker, on purpose. Run: gbrain access member list --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#credential_scope_required](../../docs/guides/write-refusals.md#credential_scope_required)
+
 ### cursor_incarnation_retired
 
 <a id="cursor_incarnation_retired"></a>
@@ -4291,6 +4301,28 @@ More: [docs/guides/troubleshooting.md#repair-preview-timeout](../../docs/guides/
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The request exceeds a configured capacity; narrow it. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### requester_scope_required
+
+<a id="requester_scope_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote read came from a connection bound to no member (an access token, an OAuth client or a local stdio server) on a brain that serves several people (two or more enabled members, or config access.serves = several), so it was refused before any work and nothing was read. | On a brain that serves several people a connection bound to nobody reads every page no rule restricts, for whoever is asking; gbrain refuses rather than guess whose notes a read is for. A connection that existed when the brain started serving several people gets 14 days of in-band notices first (reason grace_ended); one created after that is refused at once (created_after). | On the brain host, bind the connection to the person it serves: gbrain auth rescope --token <name>\|--client <id> --member <id> (preview with gbrain access check --token <name>); for a stdio server, when only one person uses that harness, gbrain setup claude-code --stdio-member <id> (gbrain setup codex --stdio-member <id> on Codex), which binds that one harness entry on that machine (refused where OpenClaw or Hermes is installed); for a harness several people talk to, give each person a key over HTTP instead (gbrain serve --http with gbrain auth create <name> --member <id> keys). A shared agent lists whom it may act for (--may-act-for) and names the person on each call. Last resort: --reads-unscoped --yes lets that one credential read every page no rule restricts for any asker. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `grace_ended`, `created_after`, `since_unknown`.
+
+More: [docs/guides/write-refusals.md#requester_scope_required](../../docs/guides/write-refusals.md#requester_scope_required)
+
+### requester_scope_unknown
+
+<a id="requester_scope_unknown"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote read came from a connection bound to no member, and the brain's settings (whether it serves one person or several) could not be read: the config read failed, and so did one re-read. The call was not answered and nothing was read; this is not an access decision, and the same call can succeed once the database answers. | A statement timeout, a lock wait or a dropped pooled connection can fail one config read while the next read succeeds. Reading that as a one-person brain would let a connection bound to nobody read every page no rule restricts on a brain that may serve several people, so gbrain refuses until it can tell. | Retry the same call in a few seconds. If it keeps failing, the brain host's operator checks the database with gbrain doctor --json. A connection bound to a member is never refused this way. | provider | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/write-refusals.md#requester_scope_unknown](../../docs/guides/write-refusals.md#requester_scope_unknown)
 
 ### requirements_changed
 

@@ -20,6 +20,7 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 /**
  * GBRA-108 design 1 follow-ups to the labelled-only grant (access_members.labelled_only).
@@ -219,6 +220,7 @@ for (const kind of testBackends()) {
       await importFromContent(engine, LABELLED, note('Labelled example', ['readable_by: [group:team-a]'], 'Harbor ledger planning notes ' + LABELLED_CANARY + ' here.'), { sourceId: SRC });
       Object.assign(bot, await mint(engine, 'bot-writer', BOT));
       Object.assign(unbound, await mint(engine, 'unbound-writer'));
+      await readsUnscopedOnPurpose(engine, unbound.id);
       Object.assign(owner, await mint(engine, 'owner-writer', OWNER));
       await cli(engine, ['member', 'labelled-only', BOT, 'on']);
     }, SETUP_MS);

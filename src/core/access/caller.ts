@@ -38,6 +38,7 @@ import { currentCallerAccess } from '../search/private-visibility.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { audienceMemberIds, parseMayActFor } from './members.ts';
+import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
@@ -413,5 +414,5 @@ export async function stdioAccessView(engine: BrainEngine, registered?: string):
   if (identity.length) return accessView(identity, 'stdio_config');
   return accessView([], 'none', null, configured
     ? `mcp.stdio_member names "${configured}", which is not an enabled member, so this server reads no page that names readers.`
-    : `${UNBOUND_NOTE} Bind it with gbrain config set ${STDIO_MEMBER_KEY} <member>.`);
+    : `${UNBOUND_NOTE} ${stdioBindRoute().text}`);
 }
