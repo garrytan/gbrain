@@ -4,7 +4,7 @@
  * surfaces on the NEXT `reserve()`, and the call's own result or error wins.
  */
 
-import { numericStatusOf, wrappedErrorLayers } from './errors.ts';
+import { readProviderFailureSignals, wrappedErrorLayers } from './errors.ts';
 import {
   usageFromError,
   type BudgetActualUsage,
@@ -23,13 +23,52 @@ export function recordOnTracker(tracker: BudgetTracker | null, actual: BudgetAct
 
 type Tokens = { inputTokens: number; outputTokens: number };
 
+/** Normalize the v6 and legacy AI SDK usage fields from successful responses. */
+export function normalizeSdkUsage(usage: unknown): Tokens {
+  const u = (usage ?? {}) as Record<string, unknown>;
+  const firstFinite = (...values: unknown[]): number => {
+    for (const value of values) {
+      if (value === null || value === undefined) continue;
+      const number = Number(value);
+      if (Number.isFinite(number)) return number;
+    }
+    return 0;
+  };
+  return {
+    inputTokens: firstFinite(u.inputTokens, u.promptTokens),
+    outputTokens: firstFinite(u.outputTokens, u.completionTokens),
+  };
+}
+
+const MAX_ERROR_USAGE_BODY = 64 * 1024;
+
+function responseBodyUsage(body: unknown): ReturnType<typeof usageFromError> | 'unreadable' {
+  // The OpenAI-compatible SDK keeps raw HTTP failures in responseBody.
+  if (typeof body !== 'string' || body.length === 0) return null;
+  if (body.length > MAX_ERROR_USAGE_BODY) return 'unreadable';
+  try { return usageFromError(JSON.parse(body)); } catch { return 'unreadable'; }
+}
+
 /** The usage any layer of a thrown error reports (its wrappers opened: `cause`, a retry wrapper's `lastError`), or null. */
-function chainUsage(err: unknown): ReturnType<typeof usageFromError> {
+function chainUsage(err: unknown): ReturnType<typeof responseBodyUsage> {
+  let inputTokens: number | null = null;
+  let outputTokens: number | null = null;
+  let unreadable = false;
   for (const layer of wrappedErrorLayers(err)) {
-    const found = usageFromError(layer);
-    if (found) return found;
+    const direct = usageFromError(layer);
+    inputTokens ??= direct?.inputTokens ?? null;
+    outputTokens ??= direct?.outputTokens ?? null;
+    if (inputTokens !== null && outputTokens !== null) break;
+    const body = responseBodyUsage(layer.responseBody);
+    if (body === 'unreadable') unreadable = true;
+    else if (body) {
+      inputTokens ??= body.inputTokens;
+      outputTokens ??= body.outputTokens;
+    }
+    if (inputTokens !== null && outputTokens !== null) break;
   }
-  return null;
+  if (inputTokens !== null || outputTokens !== null) return { inputTokens, outputTokens };
+  return unreadable ? 'unreadable' : null;
 }
 
 /**
@@ -41,8 +80,9 @@ function chainUsage(err: unknown): ReturnType<typeof usageFromError> {
  */
 function attemptBilled(attempt: unknown, fallback: Tokens): Tokens {
   const found = chainUsage(attempt);
+  if (found === 'unreadable') return fallback;
   if (found) return { inputTokens: found.inputTokens ?? fallback.inputTokens, outputTokens: found.outputTokens ?? fallback.outputTokens };
-  const status = numericStatusOf(attempt);
+  const status = readProviderFailureSignals(attempt).status;
   if (status !== undefined && status >= 400 && status < 500 && status !== 408 && status !== 499) return { inputTokens: 0, outputTokens: 0 };
   return fallback;
 }
@@ -58,7 +98,8 @@ export function failedCallUsage(
   err: unknown,
   fallback: Tokens,
 ): Tokens & { failed: true; estimated: boolean; billed: Tokens } {
-  const found = chainUsage(err);
+  const usage = chainUsage(err);
+  const found = usage === 'unreadable' ? null : usage;
   let attempts: unknown[] = [err];
   for (const layer of wrappedErrorLayers(err)) {
     if (Array.isArray(layer.errors) && layer.errors.length) { attempts = layer.errors; break; }

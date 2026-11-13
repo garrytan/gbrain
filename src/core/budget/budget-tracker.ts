@@ -675,16 +675,17 @@ export function usageFromError(err: unknown): { inputTokens: number | null; outp
   const top = (err as { usage?: unknown }).usage;
   const nested = (err as { response?: { usage?: unknown } }).response?.usage;
   const candidate = (top && typeof top === 'object' ? top : nested && typeof nested === 'object' ? nested : null) as
-    | { input_tokens?: number; output_tokens?: number; inputTokens?: number; outputTokens?: number }
+    | { input_tokens?: number; output_tokens?: number; inputTokens?: number; outputTokens?: number;
+        prompt_tokens?: number; completion_tokens?: number; promptTokens?: number; completionTokens?: number }
     | null;
   if (!candidate) return null;
-  const inputTokens = numericOrNull(candidate.input_tokens ?? candidate.inputTokens);
-  const outputTokens = numericOrNull(candidate.output_tokens ?? candidate.outputTokens);
+  const inputTokens = [candidate.input_tokens, candidate.inputTokens, candidate.prompt_tokens, candidate.promptTokens].map(numericOrNull).find(value => value !== null) ?? null;
+  const outputTokens = [candidate.output_tokens, candidate.outputTokens, candidate.completion_tokens, candidate.completionTokens].map(numericOrNull).find(value => value !== null) ?? null;
   return inputTokens !== null || outputTokens !== null ? { inputTokens, outputTokens } : null;
 }
 
 function numericOrNull(v: unknown): number | null {
-  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
 /** Re-export the pricing maps for introspection / test setup. */

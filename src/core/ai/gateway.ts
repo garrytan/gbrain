@@ -35,8 +35,8 @@ import { z } from 'zod';
 
 import { DEFAULT_CHARS_PER_TOKEN, DEFAULT_SAFETY_FACTOR, embedRequestMaxInputTokens, planEmbedRequests, rerankRequestMaxInputTokens, truncateEmbedInputs } from './embed-batch-plan.ts';
 export { splitByTokenBudget, capBatchItems, NO_BATCH_CAP_SUB_BATCH_ITEMS } from './embed-batch-plan.ts';
-import { BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
-import { failedCallUsage, recordOnTracker } from './budget-record.ts';
+import { BudgetExhausted, BudgetTracker, type BudgetReservation } from '../budget/budget-tracker.ts';
+import { failedCallUsage, normalizeSdkUsage, recordOnTracker } from './budget-record.ts';
 import { estimateChatInputTokens } from './chat-input-estimate.ts';
 import { chatWithFallback, normalizeChatFallbackChain } from './chat-fallback.ts';
 import { applyThinkingOff, thinkingOffMaxOutputTokens } from './thinking-off.ts';
@@ -2485,31 +2485,6 @@ const OCR_MAX_OUTPUT_TOKENS = 4096;
 const MULTIMODAL_IMAGE_TOKEN_CEILING = Math.ceil(16_000_000 / 560);
 
 /**
- * #4121 — the v6/legacy AI-SDK usage shapes (`inputTokens|promptTokens`,
- * `outputTokens|completionTokens`) have exactly ONE home. Used by chat()'s
- * success path and every expand()/OCR record.
- */
-function normalizeSdkUsage(usage: unknown): { inputTokens: number; outputTokens: number } {
-  const u = (usage ?? {}) as Record<string, unknown>;
-  // First FINITE field wins (adversarial F9): `??` only skips null/undefined,
-  // so a NaN v6 field would shadow a REAL legacy promptTokens value — and an
-  // unguarded NaN poisons the tracker's running total, failing every later
-  // cap check open. Fall through NaN to the legacy field, then to 0.
-  const firstFinite = (...vals: unknown[]): number => {
-    for (const v of vals) {
-      if (v === null || v === undefined) continue;
-      const n = Number(v);
-      if (Number.isFinite(n)) return n;
-    }
-    return 0;
-  };
-  return {
-    inputTokens: firstFinite(u.inputTokens, u.promptTokens),
-    outputTokens: firstFinite(u.outputTokens, u.completionTokens),
-  };
-}
-
-/**
  * Expand a search query into up to 4 related queries.
  * Returns the original query PLUS expansions. On failure, returns just the original.
  * Caller is responsible for sanitizing the query (prompt-injection boundary stays in expansion.ts).
@@ -3573,6 +3548,10 @@ export function toAISDKTools(tools: ChatToolDef[] | undefined, strict?: boolean)
   }, {} as Record<string, any>);
 }
 
+function reserveChatAttempt(tracker: BudgetTracker | null, modelId: string, estimatedInputTokens: number, maxOutputTokens: number): BudgetReservation | undefined {
+  return tracker?.reserve({ modelId, estimatedInputTokens, maxOutputTokens, kind: 'chat', label: 'gateway.chat' });
+}
+
 export async function chat(opts: ChatOpts): Promise<ChatResult> {
   refuseUnscoped();
   await discoverBeforeOpenAICall(opts.model ?? gw().config?.chat_model);
@@ -3604,7 +3583,7 @@ export async function chat(opts: ChatOpts): Promise<ChatResult> {
   // or no_pricing under a user cap) with the pre-resolution model id. record()
   // settles the reservation by id; the finally frees an attempt that never
   // billed (provider resolution failed, an invocation policy refused it).
-  const reservation = tracker?.reserve({ modelId: modelStrEarly, estimatedInputTokens, maxOutputTokens, kind: 'chat', label: 'gateway.chat' });
+  const reservation = reserveChatAttempt(tracker, modelStrEarly, estimatedInputTokens, maxOutputTokens);
   const chatRecord = { requestedModelId: modelStrEarly, purpose: opts.purpose, label: 'gateway.chat', reservation };
   try {
     return await chatAdmitted(opts, { tracker, modelStrEarly, estimatedInputTokens, maxOutputTokens, chatRecord });
@@ -3744,10 +3723,11 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
   }
 
   let _budgetRecorded = false;
-  const _recordBudget = (usage: { inputTokens: number; outputTokens: number; failed?: boolean; estimated?: boolean }): void => {
+  let attemptReservation = chatRecord.reservation;
+  const _recordBudget = (usage: { inputTokens: number; outputTokens: number; failed?: boolean; estimated?: boolean; countsAsCall?: boolean }): void => {
     if (_budgetRecorded) return;
     _budgetRecorded = true;
-    recordOnTracker(tracker, { ...chatRecord, modelId: `${recipe.id}:${modelId}`, ...usage });
+    recordOnTracker(tracker, { ...chatRecord, reservation: attemptReservation, modelId: `${recipe.id}:${modelId}`, ...usage });
   };
 
   // The actual Anthropic system-prompt cache breakpoint. A bare string
@@ -3810,9 +3790,14 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
     } catch (err) {
       if (!output || isAIInvocationPolicyError(err) || !isStructuredOutputRejection(err)) throw err;
       gw().structuredOutputRejected.add(recipe.id);
+      const rejected = failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens });
+      _recordBudget({ ...rejected.billed, failed: true, countsAsCall: false,
+        estimated: rejected.estimated && (rejected.billed.inputTokens > 0 || rejected.billed.outputTokens > 0) });
+      attemptReservation = reserveChatAttempt(tracker, modelStrEarly, estimatedInputTokens, maxOutputTokens);
+      _budgetRecorded = false;
       console.warn(
         `[ai.gateway] ${recipe.id} rejected response_format json_schema; retrying without a schema ` +
-        `and skipping it for the rest of this process: ${(err as Error)?.message ?? String(err)}`,
+        `and skipping it for the rest of this process: ${redactKeys((err as Error)?.message ?? String(err))}`,
       );
       result = await generate(undefined);
     }
@@ -3896,11 +3881,13 @@ async function chatAdmitted(opts: ChatOpts, admitted: {
       providerMetadata,
     };
   } catch (err) {
-    if (isAIInvocationPolicyError(err)) throw err;
+    if (err instanceof BudgetExhausted || isAIInvocationPolicyError(err)) throw err;
     // Pessimistic fallback (A3 amended): when err.usage isn't there, charge
     // the worst-case ceiling — better to overcount on failure than under.
     _recordBudget(failedCallUsage(err, { inputTokens: estimatedInputTokens, outputTokens: maxOutputTokens }));
     throw normalizeAIError(err, `chat(${recipe.id}:${modelId})`, redactKeys, gatewayModelNotFoundHint('chat', modelStr));
+  } finally {
+    tracker?.release(attemptReservation);
   }
 }
 

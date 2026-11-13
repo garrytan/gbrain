@@ -20,12 +20,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   chat,
+  configureGateway,
+  resetGateway,
   withBudgetTracker,
   getCurrentBudgetTracker,
   __setChatTransportForTests,
+  __setGenerateTextTransportForTests,
   type ChatOpts,
   type ChatResult,
 } from '../../../src/core/ai/gateway.ts';
+import { withAIInvocationGuard } from '../../../src/core/ai/invocation-guard.ts';
+import { freePort } from '../../helpers/serve-http.ts';
 import {
   BudgetTracker,
   BudgetExhausted,
@@ -43,7 +48,145 @@ beforeEach(() => {
 
 afterEach(() => {
   __setChatTransportForTests(null);
+  __setGenerateTextTransportForTests(null);
+  resetGateway();
   rmSync(tmp, { recursive: true, force: true });
+});
+
+describe('structured chat fallback budget', () => {
+  const model = 'ollama:synthetic-schema-budget';
+  const request: ChatOpts = {
+    model,
+    messages: [{ role: 'user', content: 'Return a synthetic result.' }],
+    maxTokens: 128,
+    responseSchema: { name: 'items', schema: { type: 'object', properties: { items: { type: 'array' } } } },
+  };
+
+  function refuseSchema(usage?: { inputTokens: number; outputTokens: number }, wrapped = false) {
+    const calls: boolean[] = [];
+    configureGateway({ chat_model: model, env: {} });
+    __setGenerateTextTransportForTests(async args => {
+      calls.push(args.output !== undefined);
+      if (args.output) {
+        const error = Object.assign(new Error('response_format json_schema unsupported'), { statusCode: 400, usage });
+        throw wrapped ? new Error('provider wrapper', { cause: error }) : error;
+      }
+      return {
+        content: [{ type: 'text', text: '{"items":[]}' }],
+        finishReason: 'stop', usage: { inputTokens: 20, outputTokens: 20 },
+      } as never;
+    });
+    return calls;
+  }
+
+  const trackerFor = (maxCostUsd: number) => new BudgetTracker({
+    maxCostUsd, label: 'schema-fallback', auditPath, providerRetries: 0,
+    pricingOverrides: { [model]: { input: 1000, output: 1000 } },
+  });
+
+  test('records billable rejection before checking the fallback against the cap', async () => {
+    const calls = refuseSchema({ inputTokens: 100, outputTokens: 100 });
+    const tracker = trackerFor(0.23);
+    await expect(withBudgetTracker(tracker, () => chat(request))).rejects.toBeInstanceOf(BudgetExhausted);
+    expect(calls).toEqual([true]);
+    expect(tracker.totalSpent).toBeCloseTo(0.20);
+    await expect(withBudgetTracker(tracker, () => chat(request))).rejects.toBeInstanceOf(BudgetExhausted);
+    expect(calls).toEqual([true]);
+  });
+
+  test('settles both attempts when the fallback fits the cap', async () => {
+    const calls = refuseSchema({ inputTokens: 100, outputTokens: 100 });
+    const tracker = trackerFor(0.50);
+    const result = await withBudgetTracker(tracker, () => chat(request));
+    expect(result.text).toBe('{"items":[]}');
+    expect(calls).toEqual([true, false]);
+    expect(tracker.totalSpent).toBeCloseTo(0.24);
+    expect(tracker.snapshot().models).toMatchObject([{ calls: 1, attempts: 2, failed_calls: 0 }]);
+  });
+
+  test('counts a failing schemaless retry as one failed gateway call', async () => {
+    configureGateway({ chat_model: model, env: {} });
+    __setGenerateTextTransportForTests(async args => {
+      if (args.output) throw Object.assign(new Error('response_format json_schema unsupported'), { statusCode: 400 });
+      throw Object.assign(new Error('temporary service failure'), { statusCode: 503 });
+    });
+    const tracker = trackerFor(0.50);
+    await expect(withBudgetTracker(tracker, () => chat(request))).rejects.toThrow('temporary service failure');
+    expect(tracker.snapshot().models).toMatchObject([{ calls: 1, attempts: 2, failed_calls: 1 }]);
+  });
+
+  test.each([false, true])('an unbilled schema rejection leaves budget for fallback (wrapped=%s)', async wrapped => {
+    const calls = refuseSchema(undefined, wrapped);
+    const tracker = trackerFor(0.18);
+    await withBudgetTracker(tracker, () => chat(request));
+    expect(calls).toEqual([true, false]);
+    expect(tracker.totalSpent).toBeCloseTo(0.04);
+    expect(tracker.snapshot().models).toMatchObject([{ calls: 1, attempts: 2, failed_calls: 0, cost_basis: 'measured' }]);
+  });
+
+  test('a rejected request cannot credit malformed negative usage to the tracker', async () => {
+    const calls = refuseSchema({ inputTokens: -100, outputTokens: 100 });
+    const tracker = trackerFor(0.23);
+    await expect(withBudgetTracker(tracker, () => chat(request))).rejects.toBeInstanceOf(BudgetExhausted);
+    expect(calls).toEqual([true]);
+    expect(tracker.totalSpent).toBeGreaterThanOrEqual(0.10);
+  });
+
+  test('fills missing error usage fields from the HTTP body', async () => {
+    configureGateway({ chat_model: model, env: {} });
+    let calls = 0;
+    __setGenerateTextTransportForTests(async () => {
+      calls++;
+      throw Object.assign(new Error('response_format json_schema unsupported'), {
+        statusCode: 400,
+        usage: { outputTokens: 0 },
+        responseBody: '{"usage":{"prompt_tokens":200,"completion_tokens":0}}',
+      });
+    });
+    const tracker = trackerFor(0.23);
+    await expect(withBudgetTracker(tracker, () => chat(request))).rejects.toBeInstanceOf(BudgetExhausted);
+    expect(calls).toBe(1);
+    expect(tracker.totalSpent).toBeCloseTo(0.20);
+  });
+
+  test.each([false, true])('checks the budget after a real SDK HTTP error body (oversized=%s)', async oversized => {
+    const port = await freePort();
+    const calls: boolean[] = [];
+    const server = Bun.serve({ hostname: '127.0.0.1', port, async fetch(httpRequest) {
+      const payload = await httpRequest.json() as { response_format?: unknown };
+      calls.push(payload.response_format !== undefined);
+      return Response.json({
+        error: { message: 'response_format json_schema unsupported' },
+        usage: { prompt_tokens: 80, completion_tokens: 80, total_tokens: 160 },
+        ...(oversized ? { debug: 'x'.repeat(64 * 1024) } : {}),
+      }, { status: 400 });
+    } });
+    try {
+      configureGateway({ chat_model: model, env: {}, base_urls: { ollama: `http://127.0.0.1:${port}/v1` } });
+      const tracker = trackerFor(0.23);
+      await expect(withBudgetTracker(tracker, () => chat(request))).rejects.toBeInstanceOf(BudgetExhausted);
+      expect(calls).toEqual([true]);
+      if (oversized) expect(tracker.totalSpent).toBeGreaterThan(0.12);
+      else expect(tracker.totalSpent).toBeCloseTo(0.16);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
+  test('releases the retry reservation when the invocation guard refuses it', async () => {
+    const calls = refuseSchema();
+    const tracker = trackerFor(0.18);
+    const refusal = new Error('synthetic invocation refusal');
+    await expect(withBudgetTracker(tracker, () => withAIInvocationGuard(async () => {
+      if (calls.length > 0) throw refusal;
+      return { settle: async () => {} };
+    }, () => chat(request)))).rejects.toBe(refusal);
+    expect(calls).toEqual([true]);
+    expect(tracker.totalSpent).toBe(0);
+    await withBudgetTracker(tracker, () => chat(request));
+    expect(calls).toEqual([true, false]);
+    expect(tracker.totalSpent).toBeCloseTo(0.04);
+  });
 });
 
 function fakeChatTransport(usage = { input_tokens: 100, output_tokens: 50 }) {
