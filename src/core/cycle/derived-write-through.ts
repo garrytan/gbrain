@@ -106,6 +106,8 @@ function checkoutClassOf(root: string): GitCheckoutClass {
 const DERIVED_COMMIT_LOCK_WAIT_MS = 30_000;
 /** #8092: the synchronous take once the lock was seen free, and the rollback's wait for it (as the classic write-through's). */
 const DERIVED_COMMIT_LOCK_TAKE_MS = 2_000;
+/** Whether a parent git commit-push holds this checkout's commit lock and exported its marker (COMMIT_LOCK_ENV) to this process. */
+const commitLockHeld = (): boolean => !!process.env[COMMIT_LOCK_ENV];
 
 /** #8092: op_checkpoints op naming a generated page whose file change a refused commit rolled back or left unwritten; the phase's next hook retries it. */
 const RETRY_OP = 'derived-write-retry';
@@ -225,7 +227,7 @@ async function commitDerivedChanges(engine: BrainEngine, label: string, changes:
         const paths = batch.filter((c, i) => !ignored.has(rels[i]!) && (existsSync(c.filePath) || tracked.has(rels[i]!))).map(c => c.filePath);
         if (!paths.length) return;
         const message = `gbrain: ${label} write-through (${paths.length} generated file(s))`;
-        if (!process.env[COMMIT_LOCK_ENV]) await (await acquireCommitLockAsync(checkoutRoot(root), DERIVED_COMMIT_LOCK_WAIT_MS)).release();
+        if (!commitLockHeld()) await (await acquireCommitLockAsync(checkoutRoot(root), DERIVED_COMMIT_LOCK_WAIT_MS)).release();
         if (managed) commitAndPush({ repo: root, cwd: root, paths, message, lockWaitMs: DERIVED_COMMIT_LOCK_TAKE_MS });
         else commitPathsLocked(root, paths, message, { lockWaitMs: DERIVED_COMMIT_LOCK_TAKE_MS });
       };
@@ -264,7 +266,7 @@ async function rollBackDerived(engine: BrainEngine, root: string, batch: readonl
   const code = typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : 'git_unavailable';
   const message = error instanceof Error ? error.message : String(error);
   const top = checkoutRoot(root);
-  const held = process.env[COMMIT_LOCK_ENV] ? (() => { try { return acquireCommitLock(top, 0); } catch { return null; } })() : null;
+  const held = commitLockHeld() ? (() => { try { return acquireCommitLock(top, 0); } catch { return null; } })() : null;
   const lock = held ? { release: async () => held.release() } : await acquireCommitLockAsync(top, DERIVED_COMMIT_LOCK_TAKE_MS).catch(() => null);
   try {
     const pending = batch.filter(change => !headHolds(root, change));
