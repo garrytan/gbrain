@@ -16,10 +16,10 @@ import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBindi
 import { chargePreparationAttempt, clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
 import type { WaitingOn } from './claim-phase.ts';
 import { PREPARATION_BUDGET_KEYS, preparationKind } from './preparation-budget.ts';
-import { chargeTransientInterruption, chargedInterruptionDetail, transientInterruption, type TransientInterruption } from './transient-retry.ts';
+import { chargeTransientInterruption, chargedInterruptionDetail, connectionCapFailure, transientDatabaseFailure, transientInterruption, type TransientInterruption } from './transient-retry.ts';
+export { connectionCapFailure, transientDatabaseFailure } from './transient-retry.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 import { isSharedReadFailure } from './bounded-reads.ts';
-import { isStalePlanError } from '../retry-matcher.ts';
 import { isBundleRecovery, isTerminal, PAGES_RECOVERY_MAX_FILES, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
 import { isLockOpenFailure, noteLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -57,7 +57,6 @@ import { recordPublicationFenceTrend } from '../fence-repair/census-store.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
 import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { commitThroughDoor, doorCommitLanded, doorMarker, replayAfterDoorCommit, sourceCanonicalGit, strictChanged } from './git-door.ts';
 import { assertNoPrivateCommit, declareStrictPublication } from './git-declared.ts';
 
@@ -254,17 +253,6 @@ function requestError(error: unknown): PublicationFailure {
 function conflictCode(code: string): boolean { return ['revision_required','revision_conflict','revision_backfill_pending','source_changed','page_identity_changed',SYNC_CURSOR_REPLACED,SYNC_PASS_SUPERSEDED].includes(code); }
 /** The terminal state of an unpublished failure: `admission_paused` (#6712 PR 4b, a destructive write `sync.admission` paused at publication) is `cancelled`. */
 function failureState(code: string): 'conflict' | 'failed' | 'cancelled' { return code === 'admission_paused' ? 'cancelled' : conflictCode(code) ? 'conflict' : 'failed'; }
-export function transientDatabaseFailure(error: unknown): boolean {
-  return ['40001','40P01','55P03','57014','53300','57P01','57P02','57P03','08000','08003','08006','08001','08004',
-    'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code)) || connectionCapFailure(error) || isStalePlanError(error);
-}
-/**
- * GBRA-133: a pooler's client cap (Supavisor `EMAXCONNSESSION`, "too many clients already") is the same contention as
- * SQLSTATE 53300 whatever code the pooler sends with it, so a write that meets it is released, never failed terminally.
- */
-export function connectionCapFailure(error: unknown): boolean {
-  return classifyPgAccessError(error).reason === 'pool_exhausted';
-}
 /**
  * Flip lane C: the shared-read failures (`sharedReadFailure`) already charged. A group's memoized read the database cancelled
  * ran once, for the whole group, and every member waiting on it gets the same failure: it is charged once, to the first

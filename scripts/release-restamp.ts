@@ -9,6 +9,16 @@
  *   bun run release:restamp --continue --accept-references
  *                                        resume and keep the listed reference lines as written
  *   bun run release:restamp --abort      return the branch to its pre-run commit
+ *   bun run release:unstamp              under merge: direct, convert a stamped branch: merge origin/master, put every
+ *                                        version stamp back to master's, move the branch's CHANGELOG entry to
+ *                                        changelog.d/<branch-slug>.md and its plain-text BEHAVIOR_CHANGES rows to
+ *                                        behavior-changes.d/, renumber its migrations, commit once
+ *   bun run migrations:renumber          merge origin/master and renumber this branch's own schema migrations
+ *                                        after master's latest; no version stamp
+ *   bun scripts/release-restamp.ts --stamp-only <version>
+ *                                        the release stamp (.gstack/ship-policy.json restamp_command): write <version>
+ *                                        into every stamp in the working tree and nothing else; no fetch, merge,
+ *                                        generator or commit
  *
  * Steps: refuse a dirty tree; fetch origin/master; capture the branch's
  * CHANGELOG entry and migration inventory; merge origin/master with a merge
@@ -32,7 +42,7 @@
  * Exit: 0 done (or nothing to change), 1 stopped (FAIL/Why/Fix/See printed), 2 usage.
  * Docs: docs/RELEASING.md#release-restamp
  */
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   BEHAVIOR_NOTICE_FILE, COLLISION_DOCS, MIGRATION_FILE_RE, MIGRATIONS_DIR, RESTAMP_DOCS, RestampError, STAMPS,
@@ -41,10 +51,12 @@ import {
   type BranchMigration, type ChangelogSection, type LeftoverRef, type Renumber,
 } from './lib/restamp.ts';
 import { offlineEnv } from './regen-all.ts';
+import { CHANGELOG_FRAGMENT_DIR, FRAGMENT_DIR } from './build-behavior-changes.ts';
 
 interface Step { name: string; argv: string[]; env?: Record<string, string>; migrationsOnly?: boolean }
 
 const USAGE = `Usage: bun run release:restamp [--dry-run] [--no-commit] [--continue [--accept-references] | --abort] [--remote <name>] [--base <branch>]
+       bun scripts/release-restamp.ts --stamp-only <version>
 
 Merges origin/master with a merge commit, sets VERSION to master's MAJOR.MINOR.(PATCH+1).0,
 renumbers this branch's own schema migrations after master's latest, rewrites every required
@@ -76,7 +88,30 @@ export const DEFAULT_CHECKS: Step[] = [
   { name: 'CHANGELOG keeps every master release heading', argv: ['bun', 'scripts/check-changelog-headings.ts'] },
 ];
 
+type Mode = 'restamp' | 'unstamp' | 'renumber';
+
+/** What release:unstamp leaves true: versions back to master's, every fragment valid, no TBD row. */
+export const UNSTAMP_CHECKS: Step[] = [
+  { name: 'bootstrap runbook stamp', argv: ['bash', 'scripts/check-bootstrap-tag.sh'] },
+  { name: 'plugin tree drift', argv: ['bash', 'scripts/check-plugin-tree.sh'] },
+  { name: 'bootstrap template drift', argv: ['bash', 'scripts/check-bootstrap-templates.sh'] },
+  { name: 'behavior-change fragments', argv: ['bun', 'scripts/build-behavior-changes.ts', '--check'] },
+  { name: "no since: 'TBD' BEHAVIOR_CHANGES row", argv: ['bun', 'scripts/check-behavior-since.ts'] },
+  { name: 'CHANGELOG keeps every master release heading', argv: ['bun', 'scripts/check-changelog-headings.ts'] },
+];
+
+export const RENUMBER_CHECKS: Step[] = [
+  { name: 'schema migration registry fresh', argv: ['bash', 'scripts/check-schema-migrations-fresh.sh'] },
+  { name: 'schema migration order', argv: ['bun', 'scripts/check-schema-migration-order.ts'] },
+];
+
+/** gstack's changelog fragment name for a branch (lib/changelog-fragments.ts fragmentSlug). */
+export const fragmentSlug = (branch: string): string =>
+  branch.replace(/[\\/]+/g, '-').replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '').slice(0, 100) || 'change';
+
 interface State {
+  mode?: Mode;
+  rows?: Array<{ id: string; text: string }>;
   phase: 'merge' | 'merge-conflict' | 'restamp';
   preHead: string;
   masterRef: string;
@@ -237,18 +272,74 @@ function prTitle(ctx: Ctx, version: string): string {
   return `v${version} ${current.replace(/^v?\d+\.\d+\.\d+(?:\.\d+)?(?:-\S+)?\s+/, '')}`;
 }
 
-function capture(ctx: Ctx, masterRef: string): State {
+const SIZE_LIMITS = 'scripts/module-size-limits.tsv';
+const limitLine = (text: string) => text.split('\n').find((l) => l.startsWith(`${BEHAVIOR_NOTICE_FILE}\t`));
+const ROW_DUMP = `import { BEHAVIOR_CHANGES } from './${BEHAVIOR_NOTICE_FILE}';
+console.log(JSON.stringify(BEHAVIOR_CHANGES.map((r) => ({ id: r.id ?? null, text: typeof r.text === 'string' ? r.text : null }))));`;
+
+/**
+ * The BEHAVIOR_CHANGES rows this branch appended (ids its merge base does not hold), read from the evaluated table at
+ * HEAD. release:unstamp moves them to behavior-changes.d/, so it refuses a branch whose notice-file diff is anything
+ * but appended table lines, a row without an id, and a row whose text is a function (convert that one by hand).
+ */
+function branchNoticeRows(ctx: Ctx, masterRef: string, mergeBase: string): Array<{ id: string; text: string }> {
+  const added = addedLines(ctx, mergeBase, ['HEAD', '--', BEHAVIOR_NOTICE_FILE]);
+  if (added.length === 0) return [];
+  const why = 'release:unstamp moves appended plain-text rows to behavior-changes.d/; anything else in the notice file is a product edit to make by hand.';
+  const how = ['move each row to behavior-changes.d/<id>.md and name <!-- behavior-change: <id> --> in changelog.d/<slug>.md (behavior-changes.d/README.md), commit,', 'then rerun: bun run release:unstamp'];
+  const removed = ctx.git('diff', '--numstat', '--no-renames', mergeBase, 'HEAD', '--', BEHAVIOR_NOTICE_FILE).trim().split('\t')[1];
+  const head = ctx.git('show', `HEAD:${BEHAVIOR_NOTICE_FILE}`).split('\n');
+  const open = head.findIndex((l) => l.startsWith('export const BEHAVIOR_CHANGES')) + 1;
+  const close = head.findIndex((l, i) => i >= open && l === '];') + 1;
+  const outside = added.filter((l) => l.line <= open || l.line >= close);
+  if (removed !== '0' || outside.length > 0) fail(`this branch changes ${BEHAVIOR_NOTICE_FILE} beyond appending BEHAVIOR_CHANGES rows${outside.length ? ` (line ${outside.slice(0, 5).map((l) => l.line).join(', ')})` : ''}`, why, how);
+  const noId = added.filter((l) => /\{ since:/.test(l.text) && !/\bid: '/.test(l.text));
+  if (noId.length > 0) fail(`${noId.length} BEHAVIOR_CHANGES row(s) this branch added have no id (line ${noId.map((l) => l.line).join(', ')})`, 'a moved row is named behavior-changes.d/<id>.md and dated by its id.', 'give each row an id (lowercase letters, digits and _), commit, then rerun: bun run release:unstamp');
+  const r = ctx.run(['bun', '-e', ROW_DUMP]);
+  const rows = (() => { try { return JSON.parse(r.out.trim().split('\n').at(-1) ?? '') as Array<{ id: string | null; text: string | null }>; } catch { return null; } })();
+  if (r.code !== 0 || !rows) fail(`could not read the BEHAVIOR_CHANGES table at HEAD (exit ${r.code}): ${r.out.trim().split('\n').slice(-3).join(' ')}`, 'release:unstamp reads each appended row\'s text from the evaluated table.', 'fix the table so bun can import it, then rerun: bun run release:unstamp');
+  const ids = (text: string) => new Set([...text.matchAll(/\bid: '([^']+)'/g)].map((m) => m[1]!));
+  const baseIds = ids(ctx.git('show', `${mergeBase}:${BEHAVIOR_NOTICE_FILE}`));
+  const mine = rows.filter((row): row is { id: string; text: string | null } => !!row.id && !baseIds.has(row.id));
+  const fn = mine.filter((row) => row.text === null).map((row) => row.id);
+  if (fn.length > 0) fail(`${fn.length} appended row(s) compute their text (${fn.join(', ')})`, 'a function row stays in the table, dated since: releasedIn(\'<id>\'), which release:unstamp does not write for you.', ["change each to { since: releasedIn('<id>'), id: '<id>', ... }, name <!-- behavior-change: <id> --> in changelog.d/<slug>.md, commit,", 'then rerun: bun run release:unstamp']);
+  const taken = [...ids(ctx.git('show', `${masterRef}:${BEHAVIOR_NOTICE_FILE}`))].filter((id) => mine.some((row) => row.id === id));
+  const files = ctx.git('ls-tree', '--name-only', `${masterRef}`, '--', `${FRAGMENT_DIR}/`).split('\n').map((f) => f.replace(/^.*\//, '').replace(/\.md$/, ''));
+  const dup = [...taken, ...mine.filter((row) => files.includes(row.id)).map((row) => row.id)];
+  if (dup.length > 0) fail(`${dup.join(', ')} already name a row on ${masterRef}`, 'every behavior-change id is unique across the table and behavior-changes.d/.', 'rename the row\'s id, commit, then rerun: bun run release:unstamp');
+  return mine.map((row) => ({ id: row.id, text: row.text! }));
+}
+
+function capture(ctx: Ctx, masterRef: string, mode: Mode = 'restamp'): State {
   const preHead = ctx.git('rev-parse', 'HEAD').trim();
   const mergeBase = ctx.git('merge-base', 'HEAD', masterRef).trim();
   const entries = branchEntrySections(ctx.git('show', 'HEAD:CHANGELOG.md'), ctx.git('show', `${mergeBase}:CHANGELOG.md`));
   if (entries.length > 1) {
+    if (mode === 'unstamp') {
+      fail(`this branch has ${entries.length} CHANGELOG entries above master's (${entries.map((e) => versionOfHeader(e.header)).join(', ')})`,
+        'a branch that carries other PRs (a stack or train) holds their entries too; each PR converts on its own, and its entry leaves this branch once it reaches master.',
+        ['land or convert the PRs this branch carries first, merge master into this branch,', 'then rerun: bun run release:unstamp (or write changelog.d/<branch-slug>.md for your own entry by hand)']);
+    }
     fail(`this branch has ${entries.length} CHANGELOG entries above master's (${entries.map((e) => versionOfHeader(e.header)).join(', ')})`,
       'a branch ships one unified entry (docs/RELEASING.md "CHANGELOG + VERSION are branch-scoped"); restamp re-stamps exactly one.',
       'fold them into one `## [X.Y.Z.W] - date` entry, commit, then rerun: bun run release:restamp');
   }
   const head = headMigrations(ctx);
   const inventory = analyzeMigrations(ctx, masterRef, head).branch;
-  return { phase: 'merge', preHead, masterRef, branchVersion: ctx.git('show', 'HEAD:VERSION').trim(), entry: entries[0] ?? null, inventory, conflicted: [], mapping: [], flaggedRefs: [], merged: false };
+  if (mode === 'unstamp') {
+    if (entries.length === 0) {
+      fail(`this branch has no CHANGELOG entry above ${masterRef}'s`, 'release:unstamp moves the branch\'s own top entry into its changelog fragment; an edit inside a released section is not one.',
+        `write changelog.d/<branch-slug>.md yourself (changelog.d/README.md), put CHANGELOG.md back to the merge base's, commit, then rerun: bun run release:unstamp`);
+    }
+    const ownLines = new Set(entries[0]!.text.split('\n'));
+    const rest = ctx.git('show', 'HEAD:CHANGELOG.md').replace(entries[0]!.text + '\n', '');
+    if (rest !== ctx.git('show', `${mergeBase}:CHANGELOG.md`) && ownLines.size > 0) {
+      fail('this branch also edits released CHANGELOG sections', 'under releases per batch a PR changes the CHANGELOG only through its changelog.d fragment; a release never rewrites a released section.',
+        'move those edits into your entry (or drop them), commit, then rerun: bun run release:unstamp');
+    }
+  }
+  const rows = mode === 'unstamp' ? branchNoticeRows(ctx, masterRef, mergeBase) : [];
+  return { mode, rows, phase: 'merge', preHead, masterRef, branchVersion: ctx.git('show', 'HEAD:VERSION').trim(), entry: entries[0] ?? null, inventory, conflicted: [], mapping: [], flaggedRefs: [], merged: false };
 }
 
 function merge(ctx: Ctx, state: State): void {
@@ -273,6 +364,15 @@ function merge(ctx: Ctx, state: State): void {
         genuine.push(f);
         continue;
       }
+    } else if (state.mode === 'unstamp' && (state.rows ?? []).length > 0 && f === BEHAVIOR_NOTICE_FILE) {
+      ctx.write(f, ctx.git('show', `${state.masterRef}:${f}`));
+    } else if (state.mode === 'unstamp' && (state.rows ?? []).length > 0 && f === SIZE_LIMITS) {
+      const merged = mergeLimitsWithMastersNoticeRow(ctx);
+      if (merged === null) {
+        genuine.push(f);
+        continue;
+      }
+      ctx.write(f, merged);
     } else if (stampFiles.has(f) && existsSync(join(ctx.root, f))) {
       const r = resolveVersionOnlyHunks(ctx.read(f));
       if (r.unresolved > 0) {
@@ -296,6 +396,23 @@ function merge(ctx: Ctx, state: State): void {
   }
   ctx.git('commit', '--no-edit', '--quiet');
   ctx.log(`restamp: merged ${state.masterRef} with a merge commit (${conflicted.length} conflict(s) resolved mechanically).`);
+}
+
+/** The size table merged with the notice file's row taken from master on every side (its rows leave the file), or null on a real conflict. */
+function mergeLimitsWithMastersNoticeRow(ctx: Ctx): string | null {
+  const stage = (n: number) => ctx.git('show', `:${n}:${SIZE_LIMITS}`);
+  const [base, ours, theirs] = [stage(1), stage(2), stage(3)];
+  const master = limitLine(theirs);
+  const pin = (text: string) => { const own = limitLine(text); return own && master ? text.replace(own, master) : text; };
+  const dir = resolve(ctx.root, ctx.git('rev-parse', '--git-path', 'gbrain-unstamp-limits').trim());
+  const at = (name: string) => join(dir, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(at('base'), pin(base));
+  writeFileSync(at('ours'), pin(ours));
+  writeFileSync(at('theirs'), pin(theirs));
+  const r = Bun.spawnSync(['git', 'merge-file', '-p', at('ours'), at('base'), at('theirs')], { cwd: ctx.root, stdout: 'pipe', stderr: 'pipe' });
+  rmSync(dir, { recursive: true, force: true });
+  return r.exitCode === 0 ? r.stdout.toString() : null;
 }
 
 function finishMerge(ctx: Ctx, state: State): void {
@@ -333,32 +450,61 @@ function applyRenumber(ctx: Ctx, state: State, plan: Renumber[]): void {
 
 interface Outcome { version: string; masterVersion: string }
 
+/**
+ * release:unstamp's one conversion: every version stamp back to master's, the branch's CHANGELOG entry to its
+ * changelog fragment, its appended rows to behavior-changes.d/ with a marker each, and the notice file and its size
+ * row to master's. Nothing else changes, so gstack-ship-receipt carry can read the commit as an unstamp.
+ */
+function unstampFiles(ctx: Ctx, state: State, masterVersion: string): void {
+  if (!state.entry) {
+    fail(`this branch has no CHANGELOG entry above ${state.masterRef}'s`, 'release:unstamp moves the branch\'s own entry into its changelog fragment.',
+      `write ${CHANGELOG_FRAGMENT_DIR}/<branch-slug>.md yourself (docs/RELEASING.md#releases-per-batch), commit, then rerun: bun run release:unstamp`);
+  }
+  const frag = `${CHANGELOG_FRAGMENT_DIR}/${fragmentSlug(ctx.git('rev-parse', '--abbrev-ref', 'HEAD').trim())}.md`;
+  if (ctx.gitOk('cat-file', '-e', `HEAD:${frag}`)) fail(`${frag} already exists`, 'release:unstamp writes the branch\'s entry there and never merges two entries.', `fold your CHANGELOG entry into ${frag} by hand, put CHANGELOG.md back to ${state.masterRef}'s, commit, then rerun`);
+  stampOnly(ctx.root, masterVersion, [state.branchVersion]);
+  ctx.write('CHANGELOG.md', ctx.git('show', `${state.masterRef}:CHANGELOG.md`));
+  const rows = state.rows ?? [];
+  const body = state.entry.text.split('\n').slice(1).join('\n').trim();
+  mkdirSync(join(ctx.root, CHANGELOG_FRAGMENT_DIR), { recursive: true });
+  ctx.write(frag, [body, ...(rows.length ? ['', ...rows.map((r) => `<!-- behavior-change: ${r.id} -->`)] : [])].join('\n') + '\n');
+  if (rows.length === 0) return;
+  mkdirSync(join(ctx.root, FRAGMENT_DIR), { recursive: true });
+  for (const row of rows) ctx.write(`${FRAGMENT_DIR}/${row.id}.md`, `${row.text}\n`);
+  ctx.write(BEHAVIOR_NOTICE_FILE, ctx.git('show', `${state.masterRef}:${BEHAVIOR_NOTICE_FILE}`));
+  const limits = ctx.read(SIZE_LIMITS);
+  const [own, master] = [limitLine(limits), limitLine(ctx.git('show', `${state.masterRef}:${SIZE_LIMITS}`))];
+  if (own && master && own !== master) ctx.write(SIZE_LIMITS, limits.replace(own, master));
+}
+
 function restampTree(ctx: Ctx, state: State, opts: { acceptRefs: boolean; date: string }): Outcome {
+  const mode = state.mode ?? 'restamp';
   const masterVersion = ctx.git('show', `${state.masterRef}:VERSION`).trim();
-  const version = nextPatchVersion(masterVersion);
+  const version = mode === 'restamp' ? nextPatchVersion(masterVersion) : masterVersion;
 
   const migrations = analyzeMigrations(ctx, state.masterRef, workingMigrations(ctx));
   applyRenumber(ctx, state, migrations.plan);
   ctx.saveState(state);
 
-  for (const stamp of STAMPS) {
+  if (mode === 'unstamp') unstampFiles(ctx, state, masterVersion);
+  for (const stamp of mode === 'restamp' ? STAMPS : []) {
     if (!existsSync(join(ctx.root, stamp.file))) fail(`${stamp.file} is missing`, 'it is a required row of the CLAUDE.md "Version locations" table.', `restore it from ${state.masterRef} (git checkout ${state.masterRef} -- ${stamp.file}), then rerun with --continue`);
     const text = ctx.read(stamp.file);
     if (stamp.read(text) !== version) ctx.write(stamp.file, stamp.write(text, version));
   }
   const olds = new Set([state.branchVersion, state.entry ? versionOfHeader(state.entry.header) ?? '' : ''].filter((v) => v && v !== version && isVersionToken(v)));
-  if (existsSync(join(ctx.root, BEHAVIOR_NOTICE_FILE))) {
+  if (mode === 'restamp' && existsSync(join(ctx.root, BEHAVIOR_NOTICE_FILE))) {
     const notice = ctx.read(BEHAVIOR_NOTICE_FILE);
     const lines = new Set(addedLines(ctx, state.masterRef, ['--', BEHAVIOR_NOTICE_FILE]).map((l) => l.line));
     let stamped = stampTbdSince(notice, version);
     for (const old of olds) stamped = restampSinceLines(stamped, lines, old, version);
     if (stamped !== notice) ctx.write(BEHAVIOR_NOTICE_FILE, stamped);
   }
-  if (state.entry) {
+  if (mode === 'restamp' && state.entry) {
     const old = versionOfHeader(state.entry.header) ?? state.branchVersion;
     ctx.write('CHANGELOG.md', rebuildChangelog(ctx.read('CHANGELOG.md'), state.entry, old, version, opts.date));
   }
-  if (existsSync(join(ctx.root, 'TODOS.md'))) {
+  if (mode === 'restamp' && existsSync(join(ctx.root, 'TODOS.md'))) {
     const lines = new Set(addedLines(ctx, state.masterRef, ['--', 'TODOS.md']).map((l) => l.line));
     let text = ctx.read('TODOS.md');
     for (const old of olds) text = restampTodoLines(text, lines, old, version);
@@ -368,6 +514,7 @@ function restampTree(ctx: Ctx, state: State, opts: { acceptRefs: boolean; date: 
   const hasMigrations = migrations.branch.length > 0;
   for (const step of ctx.steps('GBRAIN_RESTAMP_STEPS', DEFAULT_STEPS)) {
     if (step.migrationsOnly && !hasMigrations) continue;
+    if (mode !== 'restamp' && !(hasMigrations && (step.migrationsOnly || step.name === 'schema migration registry'))) continue;
     const r = ctx.run(step.argv, step.env);
     if (r.code !== 0) {
       stop(state, ctx, `generator "${step.name}" failed (${step.argv.join(' ')}, exit ${r.code}):\n${r.out.trim().split('\n').slice(-15).map((l) => `      | ${l}`).join('\n')}`,
@@ -395,8 +542,9 @@ function restampTree(ctx: Ctx, state: State, opts: { acceptRefs: boolean; date: 
     }
   }
 
-  const drift = driftProblems(ctx, version, masterVersion, state);
-  for (const check of ctx.steps('GBRAIN_RESTAMP_CHECKS', DEFAULT_CHECKS)) {
+  const drift = mode === 'restamp' ? driftProblems(ctx, version, masterVersion, state)
+    : mode === 'unstamp' ? STAMPS.flatMap((stamp) => { const v = stamp.read(ctx.read(stamp.file)); return v === masterVersion ? [] : [`${stamp.file} says ${v ?? '<none>'}, expected master's ${masterVersion}`]; }) : [];
+  for (const check of ctx.steps('GBRAIN_RESTAMP_CHECKS', mode === 'restamp' ? DEFAULT_CHECKS : mode === 'unstamp' ? UNSTAMP_CHECKS : hasMigrations ? RENUMBER_CHECKS : [])) {
     const r = ctx.run(check.argv, check.env);
     if (r.code !== 0) drift.push(`${check.name} (${check.argv.join(' ')}, exit ${r.code}):\n${r.out.trim().split('\n').slice(-10).map((l) => `      | ${l}`).join('\n')}`);
   }
@@ -475,6 +623,16 @@ function printDryRun(ctx: Ctx, state: State, date: string): void {
 
 function report(ctx: Ctx, state: State, outcome: Outcome, committed: string | null, staged: boolean): void {
   const L = ctx.log;
+  if (state.mode === 'unstamp' || state.mode === 'renumber') {
+    const what = state.mode === 'unstamp'
+      ? `unstamp: ${state.branchVersion} -> master's ${outcome.masterVersion}; the entry is in changelog.d/${fragmentSlug(ctx.git('rev-parse', '--abbrev-ref', 'HEAD').trim())}.md${state.rows?.length ? ` and ${state.rows.length} row(s) in behavior-changes.d/ (${state.rows.map((r) => r.id).join(', ')})` : ''}`
+      : `renumber: onto master v${outcome.masterVersion}`;
+    L(what);
+    for (const m of state.mapping) L(`  v${m.from} -> v${m.to}  ${m.fromPath} -> ${m.toPath}`);
+    L(committed ? `Committed ${committed.slice(0, 12)}.` : `Nothing to change${state.merged ? ' (only the merge commit was added)' : ''}.`);
+    if (state.mode === 'unstamp') L('PR title: drop the version prefix; the release names the version.');
+    return;
+  }
   L(`restamp: ${state.branchVersion} -> ${outcome.version} (master ${outcome.masterVersion}).`);
   if (state.mapping.length > 0) {
     L('Migration renumbering (source only; no database was touched):');
@@ -492,11 +650,61 @@ function report(ctx: Ctx, state: State, outcome: Outcome, committed: string | nu
   L('Verify: bun run verify   (full gate before merge: bun run ci:ubicloud or bun run ci:local), then git push');
 }
 
+/** Generated trees whose stamp lines name the release; their other bytes do not depend on VERSION. */
+const GENERATED_STAMP_ROOTS = ['plugin', 'plugin-variants', 'templates/bootstrap/template-repo'];
+
+/**
+ * The release stamp under merge: direct: every STAMPS row and every stamp line of the generated trees moves from the
+ * tree's VERSION to `version`. Returns the files written. gstack-restamp --release runs it in a clean checkout of the
+ * base and then folds the changelog fragments itself.
+ */
+export function stampOnly(root: string, version: string, from: string[] = []): string[] {
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(version)) fail(`--stamp-only needs a four-part version, got "${version}"`, 'the release stamp writes exactly the version gstack-restamp allocated.', 'pass it as the argument: bun scripts/release-restamp.ts --stamp-only <X.Y.Z.W>');
+  const old = readFileSync(join(root, 'VERSION'), 'utf8').trim();
+  const written: string[] = [];
+  const put = (rel: string, text: string) => {
+    if (readFileSync(join(root, rel), 'utf8') === text) return;
+    writeFileSync(join(root, rel), text);
+    written.push(rel);
+  };
+  for (const stamp of STAMPS) {
+    if (!existsSync(join(root, stamp.file))) fail(`${stamp.file} is missing`, 'it is a required row of the CLAUDE.md "Version locations" table.', `restore it, then rerun: bun scripts/release-restamp.ts --stamp-only ${version}`);
+    const text = readFileSync(join(root, stamp.file), 'utf8');    if (stamp.read(text) !== version) put(stamp.file, stamp.write(text, version));
+  }
+  const olds = [...new Set([old, ...from])].filter((v) => v && v !== version);
+  if (olds.length === 0) return written;
+  const lines = olds.flatMap((v) => [`"version": "${v}"`, `<!-- gbrain-plugin-tree-stamp: ${v} -->`, `<!-- gbrain-template-stamp: ${v} -->`]);
+  const walk = (rel: string): string[] => readdirSync(join(root, rel), { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(join(rel, e.name)) : e.isFile() && /\.(json|md)$/.test(e.name) ? [join(rel, e.name)] : []);
+  for (const dir of GENERATED_STAMP_ROOTS.filter(d => existsSync(join(root, d)))) {
+    for (const rel of walk(dir)) {
+      const text = readFileSync(join(root, rel), 'utf8');
+      let next = text;
+      for (const l of lines) next = next.split(l).join(l.replace(/\d+\.\d+\.\d+\.\d+/, version));
+      put(rel, next);
+    }
+  }
+  return written;
+}
+
 export function main(argv: string[], opts: { cwd?: string; env?: Record<string, string | undefined>; log?: (line: string) => void } = {}): number {
   const log = opts.log ?? ((l: string) => console.log(l));
   const env = opts.env ?? process.env;
+  if (argv[0] === '--stamp-only') {
+    if (argv.length !== 2) { log(USAGE); return 2; }
+    const top = Bun.spawnSync(['git', 'rev-parse', '--show-toplevel'], { cwd: opts.cwd ?? process.cwd(), stdout: 'pipe', stderr: 'pipe' });
+    const root = top.exitCode === 0 ? top.stdout.toString().trim() : resolve(opts.cwd ?? process.cwd());
+    try {
+      const files = stampOnly(root, argv[1]!);
+      log(`restamp --stamp-only: ${argv[1]} written to ${files.length} file(s)${files.length ? `: ${files.join(', ')}` : ''}`);
+      return 0;
+    } catch (e) {
+      if (e instanceof RestampError) { log(e.message); return 1; }
+      throw e;
+    }
+  }
   const flags = new Set(argv.filter((a) => a.startsWith('--')));
-  const known = new Set(['--dry-run', '--no-commit', '--continue', '--abort', '--accept-references', '--remote', '--base', '--help']);
+  const known = new Set(['--dry-run', '--no-commit', '--continue', '--abort', '--accept-references', '--remote', '--base', '--help', '--unstamp', '--renumber']);
+  const mode: Mode = flags.has('--unstamp') ? 'unstamp' : flags.has('--renumber') ? 'renumber' : 'restamp';
   const valueOf = (flag: string, fallback: string) => (argv.includes(flag) ? argv[argv.indexOf(flag) + 1] ?? '' : fallback);
   const remote = valueOf('--remote', 'origin');
   const base = valueOf('--base', 'master');
@@ -505,7 +713,7 @@ export function main(argv: string[], opts: { cwd?: string; env?: Record<string, 
     log(USAGE);
     return 0;
   }
-  if ([...flags].some((f) => !known.has(f)) || stray.length || !remote || !base || (flags.has('--continue') && flags.has('--abort')) || (flags.has('--accept-references') && !flags.has('--continue'))) {
+  if ([...flags].some((f) => !known.has(f)) || stray.length || !remote || !base || (flags.has('--continue') && flags.has('--abort')) || (flags.has('--accept-references') && !flags.has('--continue')) || (flags.has('--unstamp') && flags.has('--renumber')) || (mode !== 'restamp' && flags.has('--dry-run'))) {
     log(USAGE);
     return 2;
   }
@@ -548,7 +756,13 @@ export function main(argv: string[], opts: { cwd?: string; env?: Record<string, 
           'restamp numbers the version and migrations after the latest master; a stale ref would allocate a taken number.',
           `check network access and the remote, then run: git fetch ${remote} ${base} && bun run release:restamp`);
       }
-      state = capture(ctx, `${remote}/${base}`);
+      const policy = Bun.spawnSync(['git', 'show', `${remote}/${base}:.gstack/ship-policy.json`], { cwd: ctx.root, stdout: 'pipe', stderr: 'ignore' });
+      const direct = (() => { try { return JSON.parse(policy.stdout.toString() || '{}').merge === 'direct'; } catch { return false; } })();
+      if (direct && mode === 'restamp') {
+        fail(`${remote}/${base} lands PRs directly and writes versions at release (.gstack/ship-policy.json merge: direct)`, 'a PR branch carries no version, so there is nothing to restamp.',
+          ['a branch stamped before the switch: bun run release:unstamp', 'a branch whose schema migration number master took: bun run migrations:renumber']);
+      }
+      state = capture(ctx, `${remote}/${base}`, mode);
       if (flags.has('--dry-run')) {
         printDryRun(ctx, state, date);
         return 0;
@@ -564,7 +778,10 @@ export function main(argv: string[], opts: { cwd?: string; env?: Record<string, 
     let committed: string | null = null;
     if (staged && !flags.has('--no-commit')) {
       const body = state.mapping.length ? `\n\nMigrations renumbered (filename, export name, version literal):\n${state.mapping.map((m) => `  v${m.from} -> v${m.to} ${m.toPath}`).join('\n')}\nGolden regeneration: migrations/records.json follows the renumbered versions.` : '';
-      ctx.git('commit', '--quiet', '-m', `v${outcome.version} chore(release): restamp onto master v${outcome.masterVersion}${body}`);
+      const subject = state.mode === 'unstamp' ? `chore(release): unstamp onto master v${outcome.masterVersion}; versions are written at release`
+        : state.mode === 'renumber' ? `chore(migrations): renumber onto master v${outcome.masterVersion}`
+        : `v${outcome.version} chore(release): restamp onto master v${outcome.masterVersion}`;
+      ctx.git('commit', '--quiet', '-m', `${subject}${body}`);
       committed = ctx.git('rev-parse', 'HEAD').trim();
     }
     rmSync(ctx.statePath, { force: true });

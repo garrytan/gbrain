@@ -23,6 +23,19 @@ export interface WantedLinksReplacement {
   rows: WantedLinkInput[];
   /** Producers whose rows this replacement owns; others stay untouched. */
   producers: readonly WantedProducer[];
+  /**
+   * wantedReadAt() taken before the extraction's first resolution read. Every
+   * `name` row is stamped with it, so a page written after that read wakes the
+   * origin and one the read already saw does not. Required when rows has a name.
+   */
+  readAt?: string;
+}
+
+/** The database clock as a UTC ISO string with microseconds, independent of the session's DateStyle. */
+export async function wantedReadAt(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
+  const [row] = await engine.executeRaw<{ at: string }>(
+    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
+  return row!.at;
 }
 
 /**
@@ -54,11 +67,11 @@ function pageSlugShaped(target: string): boolean {
  * one that replaces its derived links), keeping only possibleWantedRows. Slug targets are locked first, so a
  * concurrent writer creating the target either committed before this check
  * (and the row is stamped `-infinity`, leaving the origin stale) or commits
- * after it with an `updated_at` past `checked_at`. Only a slug reference to an
- * exact page counts here: a bare-name reference matching some page's slug or
- * basename may legitimately stay unresolved (basename resolution is opt-in,
- * and a directory hint can skip a top-level slug), and stamping it
- * `-infinity` would re-list its origin forever.
+ * after it with an `updated_at` past `checked_at`. A bare-name reference may
+ * legitimately stay unresolved while a page has its exact slug or basename
+ * (basename resolution is opt-in, and a directory hint can skip a top-level
+ * slug), so it is stamped with the caller's read time instead: a page written
+ * after that read wakes the origin once, and the next extraction settles it.
  */
 export async function replaceWantedLinks(
   tx: Pick<BrainEngine, 'executeRaw' | 'lockPageKeys'>,
@@ -66,6 +79,9 @@ export async function replaceWantedLinks(
   replacement: WantedLinksReplacement,
 ): Promise<number> {
   if (!replacement.producers.length) return 0;
+  if (!replacement.readAt && replacement.rows.some(row => row.ref_kind === 'name')) {
+    throw new Error('replaceWantedLinks: name rows need the readAt taken before the extraction read');
+  }
   const rows = (await possibleWantedRows(tx, origin.sourceId,
     replacement.rows.filter(row => replacement.producers.includes(row.producer))))
     .map(row => ({ ...row, context: sanitizeForJsonb(row.context) }));
@@ -86,12 +102,12 @@ export async function replaceWantedLinks(
     SELECT $1, $2, v.producer, v.ref_kind, v.target_source_id, v.target_ref, v.link_type, v.context,
       CASE WHEN v.ref_kind = 'slug' AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id
         AND t.deleted_at IS NULL AND t.slug = v.target_ref)
-      THEN '-infinity'::timestamptz ELSE now() END
-    FROM jsonb_to_recordset(($3::jsonb)->'rows')
+      THEN '-infinity'::timestamptz WHEN v.ref_kind = 'name' THEN $3::timestamptz ELSE now() END
+    FROM jsonb_to_recordset(($4::jsonb)->'rows')
       AS v(producer text, ref_kind text, target_source_id text, target_ref text, link_type text, context text)
     ON CONFLICT ON CONSTRAINT wanted_links_reference_unique DO UPDATE
       SET link_type = EXCLUDED.link_type, context = EXCLUDED.context, checked_at = EXCLUDED.checked_at
-    RETURNING id`, [origin.pageId, origin.sourceId], [{ rows }]);
+    RETURNING id`, [origin.pageId, origin.sourceId, replacement.readAt ?? null], [{ rows }]);
   return written.length;
 }
 

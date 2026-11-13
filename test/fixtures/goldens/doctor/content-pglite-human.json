@@ -92,6 +92,7 @@
       "  [INFO] access_raw_only_rules: Not applicable: every folder and page rule also keeps the pages and facts derived from its pages to its readers (no rule has covers_derived: false).",
       "  [INFO] access_audience_members: Not applicable: no member is marked as an audience (gbrain access member kind <id> audience).",
       "  [INFO] access_members_read_lineage: Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.",
+      "  [INFO] access_labelled_only_members: Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
       "  [INFO] attest_read_shared_scope: Not applicable: no attest credential reads named sources as the person (--attest-read person).",
       "  [OK] rls: Skipped (PGLite — no PostgREST exposure, RLS not applicable)",
       "  [OK] function_search_path: Every gbrain function that pins a search_path ends it with pg_temp",
