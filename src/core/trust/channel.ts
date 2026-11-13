@@ -46,7 +46,8 @@ const OWNER_SOURCE_KINDS = ['canonical_reconcile', 'managed_file_import', 'manag
 /** Page frontmatter `source_kind` / `ingested_via` / `captured_via` values written by an ingestion capture (external). */
 export const EXTERNAL_CAPTURE_KINDS: readonly string[] = ['webhook', 'file-watcher', 'inbox-folder', 'cron-scheduler', 'ingest_capture'];
 /** ...and by an agent through a gbrain verb (agent_written). */
-const AGENT_CAPTURE_KINDS = ['put_page', 'capture-cli', 'capture-mcp', 'capture'];
+/** `life-chronicle:auto` is chronicle's CHRONICLE_CAPTURED_VIA: model-produced events, never above agent_written. */
+export const AGENT_CAPTURE_KINDS: readonly string[] = ['put_page', 'capture-cli', 'capture-mcp', 'capture', 'life-chronicle:auto'];
 /**
  * Harnesses whose `transcript_import` pages are the user's own sessions with
  * their agent (or their own chat exports): relayed user turns count as

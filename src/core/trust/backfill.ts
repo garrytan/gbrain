@@ -168,7 +168,7 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
     if (cols.has('pages', 'frontmatter')) {
       signals.add('frontmatter_provenance');
       terms.push(`CASE WHEN ${p}.frontmatter ? 'transcript_import' OR ${p}.frontmatter->>'provenance' = 'auto-extracted'
-        OR ${p}.frontmatter->>'dream_generated' = 'true'
+        OR ${p}.frontmatter->>'dream_generated' = 'true' OR ${p}.frontmatter->>'captured_via' = 'life-chronicle:auto'
         OR (CASE WHEN jsonb_typeof(${p}.frontmatter->'extracted_by') = 'string' THEN ${edgeTrimSql(`${p}.frontmatter->>'extracted_by'`)} END)
           LIKE '${EXTRACT_ATOMS_EXTRACTOR_PREFIX.replace(/_/g, '\\_')}%' THEN ${rank('agent_written')} END`);
     }
