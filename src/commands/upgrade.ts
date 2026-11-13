@@ -959,6 +959,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         await (await import('../core/temporal-edges-upgrade-notice.ts')).printTemporalEdgesUpgradeNotice(engine);
         // #5575 memory trust: [AGENT] ask_user while unclaimed sources hold legacy rows; never claims or scans (best-effort).
         await (await import('../core/trust/claim-notice.ts')).printTrustClaimUpgradeNotice(engine);
+        await (await import('../core/access/requester-scope.ts')).printUnscopedReadsUpgradeNotice(engine); // GST-363: credentials bound to nobody on a several-people brain
 
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on
@@ -1092,7 +1093,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
     console.warn(`\nSchema auto-apply skipped: ${msg}`);
     report.schema = 'skipped';
     report.warnings.push(`schema auto-apply skipped: ${msg}`);
-    console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
+    if ((e as { code?: unknown }).code !== 'client_behind') console.warn('Run `gbrain init --migrate-only` manually if your brain is wedged.');
   }
 
   // v0.25.1: agent-readable advisory listing recommended skills the

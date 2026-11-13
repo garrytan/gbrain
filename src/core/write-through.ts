@@ -23,14 +23,14 @@ import { hasSourceFilesystemLock, withSourceFilesystemLock, assertSourceFilesyst
  */
 
 import { existsSync, statSync, mkdirSync, unlinkSync, readdirSync, readFileSync, renameSync, rmSync } from 'fs';
-import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep, win32 } from 'path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path';
 import { atomicStagingPath, atomicWriteFileSync } from './atomic-write.ts';
 import { flushDirectory } from './fs-durable.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
 import type { BrainEngine } from './engine.ts';
 import type { StreamedFileContent } from './persistence/large-file.ts';
 import { isRelativeFileUri, serializePageToMarkdown, resolvePageFilePath, resolveSourceLocalFilePath } from './markdown.ts';
-import { isWriteTargetContained, msysToNativePath } from './path-confine.ts';
+import { isForeignAbsolutePath, isHostAbsolutePath, isWriteTargetContained, msysToNativePath } from './path-confine.ts';
 import { readSlugRootMode, resolveSlugRootMode, type SlugRootMode } from './sync-anchor.ts';
 import { resolveSlugForPath } from './sync.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from './page-size-policy.ts';
@@ -40,7 +40,7 @@ import {
   type PushLogOutcome,
 } from './brain-repo-durability.ts';
 import { bindOrigin } from './persistence/origin-guard.ts';
-import { urlCloneReadOnly } from './url-clone.ts';
+import { readOnlyCheckout } from './persistence/mirror-read-only.ts';
 
 /** Minimal logger surface — structurally compatible with operations.ts `Logger`. */
 export interface WriteThroughLogger {
@@ -102,8 +102,10 @@ export interface WriteThroughResult {
    *     the edit is kept and nothing is written.
    *   - over_push_scan_cap: the rendered file is over the pre-push secret-scan
    *     cap (PUSH_SCAN_MAX_FILE_BYTES), so committing it would block every push.
+   *   - mirror_read_only / url_clone: the source is a read-only mirror (#5409,
+   *     #7098) or a clone gbrain owns and pulls (#6946); its checkout is never written.
    */
-  skipped?: 'disabled_by_config' | 'url_clone' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed' | 'over_push_scan_cap' | 'segmented_page';
+  skipped?: 'disabled_by_config' | 'mirror_read_only' | 'url_clone' | 'no_repo_configured' | 'repo_not_found' | 'source_repo_belongs_to_other_source' | 'page_not_found_after_write' | 'path_escapes_source_root' | 'case_insensitive_collision' | 'file_changed' | 'over_push_scan_cap' | 'segmented_page';
   /** Caller-visible advisory when a permitted DB-only outcome is still risky. */
   warning?: string;
   /** Set when the render/write/rename itself threw (EACCES, ENOTDIR, disk full). */
@@ -131,6 +133,14 @@ export interface WritePageThroughOpts {
 }
 
 export function withNoRepoWriteThroughWarning<T extends { written: boolean; skipped?: string; warning?: string }>(result: T, sourceId: string, operation = 'put_page'): T {
+  if (!result.written && result.skipped === 'relative_root') {
+    return {
+      ...result,
+      warning:
+        `${operation} wrote only to the database for source '${sourceId}': its stored repo path is not an absolute directory on this host, so no durable markdown file was created. ` +
+        `Ask the operator to run gbrain sources set-path ${sourceId} <absolute-directory> before relying on the write.`,
+    } as T;
+  }
   if (result.written || result.skipped !== 'no_repo_configured') return result;
   return {
     ...result,
@@ -307,9 +317,8 @@ export async function otherSourceOwning(engine: BrainEngine, sourceId: string, p
   const target = identity(path);
   return rows.find(row => {
     // #7630: a live source's relative local_path names no known tree, so like any unresolvable spelling it counts as a match.
-    // An absolute path written by another OS (C:\ on POSIX) is not relative, the same reading doctor and --clear use.
-    const native = msysToNativePath(row.local_path);
-    if (!posix.isAbsolute(native) && !win32.isAbsolute(native)) return relativeOwns && !row.archived;
+    // An absolute path written by another OS (C:\ on POSIX) is not relative, the same reading sync, doctor and --clear use.
+    if (!isHostAbsolutePath(row.local_path) && !isForeignAbsolutePath(row.local_path)) return relativeOwns && !row.archived;
     const other = identity(row.local_path);
     if (target === null || other === null) return true;
     const rel = relative(other, target);
@@ -389,7 +398,7 @@ export async function resolvePageWriteTarget(
 
   if (sourceLocalPath) {
     // #7630: a relative local_path (a legacy ".") names whatever directory gbrain runs from, never the source's tree.
-    if (!isAbsolute(sourceLocalPath) || !existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
+    if (!isHostAbsolutePath(sourceLocalPath) || !existsSync(sourceLocalPath) || !statSync(sourceLocalPath).isDirectory()) {
       return { ok: false, skipped: 'repo_not_found' };
     }
     filePath = recordedPath
@@ -403,7 +412,7 @@ export async function resolvePageWriteTarget(
     if (!repoPath) {
       return { ok: false, skipped: 'no_repo_configured' };
     }
-    if (!isAbsolute(repoPath) || !existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
+    if (!isHostAbsolutePath(repoPath) || !existsSync(repoPath) || !statSync(repoPath).isDirectory()) {
       return { ok: false, skipped: 'repo_not_found' };
     }
     const pageRoot = sourceId === 'default' ? repoPath : join(repoPath, '.sources', sourceId);
@@ -438,7 +447,8 @@ export async function resolvePageWriteTarget(
  * `sync.repo_path`. Never throws — failures are reported via the result's
  * `skipped` / `error` fields. put_page calls it before its transaction commits
  * and rejects non-deliberate skips so a file failure rolls back the DB write.
- * A clone gbrain owns on an unmanaged brain is skipped (`url_clone`, #6946).
+ * A read-only mirror source is skipped (`mirror_read_only`, #7098), and so is a
+ * clone gbrain owns on an unmanaged brain (`url_clone`, #6946).
  */
 export async function writePageThrough(
   engine: BrainEngine,
@@ -455,9 +465,8 @@ export async function writePageThrough(
     if (await isWriteThroughDisabled(engine)) {
       return { written: false, skipped: 'disabled_by_config' };
     }
-    if (await urlCloneReadOnly(engine, sourceId)) {
-      return { written: false, skipped: 'url_clone' };
-    }
+    const readOnly = await readOnlyCheckout(engine, sourceId);
+    if (readOnly) return { written: false, skipped: readOnly };
     const target = await resolvePageWriteTarget(engine, slug, sourceId);
     if (!target.ok) {
       return { written: false, skipped: target.skipped };
@@ -621,13 +630,13 @@ export interface DeleteThroughResult {
    * Non-error reasons nothing was removed. Shares the target-resolution skip
    * vocabulary (kept in lockstep via the Extract), plus:
    *   - disabled_by_config: the operator opted the brain out of the disk sink.
-   *   - url_clone: the source is a clone gbrain owns and pulls (#6946); its checkout is never written.
+   *   - mirror_read_only / url_clone: the source is a read-only mirror (#7098) or a clone gbrain owns and pulls (#6946); its checkout is never written.
    *   - file_not_present: the page had no artifact on disk (DB-only page, or
    *     already removed by hand) — a clean no-op, not a failure.
    *   - file_changed: the caller passed `expectedFileBytes` and the file no
    *     longer holds them (an edit landed after the caller read it) — kept.
    */
-  skipped?: 'disabled_by_config' | 'url_clone' | 'file_not_present' | 'file_changed' | Extract<PageWriteTarget, { ok: false }>['skipped'];
+  skipped?: 'disabled_by_config' | 'mirror_read_only' | 'url_clone' | 'file_not_present' | 'file_changed' | Extract<PageWriteTarget, { ok: false }>['skipped'];
   /** Set when the unlink itself threw (EACCES, EPERM, read-only mount). */
   error?: string;
 }
@@ -672,9 +681,8 @@ export async function deletePageThrough(
     if (await isWriteThroughDisabled(engine)) {
       return { removed: false, skipped: 'disabled_by_config' };
     }
-    if (await urlCloneReadOnly(engine, sourceId)) {
-      return { removed: false, skipped: 'url_clone' };
-    }
+    const readOnly = await readOnlyCheckout(engine, sourceId);
+    if (readOnly) return { removed: false, skipped: readOnly };
     const target = opts.target ?? await resolvePageWriteTarget(engine, slug, sourceId);
     if (!target.ok) return { removed: false, skipped: target.skipped };
     const { filePath, writeRoot } = target;

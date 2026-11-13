@@ -28,6 +28,8 @@ import { isValidSourceId } from '../source-id.ts';
 import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
+import { holdingSlugSql } from '../facts-fence.ts';
+import { atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -689,10 +691,12 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * a synthesized concept with a private input atom (or an input atom whose
  * origin is private), are private whatever their own field says.
  * `gbrain repair visibility` then stamps the stricter value on the rows.
+ * An atom whose origin a sync rename moved (#7462) is private when the page at
+ * its `source_slug` or the page the rename moved it to is private.
  */
 function derivedOriginPrivateSql(p: string): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
-      AND ${alias}.slug = ${atom}.frontmatter->>'source_slug' AND ${alias}.frontmatter->>'visibility' = 'private')`;
+      AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
   return `(CASE WHEN ${p}.type = 'atom' THEN ${privateOrigin(p, 'derived_origin')}
     WHEN ${derivedPageSql(p)} THEN EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
@@ -930,14 +934,33 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
 /**
  * A fact is never wider than the page it is about: hide a fact whose entity page (`entity_slug`, looked up in the fact's
  * own source) the current caller cannot read under the read policy its page reads use, so a member the page's readers
- * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
- * only ever narrows. GBRA-108 design 1: the entity page is judged by the caller's ordinary access, not its labelled-only
- * grant: a labelled-only caller's fact is already kept to provenance that names it (labelledOnlyFactSql), and the
- * page a fact is about is not one of its origins.
+ * name keeps the fact and every other remote caller loses it. A fact held on a holding page (GST-2492) is also judged by
+ * that page as a page, not as lineage, so a folder's holding page hides its facts exactly as it hides itself. A fact with
+ * no entity page passes. Read sites only; it only ever narrows. GBRA-108 design 1: the entity page and the holding page
+ * are judged by the caller's ordinary access, not its labelled-only grant: a labelled-only caller's fact is already kept
+ * to provenance that names it (labelledOnlyFactSql), and that conjunct is what narrows it.
  */
 export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
   const entityPolicy = currentCallerAccess().labelledOnly ? withCallerAccess({ labelledOnly: false }, () => privatePagesFilterForCaller('entity_pp')) : privatePagesFilterForCaller('entity_pp');
-  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})`;
+  const held = `CASE WHEN ${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)} THEN ${factAlias}.source_markdown_slug END`;
+  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})${sharedHeldRuledSql(factAlias)})`;
+}
+
+/**
+ * GST-2492: a fact still held on a holding page for an entity a rule now narrows below that page (a folder rule over the
+ * shared page, an exact page rule over a folder's holding page; applied by sync, or a remember planned before the rule,
+ * until the held-fact move takes it away) reads as that entity's page would: only for a caller who satisfies every
+ * covering rule, and for nobody while a pending narrowing covers it. The owner under the opt-in reads it, as it reads every restricted page.
+ */
+function sharedHeldRuledSql(factAlias: string): string {
+  const access = currentCallerAccess();
+  if (access.ownerReadsRestricted) return '';
+  const satisfied = access.restricted ? access.satisfiedRuleIds : [];
+  const ids = satisfied.length && satisfied.every(validQualifiedRuleId) ? [...new Set(satisfied)].sort() : [];
+  const array = ids.length ? `ARRAY[${ids.map(id => `'${id}'`).join(', ')}]::text[]` : 'ARRAY[]::text[]';
+  return ` AND NOT (${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)}`
+    + ` AND (NOT COALESCE(gbrain_access_folder_rules(${factAlias}.source_id, ${factAlias}.entity_slug) <@ ${array}, true)`
+    + ` OR gbrain_access_pending_covers(${factAlias}.source_id, ${factAlias}.entity_slug)))`;
 }
 
 /**
@@ -1026,6 +1049,19 @@ const strictEngines = new Set<BrainEngine>();
 /** GBRA-218: set once a page names readers or a member exists (sticky; a trigger and `gbrain access` write it). */
 export const ACCESS_RESTRICTIONS_KEY = 'access.restrictions_present';
 
+/**
+ * GST-363: whom the brain serves. SERVES_KEY is the explicit `one` or `several` (`gbrain setup --serves several`
+ * writes it, and it wins); SERVES_DERIVED_KEY is `several` while two or more members are enabled, `one` otherwise;
+ * SERVES_SINCE_KEY is when the brain first served several people, set once and never cleared. A trigger on
+ * access_members and on config access.serves keeps the last two (migration v309), so a request reads them from its
+ * config snapshot with no query. REQUESTER_SCOPE_ENFORCE_KEY `false` turns the unscoped-read refusal into a notice
+ * (hosted, until its control plane binds each connection to a member).
+ */
+export const SERVES_KEY = 'access.serves';
+export const SERVES_DERIVED_KEY = 'access.serves_derived';
+export const SERVES_SINCE_KEY = 'access.serves_since';
+export const REQUESTER_SCOPE_ENFORCE_KEY = 'access.requester_scope_enforce';
+
 /** @internal exported for tests: engines the process-wide policy sets hold. */
 export function __aliasPolicyEngineCountForTests(): number {
   return honorAliasEngines.size + aliasOptOutEngines.size + exposeEngines.size + strictEngines.size;
@@ -1084,22 +1120,50 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
-export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean }
+/** GST-363: whom the brain serves, as a remote request reads it from config (no query). `since` is epoch seconds. */
+export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
+
+/** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean; serves?: ServesPolicy; servesUnknown?: boolean }
+
+/** GST-363: an explicit access.serves wins over the trigger-kept member count; enforcement is on unless set to false. */
+export function servesPolicyFrom(config: Record<string, string | undefined>): ServesPolicy {
+  const explicit = config[SERVES_KEY]?.trim().toLowerCase();
+  const fromConfig = explicit === 'one' || explicit === 'several';
+  const since = Date.parse(config[SERVES_SINCE_KEY]?.trim() ?? '');
+  return {
+    several: (fromConfig ? explicit : config[SERVES_DERIVED_KEY]?.trim()) === 'several',
+    from: fromConfig ? 'config' : 'members',
+    since: Number.isFinite(since) ? Math.floor(since / 1000) : null,
+    enforce: !['false', '0', 'off', 'no'].includes(config[REQUESTER_SCOPE_ENFORCE_KEY]?.trim().toLowerCase() ?? ''),
+  };
+}
 
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
  * the brain holds member-access restrictions. Takes any executeRaw engine (a
  * transaction included). An unreadable config counts as not opted out and
- * restricted (fail closed); the env hatch needs no read.
+ * restricted (fail closed); the env hatch needs no read. Whom the brain serves
+ * is then unknown (servesUnknown, GST-363): the requester-scope gate reads the
+ * serves keys once more (readServesPolicy) and refuses an unbound read when that
+ * fails too, because a timeout or a dropped pooled connection can fail this one
+ * statement while the next read succeeds.
  */
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY]]);
+    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
+      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, servesUnknown: true };
   }
+}
+
+/** GST-363: whom the brain serves, read on its own (the requester-scope gate's re-read after an unreadable policy read). Throws when unreadable. */
+export async function readServesPolicy(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ServesPolicy> {
+  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
+  return servesPolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
 }
 
 /**
@@ -1117,7 +1181,7 @@ function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
   const owner = config[OWNER_MEMBER_KEY]?.trim();
   return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',
     ownerMember: owner && ACCESS_ID_RE.test(owner) ? owner : null, ownerReadsRestricted: config[OWNER_READS_RESTRICTED_KEY]?.trim() === '1',
-    membersReadLineage: config[MEMBERS_READ_LINEAGE_KEY]?.trim() === '1' };
+    membersReadLineage: config[MEMBERS_READ_LINEAGE_KEY]?.trim() === '1', serves: servesPolicyFrom(config) };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

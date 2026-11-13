@@ -404,6 +404,35 @@ for (const kind of testBackends()) {
         }
       }, 600_000);
 
+      test('GST-2407: a context_pack scope read for a labelled-only person is refused before anything is read, like every other scope read', async () => {
+        const client = await provider().registerClientManual('lo-pack-' + randomUUID().slice(0, 8), ['client_credentials'], 'read', [], SRC);
+        await bindCredential(b.engine, { kind: 'client', id: client.clientId }, { attestActor: 'qm', attestOps: ['context_pack'] });
+        const token = (await provider().exchangeClientCredentials(client.clientId, client.clientSecret ?? '')).access_token;
+        const pack = async (params: Record<string, unknown>) => {
+          const out = await dispatchToolCall(b.engine, 'context_pack', params, { remote: true, transport: 'http', auth: await provider().verifyAccessToken(token) as unknown as AuthInfo,
+            sourceId: SRC, takesHoldersAllowList: ['world'], inboundFrameBytes: 4 * MiB, actor: { header: BOT_QM } });
+          const text = out.content.map(c => c.text).join('\n');
+          let json: Record<string, any> = {};
+          try { json = JSON.parse(text); } catch { /* prose */ }
+          return { isError: out.isError === true, text, json };
+        };
+        const scope = { source_id: SRC, entity_refs: [{ source_id: SRC, slug: ORIGINS.open.slug }] };
+        expect((await pack(scope)).isError).toBe(false);
+        await grant(true);
+        try {
+          const refused = await pack(scope);
+          expect({ isError: refused.isError, code: refused.json.code }).toEqual({ isError: true, code: 'permission_denied' });
+          expect(refused.json.message).toContain('context_pack: this person is labelled-only');
+          expect(refused.text).not.toContain(b.canary('open'));
+          expect((await pack({ source_id: SRC, entity_refs: [{ source_id: 'other-src', slug: ORIGINS.open.slug }] })).json.code).toBe('invalid_params');
+          const person = await pack({ entities: 'Harbor' });
+          expect(person.isError).toBe(false);
+          expect(person.text).not.toContain(b.canary('open'));
+        } finally {
+          await grant(false);
+        }
+      }, 600_000);
+
       test('the owner is never labelled-only, whatever the stored flag says, on the attested door too', async () => {
         await b.engine.executeRaw('UPDATE access_members SET labelled_only = true WHERE id = $1', [OWNER]);
         __resetPrivateVisibilityCacheForTests();

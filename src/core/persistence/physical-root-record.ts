@@ -3,6 +3,7 @@ import { execFileSync } from '../spawn.ts';
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { OperationError } from '../ops/contract.ts';
+import type { Action } from '../agent-output.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import { digest, sha256 } from './digest.ts';
@@ -115,8 +116,9 @@ export function coordinationPathInsideRoot(root: string, path: string): boolean 
   const rel = relative(root, path);
   return !isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`);
 }
-function readReservationRecord(root: string, allowInsideLock = false): PhysicalRootReservation | null {
-  const value = readPrivate(physicalRootReservationPath(root)) as PhysicalRootReservation | null;
+/** `directory`: where to look for the reservation named for `root`; beside `root` unless a renamed parent carried it (#8625). */
+function readReservationRecord(root: string, allowInsideLock = false, directory = dirname(root)): PhysicalRootReservation | null {
+  const value = readPrivate(join(directory, `${RESERVATION_PREFIX}${sha256(root)}.json`)) as PhysicalRootReservation | null;
   if (value === null) return null;
   if (value.version !== 1 || ![value.token,value.brainId,value.worktreeId,value.hostId].every(uuid)
     || value.root !== root || typeof value.coordinationPath !== 'string' || !isAbsolute(value.coordinationPath) || value.coordinationPath.includes('\0')
@@ -239,10 +241,134 @@ export function samePhysicalBirth(stored: string | null | undefined, live: bigin
   if (value === 0n || live === 0n) return false;
   return (value > live ? value - live : live - value) <= PHYSICAL_BIRTH_TOLERANCE_NS;
 }
+/** #8625: a checkout found at `root` whose stamp records a root that no longer exists, and the move that explains it. Refusal evidence, never ownership authority. */
+export interface MovedPhysicalRoot {
+  recorded: string; root: string; brainId: string; worktreeId: string;
+  /** The folder that moved: the checkout itself, or the renamed parent that carried it (`ancestor`). */
+  from: string; to: string; ancestor: boolean;
+  /** The live directory is the stamped one (device, inode and birth time), so moving it back reattaches the worktree. */
+  sameDirectory: boolean;
+}
+/**
+ * #8625: reads only the stamp in `root` and the reservation of the root it records: beside that old root when the checkout
+ * itself moved, or beside `root` (still named for the old root) when a parent folder was renamed and carried both along.
+ * The moved parent is the deepest one the paths share a tail below that no longer exists, so a folder moved under another
+ * folder of the same name names itself, never the folders that held it.
+ * A recorded root that still exists (a copy), a stamp and reservation that disagree on token, brain or worktree, or a
+ * parent rename that also renamed the checkout is no move (null). An ownership record other users can read keeps its own refusal.
+ */
+export function describeMovedPhysicalRoot(root: string): MovedPhysicalRoot | null {
+  try {
+    const stamp = readPhysicalRootStamp(root);
+    if (!stamp || stamp.root === root || existsSync(stamp.root)) return null;
+    let reservation = readReservationRecord(stamp.root), from = stamp.root, to = root;
+    if (!reservation) {
+      const recorded = stamp.root.split(sep), current = root.split(sep);
+      let shared = 0;
+      while (shared < Math.min(recorded.length, current.length) - 2 && recorded[recorded.length - 1 - shared] === current[current.length - 1 - shared]) shared++;
+      while (shared && existsSync(recorded.slice(0, -shared).join(sep))) shared--;
+      if (!shared) return null;
+      reservation = readReservationRecord(stamp.root, false, dirname(root));
+      from = recorded.slice(0, -shared).join(sep); to = current.slice(0, -shared).join(sep);
+    }
+    if (!reservation || reservation.token !== stamp.token || reservation.brainId !== stamp.brainId || reservation.worktreeId !== stamp.worktreeId) return null;
+    const info = statSync(root, { bigint: true });
+    return { recorded: stamp.root, root, brainId: stamp.brainId, worktreeId: stamp.worktreeId, from, to, ancestor: from !== stamp.root,
+      sameDirectory: stamp.device === info.dev.toString() && stamp.inode === info.ino.toString() && samePhysicalBirth(stamp.birth, info.birthtimeNs) };
+  } catch (error) {
+    if (error instanceof OperationError && error.detail === 'ownership_record_not_private') throw error;
+    return null;
+  }
+}
+export const PHYSICAL_ROOT_MOVED_MESSAGE = 'This folder holds the ownership stamp of a canonical checkout that was moved here from the path it is recorded at.';
+/** #8625: the path-free refusal of `reservePhysicalRoot`, which remote page writes reach through the automatic claim. */
+export function physicalRootMovedError(): OperationError {
+  const error = physicalRootError(PHYSICAL_ROOT_MOVED_MESSAGE);
+  error.detail = 'physical_root_moved';
+  error.suggestion = 'Nothing changed. On the brain host, run the same gbrain sources add, set-path or writer claim with --dry-run in a terminal: it names the recorded path and the commands that bring the checkout back. Moving folders is the user\'s decision. Never remove the ownership markers.';
+  error.docs = 'docs/guides/write-refusals.md#moved-root';
+  return error;
+}
+const shellQuote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
+/**
+ * #8625: the local CLI refusal for a moved checkout, with the exit built from existing verbs. A worktree that still has
+ * sources: a symlink at the old path, `set-path` for each source (the #5914 relocation), then the symlink removed. One
+ * whose source was removed: move it back and re-add (or claim) at the recorded path, which reattaches the worktree. A
+ * folder that is not the stamped directory any more cannot be reattached by moving it, so the exit is restore or deactivate.
+ */
+export function physicalRootMovedRefusal(moved: MovedPhysicalRoot, exit: { sourceId: string; operation: 'add' | 'claim' | 'rebind'; members: Array<{ sourceId: string; relativePath: string }> }): OperationError {
+  const { recorded, root, from, to, worktreeId } = moved, q = shellQuote;
+  const where = `The checkout at ${q(root)} is worktree ${worktreeId}, recorded at ${q(recorded)}${moved.ancestor ? `; its folder ${q(from)} was moved to ${q(to)}` : ''}.`;
+  const user = (why: string, argv: string[], user_message: string, extra: Partial<Action> = {}): Action =>
+    ({ ask_user: true, argv, consent: [], actor: 'user', requires_exclusive: false, why, user_message, docs: 'docs/guides/write-refusals.md#moved-root', ...extra });
+  const error = physicalRootError(where);
+  error.detail = 'physical_root_moved';
+  error.docs = 'docs/guides/write-refusals.md#moved-root';
+  if (exit.members.length) {
+    const steps = exit.members.map(member => ['gbrain', 'sources', 'set-path', member.sourceId, member.relativePath ? join(root, member.relativePath) : root]);
+    error.message = `${where} It holds source${steps.length > 1 ? 's' : ''} ${exit.members.map(member => member.sourceId).join(', ')}.`;
+    // The first set-path moves the worktree; each further source of it is pointed at the new path once the symlink is gone.
+    const [first, ...rest] = steps, setPathText = (step: string[]) => `gbrain sources set-path ${step[3]} ${q(step[4])}`;
+    error.suggestion = `Nothing changed. Ask the user before touching their folders. Then leave a symlink at the old path with ln -s ${q(to)} ${q(from)}, run ${setPathText(first)} `
+      + `(it keeps worktree ${worktreeId} and its history and moves the ownership records to the new path), then remove the symlink with rm ${q(from)}`
+      + `${rest.length ? `, then run ${rest.map(setPathText).join(', then ')}` : ''}. Never remove the ownership markers.`;
+    const pointAt = (step: string[], then?: Action) => user(`Moves source ${step[3]}'s canonical path to the checkout's new place, keeping its worktree and history.`, step,
+      `May I update source ${step[3]} to point at ${step[4]}?`, then ? { then } : {});
+    let after: Action | undefined;
+    for (const step of [...rest].reverse()) after = pointAt(step, after);
+    const then = pointAt(first, user('Removes the symlink left at the old path; the checkout stays where it is now.', ['rm', from], 'The symlink at the old path is no longer needed. May I remove it?',
+      after ? { then: after } : {}));
+    error.fix = user(`Leaves a symlink at the old path so gbrain can verify the moved checkout is the same worktree before it moves its records.`, ['ln', '-s', to, from],
+      `Your brain folder moved from ${from} to ${to}. I can leave a symlink at the old path, update gbrain's record of it, then remove the symlink; your files and Git history stay as they are. Shall I go ahead?`,
+      { then, verify: { argv: [...steps[0], '--dry-run'] } });
+    return error;
+  }
+  const label = exit.operation === 'claim' ? 'gbrain sources writer claim' : 'gbrain sources add';
+  if (!moved.sameDirectory) {
+    error.message = `${where} It has no source since its source was removed, and this folder is a copy, not the stamped directory (its device, inode or birth time differs).`;
+    error.suggestion = `Nothing changed. Moving this copy back to ${q(recorded)} would not reattach worktree ${worktreeId}. Restore the original folder at ${q(recorded)} from a backup, then rerun ${label} ${exit.sourceId} --path ${q(recorded)}; `
+      + 'or, if it is gone for good, switch the brain to classic mode with gbrain sources writer deactivate --dry-run (then the printed apply_command) and add the folder there. Never remove the ownership markers.';
+    error.fix = user('Read-only preview of switching the brain to classic mode, where the copied folder can be added without the old ownership records.',
+      ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run'],
+      `Your brain folder was copied to ${root} and the original at ${recorded} is gone. gbrain cannot reattach a copy. Do you want to restore the original from a backup, or switch the brain to classic mode?`);
+    return error;
+  }
+  const command = exit.operation === 'claim' ? ['gbrain', 'sources', 'writer', 'claim', exit.sourceId, '--path', recorded]
+    : ['gbrain', 'sources', 'add', exit.sourceId, '--path', recorded, ...(existsSync(join(root, '.git')) ? [] : ['--force'])];
+  const readd = exit.operation === 'claim' ? [...command, '--admin-intent', 'writer_claim', '--expected-state', '<admin_state>'] : command;
+  error.message = `${where} It has no source since its source was removed; the worktree and its history are kept.`;
+  error.suggestion = `Nothing changed. Ask the user before touching their folders. Then move it back with mv ${q(to)} ${q(from)} and run ${label} ${exit.sourceId} --path ${q(recorded)}${exit.operation === 'claim' ? ' (with the admin intent writer status prints)' : ''}, `
+    + `which reattaches worktree ${worktreeId} and its history. To keep the folder at its new place afterwards, move it again and run gbrain sources set-path ${exit.sourceId} --dry-run: it names the symlink steps. Never remove the ownership markers.`;
+  error.fix = user('Moves the folder back to where gbrain recorded it, so the worktree and its history can be reattached.', ['mv', to, from],
+    `Your brain folder moved from ${from} to ${to}, and gbrain only recognizes it at the old path. May I move it back and re-add it there? You can move it again afterwards with gbrain's help.`,
+    { verify: { argv: [...command, '--dry-run'] },
+      then: user(`Re-registers source ${exit.sourceId} at the recorded path, which reattaches worktree ${worktreeId}.`, readd, `May I register source ${exit.sourceId} at ${recorded}?`,
+        exit.operation === 'claim' ? { inputs: [{ name: 'admin_state', how: 'admin_state from gbrain sources writer status --json on the brain host' }] } : {}) });
+  return error;
+}
+const DIRECTORY_CHANGED_MESSAGE = 'The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
+  + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.';
+/** A stored refusal message (a write receipt keeps code and message only) that is the #5914 directory-changed refusal. */
+export const isPhysicalRootDirectoryChangedMessage = (message: string | null | undefined): boolean => message === DIRECTORY_CHANGED_MESSAGE;
+/**
+ * #7671: the relocated-root self-transfer as the refusal's fix, a host-admin step: prepare, then accept. `root` and
+ * `epoch` are filled when the caller holds the binding; otherwise they are inputs read from writer status.
+ */
+export function relocatedRootTransferFix(sourceId: string, binding?: { root: string; epoch: string }): Action {
+  const intent = (phase: string) => ['--admin-intent', `writer_transfer_${phase}`, '--expected-state', '<admin_state>'];
+  const adminState = { name: 'admin_state', how: `admin_state from gbrain sources writer status ${sourceId} --json on the owner host (read it again before the accept)` };
+  const prepare = ['gbrain', 'sources', 'writer', 'transfer', 'prepare', sourceId, '--self-transfer', '--confirm-relocated-root'];
+  return { argv: [...prepare, ...intent('prepare')], preview_argv: [...prepare, '--dry-run'], inputs: [adminState], consent: [], actor: 'host_admin', requires_exclusive: false,
+    docs: 'docs/guides/write-refusals.md#physical_root_directory_changed',
+    why: `Source ${sourceId}'s checkout is a new directory at its recorded path (a restored or copied brain). The self-transfer re-stamps this same path on this host when everything but the directory identity still matches; never remove the ownership markers instead.`,
+    then: { argv: ['gbrain', 'sources', 'writer', 'transfer', 'accept', sourceId, '--path', binding?.root ?? '<root>', '--expected-epoch', binding?.epoch ?? '<owner_epoch>',
+      '--manifest', '<manifest digest printed by prepare>', '--self-transfer', '--confirm-relocated-root', ...intent('accept')],
+    inputs: [adminState, ...(binding ? [] : [{ name: 'root', how: 'the binding root writer status prints' }, { name: 'owner_epoch', how: 'the owner_epoch prepare printed' }])],
+    consent: [], actor: 'host_admin', requires_exclusive: false, why: 'Accepts the self-transfer: ownership stays on this host and writes to the source resume; retry the refused write with the same request_id.' } };
+}
 /** The #5914 exit for a directory recreated at its recorded path; filled with the source and root by lockWorktree (ownership.ts). */
 export function physicalRootDirectoryChangedError(): OperationError {
-  const error = physicalRootError('The checkout directory at the recorded root is not the one this owner stamped (its inode or birth time changed) while the owner token, brain, worktree, root and device still match. '
-    + 'Inspect writer status and use the deliberate self-transfer that confirms a relocated root to re-stamp this same path.');
+  const error = physicalRootError(DIRECTORY_CHANGED_MESSAGE);
   error.detail = 'physical_root_directory_changed';
   error.suggestion = 'On the brain host, run gbrain sources writer status <source> and note admin_state, then gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root '
     + '--admin-intent writer_transfer_prepare --expected-state <admin_state>, then gbrain sources writer transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <manifest digest printed by prepare> '

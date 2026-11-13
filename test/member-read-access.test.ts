@@ -35,6 +35,7 @@ import type { WriteAuthority } from '../src/core/persistence/model.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const DIMS = 1536;
 function vectorFor(text: string): number[] {
@@ -180,6 +181,7 @@ for (const kind of testBackends()) {
         tokens[name] = minted.token;
         tokenIds[name] = minted.id;
         if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
+        else await readsUnscopedOnPurpose(engine, minted.id);
       };
       await mint('alice', 'alice-example');
       await mint('bob', 'bob-example');

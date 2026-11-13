@@ -84,6 +84,23 @@ describe('resolveSessionSpeaker', () => {
       .toEqual({ kind: 'agent', principal: 'agent-launched', source: 'detected' });
     expect(resolveSessionSpeaker({ env: {}, ancestry: () => [WORKER] })).toEqual({ kind: 'owner' });
   });
+
+  test('#8080: a Remote Control session is the owner\'s; a worker it launches is still an agent\'s', () => {
+    const session: AncestorProcess = { pid: 30, args: ['/usr/local/bin/claude', '--print', '--sdk-url', 'https://api.example.com/sessions/s1', '--input-format', 'stream-json'] };
+    for (const sub of ['remote-control', 'rc', 'remote', 'sync', 'bridge']) {
+      expect(detectAgentLaunched([session, { pid: 31, args: ['/usr/local/bin/claude', sub, '--spawn=worktree'] }])).toBe(false);
+    }
+    const nodeHost: AncestorProcess = { pid: 32, args: ['node', '/x/node_modules/@anthropic-ai/claude-code/cli.js', 'remote-control'] };
+    expect(detectAgentLaunched([session, nodeHost])).toBe(false);
+    expect(resolveSessionSpeaker({ env: {}, ancestry: () => [session, nodeHost] })).toEqual({ kind: 'owner' });
+    expect(detectAgentLaunched([WORKER, SHELL, session, nodeHost])).toBe(true);
+    expect(detectAgentLaunched([{ pid: 4, args: ['/opt/codex', 'exec', 'task'] }, session, nodeHost])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 33, args: ['/usr/local/bin/claude', '--remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 34, args: ['/usr/local/bin/claude', '--verbose', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 35, args: ['/usr/local/bin/claude', '-p', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 36, args: ['/opt/codex', 'remote-control'] }])).toBe(true);
+    expect(detectAgentLaunched([WORKER, { pid: 37, args: ['/usr/local/bin/claude', 'sync'] }])).toBe(true);
+  });
 });
 
 describe('hook banking with a session speaker', () => {
@@ -149,6 +166,56 @@ describe('hook banking with a session speaker', () => {
     const txt = files().find((f) => f.startsWith('s-agent') && f.endsWith('.txt'));
     expect(txt).toBeDefined();
     expect(corpusFileSpeaker(join(corpus(), txt!))).toEqual({ principal: 'fleet-worker' });
+  });
+});
+
+describe('#8080 speaker notes: first record wins, a differing speaker is reported', () => {
+  const ws = () => { const w = join(tmp, 'ws'); mkdirSync(w, { recursive: true }); return w; };
+  const end = (env: Record<string, string>, ancestry: AncestorProcess[], sid = 's-agent', more: { role: 'user' | 'assistant'; text: string }[] = []) => {
+    const t = writeTurns([{ role: 'user', text: BRIEF }, { role: 'assistant', text: 'ok' }, ...more]);
+    return runHook(['session-end'], { ...io, transcriptRoot: t.root, env, processAncestry: () => ancestry,
+      stdin: JSON.stringify({ session_id: sid, transcript_path: t.path, cwd: ws() }) });
+  };
+  const last = async () => { const hb = (await readHeartbeatTail(1))[0]; return [hb?.outcome, hb?.reason]; };
+
+  test('the owner resuming an agent session banks as before and notes speaker_mismatch; the sidecar stays', async () => {
+    writeConfig();
+    await end({ GBRAIN_SESSION_AGENT: 'fleet-worker' }, []);
+    expect((await last())[1]).not.toBe('speaker_mismatch');
+    await end({}, [ORCH]);
+    expect(await last()).toEqual(['degraded', 'speaker_mismatch']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toMatchObject({ principal: 'fleet-worker', source: 'env' });
+    expect(files().some((f) => f.startsWith('s-agent') && f.endsWith('.txt'))).toBe(true);
+  });
+
+  test('a different agent label notes speaker_mismatch and keeps the first record', async () => {
+    writeConfig();
+    await end({ GBRAIN_SESSION_AGENT: 'fleet-worker' }, []);
+    await end({ GBRAIN_SESSION_AGENT: 'other-worker' }, []);
+    expect(await last()).toEqual(['degraded', 'speaker_mismatch']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')?.principal).toBe('fleet-worker');
+  });
+
+  test('an agent continuing a session the owner already banked banks nothing and notes speaker_mismatch', async () => {
+    writeConfig();
+    await end({}, [ORCH]);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
+    const banked = files().filter((f) => f.startsWith('s-agent') && f.endsWith('.txt'));
+    expect(banked.length).toBeGreaterThan(0);
+    await end({}, [WORKER, SHELL, ORCH], 's-agent', [{ role: 'user', text: 'continue the sweep' }, { role: 'assistant', text: 'done' }]);
+    expect(await last()).toEqual(['degraded', 'speaker_mismatch']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
+    expect(files().filter((f) => f.startsWith('s-agent') && f.endsWith('.txt'))).toEqual(banked);
+  });
+
+  test('GBRAIN_SESSION_AGENT=owner still saves as the owner, and notes a session detection finds agent-launched', async () => {
+    writeConfig();
+    await end({ GBRAIN_SESSION_AGENT: 'owner' }, [WORKER, SHELL, ORCH]);
+    expect(await last()).toEqual(['degraded', 'speaker_owner_override_detected']);
+    expect(readSpeakerSidecar(corpus(), 's-agent')).toBeNull();
+    expect(files().some((f) => f.startsWith('s-agent') && f.endsWith('.txt'))).toBe(true);
+    await end({ GBRAIN_SESSION_AGENT: 'owner' }, [ORCH], 's-own');
+    expect((await last())[1]).toBeUndefined();
   });
 });
 

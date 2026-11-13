@@ -109,17 +109,20 @@ export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?
         fix: agentFix(['gbrain', 'sources', 'reconcile', auditSource!, '--brain', 'host', '--audit', '--conflicts', '--window', '1000000', '--json'],
           'Read-only: pages through the conflict receipts grouped by slug, with whether each file still differs.', 'maintenance_write_drift', { docs }) };
     }
+    const unknown = rows.reduce((sum, row) => sum + row.unknown, 0);
+    if (!count && !skipCount && unknown) {
+      return { name: 'maintenance_write_drift', status: 'warn', details: { ...details, health: 'unknown', exact: false }, fix_unavailable_reason: 'operator_judgement',
+        message: `Maintenance write drift unknown: no page checked on this host has a canonical file that differs from the database, but ${unknown} could not be checked here (run doctor on the canonical owner host).` };
+    }
     if (!count && !skipCount) {
-      const unknown = rows.reduce((sum, row) => sum + row.unknown, 0);
       return { name: 'maintenance_write_drift', status: 'ok', details,
-        message: unknown ? `No page checked on this host has a canonical file that differs from the database; ${unknown} could not be checked here (run doctor on the canonical owner host).`
-          : `No page whose writes refuse source_changed still has a canonical file that differs from the database.${policyNote}` };
+        message: `No page whose writes refuse source_changed still has a canonical file that differs from the database.${policyNote}` };
     }
     const first = rows.find(row => row.drifted || row.concept_skips)!.source_id;
     return { name: 'maintenance_write_drift', status: 'warn', details,
       message: `${bounded ? 'At least ' : ''}${count} page(s) have a canonical file that differs from the database, so every coordinated write to them refuses source_changed `
         + `(${rows.filter(row => row.drifted || row.concept_skips).map(row => `${row.source_id}: ${row.drifted} drifted, ${row.concept_skips} concept skip(s)`).join('; ')}). `
-        + `Maintenance now skips them before spending or admitting anything. List them: ${auditConflictsCommand(first)}; preview the resolution: ${fileDriftRepairCommand(first)} (or --prefer database), then apply with the --expect hash it prints.${policyNote}${boundNote}`,
+        + `Maintenance now skips them before spending or admitting anything. List them: ${auditConflictsCommand(first)}; preview the resolution: ${fileDriftRepairCommand(first)} (or --prefer database); its apply needs the user's consent (it asks; add --yes only after they agree).${policyNote}${boundNote}`,
       fix: agentFix(['gbrain', 'sources', 'reconcile', first, '--brain', 'host', '--audit', '--conflicts', '--json'],
         'Read-only: lists the conflict receipts grouped by slug, whether each file still differs, its drift class and producer.', 'maintenance_write_drift', { docs }) };
   } catch (error) {

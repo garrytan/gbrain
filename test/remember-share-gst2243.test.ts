@@ -91,12 +91,13 @@ for (const kind of testBackends()) {
         return { id: c.clientId, secret: c.clientSecret ?? '' };
       };
       const qm = await register('qm');
-      await bindCredential(engine, { kind: 'client', id: qm.id }, { attestActor: 'qm', attestOps: ATTEST_OPS });
+      await bindCredential(engine, { kind: 'client', id: qm.id }, { attestActor: 'qm', attestOps: ATTEST_OPS, readsUnscoped: true });
       const alice = await register('alice');
       await bindCredential(engine, { kind: 'client', id: alice.id }, { member: 'alice-example' });
       const bob = await register('bob');
       await bindCredential(engine, { kind: 'client', id: bob.id }, { member: 'bob-example' });
       const plain = await register('plain');
+      await bindCredential(engine, { kind: 'client', id: plain.id }, { readsUnscoped: true });
       for (const [name, c] of [['qm', qm], ['alice', alice], ['bob', bob], ['plain', plain]] as const) tokens[name] = (await provider().exchangeClientCredentials(c.id, c.secret)).access_token;
       await linkMember(engine, 'alice-example', 'qm', ALICE_ID);
       await linkMember(engine, 'bob-example', 'qm', BOB_ID);

@@ -97,6 +97,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       collapse: true,
       rank_priors: true,
       keyword_phrase: false,
+      qualified_aliases: false,
+      title_qualified: false,
       // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
       keyword_arm_confidence_floor: null,
       // ranker wave (Phase E3) — metadata boost gate `lexical` in every bundle since the Cat 13 held-out receipt (`always` = pre-wave pipeline).
@@ -149,6 +151,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       collapse: true,
       rank_priors: true,
       keyword_phrase: false,
+      qualified_aliases: false,
+      title_qualified: false,
       // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
       keyword_arm_confidence_floor: null,
       // ranker wave (Phase E3) — metadata boost gate `lexical` in every bundle since the Cat 13 held-out receipt (`always` = pre-wave pipeline).
@@ -200,6 +204,8 @@ describe('SEARCH_MODES + MODE_BUNDLES canonical shape', () => {
       collapse: true,
       rank_priors: true,
       keyword_phrase: false,
+      qualified_aliases: false,
+      title_qualified: false,
       // ranker wave (Phase E2) — keyword-arm confidence floor OFF in every bundle until the Cat 13 receipt.
       keyword_arm_confidence_floor: null,
       // ranker wave (Phase E3) — metadata boost gate `lexical` in every bundle since the Cat 13 held-out receipt (`always` = pre-wave pipeline).
@@ -1153,5 +1159,33 @@ describe('multi-hop planner knobs (relational_planner, relational_orient_onehop)
     expect(explicitOn).toBe(dflt);
     expect(offSlots).toBe(off);
     expect(new Set([dflt, off, onSlots, orient]).size).toBe(4);
+  });
+});
+
+describe('qualified_aliases / title_qualified mode knobs', () => {
+  test('off in every bundle', () => {
+    for (const m of ['conservative', 'balanced', 'tokenmax'] as const) {
+      expect(MODE_BUNDLES[m].qualified_aliases).toBe(false);
+      expect(MODE_BUNDLES[m].title_qualified).toBe(false);
+    }
+  });
+
+  test('config parses into the overrides; a bad value is ignored', () => {
+    expect(loadOverridesFromConfig({ 'search.qualified_aliases': 'true' }).qualified_aliases).toBe(true);
+    expect(loadOverridesFromConfig({ 'search.title_qualified': 'on' }).title_qualified).toBe(true);
+    expect(loadOverridesFromConfig({ 'search.qualified_aliases': 'false' }).qualified_aliases).toBe(false);
+    expect(loadOverridesFromConfig({ 'search.qualified_aliases': 'maybe' }).qualified_aliases).toBeUndefined();
+    expect(loadOverridesFromConfig({ 'search.title_qualified': 'yes please' }).title_qualified).toBeUndefined();
+    expect(resolveSearchMode({ mode: 'balanced', overrides: { qualified_aliases: true } }).qualified_aliases).toBe(true);
+  });
+
+  test('knobsHash: off keeps every existing key; each knob on segregates the cache on its own', () => {
+    const dflt = knobsHash(resolveSearchMode({ mode: 'balanced' }));
+    const explicitOff = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { qualified_aliases: false, title_qualified: false } }));
+    const qa = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { qualified_aliases: true } }));
+    const tq = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { title_qualified: true } }));
+    const both = knobsHash(resolveSearchMode({ mode: 'balanced', overrides: { qualified_aliases: true, title_qualified: true } }));
+    expect(explicitOff).toBe(dflt);
+    expect(new Set([dflt, qa, tq, both]).size).toBe(4);
   });
 });

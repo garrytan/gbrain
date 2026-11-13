@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * GST-359 D: docs/contracts/qm-memory-provider/v1.json to v4.json, the QM memory-provider contracts, generated from the
+ * GST-359 D: docs/contracts/qm-memory-provider/v1.json to v5.json, the QM memory-provider contracts, generated from the
  * live operation registry, the actor model and the error catalogue. test/qm-memory-contract.test.ts fails on drift.
  *   bun scripts/build-qm-memory-contract.ts          write every fixture
  *   bun scripts/build-qm-memory-contract.ts --check  exit 1 when a committed fixture is stale
@@ -9,6 +9,7 @@
  * GST-1158 F1 v3 adds the personal tools (own DM, read as the attested person) with frozen result shapes, forget_fact
  * among them, and each memory_recall fact's arm (F5). GST-2407 v4 adds memory_propose (an owner-approved write on a shared
  * page) with its proposal receipt, the E1 scope_read marking on each personal tool, and each memory_recall fact's own_page.
+ * GST-2407 v5 marks context_pack scope_read: a call that names its source reads only that source as its audience.
  */
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -24,14 +25,17 @@ import { IDEMPOTENCY_KEY_RE, MEMORY_RECALL_MAX_CHARS, MEMORY_RECALL_QUERY_CHARS,
 import { WRITE_REQUEST_STATES } from '../src/core/persistence/types.ts';
 import { TERMINAL_STATES } from '../src/core/persistence/model.ts';
 
-export type QmContractVersion = 1 | 2 | 3 | 4;
+export type QmContractVersion = 1 | 2 | 3 | 4 | 5;
 export const QM_CONTRACT_PATHS: Record<QmContractVersion, string> = {
   1: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v1.json'),
   2: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v2.json'),
   3: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v3.json'),
   4: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v4.json'),
+  5: join(import.meta.dir, '..', 'docs', 'contracts', 'qm-memory-provider', 'v5.json'),
 };
 export const QM_CONTRACT_PATH = QM_CONTRACT_PATHS[1];
+/** The personal tools v4 marks scope_read, frozen: context_pack is marked from v5 on. */
+const V4_SCOPE_READ_OPS: ReadonlySet<string> = new Set(['entity', 'find_experts', 'get_backlinks', 'get_page', 'get_timeline', 'query', 'volunteer_context', 'whois']);
 /** The arguments v1 publishes per tool, frozen: later arguments appear from v2 on. */
 const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 'max_chars', 'acting_user'], memory_write: ['facts', 'idempotency_key', 'acting_user'] };
 /** The arguments v2 publishes per tool, frozen: #8694's query_keep appears from v3 on. */
@@ -174,6 +178,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
   const v2 = version > 1;
   const v3 = version > 2;
   const v4 = version > 3;
+  const v5 = version > 4;
   const codes: readonly (keyof typeof CODES)[] = v4 ? [...ERROR_CODES, 'permission_denied', 'page_not_found', 'result_too_large', 'idempotency_conflict', 'proposals_pending_limit', 'source_changed'] : v3 ? [...ERROR_CODES, 'permission_denied', 'page_not_found', 'result_too_large'] : v2 ? [...ERROR_CODES, 'permission_denied'] : ERROR_CODES;
   const base: Record<string, string | undefined> = v2 ? { ...ERROR_NOTES,
     actor_not_attested: 'With no x-qm-actor header, acting_user is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it); the call then runs exactly as the credential.',
@@ -208,11 +213,13 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
       ...(v4 ? { scope_read: {
         marked: 'scope_read: true: a call that names sources (source_id, source_ids or all_sources, where the tool\'s input_schema declares them) reads those sources as their audience, never as the person, as memory_recall\'s scope_read does: no member-page fact, no page restricted to named readers, and privacy is never relaxed',
         every_source: "under a scope read, source_id '__all__', '__all__' in source_ids and all_sources: true are refused with invalid_params; nothing is read",
-        unmarked: 'scope_read: false: the tool reads as the person whatever the call names; context_pack refuses a call that names sources or entity_refs with invalid_params (nothing is read) unless the credential reads named sources as the person',
+        unmarked: v5 ? 'scope_read: false: the tool reads as the person whatever the call names'
+          : 'scope_read: false: the tool reads as the person whatever the call names; context_pack refuses a call that names sources or entity_refs with invalid_params (nothing is read) unless the credential reads named sources as the person',
+        ...(v5 ? { context_pack: 'a context_pack scope read names one source in source_id and reads only it: entities, cards, core memory, the counterparty brief and hot facts; entity_refs also name sources, and each must carry that same source_id; a call with entity_refs and no source_id (source_ids alone names none), an entity_refs entry in another source, or session_id is refused with invalid_params, and nothing is read; with --attest-read person the pack reads as the person, narrowed to source_id the same way' } : {}),
         as_person: 'a credential the brain operator binds with --attest-read person reads named sources as the person instead, narrowed to those sources',
         without_sources: 'the person read (read_as above)',
       } } : {}),
-      tools: [...QM_PERSONAL_OPS].sort().map(name => ({ ...toolEntry(name, version), personal_only: true, ...(v4 ? { scope_read: SCOPE_READ_OPS.has(name) } : {}), result: PERSONAL_RESULTS[name],
+      tools: [...QM_PERSONAL_OPS].sort().map(name => ({ ...toolEntry(name, version), personal_only: true, ...(v4 ? { scope_read: (v5 ? SCOPE_READ_OPS : V4_SCOPE_READ_OPS).has(name) } : {}), result: PERSONAL_RESULTS[name],
         ...(v4 && name === 'get_write_request' ? { proposal_receipt: 'the fields and states in result are a write\'s receipt; a request_id from memory_propose that no write holds yet answers memory_propose.receipt instead, with its own fields and states (awaiting_owner, denied, expired, cancelled, failed, conflict)' } : {}) })),
     } } : {}),
     memory_recall: {
@@ -314,7 +321,7 @@ export function renderQmMemoryContract(version: QmContractVersion): string {
 
 if (import.meta.main) {
   let stale = false;
-  for (const version of [1, 2, 3, 4] as const) {
+  for (const version of [1, 2, 3, 4, 5] as const) {
     const path = QM_CONTRACT_PATHS[version];
     const fresh = renderQmMemoryContract(version);
     if (process.argv.includes('--check')) {

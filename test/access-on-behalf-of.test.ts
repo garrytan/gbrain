@@ -49,6 +49,7 @@ import type { DoctorContext } from '../src/commands/doctor/context.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 
 const DIMS = 1536;
 function vectorFor(text: string): number[] {
@@ -159,6 +160,7 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(engine, { name, scopes, takesHolders: ['world'], sourceGrant: [SRC] });
         tokens[name] = { id: minted.id, token: minted.token };
         if (binding.member || binding.mayActFor) await bindCredential(engine, { kind: 'token', id: minted.id }, binding);
+        if (!binding.member) await readsUnscopedOnPurpose(engine, minted.id);
       };
       await mint('bot', { mayActFor: ['member:alice-example', 'member:bob-example', 'group:team-a', 'guest'] });
       await mint('bot-dan', { member: 'dan-example', mayActFor: ['guest', 'member:alice-example', 'member:bob-example'] }, ['read', 'write']);

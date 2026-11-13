@@ -28,7 +28,7 @@ export const PUBLIC_BY_TERMINAL: Readonly<Record<TerminalCategory, PublicCategor
   operator_cancelled: 'superseded', caller_conflict: 'conflict', file_conflict: 'drift', canonical_file_missing: 'file_missing', fence_unrenderable: 'defect',
   writer_guard: 'defect', database_refusal: 'config', owner_exception: 'defect', legacy_publication_refusal: 'superseded',
   sync_fault: 'defect', transport: 'transient', caller_refusal: 'content_refused', gbrain_defect: 'defect', diagnosis_required: 'defect',
-  schema_missing: 'storage',
+  schema_missing: 'storage', retired_operation: 'superseded',
 };
 
 /** Fault codes (holds, run stops, receipts) by name; a test pins that every `SYNC_FAULT_TABLE` code is here. */
@@ -55,7 +55,7 @@ export const PUBLIC_BY_CODE: Readonly<Record<string, PublicCategory>> = {
   slug_root_mode_mismatch: 'config', invalid_params: 'config',
   // GBRA-133 (#6712 PR 4b lane F): a file whose text holds NUL bytes, and a committed file whose Git object is gone.
   content_null_bytes: 'content_refused', content_filter_owned: 'content_refused', git_object_missing: 'storage', path_not_utf8: 'content_refused',
-  visibility_noncanonical: 'content_refused',
+  visibility_noncanonical: 'content_refused', tag_too_long: 'content_refused',
 };
 
 /** A registry code's class, for a code neither table names. */

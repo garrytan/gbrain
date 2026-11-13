@@ -161,11 +161,22 @@ export function gitHomeRequired(row: Pick<WriteRequest, 'source_id' | 'slug'>, r
   const why = 'Git is the source of truth for a git-canonical source: page content reaches the database only after Git commits its file, except for the declared database-only classes (private pages, storage.db_only directories, never-filed derive-phase pages, paths Git ignores).';
   const message = reason === 'declared_target'
     ? `Source ${row.source_id} is git-canonical and page ${row.slug} is declared database-only${remote || !declared ? '' : ` (${declared})`}, so its file is never committed; nothing was written.`
-    : `Source ${row.source_id} is git-canonical and this write would store ${reason === 'facts_lane' ? 'rows' : `page ${row.slug}`} in the database without a file in Git, so nothing was written.`;
+    : reason === 'facts_lane'
+      ? `Source ${row.source_id} is git-canonical and ${row.slug} has no page${remote ? '' : ' while a page rule keeps it to its own readers'}, so no file in Git can hold its fact yet; nothing was written.`
+      : `Source ${row.source_id} is git-canonical and this write would store page ${row.slug} in the database without a file in Git, so nothing was written.`;
+  // GST-2492: a fact for an entity no holding page can carry (an exact page rule on it) waits for the entity's own page.
+  if (reason === 'facts_lane') {
+    return opError('git_home_required', message, `Create the page ${row.slug} with put_page, then remember the fact again with a new request_id.`, { reason, why, docs: DOCS,
+      fix: { ask_user: true, argv: ['gbrain', 'put', row.slug], mcp: { tool: 'put_page', arguments: { slug: row.slug, content: '<content>' } },
+        inputs: [{ name: 'content', how: `The page as Markdown: frontmatter with type and title, then what is known about ${row.slug}. On the CLI, pass it on stdin.` }],
+        consent: [], actor: 'agent', requires_exclusive: false, why: `Creates the page ${row.slug}, so the fact has a file; then remember it again. Run it only after the user agrees.`,
+        user_message: `${row.slug} has no page yet, so the fact can't be saved in Git. Should I create a page for ${row.slug} and then save the fact on it?`,
+        verify: { argv: ['gbrain', 'get', row.slug], mcp: { tool: 'get_page', arguments: { slug: row.slug } } } } });
+  }
   const fix: Action = { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, why, docs: DOCS,
     user_message: reason === 'declared_target'
       ? `Page ${row.slug} in git-canonical source ${row.source_id} is declared database-only, so gbrain will not commit its file. Should it stay database-only, or move to a path Git tracks (outside storage.db_only and the derive folders, and not private)?`
-      : `Source ${row.source_id} is git-canonical, so every page needs a home in Git. Should ${reason === 'facts_lane' ? 'these rows' : `page ${row.slug}`} be written to a file Git tracks, or declared database-only (its directory under storage.db_only in gbrain.yml, or the page marked visibility: private)?`,
+      : `Source ${row.source_id} is git-canonical, so every page needs a home in Git. Should page ${row.slug} be written to a file Git tracks, or declared database-only (its directory under storage.db_only in gbrain.yml, or the page marked visibility: private)?`,
     verify: { argv: ['gbrain', 'sources', 'git-gap', row.source_id, '--json'] } };
   return opError('git_home_required', message, 'Ask the user which git home to configure, then submit the write again with a new request_id.', { reason, why, fix, docs: DOCS });
 }
@@ -204,7 +215,10 @@ export async function assertNoPrivateCommit(tx: BrainEngine, row: WriteRequest, 
   if (privacy) throw privateCommitRefused(row, privacy, row.authority?.remote === true);
 }
 
-/** For writers with no file form yet (G4, G5): refuses on a strict source, so a database-only row is never written there. */
+/**
+ * For a fact no holding page can carry (GST-2492: remember for an entity with no page that an exact page rule names):
+ * refuses on a strict source, so a database-only row is never written there.
+ */
 export async function assertStrictGitHome(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'slug'>, remote: boolean): Promise<void> {
   const [source] = await engine.executeRaw<{ strict: boolean }>(`SELECT COALESCE(config->>'canonical','')='git' AS strict FROM sources WHERE id=$1`, [row.source_id]);
   if (source?.strict === true) throw gitHomeRequired(row, 'facts_lane', remote);
