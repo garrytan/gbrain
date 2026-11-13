@@ -30,6 +30,7 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { raisePageLabelGuard } from '../trust/page-write.ts';
+import { openTwins, openTwinsWarning } from '../access/open-twins.ts';
 import { afterCursor, type RepairCursor, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope } from './core.ts';
 
 /** The operator's request: `--readers` as typed (`none` removes), the owner flag, and the `--slugs-file` path with its slugs. */
@@ -181,11 +182,14 @@ export async function planReaders(engine: BrainEngine, scope: RepairScope, after
   if (opts.apply) return { items: await approvedItems(engine, scope, selection, opts.expect!, command, after), preview_hash: opts.expect, residuals: {} };
   const { items, residuals } = await planPages(engine, selection);
   const hash = previewHash(hashParts(scope, selection, items));
+  const twins = await openTwins(engine, readers?.length ? items : [], readers ?? [],
+    (source, named) => `gbrain repair visibility --source ${source}${named.map(slug => ` --slug ${slug}`).join('')} --readers ${request.readers}`);
   const selectionDigest = digest(selection);
   if (items.length) await saveApprovedSet<ApprovedReaders>(engine, { command: 'visibility', hash },
     items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, readers: item.readers, selection_digest: selectionDigest })));
-  return { items: items.map((item, index) => ({ ...item, cursor: { phase: 0, id: index } })), preview_hash: hash, residuals,
-    ...(residuals.named_not_found ? { warnings: [residuals.named_not_found + ' named page(s) were not found in ' + scope.source_ids.join(', ') + ' and are not listed.'] } : {}),
+  const warnings = [...(residuals.named_not_found ? [residuals.named_not_found + ' named page(s) were not found in ' + scope.source_ids.join(', ') + ' and are not listed.'] : []), ...openTwinsWarning(twins)];
+  return { items: items.map((item, index) => ({ ...item, cursor: { phase: 0, id: index } })), preview_hash: hash, residuals: { ...residuals, ...(twins.count ? { open_twins: twins.count } : {}) },
+    ...(warnings.length ? { warnings } : {}), ...(twins.count ? { details: { open_twins: twins } } : {}),
     listing: items.map(item => ({ item: item.source_id + ':' + item.slug, class: 'readers', detail: item.action })) };
 }
 

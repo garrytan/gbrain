@@ -195,6 +195,7 @@ test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/label-only-repairs.test.ts
+test/label-repair-derived-stamps-gst2603.test.ts
 test/lane-apply-pipelining.test.ts
 test/large-pages/append-concurrency.test.ts
 test/large-pages/append-cost.test.ts
