@@ -59,7 +59,7 @@ describe('takeHitRowToHit (#2450 — takes_search MCP path)', () => {
     expect(hit).toEqual({
       take_id: 42, page_id: 7, page_slug: 'people/alice-example', row_num: 3,
       claim: 'Strong DX intuition', kind: 'take', holder: 'garry',
-      weight: 0.8, score: 0.91,
+      weight: 0.8, since_date: null, until_date: null, source: null, score: 0.91,
     });
     expect(() => JSON.stringify(hit)).not.toThrow();
   });

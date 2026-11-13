@@ -80,6 +80,7 @@ import { stuckRecoveryRepair } from './stuck-recovery.ts';
 import { ghostPagesRepair, GHOST_CONSENT_TEXT, GHOST_CONSEQUENCES, GHOST_PURGE_FUSE_HOURS } from './ghost-pages.ts';
 import { legacyTwinsRepair, LEGACY_TWINS_CONSENT_TEXT, LEGACY_TWINS_PURGE_FUSE_HOURS } from './legacy-twins.ts';
 import { originTwinsRepair, ORIGIN_TWINS_CONSENT_TEXT, ORIGIN_TWINS_PURGE_FUSE_HOURS } from './origin-twins.ts';
+import { movedPagesRepair, MOVED_PAGES_CONSENT_TEXT, MOVED_PAGES_PURGE_FUSE_HOURS } from './moved-pages.ts';
 import { receiptCompactionRepair } from './receipt-compaction.ts';
 import { aliasesRepair } from './aliases.ts';
 import { renameIdentityRepair, RENAME_IDENTITY_CONSENT_TEXT } from './rename-identity.ts';
@@ -454,7 +455,13 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'gets one revision_conflict). Preview-bound: --apply --expect <hash> sweeps exactly the previewed set; runs only when named.',
   },
   'file-drift': {
-    handler: fileDriftRepair, embeds: 'effect', checks: ['maintenance_write_drift'], explicit_only: true, preview_bound: true,
+    handler: fileDriftRepair, embeds: 'effect', checks: ['maintenance_write_drift'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Apply the previewed file-drift resolutions: each listed page takes the preferred side, and the other copy is replaced.',
+      why: 'The preview listed each page and the side that wins it.',
+      risk: 'A file rewrite is a new commit (git revert brings the edit back) and reconcile keeps a private backup of the replaced copy; a page that changed since the preview is skipped.',
+      user_message: 'Apply the previewed file-drift repair? Each listed page takes the side the preview showed, and the other copy is replaced.',
+    },
     summary: 'Resolve pages whose canonical file differs from the database (source_changed / file_database_drift, #6643) through canonical reconciliation: '
       + '--prefer file or --prefer database wins every ordinary field, within reconcile\'s protections (protected metadata stays as stored, tags are '
       + 'the union, protected takes and private fact rows are kept; the preview lists each page\'s exceptions). Select with --slug <slug>, --request '
@@ -466,7 +473,9 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'deleted only in the worktree is listed deletion_uncommitted and routed to committing the deletion or repair ghost-pages. --held [--side both|unknown|deleted '
       + '[--state tombstone_edited|purged_differs|file_gone]] selects the source\'s held file_drift pages of one Decision (several sides or states are refused; '
       + '--side deleted needs --state): a deleted page whose file changed is restored and imported (--prefer file) or keeps its deletion while the file is '
-      + 'removed by a coordinated commit (--prefer database); a purged page\'s file is imported as a new page or removed. Trusted local CLI only; runs only when named.',
+      + 'removed by a coordinated commit (--prefer database); a purged page\'s file is imported as a new page or removed. --prefer database never overwrites a file '
+      + 'edit sync never imported in bulk: such a page is listed kept_newer_file and skipped, and an exact --slug selection names the commit it discards (GST-2579). '
+      + 'The apply needs the user\'s consent (--yes), which names those edits. Trusted local CLI only; runs only when named.',
   },
   'stuck-recovery': {
     handler: stuckRecoveryRepair, embeds: 'none', checks: [], explicit_only: true, preview_bound: true, consent: 'destructive',
@@ -505,6 +514,17 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'commands to decide it; --slug <kept-slug> then only detaches the other pages (they forget the file and stay live). Refused when merges are over half of '
       + 'the source\'s file-backed pages unless GBRAIN_ALLOW_MASS_RECONCILE=1. Once no source has a group, --apply builds the pages_live_origin_key index. '
       + 'Preview-bound: --apply --expect <hash> --yes resolves exactly the previewed set. Runs only when named.',
+  },
+  'moved-pages': {
+    handler: movedPagesRepair, embeds: 'none', checks: ['ghost_pages'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: MOVED_PAGES_CONSENT_TEXT,
+    summary: 'Fold a page left behind by a file that moved into the page the moved file imported as (GST-2584): sync follows a move only when it happens, so when the old '
+      + 'page\'s deletion was held (file_gone) the new path imports as a fresh page and the old one stays. Needs --source; refused off the canonical owner host. A page is '
+      + 'folded only on proof read from Git: its old path\'s last committed content is the content a new path took in the commit that deleted it (or that path\'s first '
+      + 'commit), exactly one live page descends from it, and the old page still holds it. Its links in every role, relationship dates, timeline, raw data, files, user '
+      + `tags, aliases, facts and saved versions move to the moved page, its slug becomes an alias, its hold is cleared, and it is soft-deleted and purged after ${MOVED_PAGES_PURGE_FUSE_HOURS} h; `
+      + 'no file is written. Any other page whose file is gone is listed with why it is kept (several candidates, a database edit after the move, a shallow history). '
+      + 'Preview-bound: --apply --expect <hash> --yes folds exactly the previewed set. Runs only when named.',
   },
   'receipt-compaction': {
     handler: receiptCompactionRepair, embeds: 'none', checks: ['persistence_capacity'], explicit_only: true, preview_bound: true, consent: 'destructive',

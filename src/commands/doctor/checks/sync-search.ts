@@ -13,6 +13,7 @@ import {
   checkLinkResolutionOpportunity,
 } from './calibration.ts';
 import { checkSyncConsolidation, checkCycleFreshness } from './consolidation-cycle.ts';
+import { checkSynopsisTierCoverage } from './synopsis-coverage.ts';
 import {
   checkSyncFreshness,
   checkLinksExtractionLag,
@@ -144,6 +145,9 @@ async function runSearchMode(ctx: DoctorContext): Promise<Check[]> {
   if (engine !== null) {
     progress.heartbeat('search_mode');
     checks.push(await checkSearchMode(engine));
+    // #8744 synopsis_tier_coverage — configured per_chunk_synopsis tier vs the chunks that carry it.
+    progress.heartbeat('synopsis_tier_coverage');
+    checks.push(await checkSynopsisTierCoverage(engine));
     // issue #1777 — hidden_by_search_policy: chunked pages withheld from default
     // search by the hard-exclude prefix policy (audit the surviving excludes).
     progress.heartbeat('hidden_by_search_policy');
@@ -236,6 +240,7 @@ export const searchModeEntry: DoctorEntry = {
   name: 'search_mode',
   emits: [
     'search_mode',
+    'synopsis_tier_coverage',
     'hidden_by_search_policy',
     'eval_drift',
     'reranker_health',

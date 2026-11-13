@@ -333,7 +333,8 @@ export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = 
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND ${opts.oldestFirst ?? false}::boolean THEN t.since_date END ASC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND NOT ${opts.oldestFirst ?? false}::boolean THEN t.since_date END DESC NULLS LAST,
-        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'created_at'  THEN t.created_at END DESC NULLS LAST
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'created_at'  THEN t.created_at END DESC NULLS LAST,
+        t.id DESC
       LIMIT ${limit} OFFSET ${offset}
     `)).rows;
     return rows.map((r) => takeRowToTake(r as Record<string, unknown>));
@@ -348,7 +349,7 @@ export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts:
         : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
-             t.claim, t.kind, t.holder, t.weight,
+             t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source,
              word_similarity(${query}, t.claim)::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id
@@ -383,7 +384,7 @@ export async function searchTakesVector(
         : sqlFragment``;
     const rows = (await exec.run(sqlFragment`
       SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
-             t.claim, t.kind, t.holder, t.weight,
+             t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source,
              (1 - (t.embedding <=> ${vec}::vector))::real AS score
       FROM takes t
       JOIN pages p ON p.id = t.page_id

@@ -22,7 +22,7 @@ function ctxWith(overrides: Partial<OperationContext>): OperationContext {
   // Shape exposes only what whoami reads. Every required field gets a
   // safe stub; the test-relevant overrides come last to win.
   return {
-    engine: {} as any,
+    engine: { executeRaw: async () => [] } as any,
     config: {} as any,
     logger: { info() {}, warn() {}, error() {} },
     dryRun: false,

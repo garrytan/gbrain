@@ -12,6 +12,7 @@ import {
   formatResultsExplain,
   formatAutocutSummary,
   formatDegradedSummary,
+  buildScoreDetails,
 } from '../../src/core/search/explain-formatter.ts';
 import type { AutocutDecision } from '../../src/core/search/autocut.ts';
 
@@ -48,6 +49,14 @@ describe('formatResultExplain — no boosts', () => {
 });
 
 describe('formatResultExplain — every boost type', () => {
+  test('title_mention_boost (search.title_qualified) renders apart from the exact title boost', () => {
+    const res = r('people/alice-example', 1.25, { base_score: 1.0, title_mention_boost: 1.25 });
+    const out = formatResultExplain(res, 1);
+    expect(out).toContain('+ title-mention ×1.25');
+    expect(out).not.toContain('no boosts applied');
+    expect(buildScoreDetails(res).boosts).toEqual({ title_mention: { factor: 1.25 } });
+  });
+
   test('backlink_boost renders', () => {
     const out = formatResultExplain(
       r('a/b', 1.5, { base_score: 1.0, backlink_boost: 1.5 }),

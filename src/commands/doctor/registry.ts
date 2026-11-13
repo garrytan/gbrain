@@ -44,6 +44,7 @@ import { ipcSocketPathEntry } from './checks/local-ipc.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { postgresTlsEntry } from './checks/postgres-tls.ts';
 import { databaseEncodingEntry } from './checks/database-encoding.ts';
+import { schemaFunctionBodiesEntry } from './checks/schema-function-bodies.ts';
 import {
   pgvectorEntry,
   rlsEntry,
@@ -95,6 +96,7 @@ import { contentDriftSweepEntry } from './checks/content-drift-sweep.ts';
 import { connectorAccountMismatchEntry } from './checks/connector-account-mismatch.ts';
 import { legacyJobAuthorityEntry } from './checks/legacy-job-authority.ts';
 import { legacyTokenGrantsEntry } from './checks/legacy-token-grants.ts';
+import { unscopedMultiUserTokenEntry } from './checks/unscoped-multi-user-token.ts';
 import { grantNewOpsEntry } from './checks/grant-new-ops.ts';
 import { linksExtractionLagEntry, syncFreshnessEntry, searchModeEntry } from './checks/sync-search.ts';
 import { persistenceConsumersEntry, serveBuildDriftEntry } from './checks/persistence-consumers.ts';
@@ -134,19 +136,24 @@ import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
 import { storageManifestEntry } from './checks/storage-manifest.ts';
+import { mcpRequestLogRetentionEntry } from './checks/mcp-request-log.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
 import { strictFactsOutsideGitEntry } from './checks/strict-facts-outside-git.ts';
 import { localEditAdoptionsEntry } from './checks/local-edit-adoptions.ts';
+import { sessionLaneBudgetEntry } from './checks/session-lane.ts';
 import { syncConfigKeysEntry } from './checks/sync-config-keys.ts';
 import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
 import { folderAccessEntry } from './checks/folder-access.ts';
 import { unlabeledPeopleFoldersEntry } from './checks/unlabeled-people-folders.ts';
+import { unscopedSharedReadsEntry } from './checks/unscoped-shared-reads.ts';
+import { sharedStdioBindingEntry } from './checks/shared-stdio-binding.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
 import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
+import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
@@ -232,15 +239,19 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   memberAccessEntry,
   folderAccessEntry,
   unlabeledPeopleFoldersEntry,
+  unscopedSharedReadsEntry,
+  sharedStdioBindingEntry,
   sharedAgentAccessEntry,
   ownerReadsRestrictedEntry,
   accessLineageEntry,
+  accessLabelledOnlyEntry,
   attestReadAccessEntry,
   rlsEntry,
   postgresTlsEntry,
   functionSearchPathEntry,
   databaseEncodingEntry,
   schemaVersionEntry,
+  schemaFunctionBodiesEntry,
   rlsEventTriggerEntry,
   embeddingsEntry,
   embeddingProviderEntry,
@@ -281,6 +292,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   legacyJobAuthorityEntry,
   legacyTokenGrantsEntry,
   grantNewOpsEntry,
+  unscopedMultiUserTokenEntry,
   indexAuditEntry,
   imageAssetsEntry,
   imageEmbeddingCoverageEntry,
@@ -310,6 +322,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   trustReleaseUnpreviewedEntry,
   coreMemoryEntry,
   persistenceConsumersEntry,
+  // GBRA-133: this role's session connections across every process, against the pooler's limit (read-only).
+  sessionLaneBudgetEntry,
   runtimeBuildSkewEntry,
   cliSocketRefusalsEntry,
   atomHeldFailedEntry,
@@ -345,6 +359,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   embeddingPlaneDisagreementEntry,
   // GST-1943: the storage shelf: cards failing the card schema, interim records not adopted, a hosted shelf directory gone.
   storageManifestEntry,
+  // #6770: MCP request-log size and the opt-in retention prune (read-only; the enable fix asks the user).
+  mcpRequestLogRetentionEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];
@@ -405,7 +421,7 @@ function onlyResult(checks: Check[], only: ReadonlySet<string>, stopped: boolean
   const kept = checks.filter((c) => only.has(c.name) || (stopped && missing.length > 0 && c.name === 'connection'));
   for (const name of missing) {
     kept.push(stopped
-      ? { name, status: 'warn', message: 'Not run: the database checks stopped early (see the connection check).', fix_unavailable_reason: 'check_errored' }
+      ? { name, status: 'warn', message: 'Not run: the database checks stopped early (see the connection check).', details: { health: 'unknown' }, fix_unavailable_reason: 'check_errored' }
       : infoCheck(name, 'No finding: this check does not apply to this brain right now.', 'not_applicable'));
   }
   return kept;

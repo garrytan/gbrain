@@ -2,7 +2,8 @@
  * Tests for the advisor core: ranking, collector resilience, individual
  * collectors with a stub engine, and finding-history deltas.
  */
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -244,6 +245,25 @@ describe('collect-stalled-jobs', () => {
     const out = await collectStalledJobs.collect(ctx(engine as never));
     expect(out.find((f) => f.id === 'stalled_job:embed-backfill')).toBeDefined();
     expect(out.find((f) => f.id === 'stale_sync:wiki')).toBeDefined();
+  });
+});
+
+// Value: protects=an archived source never gets a stale_sync finding (its gbrain sync fix cannot run); fails_when=the weekly checkup nags about a source the user retired; why_new=#7281; seam=none; no_claim=a purge finding for archived sources
+describe('collect-stalled-jobs on a real brain (#7281)', () => {
+  let engine: PGLiteEngine;
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({ database_url: '' });
+    await engine.initSchema();
+  });
+  afterAll(async () => { await engine.disconnect(); });
+
+  test('an archived stale source is skipped; a live stale source is still reported', async () => {
+    await engine.executeRaw(`INSERT INTO sources (id, name, last_sync_at) VALUES ('source-a', 'source-a', now() - interval '30 days'), ('source-b', 'source-b', now() - interval '30 days')`);
+    await engine.executeRaw(`UPDATE sources SET archived = true, archived_at = now() WHERE id = 'source-a'`);
+    const ids = (await collectStalledJobs.collect(ctx(engine))).map((f) => f.id);
+    expect(ids).toContain('stale_sync:source-b');
+    expect(ids).not.toContain('stale_sync:source-a');
   });
 });
 

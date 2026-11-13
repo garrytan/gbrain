@@ -5,6 +5,7 @@ import { fenceNormalizedNotice, type FencesNormalized } from '../fence-repair/re
 import { parseFenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isHostAbsolutePath } from '../path-confine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { OperationError } from '../ops/contract.ts';
 import { admitChangeReason, CHANGE_REASON_OPERATIONS } from './change-reason.ts';
@@ -42,7 +43,7 @@ import { decideUnboundWrite, isUnboundSourcePage } from './unbound-source.ts';
 import { assertRestoreOrigin } from './detached-pages.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
 import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-target.ts';
-import { publishesDatabaseOnly } from './page-prepare.ts';
+import { CALLER_CONTENT_OPERATIONS, publishesDatabaseOnly } from './page-prepare.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
@@ -172,7 +173,7 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
   let root = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path ? join(binding.local_path, binding.relative_path) : null
     : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
-  if (root && !isAbsolute(root)) root = null;
+  if (root && !isHostAbsolutePath(root)) root = null;
   let origin: string | null = null;
   try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
   if (!root || !origin || isAbsolute(origin) || origin === '..' || origin.startsWith(`..${sep}`) || !/\.mdx?$/i.test(origin)) {
@@ -480,7 +481,11 @@ export async function preparePageAdmission(ctx: OperationContext,
   // terminal replay depend on a page that may have since been purged.
   if (input.operation === 'add_timeline_entry') await requireWritablePage({ ...ctx, sourceId }, slug, input.operation, 'page');
   intent.slug = slug;
-  if (ctx.remote !== false) Object.assign(intent, { source_kind: `mcp:${input.operation}`, source_uri: null, ingested_via: `mcp:${input.operation}` });
+  // #8667: only a remote write that supplies page text is an ingestion; any other keeps the page's provenance.
+  if (ctx.remote !== false) {
+    const via = CALLER_CONTENT_OPERATIONS.includes(input.operation) ? `mcp:${input.operation}` : null;
+    Object.assign(intent, { source_kind: via, source_uri: null, ingested_via: via });
+  }
   const [authority, , snapshot, boundAtStart, writeThroughSetting, repoPath] = await pipelined(ctx.engine, [
     () => submissionAuthority(ctx, input.operation, sourceId, source.incarnation, slug),
     () => assertKnowledgePublicationAllowed(ctx.engine, { source_id: sourceId, source_incarnation: source.incarnation, slug, operation: input.operation,
@@ -514,7 +519,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   const sandbox = ctx.viaSubagent === true && !(ctx.allowedSlugPrefixes?.length);
   const configuredWriteThrough = !/^(false|0|off|no)$/i.test(writeThroughSetting ?? 'true');
   const configuredRoot = source.local_path || repoPath;
-  const root = configuredRoot && isAbsolute(configuredRoot) ? configuredRoot : null;
+  const root = configuredRoot && isHostAbsolutePath(configuredRoot) ? configuredRoot : null;
   // Checkout paths belong to a host binding; sources.local_path may name
   // another host's original checkout after a verified ownership transfer.
   const localRoot = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path
@@ -527,7 +532,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (sandbox) authority.databaseOnlyReason = 'subagent_sandbox';
   else if (databaseOnly) authority.databaseOnlyReason = databaseOnly;
   else if (!configuredWriteThrough) authority.databaseOnlyReason = 'disabled_by_config';
-  else if (!root && !binding) authority.databaseOnlyReason = 'no_repo_configured';
+  else if (!root && !binding) authority.databaseOnlyReason = configuredRoot ? 'relative_root' : 'no_repo_configured';
   if (p.local_dir !== undefined) {
     let matches = false;
     if (ctx.remote === false && typeof p.local_dir === 'string' && localRoot) {

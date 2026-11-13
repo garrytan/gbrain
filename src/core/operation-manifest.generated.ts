@@ -4737,7 +4737,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "model": {
         "type": "string",
-        "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus."
+        "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus. Remote callers get the host think model unless the host lists this one in think.remote_models."
       },
       "since": {
         "type": "string",
@@ -7559,7 +7559,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "mutating": false,
     "idempotent": true,
     "outputRedaction": "retrieval",
-    "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures; present the answer as partial and name the held items and their retry command. The grouped view also returns withheld_noise (null when none): open reply-owed loops from senders whose mail the detector now treats as automated, with a per-sender preview_command for closing them.",
+    "description": "The open-loop engine's killer output: who is waiting on you, what you promised, and the context needed to respond. Grouped by counterparty (default, ranked; each group shows at most 5 loops, the rest counted in loops_omitted) or flat. Loops that name no counterparty are never ranked as a person: they come back in no_counterparty (null when none). Loops come from the deterministic Gmail thread-state detector and the LLM commitment extractor. Remote callers get redacted evidence (no verbatim quotes); trusted local callers also get quotes, Gmail deep links, entity-card context, and a pre-rendered text digest. Carries google-source freshness (stale flag) and completeness: when it is \"partial\", some mail in the window is held after repeated import failures (or, with no_google_sources: null, the sources could not be read); present the answer as partial and name the held items and their retry command. The grouped view also returns withheld_noise (null when none): open reply-owed loops from senders whose mail the detector now treats as automated, with a per-sender preview_command for closing them.",
     "params": {
       "group_by": {
         "type": "string",
@@ -7601,7 +7601,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
-        "description": "Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit."
+        "description": "Grouped: max groups (default 3). Flat: max loops (default 50); `count` is the number matched (at most 500) and `truncated: true` marks a list cut by this limit or by the 500-row internal cap (then `count` is a lower bound)."
       },
       "include_context": {
         "type": "boolean",

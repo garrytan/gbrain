@@ -4,8 +4,17 @@
 import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
 import { resolveJobPull } from './job-pull.ts';
-import { UnrecoverableError } from '../errors.ts';
+import { JobDeferredError, UnrecoverableError } from '../errors.ts';
 import type { SyncResult } from '../../../commands/sync.ts';
+
+/**
+ * #8799: a webhook's single-item refresh that finds its source busy is deferred instead of completing as a skip, so the
+ * queue runs it with its item and delete intent once the source is free, burning no attempt; a source-wide skip would
+ * record only a pull marker for it.
+ */
+function githubItemBusy(sourceId: string, item: { repo: string; number: number; deleted: boolean }): JobDeferredError {
+  return new JobDeferredError('sync_in_progress', `another sync holds source ${sourceId}; the ${item.deleted ? 'deletion' : 'refresh'} of ${item.repo}#${item.number} runs after it.`, 30_000);
+}
 
 export function makeSyncHandler(engine: BrainEngine): MinionHandler {
   return async (job) => {
@@ -103,6 +112,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
         AND (COALESCE(data->>'sourceId', data->>'source_id')=$2 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL AND ($4::text IS NULL AND $2='default' OR data->>'repoPath'=$4))) LIMIT 1`,
         [job.id, sourceId ?? 'default', typeof job.data.continuation_of === 'number' ? job.data.continuation_of : -1, repoPath ?? null]).catch(() => []);
       if (live) {
+        if (githubItem) throw githubItemBusy(sourceId ?? 'default', githubItem);
         console.error(`[sync] skipped: sync job #${live.id} is already draining ${sourceId ?? 'default'}.`);
         return { skipped: true, reason: 'sync_in_progress', source_id: sourceId ?? 'default', running_job_id: Number(live.id),
           next: { command: `gbrain jobs get ${live.id} --json`, safe_to_loop: true, retry_after_ms: 30_000, why: `Sync job #${live.id} is draining source ${sourceId ?? 'default'}; it resumes the cursor, so nothing else needs to run.` } };
@@ -132,6 +142,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
       // advanced) anchor.
       const { SyncLockBusyError } = await import('../../../commands/sync.ts');
       if (err instanceof SyncLockBusyError) {
+        if (githubItem) throw githubItemBusy(sourceId ?? 'default', githubItem);
         // #6712 PR 1 (folds #6706's live-job guard): one drainer per source is the drain lease; a job that finds it held completes as a skip.
         const id = sourceId ?? 'default';
         const { readDrainHolder, publicDrainHolder } = await import('../../persistence/sync-lease.ts');
@@ -151,6 +162,14 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
       if ((err as { code?: unknown } | null)?.code === 'sync_not_applicable') {
         console.error(`[sync] skipped: sync does not apply to ${sourceId ?? 'default'} (gbrain-owned content directory, not a Git checkout).`);
         return { skipped: true, reason: 'sync_not_applicable', source_id: sourceId ?? 'default' };
+      }
+      // #7646: a relative stored anchor refuses the same way on every retry, so the job completes as a skip carrying the
+      // ask-the-user fix instead of using up its attempts. The result is readable remotely (get_job): no stored path in it.
+      if ((err as { code?: unknown } | null)?.code === 'sync_anchor_relative') {
+        const refusal = err as { suggestion?: string; fix?: { argv?: string[]; actor?: string; ask_user?: boolean; inputs?: unknown } };
+        console.error(`[sync] skipped: ${refusal.suggestion ?? 'the stored sync path is not absolute on this host'}`);
+        return { skipped: true, reason: 'sync_anchor_relative', source_id: sourceId ?? 'default', suggestion: refusal.suggestion,
+          fix: { argv: refusal.fix?.argv, actor: refusal.fix?.actor, ask_user: refusal.fix?.ask_user, inputs: refusal.fix?.inputs } };
       }
       throw err;
     }

@@ -9,8 +9,9 @@ model.
 
 - **Off by default.** Nothing changes until you build a catalog and wire a
   harness to call `gbrain skills resolve`, or turn on the hook lane with
-  `gbrain setup <claude-code|codex> --skill-loading resolve` (OpenClaw: the
-  plugin below). Setup writes nothing for it otherwise.
+  `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw and
+  Pi: the plugin and extension below; Cursor: pinned skills only, below).
+  Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
   network, no model, no clock, no randomness on the turn path.
@@ -41,7 +42,7 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Claude Code plugins | `gbrain skills index build --catalog claude-code-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
-| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. |
+| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. For Pi, `gbrain setup pi --skill-loading resolve` builds `pi-user` for you (see below); for Cursor, `gbrain setup cursor --skill-loading resolve` builds the project's `cursor-project-<16 hex>` catalog for pinned skills. |
 | OpenClaw | `openclaw skills list --json \| gbrain skills index build --catalog openclaw-main --from-json - --dir <skills dir> --harness openclaw` | The list builds as is: the name is the id, and a skill OpenClaw hides from the model is skipped as ineligible. Each listed skill takes its body, path and triggers from the `--dir` skill of the same name; folder-only skills stay out. |
 | Other adapters | `gbrain skills index build --catalog <name> --from-json - --harness <h>` | The adapter pipes its skill list (schema below) and owns rebuilds. |
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
@@ -94,21 +95,38 @@ per-turn hook that puts the block in front of the model on every prompt:
 `--dry-run` lists every write, and re-running changes nothing. A bare
 `gbrain setup <harness>` refreshes a lane that is on.
 
-**Hermes** runs the same lane as a `pre_llm_call` shell hook. Hermes splits
-the command without a shell and needs its first word to be a path that
-exists, so pass the environment through `/usr/bin/env` and name gbrain by its
-absolute path:
-`/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver /abs/path/to/gbrain hook user-prompt --harness hermes`.
-Setup does not wire it yet, so build `hermes-user` yourself
-(`gbrain skills index build --catalog hermes-user --dir ~/.hermes/skills
---harness hermes`), add `hermes` to `skills.resolver.harnesses` in
-`~/.gbrain/config.json` by hand (`gbrain config set` refuses that key, which
-setup owns) and set `skills.resolver.enabled` to `true` there; the lane is
-off without it. Doctor's `skill_resolver` check does not cover Hermes yet. The lane
-reads `extra.user_message`, `session_id` and `cwd` from the hook's stdin and
-answers `{"context": "<block>"}`. Hermes sends the whole conversation history
-on every turn, so the lane streams stdin and keeps only those three strings
-(each capped at 8 KB): a history of any size is read, never refused.
+**Hermes**: `gbrain setup hermes --skill-loading resolve` builds `hermes-user`
+from `$HERMES_HOME/skills` (nested category folders included) and adds the
+lane's `pre_llm_call` entry to gbrain's marked `hooks:` block in
+`$HERMES_HOME/config.yaml`, the same block that carries the brain-first turn
+rule, approving it in `shell-hooks-allowlist.json`. Each lane owns only its
+own entry: `--no-instructions` drops the turn rule and keeps the resolver,
+`--skill-loading off` the reverse, and the block goes with its last entry.
+Hermes splits the command like a shell would but runs no shell, so it starts
+with `/usr/bin/env`:
+`/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver <launcher> /abs/path/to/gbrain hook user-prompt --harness hermes`.
+When config.yaml already has a `hooks:` section of yours, setup refuses with
+the entry to paste under it; once pasted, the next run approves and keeps it.
+`--skill-loading off` withdraws that approval but leaves your own section
+alone, so delete the pasted entry yourself. A Hermes with no SOUL.md still gets the resolver. `hermes hooks doctor` checks
+the entry on the Hermes host, and gbrain's doctor `skill_resolver` check
+covers Hermes.
+
+The lane reads `extra.user_message`, `session_id`, `cwd`, `extra.sender_id`,
+`extra.is_first_turn` and the length of `extra.conversation_history` from
+the hook's stdin and answers `{"context": "<block>"}`. Hermes sends the whole
+conversation history on every turn, so the lane streams stdin and keeps only
+those fields (each string capped at 8 KB): a history of any size is read,
+never refused. Hermes compacts in place, keeping the session id, and tells
+hooks nothing, so a first turn, or a history shorter than the last turn saw,
+starts the session's dedupe fresh. To show suggestions only on turns from
+some senders (a group chat), list them:
+`gbrain config set skills.resolver.per_harness.hermes.owner_sender_ids <id>,<id>`;
+a turn from anyone else, or with no sender, then gets no block.
+
+Pinned skills for Hermes (`gbrain skills pin add <id> --catalog hermes-user`)
+go in a marked block in `$HERMES_HOME/SOUL.md` while the lane is on, so every
+turn sees them; with no pins there is no block, and SOUL.md is never created.
 
 The lane runs the resolver in the hook process (never through `gbrain serve`),
 so it works with serve down and with no brain. Each block names the skill ids
@@ -146,7 +164,7 @@ The lane always exits 0 and prints nothing when it cannot deliver:
 - **Compaction:** a SessionStart with `source: compact` (Claude Code, and Codex
   0.165 and later) resets the session, so skills can be offered again. A Codex
   install from before gets the SessionStart group on its next setup run.
-  Hermes has no compaction event yet.
+  Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
 Each turn appends one line (outcome, error code, duration, catalogs; never
 turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
@@ -181,6 +199,16 @@ gateway's Node process instead:
    `plugins inspect` and one self-test turn under Node. Anything short of a
    loaded plugin exits 3 with `skill_resolver_plugin_not_installed` and the
    commands still to run; it never reports a partial install as done.
+
+Setup also asks OpenClaw which skills each agent's model can use
+(`openclaw skills list --json --agent <id>`, its `modelVisible` field). A
+skill in the agent's directories that OpenClaw hides from it (not eligible on
+this host, outside the agent's skill filter, model invocation off) or does not
+list at all (cut at load, see `skill_resolver_host_load_cut`) goes into that
+agent's `exclude_ids` and is never suggested, and setup names it. If the
+command fails, or lists none of the catalog's skills (usually a different
+workspace), nothing is filtered and setup says so. Run setup again after you
+change which skills an agent can use.
 
 The plugin never adds to or edits OpenClaw's own skill list. On each real user
 turn (`before_prompt_build`; inter-session and other internal turns are
@@ -226,6 +254,86 @@ and, over the last 24 hours, the turns, outcomes, how many reads were of
 suggested skills and the deadline-miss rate. Above 5% over at least 20 turns
 it warns with `skill_resolve_timeout`; keep a rollout in shadow until the rate
 is under that on the real host.
+
+## Pi extension
+
+Pi runs extensions inside its own Node process, so the resolver goes there as
+an extension instead of a per-turn CLI call.
+`gbrain setup pi --skill-loading resolve --gbrain-bin <abs path>`:
+
+1. Builds one catalog, `pi-user`, from the skill directories Pi loads in every
+   project: `$PI_CODING_AGENT_DIR/skills` (default `~/.pi/agent/skills`) and
+   `~/.agents/skills`. Project skills (`.pi/skills`, a project's
+   `.agents/skills`) are not in it.
+2. Writes the Node library to `~/.gbrain/lib/<sha256>.mjs` (the same one the
+   OpenClaw plugin uses), the state to `~/.gbrain/pi-skill-resolver.json`
+   (mode 0600) and the extension to
+   `$PI_CODING_AGENT_DIR/extensions/gbrain-skill-resolver/`.
+3. Runs one turn through the extension under Node, and, with `pi` on PATH,
+   checks that `pi --help` lists the extension's `--gbrain-skill-resolver`
+   flag. If it does not, Pi is not loading the extension: setup exits 3 with
+   `skill_resolver_plugin_not_installed` (check that `PI_CODING_AGENT_DIR` is
+   the same for Pi and for setup).
+
+Before each user run (Pi's `before_agent_start`) the extension sends up to 3
+suggestions with at least a description match as one hidden message right
+after the prompt, with each skill's SKILL.md path. Pi stores that message in
+the session and replays it on later turns, and a skill already suggested in a
+session is not suggested again, so each suggestion costs its tokens once.
+After a compaction (`session_compact`) the session starts fresh, so skills can
+be offered again. Pinned skills go in a system prompt section,
+`<gbrain_pinned_skills>`, on every run with the same text, so the prompt
+cache keeps working. Runs Pi starts itself (`messageType: custom`) get the pins
+but no suggestions. A pinned skill is never suggested, and neither is a skill
+Pi does not show the model on that run (not loaded, or
+`disable-model-invocation: true`).
+
+Ranking runs in a worker thread. A run waits at most 150 ms while the worker
+starts (the first run of a `pi -p` process) and 50 ms after that; a miss sends
+nothing and is logged as `timeout`. Measured with Pi 1.5.2 on a 4-core cloud
+machine, a cold `pi -p` run waited 70 to 100 ms, and the whole run took about
+150 ms longer than with `--no-extensions`. Each run appends one line (outcome,
+duration, suggested ids; never the prompt) to
+`skill-index/logs/pi-<date>.jsonl`, and `gbrain doctor --only skill_resolver`
+reports the extension, the library, the catalog and the last day's runs.
+
+Coverage is partial: Pi started with extensions off (`pi --no-extensions`, or
+a program that embeds Pi with `noExtensions`, as QM does) loads no extension,
+so those sessions get nothing, and doctor says so. `gbrain skills pin add <id>
+--catalog pi-user` updates the pins from Pi's next run. `gbrain setup pi
+--skill-loading off` removes the extension and the state; pins stay in
+config.json.
+
+## Cursor pinned skills
+
+Cursor gets pinned skills only. No Cursor hook can add text to the model's
+request, so there are no per-turn suggestions, and no check on this machine
+can see Cursor's request, so this route is unverified. Doctor reports Cursor
+as partial: pinned only, no per-turn hook, unverified.
+
+Run `gbrain setup cursor --skill-loading resolve` in the project:
+
+1. Setup builds the project's catalog, `cursor-project-<16 hex>`, from the skill
+   directories Cursor loads there: the project's `.agents/skills`,
+   `.cursor/skills`, `.claude/skills` and `.codex/skills`, then the same four
+   under your home directory. It records the project in
+   `~/.gbrain/cursor-skill-pins.json`.
+2. Pins come from `gbrain skills pin add <id> --catalog <that catalog>` (setup
+   prints the name). A pin the catalog does not hold is left out. With no pins
+   there is no rule file.
+3. The pins go in their own always-applied rule,
+   `.cursor/rules/gbrain-pinned-skills.mdc`, with each skill's SKILL.md path.
+   Your own rules and gbrain's brain-first rule are never touched, and a file
+   at that path that gbrain did not write is left alone (setup exits 1).
+4. Inside a git repository the rule's path goes in the repository's
+   `info/exclude` (never `.gitignore`), so it is never committed.
+
+`gbrain skills pin add|remove` rewrites the rule from any directory, and
+Cursor applies it from its next request. `gbrain setup cursor --skill-loading
+off` in the project removes the rule, its exclude line and the record; pins
+stay in config.json. The pins sit beside the skills index that
+`--skill-loading spring` writes into the brain-first rule: resolve leaves that
+index alone, and spring leaves the pins alone.
 
 ## Pinned skills
 
@@ -612,6 +720,8 @@ run. Run `gbrain setup openclaw --skill-loading resolve --agent <id>`.
 
 ### skill_resolver_host_load_cut
 
-OpenClaw lists fewer skills than the agent's skill directories hold (it caps
-each root with `skills.limits.maxCandidatesPerRoot`), so a suggestion can name
-a skill `skills_read` cannot open. Raise that limit or split the root.
+OpenClaw does not list some of the skills in the agent's skill directories (it
+caps each root with `skills.limits.maxCandidatesPerRoot`), so `skills_read`
+could not open them. Setup leaves those skills out of the agent's suggestions
+and names them. To get them back, raise that limit or split the root, then run
+setup again.
