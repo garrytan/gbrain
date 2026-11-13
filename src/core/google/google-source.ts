@@ -165,13 +165,14 @@ function loopRecoveryState(state: GoogleSourceState): Record<string, unknown> {
 /**
  * #9011: a thread whose import was still pending when processThread ran detection, then refused as purged content,
  * leaves what detection derived from a page that never landed. Drops its extract candidate and grace hold, and the open
- * loops of that slug while no live page holds it (open_loops.page_slug has no foreign key).
+ * loops of that slug while no live page holds it (open_loops.page_slug has no foreign key); the loops also for a refusal
+ * an earlier run recorded, which may have resolved after that run's cleanup.
  */
 async function forgetRefusedPurgedThreads(deps: GoogleSyncDeps, managed: ManagedConnectorSync, state: GoogleSourceState): Promise<void> {
   await managed.drainPending();
-  const slugs = managed.refusedPurgedSlugs();
+  const slugs = managed.refusedPurgedSlugs(true);
   if (!slugs.length) return;
-  const refused = new Set(slugs);
+  const refused = new Set(managed.refusedPurgedSlugs());
   deps.extractCandidates = deps.extractCandidates.filter((c) => !refused.has(c.slug));
   for (const [tid, hold] of Object.entries(state.loop_grace_holds ?? {})) if (hold.slug && refused.has(hold.slug)) delete state.loop_grace_holds![tid];
   await deps.engine.executeRaw(`DELETE FROM open_loops WHERE source_id=$1 AND page_slug=ANY($2::text[])

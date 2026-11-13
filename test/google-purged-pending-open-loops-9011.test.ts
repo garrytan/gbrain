@@ -71,6 +71,7 @@ describe('#9011: a purged Gmail thread refused at publication after a pending im
       const [slug] = await livePages();
       expect(slug).toBeDefined();
       expect(await subjectLoops()).toBe(1);
+      const [{ row: loopRow }] = await engine.executeRaw<{ row: string }>('SELECT to_jsonb(o)::text AS row FROM open_loops o WHERE source_id=$1', [f.id]) as [{ row: string }];
       // A refusal naming a slug whose page is live keeps that page's loops.
       const live = spyOn(ManagedConnectorSync.prototype, 'refusedPurgedSlugs').mockReturnValue([slug!]);
       try { await run(); } finally { live.mockRestore(); }
@@ -108,6 +109,14 @@ describe('#9011: a purged Gmail thread refused at publication after a pending im
       expect(state.purged_items?.filter(item => item.request_id !== null).map(item => item.slug)).toContain(slug!);
       expect(await subjectLoops()).toBe(0);
       expect(await quotedLoops()).toBe(0);
+
+      // A loop left by a refusal that resolved after its run's cleanup goes on a later run, from the recorded refusal.
+      await engine.executeRaw('INSERT INTO open_loops SELECT * FROM jsonb_populate_record(NULL::open_loops, $1::text::jsonb)', [loopRow]);
+      expect(await subjectLoops()).toBe(1);
+      await run();
+      await settleConnectorWrites(engine, f.id).catch(() => {});
+      await disposePersistenceConsumer(engine);
+      expect(await subjectLoops()).toBe(0);
     }
   }), TEST_TIMEOUT_MS);
 });

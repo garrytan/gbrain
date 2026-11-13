@@ -748,6 +748,8 @@ export interface CorpusFailureRecord {
   build?: string;
   /** #9279: true once the automatic retry on a newer build ran; only an operator retry runs the window after that. */
   upgrade_retried?: boolean;
+  /** #9279: true once a deterministic failure held the window; retention keeps its file until it commits or an operator retries it. */
+  held?: boolean;
 }
 
 /** The failure record, or null when absent or unparseable. Never throws. */
@@ -759,7 +761,8 @@ export function readCorpusFailure(full: string): CorpusFailureRecord | null {
       || !(r.source_incarnation === null || typeof r.source_incarnation === 'string')
       || !(r.fingerprint === null || typeof r.fingerprint === 'string') || typeof r.rearmed !== 'boolean'
       || !(r.build === undefined || typeof r.build === 'string')
-      || !(r.upgrade_retried === undefined || typeof r.upgrade_retried === 'boolean')) return null;
+      || !(r.upgrade_retried === undefined || typeof r.upgrade_retried === 'boolean')
+      || !(r.held === undefined || typeof r.held === 'boolean')) return null;
     return r;
   } catch {
     return null;
@@ -768,7 +771,7 @@ export function readCorpusFailure(full: string): CorpusFailureRecord | null {
 
 /** #9279: a window stopped by a deterministic failure: its file is never extracted until a retry, so retention keeps it. */
 export function corpusFailureHeld(record: CorpusFailureRecord | null): boolean {
-  return !!record && record.count >= CORPUS_WINDOW_FAILURE_CAP && CORPUS_DETERMINISTIC_FAILURE_CODES.includes(record.last_code);
+  return !!record && (record.held === true || (record.count >= CORPUS_WINDOW_FAILURE_CAP && CORPUS_DETERMINISTIC_FAILURE_CODES.includes(record.last_code)));
 }
 
 /** Every corpus `.txt` in `dir` with a failure record. Missing dir = empty; never throws. */

@@ -266,8 +266,13 @@ describe('a deterministic refusal after the model call (#9279)', () => {
     const { dir, paid, record } = await retryHeld(() => opError('unavailable', 'The provider timed out.', 'Retry later.'));
     try {
       expect(paid).toBe(1);
-      expect(record).toMatchObject({ count: 1, last_code: 'unavailable', upgrade_retried: true });
+      expect(record).toMatchObject({ count: 1, last_code: 'unavailable', upgrade_retried: true, held: true });
       expect(corpusFailureGate(record, record.key, null, null, Date.now())).toBe('run');
+      const full = join(dir, 'held-session.txt');
+      const old = (Date.now() - (RETENTION_DAYS * CORPUS_UNINGESTED_RETENTION_FACTOR + 1) * DAY_MS) / 1000;
+      utimesSync(full, old, old);
+      gcCorpusTurnFiles(dir, RETENTION_DAYS * DAY_MS);
+      expect(existsSync(full)).toBe(true);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, TEST_MS);
 });

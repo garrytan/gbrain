@@ -521,7 +521,8 @@ function failureCode(e: unknown): string {
  * (CORPUS_DETERMINISTIC_FAILURE_CODES) stops the window at once, stamped with
  * this build, instead of paying for four more identical refusals. A failure on
  * the automatic retry of a held window marks it upgrade_retried; a transient
- * one there starts a fresh count, so it still gets the ordinary retries.
+ * one there starts a fresh count, so it still gets the ordinary retries, and
+ * the window stays held (its file kept) until it commits or an operator retries.
  * Returns the record written.
  */
 export async function recordCorpusFailure(
@@ -552,6 +553,7 @@ export async function recordCorpusFailure(
     rearmed: same ? prev!.rearmed || rearm : false,
     ...(deterministic ? { build: VERSION } : {}),
     ...(retried ? { upgrade_retried: true } : {}),
+    ...(deterministic || held ? { held: true } : {}),
   };
   const path = full + CORPUS_FAILURE_SUFFIX;
   const tmp = `${path}.tmp-${process.pid}`;

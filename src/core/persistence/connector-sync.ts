@@ -830,9 +830,13 @@ export class ManagedConnectorSync {
     process.stderr.write(`[connector] ${this.sourceId}: skipped ${slug}: its content matches a page purge tombstone${row ? ` (request ${row.request_id})` : ''}; `
       + `the rest of the sync continues. To let it back in: gbrain pages unpurge ${slug}\n`);
   }
-  /** #9011: slugs this run skipped because the pages guard refused their admitted receipt as purged content. */
-  refusedPurgedSlugs(): string[] {
-    return [...new Set(this.purged.filter(item => item.request_id !== null).map(item => item.slug))];
+  /**
+   * #9011: slugs this run skipped because the pages guard refused their admitted receipt as purged content; with
+   * `persisted`, also those earlier runs recorded (a refusal can resolve after a run's cleanup).
+   */
+  refusedPurgedSlugs(persisted = false): string[] {
+    const items = persisted ? [...this.purged, ...(this.connectorState.purged_items ?? [])] : this.purged;
+    return [...new Set(items.filter(item => item.request_id !== null).map(item => item.slug))];
   }
   /**
    * #6831: screens a page import against the source's page purge tombstones before admission, with the content hash
