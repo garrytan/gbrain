@@ -345,5 +345,22 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
         expect(gap).toBeLessThan(1_000);
       });
     }, 180_000);
+
+    test('#8092: a refused commit inside a commit-push hook (BRAIN_COMMIT_LOCK_HELD) rolls back under the held lock', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        refuseCommits(b);
+        const lockPath = join(b.root, '.git', 'brain-commit.lock');
+        const holder = spawn('flock', [lockPath, 'sleep', '60'], { stdio: 'ignore' });
+        try {
+          await Bun.sleep(300);
+          const head = b.git('rev-parse', 'HEAD');
+          const phase = await withEnv({ BRAIN_COMMIT_LOCK_HELD: lockPath }, () => b.extract(['Renders vs proof'], 'hash-one'));
+          const atoms = await b.atoms();
+          expect({ codes: phase.failed.map(f => f.code), head: b.git('rev-parse', 'HEAD'), dirty: dirty(b),
+            files: atoms.map(a => existsSync(b.path(a.slug))), bound: atoms.map(a => a.source_path) })
+            .toEqual({ codes: ['git_unavailable'], head, dirty: '', files: [false], bound: [null] });
+        } finally { holder.kill('SIGKILL'); }
+      });
+    }, 180_000);
   });
 }

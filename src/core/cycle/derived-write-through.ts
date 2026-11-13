@@ -38,7 +38,7 @@ import { deletePageThrough, isWriteThroughDisabled, resolvePageWriteTarget, writ
 import { sourceMirrorReadOnly } from '../persistence/mirror-read-only.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { classifyGitCheckout, type GitCheckoutClass } from '../git-checkout.ts';
-import { acquireCommitLockAsync, checkoutRoot, commitAndPush, commitPathsLocked, COMMIT_LOCK_ENV, notePending, scopePaths, settlePending } from '../git/commit-push.ts';
+import { acquireCommitLock, acquireCommitLockAsync, checkoutRoot, commitAndPush, commitPathsLocked, COMMIT_LOCK_ENV, notePending, scopePaths, settlePending } from '../git/commit-push.ts';
 import { managedFilesystemRootFor, refreshManagedFilesystemRoots } from '../persistence/filesystem-guard.ts';
 import { withSourceFilesystemLock } from '../minions/source-filesystem.ts';
 import { fileDatabaseDriftToken, replaceableFile } from '../facts/file-body-guard.ts';
@@ -258,12 +258,14 @@ function gitPaths(root: string, args: string[], input?: string): string[] {
  * #8092: it runs under the checkout's commit lock (a short wait), so no writer commits between the HEAD check and the
  * restore, and it settles the restored paths out of the pending ledger, so a later edit at one of them is never swept into
  * a gbrain commit. When the lock stays busy nothing is restored: every file stays in the ledger for that writer's commit.
+ * Under a commit-push hook or child (BRAIN_COMMIT_LOCK_HELD naming this checkout's held lock) it runs under that lock.
  */
 async function rollBackDerived(engine: BrainEngine, root: string, batch: readonly DerivedFileChange[], error: unknown): Promise<DerivedCommitFailure | null> {
   const code = typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : 'git_unavailable';
   const message = error instanceof Error ? error.message : String(error);
   const top = checkoutRoot(root);
-  const lock = await acquireCommitLockAsync(top, DERIVED_COMMIT_LOCK_TAKE_MS).catch(() => null);
+  const held = process.env[COMMIT_LOCK_ENV] ? (() => { try { return acquireCommitLock(top, 0); } catch { return null; } })() : null;
+  const lock = held ? { release: async () => held.release() } : await acquireCommitLockAsync(top, DERIVED_COMMIT_LOCK_TAKE_MS).catch(() => null);
   try {
     const pending = batch.filter(change => !headHolds(root, change));
     if (!pending.length) return null;
