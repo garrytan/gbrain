@@ -3,7 +3,7 @@ import { inferTypeFromPack, resolveParsedSubtype, type ParsedMarkdown } from '..
 /**
  * Aligns a canonical file's parse with what its import over `stored` keeps (#1035, #5521): a file without an explicit
  * `type:` (or whose type was only inferred from its path, #6605) keeps the stored type, and the subtype is resolved
- * against that type, so the stored subtype is kept too, and so is the grandfather stamp (#6429). Import over an existing
+ * against that type, so the stored subtype is kept too, and so are the stamps only the database holds (`keepStoredOnlyStamps`). Import over an existing
  * page (import-file.ts), the write guard (page-prepare.ts) and reconcile (reconcile-state.ts, reconcile-prepare.ts) share it.
  * A file that still names the type a schema-pack retype replaced keeps the retyped page's type and stamp (`keepRetypeStamp`);
  * content a caller writes with no file behind it (import-file.ts without `sourcePath`: `put_page`) passes `retypeStamp` false and is
@@ -12,14 +12,30 @@ import { inferTypeFromPack, resolveParsedSubtype, type ParsedMarkdown } from '..
 export function alignWithStored(parsed: ParsedMarkdown, stored: { type: string; frontmatter?: Record<string, unknown> | null }, inferred: boolean, retypeStamp = true, write = false): void {
   if (!(retypeStamp && (keepRetypeStamp(parsed, stored) || keepPackRenamedType(parsed, stored, write))) && (inferred || !parsed.typeExplicit)) parsed.type = stored.type as ParsedMarkdown['type'];
   resolveParsedSubtype(parsed, stored);
-  keepGrandfatherStamp(parsed.frontmatter, stored);
+  keepStoredOnlyStamps(parsed, stored, retypeStamp);
 }
 
-/** Sync's reading of a file over the stored page (sync-prepare.ts): the retype stamp, the subtype and the grandfather stamp kept as `alignWithStored` keeps them; an explicit file type is otherwise read as written. */
+/** Sync's reading of a file over the stored page (sync-prepare.ts): the retype stamp, the subtype and the database-only stamps kept as `alignWithStored` keeps them; an explicit file type is otherwise read as written. */
 export function keepStoredStamps(parsed: ParsedMarkdown, stored?: { type: string; frontmatter?: Record<string, unknown> | null } | null): void {
   if (!keepRetypeStamp(parsed, stored)) keepPackRenamedType(parsed, stored, true);
   resolveParsedSubtype(parsed, stored);
+  keepStoredOnlyStamps(parsed, stored);
+}
+
+/**
+ * GST-2603: the stamps gbrain wrote into a page's stored frontmatter and never into its file, kept for a file that carries
+ * none of its own, so every file-versus-page comparison (page-prepare.ts fileMatchesSnapshot, labelEditFile) and every
+ * import of the file reads them the same way: the grandfather stamp (`keepGrandfatherStamp`), and with `retypeRecord` the
+ * rollback record of a schema-pack retype (`legacy_type`, the type the page had) once the file's type is the page's type
+ * (a file that still names the old type keeps it through `keepRetypeStamp`). A file that writes `legacy_type` itself, or
+ * names another type, is read as written. Call it after the parse's type is aligned.
+ */
+export function keepStoredOnlyStamps(parsed: ParsedMarkdown, stored?: { type: string; frontmatter?: Record<string, unknown> | null } | null, retypeRecord = true): void {
   keepGrandfatherStamp(parsed.frontmatter, stored);
+  const legacy = stored?.frontmatter?.legacy_type;
+  if (retypeRecord && stored && typeof legacy === 'string' && legacy !== stored.type && parsed.type === stored.type && !Object.hasOwn(parsed.frontmatter, 'legacy_type')) {
+    parsed.frontmatter.legacy_type = legacy;
+  }
 }
 
 /**

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { ENGINE_ROOT } from '../engine-root.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -281,9 +282,22 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
   return rows.sort((a, b) => Number(a.id) - Number(b.id));
 }
 
+/** When this process started; on PGLite no claim written earlier can belong to a live owner. */
+export const PROCESS_STARTED_AT = new Date(performance.timeOrigin);
 /**
- * PGLite only: the datastore admits one process, and this one opened it at
- * `processStartedAt`, so a claim last written before then was held by an owner
+ * #9227: the instant before which every running claim on this brain is abandoned, or null when this process cannot
+ * prove it. Only a PGLite engine that holds its datastore lock proves it: no other process can have renewed a claim
+ * since this one started, so the owner of an older claim has exited. A process without the lock, and every Postgres
+ * brain, gets null and releases nothing here.
+ */
+export function abandonedClaimCutoff(engine: BrainEngine): Date | null {
+  if (engine.kind !== 'pglite') return null;
+  const root = (engine as { [ENGINE_ROOT]?: { holdsDatastoreLock?: () => boolean } })[ENGINE_ROOT];
+  return root?.holdsDatastoreLock?.() === true ? PROCESS_STARTED_AT : null;
+}
+/**
+ * PGLite only, and only while this engine holds the datastore lock (`abandonedClaimCutoff`): the datastore admits one
+ * process, and this one opened it at `processStartedAt`, so a claim last written before then was held by an owner
  * that has exited (a crash or SIGKILL). Release those claims now instead of
  * waiting out their leases (effects 2 minutes, requests 30 s); a withdrawal
  * mirror left running would otherwise also hold back writes to its pages.
@@ -296,7 +310,7 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
  * kill loop reaches `persistence.max_preparation_attempts`.
  */
 export async function releaseAbandonedClaims(engine: BrainEngine, processStartedAt: Date, chargePreparing = false): Promise<number> {
-  if (engine.kind !== 'pglite') return 0;
+  if (!abandonedClaimCutoff(engine)) return 0;
   const effects = await engine.executeRaw(`UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
     next_attempt_at=LEAST(next_attempt_at,now()) WHERE state='running' AND recovery IS NULL AND updated_at<$1::timestamptz
     AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [processStartedAt.toISOString()]);
@@ -399,6 +413,29 @@ export async function parkEffect(engine: SqlEngine, effect: PersistenceEffect, d
 export async function failEffect(engine: SqlEngine, effect: PersistenceEffect, reason: string): Promise<void> {
   await engine.executeRaw(`UPDATE persistence_effects SET state='failed',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,updated_at=now()
     WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [effect.id, effect.execution_token, reason]);
+}
+
+/**
+ * #9227: what a classic write's receipt says about Git, read from its Git effect each time the receipt is read. Its
+ * publication stored `git_state: queued` (`queuePublicationEffects`) and nothing rewrites it, so the effect row is the
+ * live answer: `committed` with the commit's oid (an effect that recorded none, from an older build or a file Git
+ * already held, reads `committed` without one), `superseded`, `skipped` or `failed` with the reason, `retrying`
+ * with the last attempt's error, `running`, `recovering`, and `queued` only while the effect is queued. Null when the
+ * request has no Git effect row.
+ */
+export async function gitReceiptState(engine: SqlEngine, requestId: string): Promise<{ git_state: string; git_commit?: string; git_reason?: string } | null> {
+  const [row] = await engine.executeRaw<{ state: string; error_code: string | null; recovering: boolean; outcome: Record<string, unknown> | null }>(
+    `SELECT state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid AND kind='git' ORDER BY id DESC LIMIT 1`, [requestId]);
+  if (!row) return null;
+  const reason = (value: unknown) => typeof value === 'string' && /^[a-z_]{1,80}$/.test(value) ? { git_reason: value } : {};
+  if (row.recovering) return { git_state: 'recovering' };
+  if (row.state === 'failed') return { git_state: 'failed', ...reason(row.error_code) };
+  if (row.state === 'queued') return row.error_code ? { git_state: 'retrying', ...reason(row.error_code) } : { git_state: 'queued' };
+  if (row.state !== 'committed') return { git_state: row.state };
+  const git = row.outcome?.git;
+  if (git === 'superseded' || git === 'skipped') return { git_state: git, ...reason(row.outcome?.reason) };
+  const commit = row.outcome?.commit;
+  return { git_state: 'committed', ...(typeof commit === 'string' && /^[0-9a-f]{40,64}$/.test(commit) ? { git_commit: commit } : {}) };
 }
 
 /** Only public kind/state/reason, aggregated so withdrawal page counts cannot leak. */

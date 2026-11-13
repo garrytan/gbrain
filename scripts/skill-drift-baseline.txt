@@ -1,0 +1,3 @@
+# Accepted skill-drift findings (scripts/check-skill-health.ts). Shrink-only: a line whose finding
+# is gone fails as stale. Add a line only in a reviewer-visible commit, with the reason in the commit.
+# Format: <file>	<code>	<token>

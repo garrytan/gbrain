@@ -298,9 +298,13 @@ export function commitMessageArgs(paragraphs: string[], dir: string | (() => str
  *
  * `owner` is the caller's writer lock on this checkout: with it, an index lock
  * that is provably abandoned is reclaimed and the step retried (#6932).
+ *
+ * #9227: `commits` receives, for each requested path this call committed, the commit's oid, which the Git effect
+ * records in its outcome so a receipt read later can name it.
  */
 export async function commitGitTargets(root: string, relativePaths: string[], signal?: AbortSignal,
-  notes?: ReadonlyMap<string, GitCommitNote>, owner?: GitEffectOwner, expected?: ReadonlyMap<string, string | null>): Promise<Map<string, GitOutcome | OperationError>> {
+  notes?: ReadonlyMap<string, GitCommitNote>, owner?: GitEffectOwner, expected?: ReadonlyMap<string, string | null>,
+  commits?: Map<string, string>): Promise<Map<string, GitOutcome | OperationError>> {
   const results = new Map<string, GitOutcome | OperationError>();
   await withSession(root, signal, owner, true, async session => {
     // One ls-files, one status, one add and one diff for the group; targets
@@ -424,7 +428,11 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
       `Another commit changed ${moved.join(', ')} while this group of ${commitPaths.length} file(s) was being committed, so nothing was committed and the other commit stays; the effect retries against the new HEAD.`)
       : gitFailure('Cannot commit the canonical Git target.',
         `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
-    for (const c of changed) results.set(c.requested, reset && superseded.includes(c.path) ? { git: 'superseded', reason: 'committed_by_another_writer' } : outcome);
+    for (const c of changed) {
+      const result = reset && superseded.includes(c.path) ? { git: 'superseded', reason: 'committed_by_another_writer' } : outcome;
+      results.set(c.requested, result);
+      if (sha && result === outcome) commits?.set(c.requested, sha);
+    }
   });
   return results;
 }
@@ -760,10 +768,10 @@ export const DURABILITY_NOT_ENABLED = { git: 'skipped', reason: 'durability_not_
  */
 export async function publishGitEffect(root: string, relativePath: string, signal?: AbortSignal,
   hardened?: boolean, note?: GitCommitNote, binding?: Pick<WorktreeBinding, 'git_durability'> | null, owner?: GitEffectOwner,
-  expectedHash?: string | null): Promise<Record<string, unknown>> {
+  expectedHash?: string | null, commits?: Map<string, string>): Promise<Record<string, unknown>> {
   if (!(hardened ?? (await gitDurabilityPolicy(binding, root)).durable)) return { ...DURABILITY_NOT_ENABLED };
   const outcome = (await commitGitTargets(root, [relativePath], signal, note ? new Map([[relativePath, note]]) : undefined, owner,
-    expectedHash === undefined ? undefined : new Map([[relativePath, expectedHash]]))).get(relativePath)!;
+    expectedHash === undefined ? undefined : new Map([[relativePath, expectedHash]]), commits)).get(relativePath)!;
   if (outcome instanceof OperationError) throw outcome;
   if (outcome.reason === 'target_absent' && !(await gitRootAhead(root, signal))) return outcome;
   const pushed = await pushGitRoot(root, signal);

@@ -26,6 +26,8 @@ import { ItemRun } from '../core/item-failure.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { writeCliError } from '../cli/cli-error.ts';
 import { opError } from '../core/ops/contract.ts';
+import { autoDetectSkillsDirReadOnly } from '../core/repo-root.ts';
+import { skillHealthSummary } from '../core/skill-health.ts';
 
 type ActionStatus = 'ok' | 'would_apply' | 'applied' | 'blocked' | 'skipped';
 
@@ -104,6 +106,16 @@ export { MAINTAIN_SAFE_PHASES, maintainSafePhases, type SafePhaseProviders } fro
 async function buildDoctorReport(engine: BrainEngine): Promise<DoctorReport> {
   const checks = await buildChecks(engine, ['--json', '--scope=brain']);
   return computeDoctorReport(checks);
+}
+
+/** Read-only: skill size, growth and drift for the active skills folder; never edits a skill. */
+async function reportSkillHealth(): Promise<MaintenanceAction> {
+  const dir = autoDetectSkillsDirReadOnly().dir;
+  if (!dir) return { name: 'skill_health', status: 'skipped', message: 'no skills folder found' };
+  const { skillHealthFor } = await import('./skillpack/health.ts');
+  const report = skillHealthFor(dir);
+  const message = skillHealthSummary(report) + (report.findings.length ? '; run `gbrain skillpack health` for the fixes' : '');
+  return { name: 'skill_health', status: 'ok', message, details: { scope: report.scope, totals: report.totals } };
 }
 
 async function runStaleExtraction(
@@ -232,6 +244,7 @@ Conservative self-healing maintenance.
 Modes:
   --dry-run     Preview safe actions without writes. Default when --safe is absent.
   --safe        Apply safe actions: stale extraction and source cycle freshness.
+                Skill health (size, growth, drift) is reported, never applied.
   --unattended  Run free upkeep once when it is due: links, timeline, facts index,
                 bookkeeping GC and, with an embedding key, the embedding backlog
                 within maintenance.embed_daily_usd (default $1 a day; 0 = off).
@@ -240,7 +253,7 @@ Modes:
   --status      Show the last upkeep run, the next due time and what waits for you.
   --purge       Preview the page purge (soft-deleted pages past purge.retention_hours);
                 apply it with --yes --expect <hash> from the preview.
-  --json        Emit a structured report.
+  --json        Emit a structured before/action/after report.
 
 Not auto-applied:
   source-file frontmatter fixes, schema-pack upgrades, atom-pack changes,
@@ -260,6 +273,7 @@ Not auto-applied:
 
   actions.push(await runStaleExtraction(engine, beforeHealth, opts.dryRun, opts.json));
   actions.push(...await runCycleFreshnessMaintenance(engine, beforeDoctor, opts.dryRun));
+  actions.push(await reportSkillHealth());
 
   const afterHealth = await engine.getHealth();
   const afterDoctor = await buildDoctorReport(engine);

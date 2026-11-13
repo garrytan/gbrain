@@ -44,7 +44,7 @@ describe('gbrain upgrade migration ownership and outcome (#5693)', () => {
   test('package postinstall under upgrade defers migrations to post-upgrade', () => {
     const r = runUpgradeHarness({});
     expect(r.status, r.out).toBe(0);
-    expect(r.calls).toContain('bun:update gbrain:owns=1');
+    expect(r.calls).toContain('bun:update --backend=copyfile gbrain:owns=1');
     expect(r.calls).not.toContain('gbrain:apply-migrations');
     expect(r.calls).toContain('gbrain:post-upgrade');
     expect(r.out).toContain(`Binary: installed ${NEWER}`);

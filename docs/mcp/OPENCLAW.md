@@ -5,10 +5,19 @@
 > [INSTALL_FOR_AGENTS.md](../../INSTALL_FOR_AGENTS.md); the README covers the
 > bootstrap and connect paths.
 
-Two supported shapes, both stdio. A bot that several people DM connects over
-HTTP instead: see [One bot for several people, in DMs](#one-bot-for-several-people-in-dms).
+Connect with [Option 2](#option-2-openclaw-mcp-add) (stdio) when the brain runs on
+the gateway's machine, or with
+[OpenClaw's own MCP client](#remote-brain-openclaws-mcp-client-over-https) when it
+runs elsewhere. Option 1's ClawHub bundle is not available yet.
+A bot that several people DM connects over HTTP as well: see
+[One bot for several people, in DMs](#one-bot-for-several-people-in-dms).
 
-## Option 1: ClawHub bundle plugin
+## Option 1: ClawHub bundle plugin (not available yet)
+
+This project publishes no ClawHub package yet. The package named `gbrain` on
+ClawHub is an unofficial upload of an old 0.10.1 build whose manifest has no
+`id`, so `openclaw plugins install clawhub:gbrain` stops with
+`plugin manifest requires id`. Don't install it; use Option 2.
 
 GBrain ships [`openclaw.plugin.json`](../../openclaw.plugin.json) at the repo
 root. Installing the bundle plugin registers the MCP server for you — the
@@ -72,6 +81,30 @@ plus `request_tools`, which reaches every other tool; drop the
 Leave `GBRAIN_SOURCE` unset in the MCP env unless you deliberately want
 single-source retrieval: a pin scopes every tool (search, `get_brain_identity`
 counts, …) to that one source, and nothing warns on reads.
+
+## Remote brain: OpenClaw's MCP client over HTTPS
+
+When the brain runs on another machine, OpenClaw connects to its MCP endpoint
+itself, over streamable HTTP with OAuth. That grant is scoped and revocable on
+the brain host, while the stdio route above gives the gateway full local
+database access.
+
+```bash
+openclaw gateway stop
+openclaw mcp add gbrain --url https://<brain-host>/mcp --transport streamable-http --auth oauth
+openclaw mcp login gbrain
+openclaw mcp doctor gbrain --probe
+openclaw gateway start
+```
+
+`mcp add`, `login` and `doctor --probe` refuse while the local gateway runs, so
+stop it first and start it again after. `openclaw mcp login` runs the browser sign-in (on a headless host it prints a
+`--code` command to finish with). OpenClaw registers its client through dynamic
+client registration, so the brain owner turns that on and approves the consent
+([native OAuth path](../guides/hosted-harness-access.md#native-oauth-path),
+[self-service registration](ADMIN.md#self-service-dynamic-registration)). Until
+the login succeeds, OpenClaw leaves the server out of agent turns. Publish the
+endpoint with `gbrain mcp expose` ([remote MCP](../guides/remote-mcp.md)).
 
 ## One bot for several people, in DMs
 
@@ -265,7 +298,8 @@ read `none`.
 ## Brain-first instructions
 
 Registering the server only makes the tools available. Agents seldom call a
-brain nobody told them about, so finish either option with:
+brain nobody told them about, so finish either option with the primary route,
+the per-turn rule:
 
 ```bash
 gbrain setup openclaw   # --dry-run previews; --workspace <dir> picks the agent
@@ -281,7 +315,8 @@ block at the top of `GBRAIN-INSTRUCTIONS.md`.
 
 A rule in `AGENTS.md` reaches the system prompt only, so setup also puts it next
 to every user turn with a hook-only OpenClaw plugin, `gbrain-turn-rule`: its
-`before_prompt_build` handler returns the rule as `prependContext`. The plugin is
+`before_prompt_build` handler returns the rule as `prependContext` (without its
+closing "answer" sentence on heartbeat, cron and exec-completion turns). The plugin is
 self-contained (the rule text is in its code; it reads and calls nothing) and
 lives in `<OpenClaw state dir>/gbrain/gbrain-turn-rule`. Setup installs it with
 OpenClaw's own CLI:
@@ -297,6 +332,8 @@ OpenClaw requires `allowConversationAccess` before a non-bundled plugin's
 and prints those commands to run on the OpenClaw host; restart a running gateway
 afterwards. `--no-instructions` and `--remove` uninstall the plugin and delete
 its directory. A re-run after an upgrade rewrites the plugin with the new text.
+Every agent on the gateway gets the plugin's rule, so a `--workspace` run leaves
+it when it would name another server and `--no-instructions` there keeps it.
 
 OpenClaw lists no gbrain tool after `openclaw mcp set`: the model reaches them
 only through `tool_search`, whose results it frames as external data. With an
@@ -306,6 +343,20 @@ With `openclaw` on PATH, setup runs
 `openclaw plugins inspect gbrain-turn-rule --runtime --json` and exits non-zero
 with `turn_hook_not_loaded` unless the plugin shows as loaded with
 `before_prompt_build` ([repair](../guides/repair.md#turn-hook-not-loaded)).
+
+## Skills (fallback)
+
+`gbrain skillpack scaffold --harness openclaw` adds gbrain's skills to the
+workspace. OpenClaw lists them in its prompt, but in harness-evals a listed
+skill was followed on 1-3% of turns against 97-100% for the per-turn rule, so
+install skills beside the rule, never instead of it. OpenClaw serves a skill
+only whole: a SKILL.md larger than one read (64,000 characters on a model with
+200k+ context, 32,000 at 100k-200k, 16,000 below, a 32,768-byte page when the
+context window is unknown) gets "cannot be partially served" and nothing else.
+Every SKILL.md gbrain installs for OpenClaw is at most 32,000 bytes
+(`test/openclaw-route.test.ts`), so it loads on any model with 100k+ context
+and when the window is unknown; on smaller models the 16,000-character cap
+applies and the larger skills do not load.
 
 ## Scheduled jobs and workspace scripts
 
