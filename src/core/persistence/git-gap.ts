@@ -137,8 +137,12 @@ export function compareInlineExportFile(raw: Buffer, importPath: string, snapsho
   return { state: 'differs', paths: classifyDrift(file.canonical, database).paths.map(p => p.path) };
 }
 
-/** A committed file parsed the way reconcile parses a canonical file, aligned with the stored page (the census contract's file side). */
-function canonicalFile(raw: Buffer, importPath: string, page: ExportSnapshot['page']): { state: 'parsed'; canonical: ReturnType<typeof reconcileCanonical> }
+/**
+ * A committed file parsed the way reconcile parses a canonical file, aligned with the stored page (the census contract's file side).
+ * GST-2568: `retypeStamp` false reads a file naming the type a retype replaced as written, which content evidence needs: it
+ * compares the file with the page's older versions, and those predate the retype's stamp.
+ */
+function canonicalFile(raw: Buffer, importPath: string, page: ExportSnapshot['page'], retypeStamp = true): { state: 'parsed'; canonical: ReturnType<typeof reconcileCanonical> }
   | { state: 'differs'; paths: string[] } | { state: 'unparseable'; reason: UnparseableReason } {
   const text = raw.toString('utf8');
   if (!Buffer.from(text).equals(raw)) return { state: 'unparseable', reason: 'not_utf8' };
@@ -146,7 +150,7 @@ function canonicalFile(raw: Buffer, importPath: string, page: ExportSnapshot['pa
   const parsed = parseMarkdown(reading.content, `${page.slug}.md`, { validate: true, expectedSlug: page.slug });
   if (parsed.errors?.some(e => !['MISSING_OPEN', 'EMPTY_FRONTMATTER'].includes(e.code))) return { state: 'unparseable', reason: 'frontmatter' };
   if (parsed.slug !== page.slug) return { state: 'differs', paths: ['/slug'] };
-  alignWithStored(parsed, page, reading.inferred);
+  alignWithStored(parsed, page, reading.inferred, retypeStamp);
   return { state: 'parsed', canonical: reconcileCanonical(parsed, parsed.tags) };
 }
 
@@ -496,7 +500,7 @@ export async function readDirectionEvidence(engine: BrainEngine, input: { source
           const key = `${subject.id}:${blob.oid}`;
           if (fileDigests.has(key) || !blobs?.has(blob.oid)) continue;
           if (blob.oid !== subject.blob.oid && !older(subject).list.some(entry => entry.oid === blob.oid)) continue;
-          const file = canonicalFile(blobs.get(blob.oid)!, subject.importPath, page);
+          const file = canonicalFile(blobs.get(blob.oid)!, subject.importPath, page, false);
           fileDigests.set(key, file.state === 'parsed' ? digest(file.canonical) : null);
         }
       }

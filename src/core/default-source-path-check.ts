@@ -22,8 +22,9 @@
  *     write-through, fence writes, and delete-reconcile cannot find them.
  *
  *   - RELATIVE PATH (#7630): a set `local_path`, or with a null one a
- *     `sync.repo_path`, that is not absolute (a legacy "."). It names whatever
- *     directory gbrain runs from, and sync refuses it `sync_anchor_relative`.
+ *     `sync.repo_path`, that is not absolute on this host (a legacy ".", or a
+ *     path absolute only on another OS). Sync refuses it `sync_anchor_relative`
+ *     by the same predicate (`isHostAbsolutePath`).
  *
  * Everything else (no pages yet, resolvable repo fallback, deliberate
  * DB-only brain) reports ok. The repair for a genuinely broken pointer is
@@ -34,7 +35,7 @@
  * npm-squat-check.ts / pglite-leftovers-check.ts. The gathering wrapper
  * lives on the doctor surface (doctor/checks/default-source-path.ts).
  */
-import { posix, win32 } from 'path';
+import { isForeignAbsolutePath, isHostAbsolutePath } from './path-confine.ts';
 
 export interface DefaultSourcePathInput {
   /** The `default` sources row, or undefined when no such row exists. */
@@ -68,7 +69,17 @@ export function assessDefaultSourcePath(
     // integrity.
     return { status: 'skip', message: '' };
   }
-  if (defaultSource.local_path && !posix.isAbsolute(defaultSource.local_path) && !win32.isAbsolute(defaultSource.local_path)) {
+  if (defaultSource.local_path && isForeignAbsolutePath(defaultSource.local_path)) {
+    return {
+      status: 'warn',
+      message:
+        `default source local_path "${defaultSource.local_path}" is not an absolute path on this host (another host sharing this ` +
+        'brain may have set it), so sync here refuses it (sync_anchor_relative). If that host owns the brain, sync from there and ' +
+        'leave the path alone; otherwise ask the user which directory on this host holds the brain, then run ' +
+        '`gbrain sources set-path default <absolute-directory>`.',
+    };
+  }
+  if (defaultSource.local_path && !isHostAbsolutePath(defaultSource.local_path)) {
     return {
       status: 'warn',
       message:
@@ -84,7 +95,17 @@ export function assessDefaultSourcePath(
       message: `default source local_path is set: ${defaultSource.local_path}`,
     };
   }
-  if (repoPath && !posix.isAbsolute(repoPath) && !win32.isAbsolute(repoPath)) {
+  if (repoPath && isForeignAbsolutePath(repoPath)) {
+    return {
+      status: 'warn',
+      message:
+        `default source has no local_path and sync.repo_path "${repoPath}" is not an absolute path on this host (another host ` +
+        'sharing this brain may have set it), so default-source page writes here skip the repository and sync refuses it. If ' +
+        'that host owns the brain, sync from there and leave the path alone; otherwise ask the user which directory on this ' +
+        'host holds the brain, then run `gbrain sources set-path default <absolute-directory>`.',
+    };
+  }
+  if (repoPath && !isHostAbsolutePath(repoPath)) {
     return {
       status: 'warn',
       message:

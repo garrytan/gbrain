@@ -1252,6 +1252,13 @@
             "status": "ok"
           },
           {
+            "category": "meta",
+            "elapsed_ms": "<volatile>",
+            "message": "Every function this gbrain's schema defines has its body",
+            "name": "schema_function_bodies",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "Skipped (PGLite — no event trigger support)",
@@ -6399,6 +6406,13 @@
             "elapsed_ms": "<volatile>",
             "message": "All 178 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
+            "status": "ok"
+          },
+          {
+            "category": "meta",
+            "elapsed_ms": "<volatile>",
+            "message": "Every function this gbrain's schema defines has its body",
+            "name": "schema_function_bodies",
             "status": "ok"
           },
           {

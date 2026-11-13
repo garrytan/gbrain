@@ -1611,10 +1611,12 @@ export function behaviorChangesNotice(chain: ChainDisclosure | null, opts: { rem
     byRelease.set(change.since, [...(byRelease.get(change.since) ?? []), text]);
   }
   if (byRelease.size === 0) return null;
-  const count = [...byRelease.values()].reduce((n, texts) => n + texts.length, 0);
+  // #7646: rows sit in table order, which is not always release order; the disclosure lists releases oldest first.
+  const releases = [...byRelease].sort(([a], [b]) => compareReleases(a, b));
+  const count = releases.reduce((n, [, texts]) => n + texts.length, 0);
   let n = 0;
-  const why = `gbrain ${releaseSpan([...byRelease.keys()])} changed ${count} behavior${count === 1 ? '' : 's'} on this brain. All stay on; this is a one-time disclosure, not a request for consent. ` +
-    [...byRelease].map(([since, texts]) => (byRelease.size > 1 ? `v${since}: ` : '') + texts.map(t => `(${++n}) ${t}`).join(' ')).join(' ') +
+  const why = `gbrain ${releaseSpan(releases.map(([since]) => since))} changed ${count} behavior${count === 1 ? '' : 's'} on this brain. All stay on; this is a one-time disclosure, not a request for consent. ` +
+    releases.map(([since, texts]) => (releases.length > 1 ? `v${since}: ` : '') + texts.map(t => `(${++n}) ${t}`).join(' ')).join(' ') +
     ' gbrain doctor --only behavior_changes shows this again.';
   const fix: Action = chain && namesChain && !opts.remote
     ? chatFallbackRemovalFix(chain.plane, chain.filePath)

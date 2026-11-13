@@ -1224,7 +1224,13 @@ The preview lists a terminal request as `refused` with the reason and offers
 no choice for it. After `--keep disk` the database page still holds the
 content from before the write, so the page shows as file/database drift until
 you reconcile it: `gbrain sources reconcile <source> <slug> --brain host
---preview`. The command never reports the page as repaired.
+--preview`. On a git-canonical (strict) source Git is the parent, so the kept
+bytes are an uncommitted edit instead: publish it with
+`gbrain git commit-push --path <checkout> -m "<message>" -- <path>`, or discard
+it with `git -C <checkout> restore -- <path>`, then run
+`gbrain sync --source <source> --no-pull`; `git status --porcelain -- <path>`
+and `gbrain sync status --source <source> --json` verify it. The item's `fix`
+asks the user which (#7715). The command never reports the page as repaired.
 
 The apply runs under the worktree lock, so the resident recovery pass cannot
 interleave. Each step is journaled (`op_checkpoints`, op
@@ -1580,7 +1586,10 @@ again for the rest. Sync never removes ghost pages by itself.
 A code or image page (a synced `.json`, `.ts` or `.png` file) is checked at
 the file it records, never at `<slug>.md`: while that file is there the page
 is not a ghost. It is a ghost only when its recorded file is gone and no file
-sits at its slug path either, and the preview lists it at the recorded path. A
+sits at its slug path either, and the preview lists it at the recorded path.
+The apply retires it at that recorded file too: a recorded file restored
+before publication keeps the page (`file_restored`), and the commit records the
+removal of the recorded file. A
 page whose recorded path names no file inside the source (an absolute path, a
 path with `..`) is never a ghost and is never removed: doctor, `gbrain pages
 ghosts` and the preview list it apart with code `recorded_path_unresolvable`.
@@ -2634,7 +2643,9 @@ Then each take of kind `fact` held by you that is still active and unresolved,
 and whose every contributing fact is no longer yours, is retired: struck in its
 page's takes fence when the page holds it, otherwise made inactive in the
 database. The preview lists those as `take_to_retire`. A fact or take that
-changed since the preview reports `changed_since_preview` and is kept.
+changed since the preview reports `changed_since_preview` and is kept; a fact
+that already reads as the agent's with its speaker note (a resumed apply whose
+accepted request committed meanwhile) reports `reattributed`.
 
 <a id="redacted-facts"></a>
 ### Redacted facts
@@ -3013,7 +3024,7 @@ candidate one class:
 | `superseded` | A later write or delete of the page committed or is pending; for `put_page`, also a later failed `put_page` (newer content) or a page changed since the caller read it. | Kept; re-issue by hand if still wanted. |
 | `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
 | `file_database_drift` | Its last replay hit `source_changed` and the file still differs from the database. | Kept until the file matches again (a reconcile that writes only the file counts) or the page changes; reconcile it first. |
-| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull`). A refused fact extraction (`extract_facts`, including one refused `revision_conflict` because another write moved, replaced or deleted its entity page) keeps its extracted facts: when its page write's facts-absorb job is dead and can recover them, the row says `recover: gbrain facts retry-dead --reset 'facts-absorb:write:<id>'` (the retried job re-admits the retained facts at the page's current revision without a model call); while that job still runs it says `pending:`; otherwise (the extraction has no page write or its job completed or is gone, the entity page was replaced, the page was written again since or the job would skip its page write for another reason, the follow-up batches were refused as well, or the extraction also holds refusals of another kind, such as a sibling refused for a held file) it says `re-extract:` with the `extract_facts` call to make (one model call), or `not recoverable:` when the entity page of a page write's extraction was deleted. A fact request a later request of the same extraction committed is not listed. |
+| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job), or it is a caller's `forget`, which is not replayed. | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull`). A refused `forget` says `resubmit:`: nothing produces it again, so read the fact and submit the forget again with a new request_id if it is still wanted. A refused fact extraction (`extract_facts`, including one refused `revision_conflict` because another write moved, replaced or deleted its entity page) keeps its extracted facts: when its page write's facts-absorb job is dead and can recover them, the row says `recover: gbrain facts retry-dead --reset 'facts-absorb:write:<id>'` (the retried job re-admits the retained facts at the page's current revision without a model call); while that job still runs it says `pending:`; otherwise (the extraction has no page write or its job completed or is gone, the entity page was replaced, the page was written again since or the job would skip its page write for another reason, the follow-up batches were refused as well, or the extraction also holds refusals of another kind, such as a sibling refused for a held file) it says `re-extract:` with the `extract_facts` call to make (one model call), or `not recoverable:` when the entity page of a page write's extraction was deleted. A fact request a later request of the same extraction committed is not listed. |
 
 The apply replays exactly the previewed set. Each write is classified again
 and its original caller's authority is checked again first: a write that
@@ -3123,8 +3134,10 @@ again. A file whose HEAD bytes would not import as its page is listed under the
 hold's code (`visibility_noncanonical` for a `Visibility: private` that page privacy
 does not read): apply keeps its rows database-only and restores the file from
 HEAD so the clone can pull the upstream fix, but does not import HEAD, reports
-`held` with the code and leaves the page at its last imported version; sync
-holds the file until upstream fixes it (#7897). Each restored file is first backed up under
+`held` with the code and leaves the page at its last imported version. The
+restored file equals HEAD, so sync does not screen it again and records no
+hold; the page changes once an upstream fix is pulled and synced (#7897). Such
+a file is an apply item, not a residual (#7910). Each restored file is first backed up under
 `~/.gbrain/backups/url-clone-fences/`. Its rows stay active and recallable as
 database-only facts, HEAD's bytes are imported as the page (as sync would
 import them, except for a held file above), and only then is the file restored; each step is idempotent, so
@@ -3336,7 +3349,10 @@ lists each newer change the database copy overwrites and each file a
 `source_changed` (detail `unimported_file_edit`) when a decision takes the
 database copy over what such a file says (`take_database`, `delete` or
 `set_value`); decide `take_file` for those paths, or preview the page alone with
-`--slug` as above. A `never_committed` `file_gone` page resolved
+`--slug` as above. That covers an unbound collision too (a page an unbound
+write left database-only, and a different file at its slug path): `--slug
+<slug> --prefer database` reads it as drift, names the file's commit, asks for
+consent and records the file as the page's origin. A `never_committed` `file_gone` page resolved
 `--prefer database` writes no file, so it is unaffected. The keep_db policy is
 unchanged.
 
@@ -3411,9 +3427,44 @@ One preview resolves one Decision, so a selection that spans several sides or
 deleted states refuses [`file_drift_mixed_selection`](error-codes.md#file_drift_mixed_selection),
 and a deleted side refuses without `--state`
 ([`file_drift_state_required`](error-codes.md#file_drift_state_required)):
-the two `--prefer` values do opposite things in each state. `--held`, `--side`,
-`--state`, `--cursor` and `--provenance` always need `--prefer`: without it
-the command refuses with the usage line instead of running the bare survey.
+the two `--prefer` values do opposite things in each state. Those two refusals
+apply to a `--prefer` preview only.
+
+<a id="file-drift-compare"></a>**Compare before you pick a side** (GST-2568). Any selection (`--slug`,
+`--request`, `--all-drifted` or `--held`, with its narrowing flags) without
+`--prefer` compares each page with its file and writes nothing. Each page
+lists what differs (`frontmatter` with the keys, `body`, `both`, or `none`
+once gbrain's own normalisation is read), which side is newer (the file's last
+commit time at HEAD against the page's `updated_at`; `unknown` when the file
+has uncommitted bytes or a time is missing) and what a repair would do:
+`release_hold` or `no_drift` (they agree), `prefer_file` (the file was
+committed after the page last changed, so the file side is the repair),
+`needs_human` (the page is newer, a page whose file is gone, or a deleted page
+whose file differs) or `unknown`. A held comparison may span several sides and
+states, and is windowed like a held preview. The comparison prints no apply
+command; its `next_actions` names the `--prefer file` preview when some files
+are newer. A `--prefer` preview without a side names this comparison as its
+`fix`.
+
+```bash
+gbrain repair file-drift --source <id> --held --json           # compare every held page, no winner named
+```
+
+<a id="file-drift-kept-newer"></a>`--prefer file` never drops a page edited after its file's last commit in
+bulk. A `--held`, `--all-drifted` or `--request` preview lists such a page
+`kept_newer_page`, with the edit's time, the file's commit time and the two ways
+to settle it (`--prefer database` for that page, or carry the edit into the
+file, commit it and sync), and leaves its hold in place. Naming the page with
+`--slug` still resolves it file-wins, and the preview's warning says which
+database edit the apply drops. A page whose file is gone is never deleted by a
+comparison or by `--prefer file` unless you select its deleted state.
+
+Every `--prefer` preview also counts what the apply drops from the side it
+overwrites: each page's listing line ends "drops N line(s) the file holds" (or
+"the page holds"), a warning gives the total across the run, and `--json`
+carries `details.pages[].lost_lines` and `details.lost_lines_total`. A line
+counts when the result doesn't carry it; blank lines and trailing spaces don't
+count. Read those lines before you agree to the apply.
 
 | State | `--prefer database` | `--prefer file` |
 |---|---|---|
@@ -3435,13 +3486,19 @@ hold the preview observed, and answers `changed_since_preview` when any of
 them changed. A preview that finds nothing still prints an apply command; it
 applies nothing. Page and
 file agree when they differ only in formatting sync does not import (frontmatter
-key order or quoting). An apply refused before it published reserves no request
+key order or quoting, or a retype's database-only `legacy_type` stamp on a file that
+still names the old type). An apply refused before it published reserves no request
 id, so the apply a fresh preview prints goes through. A page with
 no recorded file origin (no source path, and a source URI that is not a
 `file:` URI) is compared with, and adopts, the file at its slug path, spelled
 as sync imports it (`README.md` for slug `readme`); the apply records that
 path. A sync re-screens a held page that changed since it was held even when
-Git did not move. A page a read-only mirror stored database-only (`mirror_read_only`)
+Git did not move. A gbrain that compares file drift differently (GST-2568) has
+the next sync re-screen every held `file_drift` page that is not a deletion
+once: a page that now agrees with its file is released with no commit and no
+change to its body, type or stamps (a stale stored copy of the `type` key is
+normalised away), and the sync prints `Released N held file(s) that no longer need a
+decision.` (JSON `holds_released`). A page a read-only mirror stored database-only (`mirror_read_only`)
 is compared with the file at its slug path once its source is writable again;
 the apply records that path and clears the stamp.
 
