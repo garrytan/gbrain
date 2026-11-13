@@ -491,7 +491,9 @@ write-through (`sync --full` re-exports, `brainstorm --save`), fact fences,
 timeline entries, `forget`, the extract cycle's fence pass and owner trust
 repairs leave the checkout untouched and keep the write in the database (a
 trust repair is listed `needs_review` instead), reporting `mirror_read_only`
-(#7098). The dream cycle's reverse-written pages are not gated yet.
+(#7098). The dream cycle leaves such a checkout alone too: its synthesis,
+patterns and cycle-summary pages stay in the database, retired pages' files
+are kept, and no fallback file is written under `.sources/` inside it (#8935).
 
 A managed brain never pulls inside a cycle. Advance a managed checkout with
 one command on its owner host:
