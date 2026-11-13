@@ -8936,6 +8936,7 @@
       {
         "kind": "interface",
         "members": [
+          "history?: number | undefined",
           "reset: boolean",
           "resuggested: string[]",
           "suggested: string[]",

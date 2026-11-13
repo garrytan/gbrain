@@ -1203,3 +1203,7 @@ src/core/setup/openclaw-skill-plugin.ts	fs_import	1	GBRA-435 OpenClaw skill-reso
 src/core/setup/openclaw-skill-plugin.ts	process_env	3	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
 src/core/setup/openclaw-skill-plugin.ts	spawn_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup runs the openclaw CLI (install, enable, allow, inspect) and the Node self-test; stays
 src/core/setup/skill-pins.ts	fs_import	1	GBRA-435 skill pins: reads a catalog's receipt under GBRAIN_HOME/skill-index to check pin names (no brain or engine is opened); stays
+src/core/setup/hermes-skill-pins.ts	fs_import	1	GBRA-435 Hermes skill pins: reads SOUL.md under HERMES_HOME to place or remove the pinned-skills block (no brain or engine is opened); stays
+src/core/setup/pi-skill-extension.ts	fs_import	1	GBRA-435 Pi skill-resolver extension: setup writes the extension files under the Pi agent dir and its state under GBRAIN_HOME (no brain or engine is opened); stays
+src/core/setup/pi-skill-extension.ts	process_env	4	GBRA-435 Pi skill-resolver extension: HOME and PI_CODING_AGENT_DIR locate Pi's skills and extensions, PATH finds pi and node, and the env is handed to the pi child and the self-test; stays
+src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver extension: setup runs the Node self-test and pi --help to confirm Pi loaded the extension; stays
