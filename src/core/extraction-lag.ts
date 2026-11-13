@@ -16,6 +16,8 @@ import { previewMentionPass } from './mentions/stale.ts';
 import { readMentionPolicy } from './mentions/policy.ts';
 import { resolveEnvNumber, warnOnceForEnv } from './env-number.ts';
 import { isMissingSchemaObject } from './utils.ts';
+import { managedPersistenceEnabled } from './persistence/ownership.ts';
+import { resolveIncludeFrontmatter } from './extract-frontmatter.ts';
 import { LINK_HOLD_THRESHOLD_RUNS, linkExtractionRetryFix } from './persistence/links-extraction-holds.ts';
 
 /** Warn threshold (percent of live pages actionable-stale); `GBRAIN_EXTRACTION_LAG_WARN_PCT` overrides it. */
@@ -58,8 +60,10 @@ export async function readExtractionLag(engine: BrainEngine, opts: { sourceId?: 
 
 async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeoutMs?: number }) {
   const versionTs = await effectiveLinkExtractorWatermark(engine);
+  // #9295: count the wanted rows the configured sweep re-resolves (a managed or frontmatter sweep: every producer).
+  const wantedProducers = await managedPersistenceEnabled(engine) || await resolveIncludeFrontmatter(engine) ? undefined : ['body'];
   const read = async (attendance: boolean, held: boolean) => {
-    const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held });
+    const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held, wantedProducers });
     return (await engine.executeRaw<{ total: number; stale: number; attendance_blocked: number; held: number }>(text, params, { timeoutMs: opts.timeoutMs ?? 10_000 }))[0];
   };
   let row;

@@ -772,12 +772,20 @@ export async function resolveSlugs(
  * origin last resolved it. Their next extraction creates the edge
  * (src/core/wanted-links.ts).
  */
-const WANTED_ORIGIN_IS_STALE = sqlFragment`id IN (SELECT w.origin_page_id FROM wanted_links w
+/**
+ * #9295: `producers` limits the wanted rows to the producers the caller's sweep re-resolves. A body-only sweep cannot
+ * settle a frontmatter row, so counting one made the page stale after every sweep; the row stays unchecked and a
+ * frontmatter sweep still finds it.
+ */
+function wantedOriginIsStale(producers?: readonly string[]) {
+  const producer = producers ? sqlFragment` AND w.producer = ANY(${[...producers]}::text[])` : sqlFragment``;
+  return sqlFragment`id IN (SELECT w.origin_page_id FROM wanted_links w
       JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL
-      WHERE t.updated_at > w.checked_at
+      WHERE t.updated_at > w.checked_at${producer}
     UNION SELECT w.origin_page_id FROM wanted_links w
       JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL
-      WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)`;
+      WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at${producer})`;
+}
 
 /**
  * GBRA-130 A-1: a page whose link extraction is held: its failure record is `held` at the page's current knowledge
@@ -788,6 +796,8 @@ function linkExtractionHeld(versionTs?: string) {
   return sqlFragment`COALESCE(links_extract_failure->>'state' = 'held' AND links_extract_failure->>'revision' = knowledge_revision::text${generation}, false)`;
 }
 
+type StaleOpts = { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only'; wantedProducers?: readonly string[] };
+
 /**
  * Shared stale-for-extraction predicate. `attendance` narrows it by the #5761
  * marker: a page is attendance-blocked while its marker equals its current
@@ -795,10 +805,11 @@ function linkExtractionHeld(versionTs?: string) {
  * reconsidering blocked pages. `held` (GBRA-130 A-1) excludes or selects pages
  * whose link extraction is held (linkExtractionHeld); managed extraction excludes them.
  */
-function stalePagesWhere(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only' }) {
+function stalePagesWhere(opts?: StaleOpts) {
+  const wanted = wantedOriginIsStale(opts?.wantedProducers);
   const version = opts?.versionTs
-    ? sqlFragment`(links_extracted_at IS NULL OR links_extracted_at < ${opts.versionTs}::timestamptz OR updated_at > links_extracted_at OR ${WANTED_ORIGIN_IS_STALE})`
-    : sqlFragment`(links_extracted_at IS NULL OR updated_at > links_extracted_at OR ${WANTED_ORIGIN_IS_STALE})`;
+    ? sqlFragment`(links_extracted_at IS NULL OR links_extracted_at < ${opts.versionTs}::timestamptz OR updated_at > links_extracted_at OR ${wanted})`
+    : sqlFragment`(links_extracted_at IS NULL OR updated_at > links_extracted_at OR ${wanted})`;
   const source = opts?.sourceId ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``;
   const attendance = opts?.attendance === 'exclude'
     ? sqlFragment` AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision`
@@ -820,11 +831,12 @@ export function staleForExtractionSql(versionTs: string): SqlFragment {
  * `attendance: false` is the pre-v180 shape (no marker column: nothing is attendance-blocked). `held` (GBRA-130 A-1) also
  * excludes held pages from the stale count and counts them (`held: false` is the pre-v258 shape: nothing is held).
  */
-export function extractionLagStatement(opts: { sourceId?: string; versionTs: string; attendance: boolean; held?: boolean }): { text: string; params: unknown[] } {
+export function extractionLagStatement(opts: { sourceId?: string; versionTs: string; attendance: boolean; held?: boolean; wantedProducers?: readonly string[] }): { text: string; params: unknown[] } {
   const source = opts.sourceId ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``;
-  const stale = stalePagesWhere({ versionTs: opts.versionTs, ...(opts.attendance ? { attendance: 'exclude' as const } : {}), ...(opts.held ? { held: 'exclude' as const } : {}) });
-  const blocked = opts.attendance ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ versionTs: opts.versionTs, attendance: 'blocked' })})::int` : sqlFragment`0`;
-  const held = opts.held ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ versionTs: opts.versionTs, held: 'only' })})::int` : sqlFragment`0`;
+  const base = { versionTs: opts.versionTs, wantedProducers: opts.wantedProducers };
+  const stale = stalePagesWhere({ ...base, ...(opts.attendance ? { attendance: 'exclude' as const } : {}), ...(opts.held ? { held: 'exclude' as const } : {}) });
+  const blocked = opts.attendance ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, attendance: 'blocked' })})::int` : sqlFragment`0`;
+  const held = opts.held ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, held: 'only' })})::int` : sqlFragment`0`;
   return renderFragment(sqlFragment`SELECT count(*)::int AS total, count(*) FILTER (WHERE ${stale})::int AS stale, ${blocked} AS attendance_blocked, ${held} AS held
     FROM pages WHERE deleted_at IS NULL AND ${trustedSql(quarantineFilterFragment('pages'))}${source}`);
 }
@@ -835,7 +847,7 @@ export function heldLinkExtractionStatement(opts: { sourceId?: string; versionTs
     WHERE ${stalePagesWhere({ sourceId: opts.sourceId, versionTs: opts.versionTs, held: 'only' })} ORDER BY id LIMIT ${opts.limit}`);
 }
 
-export async function countStalePagesForExtraction(exec: ScopedRead, opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only' }): Promise<number> {
+export async function countStalePagesForExtraction(exec: ScopedRead, opts?: StaleOpts): Promise<number> {
     const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS count FROM pages WHERE ${stalePagesWhere(opts)}`);
     const { rows } = await exec.unsafe<{ count?: number }>(text, params);
     return Number(rows[0]?.count ?? 0);
@@ -847,6 +859,7 @@ export async function listStalePagesForExtraction(exec: ScopedRead, opts: {
   sourceId?: string;
   versionTs?: string;
   held?: 'exclude';
+  wantedProducers?: readonly string[];
 }): Promise<StalePageRow[]> {
     const afterClause = opts.afterPageId != null ? sqlFragment` AND id > ${opts.afterPageId}` : sqlFragment``;
     // #1768: project a deterministic full-µs UTC string alongside updated_at.

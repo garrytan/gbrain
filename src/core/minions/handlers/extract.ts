@@ -29,8 +29,10 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
       // waiting for the next sync. Forward-progress guard (pagesProcessed >
       // 0) prevents an infinite chain if the sweep can't advance. #8672: the raw
       // stale count includes attendance-blocked and held pages, which no rerun
-      // clears, so a sweep that left only those chains nothing.
-      if (!job.data.dryRun && r.staleRemaining > 0 && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)
+      // clears, so a sweep that left only those chains nothing. #9295: a continuation chains again only when it
+      // left fewer pages stale than the sweep before it, so a page no sweep settles cannot keep the chain alive.
+      const previous = typeof job.data.stale_remaining === 'number' ? job.data.stale_remaining : Infinity;
+      if (!job.data.dryRun && r.staleRemaining > 0 && r.staleRemaining < previous && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)
         && !(await staleExtractionCounts(engine, sourceIdFilter)).complete) {
         try {
           const queue = new MinionQueue(engine);
@@ -41,7 +43,7 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
           // so there is no pile-up to guard against.
           await queue.add(
             'extract',
-            { ...job.data, continuation_of: job.id },
+            { ...job.data, continuation_of: job.id, stale_remaining: r.staleRemaining },
             { timeout_ms: STALE_TIME_BUDGET_MS + 5 * 60 * 1000 },
           );
         } catch { /* best-effort: next sync/manual sweep picks up the rest */ }
