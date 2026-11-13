@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { assertRecoveryVersion } from './recovery-version.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 
 export type Principal = { kind: 'oauth_client' | 'legacy_token' | 'local_cli' | 'local_stdio' | 'application'; id: string };
 /** `deferred` (PR B, docs/designs/REFRESH_WRITE_BARRIER.md): admitted during a worktree refresh, unclaimable until it is released. */
@@ -56,7 +56,7 @@ export interface WriteAuthority {
 }
 /** GST-2492: the slug a write is authorized as: a held remember's entity in place of the holding page, else the page itself. */
 export function authorizedSlug(authority: Pick<WriteAuthority, 'heldFor'>, slug: string): string {
-  return authority.heldFor && slug === UNATTRIBUTED_MEMORY_SLUG ? authority.heldFor : slug;
+  return authority.heldFor && isHoldingSlug(slug) ? authority.heldFor : slug;
 }
 
 /**

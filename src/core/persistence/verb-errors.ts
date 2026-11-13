@@ -300,6 +300,13 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true, requestId: error.requestId });
       throw markNotAdmitted(fenced);
     }
+    // GST-2492: a strict source that has no file to hold the fact (an exact page rule on a page-less entity) or cannot read
+    // its access state refuses before admission; the frozen code stays and the canonical code, reason and fix ride along.
+    if (error.code === 'git_home_required' || error.code === 'access_policy_pending') {
+      const strict = verbError(error.code === 'git_home_required' ? 'invalid_params' : 'unavailable', error.message, error.suggestion ?? 'Inspect writer status before retrying.');
+      Object.assign(strict, { canonical: error.code, reason: error.reason, why: error.why, docs: error.docs, fix: error.fix });
+      throw strict;
+    }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)
         ? 'invalid_params' : 'unavailable';

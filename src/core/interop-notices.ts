@@ -355,10 +355,10 @@ export function privateFactNotice(factId?: string | number): Notice {
  * per session. GST-2492: a fact held in Git (on memory/unattributed) needs nothing, so the notice only says where it is
  * and when it moves; a fact in the database alone needs the user's word, so the step asks before creating the page.
  */
-export function entityPageMissingNotice(sourceId: string, entitySlug: string, held = false): Notice {
+export function entityPageMissingNotice(sourceId: string, entitySlug: string, held?: { slug: string; committed: boolean }): Notice {
   const base = { code: 'entity_page_missing', kind: 'info' as const, dedupe_key: `${sourceId}\0${entitySlug}` };
   if (held) return { ...base,
-    why: `Saved and committed to Git; held on memory/unattributed until ${entitySlug} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table, in its file.` };
+    why: `${held.committed ? 'Saved and committed to Git' : 'Saved in the database only, as its folder keeps its pages out of Git'}; held on ${held.slug} until ${entitySlug} has a page. Say that when you report the save. Nothing needs to run: once the page exists, the next maintenance cycle (gbrain dream) moves the fact into the page's Facts table${held.committed ? ', in its file' : ''}.` };
   const userMessage = `The fact is saved in the database only: ${entitySlug} has no page, so it is in no file in Git. Should I create a page for ${entitySlug}?`;
   return { ...base,
     why: `Entity ${entitySlug} has no page in source ${sourceId}, so a fact saved for it is stored in the database only: recall returns it, but it is on no page and in no file in Git. Say that when you report the save, and ask the user whether to create the page; once it exists, the next maintenance cycle (gbrain dream) can move the facts saved for ${entitySlug} into the page's Facts table, in its file.`,

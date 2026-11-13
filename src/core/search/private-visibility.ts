@@ -28,6 +28,7 @@ import { isValidSourceId } from '../source-id.ts';
 import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
+import { holdingSlugSql } from '../facts-fence.ts';
 import { atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -933,14 +934,33 @@ export function privateProvenanceFilterUnderPolicy(factAlias: string): string {
 /**
  * A fact is never wider than the page it is about: hide a fact whose entity page (`entity_slug`, looked up in the fact's
  * own source) the current caller cannot read under the read policy its page reads use, so a member the page's readers
- * name keeps the fact and every other remote caller loses it. A fact with no entity page passes. Read sites only; it
- * only ever narrows. GBRA-108 design 1: the entity page is judged by the caller's ordinary access, not its labelled-only
- * grant: a labelled-only caller's fact is already kept to provenance that names it (labelledOnlyFactSql), and the
- * page a fact is about is not one of its origins.
+ * name keeps the fact and every other remote caller loses it. A fact held on a holding page (GST-2492) is also judged by
+ * that page as a page, not as lineage, so a folder's holding page hides its facts exactly as it hides itself. A fact with
+ * no entity page passes. Read sites only; it only ever narrows. GBRA-108 design 1: the entity page and the holding page
+ * are judged by the caller's ordinary access, not its labelled-only grant: a labelled-only caller's fact is already kept
+ * to provenance that names it (labelledOnlyFactSql), and that conjunct is what narrows it.
  */
 export function privateEntityFilterForCaller(factAlias: string, perCandidate = false): string {
   const entityPolicy = currentCallerAccess().labelledOnly ? withCallerAccess({ labelledOnly: false }, () => privatePagesFilterForCaller('entity_pp')) : privatePagesFilterForCaller('entity_pp');
-  return `NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug = ${factAlias}.entity_slug AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})`;
+  const held = `CASE WHEN ${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)} THEN ${factAlias}.source_markdown_slug END`;
+  return `(NOT EXISTS (SELECT 1 FROM pages entity_pp WHERE entity_pp.source_id = ${factAlias}.source_id AND entity_pp.slug IN (${factAlias}.entity_slug, ${held}) AND NOT ${entityPolicy}${perCandidate ? ' OFFSET 0' : ''})${sharedHeldRuledSql(factAlias)})`;
+}
+
+/**
+ * GST-2492: a fact still held on a holding page for an entity a rule now narrows below that page (a folder rule over the
+ * shared page, an exact page rule over a folder's holding page; applied by sync, or a remember planned before the rule,
+ * until the held-fact move takes it away) reads as that entity's page would: only for a caller who satisfies every
+ * covering rule, and for nobody while a pending narrowing covers it. The owner under the opt-in reads it, as it reads every restricted page.
+ */
+function sharedHeldRuledSql(factAlias: string): string {
+  const access = currentCallerAccess();
+  if (access.ownerReadsRestricted) return '';
+  const satisfied = access.restricted ? access.satisfiedRuleIds : [];
+  const ids = satisfied.length && satisfied.every(validQualifiedRuleId) ? [...new Set(satisfied)].sort() : [];
+  const array = ids.length ? `ARRAY[${ids.map(id => `'${id}'`).join(', ')}]::text[]` : 'ARRAY[]::text[]';
+  return ` AND NOT (${factAlias}.entity_slug IS NOT NULL AND ${holdingSlugSql(`${factAlias}.source_markdown_slug`)}`
+    + ` AND (NOT COALESCE(gbrain_access_folder_rules(${factAlias}.source_id, ${factAlias}.entity_slug) <@ ${array}, true)`
+    + ` OR gbrain_access_pending_covers(${factAlias}.source_id, ${factAlias}.entity_slug)))`;
 }
 
 /**

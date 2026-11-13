@@ -232,14 +232,14 @@ for (const backend of testBackends()) describe(`[${backend}] a strict source hol
     expect(rebuilt[claim]).toEqual([{ entity_slug: secret, source_markdown_slug: secret, active: true }]);
   }), 240_000);
 
-  test('an entity under a folder access rule is not held on the world-readable page', () => strict(async ({ engine, ctx, root }) => {
+  test('an entity under a folder access rule is not held on the world-readable page but on its folder\'s', () => strict(async ({ engine, ctx, root }) => {
     await engine.executeRaw(`INSERT INTO access_policy_state(source_id) VALUES('default') ON CONFLICT DO NOTHING`);
     await engine.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','r1','secret/',ARRAY['member:alice-example'],1)`);
     const claim = 'The secret plan has a codename.';
     const saved = await remember(ctx, claim, 'secret/plan-x');
-    expect(saved.write_through).not.toHaveProperty('held_for');
-    expect(saved.persistence).toEqual({ mode: 'database' });
+    expect(saved).toMatchObject({ page: 'secret/memory/unattributed', write_through: { written: true, held_for: 'secret/plan-x' } });
     expect(head(root, HOLD_FILE)).not.toContain(claim);
+    expect(lineOf(head(root, 'secret/memory/unattributed.md'), claim)).toContain('secret/plan-x');
   }), 180_000);
 
   test('a segmented holding page reads its entity column: forget strikes the row and a rebuild keeps the rest', () => strict(async ({ engine, ctx, root }) => {
