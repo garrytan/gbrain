@@ -7,6 +7,8 @@
  */
 import { clampSearchLimit } from '../engine.ts';
 import { dataFrontmatter } from '../data-frontmatter.ts';
+import { PROTECTED_FRONTMATTER_KEYS } from '../frontmatter-recovery.ts';
+import { REVISION_BACKFILL_PENDING } from '../page-state/types.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { opError, OperationError } from './contract.ts';
 import { federatedSearchScope, readPolicyOpts } from './context.ts';
@@ -58,21 +60,29 @@ function filtersOf(p: Record<string, unknown>): CardFilters {
 
 const NO_SHELF = 'This brain has no storage shelf yet: nothing has been registered. The archiving agent registers each item with gbrain storage-register after it verifies the archive.';
 
-async function readCard(ctx: OperationContext, id: string): Promise<{ card: Card; revision: string; updated_at: string } | null> {
+/** The card and its page frontmatter, read only when the caller may read that exact revision (a page that changes between the snapshot and the visibility check is read again). */
+async function readCard(ctx: OperationContext, id: string): Promise<{ card: Card; revision: string; updated_at: string; frontmatter: Record<string, unknown> } | null> {
   if (!await shelfExists(ctx)) return null;
   const policy = await shelfPolicy(ctx);
-  const params: unknown[] = [STORAGE_SOURCE_ID, id];
   const { pageReadFilter } = await import('../search/read-policy-sql.ts');
-  const visible = await ctx.engine.executeRaw<{ ok: number }>(`SELECT 1 AS ok FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${pageReadFilter('p', policy, params, true)}`, params);
-  if (!visible.length) return null;
-  const snapshot = await ctx.engine.readPageSnapshot(id, { sourceId: STORAGE_SOURCE_ID });
-  if (!snapshot) return null;
-  const card = cardFromPage({ slug: snapshot.page.slug, title: snapshot.page.title, frontmatter: (snapshot.page.frontmatter ?? {}) as Record<string, unknown> });
-  return card ? { card, revision: snapshot.revision, updated_at: String(snapshot.page.updated_at ?? '') } : null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const snapshot = await ctx.engine.readPageSnapshot(id, { sourceId: STORAGE_SOURCE_ID });
+    if (!snapshot) return null;
+    const params: unknown[] = [STORAGE_SOURCE_ID, id];
+    const visible = await ctx.engine.executeRaw<{ revision: string | number | null }>(`SELECT p.knowledge_revision AS revision FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ${pageReadFilter('p', policy, params, true)}`, params);
+    if (!visible.length) return null;
+    const revision = visible[0]!.revision == null ? REVISION_BACKFILL_PENDING : String(visible[0]!.revision);
+    if (revision !== snapshot.revision) continue;
+    const frontmatter = (snapshot.page.frontmatter ?? {}) as Record<string, unknown>;
+    const card = cardFromPage({ slug: snapshot.page.slug, title: snapshot.page.title, frontmatter });
+    return card ? { card, revision: snapshot.revision, updated_at: String(snapshot.page.updated_at ?? ''), frontmatter } : null;
+  }
+  throw opError('storage_revision_conflict', `Card ${id} kept changing while it was read; nothing was returned.`, 'Read the card again in a moment.', { fix: getFix(id) });
 }
 
-async function writeCard(ctx: OperationContext, card: Card, opts: { expectedRevision?: string; requestId?: string }): Promise<Record<string, unknown>> {
+async function writeCard(ctx: OperationContext, card: Card, opts: { expectedRevision?: string; requestId?: string; stored?: Record<string, unknown> }): Promise<Record<string, unknown>> {
   const { frontmatter, body } = cardPage(card);
+  for (const key of PROTECTED_FRONTMATTER_KEYS) if (opts.stored && Object.hasOwn(opts.stored, key) && !Object.hasOwn(frontmatter, key)) frontmatter[key] = opts.stored[key];
   const content = dataFrontmatter.stringify(body, frontmatter);
   try {
     const response = await submitPageMutation(storageDoorContext(ctx), { operation: 'put_page', params: {
@@ -253,7 +263,7 @@ const storage_update: Operation = {
       const { registered_by: _stampedBy, origin: _stampedOrigin, ...unstamped } = card;
       parseCardInput(unstamped);
     }
-    const response = await writeCard(ctx, card, { expectedRevision: expected });
+    const response = await writeCard(ctx, card, { expectedRevision: expected, stored: found.frontmatter });
     return { id, source_id: STORAGE_SOURCE_ID, status: card.status, write: response };
   },
   cliHints: { name: 'storage-update', positional: ['id'] },

@@ -27,6 +27,7 @@ The skill behind these is `skills/storage-manifest/SKILL.md`.
 A restore runs through the agent's own restore skill: the card's `restore.skill` with `restore.args`. Cards never
 carry commands or credentials, and gbrain never contacts a store. After the restore, `storage-update` with
 `--restored-to` records where it landed (newest first); pass `--restored-verified` only when the checksums matched.
+An update keeps the card page's access labels (`visibility`, `readable_by`), so a restricted card stays restricted.
 
 ## Repo-less brains and brains with a Git checkout
 
@@ -61,7 +62,8 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
    them (restorable for 72 hours with `gbrain restore`), only when every adopted card is on the shelf and matches its
    original's mapped card. A restore recorded with `storage-update` since adoption is not a difference. The preview
    names any `##` section of an original other than `## Record` (notes the card does not carry, which go with the
-   page), and the plan_hash binds each original's content, so an original edited after the preview refuses
+   page) and flags an original longer than the 64 KiB it reads, so you read the rest first. The plan_hash binds each
+   original's whole content, checked again just before each delete, so an original edited after the preview refuses
    `preview_changed`.
 
 A rerun skips cards already on the shelf that match and originals already tagged. A card on the shelf that differs is

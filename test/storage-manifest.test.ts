@@ -7,6 +7,7 @@
  *   - validation refuses a missing field, a command field, a stamped field, a scanner secret (in a value or an object
  *     key) and every credential shape (env assignment, credential variable, URL userinfo, presigned URL), without
  *     echoing the value;
+ *   - storage_update keeps the page's access frontmatter (visibility, readable_by) when it rewrites the card;
  *   - the write guard: put_page, remember and forget_fact into the shelf are refused storage_source_managed, a forged
  *     parameter does not open it, and the storage verbs still write;
  *   - a shelf creation that stopped before marking its role (a crash, a concurrent first register) is finished by the
@@ -220,6 +221,12 @@ describe('storage shelf on a repo-less brain', () => {
     expect(third.card.restores.map((r: { to: string }) => r.to)).toEqual(['/scratch/item-b-2', '/scratch/item-b']);
     expect((await refusal(call('storage_update', { id: 'item-b', expected_revision: third.revision, patch: { reason: 'TOKEN=abc123' } })))?.code).toBe('storage_record_secret');
     expect((await refusal(call('storage_update', { id: 'item-b', expected_revision: third.revision, patch: { origin: 'import' } })))?.code).toBe('storage_record_invalid');
+
+    await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"visibility":"private","readable_by":["alice-example"]}'::jsonb WHERE source_id = 'storage' AND slug = 'item-b'`);
+    await call('storage_update', { id: 'item-b', expected_revision: (await call('storage_get', { id: 'item-b' })).revision, patch: { status: 'retired' } });
+    const [kept] = await engine.executeRaw<{ visibility: string | null; readers: unknown }>("SELECT frontmatter->>'visibility' AS visibility, frontmatter->'readable_by' AS readers FROM pages WHERE source_id = 'storage' AND slug = 'item-b'");
+    expect(kept).toEqual({ visibility: 'private', readers: ['alice-example'] });
+    expect((await call('storage_get', { id: 'item-b' })).card.status).toBe('retired');
   }, 30_000);
 
   test('remote callers cannot write; a bound client without the storage grant reads nothing; only a grant naming the shelf reads it', async () => {

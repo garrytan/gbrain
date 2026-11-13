@@ -13,8 +13,9 @@
  *   finalize  soft-deletes the tagged originals through the page door (restorable for 72 h), only when every adopted
  *             card is on the shelf and matches its original's mapped card (a restore the card recorded since does not
  *             count as a difference). The preview names each original's other sections (a `## Restore`, notes), which
- *             the card does not carry, and the plan_hash binds each original's content, so an original edited after
- *             the preview refuses preview_changed.
+ *             the card does not carry, and flags an original longer than the 64 KiB it reads. The plan_hash binds each
+ *             original's whole content (content_hash), checked again just before its delete, so an original edited
+ *             after the preview refuses preview_changed.
  *
  * Idempotent: a card already on the shelf that matches is skipped, and so is an original already tagged. A card on
  * the shelf that differs is a conflict: reported, never overwritten, its original left untagged. The plan_hash covers
@@ -26,6 +27,7 @@ import { opError, OperationError, type OperationContext } from '../ops/contract.
 import { readFix } from '../ops/op-fix.ts';
 import { registerCard } from '../ops/storage-manifest.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
+import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { readShelfCards } from './find.ts';
 import { CARD_KEYS, cardContent, cardDigest, credentialShape, isCommandKey, parseCardInput, STAMPED_KEYS, STORED_OBJECT_TYPE, type CardInput } from './schema.ts';
@@ -52,14 +54,20 @@ export interface AdoptApplyResult {
   results: Array<{ slug: string; card_id: string | null; outcome: 'registered' | 'retagged' | 'skipped' | 'conflict' }>;
   conflicts: string[]; failure?: StepFailure; rerun?: string[]; finalize?: string[];
 }
-export interface FinalizeEntry { slug: string; card_id: string | null; state: 'delete' | 'deleted' | 'unverified' | 'not_adopted'; other_sections?: string[]; content?: string }
+export interface FinalizeEntry { slug: string; card_id: string | null; state: 'delete' | 'deleted' | 'unverified' | 'not_adopted'; other_sections?: string[]; unread_tail?: boolean; content?: string }
 export interface FinalizePlan { action: 'finalize'; dry_run: true; source_id: string; prefix: string; entries: FinalizeEntry[]; plan_hash: string; summary: string[]; apply?: string[] }
 export interface FinalizeApplyResult {
   action: 'finalize'; dry_run: false; source_id: string; prefix: string; plan_hash: string; side_effects: SideEffects;
   deleted: string[]; skipped: string[]; failure?: StepFailure; rerun?: string[];
 }
 
-interface InterimRow { slug: string; title: string; frontmatter: unknown; body: string | null; tagged: boolean; deleted: boolean }
+interface InterimRow { slug: string; title: string; frontmatter: unknown; body: string | null; content_hash: string | null; long_body: boolean; tagged: boolean; deleted: boolean }
+
+const INTERIM_COLUMNS = `p.slug, p.title, p.frontmatter, ${boundedBodyPrefixSql('p')} AS body, p.content_hash,
+      coalesce(p.body_bytes, 0) > ${BOUNDED_PREFIX_BYTES} AS long_body`;
+
+/** What a finalize plan binds for one original: its title, frontmatter and whole content (content_hash), so any edit after the preview changes it. */
+const originalDigest = (row: Pick<InterimRow, 'title' | 'frontmatter' | 'body' | 'content_hash'>) => sha256(JSON.stringify([row.title, row.frontmatter, row.content_hash ?? row.body]));
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const SECTION = /^##[ \t]+Record[ \t]*$/m;
@@ -161,7 +169,7 @@ export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontma
 
 async function listInterim(ctx: OperationContext, opts: AdoptOptions, includeDeleted: boolean): Promise<InterimRow[]> {
   return ctx.engine.executeRaw<InterimRow>(`
-    SELECT p.slug, p.title, p.frontmatter, ${boundedBodyPrefixSql('p')} AS body, p.deleted_at IS NOT NULL AS deleted,
+    SELECT ${INTERIM_COLUMNS}, p.deleted_at IS NOT NULL AS deleted,
       EXISTS (SELECT 1 FROM tags t WHERE t.page_id = p.id AND t.tag = $4) AS tagged
     FROM pages p
     WHERE p.source_id = $1 AND p.type = $2 AND left(p.slug, length($3)) = $3 AND p.slug <> $3 || 'index'${includeDeleted ? '' : ' AND p.deleted_at IS NULL'}
@@ -275,13 +283,13 @@ export async function previewFinalize(ctx: OperationContext, opts: AdoptOptions)
   const entries: FinalizeEntry[] = (await listInterim(ctx, opts, true)).flatMap((row): FinalizeEntry[] => {
     if (!row.tagged) return row.deleted ? [] : [{ slug: row.slug, card_id: null, state: 'not_adopted' }];
     const { card } = mapInterimPage(row, opts.prefix);
-    const content = sha256(JSON.stringify([row.title, row.frontmatter, row.body]));
+    const content = originalDigest(row);
     if (row.deleted) return [{ slug: row.slug, card_id: card?.id ?? null, state: 'deleted', content }];
     const onShelf = card ? shelf.get(card.id) : undefined;
     const existing = onShelf ? cardContent(onShelf) : null;
     const state = card && existing && matchesAdopted(existing, card) ? 'delete' : 'unverified';
     const other = otherSections(row.body ?? '');
-    return [{ slug: row.slug, card_id: card?.id ?? null, state, ...(other.length ? { other_sections: other } : {}), content }];
+    return [{ slug: row.slug, card_id: card?.id ?? null, state, ...(other.length ? { other_sections: other } : {}), ...(row.long_body || (row.body?.length ?? 0) >= BOUNDED_PREFIX_BYTES ? { unread_tail: true } : {}), content }];
   });
   const count = (state: FinalizeEntry['state']) => entries.filter((e) => e.state === state).length;
   const plan_hash = sha256(JSON.stringify({ v: 1, kind: 'finalize', source_id: opts.sourceId, prefix: opts.prefix,
@@ -289,12 +297,14 @@ export async function previewFinalize(ctx: OperationContext, opts: AdoptOptions)
   const summary = [`${count('delete')} adopted original(s) to soft-delete (restorable for 72 hours), ${count('deleted')} already deleted, ${count('unverified')} whose card is missing or differs, ${count('not_adopted')} not adopted yet (kept).`];
   const dropping = entries.filter((e) => e.state === 'delete' && e.other_sections);
   if (dropping.length) summary.push(`${dropping.length} original(s) to delete hold sections the card does not carry (${[...new Set(dropping.flatMap((e) => e.other_sections!))].join(', ')}): show the user, and move what matters into the card with gbrain storage-update before finalizing.`);
+  const long = entries.filter((e) => e.state === 'delete' && e.unread_tail).map((e) => e.slug);
+  if (long.length) summary.push(`${long.length} original(s) to delete are longer than 64 KiB, so sections past that point were not read (${long.slice(0, 5).join(', ')}): read each with gbrain get before finalizing.`);
   if (count('unverified')) summary.push('Finalize refuses while an adopted original has no matching card; compare it with gbrain storage-get and fix the card or the record first.');
   const apply = count('unverified') || !count('delete') ? undefined : [...adoptArgv(opts), '--finalize', '--expect', plan_hash];
   return { action: 'finalize', dry_run: true, source_id: opts.sourceId, prefix: opts.prefix, entries, plan_hash, summary, ...(apply ? { apply } : {}) };
 }
 
-/** Soft-delete the adopted originals the preview listed, each bound to the revision read just before. */
+/** Soft-delete the adopted originals the preview listed, each only while its content is still what the plan bound (deleted at the revision that matched). */
 export async function applyFinalize(ctx: OperationContext, opts: AdoptOptions & { expect: string }): Promise<FinalizeApplyResult> {
   const plan = await previewFinalize(ctx, opts);
   if (opts.expect !== plan.plan_hash) throw staleHash(opts, opts.expect, true);
@@ -307,9 +317,12 @@ export async function applyFinalize(ctx: OperationContext, opts: AdoptOptions & 
   let failure: StepFailure | undefined;
   for (const entry of plan.entries.filter((e) => e.state === 'delete')) {
     try {
-      const snapshot = await ctx.engine.readPageSnapshot(entry.slug, { sourceId: opts.sourceId });
-      if (!snapshot) continue;
-      await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: entry.slug, source_id: opts.sourceId, expected_revision: snapshot.revision } });
+      const [row] = await ctx.engine.executeRaw<InterimRow & { revision: string | number | null }>(
+        `SELECT ${INTERIM_COLUMNS}, p.knowledge_revision AS revision FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [opts.sourceId, entry.slug]);
+      if (!row) continue;
+      if (originalDigest(row) !== entry.content) throw opError('preview_changed', `${entry.slug} changed after the finalize preview; it was not deleted.`, 'Preview finalize again and show the user what changed.', { fix: previewFix(opts, true) });
+      const expected = row.revision == null ? (await ctx.engine.readPageSnapshot(entry.slug, { sourceId: opts.sourceId }))?.revision : String(row.revision);
+      await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: entry.slug, source_id: opts.sourceId, ...(expected ? { expected_revision: expected } : {}) } });
       deleted.push(entry.slug);
     } catch (error) {
       if (!(error instanceof OperationError)) throw error;

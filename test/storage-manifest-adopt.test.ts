@@ -207,6 +207,7 @@ describe('storage adopt on a repo-less brain', () => {
   test('finalize: a restore recorded on the card is no difference, other sections are named, and an original edited after the preview refuses', async () => {
     await interim('storage-manifest/dataset-a', record('dataset-a'));
     await interim('storage-manifest/dataset-b', record('dataset-b'));
+    await call('put_page', { slug: 'storage-manifest/dataset-c', request_id: randomUUID(), content: `---\ntype: stored-object\ntitle: Interim long\n---\n## Record\n\n${FENCE}json\n${JSON.stringify(record('dataset-c'))}\n${FENCE}\n\n## Notes\n\n${'Long notes. '.repeat(6000)}\n\n## Late\n\nPast the read window.\n` });
     const plan = await previewAdopt(ctx(), opts);
     await applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] });
     await call('storage_update', { id: 'dataset-a', expected_revision: (await call('storage_get', { id: 'dataset-a' })).revision,
@@ -214,15 +215,17 @@ describe('storage adopt on a repo-less brain', () => {
     expect((await call('storage_get', { id: 'dataset-a' })).card.status).toBe('restored');
 
     const preview = await previewFinalize(ctx(), opts);
-    expect(preview.entries.map((e) => [e.slug, e.state, e.other_sections])).toEqual([['storage-manifest/dataset-a', 'delete', ['Restore']], ['storage-manifest/dataset-b', 'delete', ['Restore']]]);
-    expect(preview.summary.join(' ')).toContain('hold sections the card does not carry (Restore)');
+    expect(preview.entries.map((e) => [e.slug, e.state, e.other_sections, e.unread_tail ?? false])).toEqual([['storage-manifest/dataset-a', 'delete', ['Restore'], false],
+      ['storage-manifest/dataset-b', 'delete', ['Restore'], false], ['storage-manifest/dataset-c', 'delete', ['Notes'], true]]);
+    expect(preview.summary.join(' ')).toContain('hold sections the card does not carry (Restore, Notes)');
+    expect(preview.summary.join(' ')).toContain('longer than 64 KiB, so sections past that point were not read (storage-manifest/dataset-c)');
     expect(preview.apply).toEqual(['gbrain', 'storage', 'adopt', '--finalize', '--expect', preview.plan_hash]);
 
     const original = await engine.readPageSnapshot('storage-manifest/dataset-b', { sourceId: 'default' });
     await call('put_page', { slug: 'storage-manifest/dataset-b', expected_revision: original!.revision, request_id: randomUUID(),
       content: (await call('get_page', { slug: 'storage-manifest/dataset-b', include_content: true })).content.replace('Ask the archive agent.', 'Ask the archive agent first.') });
     expect((await refusal(applyFinalize(ctx(), { ...opts, expect: preview.plan_hash })))?.code).toBe('preview_changed');
-    expect(await live()).toEqual(['storage-manifest/dataset-a', 'storage-manifest/dataset-b']);
+    expect(await live()).toEqual(['storage-manifest/dataset-a', 'storage-manifest/dataset-b', 'storage-manifest/dataset-c']);
   }, 60_000);
 
   test('a brain with a Git checkout refuses storage_manifest_missing until storage init; the storage source is not an interim source', async () => {
