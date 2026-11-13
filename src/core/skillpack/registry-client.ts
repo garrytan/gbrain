@@ -70,6 +70,7 @@ export interface LoadedRegistry {
 
 export type RegistryClientErrorCode =
   | 'no_cache_no_network'
+  | 'registry_http_error'
   | 'fetch_succeeded_but_schema_invalid'
   | 'cache_corrupt'
   | 'url_invalid';
@@ -81,6 +82,25 @@ export class RegistryClientError extends Error {
   ) {
     super(message);
     this.name = 'RegistryClientError';
+  }
+}
+
+/**
+ * Internal marker: the registry URL answered with a non-2xx HTTP status.
+ * This is NOT a network failure — the request reached the server — so it
+ * must never be reported as "First-run installs require network". Surfaced
+ * as a `RegistryClientError` with code `registry_http_error` naming the URL
+ * and the status (see the catch in loadRegistry); only thrown when there is
+ * no on-disk cache to fall back to.
+ */
+class RegistryHttpError extends Error {
+  constructor(
+    public readonly url: string,
+    public readonly status: number,
+    public readonly statusText: string,
+  ) {
+    super(`HTTP ${status} ${statusText}`);
+    this.name = 'RegistryHttpError';
   }
 }
 
@@ -222,7 +242,7 @@ export async function loadRegistry(opts: LoadRegistryOptions = {}): Promise<Load
       }
 
       if (!catalogRes.ok) {
-        throw new Error(`HTTP ${catalogRes.status} ${catalogRes.statusText}`);
+        throw new RegistryHttpError(url, catalogRes.status, catalogRes.statusText);
       }
 
       const catalogJson = await catalogRes.json();
@@ -268,13 +288,19 @@ export async function loadRegistry(opts: LoadRegistryOptions = {}): Promise<Load
     } catch (err) {
       // Schema-invalid responses are a hard failure — don't degrade to cache.
       if (err instanceof RegistryClientError) throw err;
-      // Network failure — fall through to cache.
+      // Classify the failure: a non-2xx HTTP response is not a network
+      // problem — the server answered — so it gets its own error below.
+      const httpErr = err instanceof RegistryHttpError ? err : null;
+      const failure = httpErr
+        ? `registry fetch failed: ${httpErr.url} returned HTTP ${httpErr.status}${httpErr.statusText ? ` ${httpErr.statusText}` : ''}`
+        : `registry fetch failed (${(err as Error).message})`;
+      // Network/HTTP failure — fall through to cache.
       if (cached) {
         const ageMs = Date.now() - new Date(cached.fetched_at).getTime();
         const origin: LoadedRegistry['origin'] =
           ageMs > STALE_AFTER_MS ? 'cache_hard_stale' : 'cache_soft_stale';
         process.stderr.write(
-          `[skillpack] registry fetch failed (${(err as Error).message}); using cache from ${cached.fetched_at} (${fmtAge(ageMs)} old)\n`,
+          `[skillpack] ${failure}; using cache from ${cached.fetched_at} (${fmtAge(ageMs)} old)\n`,
         );
         if (origin === 'cache_hard_stale') {
           process.stderr.write(
@@ -289,8 +315,16 @@ export async function loadRegistry(opts: LoadRegistryOptions = {}): Promise<Load
           registry_url: url,
         };
       }
+      if (httpErr) {
+        throw new RegistryClientError(
+          `${failure} and no on-disk cache exists. The registry URL is not serving a catalog` +
+            (httpErr.status === 404 ? ' (the default registry may be unavailable)' : '') +
+            ` — check the URL, or use --url / the skillpack.registry_url config key to point at another registry (e.g. \`gbrain skillpack registry --url <URL>\`).`,
+          'registry_http_error',
+        );
+      }
       throw new RegistryClientError(
-        `registry fetch failed (${(err as Error).message}) and no on-disk cache exists. First-run installs require network.`,
+        `${failure} and no on-disk cache exists. First-run installs require network.`,
         'no_cache_no_network',
       );
     }

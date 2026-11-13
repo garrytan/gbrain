@@ -105,6 +105,15 @@ gbrain skillpack scaffold <source>    # owner/repo, https, ./dir, ./*.tgz
 gbrain skillpack registry --url X     # point at a custom registry
 ```
 
+> **Registry availability:** the default registry URL
+> (`https://raw.githubusercontent.com/garrytan/gbrain-skillpack-registry/main/registry.json`)
+> currently returns HTTP 404 for unauthenticated users, so the registry-reading
+> commands need either an on-disk cache or a URL override. Use `--url <URL>` or
+> the `skillpack.registry_url` config key (`gbrain skillpack registry --url <URL>`
+> writes it) to point at a reachable catalog. A non-2xx response on the registry
+> URL is reported as its own error naming the URL and the status — not as a
+> network failure.
+
 ## Brain-resident packs
 
 A brain/source repo can carry its own publishable skillpack (`brain_resident: true`

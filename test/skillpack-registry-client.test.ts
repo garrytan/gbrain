@@ -256,6 +256,65 @@ describe('loadRegistry — cache fallback', () => {
   });
 });
 
+describe('loadRegistry — HTTP error classification', () => {
+  test('non-2xx with no cache throws registry_http_error naming URL and status', async () => {
+    const url = 'https://example.com/registry.json';
+    const fetchImpl = makeFetchImpl({
+      [url]: { body: {}, status: 404, ok: false },
+    });
+    try {
+      await loadRegistry({ url, cacheDir, fetchImpl });
+      throw new Error('should have thrown');
+    } catch (err) {
+      const e = err as RegistryClientError;
+      expect(e.code).toBe('registry_http_error');
+      expect(e.message).toContain(url);
+      expect(e.message).toContain('404');
+      // Not a network-recovery message: the server answered.
+      expect(e.message).not.toContain('First-run installs require network');
+      // Actionable: names the URL override.
+      expect(e.message).toContain('skillpack.registry_url');
+    }
+  });
+
+  test('genuine network failure with no cache stays no_cache_no_network', async () => {
+    const url = 'https://example.com/registry.json';
+    const failing = (async () => {
+      throw new Error('network down');
+    }) as unknown as typeof fetch;
+    try {
+      await loadRegistry({ url, cacheDir, fetchImpl: failing });
+      throw new Error('should have thrown');
+    } catch (err) {
+      const e = err as RegistryClientError;
+      expect(e.code).toBe('no_cache_no_network');
+      expect(e.message).toContain('First-run installs require network');
+    }
+  });
+
+  test('non-2xx with an existing stale cache still falls back to cache', async () => {
+    const url = 'https://example.com/registry.json';
+    const eurl = 'https://example.com/endorsements.json';
+    const fetchImpl1 = makeFetchImpl({
+      [url]: { body: CATALOG },
+      [eurl]: { body: ENDORSEMENTS },
+    });
+    await loadRegistry({ url, cacheDir, fetchImpl: fetchImpl1 });
+    const cacheFiles = require('fs').readdirSync(cacheDir);
+    const cf = join(cacheDir, cacheFiles[0]);
+    const data = JSON.parse(require('fs').readFileSync(cf, 'utf-8'));
+    data.fetched_at = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    writeFileSync(cf, JSON.stringify(data));
+    // Registry now answers 404 — the offline-safe contract still serves cache.
+    const httpFail = makeFetchImpl({
+      [url]: { body: {}, status: 404, ok: false },
+    });
+    const r = await loadRegistry({ url, cacheDir, fetchImpl: httpFail });
+    expect(r.origin).toBe('cache_soft_stale');
+    expect(r.catalog.skillpacks).toHaveLength(2);
+  });
+});
+
 describe('findPack + findPackWithTier', () => {
   test('finds entry by name; returns null when missing', async () => {
     const url = 'https://example.com/registry.json';
