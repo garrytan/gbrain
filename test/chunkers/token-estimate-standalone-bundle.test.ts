@@ -36,5 +36,5 @@ console.log(JSON.stringify({ available: cl100kAvailable(), tokens: estimateToken
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 });

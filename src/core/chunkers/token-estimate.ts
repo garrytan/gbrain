@@ -9,8 +9,9 @@
  * layer above cjk.ts (whose char classes they reuse) and below both chunkers.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { init as liteInit } from '@dqbd/tiktoken/lite/init';
+import { readFileSync } from 'node:fs';
+import * as liteInitModule from '@dqbd/tiktoken/lite/init';
+const liteInit = liteInitModule.init;
 import { CJK_SLUG_CHARS } from '../cjk.ts';
 // Embedded so a `bun build --compile` binary carries the WASM itself: the
 // package's Node entry reads tiktoken_bg.wasm from the build machine's
@@ -51,32 +52,25 @@ function loadEncoder(): void {
   tiktokenInitialized = true;
 }
 
-/** True when the package's own Node loader can find its WASM on disk. */
-function packageWasmReadable(): boolean {
-  try {
-    return existsSync(require.resolve('@dqbd/tiktoken/tiktoken_bg.wasm'));
-  } catch {
-    return false;
-  }
-}
-
-// init() is async, so the embedded build is prepared once at module load and
-// only when the package loader could not read its own WASM (compiled binary).
-let embeddedTiktoken: { Tiktoken: new (ranks: string, special: Record<string, number>, pat: string) => NonNullable<typeof tiktokenEncoder> } | null = null;
-if (!packageWasmReadable()) {
-  try {
-    embeddedTiktoken = (await liteInit((imports) =>
-      WebAssembly.instantiate(readFileSync(liteWasmPath), imports),
-    )) as unknown as typeof embeddedTiktoken;
-  } catch {
-    embeddedTiktoken = null;
-  }
-}
-
-/** cl100k from the lite build, with WASM bytes from the bundled asset. */
+/**
+ * cl100k from the lite build, with WASM bytes from the bundled asset. init()
+ * is async, but it hands its import object to the callback synchronously, so
+ * the instance is built and wired in-line and no top-level await is needed.
+ */
 function loadEmbeddedEncoder(): typeof tiktokenEncoder {
   try {
-    return embeddedTiktoken && new embeddedTiktoken.Tiktoken(cl100kRanks.bpe_ranks, cl100kRanks.special_tokens, cl100kRanks.pat_str);
+    const lite = liteInitModule as unknown as {
+      __wbg_set_wasm: (exports: WebAssembly.Exports) => void;
+      Tiktoken: new (ranks: string, special: Record<string, number>, pat: string) => NonNullable<typeof tiktokenEncoder>;
+    };
+    let instance: WebAssembly.Instance | null = null;
+    liteInit(async (imports) => {
+      instance = new WebAssembly.Instance(new WebAssembly.Module(readFileSync(String(liteWasmPath))), imports);
+      return instance;
+    }).catch(() => {});
+    if (!instance) return null;
+    lite.__wbg_set_wasm((instance as WebAssembly.Instance).exports);
+    return new lite.Tiktoken(cl100kRanks.bpe_ranks, cl100kRanks.special_tokens, cl100kRanks.pat_str);
   } catch {
     return null;
   }
