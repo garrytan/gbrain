@@ -37,7 +37,18 @@ export class MaintenanceWriteWait {
 
   /** The wait for the job's next publish. */
   ms(): number {
-    if (this.pending) return 0;
+    return this.pending ? 0 : this.remaining();
+  }
+
+  /**
+   * #7461: how long a session's writer-lock probe waits before the job's next publish: the publish wait, but never
+   * less than `floor`, so a pending publish (wait 0) still gets the probe. Not a publish wait itself.
+   */
+  probeMs(floor: number): number {
+    return Math.max(floor, this.pending ? 0 : this.remaining());
+  }
+
+  private remaining(): number {
     const base = testWaitMs ?? MAINTENANCE_WRITE_WAIT_MS;
     return this.deadlineAtMs == null ? base : Math.max(0, Math.min(base, this.deadlineAtMs - this.now()));
   }

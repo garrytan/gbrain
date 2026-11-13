@@ -30,8 +30,8 @@ import {
 // two surfaces can't drift again. Match on word-segments to avoid
 // false-positives (e.g. `monkey` doesn't match `key`).
 export function isSensitiveConfigKey(key: string): boolean {
-  const lower = key.toLowerCase();
-  // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, ...
+  const lower = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, secretAccessKey, ...
   return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
 }
 
@@ -283,6 +283,14 @@ export function redactConfigValue(key: string, value: string): string {
   return value;
 }
 
+/** An object config value with every sensitive field masked at any depth (#7346: storage.secretAccessKey). */
+function redactNestedConfig(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactNestedConfig);
+  if (value === null || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k,
+    typeof v === 'string' ? redactConfigValue(k, v) : v !== null && v !== undefined && isSensitiveConfigKey(k) ? '***' : redactNestedConfig(v)]));
+}
+
 // #3661: the flags `config set` actually honors. Everything else that looks
 // like a flag is rejected before the write — see the gate in the `set` branch.
 const CONFIG_SET_KNOWN_FLAGS = ['--force', '--coverage-override', '--yes'];
@@ -414,6 +422,7 @@ async function setConfigWithDecideHooks(engine: BrainEngine, key: string, value:
   if (key === 'sync.slug_conflicts.auto_remove') { const err = (await import('../core/repair/slug-autoheal.ts')).slugAutoRemoveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.origin_twins.auto_resolve') { const err = (await import('../core/repair/origin-twins-heal.ts')).originAutoResolveValueRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key === 'sync.repo_path') { const err = (await import('../core/sync-config-keys.ts')).syncRepoPathRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
+  if (key === 'cycle.purge.mcp_request_log_retention_days') { const err = (await import('../core/mcp-request-log-retention.ts')).mcpLogRetentionRefusal(value); if (err) { console.error(`[config] ${err}`); process.exit(1); } }
   if (key.startsWith('search.')) (await import('./config/keyword-timeout-value.ts')).refuseInvalidKeywordTimeoutValue(key, value);
   if (key === 'persistence.max_claim_ms') {
     const { validateMaxClaimConfigValue } = await import('../core/persistence/claim-phase.ts');
@@ -681,7 +690,7 @@ async function showConfig(engine: BrainEngine): Promise<void> {
     const display = typeof v === 'string'
       ? redactConfigValue(k, v)
       : v !== null && typeof v === 'object'
-        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(v))
+        ? (isSensitiveConfigKey(k) ? '***' : JSON.stringify(redactNestedConfig(v)))
         : v;
     console.log(`  ${k}: ${display}`);
   }
@@ -955,7 +964,7 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
     if (val !== null && val !== undefined) {
       // #3943: redact by default like `show`/`set` — `get` output lands in
       // agent transcripts and shell history; scripts opt out with the flag.
-      const out = typeof val === 'string' ? val : JSON.stringify(val);
+      const out = typeof val === 'string' ? val : JSON.stringify(rawFlag ? val : redactNestedConfig(val));
       console.log(rawFlag ? out : redactConfigValue(key, out));
       if (dbAuthoritative) {
         console.error(`[config] source: ${dbVal !== null && dbVal !== undefined ? 'db plane (authoritative for this key)' : 'file mirror (no DB row)'}${await writebackLanesNote(engine, key)}`);

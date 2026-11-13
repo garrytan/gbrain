@@ -1182,6 +1182,10 @@
         "name": "embedding_plane_disagreement"
       },
       {
+        "category": "ops",
+        "name": "mcp_request_log_retention"
+      },
+      {
         "category": "brain",
         "name": "fence_integrity"
       },

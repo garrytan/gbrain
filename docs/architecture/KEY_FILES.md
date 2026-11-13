@@ -29,8 +29,8 @@ from its last line; never raise the cap.
 | [Commands (1/6)](key-files/commands-1.md) | `agent-logs.ts` to `db-repair.ts` |
 | [Commands (2/6)](key-files/commands-2.md) | `doctor.ts`, `doctor/`; [alert](key-files/doctor-alert.md) |
 | [Commands (2/6, continued)](key-files/commands-2-continued.md) | More `doctor/checks/*`, `dream-retriage.ts` to `embed.ts`; [tiers and budgets](key-files/doctor-budgets.md) |
-| [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `extract.ts` |
-| [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract-timeline-db.ts` through `frontmatter-install-hook.ts` |
+| [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` to `extract-conversation-facts.ts` |
+| [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract.ts` through `frontmatter-install-hook.ts` |
 | [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `pages-status.ts` |
 | [Commands (4/6, continued)](key-files/commands-4-continued.md) | `persistence-admin.ts` to `reindex-search-vector.ts`, `init-mode-picker.ts`, `core/embedding-migration-cli.ts` |
 | [Commands (5/6)](key-files/commands-5.md) | `repair.ts` to `skillpack.ts`; [continued](key-files/commands-5-continued.md) |

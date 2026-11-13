@@ -31,6 +31,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { getProposal, transitionProposal, type ProposalRow } from '../ai/decide/proposals-store.ts';
 import { strikeFenceRow, supersededFact } from './forget.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import { withTrustKeep } from '../persistence/context.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
@@ -368,7 +369,8 @@ export async function prepareProposalMutation(engine: BrainEngine, row: WriteReq
   }
   const action = p.action;
   const proposal = await store.get(engine, id);
-  const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
+  // #8060: a segmented page within PAGE_MAX_BYTES is read back whole and its fence written as a normal put (facts-prepare.ts).
+  const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(row.slug, { sourceId: row.source_id }), 'decide_proposal');
   const observedRevision = snapshot?.revision ?? null;
   const done = (outcome: Record<string, unknown>): PreparedMutation => ({ observedRevision, noop: true, apply: async () => outcome });
   if (!proposal || proposal.source_id !== row.source_id) return done({ id, action, status: 'refused', reason: 'not_found' });

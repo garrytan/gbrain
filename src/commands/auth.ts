@@ -1185,8 +1185,9 @@ async function clientsCmd(args: string[]) {
       const clients = await listClientRows(engine);
       const lifetimeClamped = await tokenLifetimeClampedClients(engine);
 
-      const { readClientOpUsage } = await import('../core/mcp-usage.ts');
-      const usage = parsed.usage ? await readClientOpUsage(engine, { days: parsed.days }) : [];
+      const { readClientOpUsageWithCoverage, truncatedWindowNote } = await import('../core/mcp-usage.ts');
+      const { clients: usage, coverage } = parsed.usage ? await readClientOpUsageWithCoverage(engine, { days: parsed.days }) : { clients: [], coverage: null };
+      const windowNote = coverage?.truncated ? truncatedWindowNote(coverage) : null;
       const usageByToken = new Map(usage.map(u => [u.token_name, u]));
       const clientIds = new Set(clients.map(c => c.client_id));
       const legacyUsage = usage.filter(u => !clientIds.has(u.token_name));
@@ -1195,6 +1196,7 @@ async function clientsCmd(args: string[]) {
         console.log(JSON.stringify({
           window_days: parsed.days,
           usage_included: parsed.usage,
+          ...(coverage ? { window_truncated: coverage.truncated, covered_days: coverage.covered_days, pruned_before: coverage.pruned_before, window_note: windowNote } : {}),
           clients: clients.map(c => ({
             client_id: c.client_id,
             client_name: c.client_name,
@@ -1219,6 +1221,7 @@ async function clientsCmd(args: string[]) {
         console.log('No OAuth clients registered. Register one: gbrain auth register-client "my-client"');
         return;
       }
+      if (windowNote) console.log(`${windowNote}\n`);
       const fmtTop = (u: (typeof usage)[number]) =>
         Object.entries(u.ops).slice(0, 5).map(([op, n]) => `${op}(${n})`).join(', ');
       for (const c of clients) {
@@ -1426,7 +1429,8 @@ Usage:
                                                           joins per-client op-call counts, top ops, and last-seen
                                                           from mcp_request_log (default 30d window; HTTP clients
                                                           only — stdio use is not logged). Automation-shaped
-                                                          clients (>90% context_pack/delta) are flagged.
+                                                          clients (>90% context_pack/delta) are flagged. A window
+                                                          reaching past pruned request-log history says so.
   gbrain auth revoke-client <client_id>                   Hard-delete an OAuth 2.1 client (cascades to tokens + codes)
   gbrain auth local-writer list|register|revoke            Manage durable local CLI/stdio writers (see --help)
   gbrain auth test <url> --token <token>                  Smoke-test a remote MCP server

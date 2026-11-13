@@ -387,8 +387,8 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
 
     const { text: claimText, struck } = stripStrikethrough(claimRaw);
     const context = parseStringCell(contextRaw);
-    const supersededBy = parseSupersededByFromContext(context);
-    const forgotten    = parseForgottenFromContext(context);
+    const supersededBy = struck ? parseSupersededByFromContext(context) : undefined;
+    const forgotten    = struck && parseForgottenFromContext(context);
 
     facts.push({
       rowNum,
@@ -403,7 +403,7 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
       context,
       active: !struck,
       supersededBy,
-      forgotten: struck ? forgotten : false,
+      forgotten,
       // v0.35.4 — typed-claim fields, all optional.
       claimMetric: parseStringCell(claimMetricRaw),
       claimValue,
