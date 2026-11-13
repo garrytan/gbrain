@@ -79,6 +79,45 @@ const TWIN_LOWER = 'sources/meetings/2026-10-19-call-abcdefghxyz.md';
 const TWIN_MIXED = 'sources/meetings/2026-10-19-call-AbCdEfGhXyZ.md';
 const NESTED_INDEX = 'projects/acme-example/index.md';
 
+test('a plain directory returns a typed refusal with a read-only next step', () => each(async engine => {
+  const id = 'resolve-plain-directory';
+  const dir = mkdirSync(join(home, id), { recursive: true })!;
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, dir]);
+
+  await expect(resolveSourcePaths(engine, id, ['notes/example.md'])).rejects.toMatchObject({
+    code: 'sync_not_applicable',
+    reason: 'plain_directory',
+    message: expect.stringContaining('without Git history'),
+    suggestion: expect.stringContaining('choose a registered Git source'),
+    fix: { argv: ['gbrain', 'sources', 'status', id, '--json'], consent: [] },
+  });
+}), 240_000);
+
+test('an incomplete Git directory in an ancestor still reports the original Git failure', () => each(async engine => {
+  const id = 'resolve-damaged-git';
+  const root = join(home, id);
+  mkdirSync(join(root, '.git'), { recursive: true });
+  const dir = mkdirSync(join(root, 'notes'), { recursive: true })!;
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, dir]);
+
+  await expect(resolveSourcePaths(engine, id, ['example.md'])).rejects.toMatchObject({
+    status: 128,
+    stderr: expect.stringContaining('fatal: not a git repository'),
+  });
+}), 240_000);
+
+test('a registered Git clone with missing metadata still reports the original Git failure before its first sync', () => each(async engine => {
+  const id = 'resolve-missing-clone';
+  const dir = mkdirSync(join(home, id), { recursive: true })!;
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)',
+    [id, dir, JSON.stringify({ managed_clone: true, remote_url: 'https://example.invalid/repo.git' })]);
+
+  await expect(resolveSourcePaths(engine, id, ['example.md'])).rejects.toMatchObject({
+    status: 128,
+    stderr: expect.stringContaining('fatal: not a git repository'),
+  });
+}), 240_000);
+
 test('the slug gbrain folds a trailing hyphen into resolves to the indexed page, not a missing one', () => each(async engine => {
   const s = await source(engine, { [HYPHEN]: note('Headline') });
   await s.sync();

@@ -26,8 +26,11 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
-import { literalPathspecs } from '../git-env.ts';
 import { existsSync, realpathSync } from 'node:fs';
+import { execFileBounded } from '../bounded-child-exec.ts';
+import { classifyGitCheckout } from '../git-checkout.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
+import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from '../hardened-git.ts';
 import { isHostAbsolutePath } from '../path-confine.ts';
 import { opError } from '../ops/contract.ts';
 import { resolveSlugForPath, unsyncableReason, type SyncableReason } from '../sync.ts';
@@ -125,7 +128,20 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   if (!source.local_path || !existsSync(source.local_path)) throw opError('not_found', `Source ${sourceId} has no Git checkout on this host, so its paths cannot be resolved here.`,
     'Run this on the host that holds the checkout (gbrain sources status names its path).', { fix: readFix('Shows where the source checkout lives.', status, status) });
   const root = realpathSync(source.local_path);
-  const gitRoot = realpathSync(syncGit(root, ['rev-parse', '--show-toplevel']).trim());
+  // Match this one Git diagnostic in a fixed locale. Git also emits it for some damaged .git entries.
+  const top = await execFileBounded('git', ['-c', 'core.quotepath=false', ...HARDENED_GIT_ARGS, '-C', root, 'rev-parse', '--show-toplevel'],
+    { env: gitChildEnv({ ...NO_LAZY_FETCH_ENV, LC_ALL: 'C' }), timeout: 30_000, maxBuffer: 32 * 1024 ** 2 });
+  if (top.error) {
+    const gitExpected = source.last_commit !== null || source.config?.canonical === 'git' || source.config?.managed_clone === true
+      || (typeof source.config?.remote_url === 'string' && source.config.remote_url !== '');
+    if (!gitExpected && top.error.code === 128 && top.stderr.startsWith('fatal: not a git repository (') && classifyGitCheckout(root) === 'not_git') {
+      throw opError('sync_not_applicable', `Source ${sourceId} is a plain directory without Git history to resolve.`,
+        'For Git landing checks, choose a registered Git source. To look up an indexed page, use its slug and source with get_page.',
+        { reason: 'plain_directory', fix: readFix('Shows how the source is registered.', status, status) });
+    }
+    throw Object.assign(top.error, { status: typeof top.error.code === 'number' ? top.error.code : null, stderr: top.stderr, stdout: top.stdout });
+  }
+  const gitRoot = realpathSync(top.stdout.trim());
   const context = { root, gitRoot, sourceId, source: { last_commit: source.last_commit, config: source.config ?? {} } };
   const { scope, eligible, sourcePath } = await loadSyncEligibility(engine, context);
   const managed = await persistenceEnabledForHealth(engine).catch(() => false);
