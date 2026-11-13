@@ -4018,6 +4018,18 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/storage-manifest.md#doctor"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No storage shelf and no interim storage records on this brain.",
+          "name": "storage_manifest",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "details": {
             "bytes": 32768,
@@ -4062,18 +4074,6 @@
           "message": "The MCP request log holds 0 row(s) (0.0 MB); request-log retention is off, so it keeps every request.",
           "name": "mcp_request_log_retention",
           "readiness_state": "disabled_by_choice",
-          "severity": "info",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
-            "docs": "docs/guides/storage-manifest.md#doctor"
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No storage shelf and no interim storage records on this brain.",
-          "name": "storage_manifest",
-          "readiness_state": "not_applicable",
           "severity": "info",
           "status": "ok"
         },
