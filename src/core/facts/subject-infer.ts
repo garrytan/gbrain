@@ -141,6 +141,9 @@ const DISTINCT_ENTITY_LIMIT = 2;
 const NAME_TOKEN = "(?:\\p{Lu}[\\p{L}\\p{N}'’-]*|\\p{N}[\\p{L}\\p{N}'’-]*)";
 const DIGIT_NAME_RUN_RE = new RegExp(`(?<![\\p{L}\\p{N}'’-])${NAME_TOKEN}(?:\\s+${NAME_TOKEN}){1,3}(?![\\p{L}\\p{N}'’-])`, 'gu');
 
+/** Predicate openers that mark a CJK name as the sentence subject. */
+const CJK_PREDICATE_RE = /^(?:负责|表示|认为|决定|已经|需要|将|会|是|说|在|要|想|能|有)/u;
+
 export async function inferFactSubject(engine: BrainEngine, sourceId: string, input: InferSubjectInput): Promise<InferResult> {
   const memo = new Map<string, StrictResolution>();
   const resolve = async (query: string): Promise<StrictResolution> => {
@@ -165,8 +168,17 @@ export async function inferFactSubject(engine: BrainEngine, sourceId: string, in
     const uses = referenceUses(input.fact, query);
     return uses.length > 0 && uses.every(at => digitNames.some(d => at >= d.start && at + query.length <= d.end));
   };
+  // A registered CJK name opening the fact and followed directly by a predicate is the subject; weak CJK candidates are otherwise filtered.
+  const cjkSubject: Array<{ query: string }> = [];
+  const lead = /^\s*(\p{Script=Han}{2,6})/u.exec(input.fact)?.[1];
+  for (let n = 2; lead && n <= lead.length; n++) {
+    const rest = input.fact.slice(input.fact.indexOf(lead) + n);
+    if (!CJK_PREDICATE_RE.test(rest)) continue;
+    if ((await resolve(lead.slice(0, n))).slug !== null) { cjkSubject.push({ query: lead.slice(0, n) }); break; }
+  }
   const candidates: Array<{ query: string; sentenceStart?: true }> = [
     ...[...new Set(input.fact.match(SLUG_IN_TEXT_RE) ?? [])].map(query => ({ query })),
+    ...cjkSubject,
     ...digitNames.map(({ query }) => ({ query })),
     ...extractCandidates(input.fact).filter(c => !c.weak).map(shedOpener).filter(c => !insideDigitName(c.query)),
   ];
