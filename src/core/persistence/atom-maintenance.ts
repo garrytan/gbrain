@@ -17,7 +17,7 @@ import { preparePageMutation } from './page-prepare.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from './service.ts';
 import { MaintenanceWriteWait } from './maintenance-wait.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import type { WriteAuthority, WriteRequest } from './model.ts';
+import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
 import { MAX_DETERMINISTIC_FAILURES, writeAtomPageState } from '../cycle/extract-atoms-page-state.ts';
 import { effectiveVisibility, withFolderRestricted } from '../search/private-visibility.ts';
@@ -79,6 +79,8 @@ export interface AtomIntent extends Record<string, unknown> {
   generationKey?: GenerationKey;
   /** #7514: a hold completion records the strike count it holds at instead of counting one more failure. */
   attempts?: number;
+  /** Original member request row ID, retained on a recovered commit. */
+  recoveredMember?: string;
 }
 
 const ownerStatusFix = (sourceId: string): Action => readFix(
@@ -423,11 +425,18 @@ export async function resumeManagedGenerationMembers(engine: BrainEngine, sessio
   const resumed: ResumedMember[] = [];
   for (const member of pending) {
     let row = await getWriteRequest(engine, session.authority.principal, memberRequestId(member.activation_id, member.slug, member.action));
-    if (row && ['queued', 'running', 'recovering'].includes(row.state)) {
+    if (row && !isTerminal(row)) {
       row = session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
-      if (row.state === 'committed') { resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'waited' }); continue; }
+      if (!isTerminal(row) || row.state === 'committed') {
+        resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'waited' });
+        continue;
+      }
     }
     if (row?.state === 'committed') continue;
+    if (row?.state === 'cancelled') {
+      resumed.push({ slug: member.slug, activation_id: member.activation_id, action: member.action, outcome: 'unrecoverable' });
+      continue;
+    }
     const origin = (row?.intent as AtomIntent | null | undefined)?.origin;
     const hold = origin?.kind === 'transcript'
       ? await (await import('../cycle/synthesize-source-routing.ts')).transcriptSourceHold(engine, origin.locator, { corpusDir: opts.corpusDir, sourceId: session.sourceId })
@@ -438,31 +447,77 @@ export async function resumeManagedGenerationMembers(engine: BrainEngine, sessio
   return resumed;
 }
 
+async function recoveredAtomOriginCurrent(engine: BrainEngine, sourceId: string, origin: AtomOrigin): Promise<boolean> {
+  if (origin.kind === 'transcript') {
+    try { return sha256(readFileSync(origin.locator)) === origin.textHash; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+  const snapshot = await engine.readPageSnapshot(origin.locator, { sourceId });
+  return !!snapshot && snapshot.page.id === origin.pageId && snapshot.revision === origin.revision
+    && snapshot.page.content_hash === origin.contentHash
+    && effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }) === origin.visibility;
+}
+
 async function resubmitMember(engine: BrainEngine, session: ManagedAtomSession, member: Awaited<ReturnType<typeof listPendingMembers>>[number],
   failed: WriteRequest | null): Promise<ResumedMember['outcome']> {
-  const [planned] = await engine.executeRaw<{ before: string | null }>(
-    `SELECT m->>'before' AS before FROM derived_generation_activations a CROSS JOIN LATERAL jsonb_array_elements(a.members) m WHERE a.id=$1 AND m->>'slug'=$2`,
-    [member.activation_id, member.slug]);
+  const prior = failed?.intent as AtomIntent | null | undefined;
+  if (!failed || !prior?.origin) return 'unrecoverable';
+  if (typeof prior.expected_revision !== 'string' || failed.page_id == null ||
+      (member.action === 'overwrite' && typeof prior.content !== 'string')) return 'unrecoverable';
+  if (!await recoveredAtomOriginCurrent(engine, failed.source_id, prior.origin)) return 'unrecoverable';
   const snapshot = await engine.readPageSnapshot(member.slug, { sourceId: session.sourceId });
-  const rows = snapshot ? await atomGenerationAdapter.readItems(engine, { kind: member.kind, sourceId: member.source_id, ownerKey: member.owner_key }, [member.slug]) : new Map();
-  const current = rows.get(member.slug);
-  const before = member.action === 'retire' ? member.identity : planned?.before ?? null;
-  if (!snapshot || !current?.live || (current.identityHash !== before && current.identityHash !== member.identity)) {
+  const rows = snapshot && member.action === 'retire' ? await atomGenerationAdapter.readItems(engine,
+    { kind: member.kind, sourceId: member.source_id, ownerKey: member.owner_key }, [member.slug]) : new Map();
+  // A semantic hash omits page metadata and cannot establish that the original
+  // write still owns this revision. Reuse the exact fence accepted at admission.
+  const unchanged = snapshot?.page.id === failed.page_id && snapshot?.revision === prior.expected_revision
+    && (member.action === 'overwrite' || (rows.get(member.slug)?.live && rows.get(member.slug)?.identityHash === member.identity));
+  if (!snapshot || !unchanged) {
     await engine.transaction(tx => settleMember(tx, member.activation_id, member.slug));
     return 'kept_edited';
   }
-  const prior = failed?.intent as AtomIntent | null | undefined;
-  if (!prior?.origin || (member.action === 'overwrite' && typeof prior.content !== 'string')) return 'unrecoverable';
-  const intent: Record<string, unknown> = { ...prior, expected_revision: snapshot.revision };
+  const intent: Record<string, unknown> = { ...prior, expected_revision: snapshot.revision, recoveredMember: failed.id };
   delete intent.checkpointKey;
   delete intent.expectedCheckpoint;
-  const requestId = memberRequestId(member.activation_id, member.slug, `${member.action}:after:${failed?.id ?? 'missing'}`);
+  const next = await atomRecoveryRequest(engine, session, failed,
+    predecessor => memberRequestId(member.activation_id, member.slug, member.action + ':after:' + predecessor),
+    row => (row.state === 'conflict' && row.error_code === 'revision_conflict') || interruptedAtomCompletion(row));
+  if (next.row?.state === 'cancelled') return 'unrecoverable';
+  if (next.row) {
+    await waitAtomReceipts(engine, session, [next.row]);
+    return 'waited';
+  }
   const row = await engine.transaction(tx => admitWriteInTransaction(tx, { principal: session.authority.principal, authority: session.authority,
     operation: 'submit_job', sourceId: session.sourceId, sourceIncarnation: session.incarnation,
     worktreeId: session.binding?.worktree_id, topologyGeneration: session.binding?.topology_generation,
-    slug: member.slug, pageId: snapshot.page.id, requestId, callerIntent: intent, intent }));
+    slug: member.slug, pageId: snapshot.page.id, requestId: next.requestId, callerIntent: intent, intent }));
   await waitAtomReceipts(engine, session, [row]);
   return 'resubmitted';
+}
+
+/** The next ID is bound to the last interrupted request. A concurrent drain reuses it. */
+async function atomRecoveryRequest(engine: BrainEngine, session: ManagedAtomSession, original: WriteRequest,
+  makeId: (previousId: string) => string, retry: (row: WriteRequest) => boolean): Promise<{ requestId: string; row: WriteRequest | null }> {
+  const originalIntent = original.intent as AtomIntent;
+  let predecessor = original.id;
+  for (let attempt = 1; ; attempt++) {
+    const requestId = makeId(predecessor);
+    const row = await getWriteRequest(engine, session.authority.principal, requestId);
+    if (!row) return { requestId, row };
+    const intent = row.intent as AtomIntent | null;
+    if (row.operation !== 'submit_job' || row.source_id !== original.source_id || row.source_incarnation !== original.source_incarnation
+      || row.slug !== original.slug || row.page_id !== original.page_id
+      || (intent ? intent.kind !== originalIntent.kind || intent.activationId !== originalIntent.activationId || intent.runKey !== originalIntent.runKey : !row.compacted)) {
+      throw opError('idempotency_conflict', 'An atom recovery request ID belongs to another write.',
+        'Inspect the existing receipt before resuming the atom generation.', { fix: receiptFix(requestId) });
+    }
+    await authorizeStoredRequest(engine, row);
+    if (!retry(row) || attempt >= MAX_DETERMINISTIC_FAILURES) return { requestId, row };
+    predecessor = row.id;
+  }
 }
 
 async function atomBatchRows(engine: BrainEngine, session: ManagedAtomSession, key: string): Promise<WriteRequest[]> {
@@ -476,7 +531,7 @@ async function atomBatchRows(engine: BrainEngine, session: ManagedAtomSession, k
   }
   const children = (completion?.intent as AtomIntent | null)?.children ?? [];
   return engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE source_id=$1 AND source_incarnation=$2::uuid
-    AND principal_kind=$3 AND principal_id=$4 AND ((intent->>'runKey'=$5 AND intent->>'kind' LIKE 'managed_atom_%')
+    AND principal_kind=$3 AND principal_id=$4 AND (((intent->>'runKey'=$5 AND intent->>'kind' LIKE 'managed_atom_%') OR (outcome->>'atom_run_key'=$5 AND outcome ? 'atom_recovered_member'))
       OR request_id=$6::uuid OR id=ANY($7::uuid[])) ORDER BY sequence`,
   [session.sourceId, session.incarnation, session.authority.principal.kind, session.authority.principal.id, key, completionId, children]);
 }
@@ -547,10 +602,50 @@ export async function resumeManagedAtoms(engine: BrainEngine, session: ManagedAt
   }
 }
 
+function interruptedAtomCompletion(row: WriteRequest): boolean {
+  return row.state === 'failed' && ['preparation_stalled', 'write_interrupted'].includes(row.error_code ?? '');
+}
+
+/** Re-journal a failed completion only after every original member has a committed result. */
+async function completeRecoveredAtomBatch(engine: BrainEngine, session: ManagedAtomSession, key: string,
+  rows: readonly WriteRequest[]): Promise<WriteRequest | null> {
+  const original = rows.find(row => row.request_id === atomRequestId(key, '__managed_atom_complete__'));
+  const p = original?.intent as AtomIntent | null | undefined;
+  if (!original || !p?.activationId || !p.children?.length ||
+    (original.state !== 'conflict' && !interruptedAtomCompletion(original))) return null;
+  const committed = new Set<string>();
+  const replacements = new Map<string, string>();
+  for (const row of rows) {
+    if (row.state !== 'committed') continue;
+    committed.add(row.id);
+    const predecessor = row.outcome?.atom_recovered_member;
+    if (typeof predecessor === 'string') replacements.set(predecessor, row.id);
+  }
+  const children = p.children.map(id => replacements.get(id) ?? id);
+  if (original.state === 'conflict' && children.every((id, index) => id === p.children![index])) return null;
+  if (!children.every(id => committed.has(id))) return null;
+  const next = await atomRecoveryRequest(engine, session, original,
+    predecessor => atomRequestId(digest([predecessor, children]), 'recovered-atom-completion'), interruptedAtomCompletion);
+  if (next.row) return session.wait.observe(await waitForWrite(engine, next.row, session.config, session.wait.ms()));
+  const intent = { ...p, children };
+  const row = await engine.transaction(tx => admitWriteInTransaction(tx, {
+    principal: session.authority.principal, authority: session.authority, operation: 'submit_job',
+    sourceId: session.sourceId, sourceIncarnation: session.incarnation, worktreeId: session.binding?.worktree_id,
+    topologyGeneration: session.binding?.topology_generation, slug: original.slug, pageId: null, requestId: next.requestId,
+    callerIntent: intent, intent,
+  }));
+  return session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
+}
+
 /** Waits out the batch accepted under `key`: 'run' when there is none, 'done' when it completed, or its failed completion row. */
 async function resumeAtomBatch(engine: BrainEngine, session: ManagedAtomSession, key: string): Promise<'run' | 'done' | WriteRequest> {
   const rows = await atomBatchRows(engine, session, key);
   if (!rows.length) return 'run';
+  const recovered = await completeRecoveredAtomBatch(engine, session, key, rows);
+  if (recovered) {
+    writeResponse(recovered);
+    return 'done';
+  }
   for (const row of rows) {
     await authorizeStoredRequest(engine, row);
     const completed = session.wait.observe(await waitForWrite(engine, row, session.config, session.wait.ms()));
@@ -697,7 +792,14 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
         `Connector source ${row.source_id} was claimed by a canonical owner after this database-only atom run started; request ${row.request_id} changed nothing. Run the atom drain on the owning host.`,
         { fix: ownerStatusFix(row.source_id) });
     }
-    if (gated) { if (publishing) await assertMemberPending(tx, row, p.activationId!, 'atom'); return; }
+    if (gated) {
+      if (publishing) await assertMemberPending(tx, row, p.activationId!, 'atom');
+      if (p.recoveredMember && !await recoveredAtomOriginCurrent(tx, row.source_id, p.origin)) {
+        throw opError('source_changed', 'The accepted atom origin changed before recovery.',
+          'Read the current origin and the retained atom receipt before extracting again.', { fix: receiptFix(row.request_id) });
+      }
+      return;
+    }
     if (p.origin.kind === 'transcript') {
       if (sha256(readFileSync(p.origin.locator)) !== p.origin.textHash) throw opError('source_changed', 'The accepted atom transcript changed.',
         `The transcript behind atom request ${row.request_id} in source ${row.source_id} was edited after acceptance, so the request published nothing. Run the atom drain again to extract the current file.`,
@@ -733,7 +835,8 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
           await bumpAtomGeneration(tx, row.source_id, row.source_incarnation, p.origin.pageId, p.origin.contentHash || null);
         }
       }
-      return { ...result, atom_run_key: p.runKey, atom_kind: p.kind };
+      return { ...result, atom_run_key: p.runKey, atom_kind: p.kind,
+        ...(p.recoveredMember ? { atom_recovered_member: p.recoveredMember } : {}) };
     } };
   }
   if (p.kind === 'managed_atom_complete') {
@@ -810,7 +913,8 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
       await lowerToDerivedTier(tx, 'pages', [Number(atom.id)], derivation.trust);
       await recordTaintEdges(tx, { table: 'pages', id: Number(atom.id), sourceId: row.source_id }, derivation.inputs);
     }
-    return { ...result, atom_run_key: p.runKey, atom_kind: p.kind };
+    return { ...result, atom_run_key: p.runKey, atom_kind: p.kind,
+      ...(p.recoveredMember ? { atom_recovered_member: p.recoveredMember } : {}) };
   } };
 }
 
