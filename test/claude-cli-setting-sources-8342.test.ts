@@ -4,7 +4,8 @@
  * steer gbrain's background calls. `--setting-sources ""` loads no settings
  * source and keeps the subscription login. The child gets it only when
  * `claude --version` reports SETTING_SOURCES_MIN_VERSION or newer, probed once
- * per binary; an older or unreadable version keeps today's argv.
+ * per binary; an older or unreadable version keeps today's argv, and a probe
+ * that exited non-zero is tried again on the next call.
  *
  * A POSIX shell stub at GBRAIN_CLAUDE_CLI_BIN plays the CLI and records its
  * argv; no live CLI or provider account is used.
@@ -89,6 +90,31 @@ describe('claude-cli keeps the user\'s own settings and CLAUDE.md out of the chi
     expect(argv).toContain('--settings');
     expect(s.probes()).toBe(0);
     expect(settingSources(await s.call({ GBRAIN_CLAUDE_CLI_USER_SETTINGS: '0' }))).toBe('');
+  });
+
+  test('a --version that exits non-zero is not remembered: the next call probes again and gets --setting-sources ""', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'claude-setting-sources-flaky-'));
+    dirs.push(dir);
+    const bin = join(dir, 'claude');
+    writeFileSync(bin, [
+      '#!/bin/sh',
+      `if [ "$1" = "--version" ]; then echo probe >> "${dir}/probes"; if [ ! -f "${dir}/warm" ]; then : > "${dir}/warm"; exit 1; fi; echo '2.1.316 (Claude Code)'; exit 0; fi`,
+      'cat > /dev/null',
+      `: > "${dir}/argv"`,
+      `for a in "$@"; do printf '[%s]\\n' "$a" >> "${dir}/argv"; done`,
+      `echo '${JSON.stringify(SUCCESS)}'`,
+    ].join('\n') + '\n');
+    chmodSync(bin, 0o755);
+    const call = async () => {
+      await withEnv({ GBRAIN_CLAUDE_CLI_BIN: bin }, () => new ClaudeCliLanguageModel('claude-sonnet-5-5').doGenerate({
+        prompt: [{ role: 'user', content: [{ type: 'text', text: 'Reply OK' }] }],
+      } as LanguageModelV2CallOptions));
+      return readFileSync(join(dir, 'argv'), 'utf8').trimEnd().split('\n').map((l) => l.slice(1, -1));
+    };
+    expect(settingSources(await call())).toBeNull();
+    expect(settingSources(await call())).toBe('');
+    expect(settingSources(await call())).toBe('');
+    expect(readFileSync(join(dir, 'probes'), 'utf8').trimEnd().split('\n').length).toBe(2);
   });
 
   test('an older or unreadable version keeps today\'s argv', async () => {

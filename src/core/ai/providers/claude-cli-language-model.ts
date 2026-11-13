@@ -367,9 +367,10 @@ export function oldClaudeCliMessage(version: string | null): string {
 
 /** `claude --version`'s version number, or null, run like a real call (clean
  * cwd, scrubbed env) and killed outright after 5 s. */
-function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
+function claudeCliVersion(env: NodeJS.ProcessEnv): { version: string | null; settled: boolean } {
   const r = spawnSync(claudeBin(), ['--version'], { encoding: 'utf8', timeout: 5_000, killSignal: 'SIGKILL', cwd: ensureCleanCwd(), env });
-  return /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
+  const version = /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
+  return { version, settled: version !== null || r.status === 0 || r.signal !== null };
 }
 
 /** Oldest claude CLI that gets `--setting-sources ""` (#8342): 2.1.314 fixed
@@ -380,17 +381,20 @@ export const SETTING_SOURCES_MIN_VERSION = '2.1.314';
 const settingSourcesByBin = new Map<string, boolean>();
 
 /** Whether the configured CLI is SETTING_SOURCES_MIN_VERSION or newer: one
- * `claude --version` per binary per process; false when it cannot be read. */
+ * `claude --version` per binary per process, false when it cannot be read.
+ * A probe that failed to start or exited non-zero is not remembered, so the
+ * next call probes again; one that hung to the 5 s kill is, so a stuck CLI
+ * costs that wait once. */
 function takesNoSettingSources(env: NodeJS.ProcessEnv): boolean {
   const bin = claudeBin();
-  let known = settingSourcesByBin.get(bin);
-  if (known === undefined) {
-    const found = claudeCliVersion(env)?.split('.').map(Number);
-    const min = SETTING_SOURCES_MIN_VERSION.split('.').map(Number);
-    known = !!found && (found[0]! - min[0]! || found[1]! - min[1]! || found[2]! - min[2]!) >= 0;
-    settingSourcesByBin.set(bin, known);
-  }
-  return known;
+  const known = settingSourcesByBin.get(bin);
+  if (known !== undefined) return known;
+  const { version, settled } = claudeCliVersion(env);
+  const found = version?.split('.').map(Number);
+  const min = SETTING_SOURCES_MIN_VERSION.split('.').map(Number);
+  const takes = !!found && (found[0]! - min[0]! || found[1]! - min[1]! || found[2]! - min[2]!) >= 0;
+  if (settled) settingSourcesByBin.set(bin, takes);
+  return takes;
 }
 
 /**
@@ -544,7 +548,7 @@ function runClaude(
         // regexes only scan text before the marker (an auth-looking essay in
         // stdout must never read as a whole-run auth outage).
         const headline = isUnknownOptionError(stderr)
-          ? oldClaudeCliMessage(claudeCliVersion(env))
+          ? oldClaudeCliMessage(claudeCliVersion(env).version)
           : `claude-cli exited ${code}`;
         reject(new ClaudeCliProcessError(
           `${headline}\n--- raw ---\n${stderr.trim() || stdout.trim()}`,

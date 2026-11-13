@@ -83,6 +83,25 @@ const write = (env: Env, rel: string, body: string) => writeFileSync(join(env.ws
 const outcome = (result: Awaited<ReturnType<typeof update>>, slug: string) => result.skills.find(s => s.slug === slug)!;
 
 describe('base recording and whole-skill update', () => {
+  test('a state save that fails after the files land keeps the skill updated and finishes the journal', async () => {
+    const env = setup();
+    await scaffold(env);
+    release(env.gbrainRoot, { ...V1, 'demo/SKILL.md': V2['demo/SKILL.md'] });
+    const breakState = () => {
+      if (existsSync(join(env.statePath, 'blocked'))) return;
+      rmSync(env.statePath, { force: true });
+      mkdirSync(join(env.statePath, 'blocked'), { recursive: true });
+    };
+    const result = await update(env, { hooks: { afterRename: breakState } });
+    expect(result.summary).toMatchObject({ updated: 1, current: 1, failed: 0 });
+    expect(read(env, 'demo/SKILL.md')).toBe(V2['demo/SKILL.md']);
+    expect(outcome(result, 'demo').notes.some(n => n.includes('base record was not saved'))).toBe(true);
+    const [journal] = listJournals(env.backups);
+    expect(journal!.status).toBe('complete');
+    expect(journal!.skills.every(s => s.status === 'committed')).toBe(true);
+    expect(result.restore_command).toBeNull();
+  });
+
   test('scaffold records bases; an untouched skill updates whole, journaled; a second run is a no-op (repo-less)', async () => {
     const env = setup();
     expect(spawnSync('git', ['-C', env.ws, 'rev-parse', '--git-dir']).status).not.toBe(0);

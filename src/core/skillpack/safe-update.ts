@@ -327,7 +327,11 @@ async function applySkill(ctx: ApplyContext, outcome: SkillOutcome, js: JournalS
     js.status = 'committed';
     writeJournal(ctx.journal, ctx.backups);
     const bases = Object.fromEntries(outcome.files.filter(f => !f.sharedDep).map(f => [f.rel, f.post]));
-    await updateState(state => ({ state: withSkillBases(state, skillsRoot, { [outcome.slug]: bases }), result: null }), { statePath: ctx.opts.statePath });
+    try {
+      await updateState(state => ({ state: withSkillBases(state, skillsRoot, { [outcome.slug]: bases }), result: null }), { statePath: ctx.opts.statePath });
+    } catch (err) {
+      return { ...outcome, result: 'updated', notes: [...outcome.notes, `files updated; the base record was not saved (${(err as Error).message}), so a later update treats this skill as locally edited and skips it`] };
+    }
     return { ...outcome, result: 'updated' };
   } finally {
     rmSync(stage, { recursive: true, force: true });
