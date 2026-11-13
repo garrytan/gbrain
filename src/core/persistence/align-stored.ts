@@ -1,4 +1,4 @@
-import { inferType, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
+import { inferTypeFromPack, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
 
 /**
  * Aligns a canonical file's parse with what its import over `stored` keeps (#1035, #5521): a file without an explicit
@@ -48,7 +48,7 @@ export function keepRetypeStamp(parsed: ParsedMarkdown, stored?: { type: string;
  */
 export function keepPackRenamedType(parsed: ParsedMarkdown, stored?: { type: string; frontmatter?: Record<string, unknown> | null } | null): boolean {
   const copy = stored?.frontmatter?.type;
-  if (!stored || parsed.typeExplicit !== true || typeof copy !== 'string' || parsed.type !== copy || parsed.type === stored.type || inferType(parsed.slug) !== parsed.type) return false;
+  if (!stored || parsed.typeExplicit !== true || typeof copy !== 'string' || parsed.type !== copy || parsed.type === stored.type || inferTypeFromPack(parsed.slug, { page_types: [] }) !== parsed.type) return false;
   parsed.type = stored.type as ParsedMarkdown['type'];
   return true;
 }
