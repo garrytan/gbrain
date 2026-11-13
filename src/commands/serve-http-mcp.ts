@@ -104,8 +104,10 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
 
   /**
    * WP4 (D2): resolve this request's effective surface from the caller's
-   * verified auth. The config default (`mcp.default_surface_dcr`) is read
-   * dual-plane ONLY when the client row carries no usable surface — the
+   * verified auth. A legacy bearer token has no client row to pre-seed, so it
+   * keeps the (clamped) ceiling; its scope, source and operation grants still
+   * bound it (#9266). The config default (`mcp.default_surface_dcr`) is read
+   * dual-plane ONLY when an OAuth client row carries no usable surface — the
    * common full-surface path pays no extra config read. Unknown row values
    * are ignored with a warn-once per client (amendment 18). Never throws:
    * surface resolution must not take a request down. On a default-surface
@@ -120,6 +122,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     // min() can never go below the narrowest surface: a 'verbs' ceiling makes
     // the row/default resolution a no-op, so skip the awaited config read.
     if (ceiling === 'verbs') return { ceiling, effective: ceiling };
+    if (authInfo.principal?.kind === 'legacy_token') return { ceiling, effective: ceiling };
     const rowSurface = resolveClientRowSurface(authInfo.surface, authInfo.clientId);
     if (rowSurface !== null) return { ceiling, effective: minSurface(ceiling, rowSurface) };
     try {

@@ -527,6 +527,7 @@ test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
+test/purge-slug-stores-9146.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
@@ -704,6 +705,7 @@ test/think-remote-model.test.ts
 test/timeline-chunk-reuse.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
+test/trust-claim-chronicle-9284.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
 test/trust-keep-maintenance-reimport-8352.test.ts

@@ -33,6 +33,7 @@ import { serializeMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
 import { DRIFT_REPORT_KIND, publishSinglePage } from '../generations/adapters/single-page.ts';
 import { publishOrHold, type PublicationHold } from '../persistence/accepted-pending.ts';
+import { declareDerivation, deriveTrust } from '../trust/taint.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
@@ -372,17 +373,19 @@ export async function runPhaseDrift(
     // Typed `note` (+ report_type) so the default pack declares it (#5881).
     // Lands in the default source (brain-global artifact, same-day re-runs
     // upsert the same slug).
+    const derivation = await deriveTrust(engine, [...new Set(judged.map(j => j.candidate.pageId))].map(id => ({ table: 'pages' as const, id })),
+      { channel: 'derive:drift' });
     if (maintenance) {
       const snapshot = await engine.readPageSnapshot(reportSlug, { sourceId: 'default' });
       const report = serializeMarkdown({ report_type: 'drift' }, buildReportBody(judged, config, modelId), '',
         { type: 'note', title: `Drift report ${cycleDate}`, tags: [] });
       // #6052: a held report is not on the page yet, so it is neither linked nor counted as written.
       reportHold = await publishOrHold(() => publishMaintenancePage(engine, maintenance, reportSlug!, report,
-        { expectedRevision: snapshot?.revision ?? null, file: false }));
+        { expectedRevision: snapshot?.revision ?? null, file: false, derivation: declareDerivation(derivation.trust, derivation.inputs) }));
       if (reportHold) reportSlug = undefined;
     } else {
       try {
-        await publishSinglePage(engine, { kind: DRIFT_REPORT_KIND, sourceId: 'default', slug: reportSlug, expectedRevision: reportRevision,
+        await publishSinglePage(engine, { kind: DRIFT_REPORT_KIND, sourceId: 'default', slug: reportSlug, expectedRevision: reportRevision, derivation,
           page: { type: 'note', frontmatter: { report_type: 'drift' }, title: `Drift report ${cycleDate}`, compiled_truth: buildReportBody(judged, config, modelId) } });
       } catch (e) {
         if (!(e instanceof OperationError && e.code === 'generation_fenced')) throw e;
