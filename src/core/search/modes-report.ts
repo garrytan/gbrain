@@ -69,6 +69,8 @@ export const KNOB_DESCRIPTIONS: Record<keyof ModeBundle, string> = {
   collapse: 'Result-time collapse: same-slug twins in other sources, redirect stubs and copies of one document fold into the best row (listed in collapsed)',
   rank_priors: 'Rank priors after the reranker: organization over person when no person is named, weak OCR matches, dated over undated rows on when-questions',
   keyword_phrase: 'Keyword phrase factor (opt-in): a chunk holding the query as one contiguous phrase ranks higher in the keyword arm',
+  qualified_aliases: 'Qualified alias hop (opt-in): a 3-6 word phrase inside the query that is the alias of exactly one readable page leads with that page',
+  title_qualified: 'Qualified title boost (opt-in): a person or company title mentioned inside a longer query gets the title boost',
   diverse_pool_depth: 'Session-diverse pool before the reranker: each arm fetches at least N candidates, one row per session, the reranker reads at least N (0..100; 0 = off)',
   // Ranker wave (Phase E2) arm-confidence fusion
   keyword_arm_confidence_floor: 'Keyword-arm confidence floor: below this margin ratio the keyword + title lists fuse at half weight (null = off; (0, 1])',
@@ -130,11 +132,29 @@ export interface SearchModesReport {
    * file-plane + process env. Absent only when readiness itself threw.
    */
   reranker_readiness?: RerankerReadinessReport;
+  /**
+   * #8744: when the configured contextual-retrieval tier is per_chunk_synopsis,
+   * how many chunks actually carry synopsis vectors (import and sync embed at
+   * the title tier; the sweep is `gbrain reindex --synopsis`). Brain-wide
+   * counts, so ABSENT on the remote surface.
+   */
+  synopsis_coverage?: SynopsisCoverageReport;
   /** #4604: what this report does NOT include (per-call plane). */
   per_call_note: string;
   _meta?: {
     metric_glossary?: Record<string, string>;
   };
+}
+
+export interface SynopsisCoverageReport {
+  eligible_pages: number;
+  eligible_chunks: number;
+  synopsis_pages: number;
+  synopsis_chunks: number;
+  coverage_pct: number | null;
+  large_title_pages: number;
+  line: string;
+  fix: string;
 }
 
 export interface RerankerReadinessReport {
@@ -163,7 +183,8 @@ export function redactReadinessForRemote(report: SearchModesReport): SearchModes
   // self_hosted is deployment topology (a private base-URL override exists) —
   // not needed for the verdict, so it stays local too.
   const { model, enabled, ready } = rr;
-  return { ...report, reranker_readiness: { model, enabled, ready, self_hosted: false } };
+  const { synopsis_coverage: _brainWide, ...rest } = report;
+  return { ...rest, reranker_readiness: { model, enabled, ready, self_hosted: false } };
 }
 
 export async function buildModesReport(engine: BrainEngine): Promise<SearchModesReport> {
@@ -227,12 +248,24 @@ export async function buildModesReport(engine: BrainEngine): Promise<SearchModes
     };
   }
 
+  let synopsis_coverage: SynopsisCoverageReport | undefined;
+  try {
+    const sweep = await import('../synopsis-sweep.ts');
+    const c = await sweep.readSynopsisCoverage(engine);
+    if (c.config.configured) {
+      synopsis_coverage = { eligible_pages: c.eligible_pages, eligible_chunks: c.eligible_chunks, synopsis_pages: c.synopsis_pages,
+        synopsis_chunks: c.synopsis_chunks, coverage_pct: c.coverage_pct, large_title_pages: c.large_title_pages,
+        line: sweep.formatSynopsisCoverageLine(c), fix: sweep.SYNOPSIS_SWEEP_ARGV.join(' ') };
+    }
+  } catch { /* coverage is advisory; the doctor check synopsis_tier_coverage reports read failures */ }
+
   return {
     schema_version: 2,
     active_mode: resolved.resolved_mode,
     active_mode_valid: resolved.mode_valid,
     resolved: attributions,
     ...(reranker_readiness ? { reranker_readiness } : {}),
+    ...(synopsis_coverage ? { synopsis_coverage } : {}),
     bundles: {
       conservative: { ...MODE_BUNDLES.conservative },
       balanced: { ...MODE_BUNDLES.balanced },

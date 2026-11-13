@@ -16,7 +16,8 @@
  * search guard use): after pg_upgrade or a deleted pg_statistic autovacuum
  * never collects them, and search plans as nested loops (50-60 s at 5,000
  * pages). The fix runs the same refresh through `gbrain repair planner-stats
- * --apply`; a role that may not ANALYZE gets it as a host-operator step.
+ * --apply`; a role that may not ANALYZE gets it as a host-operator step. A role that cannot inspect the projection
+ * statistic (Postgres shows expression statistics only to the owner) is told so instead of hearing it is fresh.
  *
  * Both engines also report each expression index on a hot table that has no
  * statistics under its own name (`readExpressionIndexesWithoutStats`, lhf wave 2
@@ -31,7 +32,7 @@
  */
 import { plannerAutoAnalyzeEnabled, PLANNER_STATS_REPAIR_COMMAND, readExpressionIndexesWithoutStats, readPlannerTableStates,
   readVacuumStarvation, VACUUM_STARVATION_HOURS, type ExpressionIndexGap, type VacuumStarvation } from '../../../core/planner-stats.ts';
-import { canAnalyzePages, missingSearchStatistics } from '../../../core/search/projection-statistics.ts';
+import { canAnalyzePages, missingSearchStatistics, readProjectionStatistics } from '../../../core/search/projection-statistics.ts';
 import type { Check } from '../../doctor.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
@@ -52,11 +53,14 @@ async function runPlannerStats(ctx: DoctorContext): Promise<Check[]> {
     const missing = await missingSearchStatistics(engine);
     const gaps = await readExpressionIndexesWithoutStats(engine);
     const starved = await readVacuumStarvation(engine);
+    const hidden = engine.kind === 'postgres' && await readProjectionStatistics(engine) === 'uninspectable';
     const details = { engine: engine.kind, auto_analyze: autoAnalyze, checked: tables.map(t => t.table), stale, missing_search_statistics: missing,
-      expression_indexes_without_statistics: gaps, ...(starved.length ? { vacuum_starved: starved } : {}), fix: PLANNER_STATS_REPAIR_COMMAND };
+      expression_indexes_without_statistics: gaps, ...(starved.length ? { vacuum_starved: starved } : {}), ...(hidden ? { projection_statistics: 'uninspectable' } : {}),
+      fix: PLANNER_STATS_REPAIR_COMMAND };
     const expression = [expressionIndexText(gaps, engine.kind, autoAnalyze), starvationText(starved)].filter(Boolean).join(' ');
     if (stale.length === 0 && missing.length === 0 && gaps.length === 0 && starved.length === 0) {
-      checks.push({ name: 'planner_stats_stale', status: 'ok', message: `Planner statistics are fresh on ${tables.length} hot tables.`, details });
+      checks.push({ name: 'planner_stats_stale', status: 'ok', message: `Planner statistics are fresh on ${tables.length} hot tables.${hidden
+        ? ' This role cannot inspect the projection statistic; run gbrain doctor as the owner of pages to check it.' : ''}`, details });
       return checks;
     }
     if (missing.length > 0) {

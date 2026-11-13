@@ -143,6 +143,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'content_hash_duplicates',
   'content_sanity_audit_recent',
   'contextual_retrieval_coverage',
+  // #8744: configured per_chunk_synopsis tier vs the chunks that carry it.
+  'synopsis_tier_coverage',
   'contradictions',
   'conversation_facts_backlog',
   'conversation_format_coverage',
@@ -458,6 +460,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'legacy_token_null_scope',
   // D4: grants whose operation snapshot or stored surface keeps operations their scopes allow out of reach.
   'grant_new_ops_available',
+  // GST-363: credentials or local bot agents reading chat from several channels the same way for everyone who talks to their agent.
+  'unscoped_multi_user_token',
   'reranker_health',
   'rls',
   // The session's TLS state on a non-loopback Postgres host (doctor/checks/postgres-tls.ts).
