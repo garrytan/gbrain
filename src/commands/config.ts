@@ -29,10 +29,16 @@ import {
 // history + scrollback. This helper is the single source of truth so the
 // two surfaces can't drift again. Match on word-segments to avoid
 // false-positives (e.g. `monkey` doesn't match `key`).
+// #8920: plurals (apiKeys, tokens), acronyms (APIKey, apikey) and credential, authorization and passphrase match too,
+// except after a count word (max_tokens, max_output_tokens, budget_tokens, max_pending_per_credential), which names
+// a limit rather than a secret.
+const SECRET_WORD = /^(key|secret|token|password|pwd|passwd|auth)$/;
+const SECRET_WORD_8920 = /^(keys|secrets|tokens|passwords|credentials?|authorization|passphrases?|apikeys?)$/;
+const COUNT_WORDS = new Set(['max', 'min', 'budget', 'limit', 'avg', 'total', 'count', 'num', 'input', 'output', 'prompt', 'context', 'completion', 'reasoning', 'per']);
 export function isSensitiveConfigKey(key: string): boolean {
-  const lower = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-  // Word-boundary matches: foo_key, foo.key, key_foo, key, api_key, secretAccessKey, ...
-  return /(^|[._-])(key|secret|token|password|pwd|passwd|auth)([._-]|$)/.test(lower);
+  const words = key.replace(/([A-Z]+)([A-Z][a-z])/g, '$1_$2').replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().split(/[._-]+/);
+  // Whole-word matches: foo_key, foo.key, key_foo, key, api_key, secretAccessKey, ...
+  return words.some((word, i) => SECRET_WORD.test(word) || (SECRET_WORD_8920.test(word) && !words.slice(0, i).some(w => COUNT_WORDS.has(w))));
 }
 
 /**
@@ -280,7 +286,8 @@ export function redactConfigValue(key: string, value: string): string {
   // canonical single home (drops the whole userinfo, both schemes).
   if (/postgres(ql)?:\/\//.test(value)) return redactPgUrl(value);
   if (isSensitiveConfigKey(key)) return '***';
-  return value;
+  // #8920: userinfo (user:pass@) in a URL of any other scheme; an `@` after the host (a path, query or fragment) is not userinfo.
+  return value.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/?#\s]*@/gi, '$1***@');
 }
 
 /** An object config value with every sensitive field masked at any depth (#7346: storage.secretAccessKey). */

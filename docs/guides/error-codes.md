@@ -132,6 +132,14 @@ Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_grou
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
+### access_policy_history_unreadable
+
+<a id="access_policy_history_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A folder-rule edit on a git-backed source with no folder-rule revision yet was refused before anything was written: the first sync after it rebuilds the rules from the committed history of .gbrain/access.yml, and this checkout cannot give that history (a shallow clone, or a partial clone that lacks its Git objects), so that sync would read the whole source as nobody. | A rebuild replays every committed version of the policy file so a narrowing removed by a plain commit stays applied; without the full history it can only fail closed, so the edit refuses up front and the source keeps its current reads. | In the checkout, fetch the full history (git fetch --unshallow) or the missing objects of a partial clone, then run the same gbrain access rule command again. Run: gbrain access rule status --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
+
 ### access_policy_invalid
 
 <a id="access_policy_invalid"></a>
