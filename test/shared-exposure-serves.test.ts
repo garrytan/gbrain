@@ -140,6 +140,6 @@ describe('install routes on a one-person brain', () => {
     expect((setup.notices ?? []).map((n: any) => n.code)).not.toContain(CODE);
     const several = await runCli(['config', 'set', 'access.serves', 'several'], { env: b.env, cwd: b.root });
     expect(several.exitCode).toBe(0);
-    expect((await runCli(['auth', 'create', 'shared-bot'], { env: b.env, cwd: b.root })).stderr).toContain(CODE);
+    expect((await runCli(['auth', 'create', 'shared-bot', '--reads-unscoped', '--yes'], { env: b.env, cwd: b.root })).stderr).toContain(CODE);
   }, 240_000);
 });

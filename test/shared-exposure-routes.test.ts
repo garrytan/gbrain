@@ -114,7 +114,7 @@ describe('brain routes on a repo-less keyless brain', () => {
 
   test('auth create, register-client, mcp grant and doctor all flag chat from two channels in default', async () => {
     const b = await brain(['#alpha-team, Jul 2', '#beta-team, Jul 3']);
-    const token = await runCli(['auth', 'create', 'team-bot'], { env: b.env, cwd: b.root });
+    const token = await runCli(['auth', 'create', 'team-bot', '--reads-unscoped', '--yes'], { env: b.env, cwd: b.root });
     expect(token.stdout).toMatch(/gbrain_[0-9a-f]+/);
     expect(token.stdout).not.toContain(CODE);
     expect(token.stderr).toContain('The token "team-bot" reads the same pages whoever talks to its agent (it reads chat from 2 channels in default)');
@@ -123,7 +123,7 @@ describe('brain routes on a repo-less keyless brain', () => {
     const audience = await runCli(['auth', 'create', 'channel-bot', '--may-act-for', 'alice-example'], { env: b.env, cwd: b.root });
     expect(audience.stdout).toMatch(/gbrain_[0-9a-f]+/);
     expect(audience.stderr).not.toContain(CODE);
-    const client = await runCli(['auth', 'register-client', 'team-client'], { env: b.env, cwd: b.root });
+    const client = await runCli(['auth', 'register-client', 'team-client', '--reads-unscoped', '--yes'], { env: b.env, cwd: b.root });
     expect(client.stdout).toContain('Client ID:');
     expect(client.stderr).toContain(CODE);
     const grant = await runCli(['mcp', 'grant', 'laptop', '--harness', 'claude-code', '--source', 'default', '--url', 'https://brain.example.ts.net/mcp', '--dry-run', '--json'], { env: b.env, cwd: b.root });
@@ -138,7 +138,7 @@ describe('brain routes on a repo-less keyless brain', () => {
 
   test('a brain whose chat comes from one channel mints a token silently', async () => {
     const b = await brain(['#alpha-team, Jul 2', '#alpha-team, Jul 3']);
-    const token = await runCli(['auth', 'create', 'solo-bot'], { env: b.env, cwd: b.root });
+    const token = await runCli(['auth', 'create', 'solo-bot', '--reads-unscoped', '--yes'], { env: b.env, cwd: b.root });
     expect(token.stdout).toMatch(/gbrain_[0-9a-f]+/);
     expect(token.stderr).not.toContain(CODE);
   }, 240_000);
