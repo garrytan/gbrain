@@ -100,7 +100,23 @@ gbrain, the field to fix for a label line), and it stays out of the hash and
 the approved set. A page that starts refusing after the preview is declined
 with [`label_edit_refused`](write-refusals.md#label_edit_refused) and nothing
 written; it never counts toward `item_failures_systemic`, so the rest of the
-window applies and the receipt names the pages that did. `--slug` is the operator's way to make one page private;
+window applies and the receipt names the pages that did.
+
+Labels and folder rules apply per source. When another source holds a live
+page with the same slug, labelling the page in one source leaves that copy as
+it was, and a reader with no source filter still finds it by slug and in
+search. So the preview also lists those copies under `details.open_twins`:
+every same-slug page in another source that is not private already and that a
+caller outside the change could read (by its own `readable_by` and folder
+rules). It gives their count and the command that covers them, such as
+`gbrain repair visibility --source <other> --slug <slug>`. The list is
+read-only, checks at most 1,000 pages and names at most 50 copies; it is not
+part of the preview hash, so applying the window changes only the window. The
+`--readers` preview lists copies a member outside the new readers could read,
+`gbrain repair private-labels --class restore` lists them too, and the preview
+of `gbrain access rule add` or `gbrain access rule import` lists copies a
+narrowed rule leaves open, with the same rule for `--source <other>`. Whether
+a label should follow a copy is your call; nothing changes the copy for you. `--slug` is the operator's way to make one page private;
 a `put_page` that adds the label is an agent edit and lowers the page. On a brain
 without managed persistence, a page whose file sits in its source's checkout gets
 the same edit in that file and in the database together, so the next sync reads
