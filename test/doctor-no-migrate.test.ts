@@ -20,6 +20,8 @@ import { pg_trgm } from '@electric-sql/pglite/contrib/pg_trgm';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
+import { createEngine } from '../src/core/engine-factory.ts';
+import { upsertChronicleRow } from '../src/core/chronicle/ledger.ts';
 import { fileURLToPath } from 'node:url';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
@@ -101,6 +103,59 @@ describe('doctor --no-migrate keeps a clean DB unmigrated (#4364)', () => {
     } finally {
       try { rmSync(home, { recursive: true, force: true }); } catch { /* best effort */ }
     }
+  }, 300_000);
+
+  test.skipIf(SKIP)('Chronicle sees the database-selected chat model without startup maintenance', async () => {
+    const { home, dataDir, env } = makeHome('gbrain-doctor-chronicle-');
+    try {
+      const engine = await createEngine({ engine: 'pglite', database_path: dataDir });
+      await engine.connect({ database_path: dataDir });
+      try {
+        await engine.initSchema();
+        await engine.setConfig('chat_model', 'ollama:legacy-model-pin');
+        await engine.setConfig('models.chat', 'fixture-local');
+        const page = await engine.putPage('meetings/doctor-chronicle', {
+          type: 'meeting', title: 'Doctor fixture', compiled_truth: 'Synthetic meeting text.', timeline: '',
+        });
+        await upsertChronicleRow(engine, {
+          sourceId: 'default', pageId: page.id, slug: page.slug, contentHash: page.content_hash!,
+          state: 'pending', trigger: 'auto', reason: null, nextAttemptAt: null,
+        });
+      } finally { await engine.disconnect(); }
+      let requests = 0;
+      const endpoint = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => {
+        requests++;
+        return new Response('Unexpected model request', { status: 500 });
+      } });
+      try {
+        const result = await runCli(['doctor', '--no-migrate', '--only', 'auto_chronicle', '--json'],
+          { ...env, OLLAMA_BASE_URL: String(endpoint.url) }, 180_000);
+        expect(result.exitCode).toBe(0);
+        const check = JSON.parse(result.stdout).checks.find((row: { name: string }) => row.name === 'auto_chronicle');
+        expect(check).toMatchObject({ status: 'ok', details: { chat_available: true, pending: 1, auto_calls_24h: 0 } });
+        expect(requests).toBe(0);
+        const update = await createEngine({ engine: 'pglite', database_path: dataDir });
+        await update.connect({ database_path: dataDir });
+        try {
+          await update.setConfig('models.chat', 'deepseek:deepseek-flash');
+          await update.setConfig('deepseek_api_key', 'synthetic-local-fixture');
+        } finally { await update.disconnect(); }
+        const legacy = await runCli(['doctor', '--no-migrate', '--only', 'auto_chronicle', '--json'],
+          { ...env, DEEPSEEK_API_KEY: '', DEEPSEEK_BASE_URL: String(endpoint.url) }, 180_000);
+        expect(legacy.exitCode).toBe(0);
+        expect(JSON.parse(legacy.stdout).checks.find((row: { name: string }) => row.name === 'auto_chronicle'))
+          .toMatchObject({ status: 'ok', details: { chat_available: true, pending: 1, auto_calls_24h: 0 } });
+        expect(legacy.stdout).not.toContain('synthetic-local-fixture');
+        const invalid = await createEngine({ engine: 'pglite', database_path: dataDir });
+        await invalid.connect({ database_path: dataDir });
+        try { await invalid.setConfig('models.chat', 'ollama:'); }
+        finally { await invalid.disconnect(); }
+        const malformed = await runCli(['doctor', '--no-migrate', '--only', 'auto_chronicle', '--json'], env, 180_000);
+        expect(JSON.parse(malformed.stdout).checks.find((row: { name: string }) => row.name === 'auto_chronicle'))
+          .toMatchObject({ status: 'warn', details: { chat_available: false } });
+        expect(requests).toBe(0);
+      } finally { endpoint.stop(true); }
+    } finally { rmSync(home, { recursive: true, force: true }); }
   }, 300_000);
 
   test.skipIf(SKIP)('contrast: plain doctor still auto-migrates (detection harness is live)', async () => {

@@ -24,10 +24,35 @@ export const AUTO_CHRONICLE_DOCS = 'docs/guides/life-chronicle.md';
 const command = (argv: readonly string[]) => argv.join(' ');
 const daysAgo = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
 
-async function chatAvailable(): Promise<boolean> {
+async function chatAvailable(engine: ReturnType<typeof connectedEngine>, localCli: boolean): Promise<boolean> {
+  const { isAvailable, requireConfig } = await import('../../../core/ai/gateway.ts');
+  if (!localCli) return isAvailable('chat');
+  let config;
+  try { config = requireConfig(); }
+  catch { return isAvailable('chat'); }
+  const { resolveGatewayChatRoute } = await import('../../../core/ai/gateway-chat-route.ts');
+  const { CONFIG_API_KEY_ENV } = await import('../../../core/ai/provider-env.ts');
+  const { DB_MERGED_PROVIDER_KEY_FIELDS } = await import('../../../core/config-db-merge.ts');
+  const { resolveRecipe } = await import('../../../core/ai/model-resolver.ts');
+  const { loadConfig } = await import('../../../core/config.ts');
+  // Doctor's engine bounds executeRaw to this registry entry's deadline.
+  // SQL returns only the presence of legacy DB credentials.
+  const rows = await engine.executeRaw<{ key: string; value: string }>(
+    "SELECT key,CASE WHEN key=ANY($1::text[]) THEN 'present' ELSE value END AS value FROM config " +
+    "WHERE (key=ANY($1::text[]) AND value<>'') OR key='chat_model' OR key LIKE 'models.%'", [[...DB_MERGED_PROVIDER_KEY_FIELDS]]);
+  const values = new Map(rows.map(({ key, value }) => [key, value]));
+  const reader = { getConfig: async (key: string) => values.get(key) ?? null };
+  const fileConfig = loadConfig();
+  const env = { ...config.env };
+  for (const [field, envKey] of CONFIG_API_KEY_ENV) {
+    if (!env[envKey] && fileConfig?.[field] === undefined && values.has(field)) env[envKey] = 'present';
+  }
+  const chatModel = fileConfig?.chat_model ?? (values.get('chat_model') || config.chat_model);
+  const route = await resolveGatewayChatRoute(reader, { ...config, env, chat_model: chatModel }, () => fileConfig);
+  if (isAvailable('chat', route.model)) return true;
   try {
-    const { isAvailable } = await import('../../../core/ai/gateway.ts');
-    return isAvailable('chat');
+    const { recipe } = resolveRecipe(route.model);
+    return !!recipe.touchpoints.chat && (recipe.auth_env?.required ?? []).every(key => !!env[key]);
   } catch {
     return false;
   }
@@ -70,7 +95,7 @@ async function runAutoChronicle(ctx: DoctorContext): Promise<Check[]> {
       'disabled_by_choice', ENABLE_FIX, { enabled: false, severity: 'info', readiness: 'disabled_by_choice', docs: AUTO_CHRONICLE_DOCS }));
   } else {
     const stats = await readChronicleLedgerStats(engine);
-    const chat = await chatAvailable();
+    const chat = await chatAvailable(engine, ctx.lastKnown === 'cli');
     const activity = stats.available ? describeChronicleActivity(stats, settings.dailyLimit)
       : 'The chronicle ledger is not created yet; run `gbrain apply-migrations --yes --no-autopilot-install`.';
     const summary = { enabled: true, source: raw == null ? 'default' : 'explicit', daily_limit: settings.dailyLimit,

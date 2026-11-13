@@ -56,8 +56,9 @@ import {
   OPENROUTER_CACHE_HEADER,
   openrouterRequiresExplicitPromptCache,
 } from './recipes/openrouter.ts';
-import { resolveModelDetailed, resolveEffectiveChatModel, resolveEffectiveExpansionModel } from '../model-config.ts';
+import { resolveModelDetailed, resolveEffectiveExpansionModel } from '../model-config.ts';
 import { readLegacyModelPin } from './legacy-model-pin.ts';
+import { DEFAULT_CHAT_MODEL, prefixWithProviderFrom, resolveGatewayChatRoute } from './gateway-chat-route.ts';
 import { snapshotConfigReader } from '../config-snapshot.ts';
 import { clearGatewayModelSources, gatewayModelSource, setGatewayModelSource } from './gateway-model-sources.ts';
 import { parseLlmJson } from '../llm-json.ts';
@@ -133,7 +134,6 @@ import { logRerankFailure, type RerankFailureReason } from '../rerank-audit.ts';
 import { rerankViaDecide } from './decide/rerank-adapter.ts';
 import { runDecide, type DecideContext, type DecideRequest, type DecideResult } from './decide/index.ts';
 const DEFAULT_EXPANSION_MODEL = 'anthropic:claude-haiku-4-5-20251001';
-const DEFAULT_CHAT_MODEL = 'anthropic:claude-sonnet-4-6';
 // v0.35.0.0+: reranker runtime fallback. Used only when search.reranker.enabled
 // is set AND no explicit reranker_model is configured. #3657 seam: the value is
 // `DEFAULT_RERANKER_MODEL` imported from ./defaults.ts (ONE constant, shared with
@@ -607,25 +607,19 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
     tier: 'utility',
     fallback: cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL,
   });
-  const chatDetailed = await resolveModelDetailed(reader, {
-    configKey: 'models.chat',
-    tier: 'reasoning',
-    fallback: cfg.chat_model ?? DEFAULT_CHAT_MODEL,
-  });
-
   // When no DB-plane override won (source = tier_default/fallback), consult
   // the RAW file-plane config through the shared effective-model resolver.
   // The gateway's own cfg can't be used for this: the boot fold stamps
-  // DEFAULT_CHAT_MODEL into it when config.json has no pin, so by now an
+  // a default into it when config.json has no pin, so by now an
   // explicit pin and a fabricated default are indistinguishable in `cfg`.
   // resolveEffective*Model keeps a SERVABLE pin (its provider's key is
   // present), warns once and falls to the key-aware tier default otherwise —
   // an init-era `chat_model: openai:*` pin survives reconnect when the
   // OpenAI key is live, and stops freezing provider choice when it isn't.
-  // Only with no pin does a DB-plane chat_model/expansion_model (#6795) apply.
+  // Only with no pin does the legacy DB-plane expansion_model (#6795) apply.
   const needsFileCfg = (s: string) => s === 'tier_default' || s === 'fallback';
   let fileCfg: GBrainConfig | null = null;
-  if (needsFileCfg(chatDetailed.source) || needsFileCfg(expansionDetailed.source)) {
+  if (needsFileCfg(expansionDetailed.source)) {
     try {
       fileCfg = loadConfig();
     } catch {
@@ -633,11 +627,9 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
     }
   }
   const env = cfg.env ?? process.env;
-  const chatEffective = needsFileCfg(chatDetailed.source) ? resolveEffectiveChatModel(fileCfg, env) : null;
+  const chat = await resolveGatewayChatRoute(reader, cfg, loadConfig);
   const expansionEffective = needsFileCfg(expansionDetailed.source) ? resolveEffectiveExpansionModel(fileCfg, env) : null;
-  const dbChat = await readLegacyModelPin(reader, 'chat_model', chatEffective, fileCfg, env);
   const dbExpansion = await readLegacyModelPin(reader, 'expansion_model', expansionEffective, fileCfg, env);
-  const newChat = dbChat ?? chatEffective?.model ?? chatDetailed.model;
   const newExpansion = dbExpansion ?? expansionEffective?.model ?? expansionDetailed.model;
 
   // Resolved values are bare model ids (e.g. `claude-sonnet-4-6`) — prepend
@@ -645,22 +637,14 @@ async function resolveGatewayModels(engine: BrainEngine): Promise<AIGatewayConfi
   // the right recipe. If the resolved string already contains a `:`, it
   // came from a `provider:model` override and we use it as-is.
   const expansionFull = newExpansion.includes(':') ? newExpansion : prefixWithProviderFrom(cfg.expansion_model ?? DEFAULT_EXPANSION_MODEL, newExpansion);
-  const chatFull = newChat.includes(':') ? newChat : prefixWithProviderFrom(cfg.chat_model ?? DEFAULT_CHAT_MODEL, newChat);
 
-  processState.config = { ...cfg, expansion_model: expansionFull, chat_model: chatFull };
+  processState.config = { ...cfg, expansion_model: expansionFull, chat_model: chat.model };
   setGatewayModelSource('expansion', expansionFull, dbExpansion ? { source: 'config_key', origin: 'expansion_model' } : gatewayModelSource('expansion', expansionDetailed, expansionEffective));
-  setGatewayModelSource('chat', chatFull, dbChat ? { source: 'config_key', origin: 'chat_model' } : gatewayModelSource('chat', chatDetailed, chatEffective));
+  setGatewayModelSource('chat', chat.model, chat.source);
   processState.modelCache.clear();
   clearQueryEmbedCache();
   processState.shrink.clear();
   return processState.config;
-}
-
-/** Carry over the provider prefix from `original` when `bare` lacks one. */
-function prefixWithProviderFrom(original: string, bare: string): string {
-  const colon = original.indexOf(':');
-  if (colon === -1) return bare;
-  return `${original.slice(0, colon)}:${bare}`;
 }
 
 /**
