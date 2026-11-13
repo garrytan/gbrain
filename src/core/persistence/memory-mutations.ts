@@ -11,7 +11,7 @@ import { isNullLikeEntity } from '../facts/write-single.ts';
 import { isFactWithdrawn, planFactWithdrawal } from '../facts/withdrawal.ts';
 import { inferFactSubject, isEntityInferenceEnabled, type InferredVia } from '../facts/subject-infer.ts';
 import { isHoldingSlug, parseFactsFence, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
-import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { isSegmentedPage, withoutBody } from '../page-body/page-shape.ts';
 import { segmentedRememberRefusal, type RememberCarry } from './verb-errors.ts';
 import { materializedPage, segmentedOverCeiling } from './segmented-apply.ts';
 import { excludesPrivateWrites, storedOwnerSpeaksForItself } from './page-visibility.ts';
@@ -99,7 +99,7 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
     throw opError('page_not_found', 'The target entity is not writable by this caller.',
       `Entity page ${slug} in source ${sourceId} is deleted or not visible to this caller, so nothing was saved. Remember the fact against a visible entity, or without an entity (it is then filed under memory/unattributed).`);
   }
-  if (memberPage === SCOPE_PAGE_SLUG) { if (snapshot && !await scopePageIsShared(ctx.engine, { ...snapshot.page, source_id: sourceId, slug })) throw scopePageNotShared(sourceId); }
+  if (memberPage === SCOPE_PAGE_SLUG) { if (snapshot && !await scopePageIsShared(ctx.engine, { ...withoutBody(snapshot.page), source_id: sourceId, slug })) throw scopePageNotShared(sourceId); }
   else if (memberPage && snapshot && !memberPageIsOwn(memberPage, snapshot.page.frontmatter)) throw memberPageNotOwned(memberPage);
   if (inferred && !snapshot) throw new InferredTargetRejected('NO_ENTITY');
   // Wave B: a segmented entity page over the single-string ceiling cannot take a fence row; named or inferred, the save refuses
@@ -192,7 +192,7 @@ async function ownerDefaultKeptPrivate(ctx: OperationContext, sourceId: string, 
   const id = Number(replaces);
   if (replaces !== undefined && replaces !== null && Number.isSafeInteger(id) && (await ownMemberFactIds(ctx.engine, sourceId, [id])).has(id)) return true;
   const snapshot = slug ? await ctx.engine.readPageSnapshot(slug, { sourceId }) : null;
-  return await rememberVisibility(ctx, { p: {}, visibilityDefaulted: true }, snapshot && { ...snapshot.page, source_id: sourceId, slug: slug! }) === 'private';
+  return await rememberVisibility(ctx, { p: {}, visibilityDefaulted: true }, snapshot && { ...withoutBody(snapshot.page), source_id: sourceId, slug: slug! }) === 'private';
 }
 
 async function rememberCarry(ctx: OperationContext, call: RememberCall, page: PageLabel): Promise<RememberCarry> {
@@ -269,7 +269,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     ({ slug, authority, snapshot, fence, binding, writeThrough } = await planRememberTarget(ctx, sourceId, source, entitySlug, null, call, memberPage));
   }
   // D1: the owner's explicit visibility "world" onto a page whose facts are kept private is refused like share: true.
-  const ownerWorldRestricted = ownerShares && !call.visibilityDefaulted && snapshot !== null && isDerivationPrivate(await withFolderRestricted(ctx.engine, { ...snapshot.page, source_id: sourceId, slug }));
+  const ownerWorldRestricted = ownerShares && !call.visibilityDefaulted && snapshot !== null && isDerivationPrivate(await withFolderRestricted(ctx.engine, { ...withoutBody(snapshot.page), source_id: sourceId, slug }));
   if (p.share === true && visibility !== 'world' || ownerWorldRestricted) {
     throw Object.assign(verbError('invalid_params', `remember: ${p.share === true ? 'share: true' : 'visibility "world"'} cannot share a fact on ${slug}, whose facts are kept private (restricted page or the brain's private fact default); nothing was saved.`,
       p.share === true ? 'Share it on a page every reader of this source can read, or drop share to keep the fact on your own page.'

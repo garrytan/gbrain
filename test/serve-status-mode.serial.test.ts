@@ -80,12 +80,23 @@ describe('status-only serve: lock contention → recovery in place (a)', () => {
     mkdirSync(notes, { recursive: true });
     writeFileSync(join(notes, 'm.md'), `---\ntitle: ${MARKER}\n---\n\n# ${MARKER}\n\nStatus-mode recall proof ${MARKER}.\n`);
     expect(cli(['import', notes, '--no-embed'], env).status).toBe(0);
+    repo = join(home, 'repo');
+    mkdirSync(repo);
+    writeFileSync(join(repo, 'alpha.md'), '# Alpha example\n\nThe first committed note.\n');
+    git('init', '-q');
+    commitAll('first');
+    expect(cli(['sources', 'add', 'repo-notes', '--path', repo], env).status).toBe(0);
+    expect(cli(['sync', '--source', 'repo-notes', '--no-pull', '--json'], env).status).toBe(0);
   }, 120_000);
 
   afterAll(async () => {
     for (const c of opened) { try { await c.client.close(); } catch { /* best-effort */ } }
     rmSync(home, { recursive: true, force: true });
   });
+
+  let repo: string;
+  const git = (...args: string[]) => expect(spawnSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).status).toBe(0);
+  const commitAll = (message: string) => { git('add', '.'); git('-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', message); };
 
   test('second serve handshakes with gbrain_status naming the owner, then recovers when the owner closes', async () => {
     const owner = await connect(env);
@@ -130,6 +141,18 @@ describe('status-only serve: lock contention → recovery in place (a)', () => {
     expect(found.isError).toBeFalsy();
     expect(JSON.stringify(body(found))).toContain(MARKER);
   }, 180_000);
+
+  // #9224: the recovered serve is now the persistence owner, and a delegated sync with pages to write takes the sync
+  // lock on its engine; before, it failed with storage_error (the owner: "Unknown engine kind for db-lock: pglite").
+  test('the recovered serve owns the brain: a delegated sync with pages to write commits', () => {
+    writeFileSync(join(repo, 'alpha.md'), '# Alpha example\n\nThe first committed note, edited.\n');
+    writeFileSync(join(repo, 'beta.md'), '# Beta example\n\nA second committed note.\n');
+    commitAll('second');
+    const synced = cli(['sync', '--source', 'repo-notes', '--no-pull', '--json'], env);
+    expect({ status: synced.status, stderr: synced.stderr.slice(-2000) }).toMatchObject({ status: 0 });
+    expect(synced.stderr).toContain('Delegating to the registered PGLite owner');
+    expect(JSON.parse(synced.stdout)).toMatchObject({ source_id: 'repo-notes', sync_status: 'synced', added: 1, modified: 1 });
+  }, 120_000);
 
   test('--fail-fast keeps the supervisor exit', () => {
     const holder = spawnSync('bun', ['--no-env-file', 'run', 'src/cli.ts', 'serve', '--fail-fast'], { cwd: process.cwd(), env: { ...env, GBRAIN_HOME: join(home, 'nope') }, input: '', encoding: 'utf8', timeout: 60_000 });

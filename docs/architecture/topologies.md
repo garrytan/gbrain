@@ -566,6 +566,34 @@ neither relaxes anything else:
   binding move to the real directory, the reservation is written under the new
   `sha256(root)` name, the old one is removed and the stamp names the new root.
   A token or worktree mismatch keeps the refusal and moves nothing.
+- <a id="moved-root"></a>*Moved to a new path, no symlink (#8625):* `gbrain sources
+  set-path <source> <new>`, `gbrain sources add <id> --path <new>` and
+  `gbrain sources writer claim <id> --path <new>`, dry runs included, refuse
+  `recovery_required` with detail `physical_root_moved` when the folder's stamp
+  names this brain, a worktree this host owns and a recorded root that no longer
+  exists, and the reservation under the recorded name carries the stamp's token.
+  That reservation sits beside the old root when the checkout itself moved, or
+  beside the new root when a parent folder was renamed and carried it along; the
+  refusal then names that parent. The refusal names the recorded path, the
+  worktree and its sources, and the exit (its `fix` is `ask_user`, since it
+  moves the user's folders):
+  - *The worktree still has sources:* `ln -s <new> <old>` (the moved folder or
+    parent), `gbrain sources set-path <source> <new>` (the symlinked relocation
+    above), `rm <old>`, then `set-path` for each further source of the worktree.
+  - *Its source was removed* (`remove` keeps the worktree and its history):
+    `mv <new> <old>`, then `gbrain sources add <id> --path <old>` (add `--force`
+    for a plain directory), which reattaches the worktree; move it again with the
+    steps above.
+  - *The folder is a copy* (another filesystem, a copy and delete: its device,
+    inode or birth time differs from the stamp) *and its source was removed:*
+    moving it back would not reattach the worktree, so restore the original from a
+    backup or switch the brain to classic mode with `gbrain sources writer
+    deactivate --dry-run`.
+
+  A lookalike (another brain's stamp, a token the reservation does not carry, a
+  recorded root that still exists, a worktree another host owns, no reservation)
+  keeps the generic refusal. A remote page write that reaches the automatic claim
+  of such a folder gets the detail only, with no path or worktree id.
 
 `gbrain sources writer deactivate --dry-run` lists a `physical_root` blocker
 exactly when its real run would refuse: the managed run takes the strict
@@ -848,9 +876,12 @@ guards against; bring remote commits in with `gbrain sources refresh <source>`.
 The durability block `sources harden` writes into `AGENTS.md`/`RESOLVER.md`
 before activation says the opposite (run the push helper after every write,
 pull before writing), so `writer git-durability <source> --enable` and
-`--pat-file` rewrite that block in place to the managed variant (#5808); the
-preview reports it as `agents`, the rewrite touches nothing outside the
-markers, and the file is left for you to commit.
+`--pat-file` write the managed variant (#5808); the preview reports it as
+`agents`. An existing block is rewritten in place and nothing outside its
+markers changes. With no block, the managed block is appended to the root
+instruction file (`RESOLVER.md` or `AGENTS.md`, whichever is found first), or
+`AGENTS.md` is created when neither exists (#7733). Either way the file is
+left for you to commit, so a clean-tree check fails until you do.
 
 ### Supported managed work and explicit repair
 

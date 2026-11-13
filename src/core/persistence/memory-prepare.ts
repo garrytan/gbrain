@@ -27,6 +27,7 @@ import { noteBelief } from '../belief/ledger.ts';
 import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
+import { withoutBody } from '../page-body/page-shape.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -85,7 +86,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   if ((snapshot?.page.id ?? null) !== row.page_id && !rememberAcceptsPageCreatedSince(row, snapshot)) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
-  if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...snapshot.page, source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
+  if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...withoutBody(snapshot.page), source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   // GST-2243: a shared fact whose page turned restricted after admission is refused, never saved private under a world receipt.

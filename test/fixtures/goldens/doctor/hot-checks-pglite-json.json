@@ -9,6 +9,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [
@@ -342,6 +348,7 @@
           {
             "category": "brain",
             "details": {
+              "body_unchanged": 0,
               "drift_pct": 0,
               "drifted": 0,
               "slug_unbound": 0,
@@ -740,7 +747,9 @@
               },
               "covering_index": null,
               "deleted_page_chunks": {
+                "held": 0,
                 "past_window": 0,
+                "purgeable": 0,
                 "window_hours": 72,
                 "within_window": 0
               },
@@ -1247,7 +1256,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 178 table(s) the applied migrations create exist.",
+            "message": "All 179 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -1886,6 +1895,30 @@
             "elapsed_ms": "<volatile>",
             "message": "No page was written database-only to an unbound source.",
             "name": "unbound_source",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true,
+              "items": [],
+              "pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No deferred dream writes",
+            "name": "dream_write_deferred",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The embedding signature restamp is running clean",
+            "name": "embedding_restamp_stalled",
             "status": "ok"
           },
           {
@@ -2682,6 +2715,15 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (0 enabled member(s)), so every credential reads that person's own pages.",
+            "name": "unscoped_multi_user_token",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No image assets indexed yet",
@@ -2893,7 +2935,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
             "name": "undeclared_db_only_pages",
             "status": "ok"
           },
@@ -3693,6 +3735,18 @@
           {
             "category": "ops",
             "details": {
+              "docs": "docs/ENGINES.md#pool-sizing"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: PGLite has no connection pool to share.",
+            "name": "session_lane_budget",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "builds": [],
               "count": 0,
               "docs": "docs/guides/troubleshooting.md#runtime-build-skew",
@@ -4227,6 +4281,54 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "bytes": 32768,
+              "docs": "docs/mcp/ADMIN.md#request-log-retention",
+              "retention_days": null,
+              "rows": 0,
+              "rows_exact": true
+            },
+            "elapsed_ms": "<volatile>",
+            "fix": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "cycle.purge.mcp_request_log_retention_days",
+                "90",
+                "--brain",
+                "host"
+              ],
+              "command": "gbrain config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
+              "consent": [
+                "destructive"
+              ],
+              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
+              "next": "ask_user",
+              "requires_exclusive": false,
+              "user_message": "Your MCP request log holds 0 row(s) (0.0 MB) and nothing prunes it. Turn on 90-day retention? Request details older than 90 days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.",
+              "verify": {
+                "argv": [
+                  "gbrain",
+                  "doctor",
+                  "--only",
+                  "mcp_request_log_retention",
+                  "--json",
+                  "--brain",
+                  "host"
+                ]
+              },
+              "why": "Turns on the request-log prune: the next cycle purge phase (or, on a PGLite brain, a live serve within the hour) deletes request rows older than 90 days. Per-client lifetime totals and the audit rows (surface, memory-setting and access changes) are kept."
+            },
+            "message": "The MCP request log holds 0 row(s) (0.0 MB); request-log retention is off, so it keeps every request.",
+            "name": "mcp_request_log_retention",
+            "readiness_state": "disabled_by_choice",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "auto_repair": {
@@ -4528,6 +4630,19 @@
             "elapsed_ms": "<volatile>",
             "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
             "name": "search_mode",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "configured": false,
+              "global_tier": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the configured contextual-retrieval tier is none, not per_chunk_synopsis.",
+            "name": "synopsis_tier_coverage",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {
@@ -5166,6 +5281,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [
@@ -5499,6 +5620,7 @@
           {
             "category": "brain",
             "details": {
+              "body_unchanged": 0,
               "drift_pct": 0,
               "drifted": 0,
               "slug_unbound": 0,
@@ -5897,7 +6019,9 @@
               },
               "covering_index": null,
               "deleted_page_chunks": {
+                "held": 0,
                 "past_window": 0,
+                "purgeable": 0,
                 "window_hours": 72,
                 "within_window": 0
               },
@@ -6404,7 +6528,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 178 table(s) the applied migrations create exist.",
+            "message": "All 179 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -7043,6 +7167,30 @@
             "elapsed_ms": "<volatile>",
             "message": "No page was written database-only to an unbound source.",
             "name": "unbound_source",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true,
+              "items": [],
+              "pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No deferred dream writes",
+            "name": "dream_write_deferred",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The embedding signature restamp is running clean",
+            "name": "embedding_restamp_stalled",
             "status": "ok"
           },
           {
@@ -7839,6 +7987,15 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (0 enabled member(s)), so every credential reads that person's own pages.",
+            "name": "unscoped_multi_user_token",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "elapsed_ms": "<volatile>",
             "message": "No image assets indexed yet",
@@ -8050,7 +8207,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
             "name": "undeclared_db_only_pages",
             "status": "ok"
           },
@@ -8862,6 +9019,18 @@
           {
             "category": "ops",
             "details": {
+              "docs": "docs/ENGINES.md#pool-sizing"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: PGLite has no connection pool to share.",
+            "name": "session_lane_budget",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "builds": [],
               "count": 0,
               "docs": "docs/guides/troubleshooting.md#runtime-build-skew",
@@ -9396,6 +9565,54 @@
             "status": "ok"
           },
           {
+            "category": "ops",
+            "details": {
+              "bytes": 32768,
+              "docs": "docs/mcp/ADMIN.md#request-log-retention",
+              "retention_days": null,
+              "rows": 0,
+              "rows_exact": true
+            },
+            "elapsed_ms": "<volatile>",
+            "fix": {
+              "actor": "agent",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "cycle.purge.mcp_request_log_retention_days",
+                "90",
+                "--brain",
+                "host"
+              ],
+              "command": "gbrain config set cycle.purge.mcp_request_log_retention_days 90 --brain host",
+              "consent": [
+                "destructive"
+              ],
+              "docs": "https://github.com/garrytan/gbrain/blob/master/docs/mcp/ADMIN.md#request-log-retention",
+              "next": "ask_user",
+              "requires_exclusive": false,
+              "user_message": "Your MCP request log holds 0 row(s) (0.0 MB) and nothing prunes it. Turn on 90-day retention? Request details older than 90 days (operation, status, parameters, errors) will be deleted and cannot be restored; per-client totals and audit rows are kept.",
+              "verify": {
+                "argv": [
+                  "gbrain",
+                  "doctor",
+                  "--only",
+                  "mcp_request_log_retention",
+                  "--json",
+                  "--brain",
+                  "host"
+                ]
+              },
+              "why": "Turns on the request-log prune: the next cycle purge phase (or, on a PGLite brain, a live serve within the hour) deletes request rows older than 90 days. Per-client lifetime totals and the audit rows (surface, memory-setting and access changes) are kept."
+            },
+            "message": "The MCP request log holds 0 row(s) (0.0 MB); request-log retention is off, so it keeps every request.",
+            "name": "mcp_request_log_retention",
+            "readiness_state": "disabled_by_choice",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "brain",
             "details": {
               "auto_repair": {
@@ -9697,6 +9914,19 @@
             "elapsed_ms": "<volatile>",
             "message": "Mode: conservative (no per-key overrides — mode bundle is canonical).",
             "name": "search_mode",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "configured": false,
+              "global_tier": "none"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: the configured contextual-retrieval tier is none, not per_chunk_synopsis.",
+            "name": "synopsis_tier_coverage",
+            "readiness_state": "not_applicable",
+            "severity": "info",
             "status": "ok"
           },
           {

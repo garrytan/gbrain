@@ -23,6 +23,7 @@ import { readResolverConfig, resolverHarnesses } from '../../../core/setup/skill
 import { inspectSkillResolverHook, type ResolverHarness, type ResolverHookState } from '../../../core/setup/skill-resolver-hook.ts';
 import { describeOpenclawSkill, openclawSkillView, type OpenclawSkillView } from './skill-resolver-openclaw.ts';
 import { describePiSkillView, piSkillView, type PiSkillView } from './skill-resolver-pi.ts';
+import { cursorSkillView, describeCursorSkillView, type CursorSkillView } from './skill-resolver-cursor.ts';
 
 const name = 'skill_resolver';
 const HARNESSES: ResolverHarness[] = ['claude-code', 'codex', 'hermes'];
@@ -40,6 +41,8 @@ export interface SkillResolverView {
   openclaw?: OpenclawSkillView;
   /** The Pi extension (gbrain setup pi --skill-loading resolve), when any of it exists. */
   pi?: PiSkillView;
+  /** Cursor's pinned-skills rules (gbrain setup cursor --skill-loading resolve), when a project is recorded. */
+  cursor?: CursorSkillView;
 }
 
 function recentLane(home: string): SkillResolverView['recent'] | null {
@@ -83,8 +86,9 @@ export async function skillResolverView(home = configDir()): Promise<SkillResolv
   }
   const openclaw = await openclawSkillView(home);
   const pi = await piSkillView(home);
-  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw && !pi) return null;
-  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}), ...(pi ? { pi } : {}) };
+  const cursor = await cursorSkillView(home);
+  if (harnesses.length === 0 && !recent && !(cfg.state === 'ok' && on.length) && !openclaw && !pi && !cursor) return null;
+  return { config: cfg.state, harnesses, recent: recent ?? { turns: 0, outcomes: {}, errors: {} }, ...(openclaw ? { openclaw } : {}), ...(pi ? { pi } : {}), ...(cursor ? { cursor } : {}) };
 }
 
 const setupArgv = (harness: string) => ['gbrain', 'setup', harness, '--skill-loading', 'resolve'];
@@ -100,7 +104,8 @@ export function describeSkillResolver(v: SkillResolverView): string {
   const errs = Object.entries(v.recent.errors).map(([c, n]) => `${c} x${n}`).join(', ');
   const oc = v.openclaw ? `; ${describeOpenclawSkill(v.openclaw).line}` : '';
   const pi = v.pi ? `; ${describePiSkillView(v.pi).line}` : '';
-  return `Skill resolver: ${parts.join('; ') || (v.openclaw || v.pi ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}${pi}.`;
+  const cursor = v.cursor ? `; ${describeCursorSkillView(v.cursor).line}` : '';
+  return `Skill resolver: ${parts.join('; ') || (v.openclaw || v.pi || v.cursor ? 'no hook harness on' : 'no harness on')}${v.recent.turns ? `; last ${v.recent.turns} turns${errs ? ` with ${errs}` : ' without errors'}` : ''}${oc}${pi}${cursor}.`;
 }
 
 export function skillResolverCheck(v: SkillResolverView | null): Check | null {
@@ -131,6 +136,12 @@ export function skillResolverCheck(v: SkillResolverView | null): Check | null {
     return { name, status: 'warn', message: `${describeSkillResolver(v)} Pi: ${pi.what}.`, details: { ...details, code: pi.code },
       fix: { argv: setupArgv('pi'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${pi.code}`,
         why: 'Rebuilds the pi-user catalog, the library and the state, and rewrites the Pi extension; gbrain setup pi --skill-loading off removes it instead.' } };
+  }
+  const cursor = v.cursor ? describeCursorSkillView(v.cursor).problem : null;
+  if (cursor) {
+    return { name, status: 'warn', message: `${describeSkillResolver(v)} Cursor: ${cursor.what}.`, details: { ...details, code: cursor.code },
+      fix: { argv: setupArgv('cursor'), consent: ['persistent_install'], actor: 'agent', requires_exclusive: false, verify: doctorVerify(name), docs: `docs/guides/skill-resolver.md#${cursor.code}`,
+        why: `Run it in ${cursor.project}: it rebuilds that project's catalog and rewrites its pinned-skills rule; gbrain setup cursor --skill-loading off there removes them instead.` } };
   }
   return { name, status: 'ok', message: describeSkillResolver(v), details };
 }

@@ -41,6 +41,7 @@ test/bootstrap-contract.test.ts	bootstrap same-turn write-back contract	6	readFi
 test/bootstrap-opencode-door.serial.test.ts	opencode door — rendered AGENTS.md pull protocol	1	readFileSync
 test/bootstrap-render.test.ts	renderWorkspace — OpenClaw host keeps its schedule list out of HEARTBEAT.md (#7470)	6	readFileSync
 test/bootstrap-shared-skills.test.ts	(file-level)	19	readFileSync
+test/boring-default.test.ts	the default install adds nothing (GBRA-224 W5)	3	readFileSync
 test/brain-durability-hook.serial.test.ts	#4682 — push-lock timeout is fail-loud for the helper only	1	readFileSync
 test/brain-durability-hook.serial.test.ts	brain-commit-push.sh (D13 guarantee)	4	readFileSync
 test/brain-durability-hook.serial.test.ts	durability push remote confirmation (#5138)	9	readFileSync
@@ -78,8 +79,8 @@ test/claude-cli-recipe.test.ts	claude-cli LanguageModel — output cap (#6424)	2
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — text-only round trip	4	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli LanguageModel — tool use	17	readFileSync
 test/claude-cli-recipe.test.ts	claude-cli recipe registration	2	readFileSync
-test/cli-flag-equals.test.ts	#7619 refusals that keep consent, scope and targets right	26	readFileSync,source-surface-helper
-test/cli-flag-equals.test.ts	#7619 split rules	21	readFileSync,source-surface-helper
+test/cli-flag-equals.test.ts	#7619 refusals that keep consent, scope and targets right	28	readFileSync,source-surface-helper
+test/cli-flag-equals.test.ts	#7619 split rules	22	readFileSync,source-surface-helper
 test/cli-force-exit-teardown-arming.test.ts	cli.ts — disconnect hard-deadline armed at teardown entry, not before the op body	1	readFileSync,source-surface-helper
 test/cli.test.ts	BigInt-safe output normalization (#2450)	5	source-surface-helper
 test/cli.test.ts	CLI structure	2	source-surface-helper
@@ -280,6 +281,7 @@ test/postgres-engine.test.ts	postgres-engine / search date filtering	2	source-su
 test/postgres-engine.test.ts	postgres-engine / search path timeout isolation	7	source-surface-helper
 test/postgres15-sql-compat-7112.test.ts	#7112: shipped SQL parses on every supported Postgres (15+)	2	readFileSync
 test/private-visibility.test.ts	shared private predicate lives once (#4352 remediation)	1	readFileSync
+test/purge-root-metafile-7613.test.ts	(file-level)	2	readFileSync
 test/q2-typing-package.test.ts	(file-level)	3	readFileSync
 test/redos-hardening.test.ts	#1569 --no-schema-pack + heartbeat wiring (structural)	2	readFileSync,source-surface-helper
 test/redos-hardening.test.ts	megawave vm-watchdog removal (bootstrap-verify freeze)	5	readFileSync

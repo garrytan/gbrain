@@ -1018,7 +1018,7 @@ export function generateLaunchdPlist(wrapperPath: string, home: string, job?: Au
 <dict>
   <key>Label</key><string>${escapeXml(job?.launchdLabel ?? autopilotLaunchdLabel())}</string>
   <key>ProgramArguments</key><array>
-    <string>${escapeXml(wrapperPath)}</string>
+${(job?.launchdViaBash ? ['/bin/bash', wrapperPath] : [wrapperPath]).map(arg => `    <string>${escapeXml(arg)}</string>`).join('\n')}
   </array>
   <key>WorkingDirectory</key><string>${escapeXml(home)}</string>
   <key>RunAtLoad</key><true/>
@@ -1044,7 +1044,7 @@ function installLaunchd(wrapperPath: string, home: string, repoPath: string, job
 
   try {
     const agentsDir = join(home, 'Library', 'LaunchAgents');
-    mkdirSync(agentsDir, { recursive: true });
+    for (const dir of [agentsDir, dirname(job.logPath)]) mkdirSync(dir, { recursive: true });
     replaceLegacySharedJob(job, 'macos');
     writeFileSync(plistPath(job.launchdLabel), plist, { mode: 0o644 });
     // launchd rejects group/world-writable agent plists: bootstrap/load fails

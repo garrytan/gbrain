@@ -34,6 +34,13 @@ let chatDelayMs = 0;
 let chatOutputTokens = 50;
 let chatCalls = 0;
 let chatCallsBySource: string[] = [];
+/** #7068: the chat call (1-based) that waits until its signal aborts, and a hook run as it starts waiting. */
+let stallCall: { n: number; onStall?: () => void } | null = null;
+
+function untilAborted(signal: AbortSignal | undefined): Promise<void> {
+  if (!signal || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+}
 
 const CONVO_BODY = [
   '**Alice Example** (2024-03-15 9:00 AM): I just signed the offer letter for Acme Corp.',
@@ -71,6 +78,10 @@ beforeAll(async () => {
   __setChatTransportForTests(async (opts): Promise<ChatResult> => {
     chatCalls++;
     chatCallsBySource.push(String(opts.messages[0]?.content ?? '').slice(0, 40));
+    if (stallCall?.n === chatCalls) {
+      stallCall.onStall?.();
+      await untilAborted(opts.abortSignal);
+    }
     if (chatDelayMs > 0) await new Promise((r) => setTimeout(r, chatDelayMs));
     if (opts.abortSignal?.aborted) {
       const err = new Error('The operation was aborted.');
@@ -125,6 +136,7 @@ beforeEach(async () => {
   chatOutputTokens = 50;
   chatCalls = 0;
   chatCallsBySource = [];
+  stallCall = null;
   await engine.executeRaw(`DELETE FROM facts`);
   await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op = 'extract-conversation-facts'`);
   await engine.executeRaw(`DELETE FROM extract_rollup_7d`);
@@ -218,3 +230,52 @@ describe('runPhaseConversationFactsBackfill per-source caps (#3627)', () => {
     }
   }, 120000);
 });
+
+describe('runPhaseConversationFactsBackfill keeps committed work of an interrupted source (#7068)', () => {
+  async function seedTwoPageSource(id: string): Promise<void> {
+    await seedSource(id);
+    await engine.putPage(`conversations/${id}-later`, {
+      type: 'conversation', title: `Later chat in ${id}`, compiled_truth: CONVO_BODY, timeline: '', frontmatter: {},
+    }, { sourceId: id });
+  }
+  async function extractedRows(sourceId: string): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts WHERE source_id = $1 AND source = 'cli:extract-conversation-facts'`, [sourceId]);
+    return Number(rows[0].n);
+  }
+  async function completedPages(sourceId: string): Promise<number> {
+    const rows = await engine.executeRaw<{ n: number }>(
+      `SELECT count(DISTINCT source_markdown_slug)::int AS n FROM facts WHERE source_id = $1 AND fact = 'EXTRACTION_COMPLETE'`, [sourceId]);
+    return Number(rows[0].n);
+  }
+
+  test('a per-source walltime abort reports the page that finished, and the next run resumes after it', async () => {
+    await seedTwoPageSource('src-7068-walltime');
+    await engine.setConfig('cycle.conversation_facts_backfill.max_walltime_min', '0.05');
+    stallCall = { n: 2 };
+    const first = await runPhaseConversationFactsBackfill(engine);
+    const source = (first.details.per_source as Record<string, { walltime_exhausted?: boolean; pages_processed: number; facts_inserted: number }>)['src-7068-walltime'];
+    expect(source.walltime_exhausted).toBe(true);
+    expect(await extractedRows('src-7068-walltime')).toBe(1);
+    expect(await completedPages('src-7068-walltime')).toBe(1);
+    expect(source.pages_processed).toBe(1);
+    expect(source.facts_inserted).toBe(1);
+    expect(first.details.facts_inserted).toBe(1);
+
+    stallCall = null;
+    const second = await runPhaseConversationFactsBackfill(engine);
+    expect(second.details.pages_skipped_completed).toBe(1);
+    expect(second.details.pages_processed).toBe(1);
+    expect(await completedPages('src-7068-walltime')).toBe(2);
+  }, 120_000);
+
+  test('a caller abort still rejects the phase after a page committed', async () => {
+    await seedTwoPageSource('src-7068-cancel');
+    const caller = new AbortController();
+    stallCall = { n: 2, onStall: () => caller.abort() };
+    const outcome = await runPhaseConversationFactsBackfill(engine, { signal: caller.signal }).then(() => 'resolved', (err: Error) => err.name);
+    expect(outcome).toBe('AbortError');
+    expect(await extractedRows('src-7068-cancel')).toBe(1);
+  }, 120_000);
+});
+

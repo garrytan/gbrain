@@ -446,11 +446,18 @@ tables) under that role's RLS. Every gbrain function that pins a search_path end
 cannot hide it from a guard; before, any session, the owner included, could store purged
 content that way. A write role with no policy on a ledger still reads it empty, so its
 purged or withdrawn writes still go through: give a scoped write role a `SELECT` policy on
-the ledgers of the sources it writes (gbrain#7659 tracks the fix). Where the migrating role
-does not own a function, v277 names it on stderr and leaves it; `gbrain doctor`
-(`function_search_path`) prints the `ALTER FUNCTION` to run as its owner
-(`test/e2e/function-search-path-postgres.test.ts`).
+the ledgers of the sources it writes (gbrain#7659 tracks the fix). Each definition outside
+`src/core/schema-migrations/` pins `pg_catalog, public, pg_temp` itself (`bun run check:search-path`
+fails one that does not, or a pinned function missing from `PINNED_FUNCTION_NAMES`), so a schema
+replay keeps it; historical migration bodies still pin the old path, so every migration run ends by
+putting `pg_temp` back (`hardenFunctionSearchPaths` in `src/core/function-search-path.ts`), and the
+schema blob's generated hardening region must stay its last statement. Where the migrating role
+does not own a function, the run that applies migrations names it on stderr and leaves it;
+`gbrain doctor` (`function_search_path`) prints the schema-qualified `ALTER FUNCTION` to run as its
+owner, or `gbrain apply-migrations --yes` below v277 ([function search path](guides/troubleshooting.md#function-search-path);
+`test/e2e/function-search-path-postgres.test.ts`).
 
+<a id="writer-protocol-fences"></a>
 **Writer-protocol fences.** The managed-writer guard, the persistence protocol floor, protocol
 activation and the Git-canonical source counter also run as the writing role and read their state
 under its RLS. Since migration v278 (#7636) they fail closed: a role that cannot see the
@@ -463,8 +470,9 @@ publication either one is stored on the receipt as `writer_coordinator_required`
 #7777 for the protocol guards, #7780 for the state and remedy). A protocol guard's
 refusal outside publication (write admission, protocol activation) reaches the command as that
 database error, which gbrain's generic database output labels `permission_denied` with grant
-advice: the code at the start of the message names the refusal. On a managed brain the same refusal covers a hidden `git_canonical_brain` row or
-Git-canonical source row (for a writer without the git protocol) and a hidden page row behind a tag,
+advice: the code at the start of the message names the refusal. On a managed brain the same refusal covers, for a writer without the git protocol, a
+hidden `git_canonical_brain` row and, while the brain has any Git-canonical source, a hidden
+target or old source row whether or not that source is Git-canonical; and a hidden page row behind a tag,
 timeline entry or take. Protocol activation (row-level security on `sources`, `persistence_requests`,
 `persistence_effects`, `persistence_worktrees` or `persistence_source_bindings`) and a change to
 which sources are Git-canonical (row-level security on `sources`) refuse any role it applies to,
@@ -1099,6 +1107,18 @@ may open the full 3-connection direct pool.
 When the sum does not fit, run fewer long-running processes (for example one
 shared `gbrain serve --http` instead of one stdio `serve` per agent session),
 or raise the pooler's limit. Do not lower a long-running process below 6.
+
+`gbrain doctor` check `session_lane_budget` (read-only) counts this role's
+connections in `pg_stat_activity` across every process, by process kind
+(`serve`, `sync`, `jobs`, … from the `gbrain <kind>:<pid>:<nonce>`
+connection name) and host, and warns at 80% of the limit with the kinds
+holding the most. Postgres cannot read a pooler's per-role limit, so behind a
+Supabase pooler set `GBRAIN_SESSION_LANE_LIMIT` to the project's `pool_size`;
+without it the check reports the counts only. Without a pooler the limit is
+`max_connections` less the reserved slots. Behind a pooler the count is an
+upper bound: connections that bypass it (a direct `db.<ref>` host) count too,
+and a transaction pooler's server connections carry its own name, so they are
+counted apart, not attributed to a process.
 
 With a direct route configured, the persistence consumer's own tick
 statements (idle probe, switch read, recovery and expired-claim scans,

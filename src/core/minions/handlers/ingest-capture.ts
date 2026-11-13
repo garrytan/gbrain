@@ -97,6 +97,32 @@ function isPagesSourceFkViolation(err: unknown): boolean {
   return fkErr?.code === '23503' && namesPagesSourceFk;
 }
 
+/**
+ * The capture's slug: the caller-provided job slug, then the top-level event.slug (#3756: required for tombstones, an
+ * optional upsert hint), then the legacy metadata.slug, then a generated one. Normalized once (GST-2114): the snapshot,
+ * applied-record and writer lookups are exact while the door lowercases, so a mixed-case X-Gbrain-Slug has to name the
+ * page the door writes.
+ */
+function captureSlug(jobSlug: unknown, event: IngestionEvent): string {
+  const metadataSlug = (event.metadata as Record<string, unknown> | undefined)?.slug;
+  const slug = typeof jobSlug === 'string' && jobSlug.length > 0 ? jobSlug
+    : typeof event.slug === 'string' && event.slug.length > 0 ? event.slug
+    : typeof metadataSlug === 'string' ? metadataSlug : defaultSlugForEvent(event);
+  return validateSlug(slug);
+}
+
+/**
+ * GST-2113: a webhook capture writes only inside its credential's write source. When that source is archived, unregistered
+ * or removed after the 202, default may be outside the grant, so the job refuses (kept for gbrain jobs retry) instead of
+ * writing there. Other captures keep the default fallback.
+ */
+function refuseWebhookFallback(webhookWrite: boolean, slug: string, fallback: NonNullable<IngestCaptureResult['source_fallback']>): void {
+  if (!webhookWrite) return;
+  throw opError('source_changed', `The webhook capture for ${slug} was not written: its write source ${fallback.requested} is ${fallback.reason === 'archived' ? 'archived' : 'no longer registered'}, and a capture never falls back to default, which its credential may not be granted.`,
+    `Restore source ${fallback.requested} and run gbrain jobs retry on this job, or send the capture again with a credential whose write source is live.`,
+    { detail: 'webhook_source_unavailable' });
+}
+
 /** Rolls back a capture's page write when another run of its idempotency key already recorded the capture (GST-1856). */
 class CaptureAlreadyApplied extends Error {}
 
@@ -150,22 +176,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       throw new Error(`ingest_capture: invalid event payload: ${validationErr.message}`);
     }
 
-    // Slug resolution. #3756 added the top-level event.slug (required for
-    // tombstones, optional upsert hint) between the caller-provided job slug
-    // and the legacy metadata.slug channel.
-    let slug: string;
-    if (typeof data.slug === 'string' && data.slug.length > 0) {
-      slug = data.slug;
-    } else if (typeof event.slug === 'string' && event.slug.length > 0) {
-      slug = event.slug;
-    } else if (
-      event.metadata &&
-      typeof (event.metadata as Record<string, unknown>).slug === 'string'
-    ) {
-      slug = (event.metadata as Record<string, unknown>).slug as string;
-    } else {
-      slug = defaultSlugForEvent(event);
-    }
+    const slug = captureSlug(data.slug, event);
 
     // Untrusted-payload posture. For v1, the flag is propagated for audit
     // but not enforced at this layer (see file header). Future v2 wiring
@@ -231,7 +242,8 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     //      (as it can already forge event.source_id on path 2). Validated here
     //      against a LIVE (non-archived) sources row; on a miss we fall back to
     //      the default source AND report it via source_fallback (+ a stderr
-    //      warning) so the miss is observable.
+    //      warning) so the miss is observable, except a webhook capture, which
+    //      refuses (refuseWebhookFallback).
     //   2. event.source_id — the daemon / non-webhook emitter path (#1522):
     //      used iff it names a registered source row, silent fallback to default
     //      otherwise. Deliberately NOT archived-filtered and NOT reported, so
@@ -291,6 +303,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
     if (applied) return applied;
 
     const webhookWrite = untrustedPayload && event.source_kind === 'webhook' && !isTombstone;
+    if (sourceFallback) refuseWebhookFallback(webhookWrite, slug, sourceFallback);
     const checkWriter = (sid: string) => webhookWrite ? assertWebhookWriterMayReplace(engine, data.writer, sid, slug, event.content) : Promise.resolve(undefined);
     let checkedRevision = await checkWriter(sourceId ?? 'default');
     const door = (operation: 'put_page' | 'delete_page', sid: string, params: Record<string, unknown>) => submitPageMutation(
@@ -374,6 +387,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
           ? await engine.executeRaw<{ archived: boolean | null }>('SELECT archived FROM sources WHERE id = $1', [sourceId]) : null;
         if (!vanished || (vanished.length > 0 && vanished[0]?.archived !== true)) throw err;
         sourceFallback = { requested: sourceId!, effective: 'default', reason: vanished.length ? 'archived' : 'fk_violation' };
+        refuseWebhookFallback(webhookWrite, slug, sourceFallback);
         await checkWriter('default');
         response = await put('default', requestId && `${requestId}:default`);
       }
@@ -409,6 +423,7 @@ export function makeIngestCaptureHandler(engine: BrainEngine) {
       // The sources row can vanish (ON DELETE CASCADE) between the pre-check and this write.
       if (sourceId !== undefined && isPagesSourceFkViolation(err)) {
         sourceFallback = { requested: sourceId, effective: 'default', reason: 'fk_violation' };
+        refuseWebhookFallback(webhookWrite, slug, sourceFallback);
         checkedRevision = await checkWriter('default');
         result = await importAs(undefined);
       } else {

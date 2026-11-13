@@ -119,13 +119,14 @@ describe('loops ops', () => {
 });
 
 describe('think', () => {
-  test('an unusable explicit model is a caller error naming `model`, not --model', async () => {
-    const env = await envelopeOf('think', ctx('http'), { question: 'q', model: 'bogusprovider:foo' });
+  test('an unusable explicit model is a caller error on the local CLI naming --model', async () => {
+    const env = await envelopeOf('think', ctx('cli'), { question: 'q', model: 'bogusprovider:foo' });
     expect(env.code).toBe('invalid_params');
     expect(env.message).toMatch(/not usable.*unknown_provider/);
-    expect(`${env.message} ${env.suggestion}`).not.toMatch(/--model/);
-    expect(env.suggestion).toContain('`model`');
+    expect(env.suggestion).toMatch(/--model/);
   });
+  // GBRA-437 (#9050): a remote caller's unusable model is never an error; the host model answers
+  // with MODEL_OVERRIDE_IGNORED:unusable, pinned on real engines in test/think-remote-model.test.ts.
 });
 
 describe('add_timeline_entry', () => {
