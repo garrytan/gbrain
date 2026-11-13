@@ -20,6 +20,7 @@ test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
 test/access-hidden-page-writes.test.ts
+test/access-labelled-only-fail-closed.test.ts
 test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts

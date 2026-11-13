@@ -9,21 +9,38 @@
  * its principal. A local stdio server reads its binding from its own
  * `gbrain serve --stdio-member <id>` (the harness's MCP entry, so one
  * registration on one machine), else from config `mcp.stdio_member` set by
- * hand. A brain with no member-access restriction skips all of
- * it. Every failure (pre-migration schema, unreadable row, unknown or
- * disabled member) yields an empty identity, which reads no restricted page.
+ * hand. A remote read or write on a brain with no member-access restriction
+ * and no owner never looks a binding up. An empty identity means the
+ * credential is unbound or its member is unknown, disabled or removed; it
+ * reads no restricted page. A lookup that fails never reads as unbound, which
+ * would open every unlabelled page to a labelled-only member. A statement the
+ * database rejected (a SQLSTATE) throws access_identity_unavailable, which is
+ * retryable, unless the persistence consumer's transientDatabaseFailure or
+ * transientInterruption classifies it (a dropped connection, a lock or
+ * statement timeout, a stale plan, a publication past its ceiling); that, and
+ * every failure that is not a statement error (a preparation deadline, an
+ * abort, a coded refusal), is rethrown unchanged, so a stored write keeps its
+ * consumer's release, retry and deadline handling. The one failure that stays
+ * empty is a schema older than the member tables (v282), whose lookup misses
+ * access_members, access_group_members or the member_id column; no member,
+ * labelled-only (v308) or not, can exist there, and every owner caller there
+ * is unbound.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AuthInfo } from '../ops/contract.ts';
 import { remotePrivacyRelaxed, requestRemotePolicy, type CallerAccess, type FolderCoverage, type RemotePolicy } from '../search/private-visibility.ts';
 import { ACCESS_ID_RE, identityFor, normalizePrincipal } from './principals.ts';
 import { catalogueError } from '../error-catalogue.ts';
+import type { Action } from '../agent-output.ts';
+import { markNotAdmitted, OperationError, opError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
 import { GUEST, STDIO_MAY_ACT_FOR_KEY, mayActForCovers, singleMemberAudience, type AudiencePrincipal } from './audience.ts';
 import { audienceMemberIds, parseMayActFor } from './members.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
+import { isMissingSchemaObject } from '../utils.ts';
+import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -34,22 +51,67 @@ const MEMBERS_WHERE_SQL = (predicate: string) => `SELECT m.id, COALESCE(array_ag
   GROUP BY m.id`;
 const MEMBER_SQL = (member: string) => MEMBERS_WHERE_SQL(`m.id = (${member})`);
 
-async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
-  try {
-    const [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
-    if (!row || normalizePrincipal(`member:${row.id}`) !== `member:${row.id}`) return [];
-    const groups = (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`);
-    return identityFor(row.id, groups);
-  } catch {
-    return [];
+/** The objects v282 added that the lookup reads: a schema without them predates the member tables. */
+const MEMBER_TABLES = ['access_members', 'access_group_members'];
+const MEMBER_COLUMN = 'member_id';
+const SQLSTATE_RE = /^[0-9A-Z]{5}$/;
+const IDENTITY_RETRY_AFTER_MS = 2_000;
+const WHOAMI: NonNullable<Action['verify']> = { argv: ['gbrain', 'whoami', '--json'], mcp: { tool: 'whoami', arguments: {} } };
+
+function identityUnavailable(): OperationError {
+  return opError('access_identity_unavailable', 'The member this connection is bound to could not be looked up, so nothing was read or written.',
+    'Retry the same request in a few seconds (a write with the same request_id); if it keeps failing, ask the brain operator to run gbrain doctor --json on the brain host.', {
+      why: 'Reading the credential\'s member binding failed with a database error. Reading the connection as unbound instead would open pages its member may not read, so the request stops here.',
+      detail: `retry_after_ms=${IDENTITY_RETRY_AFTER_MS}`,
+      fix: { ...WHOAMI, consent: [], actor: 'provider', requires_exclusive: false, verify: WHOAMI,
+        why: 'After a few seconds whoami reads the binding again and shows the member this connection reads as; then repeat the original request.' },
+    });
+}
+
+/**
+ * Marks a transient failure liveIdentity rethrew unchanged (a non-enumerable property, so the error still reads the
+ * same to the persistence consumer), so the dispatch boundary can tell it from other statements' failures.
+ */
+const TRANSIENT_LOOKUP_FAILURE = Symbol('gbrain.transientIdentityLookupFailure');
+
+/**
+ * At the MCP dispatch boundary: access_identity_unavailable (retryable, not admitted) when `error`, or an error it was
+ * wrapped in, is a transient failure of a member-identity lookup; else null. A request that fails this way at
+ * submission has written nothing, so the same request_id can be sent again. The persistence consumer never sees the
+ * mapping: its lookups keep the original error, which it releases and retries.
+ */
+export function identityLookupUnavailable(error: unknown): OperationError | null {
+  for (let e = error, depth = 0; e && typeof e === 'object' && depth < 8; e = (e as { cause?: unknown }).cause, depth++) {
+    if ((e as { [TRANSIENT_LOOKUP_FAILURE]?: true })[TRANSIENT_LOOKUP_FAILURE] === true) return markNotAdmitted(identityUnavailable());
   }
+  return null;
+}
+
+async function liveIdentity(engine: Pick<BrainEngine, 'executeRaw'>, memberSql: string, param: string): Promise<string[]> {
+  let row: { id: string; groups: string[] } | undefined;
+  try {
+    [row] = await engine.executeRaw<{ id: string; groups: string[] }>(MEMBER_SQL(memberSql), [param]);
+  } catch (error) {
+    if (isMissingSchemaObject(error, 'table', MEMBER_TABLES) || isMissingSchemaObject(error, 'column', MEMBER_COLUMN)) return [];
+    if (error && typeof error === 'object' && (transientDatabaseFailure(error) || transientInterruption(error))) {
+      if (Object.isExtensible(error)) Object.defineProperty(error, TRANSIENT_LOOKUP_FAILURE, { value: true });
+      throw error;
+    }
+    const code = (error as { code?: unknown } | null)?.code;
+    if (typeof code !== 'string' || !SQLSTATE_RE.test(code)) throw error;
+    throw identityUnavailable();
+  }
+  if (!row || normalizePrincipal(`member:${row.id}`) !== `member:${row.id}`) return [];
+  const groups = (row.groups ?? []).filter(g => normalizePrincipal(`group:${g}`) === `group:${g}`);
+  return identityFor(row.id, groups);
 }
 
 /**
  * The member identity bound to `auth`: the verifier's join when present, else a lookup from its principal (a local
  * stdio principal reads the member its serve was started with, stamped as `stdioMember` on a stored write, else
- * config mcp.stdio_member, as stdio reads do); empty when unbound, unknown or unreadable. A write's publication passes
- * only its stored principal, so a member disabled or a binding removed after submission takes effect.
+ * config mcp.stdio_member, as stdio reads do); empty when unbound or the member is unknown or not enabled; a lookup
+ * that fails throws (liveIdentity: a transient database failure unchanged, else access_identity_unavailable). A write's publication passes only its stored
+ * principal, so a member disabled or a binding removed after submission takes effect.
  */
 export async function memberIdentityFor(engine: Pick<BrainEngine, 'executeRaw'>, auth: Pick<AuthInfo, 'member'> & { principal?: { kind: string; id: string }; stdioMember?: string } | undefined): Promise<string[]> {
   if (auth?.member !== undefined) return auth.member ? identityFor(auth.member.id, auth.member.groups) : [];
@@ -75,7 +137,8 @@ export async function stdioMemberId(engine: BrainEngine): Promise<string | null>
 /**
  * The identity of a local stdio server: the live member its serve was started with (--stdio-member), else the live
  * member config mcp.stdio_member names, else empty. A named member that is disabled or unknown reads as nobody and
- * never falls back to the config key.
+ * never falls back to the config key; a lookup that fails throws (liveIdentity). With no member named it runs no
+ * query.
  */
 export async function stdioMemberIdentity(engine: BrainEngine, registered?: string): Promise<string[]> {
   const member = registered ?? await stdioMemberId(engine);

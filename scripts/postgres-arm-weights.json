@@ -8,6 +8,7 @@
   "test/access-folder-rules.test.ts": 33058,
   "test/access-folder-scoped-role.test.ts": 3693,
   "test/access-hidden-page-writes.test.ts": 16117,
+  "test/access-labelled-only-fail-closed.test.ts": 4820,
   "test/access-labelled-only.test.ts": 101796,
   "test/access-member-facts.test.ts": 15215,
   "test/access-member-sweep.test.ts": 32626,
