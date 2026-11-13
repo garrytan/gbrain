@@ -6517,7 +6517,6 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "memory_write",
-    "requiresAttestedActor": true,
     "mutating": true,
     "idempotent": true,
     "outputRedaction": "no_stored_text",
@@ -6583,7 +6582,6 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   },
   {
     "name": "memory_propose",
-    "requiresAttestedActor": true,
     "mutating": true,
     "idempotent": true,
     "outputRedaction": "no_stored_text",

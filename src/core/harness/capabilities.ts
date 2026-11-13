@@ -100,13 +100,16 @@ export interface GrantGaps {
 
 export interface GrantPrerequisite { operation: string; prerequisite: string; fix: string }
 
+/** These QM handlers refuse any call without an attested actor. */
+const ATTESTED_ONLY_OPERATIONS: ReadonlySet<string> = new Set(['memory_propose', 'memory_write']);
+
 export async function grantOperationGaps(input: GrantGapInput): Promise<GrantGaps> {
   const [{ operations, opAllowedForBoundClient }, { filterOpsForSurface }] = await Promise.all([
     import('../operations.ts'), import('../../mcp/surface.ts'),
   ]);
   const fence = { boundSlugPrefixes: input.boundSlugPrefixes, fenceProjectionDegraded: input.fenceProjectionDegraded, grantProjectionDegraded: input.grantProjectionDegraded };
   const eligible = operations.filter(op => !op.localOnly && !input.disabled.has(op.name)
-    && (!op.requiresAttestedActor || input.attestedOperations?.includes(op.name))
+    && (!ATTESTED_ONLY_OPERATIONS.has(op.name) || input.attestedOperations?.includes(op.name))
     && operationScopesAllowed([...input.scopes], op) && opAllowedForBoundClient(fence, op));
   const outside = (surface: GrantSurface | null): string[] => {
     if (!surface || surface === 'full') return [];
