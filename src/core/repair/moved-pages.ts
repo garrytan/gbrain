@@ -34,7 +34,7 @@ import { mergeTwinInto } from '../persistence/twin-merge.ts';
 import { readMovedPage, type MovedEvidence, type MovedHeldReason, type MovedPageRef } from '../persistence/moved-pages.ts';
 import { readDeletionProvenance } from '../persistence/sync-origin-evidence.ts';
 import { clearGitHold, movedPagesPreviewArgv } from '../persistence/sync-holds.ts';
-import { ghostPageNow, scanGhostSource, sourceContext, type GhostOwner } from '../ghost-pages.ts';
+import { ghostPageNamed, ghostPageNow, scanGhostSource, sourceContext, type GhostOwner } from '../ghost-pages.ts';
 import { MASS_RECONCILE_MIN_PAGES, MASS_RECONCILE_RATIO, massReconcileAllowed } from '../sync-reconcile.ts';
 import { ghostScanRefusal, GHOST_PURGE_FUSE_HOURS, GHOST_REPAIR_LIMIT } from './ghost-pages.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
@@ -96,7 +96,8 @@ export const movedPagesRepair: RepairHandler = {
     const refusal = ghostScanRefusal(scan);
     if (refusal) throw refusal;
     const owner = scan.owner!, root = scan.root!;
-    const ghosts = scan.ghosts.filter(ghost => !slugs || slugs.includes(ghost.slug)).slice(0, GHOST_REPAIR_LIMIT);
+    const named = slugs ? await Promise.all(slugs.map(slug => ghostPageNamed(engine, sourceId, slug))) : [];
+    const ghosts = slugs ? named.filter(ghost => ghost !== null) : scan.ghosts.slice(0, GHOST_REPAIR_LIMIT);
     const provenance = await readDeletionProvenance(root, ghosts.map(ghost => ghost.path));
     const observedAt = new Date().toISOString();
     const pairs: MovedPair[] = [], held: HeldPage[] = [];
@@ -120,9 +121,9 @@ export const movedPagesRepair: RepairHandler = {
       const hash = previewHash(hashParts(scope, slugs, owner, pairs, held));
       if (pairs.length) await saveApprovedSet<ApprovedPair>(engine, { command: 'moved-pages', hash }, pairs.map(pair => ({ ...pair, owner, selection: scope.source_ids })));
       const warnings = [
-        ...(missing.length ? [`Not a live page whose file is gone in source ${sourceId}${scan.truncated ? ` among the first ${GHOST_REPAIR_LIMIT} checked (preview the whole source after applying)` : ''}, so nothing to fold: ${missing.join(', ')}.`] : []),
+        ...(missing.length ? [`Not a live page whose file is gone in source ${sourceId}, so nothing to fold: ${missing.join(', ')}.`] : []),
         ...(mass ? [`${pairs.length} fold(s) against ${scan.file_backed} file-backed page(s) (more than ${Math.round(MASS_RECONCILE_RATIO * 100)}%): the apply refuses unless GBRAIN_ALLOW_MASS_RECONCILE=1; check the source first.`] : []),
-        ...((scan.truncated || scan.ghosts.length > ghosts.length) && !slugs ? [`More pages whose file is gone may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, then preview again.`] : []),
+        ...((scan.truncated || scan.ghosts.length > ghosts.length) && !slugs ? [`More pages whose file is gone may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, or name pages with --slug (repair file-drift --held lists each moved page's command), then preview again.`] : []),
         ...(held.length ? [`${held.length} page(s) whose file is gone are not proven moved and are never folded by this apply; each lists why.`] : []),
         ...(pairs.length ? [MOVED_PAGES_CONSENT_TEXT.risk] : []),
         ...(!scan.ghosts.length ? [`Source ${sourceId} has no live page whose file is gone; nothing to fold.`] : []),
@@ -181,7 +182,7 @@ export async function movedPairNow(engine: BrainEngine, pair: MovedPair, owner: 
   return verdict.survivor.page_id === pair.survivor.page_id && verdict.old_blob === pair.old_blob ? null : 'another page is now the moved one';
 }
 
-/** Under both page keys: why the locked pair is no longer the approved one, or null. */
+/** Under both page keys: why the locked pair is no longer the approved one, or null; the old file must still be gone. */
 async function pairLocked(tx: BrainEngine, pair: MovedPair): Promise<string | null> {
   const rows = await tx.executeRaw<{ id: number; slug: string; revision: string; source_path: string | null }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path FROM pages
     WHERE source_id=$1 AND id=ANY($2::int[]) AND deleted_at IS NULL`, [pair.source_id, [pair.old.page_id, pair.survivor.page_id]]);
@@ -189,7 +190,8 @@ async function pairLocked(tx: BrainEngine, pair: MovedPair): Promise<string | nu
     const row = rows.find(candidate => Number(candidate.id) === page.page_id);
     if (!row || row.slug !== page.slug || String(row.revision) !== page.revision || row.source_path !== page.path) return `${page.slug} changed`;
   }
-  return null;
+  const now = await ghostPageNow(tx, pair.source_id, pair.old.slug);
+  return now.ghost ? null : `${pair.old.path} is back or no longer gone (${now.reason})`;
 }
 
 /** The write itself, inside the caller's transaction with both page keys held. */

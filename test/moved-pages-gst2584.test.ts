@@ -344,4 +344,20 @@ for (const backend of testBackends()) {
     const after = await runner(engine, 'moved-pages', {});
     expect(listed(after, 'notes/alpha')).toMatchObject({ class: 'moved_to' });
   }, opts(backend, { 'notes/alpha.md': ALPHA, 'notes/alpha-copy.md': ALPHA, 'notes/beta.md': BETA })), 240_000);
+
+  test(`${backend}: a moved page whose readers were widened at the new path stays held (access differs)`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, root, () => { mv(root, 'archive/alpha.md')();
+      writeFileSync(join(root, 'archive/alpha.md'), readFileSync(join(root, 'archive/alpha.md'), 'utf8').replace('readable_by: [alice-example]\n', '')); git(root, 'commit', '-qam', 'open it up'); });
+    const preview = await runner(engine, 'moved-pages', {});
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'held:access_differs' });
+  }, opts(backend, { 'notes/alpha.md': '---\ntitle: Alpha\nreadable_by: [alice-example]\n---\n\nThe alpha body, kept word for word through the move.\n', 'notes/beta.md': BETA })), 240_000);
+
+  test(`${backend}: a file created from the same content after the old one was deleted is not where it moved`, () => managedBrain(async ({ engine, root }) => {
+    await movedAway(engine, root, () => { git(root, 'rm', '-q', 'notes/alpha.md'); git(root, 'commit', '-qm', 'delete');
+      mkdirSync(join(root, 'archive'), { recursive: true }); writeFileSync(join(root, 'archive/recreated.md'), ALPHA); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'recreate later'); });
+    const preview = await runner(engine, 'moved-pages', {});
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'held:not_moved' });
+  }, opts(backend)), 240_000);
 }
