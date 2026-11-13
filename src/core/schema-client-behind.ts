@@ -10,21 +10,21 @@ import { LATEST_SCHEMA_VERSION } from './schema-migrations/latest.generated.ts';
 
 type Query = (sql: string) => Promise<ReadonlyArray<Record<string, unknown>>>;
 
-export function clientBehindError(version: number): OperationError {
+export function clientBehindError(version: number, newest = LATEST_SCHEMA_VERSION): OperationError {
   return opError('client_behind',
-    `The brain schema is at v${version}, newer than this gbrain binary (v${LATEST_SCHEMA_VERSION}); schema setup refused before replaying this binary's schema, so nothing changed.`,
+    `The brain schema is at v${version}, newer than this gbrain binary (v${newest}); schema setup refused before replaying this binary's schema, so nothing changed.`,
     'Upgrade gbrain on this host (gbrain upgrade) to the release that migrated the database or newer, then rerun the command; reads keep working on this binary meanwhile.',
     { fix: { argv: ['gbrain', 'upgrade'], consent: [], actor: 'host_admin', requires_exclusive: false,
       why: "An older binary's schema replay would reinstall superseded function bodies over the newer schema; a current binary replays matching ones.",
       verify: { argv: ['gbrain', 'doctor', '--only', 'schema_version', '--json'] } } });
 }
 
-/** Throws `client_behind` when the database's schema version is newer than this binary. */
+/** Throws `client_behind` when the database's schema version is newer than `newest`, the newest migration runMigrations would apply. */
 // engine-sql-ok: a two-statement version probe both engines run on their DDL connection before the schema replay
-export async function assertSchemaNotAhead(query: Query): Promise<void> {
+export async function assertSchemaNotAhead(query: Query, newest = LATEST_SCHEMA_VERSION): Promise<void> {
   const [probe] = await query(`SELECT to_regclass('config') IS NOT NULL AS present`);
   if (!probe?.present) return;
   const [row] = await query(`SELECT value FROM config WHERE key = 'version'`);
   const version = parseInt(String(row?.value ?? '0'), 10);
-  if (version > LATEST_SCHEMA_VERSION) throw clientBehindError(version);
+  if (version > newest) throw clientBehindError(version, newest);
 }

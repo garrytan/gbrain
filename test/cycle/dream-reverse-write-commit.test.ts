@@ -91,7 +91,7 @@ const dirty = (b: Brain) => b.git('status', '--porcelain', '--untracked-files=al
 const filesUnder = (dir: string): string[] => !existsSync(dir) ? [] : readdirSync(dir, { recursive: true, withFileTypes: true })
   .filter(e => e.isFile() && e.name.endsWith('.md')).map(e => e.name);
 const setMirror = (engine: BrainEngine, sourceId: string, readOnly: boolean) =>
-  engine.executeRaw(`UPDATE sources SET config = $2::jsonb WHERE id = $1`, [sourceId, JSON.stringify(readOnly ? { mirror_read_only: true } : {})]);
+  engine.executeRaw(`UPDATE sources SET config = $2::text::jsonb WHERE id = $1`, [sourceId, JSON.stringify(readOnly ? { mirror_read_only: true } : {})]);
 const failedHolds = (held: string[], slug: string) => held.filter(h => h.startsWith(`${slug} (write_through_failed`));
 
 function refuseCommits(b: Brain): void {
