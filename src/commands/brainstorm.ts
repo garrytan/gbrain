@@ -507,6 +507,13 @@ export function formatSaveOutcome(
       exitCode: 0,
     };
   }
+  if (dbSaved && writeThrough.skipped === 'mirror_read_only') {
+    return {
+      stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source is a read-only mirror, \`gbrain sources mirror-readonly\` — kept database-only)._`,
+      stderr,
+      exitCode: 0,
+    };
+  }
   if (dbSaved && writeThrough.skipped === 'url_clone') {
     return {
       stdout: `\n_Saved to DB page \`${ctx.slug}\` (the source is a clone gbrain pulls from upstream — kept database-only)._`,

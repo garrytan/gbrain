@@ -38,7 +38,7 @@ export interface WriteAuthority {
    * holding page, which is gbrain's own companion to it.
    */
   heldFor?: string;
-  databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached' | 'entity_page_missing';
+  databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'relative_root' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached' | 'entity_page_missing';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;
   sourceId: string;

@@ -17,7 +17,7 @@ import { closeSync, lstatSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from './spawn.ts';
 import type { Action } from './agent-output.ts';
-import { gitChildEnv } from './git-env.ts';
+import { gitChildEnv, literalPathspecs } from './git-env.ts';
 import { buildGitInvocation, isWithinRoot } from './sync-git.ts';
 import type { GitHoldRecord } from './persistence/sync-holds.ts';
 
@@ -49,16 +49,16 @@ function hold(code: ClassicFileHoldCode, reason: ClassicFileHoldReason, relPath:
 /** Read-only Git plumbing in the source root: optional locks off, literal pathspecs, null on any failure. */
 function gitRead(root: string, args: string[]): string | null {
   try {
-    return execFileSync('git', buildGitInvocation(root, args), { env: gitChildEnv({ GIT_OPTIONAL_LOCKS: '0', GIT_LITERAL_PATHSPECS: '1' }),
+    return execFileSync('git', buildGitInvocation(root, args), { env: gitChildEnv({ GIT_OPTIONAL_LOCKS: '0' }),
       encoding: 'utf-8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] });
   } catch { return null; }
 }
 
 /** A committed file missing on disk: skip_worktree when the index marks it so, deleted_locally otherwise; null when HEAD has no blob there. */
 function absentFromWorktree(root: string, relPath: string): ClassicFileHold | null {
-  const tree = gitRead(root, ['ls-tree', '-z', 'HEAD', '--', relPath]);
+  const tree = gitRead(root, ['ls-tree', '-z', 'HEAD', '--', ...literalPathspecs([relPath])]);
   if (!tree || !/^(100644|100755|120000) blob /.test(tree)) return null;
-  const flag = gitRead(root, ['ls-files', '-z', '-v', '--', relPath])?.charAt(0);
+  const flag = gitRead(root, ['ls-files', '-z', '-v', '--', ...literalPathspecs([relPath])])?.charAt(0);
   return hold('absent_from_worktree', flag === 'S' ? 'skip_worktree' : 'deleted_locally', relPath);
 }
 

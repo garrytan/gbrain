@@ -39,6 +39,7 @@ import { requirePostgresTestDatabase, testBackends } from './helpers/test-backen
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import { withManagedFixtureWrite } from './helpers/managed-e2e-fixture-write.ts';
+import { durableGitRepo, git } from './helpers/git-publication.ts';
 
 const STORED = { source_kind: 'webhook', ingested_via: 'webhook', ingested_at: '2026-01-02T03:04:05.000Z' };
 const stampsOf = (fm: Record<string, unknown>) => ({ source_kind: fm.source_kind, ingested_via: fm.ingested_via, ingested_at: fm.ingested_at });
@@ -236,6 +237,83 @@ for (const kind of testBackends()) {
           expect(fs.readFileSync(fileOf(slug), 'utf8')).toBe(before);
         } finally {
           await engine.executeRaw(`UPDATE sources SET local_path = NULL, config = config - 'managed_clone' WHERE id = 'default'`);
+        }
+      }, 120_000);
+
+      test.skipIf(!repo)('#7960: a database commit that fails after the page file was committed puts the file and HEAD back; both sides stay unchanged', async () => {
+        const slug = 'inbox/commit-fails';
+        const rel = `${slug}.md`;
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        durableGitRepo(brainDir, [rel]);
+        const before = { file: fs.readFileSync(fileOf(slug), 'utf8'), head: git(brainDir, 'rev-parse', 'HEAD').trim(), tier: await tierOf(slug), revision: (await page(slug)).revision };
+        const dry = await run(false);
+        expect(dry.affected).toBe(1);
+        const outer = engine;
+        const transaction = Object.getPrototypeOf(outer).transaction as BrainEngine['transaction'];
+        let forced = false;
+        outer.transaction = async function (this: BrainEngine, fn: (tx: BrainEngine) => Promise<unknown>, opts?: Parameters<BrainEngine['transaction']>[1]) {
+          if (this !== outer) return transaction.call(this, fn, opts);
+          return transaction.call(outer, async tx => {
+            const result = await fn(tx);
+            if (!forced && fs.readFileSync(fileOf(slug), 'utf8') !== before.file) { forced = true; throw new Error('forced database commit failure'); }
+            return result;
+          }, opts);
+        } as BrainEngine['transaction'];
+        try {
+          await run(true, { expect: dry.preview_hash }).catch(() => undefined);
+        } finally { delete (outer as { transaction?: unknown }).transaction; }
+        expect(forced).toBe(true);
+        expect({ file: fs.readFileSync(fileOf(slug), 'utf8'), headFile: git(brainDir, 'show', `HEAD:${rel}`), status: git(brainDir, 'status', '--porcelain').trim(),
+          tier: await tierOf(slug), revision: (await page(slug)).revision, proposals: await proposals(slug) })
+          .toEqual({ file: before.file, headFile: before.file, status: '', tier: before.tier, revision: before.revision, proposals: [] });
+        expect(git(brainDir, 'rev-list', '--count', `${before.head}..HEAD`).trim()).toBe('2');
+      }, 120_000);
+
+      test.skipIf(!repo)('#7960: a database commit that landed but whose acknowledgment was lost keeps the repaired file and its commit', async () => {
+        const slug = 'inbox/commit-ack-lost';
+        const rel = `${slug}.md`;
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        durableGitRepo(brainDir, [rel]);
+        const before = { file: fs.readFileSync(fileOf(slug), 'utf8'), head: git(brainDir, 'rev-parse', 'HEAD').trim(), revision: (await page(slug)).revision };
+        const dry = await run(false);
+        expect(dry.affected).toBe(1);
+        const outer = engine;
+        const transaction = Object.getPrototypeOf(outer).transaction as BrainEngine['transaction'];
+        let repaired = null as string | null;
+        outer.transaction = async function (this: BrainEngine, fn: (tx: BrainEngine) => Promise<unknown>, opts?: Parameters<BrainEngine['transaction']>[1]) {
+          const result = await transaction.call(this, fn, opts);
+          if (this === outer && repaired === null && fs.readFileSync(fileOf(slug), 'utf8') !== before.file) {
+            repaired = fs.readFileSync(fileOf(slug), 'utf8');
+            throw new Error('forced lost COMMIT acknowledgment');
+          }
+          return result;
+        } as BrainEngine['transaction'];
+        try {
+          await run(true, { expect: dry.preview_hash }).catch(() => undefined);
+        } finally { delete (outer as { transaction?: unknown }).transaction; }
+        expect(repaired).not.toBeNull();
+        expect(repaired).not.toBe(before.file);
+        expect({ file: fs.readFileSync(fileOf(slug), 'utf8'), headFile: git(brainDir, 'show', `HEAD:${rel}`), status: git(brainDir, 'status', '--porcelain').trim() })
+          .toEqual({ file: repaired!, headFile: repaired!, status: '' });
+        expect((await page(slug)).revision).not.toBe(before.revision);
+        expect(git(brainDir, 'rev-list', '--count', `${before.head}..HEAD`).trim()).toBe('1');
+      }, 120_000);
+
+      test.skipIf(!repo)('#7098: a page of a source marked mirror-readonly is listed needs_review, not repaired in the database alone', async () => {
+        const slug = 'inbox/read-only-mirror';
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        const before = fs.readFileSync(fileOf(slug), 'utf8');
+        await engine.executeRaw(`UPDATE sources SET config = COALESCE(config, '{}'::jsonb) || '{"mirror_read_only":true}'::jsonb WHERE id = 'default'`);
+        try {
+          const dry = await run(false);
+          expect(dry.affected).toBe(0);
+          expect(dry.listing.map((entry: Record<string, string>) => [entry.class, entry.detail])).toEqual([['needs_review', expect.stringContaining('mirror_read_only')]]);
+          expect(fs.readFileSync(fileOf(slug), 'utf8')).toBe(before);
+        } finally {
+          await engine.executeRaw(`UPDATE sources SET config = config - 'mirror_read_only' WHERE id = 'default'`);
         }
       }, 120_000);
 

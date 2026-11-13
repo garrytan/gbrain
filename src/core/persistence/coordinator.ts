@@ -16,10 +16,10 @@ import { acquireWorktree, getWorktreeBinding, guardOwnership, type WorktreeBindi
 import { chargePreparationAttempt, clearResolvedRecovery, completeWrite, getWriteRequestById, lockCounters, markRecovering, prepareRecovery, releaseUnpublishedClaim } from './journal.ts';
 import type { WaitingOn } from './claim-phase.ts';
 import { PREPARATION_BUDGET_KEYS, preparationKind } from './preparation-budget.ts';
-import { chargeTransientInterruption, chargedInterruptionDetail, transientInterruption, type TransientInterruption } from './transient-retry.ts';
+import { chargeTransientInterruption, chargedInterruptionDetail, connectionCapFailure, transientDatabaseFailure, transientInterruption, type TransientInterruption } from './transient-retry.ts';
+export { connectionCapFailure, transientDatabaseFailure } from './transient-retry.ts';
 import { readWriteSwitchSnapshot } from './switches.ts';
 import { isSharedReadFailure } from './bounded-reads.ts';
-import { isStalePlanError } from '../retry-matcher.ts';
 import { isBundleRecovery, isTerminal, PAGES_RECOVERY_MAX_FILES, principalKey, requestPrincipal, recoveryFiles, type FileRecoveryRecord, type RecoveryRecord, type WriteRequest } from './model.ts';
 import { isLockOpenFailure, noteLockOpenFailure, type NativeLockHandle } from './native-lock.ts';
 import { withCoordinatedWrite } from './context.ts';
@@ -48,7 +48,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -57,7 +57,6 @@ import { recordPublicationFenceTrend } from '../fence-repair/census-store.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
 import { publicationBeliefOptions, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
-import { classifyPgAccessError } from '../pg-access-classify.ts';
 import { commitThroughDoor, doorCommitLanded, doorMarker, replayAfterDoorCommit, sourceCanonicalGit, strictChanged } from './git-door.ts';
 import { assertNoPrivateCommit, declareStrictPublication } from './git-declared.ts';
 
@@ -233,7 +232,7 @@ function requestError(error: unknown): PublicationFailure {
   if (error instanceof OperationError) {
     // #6188: a typed fence refusal keeps its location in the bounded detail, which outlives receipt compaction.
     const detail = fenceFailureDetail(error) ?? withdrawalFailureDetail(error) ?? (error.syncRefusal as PublicationFailure['detail'] | undefined)
-      ?? (error.detail === CANONICAL_FILE_MISSING ? { origin: CANONICAL_FILE_MISSING } : undefined)
+      ?? (error.detail === CANONICAL_FILE_MISSING || error.detail === GRANDFATHER_RETIRED ? { origin: error.detail } : undefined)
       ?? ((CHECKOUT_REFUSAL_ORIGINS as readonly unknown[]).includes(error.detail) ? { origin: error.detail as CheckoutRefusalOrigin } : undefined)
       // #6693: a refusal on a page whose file awaits import or is held by sync; the replay after import selects on it.
       ?? (error.code === 'source_changed' && (error.reason === PENDING_IMPORT || error.reason === SYNC_HELD) ? { origin: error.reason } : undefined)
@@ -254,17 +253,6 @@ function requestError(error: unknown): PublicationFailure {
 function conflictCode(code: string): boolean { return ['revision_required','revision_conflict','revision_backfill_pending','source_changed','page_identity_changed',SYNC_CURSOR_REPLACED,SYNC_PASS_SUPERSEDED].includes(code); }
 /** The terminal state of an unpublished failure: `admission_paused` (#6712 PR 4b, a destructive write `sync.admission` paused at publication) is `cancelled`. */
 function failureState(code: string): 'conflict' | 'failed' | 'cancelled' { return code === 'admission_paused' ? 'cancelled' : conflictCode(code) ? 'conflict' : 'failed'; }
-export function transientDatabaseFailure(error: unknown): boolean {
-  return ['40001','40P01','55P03','57014','53300','57P01','57P02','57P03','08000','08003','08006','08001','08004',
-    'ECONNRESET','ECONNREFUSED','ETIMEDOUT','CONNECTION_CLOSED','CONNECTION_ENDED'].includes(String((error as {code?:string})?.code)) || connectionCapFailure(error) || isStalePlanError(error);
-}
-/**
- * GBRA-133: a pooler's client cap (Supavisor `EMAXCONNSESSION`, "too many clients already") is the same contention as
- * SQLSTATE 53300 whatever code the pooler sends with it, so a write that meets it is released, never failed terminally.
- */
-export function connectionCapFailure(error: unknown): boolean {
-  return classifyPgAccessError(error).reason === 'pool_exhausted';
-}
 /**
  * Flip lane C: the shared-read failures (`sharedReadFailure`) already charged. A group's memoized read the database cancelled
  * ran once, for the whole group, and every member waiting on it gets the same failure: it is charged once, to the first
@@ -431,7 +419,7 @@ export function decoratePublicationOutcome(row: WriteRequest, prepared: Prepared
   outcome.write_through = fileCount ? { written: !prepared.noop, ...(row.authority.heldFor ? { held_for: row.authority.heldFor } : {}) }
     : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
   if (prepared.databaseOnlyReason === 'mirror_read_only') outcome.storage = 'database_only';
-  if ((row.operation === 'put_page' || row.operation === 'edit_page' || row.operation === 'append_page') && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
+  if ((row.operation === 'put_page' || row.operation === 'edit_page' || row.operation === 'append_page') && row.authority.remote && (row.authority.databaseOnlyReason === 'no_repo_configured' || row.authority.databaseOnlyReason === 'relative_root')) outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
   if ((outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {
     outcome.write_through = { ...outcome.write_through as object, warning: unboundWriteWarning(row.operation, row.source_id, row.authority.databaseOnlyReason === 'unbound_source') };
   }
@@ -881,14 +869,19 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       // Withdrawal is authoritative DB state and is never rolled back here.
       const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
         ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
+      // GST-2517: a door commit that landed in this attempt put the write in Git, so the row follows by replay unless the door
+      // itself refused after landing (a git_* code, whose receipt names the commit); the replay makes no second commit, so a
+      // failure of its own is final.
+      const replayLanded = landed !== null && !failure?.code.startsWith('git_');
       // #8767: so is a local edit adoption's own commit (local-edit-adoption.ts), on a failure and on the requeued replay.
       landed ??= adoption?.landed ?? null;
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
-      if (failure) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
+      if (failure && !replayLanded) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
       for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(current.recovery_bytes)]);
       const [queued] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='queued',execution_token=NULL,
-        claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),updated_at=now()
+        claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),
+        ${failure ? 'error_code=NULL,error_message=NULL,error_detail=NULL,' : ''}updated_at=now()
         WHERE id=$1::uuid RETURNING *`, [id, kept ? JSON.stringify(kept) : null]);
       return queued;
     });

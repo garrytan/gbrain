@@ -20,6 +20,8 @@ test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts
 test/access-folder-scoped-role.test.ts
 test/access-hidden-page-writes.test.ts
+test/access-labelled-only-fail-closed.test.ts
+test/access-labelled-only.test.ts
 test/access-member-facts.test.ts
 test/access-member-sweep.test.ts
 test/access-members-read-lineage.test.ts
@@ -79,6 +81,7 @@ test/cycle/dream-reverse-write-commit.test.ts
 test/cycle/synthesize-concepts-merge.test.ts
 test/db-lock-reconnect.test.ts
 test/db-only-labels-gst2519.test.ts
+test/db-wins-unimported-gst2579.test.ts
 test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/derived-link-reconciliation.test.ts
@@ -92,6 +95,7 @@ test/doctor-routing-skill-pack-source.test.ts
 test/doctor-strict-facts-outside-git.test.ts
 test/doctor-sync-freshness-skill-pack-6076.test.ts
 test/edge-whitespace-twins.test.ts
+test/effect-commit-moved-head.test.ts
 test/embed-once-per-content-version.serial.test.ts
 test/embed-stale-images-managed-6529.test.ts
 test/embedding-completion-atomic.serial.test.ts
@@ -126,14 +130,17 @@ test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
 test/forecast-journal.test.ts
+test/forget-door-landed-gst2517.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
 test/g4-forget-fence-edit.test.ts
 test/gated-hold-strict-page-gst2535.test.ts
 test/get-chunks-paging.test.ts
+test/ghost-pages-git-canonical-7967.test.ts
 test/git-canonical-conversion-evidence-d4.test.ts
 test/git-canonical-conversion-g8a.test.ts
 test/git-canonical-conversion-live-writer.test.ts
 test/git-canonical-conversion-no-checkout-7885.test.ts
+test/git-canonical-conversion-owner-root-7956.test.ts
 test/git-canonical-conversion-progress.test.ts
 test/git-canonical-conversion-strict-pass-7866.test.ts
 test/git-canonical-declared-g7a.test.ts
@@ -336,6 +343,7 @@ test/migration-0-53-host-move-7900.test.ts
 test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
+test/mirror-readonly-write-through-7098.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
@@ -498,6 +506,7 @@ test/persistence-write-interrupted.test.ts
 test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
+test/physical-root-copied-brain-fix-7671.test.ts
 test/physical-root-moved-8625.test.ts
 test/privacy-label-ignored.test.ts
 test/provenance-drift-7891.test.ts
@@ -564,6 +573,7 @@ test/repair-rename-identity-6729.test.ts
 test/repair-secret-spans.test.ts
 test/repair-unwithdrawn-facts-8819.test.ts
 test/request-tools-combined-gbra449.test.ts
+test/requester-scope.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts
@@ -595,6 +605,7 @@ test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
 test/source-lifecycle-dry-run-physical-root-6849.test.ts
+test/source-purge-stranded-pages-7072.test.ts
 test/source-retire-missing-checkout.test.ts
 test/source-row-diagnostics.test.ts
 test/sources-git-reconcile.test.ts

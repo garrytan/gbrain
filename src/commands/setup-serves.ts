@@ -14,7 +14,7 @@
  *     member, one bound key per member in a 0600 file) and proves the labels with one bound read per member
  *     per other member (`gbrain find people/<other>/ --as <member> --json`): none returns a page.
  */
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
@@ -27,12 +27,24 @@ export interface ServesFlags { serves?: 'one' | 'several'; members?: string; mem
 /** GST-363: the --stdio-member this harness entry will carry (member) and the one it carries now (previous). */
 export interface EntryBinding { member: string | null; previous: string | null }
 
-/** A harness installed on this host whose stdio sessions serve several conversations (OpenClaw, Hermes), or null. */
+/**
+ * A harness installed on this host whose stdio sessions serve several conversations (OpenClaw, Hermes), or null.
+ * A `hermes` on PATH counts only as a script (the Hermes agent's launcher): React Native ships a compiled JavaScript
+ * engine under the same name.
+ */
 export function sharedStdioHarness(): string | null {
-  const onPath = (bin: string) => { try { return !!Bun.which(bin, { PATH: process.env.PATH ?? '' }); } catch { return false; } };
-  if (onPath('openclaw') || existsSync(openclawStateDir())) return 'OpenClaw';
-  if (onPath('hermes') || existsSync(process.env.HERMES_HOME?.trim() || join(homedir(), '.hermes'))) return 'Hermes';
+  const which = (bin: string) => { try { return Bun.which(bin, { PATH: process.env.PATH ?? '' }); } catch { return null; } };
+  if (which('openclaw') || existsSync(openclawStateDir())) return 'OpenClaw';
+  if (isScript(which('hermes')) || existsSync(process.env.HERMES_HOME?.trim() || join(homedir(), '.hermes'))) return 'Hermes';
   return null;
+}
+
+function isScript(path: string | null): boolean {
+  if (!path) return false;
+  try {
+    const fd = openSync(path, 'r');
+    try { const head = Buffer.alloc(2); return readSync(fd, head, 0, 2, 0) === 2 && head.toString('latin1') === '#!'; } finally { closeSync(fd); }
+  } catch { return false; }
 }
 
 export interface ProofLine { member: string; own: number; leaked: string[] }
@@ -158,7 +170,7 @@ export function servesApply(flags: ServesFlags, launcher: string, harness: strin
   const reread = several && !flags.dryRun ? readServesStatus(launcher) : null;
   const status = reread ? ('status' in reread ? reread.status : null) : plan.status;
   const preview = several && flags.dryRun && status?.serves !== 'several';
-  const view: ServesStatus | null = preview ? { serves: 'several', from: 'config', enabled_members: plan.roster, owner: null, stdio_member: status?.stdio_member ?? null } : status;
+  const view: ServesStatus | null = preview ? { serves: 'several', from: 'config', enabled_members: plan.roster, since: null, owner: null, stdio_member: status?.stdio_member ?? null } : status;
   const stdio = bindStdio(harness, view, entry, flags.dryRun);
   if (!labelled && !stdio) return null;
   const outcome: ServesOutcome = { ...(labelled ?? { mode: 'one' as const }), brain_serves: 'one', ...(stdio ? { stdio } : {}),

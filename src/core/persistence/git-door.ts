@@ -11,7 +11,9 @@
  * `hash-object -w -t tree`, which refuses a malformed tree), `commit-tree` writes the commit with the porcelain path's
  * message (`commitMessage`), and `update-ref <branch> <new> <old>` moves the branch only if it still names the HEAD the
  * commit was built on. A branch that moved meanwhile (a commit made in the checkout) is read again and the commit
- * rebuilt once; a second move refuses, so the publication rolls back. The checkout's index then gets exactly the
+ * rebuilt once; a second move refuses, so the publication rolls back. GST-2552: a move that changed a target (a commit
+ * of the same file) refuses `git_target_changed` instead, since the planned blob was hashed before that commit and would
+ * silently revert it. The checkout's index then gets exactly the
  * published entries (`update-index --cacheinfo` / `--force-remove`): `git status` shows them clean, a later commit from
  * that index keeps them, and every other entry, staged or not, is left as it was.
  *
@@ -39,8 +41,8 @@
  * once through publishGroup.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { closeSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { closeSync, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { Notice } from '../agent-output.ts';
 import { literalPathspecs } from '../git-env.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -74,8 +76,16 @@ export function strictChanged(sourceId: string): OperationError {
     'Retry the write with a new request_id.');
 }
 
-/** Test seam: runs after a door commit is written and before the compare-and-swap that moves the branch to it. */
-export const doorSeams: { beforeUpdateRef?: (root: string, attempt: number) => Promise<void> | void } = {};
+/**
+ * Test seams: `beforeUpdateRef` runs after a door commit is written and before the compare-and-swap that moves the branch to it;
+ * `indexLockHeld` runs while the index refresh holds `index.lock` open, after the index copy is updated and before it is renamed.
+ */
+export const doorSeams: { beforeUpdateRef?: (root: string, attempt: number) => Promise<void> | void; indexLockHeld?: (lock: string) => Promise<void> | void } = {};
+
+/** Test seam: the descriptor close and renames that commit a refreshed index, and the platform that decides whether a rename is retried. */
+export const indexCommitIo: { close: (fd: number) => void; rename: (from: string, to: string) => void; platform: NodeJS.Platform } = {
+  close: closeSync, rename: renameSync, platform: process.platform,
+};
 
 const doorTurns = new Map<string, Promise<void>>();
 /** Refusals that keep their own code: the checkout's state, not the commit, stopped the write. */
@@ -206,6 +216,12 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
     target.note ??= file.note;
     targets.set(rel, target);
   }
+  const start = await git(session, ['rev-parse', '-q', '--verify', `${branch}^{commit}`]);
+  const committed = async (commit: string) => {
+    const tree = await git(session, ['ls-tree', '-r', '--full-name', '-z', commit, '--', ...literalPathspecs([...targets.keys()])]);
+    if (tree.code !== 0) throw gitFailure('Cannot read the canonical Git tree.', `git ls-tree could not read ${commit}.`);
+    return new Map(tree.stdout.split('\0').filter(Boolean).map(record => [record.slice(record.indexOf('\t') + 1), record.slice(0, record.indexOf('\t'))] as const));
+  };
   refuseChanged(root, targets.values());
   const present = [...targets.values()].filter(target => existsSync(join(root, target.rel)));
   if (present.length) {
@@ -222,10 +238,19 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
   const scratch = mkdtempSync(join(temp, 'commit-'));
   try {
     for (let attempt = 0; ; attempt++) {
-      const resolved = await git(session, ['rev-parse', '-q', '--verify', `${branch}^{commit}`]);
+      // The first attempt builds on the HEAD read before the files were hashed; a later one reads the moved branch again.
+      const resolved = attempt ? await git(session, ['rev-parse', '-q', '--verify', `${branch}^{commit}`]) : start;
       if (resolved.code !== 0) throw opError('git_branch_unborn', `Branch ${branch} in ${root} has no commit yet, so the strict source's write has nothing to commit on; nothing was published.`,
         'Make the first commit on the branch with git on the brain host, then retry the write with a new request_id.');
       const head = resolved.stdout.trim();
+      if (head !== start.stdout.trim()) {
+        const [before, now] = [await committed(start.stdout.trim()), await committed(head)];
+        const moved = [...targets.values()].filter(target => {
+          const key = `${prefix}${target.rel}`, entry = now.get(key);
+          return entry !== before.get(key) && (target.oid ? !entry?.endsWith(` ${target.oid}`) : entry !== undefined);
+        }).map(target => target.rel);
+        if (moved.length) throw targetChanged(root, moved, 'changed in a commit that landed while this write was being committed');
+      }
 
       // The directories along every target path, read from HEAD level by level; only the named entries are decoded.
       const want = new Map<string, string[]>([['', []]]);
@@ -267,11 +292,11 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
         target.head = before && before.mode !== TREE_MODE ? `${indexMode} ${before.oid.toString('hex')}` : undefined;
         if (target.oid) {
           if (!before || before.mode === TREE_MODE) fresh.push(target);
-          if (before && /^100[0-7]{3}$/.test(before.mode) && target.mode !== before.mode) {
+          if (before && /^100[0-7]{3}$/.test(before.mode) && target.mode !== indexMode) {
             fileModeTrusted ??= (await git(session, ['config', '--type=bool', '--default=true', 'core.fileMode'])).stdout.trim() !== 'false';
-            if (!fileModeTrusted) target.mode = before.mode;
+            if (!fileModeTrusted) target.mode = indexMode;
           }
-          if (before && before.mode === target.mode && before.oid.toString('hex') === target.oid) continue;
+          if (before && indexMode === target.mode && before.oid.toString('hex') === target.oid) continue;
           dir.edits.set(target.name, { mode: target.mode!, oid: Buffer.from(target.oid, 'hex') });
         } else {
           if (!before || before.mode === TREE_MODE) continue;
@@ -285,7 +310,7 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
       if (staged.length) {
         const replaced = await replacedEntries(session, head, staged);
         const foreign = staged.filter(target => indexed.entries.get(target.rel) !== replaced.get(target.rel));
-        if (foreign.length) throw indexConflict(root, foreign);
+        if (foreign.length) throw indexConflict(root, foreign, !changed.length);
       }
       const restored = () => { if (staged.length) onIndexRestored?.(staged.map(target => target.rel)); };
       if (!changed.length) {
@@ -365,21 +390,31 @@ export function indexRestoredNotice(paths: string[]): Notice {
 /** The targets whose file no longer holds its planned state (its bytes, or no file for a removal) refuse as `git_target_changed`. */
 function refuseChanged(root: string, targets: Iterable<Target>): void {
   const moved = [...targets].filter(target => { try { return hashFile(join(root, target.rel)) !== target.planned; } catch { return true; } }).map(target => target.rel);
-  if (!moved.length) return;
-  throw opError('git_target_changed', `${moved.join(', ')} in ${root} no longer holds the bytes this write published, so nothing was committed and the write was not published.`,
-    'Another process changed the file during the write. If the file now holds neither this write\'s bytes nor the version before it, recovery leaves it as it is and holds the write, so the source\'s later writes wait: preview with gbrain repair stuck-recovery --json, ask the user which version to keep, then apply that choice with the --keep, --expect and --apply --yes flags the preview lists (--keep disk keeps the edit). If it holds the version before the write, nothing is held and the write failed; read the page before resubmitting it with a new request_id.', { detail: moved.join(',') });
+  if (moved.length) throw targetChanged(root, moved, 'no longer holds the bytes this write published');
 }
 
-/** Targets whose index entry differs from HEAD's and from the version their path's last commit replaced (a staged change, or a merge conflict) refuse as `git_index_conflict`. */
-function indexConflict(root: string, staged: Target[]): OperationError {
+function targetChanged(root: string, moved: string[], what: string): OperationError {
+  return opError('git_target_changed', `${moved.join(', ')} in ${root} ${what}, so nothing was committed and the write was not published.`,
+    'Another process changed the file during the write. If the file now holds neither this write\'s bytes nor the version before it, recovery leaves it as it is and holds the write, so the source\'s later writes wait: preview with gbrain repair stuck-recovery --json (--source with the write\'s source lists only its held writes), ask the user which version to keep, then apply that choice with the --keep, --expect and --apply --yes flags the preview lists (--keep disk keeps the edit). If it holds the version before the write, nothing is held and the write failed. If it holds this write\'s bytes again by the time recovery runs, recovery restores the version before it and the write failed, with nothing held. After a failure, read the page before resubmitting it with a new request_id.', { detail: moved.join(',') });
+}
+
+/**
+ * Targets whose index entry differs from HEAD's and from the version their path's last commit replaced (a staged change, or a merge conflict) refuse as
+ * `git_index_conflict`. `atHead`: HEAD already holds every target in its planned state (a replay after its own commit landed), so the refusal says so.
+ */
+function indexConflict(root: string, staged: Target[], atHead: boolean): OperationError {
   const paths = staged.map(target => target.rel);
-  return opError('git_index_conflict', `${paths.join(', ')} in ${root} has a staged change that is not committed, so this write committed nothing and the index was left as it was.`,
-    'Commit the staged change, or unstage it (git restore --staged -- <path> keeps the file on disk), then retry the write with a new request_id.', {
+  return opError('git_index_conflict', atHead
+    ? `${paths.join(', ')} in ${root} has a staged change that is not committed. HEAD already holds this write's bytes (committed earlier), so there was nothing to commit and the index was left as it was.`
+    : `${paths.join(', ')} in ${root} has a staged change that is not committed, so this write committed nothing and the index was left as it was.`,
+    atHead ? 'Git holds the write; the source\'s next sync imports it into the page. Commit the staged change, or unstage it (git restore --staged -- <path> keeps the file on disk).'
+      : 'Commit the staged change, or unstage it (git restore --staged -- <path> keeps the file on disk), then retry the write with a new request_id.', {
       detail: paths.join(','),
-      fix: { ask_user: true, argv: ['git', '-C', root, 'restore', '--staged', '--', ...paths], consent: [], actor: 'user', requires_exclusive: false,
+      fix: { ask_user: true, argv: ['git', '-C', root, 'restore', '--staged', '--', ...literalPathspecs(paths)], consent: [], actor: 'user', requires_exclusive: false,
         why: 'The door commits a path only while its index entry equals HEAD\'s, so a staged change is never overwritten or committed under a gbrain commit. Unstaging keeps the file on disk; committing it publishes that change.',
-        user_message: `${paths.join(', ')} in ${root} has a staged change that is not committed, so gbrain did not commit its write there. Commit the staged change, or unstage it (its bytes stay on disk), then retry the write?`,
-        verify: { argv: ['git', '-C', root, 'diff', '--cached', '--name-only', '--', ...paths] } },
+        user_message: atHead ? `${paths.join(', ')} in ${root} has a staged change that is not committed; gbrain's write is already in HEAD. Commit the staged change, or unstage it (its bytes stay on disk)?`
+          : `${paths.join(', ')} in ${root} has a staged change that is not committed, so gbrain did not commit its write there. Commit the staged change, or unstage it (its bytes stay on disk), then retry the write?`,
+        verify: { argv: ['git', '-C', root, 'diff', '--cached', '--name-only', '--', ...literalPathspecs(paths)] } },
     });
 }
 
@@ -451,6 +486,7 @@ async function syncIndex(session: GitSession, root: string, prefix: string, inde
     held = fd !== null;
     if (!held) failure = `Unable to create '${lock}': File exists; another git process holds the index lock${reclaimed === true ? '' : ` (not reclaimed: ${reclaimed})`}`;
     if (held) {
+      sweepIndexCopies(index);
       const moved = indexSignature(index) !== seen.signature;
       // Git never rewrites an index in place (it writes <file>.lock and renames it), so a hard link is a safe copy.
       if (existsSync(index)) try { linkSync(index, copy); } catch { copyFileSync(index, copy); }
@@ -464,13 +500,22 @@ async function syncIndex(session: GitSession, root: string, prefix: string, inde
         const updated = await git({ ...session, indexFile: copy }, ['update-index', '--add', '--force-write-index', ...kept.flatMap(target => ['--cacheinfo', `${target.mode},${target.oid},${prefix}${target.rel}`]),
           ...(removed.length ? ['--force-remove', '--', ...removed.map(target => target.rel)] : [])]);
         if (updated.code !== 0) failure = updated.stderr.trim().slice(0, 300) || `exit ${updated.code}`;
-        else { closeSync(fd!); fd = null; renameSync(copy, lock); renameSync(lock, index); held = false; }
+        else {
+          await doorSeams.indexLockHeld?.(lock);
+          const open = fd!;
+          fd = null;
+          indexCommitIo.close(open);
+          await renameIndex(copy, lock);
+          await renameIndex(lock, index);
+          held = false;
+        }
       }
     }
   } catch (error) { failure = error instanceof Error ? error.message : String(error); }
   finally {
-    if (fd !== null) closeSync(fd);
+    if (fd !== null) try { closeSync(fd); } catch { /* the descriptor is released whether or not close reports an error */ }
     rmSync(copy, { force: true });
+    rmSync(`${copy}.lock`, { force: true });
     if (held) rmSync(lock, { force: true });
   }
   if (!failure && !restaged.length) return;
@@ -481,6 +526,40 @@ async function syncIndex(session: GitSession, root: string, prefix: string, inde
       'Git holds the write, and the staged change was not overwritten; git diff --cached -- <path> in that checkout shows it against the new commit. Commit it, or unstage it with git restore --staged -- <path> (the file stays on disk).');
   landedFailures.add(error);
   throw error;
+}
+
+const RENAME_RETRY_MS = [1, 10, 20, 40, 100];
+const SHARING_VIOLATIONS = new Set(['EPERM', 'EBUSY', 'EACCES']);
+
+/**
+ * Renames a refreshed index into place. On win32 a sharing violation (an indexer, antivirus or a reader holding the file for a moment) is
+ * retried with a short backoff, as Git for Windows retries its own index rename (#7756); elsewhere the first failure stands.
+ */
+async function renameIndex(from: string, to: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { indexCommitIo.rename(from, to); return; } catch (error) {
+      if (indexCommitIo.platform !== 'win32' || attempt >= RENAME_RETRY_MS.length || !SHARING_VIOLATIONS.has((error as NodeJS.ErrnoException).code ?? '')) throw error;
+    }
+    await new Promise(done => setTimeout(done, RENAME_RETRY_MS[attempt]));
+  }
+}
+
+const processGone = (pid: number) => {
+  try { process.kill(pid, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH'; }
+};
+
+/**
+ * Removes the index copies (`<index>.gbrain-<pid>-<random>`, and the Git lock of one) a refresh left when its process was killed before its
+ * cleanup (#7755), once that process is gone. Runs while the caller holds `index.lock`, which every refresh holds while its copy exists.
+ */
+function sweepIndexCopies(index: string): void {
+  const dir = dirname(index), stem = `${basename(index)}.gbrain-`;
+  let names: string[];
+  try { names = readdirSync(dir); } catch { return; }
+  for (const name of names) {
+    const pid = name.startsWith(stem) ? /^(\d+)-[0-9a-f]{12}(?:\.lock)?$/.exec(name.slice(stem.length))?.[1] : undefined;
+    if (pid && processGone(Number(pid))) try { rmSync(join(dir, name), { force: true }); } catch { /* best effort: a leftover never fails the refresh */ }
+  }
 }
 
 /** Whether the working tree and HEAD both hold the record's published state at its path (its bytes, or no entry for a removal). */
