@@ -193,6 +193,16 @@ function helper(f: Fixture, cli: boolean, ...args: string[]) {
     env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: f.home, GBRAIN_HOME: f.home, GBRAIN_SKIP_STARTUP_HOOKS: '1', ...identity } });
 }
 
+test('#7793: helper without gbrain commits a named page when git exported GIT_LITERAL_PATHSPECS=1 to it', () => {
+  const f = fixture('helper-literal', 'remoteless');
+  helper(f, false);
+  writeFileSync(join(f.brain, 'people', 'bob-example.md'), page('Bob', 'Second version.'));
+  const r = spawnSync('bash', [join(f.brain, 'scripts', 'brain-commit-push.sh'), 'write pages', 'people/bob-example.md'], { cwd: f.brain, encoding: 'utf8', timeout: 60_000,
+    env: { PATH: '/usr/local/bin:/usr/bin:/bin', HOME: f.home, GBRAIN_HOME: f.home, GBRAIN_SKIP_STARTUP_HOOKS: '1', GIT_LITERAL_PATHSPECS: '1', ...identity } });
+  expect(r.stderr).not.toContain('did not match');
+  expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
+}, 60_000);
+
 test('helper without gbrain: a skipped path fails loudly instead of printing nothing to commit and exiting 0', () => {
   const f = fixture('helper-fallback', 'classic');
   editHidden(f, 'people/alice-example.md');

@@ -4,7 +4,7 @@
  * coverage lives in test/e2e/sources-remote-mcp.test.ts.
  */
 
-import { test, expect, describe, beforeAll, afterAll, beforeEach } from 'bun:test';
+import { test, expect, describe, beforeAll, afterAll, beforeEach, spyOn } from 'bun:test';
 import {
   mkdirSync,
   writeFileSync,
@@ -1343,6 +1343,24 @@ describe('#7630 — a relative clone local_path never names the current director
       expect(threw?.message).toContain('gbrain sources set-path rel-reclone');
       expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
       expect(readdirSync(dir)).toEqual(['KEEP_ME.md']);
+    });
+  });
+
+  // #7646: the skipped cleanup is reported in the result (remote sources_remove sees only that) and the warning names gbrain's
+  // own clone directory, which a later sources add <id> --url refuses while it holds files.
+  test('removeSource reports clone_skipped_reason and names the clone directory it left', async () => {
+    await insideRelativeClone('rel-orphan', { remote_url: 'https://github.com/example/repo', managed_clone: true }, async dir => {
+      const cloneDir = defaultCloneDir('rel-orphan');
+      mkdirSync(cloneDir, { recursive: true });
+      writeFileSync(join(cloneDir, 'README.md'), 'the clone gbrain made');
+      const errors: string[] = [];
+      const spy = spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errors.push(a.map(String).join(' ')); });
+      let result: Awaited<ReturnType<typeof removeSource>>;
+      try { result = await removeSource(engine, { id: 'rel-orphan', confirmDestructive: true }); } finally { spy.mockRestore(); }
+      expect(result).toMatchObject({ clone_removed: false, clone_skipped_reason: 'relative_path' });
+      expect(errors.join('\n')).toContain(`gbrain's clone directory for this source is ${cloneDir}`);
+      expect(existsSync(join(cloneDir, 'README.md'))).toBe(true);
+      expect(existsSync(join(dir, 'KEEP_ME.md'))).toBe(true);
     });
   });
 });

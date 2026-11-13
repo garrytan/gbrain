@@ -740,6 +740,14 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### client_behind
+
+<a id="client_behind"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Schema setup (initSchema, which gbrain init, init --migrate-only and upgrade run, and apply-migrations before its orchestrators) refused because the brain's schema version is newer than this gbrain binary's newest migration; nothing in its schema ran and nothing changed. | initSchema replays the binary's whole schema, CREATE OR REPLACE FUNCTION included, before it runs migrations. An older binary sharing the database with a newer one (another host, a lagging cron running apply-migrations or upgrade) used to reinstall its own superseded function bodies, the writer-fence guards among them, over the newer ones and then apply nothing (#7776). Reads do not run schema setup and keep working on the older binary; doctor schema_function_bodies names bodies an older replay already reverted. | Upgrade gbrain on this host (gbrain upgrade) to the release that migrated the database or newer, then rerun the command. Run: gbrain doctor --only schema_version --json | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### client_json_unreadable
 
 <a id="client_json_unreadable"></a>
@@ -1938,7 +1946,7 @@ More: [docs/guides/write-refusals.md#file_too_large](../../docs/guides/write-ref
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Sync held one file because it is not a readable regular file inside the source root (a symlink, a non-regular file or a permission error); the rest of the source synced. | Sync reads only regular files inside the source root and never follows a symlink, which can point anywhere on the host. The file waits in the hold store instead of failing the run, so it never blocks the source, and classic sync re-screens it on every run. | Replace the symlink with the regular file (or delete it), make the file readable to the account gbrain runs as, or leave it out with sync.exclude; the next gbrain sync --source <source> --no-pull re-screens it. | agent | `repeat the read that failed` | 1 | no |
+| Sync held one file because it is not a readable regular file inside the source root (a symlink, a non-regular file or a permission error); the rest of the source synced. | Sync reads only regular files inside the source root and never follows a symlink, which can point anywhere on the host. The file waits in the hold store instead of failing the run, so it never blocks the source, and classic sync re-screens it on every run. | Replace the symlink with the regular file (or delete it), make the file readable to the account that runs gbrain, or leave it out with sync.exclude; the next gbrain sync --source <source> --no-pull re-screens it. | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `symlink_in_repo`, `symlink_outside_root`, `symlink_dangling`, `symlink_loop`, `permission_denied`, `not_regular_file`.
 
@@ -2124,7 +2132,7 @@ More: [docs/guides/git-canonical.md#approval-across-time](../../docs/guides/git-
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A git-canonical conversion stopped because its strict pass did not finish, or finished with work left after the flag was set. | The conversion runs a full strict-equivalent pass before it sets canonical: git, and one genuine strict pass after, then up to three closing strict passes while only door commits a live writer landed meanwhile are left (Git ahead of the database). A pass that ends partial, blocked or deferred stops the conversion where it is: before the flag the source stays as it was, after it the source stays strict (Git wins) and the plan lists what is left. | Wait until gbrain sync status --source <id> --json shows the source idle, then preview again with gbrain sources canonical <id> --to git --dry-run and apply the new hash. | agent | `repeat the read that failed` | 1 | yes |
+| A git-canonical conversion stopped because its strict pass did not finish, finished with work left after the flag was set, or found the flag removed (a --to mixed apply) while it ran. | The conversion runs a full strict-equivalent pass before it sets canonical: git, and one genuine strict pass after, then up to three closing strict passes while only door commits a live writer landed meanwhile are left (Git ahead of the database). A pass that ends partial, blocked or deferred stops the conversion where it is: before the flag the source stays as it was, after it the source stays strict (Git wins) and the plan lists what is left. | Wait until gbrain sync status --source <id> --json shows the source idle, then preview again with gbrain sources canonical <id> --to git --dry-run and apply the new hash. | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/designs/GIT_CANONICAL_MEMORY.md#conversion](../../docs/designs/GIT_CANONICAL_MEMORY.md#conversion)
 
@@ -2250,7 +2258,7 @@ More: [docs/guides/write-refusals.md#git_protocol_required](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A strict (canonical: git) write's file changed on disk while it was being committed, so nothing was committed and the write was not published. | The door commits exactly the bytes the write published, and checks the file's hash against them before and after Git stores it. An edit landing in between would otherwise be committed while the database records other content; recovery leaves the changed file as it is. | When the file holds neither the write's bytes nor the version before it, the write is held in recovery (blocked reason unexpected_file_bytes) and the source's later writes wait behind it; when it holds the version before the write, nothing is held and the write failed, so read the page before resubmitting it with a new request_id. To resolve a held write, preview with gbrain repair stuck-recovery --source <id> --json, ask the user which version to keep, then run gbrain repair stuck-recovery --source <id> --keep disk\|prior --apply --expect <preview_hash> --yes (disk keeps the edit). Run: gbrain sources writer status --json | user | `repeat the read that failed` | 1 | no |
+| A strict (canonical: git) write's file changed on disk while it was being committed, so nothing was committed and the write was not published. | The door commits exactly the bytes the write published, and checks the file's hash against them before and after Git stores it. An edit landing in between would otherwise be committed while the database records other content; recovery leaves the changed file as it is. | When the file holds neither the write's bytes nor the version before it, the write is held in recovery (blocked reason unexpected_file_bytes) and the source's later writes wait behind it; when it holds the version before the write, nothing is held and the write failed; when it holds the write's own bytes again by the time recovery runs, recovery restores the version before the write and the write failed, with nothing held. After a failure, read the page before resubmitting it with a new request_id. To resolve a held write, preview with gbrain repair stuck-recovery --source <id> --json, ask the user which version to keep, then run gbrain repair stuck-recovery --source <id> --keep disk\|prior --apply --expect <preview_hash> --yes (disk keeps the edit). Run: gbrain sources writer status --json | user | `repeat the read that failed` | 1 | no |
 
 ### git_target_ignored
 
@@ -5074,6 +5082,14 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 |---|---|---|---|---|---|---|
 | A committed source and approved schema are required. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### source_pages_remain
+
+<a id="source_pages_remain"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A source delete did not cascade to the source's pages, so it was rolled back and the source and its pages are unchanged. | Every source delete relies on the pages -> sources ON DELETE CASCADE foreign key; without it the pages would stay live with no sources row, where no write, export or per-source audit can reach them (#7072). | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### source_profile_no_backfill
 
 <a id="source_profile_no_backfill"></a>
@@ -5105,6 +5121,16 @@ More: [docs/guides/write-refusals.md#slug_page_mismatch](../../docs/guides/write
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Multiple active sources alias this canonical skill root; resolve ownership before publishing. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### source_root_unreadable
+
+<a id="source_root_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The source's registered root on its owner host cannot be read as a directory (gone, unmounted, not a directory, no permission or a symlink loop), so `gbrain sources canonical` planned and wrote nothing. | Converting a source reads its whole checkout; a root that cannot be listed would otherwise surface as a raw filesystem or Git error, or as a missing-checkout refusal whose fix creates an empty repository there. | Restore or remount the directory on the brain host (or make it readable to the account that runs gbrain), compare it with the root gbrain sources writer status --source <source> --json names, then preview again. | host_admin | `gbrain doctor --json` | 1 | no |
+
+Reasons: `missing`, `not_directory`, `permission_denied`, `symlink_loop`, `unreadable`.
 
 ### source_writeback_required
 

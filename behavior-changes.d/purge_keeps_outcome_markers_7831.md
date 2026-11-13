@@ -1,0 +1,1 @@
+Purging a fact whose text is exactly `EXTRACTION_COMPLETE` or `EXTRACTION_NOT_APPLICABLE` (`gbrain forget <id> --purge`) no longer removes the conversation-facts outcome rows that carry the same text: the purge, its receipt, `--status` and a restore replay leave them in place, so those pages are not extracted again. The purged claim itself is still removed and tombstoned.
