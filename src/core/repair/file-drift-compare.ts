@@ -76,7 +76,7 @@ export function newerPageParagraph(sourceId: string, slug: string, evidence: Dri
   const what = evidence.differs === 'both' ? 'body and frontmatter' : evidence.differs === 'body' ? 'body' : `frontmatter (${evidence.keys.join(', ')})`;
   return `page ${slug} changed after its file was last committed (page updated ${evidence.page_updated_at}, ${evidence.path} committed ${evidence.file_committed_at}) and its ${what} differs, `
     + `so letting the file win may drop a database edit; it stays held for a person. updated_at also moves on gbrain's own writes (a retype), so read both sides first. `
-    + `To keep the file, run gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file; to keep the page, run it with --prefer database (rewrites the file from the page) or carry the edit into the file, commit it and run gbrain sync --source ${sourceId}.`;
+    + `To keep the file, preview gbrain repair file-drift --source ${sourceId} --slug ${slug} --prefer file. To keep the page, preview it with --prefer database instead (its apply would rewrite the file from the page and needs the user's consent), or carry the edit into the file, commit it and run gbrain sync --source ${sourceId}.`;
 }
 
 /** One selected page, compared: a held page by its hold, any other by its slug. Never writes. */

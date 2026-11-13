@@ -54,7 +54,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { configDir } from '../config.ts';
 import { flushDirectory } from '../fs-durable.ts';
@@ -65,11 +65,13 @@ import { matchesRepairPath } from './path-glob.ts';
 import { shellQuote } from '../agent-output.ts';
 import { commitPushCommand } from '../git/commit-push.ts';
 import type { ParsedPage } from '../import-file.ts';
-import { digest, stableJson } from '../persistence/digest.ts';
+import { digest, sha256, stableJson } from '../persistence/digest.ts';
 import { currentVerifiedLocalWriter, readLocalWriter, withVerifiedLocalRegistration } from '../persistence/identity.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
-import { auditDriftConflicts, DRIFT_CLASSES, driftClass, liveFileDrift, type DriftClass } from '../persistence/drift-conflicts.ts';
+import { auditDriftConflicts, DRIFT_CLASSES, driftClass, liveFileDrift, type DriftClass, type LiveDrift } from '../persistence/drift-conflicts.ts';
+import { classifyDrift } from '../persistence/reconcile-additive.ts';
+import { isUnboundSourcePage } from '../persistence/unbound-source.ts';
 import { protectedReconcileKey, reconcileCanonical, RECONCILE_SCAN_KEYS, type ReconcileDecision } from '../persistence/reconcile-merge.ts';
 import { fileWinsContent } from '../persistence/file-wins-content.ts';
 import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readCanonicalFileText, readDeletedDriftTarget, readReconcileState, assertReconcileRevision, validateReconcileArtifact, type DeletedDriftChange, type DeletedDriftTarget, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
@@ -727,6 +729,23 @@ async function applyDeletedSide(ctx: OperationContext, page: ApprovedPage, artif
   }
 }
 
+/**
+ * GST-2579: an unbound collision (#5254: a page an unbound write left database-only, and a file at its slug path that differs)
+ * read as drift, so an exact --slug selection resolves it. `sources reconcile` refuses to take its database side over a file
+ * the database never held and names this step, whose apply records the file as the page's origin and needs consent.
+ */
+async function unboundCollisionDrift(engine: BrainEngine, sourceId: string, slug: string): Promise<LiveDrift | null> {
+  if (!await isUnboundSourcePage(engine, sourceId, slug)) return null;
+  try {
+    const state = await readReconcileState(engine, sourceId, slug);
+    if (classifyDrift(state.file, reconcileCanonical(state.snapshot.page, state.snapshot.tags)).verdict === 'no_drift') return null;
+    return { still_present: true, reason: 'unbound_collision', db_revision: state.snapshot.revision, path: relative(state.root, state.path).split(sep).join('/'), file_hash: sha256(state.raw) };
+  } catch (error) {
+    if (error instanceof OperationError) return null;
+    throw error;
+  }
+}
+
 /** GBRA-133: re-checks a held page whose page and file agreed at the preview and schedules its re-screen (`sources retry-held` for one path). */
 async function releaseAgreedHold(engine: BrainEngine, page: ApprovedPage, pin: ReleasePin, requestId: string): Promise<RepairItemOutcome> {
   const hold = await readGitHold(engine, page.source_id, pin.incarnation, pin.path);
@@ -801,26 +820,31 @@ async function compareSelection(engine: BrainEngine, sourceId: string, opts: Rep
 
 /**
  * GST-2579: the consent wording of a file-drift apply, naming every file edit sync never imported that the previewed
- * database-wins resolutions overwrite (the artifact's `discards`).
+ * database-wins resolutions overwrite (the artifact's `discards`), and GST-2568: how many lines of the overwritten copies the
+ * results do not carry (`lost_lines`).
  */
 export function fileDriftConsentText(hash: string, sourceId: string | undefined): { what: string; why: string; risk: string; user_message: string } {
   let discards: UnimportedFile[] = [];
   let removals: string[] = [];
+  let losing: number[] = [];
   try {
     const pages = [...readArtifact(hash, `gbrain repair file-drift --source ${sourceId ?? '<source>'}`).values()];
     discards = pages.flatMap(page => 'discards' in page && page.discards ? [page.discards] : []);
     removals = pages.flatMap(page => 'remove_file' in page ? [page.remove_file.path] : []);
+    losing = pages.flatMap(page => 'lost_lines' in page && page.lost_lines ? [page.lost_lines] : []);
   } catch { /* the apply itself refuses a missing or changed artifact */ }
   const list = (items: string[]) => items.slice(0, 10).join('; ') + (items.length > 10 ? `; and ${items.length - 10} more (listed in the preview)` : '');
   const named = list(discards.map(unimportedFileText));
+  const lost = losing.reduce((sum, lines) => sum + lines, 0);
+  const dropping = lost ? ` It drops ${lost} line(s) that the copies it overwrites hold and the result does not carry, across ${losing.length} page(s).` : '';
   const removing = removals.length ? ` It also removes ${removals.length} file(s) that changed after their page was deleted, and the page does not hold what they say: ${list(removals)}.` : '';
   return {
     what: 'Apply the previewed file-drift resolutions: each listed page takes the preferred side, so either the canonical file is rewritten from the database copy or the page is replaced from the file.',
-    why: `The preview ${hash} listed each page and the side that wins it${discards.length ? `, and the file edits sync never imported that the database copy overwrites (${discards.length})` : ''}${removals.length ? `, and the files it removes (${removals.length})` : ''}.`,
+    why: `The preview ${hash} listed each page and the side that wins it${discards.length ? `, and the file edits sync never imported that the database copy overwrites (${discards.length})` : ''}${removals.length ? `, and the files it removes (${removals.length})` : ''}${lost ? `, and the lines the overwritten copies hold that the result drops (${lost})` : ''}.`,
     risk: 'The losing side is replaced: a file rewrite is a new commit (git revert brings the edit back) and reconcile keeps a private backup of the replaced copy; a removed file comes back with git revert only when it was committed; a page that changed since the preview is skipped.',
     user_message: (discards.length
       ? `Apply the previewed file-drift repair? It overwrites file edits sync never imported with the database copy: ${named}.`
-      : 'Apply the previewed file-drift repair? Each listed page takes the side the preview showed, and the other copy is replaced.') + removing,
+      : 'Apply the previewed file-drift repair? Each listed page takes the side the preview showed, and the other copy is replaced.') + dropping + removing,
   };
 }
 
@@ -901,7 +925,8 @@ export const fileDriftRepair: RepairHandler = {
           if (targetSlug === null) { count('no_page'); listing.push({ item: `${sourceId}:${label}`, class: 'no_page', detail: 'the hold names no page; the next sync re-classifies it' }); continue; }
           const slug = targetSlug;
           await authorizeReconcile(engine, sourceId, slug);
-          const live = await liveFileDrift(engine, sourceId, slug);
+          const found = await liveFileDrift(engine, sourceId, slug);
+          const live = opts.slugs?.length && found.reason === 'database_only' ? await unboundCollisionDrift(engine, sourceId, slug) ?? found : found;
           if (target && (target.state === 'file_gone') !== (live.reason === 'canonical_file_missing')) {
             count('side_changed');
             listing.push({ item: `${sourceId}:${slug}`, class: 'side_changed', detail: `its file is ${live.reason === 'canonical_file_missing' ? 'gone' : 'present'} now; gbrain sources status ${sourceId} --json shows its current Decision after the next sync` });

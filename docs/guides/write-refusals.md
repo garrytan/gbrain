@@ -784,7 +784,11 @@ read the page again and resubmit with a new request ID. If a canonical file
 appears at the path of a database-only page after binding, sync stops for that
 file with `source_changed` and reason `unbound_source`; neither copy is
 overwritten and the database page stays served. Rename or remove the file,
-commit, and sync again.
+commit, and sync again. Or settle the pair: `gbrain sources reconcile <source>
+<slug> --preview` and decide `take_file` to keep the file, or preview
+`gbrain repair file-drift --source <source> --slug <slug> --prefer database` to
+keep the database copy (it names the file's commit, and its apply needs the
+user's consent).
 
 `gbrain doctor` reports the `unbound_source` check: the number of such pages
 per source. While the source is unbound it is `ok` and prints the bind command;

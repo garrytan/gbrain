@@ -43,6 +43,7 @@ import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/
 import { FILE_DRIFT_VERSION, writeGitHold } from '../src/core/persistence/sync-holds.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { resolveRepairScope, type RepairPlanOptions } from '../src/core/repair/core.ts';
+import { fileDriftConsentText } from '../src/core/repair/file-drift.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -254,6 +255,8 @@ for (const backend of testBackends()) {
     expect(byFile.details!.lost_lines_total).toBe(2);
     expect(detail(byFile, 'notes/newer-file')).toContain('drops 1 line(s) the page holds');
     expect(byFile.warnings?.join(' ')).toContain('The apply drops 2 line(s) the pages it overwrites hold and the result does not carry, across 2 page(s)');
+    // The consent the apply asks for says the same.
+    expect(fileDriftConsentText(byFile.preview_hash!, 'default').user_message).toContain('It drops 2 line(s) that the copies it overwrites hold and the result does not carry, across 2 page(s).');
     const byDatabase = await repair(engine, { slugs: ['notes/newer-page'], prefer: 'database' }) as Plan;
     expect([lost(byDatabase), byDatabase.details!.lost_lines_total]).toEqual([{ 'notes/newer-page': 1 }, 1]);
     expect(detail(byDatabase, 'notes/newer-page')).toContain('drops 1 line(s) the file holds');

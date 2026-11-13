@@ -3336,7 +3336,10 @@ lists each newer change the database copy overwrites and each file a
 `source_changed` (detail `unimported_file_edit`) when a decision takes the
 database copy over what such a file says (`take_database`, `delete` or
 `set_value`); decide `take_file` for those paths, or preview the page alone with
-`--slug` as above. A `never_committed` `file_gone` page resolved
+`--slug` as above. That covers an unbound collision too (a page an unbound
+write left database-only, and a different file at its slug path): `--slug
+<slug> --prefer database` reads it as drift, names the file's commit, asks for
+consent and records the file as the page's origin. A `never_committed` `file_gone` page resolved
 `--prefer database` writes no file, so it is unaffected. The keep_db policy is
 unchanged.
 
