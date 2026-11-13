@@ -309,6 +309,7 @@ async function runEmbedStep(engine: BrainEngine, now: Date, signal: AbortSignal 
   }
 }
 
+/** Reserves the rest of the day's cap in the ledger before any spend and settles it to the actual spend afterwards, so a run killed mid-step cannot spend the cap again. */
 async function embedWithinDailyCap(engine: BrainEngine, now: Date, signal: AbortSignal | undefined): Promise<{ step: UpkeepStep; embed: { spent_today_usd: number; cap_usd: number } }> {
   const cap = await readEmbedDailyCapUsd(engine);
   const spentBefore = await readEmbedSpentToday(engine, now);
@@ -322,6 +323,7 @@ async function embedWithinDailyCap(engine: BrainEngine, now: Date, signal: Abort
   const [{ embedCostCap }, { loadPricingOverrides }, { runEmbedCore }, { embedStaleFacts }] = await Promise.all([
     import('../embed-cost-cap.ts'), import('../budget/budget-tracker.ts'), import('../../commands/embed.ts'), import('../embed-facts.ts')]);
   const costCap = embedCostCap(remaining, 'user', await loadPricingOverrides(engine).catch(() => undefined))!;
+  await engine.setConfig(MAINTENANCE_EMBED_SPEND_KEY, JSON.stringify({ day: utcDay(now), usd: cap }));
   const combined = anyAbortSignal(signal ? [costCap.signal, signal] : [costCap.signal]);
   let spent = 0;
   let status: UpkeepStepStatus = 'ok';
