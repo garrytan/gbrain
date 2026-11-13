@@ -11,7 +11,9 @@
  * `hash-object -w -t tree`, which refuses a malformed tree), `commit-tree` writes the commit with the porcelain path's
  * message (`commitMessage`), and `update-ref <branch> <new> <old>` moves the branch only if it still names the HEAD the
  * commit was built on. A branch that moved meanwhile (a commit made in the checkout) is read again and the commit
- * rebuilt once; a second move refuses, so the publication rolls back. The checkout's index then gets exactly the
+ * rebuilt once; a second move refuses, so the publication rolls back. GST-2552: a move that changed a target (a commit
+ * of the same file) refuses `git_target_changed` instead, since the planned blob was hashed before that commit and would
+ * silently revert it. The checkout's index then gets exactly the
  * published entries (`update-index --cacheinfo` / `--force-remove`): `git status` shows them clean, a later commit from
  * that index keeps them, and every other entry, staged or not, is left as it was.
  *
@@ -206,6 +208,12 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
     target.note ??= file.note;
     targets.set(rel, target);
   }
+  const start = await git(session, ['rev-parse', '-q', '--verify', `${branch}^{commit}`]);
+  const committed = async (commit: string) => {
+    const tree = await git(session, ['ls-tree', '-r', '--full-name', '-z', commit, '--', ...literalPathspecs([...targets.keys()])]);
+    if (tree.code !== 0) throw gitFailure('Cannot read the canonical Git tree.', `git ls-tree could not read ${commit}.`);
+    return new Map(tree.stdout.split('\0').filter(Boolean).map(record => [record.slice(record.indexOf('\t') + 1), record.slice(0, record.indexOf('\t'))] as const));
+  };
   refuseChanged(root, targets.values());
   const present = [...targets.values()].filter(target => existsSync(join(root, target.rel)));
   if (present.length) {
@@ -222,10 +230,19 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
   const scratch = mkdtempSync(join(temp, 'commit-'));
   try {
     for (let attempt = 0; ; attempt++) {
-      const resolved = await git(session, ['rev-parse', '-q', '--verify', `${branch}^{commit}`]);
+      // The first attempt builds on the HEAD read before the files were hashed; a later one reads the moved branch again.
+      const resolved = attempt ? await git(session, ['rev-parse', '-q', '--verify', `${branch}^{commit}`]) : start;
       if (resolved.code !== 0) throw opError('git_branch_unborn', `Branch ${branch} in ${root} has no commit yet, so the strict source's write has nothing to commit on; nothing was published.`,
         'Make the first commit on the branch with git on the brain host, then retry the write with a new request_id.');
       const head = resolved.stdout.trim();
+      if (head !== start.stdout.trim()) {
+        const [before, now] = [await committed(start.stdout.trim()), await committed(head)];
+        const moved = [...targets.values()].filter(target => {
+          const key = `${prefix}${target.rel}`, entry = now.get(key);
+          return entry !== before.get(key) && (target.oid ? !entry?.endsWith(` ${target.oid}`) : entry !== undefined);
+        }).map(target => target.rel);
+        if (moved.length) throw targetChanged(root, moved, 'changed in a commit that landed while this write was being committed');
+      }
 
       // The directories along every target path, read from HEAD level by level; only the named entries are decoded.
       const want = new Map<string, string[]>([['', []]]);
@@ -365,8 +382,11 @@ export function indexRestoredNotice(paths: string[]): Notice {
 /** The targets whose file no longer holds its planned state (its bytes, or no file for a removal) refuse as `git_target_changed`. */
 function refuseChanged(root: string, targets: Iterable<Target>): void {
   const moved = [...targets].filter(target => { try { return hashFile(join(root, target.rel)) !== target.planned; } catch { return true; } }).map(target => target.rel);
-  if (!moved.length) return;
-  throw opError('git_target_changed', `${moved.join(', ')} in ${root} no longer holds the bytes this write published, so nothing was committed and the write was not published.`,
+  if (moved.length) throw targetChanged(root, moved, 'no longer holds the bytes this write published');
+}
+
+function targetChanged(root: string, moved: string[], what: string): OperationError {
+  return opError('git_target_changed', `${moved.join(', ')} in ${root} ${what}, so nothing was committed and the write was not published.`,
     'Another process changed the file during the write. If the file now holds neither this write\'s bytes nor the version before it, recovery leaves it as it is and holds the write, so the source\'s later writes wait: preview with gbrain repair stuck-recovery --json, ask the user which version to keep, then apply that choice with the --keep, --expect and --apply --yes flags the preview lists (--keep disk keeps the edit). If it holds the version before the write, nothing is held and the write failed; read the page before resubmitting it with a new request_id.', { detail: moved.join(',') });
 }
 

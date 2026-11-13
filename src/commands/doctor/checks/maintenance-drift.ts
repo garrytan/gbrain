@@ -119,7 +119,7 @@ export async function maintenanceWriteDriftCheck(engine: BrainEngine, sourceIds?
     return { name: 'maintenance_write_drift', status: 'warn', details,
       message: `${bounded ? 'At least ' : ''}${count} page(s) have a canonical file that differs from the database, so every coordinated write to them refuses source_changed `
         + `(${rows.filter(row => row.drifted || row.concept_skips).map(row => `${row.source_id}: ${row.drifted} drifted, ${row.concept_skips} concept skip(s)`).join('; ')}). `
-        + `Maintenance now skips them before spending or admitting anything. List them: ${auditConflictsCommand(first)}; preview the resolution: ${fileDriftRepairCommand(first)} (or --prefer database), then apply with the --expect hash it prints.${policyNote}${boundNote}`,
+        + `Maintenance now skips them before spending or admitting anything. List them: ${auditConflictsCommand(first)}; preview the resolution: ${fileDriftRepairCommand(first)} (or --prefer database); its apply needs the user's consent (it asks; add --yes only after they agree).${policyNote}${boundNote}`,
       fix: agentFix(['gbrain', 'sources', 'reconcile', first, '--brain', 'host', '--audit', '--conflicts', '--json'],
         'Read-only: lists the conflict receipts grouped by slug, whether each file still differs, its drift class and producer.', 'maintenance_write_drift', { docs }) };
   } catch (error) {

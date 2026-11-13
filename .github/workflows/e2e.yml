@@ -35,8 +35,10 @@ permissions:
 # push runs. Scheduled runs get their own `-nightly` group (as in test.yml):
 # sharing refs/heads/master with push runs let the next merge cancel the
 # nightly full corpus mid-shard (#6040).
+# A push to master is keyed by its commit, so a newer push never cancels it: the Release gate
+# (scripts/release-gate.ts) publishes only the release commit's own green runs.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || (github.event_name == 'push' && github.sha) || github.ref }}${{ github.event_name == 'workflow_dispatch' && inputs.full_corpus && '-full-corpus' || '' }}${{ github.event_name == 'schedule' && '-nightly' || '' }}
   cancel-in-progress: true
 
 jobs:

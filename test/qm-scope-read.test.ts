@@ -219,16 +219,52 @@ for (const kind of testBackends()) {
       expect((await call('person', 'get_backlinks', { slug: ACME, all_sources: true })).text).toContain('zephyr-restricted-example');
     }, 120_000);
 
-    test('context_pack that names sources is refused on a scope credential, never read as the person; unnamed and person credentials are unchanged', async () => {
-      const c = await provider().registerClientManual('scope-ctx-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
-      await provider().rescopeClient(c.clientId, { federatedRead: [SRC, ROOM] });
-      await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm', attestOps: [...SCOPE_OPS, 'context_pack'] });
-      clients.ctx = { id: c.clientId, secret: c.clientSecret ?? '', token: (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token };
-      for (const params of [{ source_id: SRC }, { all_sources: true }, { entity_refs: [{ source_id: SRC, slug: RESTRICTED }] }]) {
-        const out = await refused(call('ctx', 'context_pack', { counterparty: 'Zephyr Restricted Example', ...params }), 'invalid_params');
-        expect(out.all).toContain('context_pack: a call that names sources');
+    test('GST-2407: context_pack that names sources reads only that source as its audience; a pack that would leave it is refused before any read', async () => {
+      for (const [name, read] of [['ctx', undefined], ['ctxp', 'person']] as const) {
+        const c = await provider().registerClientManual('scope-' + name + '-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+        await provider().rescopeClient(c.clientId, { federatedRead: [SRC, ROOM] });
+        await bindCredential(engine, { kind: 'client', id: c.clientId }, { attestActor: 'qm', attestOps: [...SCOPE_OPS, 'context_pack'], ...(read ? { attestRead: read } : {}) });
+        clients[name] = { id: c.clientId, secret: c.clientSecret ?? '', token: (await provider().exchangeClientCredentials(c.clientId, c.clientSecret ?? '')).access_token };
       }
-      expect((await call('ctx', 'context_pack', { counterparty: 'Zephyr Restricted Example' })).all).not.toContain('context_pack: a call that names sources');
+      await engine.setConfig('memory.core.enabled', 'true');
+      await importFromContent(engine, 'notes/core-src-example', ['---', 'type: note', 'title: Core Src Example', 'always_load: true', '---', 'canarycoresrc harbor rules.'].join('\n'), { sourceId: SRC });
+      await importFromContent(engine, 'notes/core-room-example', ['---', 'type: note', 'title: Core Room Example', 'always_load: true', '---', 'canarycoreroom harbor rules.'].join('\n'), { sourceId: ROOM });
+      try {
+        const src = await call('ctx', 'context_pack', { entities: 'Acme Example,Zephyr Restricted Example,Ivo Galewright', counterparty: 'Acme Example', source_id: SRC });
+        expect(src.isError).toBe(false);
+        expect(src.structured?.cards?.map((card: { slug: string }) => card.slug)).toEqual([ACME]);
+        expect(src.all).toContain('canarycoresrc');
+        expect(src.all).not.toContain('canarycoreroom');
+        hidden(src);
+        const room = await call('ctx', 'context_pack', { entities: 'Room Example', counterparty: 'Acme Example', source_id: ROOM });
+        expect(room.isError).toBe(false);
+        expect(room.structured?.cards?.map((card: { slug: string }) => card.slug)).toEqual(['companies/room-example']);
+        expect(room.all).toContain('canarycoreroom');
+        for (const leak of ['canarycoresrc', 'acme-example', 'canaryworldacme', 'canaryworldtimeline']) expect(room.all).not.toContain(leak);
+        hidden(room);
+        const refs = await call('ctx', 'context_pack', { source_id: ROOM, entity_refs: [{ source_id: ROOM, slug: 'companies/room-example' }] });
+        expect(refs.structured?.cards?.map((card: { slug: string }) => card.slug)).toEqual(['companies/room-example']);
+        for (const params of [{ entity_refs: [{ source_id: SRC, slug: ACME }] }, { source_id: ROOM, entity_refs: [{ source_id: SRC, slug: RESTRICTED }] },
+          { source_id: ROOM, entity_refs: [{ slug: 'companies/room-example' }] }, { entities: 'Acme Example', source_id: SRC, session_id: 'session-a' }]) {
+          const out = await refused(call('ctx', 'context_pack', { counterparty: 'Zephyr Restricted Example', ...params }), 'invalid_params');
+          expect(out.all).toContain('context_pack: ');
+          expect(out.all).not.toContain('canarycore');
+        }
+        for (const params of [{ source_id: '__all__' }, { all_sources: true }]) await refused(call('ctx', 'context_pack', { entities: 'Acme Example', ...params }), 'invalid_params');
+        const other = await call('ctx', 'context_pack', { entities: 'Other Example', source_id: OTHER });
+        expect(other.isError).toBe(true);
+        expect(other.all).not.toContain('canaryotherpage');
+        expect((await call('ctx', 'context_pack', { counterparty: 'Zephyr Restricted Example' })).isError).toBe(false);
+        const person = await call('ctxp', 'context_pack', { entities: 'Acme Example', source_id: SRC, session_id: 'session-a' });
+        expect(person.isError).toBe(false);
+        const personRoom = await call('ctxp', 'context_pack', { entities: 'Room Example', counterparty: 'Acme Example', source_id: ROOM });
+        expect(personRoom.all).toContain('canarycoreroom');
+        for (const leak of ['canarycoresrc', 'acme-example']) expect(personRoom.all).not.toContain(leak);
+        const ids = await refused(call('ctx', 'context_pack', { entities: 'Acme Example', source_ids: [SRC] }), 'invalid_params');
+        expect(ids.all).toContain('names exactly one source in source_id');
+      } finally {
+        await engine.setConfig('memory.core.enabled', 'false');
+      }
     }, 120_000);
 
     test('an agent job submitted for the person reads named sources as the scope too, exactly like the direct call', async () => {
