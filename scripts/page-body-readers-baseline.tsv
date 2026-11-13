@@ -493,7 +493,7 @@ src/core/persistence/page-input.ts	normalizeSubagentPageInput	call:serializeMark
 src/core/persistence/page-input.ts	normalizeSubagentPageInput	field	SEGW	
 src/core/persistence/page-mutations.ts	unquotedPutContent	field	SEGW	counts the stored inline body's literal tool-call summaries through readStoredBody; a segmented page reads NULL, so a summarized remote round trip is refused and nothing is written
 src/core/persistence/page-prepare.ts	canonical	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
-src/core/persistence/page-prepare.ts	fileMatchesSnapshot	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
+src/core/persistence/page-prepare.ts	fileSnapshotDifference	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	frontmatterDriftWrite	field	SEGW	#8109: called only for an inline page (bodyUnread excluded at the call site); compares the file's parsed body with the snapshot body
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
@@ -623,7 +623,7 @@ src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a se
 src/core/repair/visibility.ts	planAliases	sql	META	
 src/core/repair/visibility.ts	planEvents	sql	META	
 src/core/repair/visibility.ts	planLineage	sql	META	
-src/core/repair/visibility.ts	visibilityRepair	call:serializePageToMarkdown	SEGW	
+src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
 src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts	v091	sql	NONE	not the page body: historical generation trigger
 src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not the page body: historical
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
