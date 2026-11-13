@@ -13,10 +13,9 @@ import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { connectorRender } from '../connectors/connector-text.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
 import { mkdirPrivate } from '../atomic-write.ts';
-import { replaceableFile } from '../facts/file-body-guard.ts';
+import { replaceableFile, type StoredBody } from '../facts/file-body-guard.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, replaceOrInsertFactsFence } from '../facts-fence.ts';
 import { carryStoredFences, hasFence } from '../connectors/fence-carry.ts';
-import type { Page } from '../types.ts';
 import { assertInlineBody } from '../page-body/page-shape.ts';
 import { OperationError } from '../ops/contract.ts';
 import { slugifyPath } from '../sync.ts';
@@ -24,6 +23,7 @@ import { isPrivatePage } from '../search/private-visibility.ts';
 import { withPrivateVisibility } from './google-render.ts';
 import { isWriteThroughDisabled } from '../write-through.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
+import { intentCarriesPurgedContent } from '../persistence/purged-intent.ts';
 import type { GoogleSourceConfig, GoogleSourceState } from './types.ts';
 import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 
@@ -123,14 +123,13 @@ function writePrivateTemp(tmpPath: string, markdown: string): void {
 }
 
 
-/** GBRA-133 (#7292): the checkout file with the live page's `## Facts` fence put back, for `replaceableFile`; null when it has a fence of its own. */
-function withStoredFactsFence(existing: Page): (fileBytes: string) => string | null {
-  assertInlineBody(existing, 'Google connector file comparison');
-  const body = existing.compiled_truth ?? '';
+/** GBRA-133 (#7292, #8645): the checkout file with one stored state's `## Facts` fence put back, for `replaceableFile`; null when it has a fence of its own. */
+function withStoredFactsFence(fileBytes: string, state: StoredBody): string | null {
+  const body = state.compiled_truth ?? '';
   const start = body.indexOf(FACTS_FENCE_BEGIN);
   const stop = start === -1 ? -1 : body.indexOf(FACTS_FENCE_END, start + FACTS_FENCE_BEGIN.length);
   const block = stop === -1 ? null : body.slice(start, stop + FACTS_FENCE_END.length);
-  return fileBytes => block === null || hasFence(fileBytes) ? null : replaceOrInsertFactsFence(fileBytes, block);
+  return block === null || hasFence(fileBytes) ? null : replaceOrInsertFactsFence(fileBytes, block);
 }
 
 export async function importRendered(
@@ -141,7 +140,7 @@ export async function importRendered(
   summary: GoogleSyncSummary,
   countedSlugs: Set<string>,
   identity: Record<string, string | readonly string[]> = {},
-): Promise<string> {
+): Promise<string | null> {
   markdown = connectorRender(markdown, { path: relPath, account: deps.cfg.account, ...identity });
   const slug = slugifyPath(relPath);
   const [labels] = await deps.engine.executeRaw<{ type: string; frontmatter: unknown }>(
@@ -149,6 +148,7 @@ export async function importRendered(
   if (labels && isPrivatePage(labels)) markdown = withPrivateVisibility(markdown);
   if (deps.managed) {
     const result = await deps.managed.importMarkdown(relPath, markdown);
+    if (result.purged) return null;
     if (result.status === 'imported') {
       summary.pagesAffected.push(result.slug);
       summary.chunksCreated += result.chunks;
@@ -164,8 +164,13 @@ export async function importRendered(
   const existing = await deps.engine.getPage(slug, { sourceId: deps.sourceId });
   if (existing) assertInlineBody(existing, 'Google connector materialization');
   markdown = await carryStoredFences(deps.sourceId, slug, relPath, existing, markdown, 'Google connector fence carry');
+  // #8644: content the owner purged is skipped before any file is touched, as the managed connector skips it (#6831).
+  if (await intentCarriesPurgedContent(deps.engine, { source_id: deps.sourceId, slug, intent: { content: markdown } }, { facts: false, pages: true })) {
+    deps.log(`[google] skipped ${slug}: its content matches a page purge tombstone; the rest of the sync continues. To let it back in: gbrain pages unpurge ${slug}`);
+    return null;
+  }
   const databaseOnly = await isWriteThroughDisabled(deps.engine) || isSourceDbOnlySlug(deps.cfg.dir, slug, 'refuse');
-  const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence(existing) : undefined);
+  const guard = databaseOnly ? null : await replaceableFile(deps.engine, deps.sourceId, slug, filePath, existing ? withStoredFactsFence : undefined);
   const drift = () => new OperationError('file_database_drift',
     `${slug}: the checkout file has an edit not retained in the database, or changed during import. The file was not replaced. If the file is newer, run gbrain sync --source ${deps.sourceId}; if the database is newer, re-save its page with write-through on; if both changed, ask the user which version to keep before retrying.`,
     'Import the newer file with gbrain sync, or ask the user which version to keep; the item is held until then.');

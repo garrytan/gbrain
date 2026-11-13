@@ -6,7 +6,7 @@ import { boundedReads } from './bounded-reads.ts';
 import { isQuarantined, quarantineOutcome } from '../quarantine.ts';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
-import { matchesAnyGlob } from '../sync.ts';
+import { isSyncMetafile, matchesAnyGlob } from '../sync.ts';
 import { syncExcludePatterns } from './sync-discovery.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { GBrainConfig } from '../config.ts';
@@ -26,7 +26,8 @@ import { isOpPageSlug } from '../ops/context.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
 import type { RegistryCode } from '../error-registry.ts';
 import { pageIdentityError } from './page-identity.ts';
-import { contentRefusalError, PAGE_OVER_LIMIT_SUGGESTION, type ContentRefusal } from '../import-screen.ts';
+import { contentRefusalError, PAGE_OVER_LIMIT_SUGGESTION, TAG_TOO_LONG_SUGGESTION, type ContentRefusal } from '../import-screen.ts';
+import { tagLengthHold } from '../tag-limit.ts';
 import { ContentSanityBlockError } from '../content-sanity.ts';
 import { assertPageRevision, type PageSnapshot } from '../page-state/types.ts';
 import { GIT_HOLD_OP, gitHoldFingerprint, gitHoldFix, readGitHold } from './sync-holds.ts';
@@ -155,7 +156,7 @@ interface CanonicalProvenance { source_kind: string; ingested_via: string; inges
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
  * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
  */
-const CALLER_CONTENT_OPERATIONS = ['put_page', 'edit_page', 'append_page', 'capture'];
+export const CALLER_CONTENT_OPERATIONS = ['put_page', 'edit_page', 'append_page', 'capture'];
 /**
  * Canonical stamps belong to the first write, never to a later preparation attempt. #7873: they are server-owned on
  * every caller-content write a remote caller makes, with or without a repository: the caller's values are dropped and
@@ -449,7 +450,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     && !(await gitDurabilityPolicy(binding, root)).durable) return undefined;
   if (options.excludeTombstone && snapshot?.page.deleted_at) {
     const rel = relative(root, path).split(sep).join('/');
-    if (matchesAnyGlob(rel, options.excludeTombstone.patterns)) { options.excludeTombstone.onExcluded(rel); return undefined; }
+    if (unimportedBySync(rel, options.excludeTombstone.patterns)) { options.excludeTombstone.onExcluded(rel); return undefined; }
   }
   // A prior file over the single-string ceiling is read on demand in pieces (large-file.ts), never whole; so is the file
   // of a page stored in segments, or of a streamed target, at any size (its comparison reads it piecewise anyway).
@@ -621,13 +622,14 @@ export async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteR
 /**
  * #6368: a tombstone whose file is under sync.exclude does not own that file (sync never reads it again), so its purge is
  * database-only: the file is neither compared nor removed. `excludedPath` names that file; the apply re-checks it.
+ * #7613: the same holds for a file at a root sync metafile path (`unimportedBySync`), so every tombstone purge runs the check.
  */
 async function prepareDeleteFileTarget(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, purge: boolean,
   options: Parameters<typeof prepareFileTarget>[5]): Promise<{ file: PreparedMutation['file']; excludedPath: string | null; shared: SharedOrigin | null }> {
   let excludedPath: string | null = null, shared: SharedOrigin | null = null;
-  const exclude = purge && snapshot.page.deleted_at != null ? await syncExcludePatterns(engine) : [];
-  const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { ...options,
-    ...(exclude.length ? { excludeTombstone: { patterns: exclude, onExcluded: (path: string) => { excludedPath = path; } } } : {}),
+  const excludeTombstone = purge && snapshot.page.deleted_at != null
+    ? { patterns: await syncExcludePatterns(engine), onExcluded: (path: string) => { excludedPath = path; } } : undefined;
+  const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { ...options, ...(excludeTombstone ? { excludeTombstone } : {}),
     sharedOrigin: { onShared: value => { shared = value; } } });
   return { file, excludedPath, shared };
 }
@@ -671,8 +673,16 @@ function sharedTombstoneChanged(row: WriteRequest, what: string): OperationError
     `Page ${row.slug}'s file in source ${row.source_id} was recorded by another live page when this retention purge was prepared.`, pageFix(row.source_id, row.slug));
 }
 
+/**
+ * #7613: whether sync never imports the file at `rel` (source-relative, `/`-separated): it is under sync.exclude, or it is a
+ * sync metafile at the source root, which is scaffolding in every `sync.metafile_pages` mode. A nested metafile can be a page.
+ */
+function unimportedBySync(rel: string, exclude: string[]): boolean {
+  return (!rel.includes('/') && isSyncMetafile(rel)) || matchesAnyGlob(rel, exclude);
+}
+
 async function assertStillSyncExcluded(tx: BrainEngine, row: WriteRequest, excludedPath: string): Promise<void> {
-  if (matchesAnyGlob(excludedPath, await syncExcludePatterns(tx))) return;
+  if (unimportedBySync(excludedPath, await syncExcludePatterns(tx))) return;
   throw pageRefusal('source_changed', 'sync.exclude changed while the purge was prepared.', row,
     `${excludedPath} was excluded from sync when the purge of ${row.slug} was prepared and is not any more, so nothing was purged. Run the purge again; it re-reads the exclusion.`, pageFix(row.source_id, row.slug));
 }
@@ -845,6 +855,8 @@ export const segmentedTagWork = { flips: 0, hashStreams: 0 };
  * Null when the write gate would scan the whole body (an external_untrusted writer): that write takes the put path.
  */
 export async function prepareSegmentedTagMutation(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, tags: string[]): Promise<PreparedMutation | null> {
+  const tagHold = tagLengthHold(tags);
+  if (tagHold) throw contentRefusalError(tagHold, TAG_TOO_LONG_SUGGESTION, { legacy_error: 'invalid_params' });
   const source = { sourceId: row.source_id };
   const [, pack, storedTier] = await Promise.all([assertKnowledgePublicationAllowed(engine, row),
     loadActivePackForEngine(engine, { remote: row.authority.remote, sourceId: row.source_id }).catch(() => null), storedPageTier(engine, row.source_id, row.slug)]);

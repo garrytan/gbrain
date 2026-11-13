@@ -31,7 +31,7 @@ import { MEMBER_PAGE_PREFIX, onOwnedMemoryPageSql } from '../access/member-facts
 import { storedOwnerSpeaksForItself } from './page-visibility.ts';
 import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 
 interface ForgetTarget { id: number; entity_slug: string | null; trust_tier?: string | null }
@@ -162,9 +162,9 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   };
   const own = await engine.readPageSnapshot(row.slug, { sourceId, includeDeleted: true });
   if ((own?.page.id ?? null) !== row.page_id) throw pageIdentityError(own != null || row.page_id === null, 'The page of the forgotten fact was deleted or recreated.');
-  // GST-2492: a fact held on memory/unattributed for an entity with no page is struck at its own row, in the file and the
+  // GST-2492: a fact held on a holding page for an entity with no page is struck at its own row, in the file and the
   // page, so a rebuild from Git does not bring it back; the claim-wide strike would also reach other entities' rows there.
-  const held = row.slug === UNATTRIBUTED_MEMORY_SLUG && fact.source_markdown_slug === row.slug && fact.entity_slug !== null && fact.row_num !== null
+  const held = isHoldingSlug(row.slug) && fact.source_markdown_slug === row.slug && fact.entity_slug !== null && fact.row_num !== null
     && plan.subject !== '*' && own && !own.page.deleted_at && row.worktree_id
     ? await prepareFenceRowRetirement(engine, row, _config, row.slug, { rowNum: Number(fact.row_num), note: 'memory withdrawn', validUntil: new Date(withdrawnAt), forgotten: true }, signal)
     : null;

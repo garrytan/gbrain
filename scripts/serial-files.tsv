@@ -270,6 +270,7 @@ test/managed-timeline-facts.serial.test.ts	global-state	global-state: configureG
 test/managed-unsupported-preflight.serial.test.ts	R2	R2: mock.module(../src/core/ai/gateway.ts) replaces modules for every file in the process
 test/mcp-admin-cli.serial.test.ts	global-state	global-state: spyOn console.log, globalThis.fetch
 test/mcp-backup-nag.serial.test.ts	R2	R2: mock.module(../src/core/search/hybrid.ts, ../src/core/search/projection-readiness.ts) replaces modules for every file in the process
+test/mcp-request-log-retention-cli.serial.test.ts	global-state	global-state: spawns real gbrain CLI and derive-starter-ops children that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the cases read the request log the setup seeded
 test/memorable-relay.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, MEMORABLE_BIN, GBRAIN_MEMORABLE_CONFIG, GBRAIN_MEMORABLE)
 test/memory-safety-wave.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway; binds local servers/ports
 test/migrate-embeddings-ann-deferred-5088.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
@@ -417,6 +418,7 @@ test/sync-soft-delete.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/takes-vector-lifecycle-5885.serial.test.ts	global-state	global-state: process-wide test seams __setEmbedTransportForTests; configureGateway changes the process-wide AI gateway
 test/thin-client-write-errors.serial.test.ts	global-state	global-state: binds local servers/ports
 test/think-cli-source-flag.serial.test.ts	R2	R2: mock.module(../src/core/think/index.ts, ../src/core/config.ts, ../src/core/source-resolver.ts) replaces modules for every file in the process
+test/think-remote-model-thin-client.serial.test.ts	R2	R2: mock.module(../src/core/config.ts, ../src/core/mcp-client.ts) replaces modules for every file in the process
 test/think-embed-question-wiring.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts, ../src/core/think/index.ts) replaces modules for every file in the process
 test/think-extractive.serial.test.ts	global-state	global-state: process-wide test seams __setChatTransportForTests, __setEmbedTransportForTests, __setUsageLogPathForTests
 test/think-gather-adaptive-return.serial.test.ts	R2	R2: mock.module(../src/core/embedding.ts) replaces modules for every file in the process
@@ -466,3 +468,4 @@ test/launcher-lanes-bunfig.serial.test.ts	global-state	global-state: spawns gbra
 test/extraction-review-door.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME) around real git subprocesses against tmp repos for the page-door review decisions
 test/synopsis-sweep-8744.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL)
 test/release-channel-w1.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_RELEASE_CHANNEL) and stubs globalThis.fetch
+test/hermes-snapshot-7067.serial.test.ts	R2	R2: mock.module(node:fs) wraps copyFileSync to inject a writer and WAL checkpoint mid-snapshot

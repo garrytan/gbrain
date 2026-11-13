@@ -38,8 +38,8 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { prepareFenceFactAppend } from '../facts/fence-fact-append.ts';
 import { assertFactNotWithdrawn } from '../facts/single-prepare.ts';
 import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
-import { parseFactsFenceFor, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
-import { holdsInGit } from '../facts/held-fact-move.ts';
+import { isHoldingSlug, parseFactsFenceFor, type ParsedFact } from '../facts-fence.ts';
+import { holdingHome } from '../facts/held-fact-move.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
@@ -116,13 +116,15 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
   if (!hold || hold.kind !== 'fact') return null;
   let target = releaseTarget(hold);
   let snapshot = target ? await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, includeDeleted: true }) : null;
-  // GST-2492 PR 2: on a strict source a fact with no entity, or whose entity has no page, is released onto
-  // memory/unattributed (a held row names its entity), so it is committed to Git before its database row.
-  if ((!target || !snapshot && target.mode === 'append') && await holdsInGit(engine, hold.source_id, str(hold.payload.entity_slug))) {
-    target = { slug: UNATTRIBUTED_MEMORY_SLUG, mode: 'append' };
-    snapshot = await engine.readPageSnapshot(UNATTRIBUTED_MEMORY_SLUG, { sourceId: hold.source_id, includeDeleted: true });
+  // GST-2492 PR 2: on a strict source a fact with no entity, or whose entity has no page, is released onto its holding page
+  // (memory/unattributed, or its folder's under a folder rule; a held row names its entity), so it is committed to Git
+  // before its database row.
+  const home = !target || !snapshot && target.mode === 'append' ? await holdingHome(engine, hold.source_id, str(hold.payload.entity_slug)) : null;
+  if (home && 'slug' in home) {
+    target = { slug: home.slug, mode: 'append' };
+    snapshot = await engine.readPageSnapshot(home.slug, { sourceId: hold.source_id, includeDeleted: true });
   }
-  if (!target || !snapshot && target.slug !== UNATTRIBUTED_MEMORY_SLUG) return null;
+  if (!target || !snapshot && !isHoldingSlug(target.slug)) return null;
   const { initializeLocalPersistence, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
   const { submissionAuthority } = await import('../persistence/authority.ts');
   const { admitWrite, getWriteRequest } = await import('../persistence/journal.ts');
@@ -203,13 +205,13 @@ export async function prepareTrustReleaseMutation(engine: BrainEngine, row: Writ
   const hold = await getWriteGateHold(engine, intent.hold_id);
   if (!current(hold)) throw decidedMeanwhile(intent.hold_id);
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
-  const firstHolding = !snapshot && row.slug === UNATTRIBUTED_MEMORY_SLUG && row.page_id === null && intent.mode === 'append';
+  const firstHolding = !snapshot && isHoldingSlug(row.slug) && row.page_id === null && intent.mode === 'append';
   if (!firstHolding && (!snapshot || snapshot.page.deleted_at || snapshot.page.id !== row.page_id)) {
     throw pageIdentityError(Boolean(snapshot && !snapshot.page.deleted_at), `The page h${hold.id} is released into was deleted or recreated; the fact stays held.`);
   }
   const p = hold.payload;
   const fact: NewFact & { valid_from: Date } = {
-    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? (row.slug === UNATTRIBUTED_MEMORY_SLUG ? null : row.slug),
+    fact: String(p.fact ?? ''), kind: (str(p.kind) ?? 'fact') as NewFact['kind'], entity_slug: str(p.entity_slug) ?? (isHoldingSlug(row.slug) ? null : row.slug),
     visibility: p.visibility === 'world' ? 'world' : 'private', source: str(p.source) ?? `trust release h${hold.id}`, context: str(p.context),
     source_session: str(p.source_session), confidence: 1, valid_from: str(p.valid_from) ? new Date(String(p.valid_from)) : new Date(),
     valid_until: str(p.valid_until) ? new Date(String(p.valid_until)) : null, embedding: null, embedding_model: null, ...claimColumns(p as never),
