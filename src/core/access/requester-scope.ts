@@ -11,7 +11,7 @@
  * test/requester-scope.test.ts fails when a new read operation is neither refused nor listed here.
  *
  * Grace: a connection that existed when the brain started serving several people (config access.serves_since, set
- * once by the v308 trigger, or the upgrade that added it) keeps reading for 14 days with an in-band notice
+ * once by the v309 trigger, or the upgrade that added it) keeps reading for 14 days with an in-band notice
  * (_meta.access.requester_scope); a stdio server and a credential with no creation time count as such. A credential
  * created after that point is refused at once. Hosted brains set access.requester_scope_enforce = false until their
  * control plane binds each connection to a member: every unscoped read then carries the notice and nothing is refused.

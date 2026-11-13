@@ -18,8 +18,8 @@ import type { Migration } from './types.ts';
 // rescope --reads-unscoped --yes); NULL, with no backfill. Nothing else is
 // rewritten. No schema.sql mirror: like v282, these exist only through
 // migrations. The number is a placeholder restamped at the merge slot.
-export const v308: Migration = {
-  version: 308,
+export const v309: Migration = {
+  version: 309,
   name: 'requester_scope',
   idempotent: true,
   sql: `

@@ -14,7 +14,7 @@
  * 3. Existing coverage: setup-serves-several.test.ts (labelling, brainServes), access-qm-actor.test.ts (attested
  *    calls), access-on-behalf-of.test.ts (audiences), member-read-access.test.ts (bound reads).
  * 4. Real seams: legacy tokens through the serve --http legacy transport over a real socket (startHttpTransport) and
- *    the OAuth verifier; dispatchToolCall remote=true over stdio; the v308 trigger on PGLite (repo-less and a repo
+ *    the OAuth verifier; dispatchToolCall remote=true over stdio; the v309 trigger on PGLite (repo-less and a repo
  *    brain) and Postgres when DATABASE_URL is set; `bun src/cli.ts auth` spawned against a temp GBRAIN_HOME.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';

@@ -1030,7 +1030,7 @@ export const ACCESS_RESTRICTIONS_KEY = 'access.restrictions_present';
  * GST-363: whom the brain serves. SERVES_KEY is the explicit `one` or `several` (`gbrain setup --serves several`
  * writes it, and it wins); SERVES_DERIVED_KEY is `several` while two or more members are enabled, `one` otherwise;
  * SERVES_SINCE_KEY is when the brain first served several people, set once and never cleared. A trigger on
- * access_members and on config access.serves keeps the last two (migration v308), so a request reads them from its
+ * access_members and on config access.serves keeps the last two (migration v309), so a request reads them from its
  * config snapshot with no query. REQUESTER_SCOPE_ENFORCE_KEY `false` turns the unscoped-read refusal into a notice
  * (hosted, until its control plane binds each connection to a member).
  */

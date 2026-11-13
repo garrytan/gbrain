@@ -3,7 +3,7 @@
  * access.serves says `several`, or when it is unset and the brain has two or
  * more enabled members; an explicit `one` or `several` wins over the member
  * count. The member count is the flag a trigger on access_members keeps in
- * config access.serves_derived (migration v308), which a remote request reads
+ * config access.serves_derived (migration v309), which a remote request reads
  * from its config snapshot (servesPolicyFrom); `since` is when the brain first
  * served several people, which starts the unscoped-read grace.
  * `gbrain setup <harness> --serves several` writes the explicit value; the
