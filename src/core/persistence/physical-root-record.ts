@@ -252,6 +252,8 @@ export interface MovedPhysicalRoot {
 /**
  * #8625: reads only the stamp in `root` and the reservation of the root it records: beside that old root when the checkout
  * itself moved, or beside `root` (still named for the old root) when a parent folder was renamed and carried both along.
+ * The moved parent is the deepest one the paths share a tail below that no longer exists, so a folder moved under another
+ * folder of the same name names itself, never the folders that held it.
  * A recorded root that still exists (a copy), a stamp and reservation that disagree on token, brain or worktree, or a
  * parent rename that also renamed the checkout is no move (null). An ownership record other users can read keeps its own refusal.
  */
@@ -264,6 +266,7 @@ export function describeMovedPhysicalRoot(root: string): MovedPhysicalRoot | nul
       const recorded = stamp.root.split(sep), current = root.split(sep);
       let shared = 0;
       while (shared < Math.min(recorded.length, current.length) - 2 && recorded[recorded.length - 1 - shared] === current[current.length - 1 - shared]) shared++;
+      while (shared && existsSync(recorded.slice(0, -shared).join(sep))) shared--;
       if (!shared) return null;
       reservation = readReservationRecord(stamp.root, false, dirname(root));
       from = recorded.slice(0, -shared).join(sep); to = current.slice(0, -shared).join(sep);

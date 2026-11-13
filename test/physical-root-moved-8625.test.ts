@@ -188,6 +188,20 @@ for (const kind of testBackends()) describe(`#8625 a moved managed checkout name
     expect(existsSync(from)).toBe(!bound);
   }), 120_000);
 
+  for (const bound of [true, false]) test(`a parent moved under another folder with the same name (${bound ? 'bound' : 'removed source'}) names that parent, never the folders that held it`, () => fixture({ parent: join('left', 'group') }, async f => {
+    if (!bound) await remove(f.source);
+    const from = join(f.base, 'left', 'group'), to = join(f.base, 'right', 'group'), moved = join(to, 'root'), sourceId = bound ? f.source : `${f.source}-b`;
+    mkdirSync(join(f.base, 'right'));
+    renameSync(from, to);
+    const error = await refusal(bound ? setPath(sourceId, moved, true) : add(sourceId, moved, true));
+    expectMoved(error, f.root, f.worktreeId);
+    expect(error!.message).toContain(`'${from}'`);
+    expect(error!.fix!.argv).toEqual(bound ? ['ln', '-s', to, from] : ['mv', to, from]);
+    await runFix(error!.fix);
+    expect(await getWorktreeBinding(engine, sourceId)).toMatchObject({ worktree_id: f.worktreeId, local_path: bound ? moved : f.root });
+    expect(existsSync(join(f.base, 'right'))).toBe(true);
+  }), 120_000);
+
   test('a copy with a new inode whose original was deleted names restore or deactivate, never a move back', () => fixture({}, async f => {
     await remove(f.source);
     const copy = join(f.base, 'copied-root');

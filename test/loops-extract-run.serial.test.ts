@@ -893,6 +893,35 @@ describe('#7289 the dedup key is the thread, direction and verbatim quote, not t
     expect(new Set(r.loop_ids).size).toBe(3);
   });
 
+  test('two obligations quoting one sentence to different people stay two loops, and a reordered pass keeps each on its own row', async () => {
+    const slug = 'emails/2026/08/2026-08-24-deck-invoice-7289eeee';
+    const threadId = 'thread-7289eeee';
+    const sentence = 'I will send Alice the deck and Bob the invoice by Friday.';
+    await engine.putPage(slug, {
+      type: 'email', title: 'Re: deck and invoice', compiled_truth: `Alice: Any update?\n\nMe: ${sentence}\n`,
+      frontmatter: { thread_id: threadId, date: '2026-08-24T10:00:00Z' },
+    }, { sourceId: SRC });
+    const alice = { direction: 'owed_by_me', text: 'Send Alice the deck by Friday', counterparty_name: 'Alice Example', counterparty_email: 'alice-example@example.invalid', due_iso: null, quote: sentence };
+    const bob = { direction: 'owed_by_me', text: 'Send Bob the invoice by Friday', counterparty_name: 'Bob Example', counterparty_email: 'bob-example@example.invalid', due_iso: null, quote: sentence };
+    const byEmail = async () => (await engine.executeRaw<{ id: number; counterparty_email: string; summary: string }>(
+      `SELECT id, counterparty_email, summary FROM open_loops WHERE source_id = $1 AND thread_id = $2 AND status = 'open' ORDER BY id`, [SRC, threadId]))
+      .map((row) => [Number(row.id), row.counterparty_email, row.summary]);
+    chatImpl = reply([alice, bob]);
+    const r = await runLoopsExtract(engine, { slug, sourceId: SRC });
+    expect(r.commitments).toBe(2);
+    const first = await byEmail();
+    expect(first.map(([, email, summary]) => [email, summary])).toEqual([
+      ['alice-example@example.invalid', 'Send Alice the deck by Friday'],
+      ['bob-example@example.invalid', 'Send Bob the invoice by Friday'],
+    ]);
+    chatImpl = reply([{ ...bob, text: 'Invoice to Bob by Friday' }, { ...alice, text: 'Deck to Alice by Friday' }]);
+    await runLoopsExtract(engine, { slug, sourceId: SRC });
+    expect(await byEmail()).toEqual([
+      [first[0]![0], 'alice-example@example.invalid', 'Deck to Alice by Friday'],
+      [first[1]![0], 'bob-example@example.invalid', 'Invoice to Bob by Friday'],
+    ]);
+  });
+
   test('an open loop keyed on the old paraphrase key gets no twin: the next pass updates it', async () => {
     const slug = 'emails/2026/08/2026-08-24-budget-thread-7289cccc';
     const threadId = 'thread-7289cccc';
