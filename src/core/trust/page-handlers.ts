@@ -384,25 +384,28 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
         await closeProposal(tx, intent.proposal, input.by);
       }))));
   } catch (error) {
-    if (rendered?.path && file?.ok && file.target) await restoreOwnerRepairFile(engine, input.slug, file.target, rendered);
+    if (rendered?.path && file?.ok && file.target) await restoreOwnerRepairFile(engine, input, file.target, rendered);
     throw error;
   }
 }
 
 /**
  * #7960: puts back the bytes an owner repair's file held before `rendered` replaced them (removes a file it created), only
- * while the file still holds what the repair wrote, and commits that restore when the repair's write was committed.
- * Best-effort: the caller rethrows the database failure either way.
+ * while the file still holds what the repair wrote and the page row still has the revision the repair started from (a
+ * transaction whose COMMIT landed but whose acknowledgment was lost keeps its file), and commits that restore when the
+ * repair's write was committed. Best-effort: the caller rethrows the database failure either way.
  */
-async function restoreOwnerRepairFile(engine: BrainEngine, slug: string, target: OwnerRepairTarget, rendered: WriteThroughResult): Promise<void> {
+async function restoreOwnerRepairFile(engine: BrainEngine, input: PageActionInput, target: OwnerRepairTarget, rendered: WriteThroughResult): Promise<void> {
   const { existsSync, readFileSync, rmSync } = await import('node:fs');
   const { atomicWriteFileSync } = await import('../atomic-write.ts');
   const { commitWriteThroughFile } = await import('../brain-repo-durability.ts');
   const { withSourceFilesystemLock } = await import('../minions/source-filesystem.ts');
+  const { slug } = input;
   const path = rendered.path!;
   try {
     await withSourceFilesystemLock(engine, target.writeRoot, async () => {
       if ((existsSync(path) ? readFileSync(path, 'utf-8') : null) !== rendered.content) return;
+      if ((await engine.readPageSnapshot(slug, { sourceId: input.sourceId }))?.revision !== input.expectedRevision) return;
       if (target.expectedFileBytes === null) rmSync(path, { force: true });
       else atomicWriteFileSync(path, target.expectedFileBytes);
       if (rendered.committed) commitWriteThroughFile(target.writeRoot, path, slug, 'restore write-through');

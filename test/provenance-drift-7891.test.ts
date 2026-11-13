@@ -270,6 +270,37 @@ for (const kind of testBackends()) {
         expect(git(brainDir, 'rev-list', '--count', `${before.head}..HEAD`).trim()).toBe('2');
       }, 120_000);
 
+      test.skipIf(!repo)('#7960: a database commit that landed but whose acknowledgment was lost keeps the repaired file and its commit', async () => {
+        const slug = 'inbox/commit-ack-lost';
+        const rel = `${slug}.md`;
+        await seed(slug, STORED);
+        await rewrite(slug, {}, 'oauth_client');
+        durableGitRepo(brainDir, [rel]);
+        const before = { file: fs.readFileSync(fileOf(slug), 'utf8'), head: git(brainDir, 'rev-parse', 'HEAD').trim(), revision: (await page(slug)).revision };
+        const dry = await run(false);
+        expect(dry.affected).toBe(1);
+        const outer = engine;
+        const transaction = Object.getPrototypeOf(outer).transaction as BrainEngine['transaction'];
+        let repaired = null as string | null;
+        outer.transaction = async function (this: BrainEngine, fn: (tx: BrainEngine) => Promise<unknown>, opts?: Parameters<BrainEngine['transaction']>[1]) {
+          const result = await transaction.call(this, fn, opts);
+          if (this === outer && repaired === null && fs.readFileSync(fileOf(slug), 'utf8') !== before.file) {
+            repaired = fs.readFileSync(fileOf(slug), 'utf8');
+            throw new Error('forced lost COMMIT acknowledgment');
+          }
+          return result;
+        } as BrainEngine['transaction'];
+        try {
+          await run(true, { expect: dry.preview_hash }).catch(() => undefined);
+        } finally { delete (outer as { transaction?: unknown }).transaction; }
+        expect(repaired).not.toBeNull();
+        expect(repaired).not.toBe(before.file);
+        expect({ file: fs.readFileSync(fileOf(slug), 'utf8'), headFile: git(brainDir, 'show', `HEAD:${rel}`), status: git(brainDir, 'status', '--porcelain').trim() })
+          .toEqual({ file: repaired!, headFile: repaired!, status: '' });
+        expect((await page(slug)).revision).not.toBe(before.revision);
+        expect(git(brainDir, 'rev-list', '--count', `${before.head}..HEAD`).trim()).toBe('1');
+      }, 120_000);
+
       test.skipIf(!repo)('#7098: a page of a source marked mirror-readonly is listed needs_review, not repaired in the database alone', async () => {
         const slug = 'inbox/read-only-mirror';
         await seed(slug, STORED);
