@@ -746,6 +746,8 @@ export interface CorpusFailureRecord {
   rearmed: boolean;
   /** #9279: the gbrain version that recorded a deterministic failure (CORPUS_DETERMINISTIC_FAILURE_CODES). */
   build?: string;
+  /** #9279: true once the automatic retry on a newer build ran; only an operator retry runs the window after that. */
+  upgrade_retried?: boolean;
 }
 
 /** The failure record, or null when absent or unparseable. Never throws. */
@@ -756,7 +758,8 @@ export function readCorpusFailure(full: string): CorpusFailureRecord | null {
       || !Number.isFinite(r.last_at) || !Number.isFinite(r.first_at) || typeof r.last_code !== 'string'
       || !(r.source_incarnation === null || typeof r.source_incarnation === 'string')
       || !(r.fingerprint === null || typeof r.fingerprint === 'string') || typeof r.rearmed !== 'boolean'
-      || !(r.build === undefined || typeof r.build === 'string')) return null;
+      || !(r.build === undefined || typeof r.build === 'string')
+      || !(r.upgrade_retried === undefined || typeof r.upgrade_retried === 'boolean')) return null;
     return r;
   } catch {
     return null;

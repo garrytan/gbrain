@@ -233,4 +233,41 @@ describe('a deterministic refusal after the model call (#9279)', () => {
       expect(corpusFailureGate({ ...record, last_code: 'provider_error' }, record.key, null, null, Date.now())).toBe('dead_lettered');
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, TEST_MS);
+
+  async function retryHeld(error: () => Error) {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-9279-retry-'));
+    const full = join(dir, 'held-session.txt');
+    writeFileSync(full, transcript());
+    const key = await corpusFrontierKey(full, 'held-session.txt');
+    writeFileSync(full + CORPUS_FAILURE_SUFFIX, JSON.stringify({ version: 1, key, source_incarnation: null, count: CORPUS_WINDOW_FAILURE_CAP,
+      first_at: 1, last_at: 1, last_code: 'page_body_segmented', fingerprint: null, rearmed: false, build: '0.0.0.1' }) + '\n');
+    let paid = 0;
+    await runCorpusWindows({
+      full, raw: readFileSync(full, 'utf8'), fileStat: corpusFileStat((await import('node:fs')).statSync(full)), maxWindows: 1,
+      overBudget: () => false, signal: new AbortController().signal, failures: { fingerprint: null },
+      extract: async () => {
+        await invokeAI({ operation: 'extract', model: 'anthropic:test', kind: 'chat' }, async () => { paid++; return 'facts'; }, () => null);
+        throw error();
+      },
+    }).catch((e: unknown) => e);
+    return { dir, paid, record: readCorpusFailure(full)! };
+  }
+
+  test('retries a held window automatically once, not on every later build', async () => {
+    const { dir, paid, record } = await retryHeld(() => opError('page_body_segmented', 'The entity page is stored in segments.', 'Retrying refuses the same way.'));
+    try {
+      expect(paid).toBe(1);
+      expect(record).toMatchObject({ count: CORPUS_WINDOW_FAILURE_CAP + 1, last_code: 'page_body_segmented', build: VERSION, upgrade_retried: true });
+      expect(corpusFailureGate({ ...record, build: '0.0.0.2' }, record.key, null, null, Date.now())).toBe('dead_lettered');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, TEST_MS);
+
+  test('a transient failure on that retry starts a fresh count instead of stopping the window for good', async () => {
+    const { dir, paid, record } = await retryHeld(() => opError('unavailable', 'The provider timed out.', 'Retry later.'));
+    try {
+      expect(paid).toBe(1);
+      expect(record).toMatchObject({ count: 1, last_code: 'unavailable', upgrade_retried: true });
+      expect(corpusFailureGate(record, record.key, null, null, Date.now())).toBe('run');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, TEST_MS);
 });

@@ -36,7 +36,7 @@ import { withAIInvocationGuard } from '../ai/invocation-guard.ts';
 import { parseCorpusTurns, type CorpusTurn } from './corpus-turns.ts';
 import { VERSION } from '../../version.ts';
 import {
-  CORPUS_DETERMINISTIC_FAILURE_CODES, CORPUS_FAILURE_SUFFIX, CORPUS_NON_TERMINAL_SKIPS, CORPUS_PROGRESS_LOCK_SUFFIX, CORPUS_PROGRESS_SUFFIX, CORPUS_WINDOW_FAILURE_CAP,
+  CORPUS_DETERMINISTIC_FAILURE_CODES, CORPUS_FAILURE_SUFFIX, corpusFailureHeld, CORPUS_NON_TERMINAL_SKIPS, CORPUS_PROGRESS_LOCK_SUFFIX, CORPUS_PROGRESS_SUFFIX, CORPUS_WINDOW_FAILURE_CAP,
   corpusFileCompletion, corpusFileFinished, parseCorpusProgress, parseWbFileName, readCorpusFailure, type CorpusFailureRecord,
 } from './corpus-segments.ts';
 
@@ -419,7 +419,8 @@ function windowKey(turns: CorpusTurn[], at: { turn: number; offset: number }): s
  * changed since its last failure. #9279: a window stopped by a deterministic
  * failure runs once on a gbrain build other than the one that recorded it
  * (a record from before #9279 carries no build), so an upgrade that fixes the
- * refusal extracts it with no command.
+ * refusal extracts it with no command. That automatic retry happens once per
+ * record (upgrade_retried); after it only an operator retry runs the window.
  */
 export function corpusFailureGate(
   record: CorpusFailureRecord | null,
@@ -430,7 +431,7 @@ export function corpusFailureGate(
 ): 'run' | 'backoff' | 'dead_lettered' {
   if (!record || record.key !== key || record.source_incarnation !== incarnation) return 'run';
   if (record.count >= CORPUS_WINDOW_FAILURE_CAP) {
-    const rebuilt = CORPUS_DETERMINISTIC_FAILURE_CODES.includes(record.last_code) && record.build !== VERSION;
+    const rebuilt = CORPUS_DETERMINISTIC_FAILURE_CODES.includes(record.last_code) && record.build !== VERSION && record.upgrade_retried !== true;
     return rebuilt || rearms(record, fingerprint) ? 'run' : 'dead_lettered';
   }
   if (record.count === 1) return 'run';
@@ -518,8 +519,10 @@ function failureCode(e: unknown): string {
  * count; the error label never resets it. A capped window re-armed by a
  * fingerprint change starts over once. #9279: a deterministic failure
  * (CORPUS_DETERMINISTIC_FAILURE_CODES) stops the window at once, stamped with
- * this build, instead of paying for four more identical refusals. Returns the
- * record written.
+ * this build, instead of paying for four more identical refusals. A failure on
+ * the automatic retry of a held window marks it upgrade_retried; a transient
+ * one there starts a fresh count, so it still gets the ordinary retries.
+ * Returns the record written.
  */
 export async function recordCorpusFailure(
   full: string,
@@ -534,7 +537,9 @@ export async function recordCorpusFailure(
   const rearm = same && prev!.count >= CORPUS_WINDOW_FAILURE_CAP && rearms(prev!, fingerprint);
   const code = failureCode(error);
   const deterministic = CORPUS_DETERMINISTIC_FAILURE_CODES.includes(code);
-  const count = same && !rearm ? prev!.count + 1 : 1;
+  const held = same && corpusFailureHeld(prev);
+  const retried = same && (prev!.upgrade_retried === true || (held && prev!.build !== VERSION));
+  const count = same && !rearm && !(held && !deterministic) ? prev!.count + 1 : 1;
   const record: CorpusFailureRecord = {
     version: 1,
     key,
@@ -546,6 +551,7 @@ export async function recordCorpusFailure(
     fingerprint,
     rearmed: same ? prev!.rearmed || rearm : false,
     ...(deterministic ? { build: VERSION } : {}),
+    ...(retried ? { upgrade_retried: true } : {}),
   };
   const path = full + CORPUS_FAILURE_SUFFIX;
   const tmp = `${path}.tmp-${process.pid}`;

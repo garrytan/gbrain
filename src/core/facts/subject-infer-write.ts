@@ -97,6 +97,14 @@ async function targetFenceClean(engine: BrainEngine, sourceId: string, slug: str
   const { isSegmentedPage } = await import('../page-body/page-shape.ts');
   const { materializedSnapshot, segmentedOverCeiling } = await import('../persistence/segmented-apply.ts');
   if (isSegmentedPage(snapshot.page) && (!managed || segmentedOverCeiling(snapshot.page))) return false;
+  let body: string;
+  try {
+    body = (await materializedSnapshot(engine, snapshot))!.page.compiled_truth;
+  } catch (error) {
+    const { OperationError } = await import('../ops/contract.ts');
+    if (error instanceof OperationError) return false;
+    throw error;
+  }
   const { parseFactsFence } = await import('../facts-fence.ts');
-  return parseFactsFence((await materializedSnapshot(engine, snapshot))!.page.compiled_truth).warnings.length === 0;
+  return parseFactsFence(body).warnings.length === 0;
 }

@@ -71,6 +71,12 @@ describe('#9011: a purged Gmail thread refused at publication after a pending im
       const [slug] = await livePages();
       expect(slug).toBeDefined();
       expect(await subjectLoops()).toBe(1);
+      // A refusal naming a slug whose page is live keeps that page's loops.
+      const live = spyOn(ManagedConnectorSync.prototype, 'refusedPurgedSlugs').mockReturnValue([slug!]);
+      try { await run(); } finally { live.mockRestore(); }
+      await settleConnectorWrites(engine, f.id);
+      await disposePersistenceConsumer(engine);
+      expect(await subjectLoops()).toBe(1);
       const snapshot = (await engine.readPageSnapshot(slug!, { sourceId: f.id }))!;
       await submitPageMutation(ctx(engine, f.id), { operation: 'delete_page', params: { slug: slug!, purge: true, expected_revision: snapshot.revision } });
       await settleConnectorWrites(engine, f.id);
