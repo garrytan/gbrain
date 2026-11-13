@@ -26,6 +26,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}${{ inputs.runs && inputs.runs != '1' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: false
 
+# A git transfer below 1 KB/s for 120 s fails, so actions/checkout retries its fetch (3 attempts) instead of
+# hanging silent until the job timeout on a stalled connection to github.com.
+env:
+  GIT_HTTP_LOW_SPEED_LIMIT: '1000'
+  GIT_HTTP_LOW_SPEED_TIME: '120'
+
 jobs:
   gate:
     name: Sync freshness gate (10k, watch, p50 of 10 vs baseline +25%)

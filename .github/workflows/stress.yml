@@ -36,6 +36,12 @@ on:
 permissions:
   contents: read
 
+# A git transfer below 1 KB/s for 120 s fails, so actions/checkout retries its fetch (3 attempts) instead of
+# hanging silent until the job timeout on a stalled connection to github.com.
+env:
+  GIT_HTTP_LOW_SPEED_LIMIT: '1000'
+  GIT_HTTP_LOW_SPEED_TIME: '120'
+
 jobs:
   plan:
     name: Stress plan
