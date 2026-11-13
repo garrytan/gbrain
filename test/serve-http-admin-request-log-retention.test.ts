@@ -91,6 +91,7 @@ describe('admin dashboard across a request-log prune', () => {
 
 describe('admin Request Log page', () => {
   test('shows the retention window and prune date the endpoint returns', () => {
+    // test-reads-source-ok[structural]: the admin SPA has no component harness, so this pins that the page renders the endpoint's retention fields
     const page = readFileSync('admin/src/pages/RequestLog.tsx', 'utf8');
     expect(page).toContain('data.retention_days');
     expect(page).toContain('data.pruned_before');
