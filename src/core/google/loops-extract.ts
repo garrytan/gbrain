@@ -5,7 +5,7 @@
  * deck by Friday" — direction, counterparty, due date, verbatim quote) and
  * pending decisions. ONE extractor, not two (outside-voice F5): the results
  * project into BOTH substrates in the same pass —
- *   - an open_loops row (dedup 'commit:<sha8(canonical)>', detector llm_extract)
+ *   - an open_loops row (dedup 'commit:<sha8(canonical)>', or 'commit:c:<sha8>' when it names a counterparty; detector llm_extract)
  *   - a facts row via writeSingleFact (kind=commitment, fence-first, deduped)
  *     whose id lands on open_loops.fact_id, so entity cards / recall see the
  *     commitment through the existing read paths with zero new read code
@@ -336,22 +336,26 @@ function uniqueByQuote<T extends { quote: string }>(items: T[], direction: (item
  * #7289: a loop is its thread, direction, verbatim quote and counterparty, so
  * every pass over a growing thread updates the loop its quote opened instead of
  * opening one per paraphrase, and one sentence that promises two people two
- * things stays two loops. A row already keyed that way wins; otherwise a row
- * recorded for that quote keeps its key (rows written before this keyed on the
- * model's text), open rows first, unless another item of this pass already took
- * it (`claimed`). An item without a verified quote keys on its text.
+ * things stays two loops. A row already keyed to this person wins; otherwise a
+ * legacy row recorded for that quote (keyed before the counterparty, on the
+ * quote or the model's text) keeps its key, open rows first. A row keyed to
+ * another person (`commit:c:`) or already taken by another item of this pass
+ * (`claimed`) is never adopted. An item without a verified quote keys on its text.
  */
 async function loopDedupKey(engine: BrainEngine, sourceId: string, threadId: string, loopType: LoopType,
   direction: string, text: string, quote: string, who: string, claimed: Set<string>): Promise<string> {
   const q = quoteKey(quote);
   if (!q) return `commit:${sha8(JSON.stringify({ t: threadId, d: direction, x: text.toLowerCase() }))}`;
-  const fresh = `commit:${sha8(JSON.stringify({ t: threadId, d: direction, q, ...(who ? { c: who } : {}) }))}`;
-  const rows = await engine.executeRaw<{ dedup_key: string; quote: string }>(
-    `SELECT dedup_key, evidence->0->>'quote' AS quote FROM open_loops
+  const fresh = who ? `commit:c:${sha8(JSON.stringify({ t: threadId, d: direction, q, c: who }))}` : `commit:${sha8(JSON.stringify({ t: threadId, d: direction, q }))}`;
+  const rows = (await engine.executeRaw<{ dedup_key: string; quote: string; counterparty_email: string | null }>(
+    `SELECT dedup_key, evidence->0->>'quote' AS quote, counterparty_email FROM open_loops
       WHERE source_id = $1 AND thread_id = $2 AND loop_type = $3 AND detector = 'llm_extract'
         AND COALESCE(evidence->0->>'quote', '') <> ''
-      ORDER BY (dedup_key = $4) DESC, (status = 'open') DESC, id`, [sourceId, threadId, loopType, fresh]);
-  const key = rows.find((row) => quoteKey(row.quote) === q && !claimed.has(row.dedup_key))?.dedup_key ?? fresh;
+      ORDER BY (status = 'open') DESC, id`, [sourceId, threadId, loopType]))
+    .filter((row) => quoteKey(row.quote) === q && !claimed.has(row.dedup_key));
+  const samePerson = (row: { dedup_key: string; counterparty_email: string | null }) =>
+    row.dedup_key === fresh || (!!who && (row.counterparty_email ?? '').toLowerCase().trim() === who);
+  const key = (rows.find(samePerson) ?? rows.find((row) => !row.dedup_key.startsWith('commit:c:')))?.dedup_key ?? fresh;
   claimed.add(key);
   return key;
 }
