@@ -26,6 +26,7 @@ import { performSync } from '../src/commands/sync.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { publishManagedEntityFacts } from '../src/core/facts/managed-fact-write.ts';
+import { scanFactsHome } from '../src/core/facts/facts-home.ts';
 import { resolveRepairScope, type RepairKind } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
@@ -169,6 +170,19 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     await settleManagedGitEffects(engine);
     expect(lineOf(head(root, HOLD_FILE), SUBJECTLESS)).toContain(SUBJECTLESS);
     expect(await factRow(engine, SUBJECTLESS)).toMatchObject({ entity_slug: null, source_markdown_slug: HOLD, row_num: 1 });
+  }), 120_000);
+
+  test('with write-through off, a fact for an entity under an exact page rule is listed folder_restricted and never homed on a holding page', () => brain(async ({ engine }) => {
+    await engine.executeRaw(`INSERT INTO access_policy_state(source_id) VALUES('default') ON CONFLICT DO NOTHING`);
+    await engine.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','r1','clients/acme-example',ARRAY['member:alice-example'],1)`);
+    __resetPrivateVisibilityCacheForTests();
+    await legacy(engine, RESTRICTED, 'clients/acme-example');
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id='default'`);
+    await engine.setConfig('sync.write_through', 'false');
+    const scan = await scanFactsHome(engine, 'default');
+    expect(scan.rows.filter(row => row.entity_slug === 'clients/acme-example')).toMatchObject([{ group: 'folder_restricted', reason: 'page_rule' }]);
+    expect(scan.homeable).toEqual([]);
+    expect(classes(await repair(engine))).toEqual(['folder_restricted']);
   }), 120_000);
 
   test('a source that is not strict lists nothing, writes nothing and names the census', () => brain(async ({ engine }) => {

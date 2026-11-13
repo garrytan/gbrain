@@ -24,12 +24,11 @@
  *   row on any page's Facts table; the census counts it, so it is listed, never moved.
  */
 import type { BrainEngine } from '../engine.ts';
-import { folderHoldingSlug, holdingSlugSql, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { holdingSlugSql, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
-import { folderRestricted } from '../search/private-visibility.ts';
 import { adoptableClaim, pageHasFile, planPageFence, type UnfencedFactRow } from './unfenced-facts.ts';
-import { ambiguousHeldReason, heldFactTarget, holdingHome } from './held-fact-move.ts';
+import { ambiguousHeldReason, heldFactTarget, holdingHome, holdingPageFor } from './held-fact-move.ts';
 
 export const FACTS_HOME_DOCS = 'docs/guides/repair.md#facts-home';
 export const HELD_TOO_LONG_DAYS = 30;
@@ -85,8 +84,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
     if (row.entity_slug !== null && row.page_deleted) { add({ ...base, group: 'entity_page_deleted' }); continue; }
     const entity = row.entity_slug === UNATTRIBUTED_MEMORY_SLUG ? null : row.entity_slug;
     // The holding page every fact writer uses (held-fact-move.ts holdingHome); with write-through off, the one it would use.
-    const found = await holdingHome(engine, sourceId, entity);
-    const home = found ?? (entity !== null && await folderRestricted(engine, sourceId, entity) ? { slug: folderHoldingSlug(entity) } : { slug: UNATTRIBUTED_MEMORY_SLUG });
+    const home = await holdingHome(engine, sourceId, entity) ?? await holdingPageFor(engine, sourceId, entity);
     if ('refused' in home) { add({ ...base, group: 'folder_restricted', reason: home.refused }); continue; }
     const oracle = adoptableClaim(row);
     if ('rejected' in oracle) { add({ ...base, group: 'cannot_render', reason: oracle.rejected }); continue; }
