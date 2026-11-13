@@ -37,6 +37,7 @@ import { appendContextNote } from './subject-infer.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
 import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 
 export const RELINK_OPERATION = 'relink_facts';
 
@@ -68,8 +69,8 @@ function fenceRow(v: Record<string, unknown>, rowNum: number, context: string) {
   return {
     rowNum, claim: String(v.fact), kind: v.kind as never, confidence: Number(v.confidence ?? 1),
     visibility: v.visibility as never, notability: (v.notability ?? 'medium') as never,
-    validFrom: formatFenceDate(new Date(String(v.valid_from))),
-    validUntil: v.valid_until ? formatFenceDate(new Date(String(v.valid_until))) : undefined,
+    validFrom: relinkDate(v.valid_from),
+    validUntil: v.valid_until ? relinkDate(v.valid_until) : undefined,
     source: v.source == null ? undefined : String(v.source),
     context,
     ...(v.claim_metric ? { claimMetric: String(v.claim_metric) } : {}),
@@ -80,12 +81,27 @@ function fenceRow(v: Record<string, unknown>, rowNum: number, context: string) {
   };
 }
 
+/** Keep millisecond precision without changing the legacy whole-second/date-only shape. */
+function relinkDate(value: unknown): string {
+  const date = new Date(String(value));
+  return date.getUTCMilliseconds() ? date.toISOString() : formatFenceDate(date);
+}
+
+/** The projection uses JS Date; refuse higher precision instead of silently rounding it. */
+function representableDate(value: unknown): boolean {
+  if (value == null) return true;
+  const text = String(value);
+  const submillisecond = /\.\d{3}(\d+)/.exec(text)?.[1];
+  return Number.isFinite(new Date(text).getTime()) && !/[1-9]/.test(submillisecond ?? '');
+}
+
 /**
  * A claim the fence cannot carry unchanged (wrapped in ~~, or otherwise not
  * parsing back to the same active claim and visibility) would be expired and
  * re-inserted as a different fact by the page projection, so it is never moved.
  */
 function roundTrips(v: Record<string, unknown>, context: string): boolean {
+  if (!representableDate(v.valid_from) || !representableDate(v.valid_until)) return false;
   const parsed = parseFactsFence(upsertFactRow('', fenceRow(v, 1, context)).body);
   const cell = parsed.facts[0];
   return parsed.warnings.length === 0 && parsed.facts.length === 1 && cell!.active && cell!.claim === String(v.fact)
@@ -217,7 +233,9 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     }
     await page?.validate?.(tx);
   };
-  const apply = async (tx: BrainEngine): Promise<Record<string, unknown>> => {
+  // Relink changes placement and adds a maintenance note, not the claim's provenance.
+  // Keep this scope through page projection too; write attribution still records the request.
+  const apply = async (tx: BrainEngine): Promise<Record<string, unknown>> => withTrustKeep(tx, ['facts'], async () => {
     const outcome: RelinkGroupOutcome = { linked: [], deduped: [], skipped: [], queued: 0 };
     const guard = 'WHERE source_id=$1 AND id=$2 AND entity_slug IS NULL AND row_num IS NULL AND source_markdown_slug IS NULL AND expired_at IS NULL RETURNING id';
     // Rows take their fence positions before the page projection runs, so the
@@ -255,7 +273,7 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
       outcome.queued = await enqueueRelinked(tx, row.source_id, outcome.linked.map(l => l.id));
     }
     return { ...published, status: 'relinked', slug: row.slug, ...outcome, ...normalized };
-  };
+  });
   if (!page) return { observedRevision, validate, apply };
   return { ...page, validate, apply };
 }
