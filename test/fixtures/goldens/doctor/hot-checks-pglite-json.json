@@ -816,7 +816,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Extraction lag not applicable (20 pages — too few to assess); 1 page(s) pending link extraction (gbrain extract --stale finishes them)",
+            "message": "Extraction lag not applicable (20 pages — too few to assess); 13 page(s) pending link extraction (gbrain extract --stale finishes them)",
             "name": "links_extraction_lag",
             "status": "ok"
           },
@@ -5948,7 +5948,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Extraction lag not applicable (20 pages — too few to assess); 1 page(s) pending link extraction (gbrain extract --stale finishes them)",
+            "message": "Extraction lag not applicable (20 pages — too few to assess); 13 page(s) pending link extraction (gbrain extract --stale finishes them)",
             "name": "links_extraction_lag",
             "status": "ok"
           },
