@@ -81,7 +81,8 @@ const NESTED_INDEX = 'projects/acme-example/index.md';
 
 test('a plain directory returns a typed refusal with a read-only next step', () => each(async engine => {
   const id = 'resolve-plain-directory';
-  const dir = mkdirSync(join(home, id), { recursive: true })!;
+  const dir = join(home, id);
+  mkdirSync(dir, { recursive: true });
   await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, dir]);
 
   await expect(resolveSourcePaths(engine, id, ['notes/example.md'])).rejects.toMatchObject({
@@ -96,8 +97,9 @@ test('a plain directory returns a typed refusal with a read-only next step', () 
 test('an incomplete Git directory in an ancestor still reports the original Git failure', () => each(async engine => {
   const id = 'resolve-damaged-git';
   const root = join(home, id);
+  const dir = join(root, 'notes');
   mkdirSync(join(root, '.git'), { recursive: true });
-  const dir = mkdirSync(join(root, 'notes'), { recursive: true })!;
+  mkdirSync(dir, { recursive: true });
   await engine.executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [id, dir]);
 
   await expect(resolveSourcePaths(engine, id, ['example.md'])).rejects.toMatchObject({
@@ -108,7 +110,8 @@ test('an incomplete Git directory in an ancestor still reports the original Git 
 
 test('a registered Git clone with missing metadata still reports the original Git failure before its first sync', () => each(async engine => {
   const id = 'resolve-missing-clone';
-  const dir = mkdirSync(join(home, id), { recursive: true })!;
+  const dir = join(home, id);
+  mkdirSync(dir, { recursive: true });
   await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)',
     [id, dir, JSON.stringify({ managed_clone: true, remote_url: 'https://example.invalid/repo.git' })]);
 
