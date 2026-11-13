@@ -12,14 +12,18 @@
  * GST-2521: every label write raises the page's label guard (raisePageLabelGuard), so an agent write at the page's own
  * tier is held from widening what the owner set.
  */
+import { relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { opError, type OperationContext } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { importFromContent } from '../import-file.ts';
+import type { PageSnapshot } from '../page-state/types.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { withTrustKeep } from '../persistence/context.ts';
+import { existingHostIdFor } from '../persistence/identity.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
-import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { labelEditFile } from '../persistence/page-prepare.ts';
+import { getWorktreeBinding, managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { fileSnapshotDifference, labelEditFit, labelEditRefused, prepareFileTarget } from '../persistence/page-prepare.ts';
+import { readSyncFile } from '../persistence/sync-discovery.ts';
 import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import type { RepairItemOutcome } from './core.ts';
 import { raisePageLabelGuard } from '../trust/page-write.ts';
@@ -87,7 +91,9 @@ export async function writeLabelFile(engine: BrainEngine, page: { source_id: str
   const snapshot = before === null ? null : await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
   if (before === null || !snapshot) return importAtRevision(engine, page, write.revision, write.content, write.embed, write.preview);
   if (snapshot.revision !== write.revision) return null;
-  const text = labelEditFile(page.slug, Buffer.from(before, 'utf8'), write.content, write.edit, snapshot);
+  const fit = labelEditFit(page.slug, Buffer.from(before, 'utf8'), write.content, write.edit, snapshot);
+  if (typeof fit !== 'string') throw labelEditRefused(page, fit.keys, write.edit);
+  const text = fit;
   let unwritable: string | undefined;
   try {
     return await importAtRevision(engine, page, write.revision, text, write.embed, write.preview, async tx => {
@@ -100,6 +106,57 @@ export async function writeLabelFile(engine: BrainEngine, page: { source_id: str
     if (unwritable) return held(unwritable);
     throw error;
   }
+}
+
+/**
+ * GST-2603: why the label write of `snapshot`'s page would not take its file, read now from the file's current bytes and
+ * changing nothing; null when it would, or when the page has no file here (a repo-less brain, a database-only page, a file
+ * this host does not own: the write decides those). `file_database_drift`: the file differs from the page (`error` is the
+ * refusal the write throws); `label_edit_refused`: the file holds the page but cannot take the edit line by line. `keys` names
+ * what differs or blocks (a frontmatter key, title, type, tags, body or timeline, never a stamp only the database holds); `next`
+ * is the step that clears it. The managed write (page-prepare.ts prepareFileTarget, labelEditFile) and the unmanaged
+ * checkout write (writeLabelFile) compare with the same rule.
+ */
+export interface LabelFileRefusal { reason: 'file_database_drift' | 'label_edit_refused'; keys: string[]; next: string; error: OperationError }
+export async function labelFileRefusal(engine: BrainEngine, snapshot: PageSnapshot, content: string, edit: LabelEdit): Promise<LabelFileRefusal | null> {
+  const { source_id: sourceId, slug } = snapshot.page;
+  const drift = (keys: string[], next: string, error: OperationError): LabelFileRefusal => ({ reason: 'file_database_drift', keys, next, error });
+  const read = (root: string, path: string) => { try { return readSyncFile(root, path); } catch { return null; } };
+  let bytes: Buffer | null;
+  if (await managedPersistenceEnabled(engine)) {
+    const hostId = existingHostIdFor(engine);
+    const binding = hostId ? await getWorktreeBinding(engine, sourceId, hostId) : null;
+    if (!binding?.local_path || binding.owner_host_id !== hostId || binding.state !== 'active') return null;
+    try {
+      const target = await prepareFileTarget(engine, { source_id: sourceId, worktree_id: binding.worktree_id, slug }, snapshot, content, hostId!);
+      bytes = target && target.content !== null ? read(target.root, target.path) : null;
+    } catch (error) {
+      if (!(error instanceof OperationError) || error.detail !== 'file_database_drift') return null;
+      const local = (error as OperationError & { localEdit?: { root: string; path: string } }).localEdit;
+      const text = local ? read(local.root, local.path) : null;
+      const keys = local && text ? await fileSnapshotDifference(engine, slug, text.toString('utf8'), snapshot, relative(local.root, local.path).split(sep).join('/')) : [];
+      return drift(keys, local ? `gbrain sources reconcile ${sourceId} ${slug} --preview` : error.suggestion ?? '', error);
+    }
+  } else {
+    if (!(await filesInCheckout(engine, [Number(snapshot.page.id)])).has(Number(snapshot.page.id))) return null;
+    const { ownerRepairFile } = await import('../trust/page-handlers.ts');
+    const file = await ownerRepairFile(engine, sourceId, slug);
+    if (!file.ok && file.reason === 'file_database_drift') {
+      const { derivedFileTarget } = await import('../cycle/derived-write-through.ts');
+      const target = await derivedFileTarget(engine, slug, sourceId);
+      const text = target.ok ? read(target.target.writeRoot, target.target.filePath) : null;
+      const keys = text ? await fileSnapshotDifference(engine, slug, text.toString('utf8'), snapshot, snapshot.page.source_path ?? `${slug}.md`) : [];
+      return drift(keys, `gbrain sync --source ${sourceId}`, opError('source_changed', `${sourceId}:${slug} was not written: its file in the source's checkout holds an edit the database lacks.`,
+        `Run gbrain sync --source ${sourceId}, then preview the repair again.`, { detail: 'file_database_drift' }));
+    }
+    if (!file.ok || !file.target?.expectedFileBytes) return null;
+    bytes = Buffer.from(file.target.expectedFileBytes, 'utf8');
+  }
+  if (!bytes) return null;
+  const fit = labelEditFit(slug, bytes, content, edit, snapshot);
+  if (typeof fit === 'string') return null;
+  const error = labelEditRefused(snapshot.page, fit.keys, edit);
+  return { reason: 'label_edit_refused', keys: fit.keys, next: error.suggestion ?? '', error };
 }
 
 /**

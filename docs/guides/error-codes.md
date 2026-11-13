@@ -2892,6 +2892,18 @@ More: [docs/guides/sync-unblock-runbook.md#decision-table](../../docs/guides/syn
 
 More: [docs/guides/repair.md#known-as-of-unproven](../../docs/guides/repair.md#known-as-of-unproven)
 
+### label_edit_refused
+
+<a id="label_edit_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A label-only repair left a page unchanged because its file holds the page but cannot take the label edit line by line. | Operator label repairs (gbrain repair visibility, gbrain repair private-labels) change only the label lines of a page's file and never re-render it, so a person's formatting, key order and comments survive. A label line with a block or multi-line value or a duplicate key, a file with no frontmatter block, or a file that still differs from the page once its label lines are edited (a frontmatter key, the title, the type, the tags or the body; never a stamp gbrain keeps only in the database) cannot be edited that way. The repair counts the page as declined, writes nothing, and the next preview lists it as held with what blocks it. | Make the field the refusal names in the page's file match the page, or write the label line as one plain line, commit it, run gbrain sync for the source, then preview the repair again. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `file_differs`, `label_line`.
+
+More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write-refusals.md#label_edit_refused)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>
