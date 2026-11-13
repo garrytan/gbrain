@@ -83,23 +83,24 @@ const write = (env: Env, rel: string, body: string) => writeFileSync(join(env.ws
 const outcome = (result: Awaited<ReturnType<typeof update>>, slug: string) => result.skills.find(s => s.slug === slug)!;
 
 describe('base recording and whole-skill update', () => {
-  test('a state save that fails after the files land keeps the skill updated and finishes the journal', async () => {
+  test('a state save that fails after the files land keeps the skill updated, leaves the next skill untouched and finishes the journal', async () => {
     const env = setup();
     await scaffold(env);
-    release(env.gbrainRoot, { ...V1, 'demo/SKILL.md': V2['demo/SKILL.md'] });
+    release(env.gbrainRoot, V2);
     const breakState = () => {
       if (existsSync(join(env.statePath, 'blocked'))) return;
       rmSync(env.statePath, { force: true });
       mkdirSync(join(env.statePath, 'blocked'), { recursive: true });
     };
     const result = await update(env, { hooks: { afterRename: breakState } });
-    expect(result.summary).toMatchObject({ updated: 1, current: 1, failed: 0 });
+    expect(result.summary).toMatchObject({ updated: 1, failed: 1 });
     expect(read(env, 'demo/SKILL.md')).toBe(V2['demo/SKILL.md']);
     expect(outcome(result, 'demo').notes.some(n => n.includes('base record was not saved'))).toBe(true);
+    expect(read(env, 'other/SKILL.md')).toBe(V1['other/SKILL.md']);
+    expect(outcome(result, 'other').failure).toContain('the state file cannot be read');
     const [journal] = listJournals(env.backups);
     expect(journal!.status).toBe('complete');
-    expect(journal!.skills.every(s => s.status === 'committed')).toBe(true);
-    expect(result.restore_command).toBeNull();
+    expect(journal!.skills.map(s => [s.slug, s.status])).toEqual([['demo', 'committed'], ['other', 'abandoned']]);
   });
 
   test('scaffold records bases; an untouched skill updates whole, journaled; a second run is a no-op (repo-less)', async () => {

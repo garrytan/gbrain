@@ -294,7 +294,12 @@ async function applySkill(ctx: ApplyContext, outcome: SkillOutcome, js: JournalS
       writeFileSync(path, bytes);
       staged.push(path);
     }
-    const fresh = loadState({ statePath: ctx.opts.statePath }).roots?.[skillsRoot]?.[outcome.slug];
+    let fresh: InstalledSkillRecord | undefined;
+    try {
+      fresh = loadState({ statePath: ctx.opts.statePath }).roots?.[skillsRoot]?.[outcome.slug];
+    } catch (err) {
+      return fail(`the state file cannot be read: ${(err as Error).message}`, 'abandoned');
+    }
     if (fresh?.pinned || changed.some(f => (fresh?.files[f.rel] ?? null) !== f.base)) {
       return fail('the skill was pinned or its recorded base changed since classification', 'abandoned');
     }
