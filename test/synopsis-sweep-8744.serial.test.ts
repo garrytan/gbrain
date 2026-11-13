@@ -226,4 +226,38 @@ for (const kind of testBackends()) describe(`#8744 synopsis sweep (${kind})`, ()
     expect(rerun.plan!.pages).toEqual([]);
     expect(chatCalls).toBe(0);
   });
+
+  test('--yes --json: stdout is one JSON document, the in-process worker logs go to stderr', async () => {
+    await importFromContent(engine, 'notes/gamma-example', body('Gamma example', 2), { sourceId: 'default' });
+    const out: string[] = [];
+    const { log, error } = console;
+    const write = process.stdout.write.bind(process.stdout);
+    const writeErr = process.stderr.write.bind(process.stderr);
+    console.log = (...args: unknown[]) => { out.push(args.map(String).join(' ') + '\n'); };
+    console.error = () => {};
+    process.stdout.write = ((chunk: string | Uint8Array) => { out.push(String(chunk)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    let result;
+    try { result = await runReindexSynopsis(engine, ['--synopsis', '--yes', '--max-usd', '5', '--json'], { pollMs: 100 }); }
+    finally { console.log = log; console.error = error; process.stdout.write = write; process.stderr.write = writeErr; }
+    expect(result.run).toMatchObject({ synopsis: 1, failed: 0 });
+    expect(JSON.parse(out.join('')).run).toMatchObject({ synopsis: 1, failed: 0 });
+  });
+
+  test('a failed status poll stops the in-process worker and the run fails with that error instead of hanging', async () => {
+    await importFromContent(engine, 'notes/delta-example', body('Delta example', 2), { sourceId: 'default' });
+    const original = engine.executeRaw;
+    let failed = false;
+    engine.executeRaw = (async function (this: BrainEngine, sql: string, params?: unknown[]) {
+      if (!failed && sql.startsWith('SELECT status FROM minion_jobs')) { failed = true; throw new Error('connection reset by the pooler'); }
+      return original.call(this, sql, params as never);
+    }) as typeof engine.executeRaw;
+    try {
+      const outcome = await Promise.race([
+        quiet(() => runReindexSynopsis(engine, ['--synopsis', '--yes', '--max-usd', '5'], { pollMs: 100 })).then(() => 'resolved', (e: Error) => e.message),
+        new Promise<string>(resolve => setTimeout(() => resolve('hung'), 20_000)),
+      ]);
+      expect(outcome).toBe('connection reset by the pooler');
+    } finally { engine.executeRaw = original; }
+  }, 30_000);
 });

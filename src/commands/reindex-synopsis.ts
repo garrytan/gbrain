@@ -189,18 +189,26 @@ export async function runReindexSynopsis(engine: BrainEngine, args: string[], op
     const pollMs = opts.pollMs ?? 500;
     const worker = new MinionWorker(engine, { pollInterval: pollMs, healthCheckInterval: 0 });
     worker.register(SYNOPSIS_SWEEP_JOB, makeContextualReindexHandler({ engine }));
-    const running = worker.start();
-    let settled = false;
-    const watch = (async () => {
-      while (!settled) {
-        await new Promise(resolve => setTimeout(resolve, pollMs));
-        const rows = await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = ANY($1::int[])', [pendingIds]);
-        if (rows.every(r => TERMINAL.has(r.status))) { settled = true; worker.stop(); }
-      }
-    })();
-    await running;
-    settled = true;
-    await watch.catch(() => undefined);
+    const log = console.log;
+    if (json) console.log = (...line: unknown[]) => console.error(...line);
+    let watchError: unknown;
+    try {
+      const running = worker.start();
+      let settled = false;
+      const watch = (async () => {
+        try {
+          while (!settled) {
+            await new Promise(resolve => setTimeout(resolve, pollMs));
+            const rows = await engine.executeRaw<{ status: string }>('SELECT status FROM minion_jobs WHERE id = ANY($1::int[])', [pendingIds]);
+            if (rows.every(r => TERMINAL.has(r.status))) { settled = true; worker.stop(); }
+          }
+        } catch (error) { watchError = error; worker.stop(); }
+      })();
+      await running;
+      settled = true;
+      await watch;
+    } finally { console.log = log; }
+    if (watchError) throw watchError;
     if (worker.configurationError) {
       const { reportInlineWorkerConfiguration } = await import('./jobs-readiness.ts');
       reportInlineWorkerConfiguration(worker.configurationError);
