@@ -293,6 +293,11 @@ export interface ExtractConversationFactsCoreOpts {
    * unless dryRun; bypasses the fresh-outcome skip.
    */
   grammar?: string | null;
+  /**
+   * #7068: given a copy of the run's counters when the run ends in a thrown error, taken after the managed flush published
+   * the pages that finished, so a caller can report work that committed. The error is still thrown.
+   */
+  onInterrupted?: (partial: ExtractConversationFactsResult) => void;
 }
 
 export { extractExitCode, extractRunStatus };
@@ -1396,6 +1401,7 @@ export async function runExtractConversationFactsCore(
       // surface. NOT a thrown failure.
       return result;
     }
+    opts.onInterrupted?.(structuredClone(result));
     throw err;
   }
 

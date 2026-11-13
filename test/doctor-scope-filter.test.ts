@@ -92,3 +92,18 @@ describe('buildChecks --scope=brain skip-computation contract', () => {
     });
   });
 });
+
+// Value: protects=doctor --scope brain (separate value) skips the skill group like --scope=brain, and an unknown scope refuses; fails_when=the separate form runs the full skill group (and --fix can edit SKILL.md files the operator asked to skip); why_new=#7624; seam=none; no_claim=thin-client doctor
+describe('#7624 doctor --scope reads both forms', () => {
+  test('--scope brain skips the SKILL group; an unknown scope is invalid_params', async () => {
+    const skillsDir = makeSkillsTree();
+    await withEnv({ GBRAIN_SKILLS_DIR: skillsDir, GBRAIN_NO_BANNER: '1' }, async () => {
+      const checks = await buildChecks(null, ['--scope', 'brain', '--fast']);
+      expect(checks.filter(c => ['resolver_health', 'skill_conformance', 'skill_brain_first', 'whoknows_health'].includes(c.name))).toEqual([]);
+    });
+    const { parseDoctorScope } = await import('../src/commands/doctor/budget.ts');
+    expect(parseDoctorScope([])).toBe('all');
+    expect(parseDoctorScope(['--scope=all'])).toBe('all');
+    expect(() => parseDoctorScope(['--scope', 'brains'])).toThrow('Unknown doctor scope: brains');
+  });
+});

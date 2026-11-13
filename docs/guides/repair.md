@@ -1097,8 +1097,11 @@ as `content_receipts`. A receipt an older release left on the old root makes
 doctor report `content_receipt_stale` with this repair as its fix. The repair
 also lists an unfinished setup checkpoint that names another root: after a host
 move, the 0.53.0 migration refuses `The canonical root changed after setup
-began` with this repair as its fix (#7900). Follow the class it prints, then
-run `gbrain apply-migrations --force-retry 0.53.0`.
+began` with this repair as its fix (#7900). The repair lists only sources claimed
+under activated writer persistence, so for a moved source that is not, the
+refusal names the `gbrain sources writer claim` and `activate` previews to run
+first (#7915). Follow the class it prints, then run
+`gbrain apply-migrations --force-retry 0.53.0`.
 
 ```bash
 gbrain repair content-receipt-root --source default                       # preview, on the owner host
@@ -2037,7 +2040,9 @@ with the preview and apply commands; a stale hash refuses with
 [`preview_changed`](#preview-changed). An apply under a different `--source`
 than the preview also refuses with `preview_changed`. Doctor
 `atom_provenance_drift` names this command when drift crosses its warn
-threshold.
+threshold. An atom whose page changed only in its frontmatter or in gbrain's
+facts and takes sections is not drift when one of the page's recent versions
+still holds the edition it was extracted from (#6825).
 
 ### Atoms restore
 
@@ -2871,11 +2876,11 @@ The preview puts each fact in one group:
 
 | Group | What the apply does |
 |---|---|
-| `entity_page_missing` | Writes the fact to `memory/unattributed` as a held row that names its entity, in one commit. Once the entity has a page, the next maintenance cycle moves it there. |
+| `entity_page_missing` | Writes the fact as a held row that names its entity, one commit per holding page: `memory/unattributed`, or for an entity under a folder access rule its folder's holding page (`<folder>/memory/unattributed`, which the rule covers). Once the entity has a page, the next maintenance cycle moves it there. |
 | `no_entity` | Writes the fact to `memory/unattributed`. |
 | `entity_page_exists` | Nothing: the entity has a page, and the next maintenance cycle (`gbrain dream`) moves the fact into it. |
 | `cannot_render` | Nothing: the Facts table cannot show the fact as it stands (the class says why). It stays in the database, active and searchable. |
-| `folder_restricted` | Nothing: the entity is under a folder access rule, so the fact is never named on the world-readable holding page. It stays in the database only. |
+| `folder_restricted` | Nothing: an exact page rule covers the entity (`page_rule`: create the entity's page, then the next maintenance cycle moves the fact into it), or this database role cannot read the access rules (`access_unreadable`). It stays in the database only. |
 | `entity_page_deleted` | Nothing: the entity's page is deleted (it may have been private, and purging it would not reach a row on the holding page). Restore the page or purge it; the fact stays in the database only. |
 | `held_fact_unmovable` | Nothing: a held row whose page cannot take it, with the reason. `entity_ambiguous` names the pages a bare name could mean; save the fact again with the page slug and forget the held one. |
 | `held_over_30_days` | Nothing: a held row whose entity still has no page after 30 days, with the nearest existing page gbrain finds. |

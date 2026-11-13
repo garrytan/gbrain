@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 287261,
-    "stdoutSha256": "11bcd0f833dfdd13c8911e943508f53e2eaef4ec0aa7baf3f65a983f8fa64d8f",
+    "stdoutBytes": 287444,
+    "stdoutSha256": "740b602d25a6b3f9bc25426600bd3eeed9b87c1b0e775167e1396b777bb3d6e9",
     "toolNames": [
       "remember",
       "entity",
@@ -5305,7 +5305,7 @@
               "type": "string"
             },
             "model": {
-              "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus.",
+              "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus. Remote callers get the host think model unless the host lists this one in think.remote_models.",
               "type": "string"
             },
             "question": {
@@ -8587,7 +8587,7 @@
               "type": "boolean"
             },
             "limit": {
-              "description": "Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit.",
+              "description": "Grouped: max groups (default 3). Flat: max loops (default 50); `count` is the number matched (at most 500) and `truncated: true` marks a list cut by this limit or by the 500-row internal cap (then `count` is a lower bound).",
               "type": "number"
             },
             "loop_type": {

@@ -1,28 +1,30 @@
 /**
  * `gbrain repair facts-home --source <id> [--apply --expect <hash>]` (GST-2492 PR 2): give the facts of a strict source
  * that live in the database alone a home in Git. The preview (facts/facts-home.ts `scanFactsHome`) lists every such fact
- * by group and writes nothing: a fact with no entity, or for an entity with no page, is what the apply writes to
- * memory/unattributed (a held row names its entity, so the upkeep move takes it to the entity's page once that page
- * exists); a fact whose entity has a page is left to that upkeep step; a fact the Facts table cannot render, one for an
- * entity under a folder access rule, a held row its page cannot take, and a held row older than 30 days (with the nearest
- * existing page the resolver finds) are listed and left alone. `--apply --expect <hash>` writes exactly the previewed set
- * in one maintenance publication through the write door; the facts rows move in place (ids, vectors and provenance kept).
+ * by group and writes nothing: a fact with no entity, or for an entity with no page, is what the apply writes to its
+ * holding page, memory/unattributed or, for an entity under a folder access rule, the holding page of its folder (a held
+ * row names its entity, so the upkeep move takes it to the entity's page once that page exists); a fact whose entity has
+ * a page is left to that upkeep step; a fact the Facts table cannot render, one no holding page can carry (an exact page
+ * rule on its entity), a held row its page cannot take, and a held row older than 30 days (with the nearest existing page
+ * the resolver finds) are listed and left alone. `--apply --expect <hash>` writes exactly the previewed set
+ * in one maintenance publication per holding page through the write door; the facts rows move in place (ids, vectors and
+ * provenance kept).
  * A source that isn't strict lists nothing and says so (its database keeps such facts by design), so the bare preview a
  * remediation plan prints runs as pasted. Runs only when named; never on upgrade.
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { digest } from '../persistence/digest.ts';
 import { maintenancePreflight, planFactFenceAdoption, readFacts, submitPlannedFactFenceAdoption } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { FACTS_HOME_DOCS, factsHomePreviewCommand, scanFactsHome, type FactsHomeRow, type FactsHomeScan } from '../facts/facts-home.ts';
 import { planPageFence } from '../facts/unfenced-facts.ts';
-import { submitPageMutation } from '../persistence/page-mutations.ts';
-import { repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
+import { ensurePageForHeldRows } from '../facts/held-fact-move.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
-interface ApprovedFact { id: number; value: string }
+interface ApprovedFact { id: number; value: string; home: string }
 interface HomeItem extends RepairItem { facts: ApprovedFact[]; hash: string }
 
 /** At most this many facts are written per preview, in one publication; the preview after an apply lists the rest. */
@@ -40,10 +42,12 @@ function previewChanged(hash: string, sourceId: string): OperationError {
 
 const DETAIL: Record<FactsHomeRow['group'], (row: FactsHomeRow) => string> = {
   entity_page_exists: row => `${row.entity_slug} has a page; the extract_facts upkeep step moves this fact there (gbrain dream --phase extract_facts runs it now)`,
-  entity_page_missing: row => `${row.entity_slug} has no page; the apply writes it to ${UNATTRIBUTED_MEMORY_SLUG} as a held row naming ${row.entity_slug}`,
-  no_entity: () => `no entity; the apply writes it to ${UNATTRIBUTED_MEMORY_SLUG}`,
+  entity_page_missing: row => `${row.entity_slug} has no page; the apply writes it to ${row.home} as a held row naming ${row.entity_slug}`,
+  no_entity: row => `no entity; the apply writes it to ${row.home}`,
   cannot_render: row => `the Facts table cannot render it as it stands (${row.reason}); it stays database-only, active and searchable`,
-  folder_restricted: row => `${row.entity_slug} is under a folder access rule, so it is not named on the world-readable holding page; it stays database-only`,
+  folder_restricted: row => row.reason === 'page_rule'
+    ? `a page rule keeps ${row.entity_slug} to its own readers, which no holding page carries; create the page (gbrain put ${row.entity_slug}) and the extract_facts upkeep step fences the fact there; it stays database-only until then`
+    : `the folder access rules covering ${row.entity_slug} cannot be read now, so no holding page is chosen; it stays database-only (retry later)`,
   entity_page_deleted: row => `${row.entity_slug} is deleted (it may be private, and its purge would not reach the holding page); restore the page (gbrain restore ${row.entity_slug}) or purge it; the fact stays database-only`,
   held_fact_unmovable: row => `held for ${row.entity_slug}, whose page cannot take it (${row.reason}); edit the row, or forget the duplicate`,
   held_over_30_days: row => `held for ${row.entity_slug} since ${row.held_since} and the page still does not exist; ${row.nearest ? `the nearest existing page is ${row.nearest}` : 'no existing page resolves to it'}`,
@@ -53,12 +57,12 @@ const DETAIL: Record<FactsHomeRow['group'], (row: FactsHomeRow) => string> = {
 
 const hashParts = (scope: RepairScope, scan: FactsHomeScan, approved: ApprovedFact[]) =>
   ({ kind: 'facts-home-v1', brain_id: scope.brain_id, source_id: scan.source_id, approved: approved.map(f => [f.id, f.value]),
-    listed: scan.rows.map(row => [row.id, row.group, row.reason ?? null, row.nearest ?? null]) });
+    listed: scan.rows.map(row => [row.id, row.group, row.reason ?? null, row.nearest ?? null, row.home ?? null]) });
 
 /** The previewed facts with the digest of each stored row, as the apply re-checks them. */
 async function approvedFacts(engine: BrainEngine, scan: FactsHomeScan): Promise<ApprovedFact[]> {
-  const ids = scan.homeable.slice(0, MAX_PER_APPLY).map(row => Number(row.id));
-  return (await readFacts(engine, scan.source_id, ids)).map(fact => ({ id: fact.id, value: digest(fact.value) })).sort((a, b) => a.id - b.id);
+  const homes = new Map(scan.homeable.slice(0, MAX_PER_APPLY).map(row => [Number(row.id), row.home]));
+  return (await readFacts(engine, scan.source_id, [...homes.keys()])).map(fact => ({ id: fact.id, value: digest(fact.value), home: homes.get(fact.id)! })).sort((a, b) => a.id - b.id);
 }
 
 export const factsHomeRepair: RepairHandler = {
@@ -80,7 +84,8 @@ export const factsHomeRepair: RepairHandler = {
     const approved = await approvedFacts(engine, scan);
     const hash = previewHash(hashParts(scope, scan, approved));
     const item = (facts: ApprovedFact[], key: string): HomeItem[] => facts.length
-      ? [{ cursor: { phase: 0, id: 1 }, source_id: sourceId, slug: UNATTRIBUTED_MEMORY_SLUG, chars: 0, action: `hold ${facts.length} fact(s)`, facts, hash: key }] : [];
+      ? [{ cursor: { phase: 0, id: 1 }, source_id: sourceId, slug: UNATTRIBUTED_MEMORY_SLUG, chars: 0,
+        action: `hold ${facts.length} fact(s) on ${[...new Set(facts.map(fact => fact.home))].sort().join(', ')}`, facts, hash: key }] : [];
     if (opts?.apply) {
       if (!opts.expect) {
         throw opError('invalid_params', 'gbrain repair facts-home --apply writes only the set a preview printed.',
@@ -107,7 +112,7 @@ export const factsHomeRepair: RepairHandler = {
     }
   },
   render(details) {
-    return [`  each written fact moves in place onto ${UNATTRIBUTED_MEMORY_SLUG} in one commit; check afterwards with ${details.verify}; guide: ${details.docs}`];
+    return [`  each written fact moves in place onto its holding page, one commit per page; check afterwards with ${details.verify}; guide: ${details.docs}`];
   },
 };
 
@@ -117,27 +122,35 @@ const changed = (reason: string, detail: Record<string, unknown> = {}): RepairIt
 async function homeFacts(ctx: OperationContext, sourceId: string, approved: ApprovedFact[]): Promise<RepairItemOutcome> {
   const engine = ctx.engine;
   const scan = await scanFactsHome(engine, sourceId);
-  const current = new Map((await approvedFacts(engine, scan)).map(fact => [fact.id, fact.value]));
-  if (approved.some(fact => current.get(fact.id) !== fact.value)) return changed('facts_changed');
-  const rows = scan.homeable.filter(row => approved.some(fact => fact.id === Number(row.id)));
+  const current = new Map((await approvedFacts(engine, scan)).map(fact => [fact.id, `${fact.value}\0${fact.home}`]));
+  if (approved.some(fact => current.get(fact.id) !== `${fact.value}\0${fact.home}`)) return changed('facts_changed');
   const authority = await maintenancePreflight(engine, sourceId);
   if (!authority) return { applied: false, outcome: 'skipped', reason: 'no_maintenance_authority' };
-  // Maintenance publishes only to a page that exists, so a source with no holding page yet gets the empty one first,
-  // as the first fact saved with no entity creates it (a note titled Unattributed memory).
-  if (!await engine.readPageSnapshot(UNATTRIBUTED_MEMORY_SLUG, { sourceId, includeDeleted: true })) {
-    const local = { ...ctx, remote: false, sourceId } as OperationContext;
-    await submitPageMutation(local, { operation: 'put_page', params: { slug: UNATTRIBUTED_MEMORY_SLUG,
-      request_id: await repairRequestId(local, 'facts-home', { source_id: sourceId, slug: UNATTRIBUTED_MEMORY_SLUG }, 'holding-page'),
-      content: '---\ntype: note\ntitle: Unattributed memory\n---\n' } });
+  // One maintenance publication per holding page; every approved fact was re-checked above, so a changed one writes none.
+  const receipts: Array<{ slug: string; facts: number; request_id: string; receipt: Record<string, unknown> }> = [];
+  for (const home of [...new Set(approved.map(fact => fact.home))].sort()) {
+    const rows = scan.homeable.filter(row => row.home === home && approved.some(fact => fact.id === Number(row.id)));
+    const outcome = await homeOnPage(ctx, authority, sourceId, home, rows);
+    if ('applied' in outcome) return receipts.length ? { ...outcome, detail: { ...outcome.detail, written: receipts } } : outcome;
+    receipts.push(outcome);
   }
-  const planned = await planPageFence(engine, sourceId, UNATTRIBUTED_MEMORY_SLUG, rows);
+  return { applied: true, outcome: 'held', detail: { facts: receipts.reduce((n, r) => n + r.facts, 0), pages: receipts } };
+}
+
+async function homeOnPage(ctx: OperationContext, authority: NonNullable<Awaited<ReturnType<typeof maintenancePreflight>>>, sourceId: string, home: string,
+  rows: FactsHomeScan['homeable']): Promise<RepairItemOutcome | { slug: string; facts: number; request_id: string; receipt: Record<string, unknown> }> {
+  const engine = ctx.engine;
+  // Maintenance publishes only to a page that exists, so a holding page that does not exist yet is created empty first,
+  // as the first fact held there creates it (a note titled Unattributed memory).
+  await ensurePageForHeldRows(engine, sourceId, home, ctx);
+  const planned = await planPageFence(engine, sourceId, home, rows);
   if (!planned) return changed('holding_page_deleted');
   const { snapshot, fence } = planned;
   if ('warnings' in fence) return { applied: false, outcome: 'skipped', reason: 'holding_fence_malformed', detail: { warnings: fence.warnings } };
   if (fence.rejected.length) return changed('fence_rejected', { rejected: fence.rejected.map(r => ({ fact_id: r.fact_id, class: r.class })) });
-  const plan = await planFactFenceAdoption(engine, authority, UNATTRIBUTED_MEMORY_SLUG, { content: fence.body, expectedRevision: snapshot.revision,
+  const plan = await planFactFenceAdoption(engine, authority, home, { content: fence.body, expectedRevision: snapshot.revision,
     assignments: fence.assignments.map(a => ({ id: Number(a.id), row_num: a.row_num })) });
   if (plan.kind === 'suppressed') return { applied: false, outcome: 'skipped', reason: 'refused_recently', detail: { request_id: plan.prior.request_id, error_code: plan.prior.error_code } };
-  const receipt = await submitPlannedFactFenceAdoption(engine, authority, UNATTRIBUTED_MEMORY_SLUG, plan, true);
-  return { applied: true, outcome: 'held', detail: { facts: fence.assignments.length, request_id: plan.requestId, receipt } };
+  const receipt = await submitPlannedFactFenceAdoption(engine, authority, home, plan, true);
+  return { slug: home, facts: fence.assignments.length, request_id: plan.requestId, receipt };
 }

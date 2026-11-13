@@ -285,6 +285,8 @@ export async function runPhaseConversationFactsBackfill(
       const onOuterAbort = () => controller.abort();
       opts.signal?.addEventListener('abort', onOuterAbort, { once: true });
 
+      let interrupted: ExtractConversationFactsResult | null = null;
+      const committed = () => interrupted ?? zeroResult();
       try {
         const result = await withBudgetTracker(tracker, () =>
           runExtractConversationFactsCore(engine, {
@@ -297,6 +299,7 @@ export async function runPhaseConversationFactsBackfill(
             // per-source worker count. Default 1 — opt-in concurrency
             // for cycle paths.
             workers: cfg.workers,
+            onInterrupted: partial => { interrupted = partial; },
           }, controller.signal),
         );
         perSourceResults[src.id] = result;
@@ -311,7 +314,7 @@ export async function runPhaseConversationFactsBackfill(
           // continue with the next source.
           sourcesWalltimeExhausted++;
           perSourceResults[src.id] = {
-            ...zeroResult(),
+            ...committed(),
             walltime_exhausted: true,
             error: 'walltime_exhausted',
           };
@@ -319,7 +322,7 @@ export async function runPhaseConversationFactsBackfill(
           // Escaped the core's own catch — same per-source posture.
           sourcesBudgetExhausted++;
           perSourceResults[src.id] = {
-            ...zeroResult(),
+            ...committed(),
             budget_exhausted: true,
             budget_reason: err.reason,
             budget_model: err.modelId,
@@ -338,8 +341,8 @@ export async function runPhaseConversationFactsBackfill(
         } else {
           // Per-source failure: record + continue with next source.
           perSourceResults[src.id] = {
-            ...zeroResult(),
-            pages_failed: 1,
+            ...committed(),
+            pages_failed: committed().pages_failed + 1,
             error: (err as Error).message,
           };
         }

@@ -233,3 +233,23 @@ describe('nag snooze (escalate-then-suppress)', () => {
     }
   });
 });
+
+describe('request-log retention: a truncated 90-day window', () => {
+  for (const remote of [false, true]) {
+    test(`remote=${remote}: no "unused" half when pruned history cuts into the window, and the finding says why`, async () => {
+      await engine.executeRaw(
+        `INSERT INTO mcp_request_log_rollup (token_name, requests, last_used_at, pruned_through)
+         VALUES ('pruned-client', 50, now() - interval '10 days', now() - interval '10 days')`);
+      try {
+        const findings = await collectMcpClientFit.collect(ctx({ remote }));
+        const drift = findings.find((f) => f.id === 'mcp_starter_ops_drift');
+        expect(drift).toBeDefined();
+        expect(drift!.detail).toContain(nonStarterOp);
+        expect(drift!.detail).not.toContain('unused for 90d');
+        expect(drift!.detail).toContain('pruned');
+      } finally {
+        await engine.executeRaw("DELETE FROM mcp_request_log_rollup WHERE token_name = 'pruned-client'");
+      }
+    });
+  }
+});

@@ -3041,7 +3041,7 @@ OUT deliberately — see the plan's "NOT in scope" list).
   (absent) config defaults to warn") and `test/mcp-tool-defs.test.ts` pins
   both emission states. **Effort:** small (1-line default + test updates).
   **Priority:** P1.
-- [ ] **P2 — mcp_request_log retention/pruning.** **What:** a retention policy
+- [x] **P2 — mcp_request_log retention/pruning.** **Done (#6770 rewrite):** opt-in `cycle.purge.mcp_request_log_retention_days` (30-3650) prunes in the cycle purge phase and, on PGLite, hourly inside a live serve; `surface_change` and `memory_setting_change` rows are never pruned, pruned rows are tallied per token in `mcp_request_log_rollup`, and usage windows that reach past pruned history report it (docs/mcp/ADMIN.md#request-log-retention). **What (as filed):** a retention policy
   (age- or row-capped prune, `gbrain maintain` hook or cron). **Why:** the
   table now carries MORE than request telemetry — `surface_change` audit rows
   (ENG-8) and `denied_after_list` metric rows ride it — and it grows unbounded

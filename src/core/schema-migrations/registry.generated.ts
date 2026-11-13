@@ -310,6 +310,7 @@ import { v306 } from './v306-member-page-withdrawal-scope.ts';
 import { v307 } from './v307-page-label-guards.ts';
 import { v308 } from './v308-access-labelled-only.ts';
 import { v309 } from './v309-requester-scope.ts';
+import { v310 } from './v310-mcp-request-log-rollup.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -618,4 +619,5 @@ export const MIGRATIONS: Migration[] = [
   v307,
   v308,
   v309,
+  v310,
 ];

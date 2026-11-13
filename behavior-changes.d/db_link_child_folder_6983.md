@@ -1,0 +1,1 @@
+On the DB link path (`gbrain extract links --source db` and automatic link backfills), a `.md` link with a folder and no `./` or `../` prefix (`[x](notes/a.md)`) now resolves against the linking page's folder first, then its parent folders, then the brain root, matching `--source fs`. Where both a child page and a root page exist, the edge now points at the child.

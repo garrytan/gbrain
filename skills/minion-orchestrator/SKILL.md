@@ -205,7 +205,7 @@ slug binding; generic `submit_job` does not accept these job names.
 ## Phase 1: Submit
 
 ```
-gbrain agent run "Research Acme Corp revenue" --tools "search,query"
+gbrain agent run --tools "search,query" "Research Acme Corp revenue"
 ```
 
 `--tools` accepts a comma-separated subset of `BRAIN_TOOL_ALLOWLIST` (see
