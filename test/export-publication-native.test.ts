@@ -5,8 +5,9 @@ import { join, resolve } from 'node:path';
 import { ExportStage, EXPORT_MARKER } from '../src/core/export-stage.ts';
 import { publishExport } from '../src/core/export-publish.ts';
 import { removeCompiledSmokeDirectory } from '../scripts/native/compiled-smoke-cleanup.ts';
+import { registerExportPublicationTests } from './helpers/export-publication-cases.ts';
 
-await import('./export-publication.test.ts');
+registerExportPublicationTests();
 
 /** An awaited child: a `Bun.spawnSync` wait is where oven-sh/bun#34069 poisons Bun 1.4.0 to 1.4.2 (test/helpers/git-publication.ts). */
 async function run(argv: string[], options: { cwd: string; env: Record<string, string> }) {
