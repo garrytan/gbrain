@@ -321,4 +321,40 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     expect({ labelled: await reads('alice', 'notes/labelled-example'), ruled: await reads('alice', 'notes/ruled-example') }).toEqual({ labelled: false, ruled: true });
     expect({ labelled: await reads('unbound', 'notes/labelled-example'), ruled: await reads('unbound', 'notes/ruled-example') }).toEqual({ labelled: false, ruled: false });
   }), 180_000);
+  const twin = 'notes/shared-example';
+  async function twinBrain(engine: BrainEngine) {
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b') ON CONFLICT (id) DO NOTHING");
+    for (const sourceId of ['default', 'source-b']) expect((await importFromContent(engine, twin, note('Shared', [], 'Shared body in ' + sourceId + '.'), { noEmbed: true, sourceId })).status).toBe('imported');
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example'), ('alice-example') ON CONFLICT DO NOTHING");
+    await engine.setConfig('access.owner_member', 'owner-example');
+  }
+  const rules = async (engine: BrainEngine, argv: string[]) => {
+    const lines: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); });
+    try { await runAccessRules(engine, 'rule', [...argv, '--json'], true); } finally { spy.mockRestore(); }
+    return JSON.parse(lines.join(NL));
+  };
+
+  test('labelling a page in one source names the same-slug page another source leaves open, with its count and the covering command; a private twin is named nowhere', () => brain(async engine => {
+    await twinBrain(engine);
+    const argv = ['visibility', '--source', 'default', '--slug', twin];
+    const open = await repair(engine, argv);
+    expect(open.details.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['gbrain repair visibility --source source-b --slug ' + twin] });
+    expect(open.residuals.open_twins).toBe(1);
+    expect(open.warnings.join(NL)).toContain('1 live page(s) in other sources share a slug with a page this changes');
+    await stampRow(engine, 'source-b', twin, "frontmatter=frontmatter || '{\"visibility\":\"private\"}'::jsonb");
+    const covered = await repair(engine, argv);
+    expect({ twins: covered.details?.open_twins, residual: covered.residuals.open_twins, hash: covered.preview_hash }).toEqual({ twins: undefined, residual: undefined, hash: open.preview_hash });
+    expect((await run(engine, [...argv, '--apply', '--expect', open.preview_hash])).result.applied).toBe(1);
+  }), 180_000);
+
+  test('ruling a page in one source names the same-slug page another source leaves open, with its count and the covering rule; a twin ruled for the same reader is named nowhere', () => brain(async (engine, home) => {
+    await twinBrain(engine);
+    const file = join(home, 'access.yml');
+    writeFileSync(file, ['version: 1', 'rules:', '  - slug: ' + twin, '    readable_by: [alice-example]', ''].join(NL));
+    const open = await rules(engine, ['import', '--file', file, '--source', 'default']);
+    expect(open.open_twins).toEqual({ count: 1, twins: [{ source_id: 'source-b', slug: twin, twin_of: 'default:' + twin }], commands: ['gbrain access rule add --slug ' + twin + ' --readers alice-example --source source-b'] });
+    expect((await rules(engine, ['add', '--slug', twin, '--readers', 'alice-example', '--source', 'source-b', '--yes'])).state).toBe('applied');
+    expect((await rules(engine, ['import', '--file', file, '--source', 'default'])).open_twins).toEqual({ count: 0, twins: [], commands: [] });
+  }), 180_000);
 });
