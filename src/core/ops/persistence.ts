@@ -116,7 +116,7 @@ async function quotedOutcome(outcome: Record<string, unknown>, slug: string): Pr
 
 async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: WriteHealthFacts): Promise<Record<string, unknown>> {
   const { receiptFor } = await import('../persistence/journal.ts');
-  const { publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
+  const { gitReceiptState, publicEffectsForRequest } = await import('../persistence/effect-journal.ts');
   const { receiptDeliveredHint } = await import('../persistence/connector-errors.ts');
   const { CHECKPOINT_VALIDATION_TIMEOUT, checkpointTimeoutHint } = await import('../persistence/checkpoint-validation.ts');
   const { writeFailureDiagnostic } = await import('../persistence/verb-errors.ts');
@@ -136,7 +136,10 @@ async function publicReceipt(ctx: OperationContext, row: WriteRequest, facts?: W
   const { cliRenderContext, renderAction } = await import('../agent-output.ts');
   const render = ctx.remote === false ? cliRenderContext() : { transport: 'stdio' as const, isCallable: () => false, preapproved: () => false };
   const { liveSearchable } = await import('../persistence/searchable.ts');
-  const receipt = publicWriteReceipt(receiptFor(row, facts));
+  const stored = publicWriteReceipt(receiptFor(row, facts));
+  // #9227: a classic write's `git_state: queued` is what its publication stored; the Git effect row says where Git is now.
+  const git = stored.persistence?.git_state === 'queued' ? await gitReceiptState(ctx.engine, row.id) : null;
+  const receipt = git ? { ...stored, persistence: { ...stored.persistence!, ...git } } : stored;
   // GBRA-217: a reason whose Git effect was superseded is reported as not committed.
   const settled = await (await import('../persistence/change-reason.ts')).settledReasonRecorded(ctx.engine, row);
   if (settled) ctx.emitNotice?.(settled.notice);

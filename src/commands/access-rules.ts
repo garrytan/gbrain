@@ -25,6 +25,7 @@ import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleC
 import { folderHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../core/facts-fence.ts';
 import { heldRowsInVersions } from '../core/facts/fence-fact-append.ts';
 import { identityFor } from '../core/access/principals.ts';
+import { openTwins, openTwinsLines, OPEN_TWINS_PAGES, type OpenTwins } from '../core/access/open-twins.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
 import {
   appliedRules, applyApproved, getRevision, listRevisions, newOperationId, policyStatus, previewApply, proposeRevision, readAccessStore, resumePolicy,
@@ -114,6 +115,8 @@ export interface RulePreview {
   changes: RuleChange[];
   held: RuleChange[];
   matched_pages: Record<string, number>;
+  /** GST-2603: same-slug pages in other sources the narrowed rules leave readable (listed, never approved). */
+  open_twins: OpenTwins;
   unknown_readers: string[];
   members_losing: string[];
   credentials_losing: Array<{ member: string; kind: string; name: string }>;
@@ -179,11 +182,18 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
     pages.set(g.from, { ...page, rows: page.rows + v.rows + k * keys.length, versions: page.versions + v.versions + k, ...(v.segmented ? { segmented_versions_not_edited: v.segmented } : {}) });
   }
   const edits = [...pages.values()], segmented = Math.max(0, ...edits.map(p => p.segmented_versions_not_edited ?? 0));
+  const twins: OpenTwins = { count: 0, twins: [], commands: [] };
+  for (const rule of cls.changes.filter(c => c.narrowing).map(c => cls.target.find(r => r.id === c.rule)).filter(r => r !== undefined)) {
+    const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
+    const found = await openTwins(engine, covered, rule.readable_by,
+      source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')} --source ${source}`);
+    Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
+  }
   return { source_id: sourceId, store, store_persisted: persisted, expect, desired, changes: cls.changes, held: cls.held, matched_pages: matched,
     unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, held_facts_moving: moving,
     held_struck_rows_leaving: plan.groups.reduce((n, g) => n + (g.note === 'moved' ? g.struck.length : 0), 0),
     held_versions_editing: { rows: edits.reduce((n, p) => n + p.rows, 0), versions: edits.reduce((n, p) => n + p.versions, 0),
-      ...(edits.length ? { pages: edits } : {}), ...(segmented ? { segmented_versions_not_edited: segmented } : {}) } };
+      ...(edits.length ? { pages: edits } : {}), ...(segmented ? { segmented_versions_not_edited: segmented } : {}) }, open_twins: twins };
 }
 
 function previewLines(p: RulePreview, rerun: string): string[] {
@@ -194,6 +204,7 @@ function previewLines(p: RulePreview, rerun: string): string[] {
     ...(p.unknown_readers.length ? [`  Unknown readers (no such member or group; they match nobody): ${p.unknown_readers.join(', ')}`] : []),
     ...(p.members_losing.length ? [`  Members losing access: ${p.members_losing.join(', ')}`] : []),
     ...(p.credentials_losing.length ? [`  Credentials losing access: ${p.credentials_losing.map(c => `${c.kind} ${c.name} (${c.member})`).join(', ')}`] : []),
+    ...openTwinsLines(p.open_twins),
     ...(p.held_facts_moving.length ? [`  Held facts leaving their holding page with this change: ${p.held_facts_moving.length} (${p.held_facts_moving.slice(0, 10).map(m => `fact ${m.fact_id} for ${m.entity_slug} from ${m.from} to ${m.to}${m.to === m.entity_slug ? ' (its page)' : ''}${m.because ? `, because ${m.because}` : ''}`).join(', ')}${p.held_facts_moving.length > 10 ? ', ...' : ''})`] : []),
     ...(p.held_struck_rows_leaving ? [`  ${p.held_struck_rows_leaving} struck (withdrawn) held row(s) of those entities leave their holding page with them`] : []),
     ...(p.held_versions_editing.pages ?? []).flatMap(e => [

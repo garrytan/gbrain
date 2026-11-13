@@ -54,7 +54,9 @@ import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { atomOriginSlugSql } from '../persistence/atom-origin.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
-import { filesInCheckout, writeLabelFile, writeLabelPage } from './label-write.ts';
+import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
+import { ownerMemberId } from '../access/owner.ts';
+import { filesInCheckout, labelFileRefusal, writeLabelFile, writeLabelPage, type LabelFileRefusal } from './label-write.ts';
 import { applyReaders, planReaders, raiseGuardOnly, raiseReadersGuard, readersBatch, readersGitCounts, readersGuardOnly, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
@@ -333,6 +335,11 @@ function missingFileHeld(item: Pick<RepairItem, 'source_id' | 'slug'>, error: un
 async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, snapshot: PageSnapshot, content: string, edit: LabelEdit, batch?: string): Promise<RepairItemOutcome | null> {
   if (isSegmentedPage(snapshot.page)) return { applied: false, outcome: 'segmented_page', reason: 'The page body is stored in segments; edit it by hand on the brain host.' };
   const path = (await filesInCheckout(ctx.engine, [Number(snapshot.page.id)])).get(Number(snapshot.page.id));
+  // GST-2603: a managed page whose file took a change the label edit cannot be spliced over since the preview declines here, before admission.
+  if (!path) {
+    const refusal = await labelFileRefusal(ctx.engine, snapshot, content, edit);
+    if (refusal?.reason === 'label_edit_refused') throw refusal.error;
+  }
   const write = { revision: snapshot.revision, content, edit, embed: true, preview: 'gbrain repair visibility', ...(batch ? { batch } : {}) };
   let written: Awaited<ReturnType<typeof writeLabelFile>>;
   try {
@@ -344,6 +351,23 @@ async function labelWrite(ctx: Parameters<RepairHandler['apply']>[0], item: Repa
   if (written === null) throw opError('revision_conflict', `${item.source_id}:${item.slug} changed after it was read, so it was not written.`,
     'Preview gbrain repair visibility again; the page is listed with its current state.');
   return typeof written === 'string' ? null : written;
+}
+
+/** A page item's label write: the page rendered with its new visibility, and the one label line that changes in its file. */
+function visibilityWrite(snapshot: PageSnapshot, to: string): { content: string; edit: LabelEdit } {
+  return { content: serializePageToMarkdown({ ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, visibility: to } }, snapshot.tags), edit: { set: { visibility: to }, remove: [] } };
+}
+
+/** GST-2603: a previewed page whose label write its file would refuse now; listed as held, outside the preview hash and the approved set. */
+interface HeldVisibility { item: string; reason: LabelFileRefusal['reason']; keys: string[]; next: string }
+/** The preview's check of one page item against its file's current bytes, as the apply's write compares them (repair/label-write.ts labelFileRefusal). */
+async function heldPage(engine: BrainEngine, item: VisibilityItem): Promise<HeldVisibility | null> {
+  if (item.target.phase === 4 || !item.change || item.change.from === item.change.to) return null;
+  const snapshot = await engine.readPageSnapshot(item.slug, { sourceId: item.source_id });
+  if (!snapshot || Number(snapshot.page.id) !== item.target.id || isSegmentedPage(snapshot.page)) return null;
+  const write = visibilityWrite(snapshot, item.change.to);
+  const refusal = await labelFileRefusal(engine, snapshot, write.content, write.edit);
+  return refusal && { item: `${item.source_id}:${item.slug}`, reason: refusal.reason, keys: refusal.keys, next: refusal.next };
 }
 
 export type VisibilityClass = 'facts' | 'events' | 'aliases' | 'lineage' | 'pages';
@@ -451,9 +475,21 @@ export const visibilityRepair: RepairHandler = {
       progress?.heartbeat(`${cls}: ${ordered.length} to repair${cls === 'facts' ? ` (${planned.residuals.world_facts_remotely_readable} remotely readable)` : ''} in ${Date.now() - started} ms`);
       progress?.tick(1);
     }
+    // GST-2603: each page item is checked against its file as its write would be; one the write would refuse is held.
+    progress?.heartbeat(`checking ${window.length} item(s) against their files`);
+    const held: HeldVisibility[] = [];
+    const items: VisibilityItem[] = [];
+    for (const { readable: _readable, ...item } of window as Array<VisibilityItem & { readable?: boolean }>) {
+      const hold = await heldPage(engine, item as VisibilityItem);
+      if (hold) held.push(hold); else items.push(item as VisibilityItem);
+    }
     progress?.finish();
-    const items = window.map(({ readable: _readable, ...item }: VisibilityItem & { readable?: boolean }) => item as VisibilityItem);
+    if (held.length) Object.assign(residuals, { held_file_drift: held.filter(hold => hold.reason === 'file_database_drift').length, held_label_edit: held.filter(hold => hold.reason === 'label_edit_refused').length });
     const hash = previewHash(hashParts(scope, selection, items));
+    const owner = await ownerMemberId(engine);
+    const twins = await openTwins(engine, items.filter(item => item.target.phase !== 4 && item.change?.to === 'private'), owner ? [owner] : [],
+      (source, slugs) => `gbrain repair visibility --source ${source}${slugs.map(slug => ` --slug ${slug}`).join('')}`);
+    if (twins.count) residuals.open_twins = twins.count;
     if (items.length) await saveApprovedSet<ApprovedVisibility>(engine, { command: 'visibility', hash },
       items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, change: item.change!, selection })));
     const next = visibilityPreviewCommand(scope, selection, true);
@@ -462,11 +498,13 @@ export const visibilityRepair: RepairHandler = {
         + `Apply this window (or decide not to), then preview again for the next one: ${next}`] : []),
       ...timedOut.map(cls => `Class ${cls} did not finish within the ${PLAN_STATEMENT_MS} ms statement bound and is not listed; the other classes are. `
         + `Preview the others with --class, or run gbrain doctor --only derived_visibility for the counts.`),
+      ...openTwinsWarning(twins),
+      ...(held.length ? [`${held.length} page(s) are held and not in this preview's set: their files would refuse the label write now. details.held names what differs for each and the step that clears it; preview again after it.`] : []),
     ];
     return { warnings, items: items.map((item, index) => ({ ...item, cursor: { phase: 0, id: index } })), preview_hash: hash,
       residuals,
       listing: items.map(item => ({ item: `${item.source_id}:${item.slug}`, class: CLASS_OF_PHASE[item.target.phase]!, detail: item.action })),
-      details: { window: { size, listed: items.length, pending, pending_past_window: pendingPastWindow, not_read: notRead, timed_out: timedOut, next_preview: next } } };
+      details: { window: { size, listed: items.length, pending, pending_past_window: pendingPastWindow, not_read: notRead, timed_out: timedOut, next_preview: next }, ...(held.length ? { held } : {}), ...(twins.count ? { open_twins: twins } : {}) } };
   },
   /** A --readers apply: how its managed writes reached Git (`details.git`, effect states; readers.ts readersGitCounts). */
   async report(ctx, scope, result, opts) {
@@ -474,7 +512,10 @@ export const visibilityRepair: RepairHandler = {
   },
   render(details) {
     const git = details.git as Record<string, number> | undefined;
-    return git ? [`  git: ${Object.entries(git).map(([key, value]) => `${key}=${value}`).join(', ')} (file(s) by Git effect state; queued files commit together, up to 100 per commit)`] : [];
+    const held = (details.held as HeldVisibility[] | undefined) ?? [];
+    return [...(git ? [`  git: ${Object.entries(git).map(([key, value]) => `${key}=${value}`).join(', ')} (file(s) by Git effect state; queued files commit together, up to 100 per commit)`] : []),
+      ...openTwinsLines(details.open_twins as OpenTwins | undefined),
+      ...held.map(hold => `  held ${hold.item} (${hold.reason}${hold.keys.length ? `: ${hold.keys.join(', ')}` : ''}); next: ${hold.next}`)];
   },
   /**
    * GST-2476: a run of readers items of one managed source at once. Each page is re-checked as apply does; the pages are
@@ -525,8 +566,8 @@ export const visibilityRepair: RepairHandler = {
         .changes.find(c => c.id === target.id);
       if (!fresh || fresh.from !== item.change.from || fresh.to !== item.change.to) return false;
       if (item.change.from === item.change.to) return await raiseGuardOnly(ctx.engine, { ...item, target }, frontmatter => frontmatter.visibility === item.change!.to);
-      const page = { ...snapshot.page, frontmatter: { ...snapshot.page.frontmatter, visibility: item.change.to } };
-      return await labelWrite(ctx, item, snapshot, serializePageToMarkdown(page, snapshot.tags), { set: { visibility: item.change.to }, remove: [] }) ?? true;
+      const write = visibilityWrite(snapshot, item.change.to);
+      return await labelWrite(ctx, item, snapshot, write.content, write.edit) ?? true;
     });
   },
 };
