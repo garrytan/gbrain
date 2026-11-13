@@ -872,7 +872,7 @@ file holds the restored edit:
 
 ```bash
 gbrain repair file-drift --source <id> --slug <slug> --prefer database                          # preview
-gbrain repair file-drift --source <id> --slug <slug> --prefer database --apply --expect <preview-hash>
+gbrain repair file-drift --source <id> --slug <slug> --prefer database --apply --expect <preview-hash> --yes   # after the user agrees
 ```
 
 A restored page is not listed again.
@@ -3307,6 +3307,61 @@ and `gbrain agent logs --since`.
 equivalent: `--prefer database` keeps the database copy, `--prefer file`
 keeps the file.
 
+<a id="file-drift-newer"></a>**A database-wins repair never silently discards a newer file change** (GST-2579).
+Before this release, `--prefer database` (by `--held`, `--all-drifted` or
+`--slug`) and a `gbrain sources reconcile` apply that took the database copy
+wrote the page over its file even when the file held another writer's commit
+that sync had not imported yet, and the preview said "exactly the preferred
+side". Now a database-wins write goes ahead only when the database itself held
+the version the file's bytes record: the bytes the page's last import read or left
+on disk (sync's import record, including a blob a sync adopted into it), or bytes a Git effect of one of the page's own
+writes put in the file for a revision the page has held (its live revision or one
+in its version history). So a database edit made after the file's last commit
+still wins, shorter or not. Anything else is a change the database never held,
+whoever committed it: another writer's commit, an uncommitted edit, gbrain's own
+writer commit of a revision whose database row never landed, or a page with no
+import record and no write of its own.
+
+| Selection | A newer file edit | A commit that deleted the file (`file_gone`) |
+|---|---|---|
+| `--held`, `--all-drifted`, `--request` | listed `kept_newer_file`, nothing written, the hold stays | listed `kept_newer_delete`, nothing written, the hold stays |
+| `--slug <slug>` | approved; the listing, `details.pages[].discards`, the warnings and the consent name the commit (sha, author, date), or say the edit is uncommitted | approved; the same places name the deleting commit |
+
+Every `gbrain repair file-drift` apply now needs the user's consent: run the
+printed apply without `--yes` and it exits 3 with the consent message, which
+lists each newer change the database copy overwrites and each file a
+`tombstone_edited` or `purged_differs` `--prefer database` apply removes; add
+`--yes` only after the user agrees. `gbrain sources reconcile` (and MCP
+`writer_reconcile_preview` / `writer_reconcile_apply`) refuses
+`source_changed` (detail `unimported_file_edit`) when a decision takes the
+database copy over what such a file says (`take_database`, `delete` or
+`set_value`); decide `take_file` for those paths, or preview the page alone with
+`--slug` as above. A `never_committed` `file_gone` page resolved
+`--prefer database` writes no file, so it is unaffected. The keep_db policy is
+unchanged.
+
+<a id="file-drift-past-losses"></a>**Finding earlier overwrites (read-only).** Every reconcile apply, a
+file-drift page included, first keeps a private backup of both sides at
+`~/.gbrain/reconciliation-previews/<request_id>.<digest>.json`
+(`$GBRAIN_HOME/.gbrain/…` when `GBRAIN_HOME` is set), mode 0600, with
+`retention: pre_admission_or_terminal`. Nothing prunes it: it stays until
+`gbrain sources reconcile <source> <slug> --remove-backup <ref>` removes it once
+its request has finished (`--backups` lists a page's). `preview.preimages.file_base64`
+holds the file bytes the apply replaced. To list database-wins applies and check
+whether the replaced bytes came from a commit gbrain never imported:
+
+```bash
+dir="${GBRAIN_HOME:-$HOME}/.gbrain/reconciliation-previews"
+jq -r 'select(any(.preview.decisions[]; .action != "take_file"))
+  | [.request_id, .preview.preconditions.source_id, .preview.preconditions.slug, .preview.preconditions.relative_path, .preview.preconditions.assessment_at] | @tsv' "$dir"/*.json
+# For one listed backup: the blob of the bytes it replaced, and the commit that introduced that blob.
+jq -r .preview.preimages.file_base64 "$dir/<backup>.json" | base64 -d | git -C <checkout> hash-object --no-filters --stdin
+git -C <checkout> log --all --find-object=<blob> --format='%H %an %aI %s'
+```
+
+A commit there that gbrain did not write is an edit the repair overwrote;
+`git -C <checkout> show <commit>:<path>` (or the decoded backup) recovers it.
+
 <a id="deleted-canonical-files"></a>**A page whose canonical file is gone** (#6712). A page selected with
 `--slug` or `--request` whose recorded canonical file is missing is resolved
 by where the deletion stands in Git:
@@ -3400,7 +3455,7 @@ preview command with `--cursor <next_cursor>` (JSON: `details.window`):
 
 ```bash
 gbrain repair file-drift --source <id> --held --side deleted --state file_gone --prefer database             # window 1
-gbrain repair file-drift --source <id> --held --side deleted --state file_gone --prefer database --apply --expect <hash>
+gbrain repair file-drift --source <id> --held --side deleted --state file_gone --prefer database --apply --expect <hash> --yes   # after the user agrees
 gbrain repair file-drift --source <id> --held --side deleted --state file_gone --cursor <next_cursor> --prefer database  # window 2
 ```
 

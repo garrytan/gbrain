@@ -38,6 +38,7 @@ import { cliOptsToProgressOptions, getCliOptions } from '../core/cli-options.ts'
 import { resolveSecretRules } from '../core/secret-spans.ts';
 import { normalizeSeatLabel } from '../core/context/seat.ts';
 import { agentSessionFlagArgs } from '../core/repair/agent-session-facts.ts';
+import { fileDriftConsentText } from '../core/repair/file-drift.ts';
 import { privateLabelsLedger } from './repair-private-labels.ts';
 import { isAbsolute } from 'node:path';
 import { readFileSync } from 'node:fs';
@@ -546,8 +547,12 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
       ...(kind === 'rename-identity' ? [...slugs.flatMap(slug => ['--slug', slug]), ...(from ? ['--from', from] : []), ...(close ? ['--close'] : [])] : []),
       ...(kind === 'origin-twins' || kind === 'timeline-order' || kind === 'contact-rows' || kind === 'provenance' ? slugs.flatMap(slug => ['--slug', slug]) : []),
       ...(generations ? generationsSelectionArgv(generations) : []),
-      ...(kind === 'agent-session-facts' ? agentSessionFlagArgs({ cwdPrefixes, sessions, principal }) : [])];
-    const custom = repairSpec(kind as RepairKind).consentText;
+      ...(kind === 'agent-session-facts' ? agentSessionFlagArgs({ cwdPrefixes, sessions, principal }) : []),
+      ...(kind === 'file-drift' ? [...slugs.flatMap(slug => ['--slug', slug]), ...requests.flatMap(id => ['--request', id]), ...(allDrifted ? ['--all-drifted'] : []),
+        ...(driftClass ? ['--class', driftClass] : []), ...(since ? ['--since', since] : []), ...(held ? ['--held'] : []), ...(side ? ['--side', side] : []),
+        ...(state ? ['--state', state] : []), ...(provenance ? ['--provenance', provenance] : []), ...(cursor ? ['--cursor', cursor] : []), ...(prefer ? ['--prefer', prefer] : [])] : [])];
+    // GST-2579: a file-drift consent names the unimported file edits its database-wins pages overwrite.
+    const custom = kind === 'file-drift' ? fileDriftConsentText(expect, source) : repairSpec(kind as RepairKind).consentText;
     const text = custom ? { ...custom, why: `Preview ${expect}: ${custom.why}`, user_message: `${custom.user_message} (preview ${expect.slice(0, 12)}${keep ? `, keep ${keep}` : ''})` } : {
       what: `Rewrite the previewed ${kind} changes on disk and import them`,
       why: `The preview ${expect} listed each file change; applying it rewrites those files in place and publishes them.`,
