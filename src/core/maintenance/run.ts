@@ -295,7 +295,21 @@ function backedOff(failures: UpkeepFailure[], step: string, scope: string, now: 
   return !!entry && entry.count >= UPKEEP_BACKOFF_FAILURES && now.getTime() - Date.parse(entry.last_at) < UPKEEP_BACKOFF_MS;
 }
 
+/** One embed step at a time per brain, so overlapping runs cannot each spend the remaining daily cap. */
 async function runEmbedStep(engine: BrainEngine, now: Date, signal: AbortSignal | undefined): Promise<{ step: UpkeepStep; embed: { spent_today_usd: number; cap_usd: number } }> {
+  const lock = await tryAcquireDbLock(engine, MAINTENANCE_EMBED_LOCK_ID, 60);
+  if (!lock) {
+    return { step: { name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' },
+      embed: { spent_today_usd: await readEmbedSpentToday(engine, now), cap_usd: await readEmbedDailyCapUsd(engine) } };
+  }
+  try {
+    return await embedWithinDailyCap(engine, now, signal);
+  } finally {
+    await lock.release();
+  }
+}
+
+async function embedWithinDailyCap(engine: BrainEngine, now: Date, signal: AbortSignal | undefined): Promise<{ step: UpkeepStep; embed: { spent_today_usd: number; cap_usd: number } }> {
   const cap = await readEmbedDailyCapUsd(engine);
   const spentBefore = await readEmbedSpentToday(engine, now);
   const embed = (spent: number) => ({ spent_today_usd: Math.round(spent * 1e6) / 1e6, cap_usd: cap });
@@ -332,7 +346,7 @@ async function runEmbedStep(engine: BrainEngine, now: Date, signal: AbortSignal 
     }
   } catch (error) {
     spent = Math.max(spent, costCap.spent());
-    if (!costCap.hit()) {
+    if (!costCap.hit() && !combined.signal.aborted) {
       status = 'fail';
       code = (error as { code?: string } | null)?.code ?? 'embed_failed';
     }
@@ -397,6 +411,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     ].filter((item) => !done.includes(item.key));
     const deadline = budgeted ? Date.now() + opts.budgetMs! : Infinity;
     const steps: UpkeepStep[] = [];
+    const cycled = new Set<string>();
     let lockBusy = false;
     for (const item of items) {
       if (Date.now() >= deadline || opts.signal?.aborted) break;
@@ -437,6 +452,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
         if (phases.length > 0) {
           const report = await (opts.cycle ?? runCycle)(engine, cycleOpts);
           if (report.status === 'skipped' && report.reason === 'cycle_already_running') { lockBusy = true; break; }
+          cycled.add(scope);
           steps.push(...stepsFrom(report, scope));
           if (report.reason === 'aborted') { unfinished(); break; }
           if (report.reason === 'lock_stolen') break;
@@ -461,21 +477,28 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     const finished = items.every((item) => done.includes(item.key));
     let embed: UpkeepRecord['embed'];
     if (finished && plan.embedding && !opts.signal?.aborted) {
-      const lock = await tryAcquireDbLock(engine, MAINTENANCE_EMBED_LOCK_ID);
-      if (!lock) steps.push({ name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' });
-      else {
+      if (Date.now() >= deadline) {
+        steps.push({ name: 'embed', scope: 'global', status: 'skipped', reason: 'budget_exhausted' });
+      } else {
+        const budget = Number.isFinite(deadline)
+          ? anyAbortSignal([...(opts.signal ? [opts.signal] : []), AbortSignal.timeout(Math.max(1, deadline - Date.now()))]) : null;
         try {
-          const result = await runEmbedStep(engine, now, opts.signal);
+          const result = await runEmbedStep(engine, now, budget?.signal ?? opts.signal);
           steps.push(result.step);
           embed = result.embed;
         } finally {
-          await lock.release();
+          budget?.dispose();
         }
       }
     }
     if (finished && engine.kind === 'pglite' && !opts.signal?.aborted) steps.push(await checkpointStep(engine));
     const failed = steps.filter((step) => step.status === 'fail');
+    const planned = new Map<string, string[]>([
+      ...sources.map((source): [string, string[]] => [source.id, [...plan.source, 'cycle']]),
+      ['global', [...plan.global, 'cycle', ...(plan.embedding ? ['embed'] : []), ...(engine.kind === 'pglite' ? ['checkpoint'] : [])]],
+    ]);
     const nextFailures: UpkeepFailure[] = failures
+      .filter((f) => planned.get(f.scope)?.includes(f.step) && !(f.step === 'cycle' && cycled.has(f.scope)))
       .filter((f) => !steps.some((s) => s.name === f.step && s.scope === f.scope && s.status !== 'fail' && s.reason !== 'backed_off' && s.reason !== 'parked'));
     for (const step of failed) {
       const entry = nextFailures.find((f) => f.step === step.name && f.scope === step.scope);

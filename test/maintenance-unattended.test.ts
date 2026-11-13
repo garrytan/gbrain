@@ -261,6 +261,42 @@ for (const kind of testBackends()) {
         expect(check).toMatchObject({ status: 'warn', details: { state: 'failing' } });
         expect(check.message).toContain('orphans');
       });
+
+      test('a cycle that threw three times reads failing until the next clean run clears it', async () => {
+        let throws = 3;
+        const flaky: typeof runCycle = async (e, o) => {
+          if (throws > 0 && !o.sourceId) { throws -= 1; throw Object.assign(new Error('connection reset'), { code: 'db_connection_reset' }); }
+          return runCycle(e, o);
+        };
+        let at = Date.now();
+        for (let i = 0; i < 3; i++) {
+          const outcome = await upkeep(engine, { runner: 'test', providers: KEYLESS, cycle: flaky, now: () => new Date(at) });
+          expect(outcome).toMatchObject({ status: 'ran', exit: 1, code: 'db_connection_reset' });
+          at += UPKEEP_INTERVAL_MS + HOUR;
+        }
+        expect(await checkUnattendedMaintenance(engine, { nowMs: at })).toMatchObject({ status: 'warn', details: { state: 'failing' } });
+        const clean = await upkeep(engine, { runner: 'test', providers: KEYLESS, cycle: flaky, now: () => new Date(at) });
+        expect(clean).toMatchObject({ status: 'ran', exit: 0 });
+        expect(clean.record!.consecutive_failures).toEqual([]);
+        expect(await checkUnattendedMaintenance(engine, { nowMs: at })).toMatchObject({ status: 'ok', details: { state: 'ok' } });
+      });
+
+      test('a failing step that is held back afterwards no longer keeps doctor failing', async () => {
+        const failing: typeof runCycle = async (e, o) => {
+          const report = await runCycle(e, o);
+          return { ...report, phases: report.phases.map((p) => p.phase === 'fence_repair' ? { ...p, status: 'fail' as const, code: 'fence_probe_failed' } : p) };
+        };
+        let at = Date.now();
+        for (let i = 0; i < 3; i++) {
+          await upkeep(engine, { runner: 'test', providers: KEYLESS, cycle: failing, now: () => new Date(at) });
+          at += UPKEEP_INTERVAL_MS + HOUR;
+        }
+        expect((await readUpkeepRecord(engine))!.consecutive_failures).toEqual([expect.objectContaining({ step: 'fence_repair', count: 3 })]);
+        const held = await upkeep(engine, { runner: 'test', providers: { ...KEYLESS, fenceRepairModel: true }, now: () => new Date(at) });
+        expect(held.record!.held).toContain('fence_repair');
+        expect(held.record!.consecutive_failures).toEqual([]);
+        expect(await checkUnattendedMaintenance(engine, { nowMs: at })).toMatchObject({ status: 'ok', details: { state: 'ok' } });
+      });
     });
 
     describe('decision D: the embedding cap', () => {
@@ -296,6 +332,61 @@ for (const kind of testBackends()) {
         expect(outcome.record!.embed!.cap_usd).toBe(1);
         expect(outcome.record!.embed!.spent_today_usd).toBeLessThanOrEqual(1);
       });
+    });
+
+    describe('review fixes: the embed step and fact deferral', () => {
+      const quick: typeof runCycle = async () => ({ status: 'ok', phases: [] }) as never;
+
+      test('an edited fact on a keyed brain is replaced, not only expired, when upkeep defers its embedding', async () => {
+        await keyed();
+        await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'Alice works on search.\n\n' + FENCE('Alice leads the search team') });
+        let at = Date.now();
+        await upkeep(engine, { runner: 'test', providers: KEYED, now: () => new Date(at) });
+        expect(await engine.executeRaw('SELECT fact FROM facts WHERE expired_at IS NULL AND embedding IS NOT NULL')).toEqual([{ fact: 'Alice leads the search team' }]);
+        await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'Alice works on search.\n\n' + FENCE('Alice leads the ranking team') });
+        at += UPKEEP_INTERVAL_MS + HOUR;
+        await upkeep(engine, { runner: 'test', providers: KEYED, now: () => new Date(at) });
+        expect(await engine.executeRaw('SELECT fact FROM facts WHERE expired_at IS NULL')).toEqual([{ fact: 'Alice leads the ranking team' }]);
+      });
+
+      test('two overlapping runs embed once: the second skips the embed step instead of spending the cap again', async () => {
+        await keyed();
+        const [col] = await engine.executeRaw<{ dims: number }>("SELECT atttypmod AS dims FROM pg_attribute WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'");
+        __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return { embeddings: values.map(() => new Array(Number(col!.dims)).fill(0.01)) };
+        }) as never);
+        await engine.putPage('notes/embed-me', { type: 'concept', title: 'Embed', compiled_truth: 'A page whose chunks need vectors.' });
+        const [a, b] = await Promise.all([1, 2].map(() => upkeep(engine, { runner: 'test', providers: KEYED, cycle: quick })));
+        const embedSteps = [a, b].map((o) => o.record!.steps.find((s) => s.name === 'embed'));
+        expect(embedSteps.filter((s) => s?.status === 'ok')).toHaveLength(1);
+        expect(embedSteps).toContainEqual({ name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' });
+      });
+
+      test('the embed step does not start once the run budget is spent', async () => {
+        await keyed();
+        await engine.putPage('notes/embed-me', { type: 'concept', title: 'Embed', compiled_truth: 'A page whose chunks need vectors.' });
+        const slowSource: typeof runCycle = async (e, o) => {
+          if (o.sourceId) await new Promise((resolve) => setTimeout(resolve, 120));
+          return quick(e, o);
+        };
+        const outcome = await upkeep(engine, { runner: 'test', providers: KEYED, cycle: slowSource, budgetMs: 60 });
+        expect(outcome.record!.cursor).toBeNull();
+        expect(outcome.record!.steps).toContainEqual({ name: 'embed', scope: 'global', status: 'skipped', reason: 'budget_exhausted' });
+        expect(calls).toEqual([]);
+      });
+    });
+
+    test('a purge limited to the previewed pages leaves a page that became eligible afterwards', async () => {
+      const { purgeDeletedPagesCoordinated } = await import('../src/core/persistence/purge-deleted.ts');
+      for (const slug of ['notes/previewed', 'notes/late']) {
+        await engine.putPage(slug, { type: 'concept', title: slug, compiled_truth: 'Deleted long ago.' });
+        await engine.softDeletePage(slug);
+      }
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE slug IN ('notes/previewed', 'notes/late')");
+      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true, only: (page) => page.slug === 'notes/previewed' });
+      expect(result.slugs).toEqual(['notes/previewed']);
+      expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE 'notes/%' ORDER BY slug")).toEqual([{ slug: 'notes/late' }]);
     });
 
     describe('doctor states with a fixed clock', () => {

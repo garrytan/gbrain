@@ -381,7 +381,9 @@ async function runPurgeCli(engine: BrainEngine, opts: MaintainOptions): Promise<
     setCliExitVerdict(writeCliError(opError('preview_changed', why, 'Preview again: gbrain maintain --purge', { fix, detail: `current hash ${hash}` }), 'maintain', { json: !!opts.json }));
     return;
   }
-  const result = await purgeDeletedPagesCoordinated(engine, retention, { automatic: true });
+  const previewed = new Set(pages.map((p) => p.source_id ? `${p.source_id}/${p.slug}` : p.slug));
+  const result = await purgeDeletedPagesCoordinated(engine, retention, {
+    automatic: true, only: (p) => previewed.has(selection.managed ? `${p.source_id}/${p.slug}` : p.slug) });
   if (result.error) setCliExitVerdict(1);
   if (opts.json) { console.log(JSON.stringify({ mode: 'applied', purged: result.count, slugs: result.slugs, blocked: result.blocked, deferred: result.deferred, ...(result.error ? { error: result.error } : {}) }, null, 2)); return; }
   console.log(`Purged ${result.count} page(s).${result.blocked.length ? ` ${result.blocked.length} blocked; see --json.` : ''}`);
