@@ -164,3 +164,22 @@ describe('doctor legacy_token_null_scope', () => {
     expect(after.details?.null_scope_count).toBe(0);
   });
 });
+
+describe('a brain that serves several people (GST-363)', () => {
+  test('the dashboard refuses to mint a key bound to nobody, like auth create: credential_scope_required, nothing created', async () => {
+    const { addMember, disableMember } = await import('../src/core/access/members.ts');
+    const ids = ['alice-example', 'bob-example'];
+    for (const id of ids) await addMember(engine, id);
+    try {
+      const before = (await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_tokens'))[0]!.n;
+      const { status, body } = await post('/admin/api/api-keys', { name: 'dash-unbound' });
+      expect(status).toBe(400);
+      expect(JSON.stringify(body)).toContain('credential_scope_required');
+      expect(body.token).toBeUndefined();
+      expect((await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM access_tokens'))[0]!.n).toBe(before);
+    } finally {
+      for (const id of ids) await disableMember(engine, id);
+    }
+    expect((await post('/admin/api/api-keys', { name: 'dash-after-members' })).status).toBe(200);
+  });
+});
