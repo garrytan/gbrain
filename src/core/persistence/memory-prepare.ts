@@ -20,13 +20,14 @@ import { lexicalContestCandidate, recordContestedFact, supersessionGuarded } fro
 import { storedTrustTier } from '../trust/tier.ts';
 import { fenceAppendPendingTier } from '../eligibility/fence-overlay.ts';
 import { prepareFenceFactAppend, prepareFenceFactCreate, prepareFenceRowRetirement, requestReceiptFix, type FenceFactAppend } from '../facts/fence-fact-append.ts';
-import { privateProvenanceFilterFragment, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
+import { remoteProvenanceFloorSql, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { tightenToPage } from '../facts/visibility.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts/extract-from-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, memberPageIsOwn, memberPageNotOwned, onOwnedMemoryPageSql, scopePageFrontmatter, scopePageIsShared, scopePageNotShared } from '../access/member-facts.ts';
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
+import { withoutBody } from '../page-body/page-shape.ts';
 
 function conflict(row: WriteRequest): never {
   throw opError('revision_conflict', 'The memory changed during semantic preparation.',
@@ -59,7 +60,7 @@ async function activeUnlinkedCopy(engine: BrainEngine, sourceId: string, input: 
   // GST-359 C2: a member's fact links only its own page's unlinked copy; no other write links one on a member page.
   const [row] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts
     WHERE source_id=$1 AND visibility=$2 AND entity_slug IS NULL AND expired_at IS NULL
-      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate && !input.page_slug ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}
+      AND (valid_until IS NULL OR valid_until > now()) AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3)${excludePrivate && !input.page_slug ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}
       AND ${input.page_slug ? 'source_markdown_slug=$4' : `($4::text IS NULL AND NOT ${onOwnedMemoryPageSql('facts')})`}
     ORDER BY id DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.page_slug ?? null]);
   return row ? Number(row.id) : null;
@@ -85,7 +86,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   if ((snapshot?.page.id ?? null) !== row.page_id && !rememberAcceptsPageCreatedSince(row, snapshot)) throw pageIdentityError(snapshot != null || row.page_id === null, 'The accepted entity was deleted or recreated.');
   if (p.member_page === true && snapshot && !memberPageIsOwn(row.slug, snapshot.page.frontmatter)) throw memberPageNotOwned(row.slug);
-  if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...snapshot.page, source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
+  if (p.scope_page === true && snapshot && !await scopePageIsShared(engine, { ...withoutBody(snapshot.page), source_id: row.source_id, slug: row.slug })) throw scopePageNotShared(row.source_id);
   // A defaulted visibility never lands broader than the target page as it stands at publication.
   if (p.visibility_defaulted === true && snapshot) input.visibility = tightenToPage(input.visibility, await withFolderRestricted(engine, snapshot.page));
   // GST-2243: a shared fact whose page turned restricted after admission is refused, never saved private under a world receipt.
@@ -161,7 +162,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const retiredUntil = status === 'superseded' ? supersededValidUntil(decision.candidate!, validFrom) : null;
   // The fact is published as a row of its entity page's facts fence, file before facts row (facts/fence-fact-append.ts).
   let fence: FenceFactAppend | undefined;
-  if (p.fence === true && (snapshot || row.slug === UNATTRIBUTED_MEMORY_SLUG)) {
+  if (p.fence === true && (snapshot || isHoldingSlug(row.slug))) {
     const old = decision.candidate;
     fence = await prepareFenceFactAppend(engine, row, config, snapshot, { fact, pendingTier: fenceAppendPendingTier(writerTier),
       supersede: status === 'superseded' && old?.source_markdown_slug === row.slug && old.row_num != null ? { rowNum: Number(old.row_num), validUntil: retiredUntil } : undefined }, signal);
@@ -172,10 +173,10 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
     fence = await prepareFenceFactCreate(engine, row, config, { fact, pendingTier: fenceAppendPendingTier(writerTier),
       frontmatter: scopePageFrontmatter(), heading: '# Scope memory' }, signal);
   }
-  // GBRA-190 G4: linking a fact saved without an entity retires its memory/unattributed row in the same publication.
+  // GBRA-190 G4: linking a fact saved without an entity retires its holding row in the same publication.
   const old = status === 'superseded' ? decision.candidate! : null;
-  const linkedRow = old && old.source_markdown_slug === UNATTRIBUTED_MEMORY_SLUG && row.slug !== UNATTRIBUTED_MEMORY_SLUG && old.row_num != null
-    ? await prepareFenceRowRetirement(engine, row, config, UNATTRIBUTED_MEMORY_SLUG, { rowNum: Number(old.row_num), note: `linked to ${input.entity_slug}`, validUntil: retiredUntil }, signal) : null;
+  const linkedRow = old && isHoldingSlug(old.source_markdown_slug) && row.slug !== old.source_markdown_slug && old.row_num != null
+    ? await prepareFenceRowRetirement(engine, row, config, old.source_markdown_slug!, { rowNum: Number(old.row_num), note: `linked to ${input.entity_slug}`, validUntil: retiredUntil }, signal) : null;
   // The belief ledger records the superseded fact in its own stream, so that stream's page key is held too.
   const supersededStream = status === 'superseded' ? decision.candidate!.source_markdown_slug ?? decision.candidate!.entity_slug ?? null : null;
   const additionalPageKeys = supersededStream && supersededStream !== row.slug && !linkedRow ? [{ sourceId: row.source_id, slug: supersededStream }] : undefined;

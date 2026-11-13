@@ -151,6 +151,29 @@ describe('claude-cli output-cap envelope finishes as length (#6523)', () => {
     }
   });
 
+  // #7273: Claude Code 2.1.305 writes the key as JSON null instead of leaving it out.
+  test('a null api_error_status counts as no status: the cap is length, anything else stays a typed failure', async () => {
+    const nullStatus = { api_error_status: null };
+    for (const exit of [0, 1]) {
+      for (const body of [envelope(capMessage(2048), { ...nullStatus, subtype: 'success', stop_reason: 'stop_sequence' }),
+        [{ type: 'system', subtype: 'init' }, envelope(capMessage(2048), nullStatus)]]) {
+        await withCli({ '*': { body, exit } }, async () => {
+          const out = await generate();
+          expect(out.finishReason, `exit ${exit}`).toBe('length');
+          expect(out.content).toEqual([{ type: 'text', text: '' }]);
+        });
+      }
+      for (const result of ['API Error: overloaded', `See the docs: ${capMessage(2048)}`]) {
+        await withCli({ '*': { body: envelope(result, nullStatus), exit } }, async () => {
+          const error = await rejection(generate);
+          expect(error, `${result} (exit ${exit})`).toBeInstanceOf(ClaudeCliProcessError);
+          expect((error as ClaudeCliProcessError).apiErrorStatus).toBeUndefined();
+          expect((error as ClaudeCliProcessError).exitCode).toBe(exit);
+        });
+      }
+    }
+  });
+
   test('a success envelope quoting the prefix is ordinary model text', async () => {
     const quote = `The CLI said: ${capMessage(2048)}`;
     await withCli({ '*': { body: envelope(quote, { is_error: false, subtype: 'success', stop_reason: 'end_turn' }), exit: 0 } }, async () => {

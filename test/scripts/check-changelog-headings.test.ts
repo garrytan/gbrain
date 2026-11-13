@@ -52,6 +52,25 @@ describe('check:changelog-headings', () => {
     expect(r.out).toContain('Fix:  restore it from the base');
   });
 
+  test('a branch behind master skips only the releases newer than its own VERSION', () => {
+    const root = repo();
+    writeFileSync(join(root, 'VERSION'), '0.60.321.0\n');
+    writeFileSync(join(root, 'CHANGELOG.md'), changelog('0.60.321.0', '0.60.46.0'));
+    const r = run(root);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('1 newer release heading(s) on origin/master are not on this branch yet');
+  });
+
+  test('a branch behind master that cut an older release heading is still refused', () => {
+    const root = repo();
+    writeFileSync(join(root, 'VERSION'), '0.60.321.0\n');
+    writeFileSync(join(root, 'CHANGELOG.md'), changelog('0.60.321.0'));
+    const r = run(root);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('missing 1 release heading(s)');
+    expect(r.out).toContain('## [0.60.46.0]');
+  });
+
   test('without the base ref: refused under CI, skipped locally', () => {
     const root = repo();
     git(root, 'update-ref', '-d', 'refs/remotes/origin/master');

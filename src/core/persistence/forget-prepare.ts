@@ -21,7 +21,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { planFactWithdrawal, recordFactWithdrawal } from '../facts/withdrawal.ts';
 import { rebuildPendingPageProjections } from '../page-state/projections.ts';
-import { ownerReadPolicyFragment, privateProvenanceFilterFragment, readPolicyFragment, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { ownerReadPolicyFragment, readPolicyFragment, remoteProvenanceFloorSql, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { folderAccessForAll, memberIdentityFor } from '../access/caller.ts';
 import { remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { materializedPage } from './segmented-apply.ts';
@@ -31,7 +31,7 @@ import { MEMBER_PAGE_PREFIX, onOwnedMemoryPageSql } from '../access/member-facts
 import { storedOwnerSpeaksForItself } from './page-visibility.ts';
 import type { CompanionPage, PageMutationFile, PreparedMutation } from './coordinator.ts';
 import type { WriteAuthority, WriteRequest } from './model.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 
 interface ForgetTarget { id: number; entity_slug: string | null; trust_tier?: string | null }
@@ -51,7 +51,7 @@ export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId:
       JOIN facts l ON l.source_id=u.source_id AND l.visibility=u.visibility AND l.entity_slug IS NOT NULL AND l.id<>u.id
         AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
         AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
-      WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('l')}` : ''}
+      WHERE u.id=$1 AND u.source_id=$2 AND ($3::boolean=false OR l.visibility='world')${excludePrivate ? ` AND ${remoteProvenanceFloorSql('l')}` : ''}
       ORDER BY l.id LIMIT 5`, [id, sourceId, remote]);
     if (linked.length) {
       const named = linked.map(row => `#${row.id} (${row.entity_slug})`).join(', ');
@@ -66,7 +66,7 @@ export async function refuseForgetReachingOtherCopies(tx: BrainEngine, sourceId:
       AND (u.entity_slug IS NULL OR l.entity_slug=u.entity_slug)
       AND l.expired_at IS NULL AND (l.valid_until IS NULL OR l.valid_until > now())
       AND gbrain_fact_fingerprint(l.fact)=gbrain_fact_fingerprint(u.fact)
-    WHERE u.id=$1 AND u.source_id=$2 AND NOT (${privateProvenanceFilterFragment('l')}) LIMIT 1`, [id, sourceId]);
+    WHERE u.id=$1 AND u.source_id=$2 AND NOT (${remoteProvenanceFloorSql('l')}) LIMIT 1`, [id, sourceId]);
   if (!hidden.length) return;
   throw verbError('invalid_params',
     `claim_linked: the same claim as fact #${id} is active elsewhere in this brain. Forgetting #${id} would withdraw it there too, so nothing was forgotten.`,
@@ -104,7 +104,7 @@ export async function readForgetTarget(engine: BrainEngine, id: number, sourceId
   const [fact] = await engine.executeRaw<ForgetTarget & { source_markdown_slug: string | null; row_num: number | null; expired_at: Date | null }>(`SELECT id,entity_slug,source_markdown_slug,row_num,expired_at,trust_tier FROM facts
     WHERE id=$1 AND source_id=$2 AND ${ownPage ? `visibility='private' AND source_markdown_slug=$3 AND EXISTS (SELECT 1 FROM pages member_page
       WHERE member_page.source_id=facts.source_id AND member_page.slug=$3 AND member_page.deleted_at IS NULL AND member_page.page_readers && ARRAY[$4::text])`
-    : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${privateProvenanceFilterFragment('facts')}` : ''}`}${lock ? ' FOR UPDATE' : ''}`,
+    : `($3::boolean=false OR visibility='world')${excludePrivate ? ` AND ${remoteProvenanceFloorSql('facts')}` : ''}`}${lock ? ' FOR UPDATE' : ''}`,
   ownPage ? [id, sourceId, ownPage, `member:${ownPage.slice(MEMBER_PAGE_PREFIX.length)}`] : [id, sourceId, remote]);
   return fact ?? null;
 }
@@ -162,9 +162,9 @@ export async function prepareForgetMutation(engine: BrainEngine, row: WriteReque
   };
   const own = await engine.readPageSnapshot(row.slug, { sourceId, includeDeleted: true });
   if ((own?.page.id ?? null) !== row.page_id) throw pageIdentityError(own != null || row.page_id === null, 'The page of the forgotten fact was deleted or recreated.');
-  // GST-2492: a fact held on memory/unattributed for an entity with no page is struck at its own row, in the file and the
+  // GST-2492: a fact held on a holding page for an entity with no page is struck at its own row, in the file and the
   // page, so a rebuild from Git does not bring it back; the claim-wide strike would also reach other entities' rows there.
-  const held = row.slug === UNATTRIBUTED_MEMORY_SLUG && fact.source_markdown_slug === row.slug && fact.entity_slug !== null && fact.row_num !== null
+  const held = isHoldingSlug(row.slug) && fact.source_markdown_slug === row.slug && fact.entity_slug !== null && fact.row_num !== null
     && plan.subject !== '*' && own && !own.page.deleted_at && row.worktree_id
     ? await prepareFenceRowRetirement(engine, row, _config, row.slug, { rowNum: Number(fact.row_num), note: 'memory withdrawn', validUntil: new Date(withdrawnAt), forgotten: true }, signal)
     : null;

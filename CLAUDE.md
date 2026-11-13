@@ -301,10 +301,9 @@ checkpoint resume, or DB-contention-aware pace mode.
 
 ## Version locations (single source of truth: `VERSION` file)
 
-Every release updates the required version stamps in the table below.
-`bun run release:restamp` rewrites all of them, renumbers the branch's own
-schema migrations after master's and runs the auto-derived regenerations;
-run it when the PR is next to merge ([how](docs/RELEASING.md#release-restamp)).
+Every release updates the required version stamps in the table below. PRs do
+not: a PR carries a `changelog.d` fragment, and the release PR rewrites every
+row ([releases per batch](docs/RELEASING.md#releases-per-batch)).
 Update TODOS only when filing new work. `/ship`'s Step 12 idempotency check
 catches VERSION vs package.json drift; the canonical list lives here.
 
@@ -366,9 +365,9 @@ four numeric segments are required first. Historical 3-segment versions
   (e.g. "v0.21.0 Code Cathedral"); update only when the README's marketing
   copy is intentionally being refreshed, NOT on every micro/patch bump.
 
-**Always use PATCH without asking**, including the initial release choice;
-override `/ship`'s MINOR/MAJOR prompts. Auto-allocate past collisions, sync all
-version stamps and the PR title, then report the number. This changes numbering
+**PRs carry no version** ([releases per batch](docs/RELEASING.md#releases-per-batch)):
+/ship writes a `changelog.d` fragment, and the release PR picks the next PATCH
+(never MINOR or MAJOR) and syncs every stamp. This changes numbering
 only: scope, merge, deployment, paid-work and validation approvals still apply.
 CI rejects mismatched `VERSION`/`package.json` or versions not newer than master.
 
@@ -469,8 +468,8 @@ This applies to README, CHANGELOG, docs, PRs, commits, issues, and release pages
 
 ## PR title format — version FIRST (IRON RULE)
 
-PR titles and version-bump commit subjects start with the version, followed by
-the conventional-commit subject:
+A PR without a version is titled in plain words. Release PR titles and version-bump commit subjects start with the
+version, followed by the conventional-commit subject:
 
 ```
 vMAJOR.MINOR.PATCH.MICRO <type>(<scope>): <summary> (#issue or wave ref)

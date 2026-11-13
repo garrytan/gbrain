@@ -151,7 +151,11 @@ const SLOT_FLAGS: ReadonlyArray<readonly [NightlyProbeSlotId, string]> = [
  * `--slot-<x>-model` flag, which wins over the #4636 substitution, and with
  * routes the batch keeps the gateway the caller refreshed from the brain
  * (`useConfiguredGateway`) instead of rebuilding it from the file plane.
- * With no routes the call is the pre-#5872 one.
+ * With no routes the call is the pre-#5872 one. `--concurrent 1` (#7534):
+ * every judge call reserves its worst case against the run cap until it
+ * settles, so questions run one at a time (each question's judges still run
+ * together) and a cap that pays for the probe is not refused for holding
+ * several questions' worst cases at once.
  */
 export function buildCrossModalProbeCall(args: CrossModalProbeArgs): { argv: string[]; opts: RunCrossModalOpts } {
   const argv = [
@@ -161,6 +165,8 @@ export function buildCrossModalProbeCall(args: CrossModalProbeArgs): { argv: str
     args.summaryPath,
     '--max-usd',
     String(args.maxUsd),
+    '--concurrent',
+    '1',
     '--dimensions',
     PROBE_QA_DIMENSIONS.join(','),
     '--yes',

@@ -398,6 +398,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
   // No paths: discovery. Without the all flag, show what WOULD be imported
   // and stop (a safe default for a command that can touch five harness
   // histories); with it, import the discovered set.
+  let discoveredFormats: Map<string, TranscriptFormat> | undefined;
   if (parsed.paths.length === 0) {
     const { discoverTranscriptFiles } = await import('../core/transcripts/discover.ts');
     // #4472: discovery excludes gbrain's own claude-cli subprocess sessions
@@ -423,6 +424,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
       return;
     }
     parsed.paths = discovered.map((d) => d.path);
+    discoveredFormats = new Map(discovered.map((d) => [d.path, d.format]));
   }
 
   // Source: the canonical 6-tier chain (capture.ts pattern) — one resolved
@@ -502,6 +504,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
     result = await runTranscriptsIngest(engine, {
       paths,
       format: parsed.format,
+      discoveredFormats,
       dryRun: parsed.dryRun,
       limit: parsed.limit,
       sinceIso,
@@ -537,7 +540,7 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
 
   // --facts: ONE extractor invocation over every touched slug (including
   // hash-skipped pages — the extractor's version-token gate dedupes work).
-  let factsSummary: { pages: number; pagesFailed: number; spentUsd?: number } | undefined;
+  let factsSummary: import('../core/transcripts/ingest-facts.ts').IngestFactsResult | undefined;
   if (parsed.facts && !parsed.dryRun && result.slugsTouched.length > 0) {
     const { runIngestFacts } = await import('../core/transcripts/ingest-facts.ts');
     factsSummary = await runIngestFacts(engine, {
@@ -558,6 +561,11 @@ async function runIngest(engine: BrainEngine, args: string[], dispatch: Pick<Cli
           (factsSummary.spentUsd !== undefined ? `, ~$${factsSummary.spentUsd.toFixed(2)} spent` : '') +
           (factsSummary.pagesFailed > 0 ? ' (failed pages stay unfinished; stderr names each retry command)' : ''),
       );
+      if (factsSummary.budgetExhausted) console.log(factsSummary.budgetReason === 'no_pricing'
+        ? 'facts: stopped because a model has no pricing; pages after the stop have no facts yet (raising --max-cost-usd cannot fix this)'
+        : `facts: stopped at the ${factsSummary.budgetReason ?? 'cost'} budget; pages after the stop have no facts yet (re-run with a higher --max-cost-usd to continue)`);
+      if (factsSummary.pagesSkippedTooLarge) console.log(`facts: ${factsSummary.pagesSkippedTooLarge} page(s) skipped as too large to extract`);
+      if (factsSummary.pagesLockSkipped) console.log(`facts: ${factsSummary.pagesLockSkipped} page(s) skipped while another run held them (re-run to finish them)`);
     }
     const firstImported = result.files.flatMap((f) => f.sessions).find((s) => !s.error && s.baseSlug);
     if (firstImported && !parsed.dryRun) {

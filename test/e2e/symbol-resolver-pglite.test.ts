@@ -5,7 +5,8 @@
  *   - Unambiguous within-file match → edge_metadata.resolved_chunk_id set
  *   - Multi-match within file → edge_metadata.ambiguous=true + candidates
  *   - No match → edge stays untouched
- *   - chunks_walked watermark advances (edges_backfilled_at = NOW())
+ *   - chunks_walked watermark advances (edges_backfilled_at = NOW()) on the
+ *     chunks that own an edge; a chunk that owns none is never walked (#7119)
  *   - Idempotency: re-run on processed chunks is a no-op
  *   - Resume: bumping EDGE_EXTRACTOR_VERSION_TS forces re-walk
  *   - Source isolation: resolver scoped to one source_id; never touches edges
@@ -49,7 +50,7 @@ describe('v0.34 W0c symbol-resolver — unambiguous within-file match', () => {
 
     const stats = await resolveSymbolEdgesIncremental(engine, { sourceId: 'source-a' });
 
-    expect(stats.chunks_walked).toBeGreaterThanOrEqual(2);
+    expect(stats.chunks_walked).toBe(1);
     expect(stats.edges_resolved).toBe(1);
     expect(stats.edges_ambiguous).toBe(0);
     expect(stats.edges_unmatched).toBe(0);
@@ -126,14 +127,14 @@ describe('v0.34 W0c symbol-resolver — watermark + idempotency', () => {
     await insertUnresolvedEdge(engine, callerChunk, 'callerInA', 'parseMarkdown', 'source-a');
 
     const stats1 = await resolveSymbolEdgesIncremental(engine, { sourceId: 'source-a' });
-    expect(stats1.chunks_walked).toBeGreaterThanOrEqual(2);
+    expect(stats1.chunks_walked).toBe(1);
 
     const watermarkAfter = await engine.executeRaw<{ count: number }>(
       `SELECT COUNT(*)::int AS count FROM content_chunks
         WHERE edges_backfilled_at IS NOT NULL`,
       [],
     );
-    expect(watermarkAfter[0]!.count).toBeGreaterThanOrEqual(2);
+    expect(watermarkAfter[0]!.count).toBe(1);
 
     // Second run: every chunk already has edges_backfilled_at >= EDGE_EXTRACTOR_VERSION_TS.
     const stats2 = await resolveSymbolEdgesIncremental(engine, { sourceId: 'source-a' });

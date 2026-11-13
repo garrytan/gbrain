@@ -290,6 +290,23 @@ describe('put_page provenance — CV12 COALESCE-preserve UPDATE', () => {
     const prov = await readProvenance('wiki/p3a-local-then-remote');
     expect(prov.source_kind).toBe('mcp:put_page');
   });
+
+  test('a remote timeline entry, tag or link keeps the page provenance and ignores supplied stamps (#8667)', async () => {
+    const run = (name: string, ctx: OperationContext, p: Record<string, unknown>) =>
+      withEnv({ GBRAIN_HOME: home }, () => operations.find((o) => o.name === name)!.handler(ctx, p));
+    const slug = 'wiki/p3a-local-then-remote-meta';
+    await putPageOp.handler(makeCtx({ remote: false }), {
+      slug, content: '---\ntype: note\ntitle: V1\n---\n\nbody', source_kind: 'capture-cli', source_uri: 'file:///tmp/v1.md', ingested_via: 'put_page',
+    });
+    const before = await readProvenance(slug);
+    expect(before.source_kind).toBe('capture-cli');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await run('add_timeline_entry', makeCtx({ remote: true }), { slug, date: '2026-11-01', summary: 'Kickoff with acme-example' });
+    await run('add_tag', makeCtx({ remote: true }), { slug, tag: 'follow-up', source_kind: 'spoofed', ingested_via: 'spoofed' });
+    await putPageOp.handler(makeCtx({ remote: false }), { slug: 'wiki/p3a-link-target', content: '---\ntype: note\ntitle: Target\n---\n\nbody' });
+    await run('add_link', makeCtx({ remote: true }), { from: slug, to: 'wiki/p3a-link-target', link_type: 'mentions' });
+    expect(await readProvenance(slug)).toEqual(before);
+  });
 });
 
 describe('put_page provenance — T2 subagent namespace regression', () => {

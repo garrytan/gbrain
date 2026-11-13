@@ -34,6 +34,7 @@
  */
 
 import type { SupportedCodeLanguage } from './code.ts';
+import { extractElixirCallEdges } from './code-elixir.ts';
 
 export interface ExtractedEdge {
   /**
@@ -564,6 +565,8 @@ export function extractDartCallEdges(tree: any): ExtractedEdge[] {
 export function extractCallEdges(tree: any, language: SupportedCodeLanguage): ExtractedEdge[] {
   // Dart has no call node for CALL_CONFIG to name — see extractDartCallEdges.
   if (language === 'dart') return extractDartCallEdges(tree);
+  // Elixir's call node is every construct, definitions included — see code-elixir.ts.
+  if (language === 'elixir') return extractElixirCallEdges(tree);
   const cfg = CALL_CONFIG[language];
   if (!cfg) return [];
   const out: ExtractedEdge[] = [];

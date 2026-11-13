@@ -104,7 +104,11 @@ export interface AudienceAuditEvent {
   op: string;
   audience: string[];
   outcome: 'accepted' | 'on_behalf_of_invalid_audience' | 'on_behalf_of_not_permitted' | 'on_behalf_of_unknown_member' | 'on_behalf_of_in_arguments'
-    | 'actor_not_attested' | 'actor_unlinked';
+    | 'actor_not_attested' | 'actor_unlinked'
+    /** GST-363: a read from a connection bound to nobody on a brain that serves several people, refused before any work. */
+    | 'requester_scope_required'
+    /** GST-363: the same read when whom the brain serves could not be read (even after one re-read): refused as retryable. */
+    | 'requester_scope_unknown';
   /** GST-359 C1: an attested actor's system, the id it named (only when well-formed) and a refusal's reason. */
   actor?: { system: string; external_id?: string; reason?: string };
 }

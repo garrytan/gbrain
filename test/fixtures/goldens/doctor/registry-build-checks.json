@@ -407,6 +407,14 @@
       },
       {
         "category": "brain",
+        "name": "unscoped_shared_reads"
+      },
+      {
+        "category": "brain",
+        "name": "shared_stdio_binding"
+      },
+      {
+        "category": "brain",
         "name": "access_may_act_for_wildcard"
       },
       {
@@ -424,6 +432,10 @@
       {
         "category": "brain",
         "name": "access_members_read_lineage"
+      },
+      {
+        "category": "brain",
+        "name": "access_labelled_only_members"
       },
       {
         "category": "brain",
@@ -456,6 +468,10 @@
       {
         "category": "meta",
         "name": "schema_missing_tables"
+      },
+      {
+        "category": "meta",
+        "name": "schema_function_bodies"
       },
       {
         "category": "ops",
@@ -608,6 +624,14 @@
       {
         "category": "brain",
         "name": "unbound_source"
+      },
+      {
+        "category": "ops",
+        "name": "dream_write_deferred"
+      },
+      {
+        "category": "ops",
+        "name": "embedding_restamp_stalled"
       },
       {
         "category": "ops",
@@ -863,6 +887,10 @@
       },
       {
         "category": "ops",
+        "name": "unscoped_multi_user_token"
+      },
+      {
+        "category": "ops",
         "name": "index_audit"
       },
       {
@@ -1055,6 +1083,10 @@
       },
       {
         "category": "ops",
+        "name": "session_lane_budget"
+      },
+      {
+        "category": "ops",
         "name": "runtime_build_skew"
       },
       {
@@ -1162,12 +1194,20 @@
         "name": "embedding_plane_disagreement"
       },
       {
+        "category": "ops",
+        "name": "mcp_request_log_retention"
+      },
+      {
         "category": "brain",
         "name": "fence_integrity"
       },
       {
         "category": "ops",
         "name": "search_mode"
+      },
+      {
+        "category": "brain",
+        "name": "synopsis_tier_coverage"
       },
       {
         "category": "brain",

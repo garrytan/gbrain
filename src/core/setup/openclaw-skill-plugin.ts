@@ -16,6 +16,14 @@
  *    the plugin's index.js;
  *  - the plugin itself under <OpenClaw state dir>/gbrain/gbrain-skill-resolver.
  *
+ * Each agent's catalog is checked against what OpenClaw shows that agent's
+ * model (`openclaw skills list --json --agent <id>`, `modelVisible`): a
+ * skill OpenClaw hides from it (ineligible on this host, left out by the
+ * agent's skill filter, model invocation disabled, or cut at load) is added
+ * to the agent's exclude_ids, so it is never suggested. With no openclaw on
+ * PATH, or a list that names none of the catalog's skills, nothing is
+ * filtered and the result says so.
+ *
  * OpenClaw's CLI (install --link, enable, the conversation-access grant) runs
  * only when the plugin files changed or OpenClaw's config does not show the
  * plugin installed, enabled and allowed, so a mode flip, a pin change or a
@@ -36,7 +44,7 @@ import { logsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { readDirSources } from '../skills/resolver/sources.ts';
 import { openclawConfigPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
 import { openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
-import { pinnedBlockFor } from './skill-pins.ts';
+import { catalogSkillIds, pinnedBlockFor } from './skill-pins.ts';
 import { readResolverConfig } from './skill-resolver-config.ts';
 import { laneTurnSettings } from '../skills/resolver/config.ts';
 
@@ -164,8 +172,8 @@ export function openclawSkillPluginRegistered(dir = openclawSkillPluginDir()): b
   } catch { return false; }
 }
 
-/** Build the library from this gbrain's source and keep it at <lib>/<sha256>.mjs, writable by its owner only. */
-async function ensureLibrary(home: string, previous: string | null): Promise<{ sha256: string; wrote: boolean; path: string }> {
+/** Build the library from this gbrain's source and keep it at <lib>/<sha256>.mjs, writable by its owner only; the prune keeps every library a consumer's state (OpenClaw, Pi) still names. */
+export async function ensureResolverLibrary(home: string): Promise<{ sha256: string; wrote: boolean; path: string }> {
   const { buildResolverLibrary, LIBRARY_FILE } = await import('../../commands/skill-resolver-library.ts');
   const dir = openclawSkillLibDir(home);
   const built = await buildResolverLibrary(join(dir, LIBRARY_FILE));
@@ -173,8 +181,10 @@ async function ensureLibrary(home: string, previous: string | null): Promise<{ s
   const wrote = !existsSync(target);
   if (wrote) copyFileSync(built.path, target);
   chmodSync(target, 0o644);
+  const { readPiSkillState } = await import('./pi-skill-extension.ts');
+  const keep = new Set([built.sha256, readOpenclawSkillState(home)?.library_sha256, readPiSkillState(home)?.library_sha256].map((s) => `${s}.mjs`));
   for (const f of readdirSync(dir)) {
-    if (/^[0-9a-f]{64}\.mjs$/.test(f) && f !== `${built.sha256}.mjs` && f !== `${previous}.mjs`) rmSync(join(dir, f), { force: true });
+    if (/^[0-9a-f]{64}\.mjs$/.test(f) && !keep.has(f)) rmSync(join(dir, f), { force: true });
   }
   return { sha256: built.sha256, wrote, path: target };
 }
@@ -193,15 +203,22 @@ function selfTest(node: string, dir: string, agentId: string, message: string, r
   return { ok: false, detail: `the plugin's self-test under ${node} failed (${doc.code ?? lastLine(r.output)})` };
 }
 
-function hostCount(run: Run, bin: string, agentId: string): number | null {
+/** What `openclaw skills list --json --agent <id>` lists for one agent, and which of those its model can use (modelVisible; else eligible and not hidden); null when the call or its JSON fails. */
+function hostSkills(run: Run, bin: string, agentId: string): { listed: Set<string>; visible: Set<string> } | null {
   const r = run([bin, 'skills', 'list', '--json', '--agent', agentId]);
   if (!r.ok) return null;
   try {
-    const j = JSON.parse(r.output) as unknown;
-    const list = Array.isArray(j) ? j : Array.isArray((j as { skills?: unknown })?.skills) ? (j as { skills: unknown[] }).skills : null;
-    return list ? list.length : null;
+    const j = JSON.parse(r.output.slice(r.output.indexOf('{'))) as unknown;
+    const list = Array.isArray((j as { skills?: unknown })?.skills) ? (j as { skills: Array<Record<string, unknown>> }).skills : null;
+    if (!list) return null;
+    const named = list.filter((e) => e && typeof e.name === 'string');
+    const shows = (e: Record<string, unknown>) => (typeof e.modelVisible === 'boolean' ? e.modelVisible
+      : e.eligible === true && e.disabled !== true && e.blockedByAgentFilter !== true && e.blockedByAllowlist !== true);
+    return { listed: new Set(named.map((e) => e.name as string)), visible: new Set(named.filter(shows).map((e) => e.name as string)) };
   } catch { return null; }
 }
+
+const someNames = (ids: string[]) => `${ids.slice(0, 10).join(', ')}${ids.length > 10 ? ` and ${ids.length - 10} more` : ''}`;
 
 export interface OpenclawSkillSyncOptions {
   mode: 'live' | 'shadow' | null;
@@ -270,14 +287,24 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     }
     if (skills < 1) { out.notes.push(`agent ${id}: no model-invocable skill in ${dirs.join(', ')}, so it was skipped`); continue; }
     out.steps.push({ step: 'catalog', action: fresh ? 'keep' : 'write', detail: `${catalog}: ${skills} skills from ${dirs.join(', ')}` });
+    const host = bin ? hostSkills(run, bin, id) : null;
+    const catalogIds = dryRun && !fresh ? readDirSources(dirs).skills.map((s) => s.id) : [...(catalogSkillIds(home, catalog) ?? [])];
+    let hidden: string[] = [];
+    if (bin && !host) out.notes.push(`agent ${id}: \`openclaw skills list --json --agent ${id}\` failed, so skills OpenClaw hides from this agent were not filtered out of ${catalog}`);
+    else if (host && !catalogIds.some((n) => host.listed.has(n))) out.notes.push(`agent ${id}: OpenClaw lists none of ${catalog}'s skills for this agent, so the catalog was not filtered (check that the agent's workspace is ${dirs[0]})`);
+    else if (host) hidden = catalogIds.filter((n) => !host.visible.has(n));
+    const cut = host ? hidden.filter((n) => !host.listed.has(n)) : [];
+    const shut = hidden.filter((n) => !cut.includes(n));
+    if (shut.length) out.notes.push(`agent ${id}: ${shut.length} skill(s) OpenClaw hides from this agent's model (ineligible on this host, outside its skill filter, or model invocation off) are never suggested: ${someNames(shut)}`);
+    if (cut.length) out.notes.push(`agent ${id}: OpenClaw does not list ${cut.length} of ${catalog}'s skills (dropped at load by skills.limits.maxCandidatesPerRoot, or not in its skill roots), so they are never suggested: ${someNames(cut)} (skill_resolver_host_load_cut)`);
     const pins = dryRun ? { block: '', ids: [], unknown: [] as string[] } : pinnedBlockFor(home, catalog, 'openclaw');
     agents[id] = {
       mode: opts.mode ?? before?.mode ?? 'live', catalog, skill_dirs: dirs,
-      top_k: lane.top_k, min_match: lane.min_match, exclude_ids: lane.exclude_ids,
+      top_k: lane.top_k, min_match: lane.min_match, exclude_ids: [...new Set([...lane.exclude_ids, ...hidden])],
       live_fraction: tune.live_fraction ?? before?.live_fraction ?? 1, pins_route: tune.pins_route ?? before?.pins_route ?? 'system',
       pinned_block: pins.block, pinned_ids: pins.ids, owner_sender_ids: tune.owner_sender_ids ?? before?.owner_sender_ids ?? [],
     };
-    out.agents.push({ id, mode: agents[id]!.mode, catalog, skills, pins: pins.ids.length, unknown_pins: pins.unknown });
+    out.agents.push({ id, mode: agents[id]!.mode, catalog, skills: skills - hidden.length, pins: pins.ids.length, unknown_pins: pins.unknown });
     if (pins.unknown.length) out.notes.push(`agent ${id}: pinned skill(s) not in ${catalog}, left out of the block: ${pins.unknown.join(', ')} (skill_resolver_pin_unknown)`);
   }
   if (out.agents.length === 0) return fail({ code: 'skill_resolver_setup_incomplete', message: `The skill resolver was not turned on for any agent: ${out.notes.join('; ')}. Nothing was written.` });
@@ -297,7 +324,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   }
 
   let lib: { sha256: string; wrote: boolean; path: string };
-  try { lib = await ensureLibrary(home, prior?.library_sha256 ?? null); } catch (e) {
+  try { lib = await ensureResolverLibrary(home); } catch (e) {
     return fail({ code: e instanceof ResolverError && e.code === 'skill_source_unreadable' ? 'skill_source_unreadable' : 'skill_resolver_setup_incomplete',
       message: `The skill resolver library could not be built (${(e as Error).message}). The catalogs were built; the state file and the plugin were not written.` });
   }
@@ -331,12 +358,6 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const loaded = inspect.ok && inspect.output.includes('before_prompt_build') && /"status"\s*:\s*"loaded"|"imported"\s*:\s*true/.test(inspect.output) && !/"status"\s*:\s*"(?:error|disabled)"/.test(inspect.output);
     if (!loaded) return fail({ code: 'skill_resolver_plugin_not_installed', message: `\`openclaw plugins inspect ${OPENCLAW_SKILL_PLUGIN_ID} --runtime --json\` does not show the plugin loaded with before_prompt_build (${lastLine(inspect.output)}).`, commands: [shown([bin, 'plugins', 'inspect', OPENCLAW_SKILL_PLUGIN_ID, '--runtime', '--json'])], argv: [bin, 'plugins', 'inspect', OPENCLAW_SKILL_PLUGIN_ID, '--runtime', '--json'], recovery: `partial: files written, ${commands.length} of ${commands.length} commands ran, but OpenClaw does not load the plugin; check the inspect output, then gbrain doctor --only skill_resolver` });
     out.steps.push({ step: 'verify', action: 'run', detail: 'openclaw loads it with before_prompt_build' });
-  }
-  if (bin) {
-    for (const a of out.agents) {
-      const n = hostCount(run, bin, a.id);
-      if (n !== null && n < a.skills) out.notes.push(`agent ${a.id}: OpenClaw lists ${n} skills but ${a.catalog} holds ${a.skills}; OpenClaw dropped some at load (skills.limits.maxCandidatesPerRoot), and skills_read cannot open those (skill_resolver_host_load_cut)`);
-    }
   }
   const node = deps.nodeBin !== undefined ? deps.nodeBin : which('node');
   if (!node) out.notes.push('no node on PATH, so the plugin self-test did not run; the gateway runs it under its own Node');

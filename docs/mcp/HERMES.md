@@ -79,7 +79,7 @@ hook is not healthy ([repair](../guides/repair.md#turn-hook-not-loaded)).
 `--no-instructions` and `--remove` take the hook and its approval out.
 
 Hermes lists gbrain's tools only inside `tool_search`'s description, so with an
-MCP connection the rule also names them (`mcp_gbrain_recall`, `mcp_gbrain_entity`
+MCP connection the rule also names them (`mcp__gbrain__recall`, `mcp__gbrain__entity`
 and the rest) and says to find them with `tool_search`.
 
 Search results also carry `_meta.brain_hot_memory`, the brain's recent facts.
@@ -139,7 +139,8 @@ hermes -z "ask my gbrain brain: what did I import most recently?"
 
 `hermes -z` prints the final answer on stdout (benign notices may appear on
 stderr). Inside Hermes, gbrain's tools appear namespaced as
-`mcp_gbrain_<tool>` (e.g. `mcp_gbrain_search`).
+`mcp__gbrain__<tool>` (e.g. `mcp__gbrain__search`; Hermes releases before July 2026
+used `mcp_gbrain_<tool>`).
 
 ## Headless auth + model pin
 
@@ -167,9 +168,25 @@ Hermes cron is fully non-interactive, which makes it a natural scheduler for
 brain maintenance:
 
 ```bash
-hermes cron create --name gbrain-sync '0 */4 * * *' 'Run gbrain sync and report anything unusual'
+hermes cron create --name gbrain-sync '0 */4 * * *' 'Run gbrain sync; report only a non-zero exit, with its error code and fix'
 hermes cron tick    # run due jobs once and exit — deterministic testing
 hermes cron list
+```
+
+For health, page on `gbrain doctor --alert`, never on `health_score` or a
+summary of the full doctor report. The score counts advisory warnings (skill
+routing, coaching) the same as an outage; the alert verdict pages only on the
+page class ([doctor --alert](../guides/troubleshooting.md#doctor-alert)):
+
+```bash
+hermes cron create --name gbrain-alert '17 * * * *' 'Run `gbrain doctor --alert --json 2>>~/.gbrain/alert-stderr.log` and read its exit code. 0: say nothing. 17: report each alert.items entry with its fix. 18: report only when alert.consecutive_unknown is 2 or more, with each alert.unknown fix. Any other exit: report the exit code and the last lines of ~/.gbrain/alert-stderr.log. Never report health_score.'
+```
+
+The same rule as a plain crontab line (through the
+[wrapper](../guides/cron-schedule.md#calling-gbrain-unattended)):
+
+```bash
+17 * * * * gbrain-run doctor --alert --json > /tmp/gbrain-alert.json 2>> /tmp/gbrain-alert.err; rc=$?; case $rc in 0) ;; 17) your-notify "gbrain needs action: $(jq -c '[.alert.items[].check]' /tmp/gbrain-alert.json)" ;; 18) [ "$(jq -r '.alert.consecutive_unknown // 0' /tmp/gbrain-alert.json)" -ge 2 ] && your-notify "gbrain health unknown twice in a row" ;; *) your-notify "gbrain doctor --alert failed (exit $rc), see /tmp/gbrain-alert.err" ;; esac
 ```
 
 See [docs/guides/cron-schedule.md](../guides/cron-schedule.md) for the full

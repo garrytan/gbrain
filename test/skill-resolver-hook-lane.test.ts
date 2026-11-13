@@ -14,7 +14,10 @@
  * project root down to cwd) is built out of the turn and merged at rank time;
  * a built claude-code-plugins catalog is searched; no built catalog ends the
  * turn as no_catalog; Hermes reads extra.user_message from a stream of any size
- * and answers {"context"}; with the lane off it prints and writes nothing.
+ * and answers {"context"}, starts a session fresh on its first turn or when
+ * its history shrinks (in-place compaction), and honours
+ * per_harness.hermes.owner_sender_ids; with the lane off it prints and writes
+ * nothing.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
@@ -23,7 +26,8 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { runCli } from './helpers/cli-spawn.ts';
 import { CLAUDE_PLUGINS_CATALOG, LANE_DEADLINE_MS, projectCatalogPrefix, WORKER_SRC_PATH } from '../src/core/skills/resolver/hook-lane.ts';
-import { HOOK_FIELD_CAP, readJsonFields } from '../src/core/skills/resolver/hook-input.ts';
+import { HOOK_FIELD_CAP, readHookFields, readJsonFields } from '../src/core/skills/resolver/hook-input.ts';
+import { historyShrank, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { MESSAGE_CAP_BYTES } from '../src/core/skills/resolver/resolve.ts';
 import { dailyLogFile, LANE_LOG } from '../src/core/skills/resolver/daily-log.ts';
 
@@ -648,6 +652,51 @@ describe('skill-resolver lane: hermes', () => {
     }
   });
 
+  test('in-place compaction: a history shorter than the last turn saw offers a deduped skill again; a longer or unknown one does not', async () => {
+    const b = await hermesBox();
+    const ask = (n: number | null) => hook(b, hermesCmd(b), { session_id: 'h5', extra: { user_message: 'please deploy the widget to staging', ...(n === null ? {} : { conversation_history: history(n * 200).slice(0, n) }) } }, WIDE);
+    expect(JSON.parse((await ask(4)).stdout).context).toContain('id: "deploy-widget"');
+    expect((await ask(6)).stdout).toBe('');
+    expect((await ask(null)).stdout).toBe('');
+    expect(JSON.parse((await ask(2)).stdout).context).toContain('id: "deploy-widget"');
+    expect((await ask(3)).stdout).toBe('');
+  });
+
+  test('is_first_turn starts the session fresh even when the history did not shrink', async () => {
+    const b = await hermesBox();
+    const turn = (first: boolean) => ({ session_id: 'h6', extra: { user_message: 'please deploy the widget to staging', conversation_history: [], is_first_turn: first } });
+    expect(JSON.parse((await hook(b, hermesCmd(b), turn(true), WIDE)).stdout).context).toContain('id: "deploy-widget"');
+    expect((await hook(b, hermesCmd(b), turn(false), WIDE)).stdout).toBe('');
+    expect(JSON.parse((await hook(b, hermesCmd(b), turn(true), WIDE)).stdout).context).toContain('id: "deploy-widget"');
+  });
+
+  test('owner_sender_ids: a listed sender gets the block; an unlisted, empty or missing sender gets none, as in the OpenClaw plugin', async () => {
+    const b = await hermesBox({ per_harness: { hermes: { owner_sender_ids: ['alice-example'] } } });
+    const ask = (id: string, sender?: string) => hook(b, hermesCmd(b), { session_id: id, extra: { user_message: 'please deploy the widget to staging', ...(sender === undefined ? {} : { sender_id: sender }) } }, WIDE);
+    expect((await ask('h7a', '')).stdout).toBe('');
+    expect((await ask('h7b')).stdout).toBe('');
+    expect((await ask('h7c', 'bob-example')).stdout).toBe('');
+    expect(laneLog(b).map((l) => l.outcome)).toEqual(['skipped_sender', 'skipped_sender', 'skipped_sender']);
+    expect(sessions(b)).toEqual([]);
+    expect(JSON.parse((await ask('h7d', 'alice-example')).stdout).context).toContain('id: "deploy-widget"');
+    const open = await hermesBox({ per_harness: { hermes: { owner_sender_ids: [] } } });
+    expect(JSON.parse((await hook(open, hermesCmd(open), { session_id: 'h7e', extra: { user_message: 'please deploy the widget to staging', sender_id: '' } }, WIDE)).stdout).context).toContain('id: "deploy-widget"');
+  });
+
+  test('a stored session from before the history field, or a turn with no history, never resets', async () => {
+    const b = await hermesBox();
+    const home = join(b.home, '.gbrain');
+    const key = sessionKey('on', 'hermes', 'h8');
+    mkdirSync(join(b.home, '.gbrain', 'skill-index', 'sessions'), { recursive: true });
+    writeFileSync(join(b.home, '.gbrain', 'skill-index', 'sessions', key + '.json'), JSON.stringify({ v: 1, turn: 3, spent: 10, last: { 'deploy-widget': 3 }, again: {} }));
+    expect(await historyShrank(home, key, 0)).toBe(false);
+    expect(await historyShrank(home, key, undefined)).toBe(false);
+    expect(await historyShrank(home, sessionKey('on', 'hermes', 'none-yet'), 0)).toBe(false);
+    writeFileSync(join(b.home, '.gbrain', 'skill-index', 'sessions', key + '.json'), JSON.stringify({ v: 1, turn: 3, spent: 10, last: {}, again: {}, history: 5 }));
+    expect(await historyShrank(home, key, 4)).toBe(true);
+    expect(await historyShrank(home, key, 5)).toBe(false);
+  });
+
   test('skills.resolver.lane_payload_chars caps the Hermes JSON too', async () => {
     const b = await hermesBox({ lane_payload_chars: 500 });
     const r = await hook(b, hermesCmd(b), { session_id: 'h4', extra: { user_message: 'deploy the widget, write the changelog and triage the bug' } }, WIDE);
@@ -682,5 +731,31 @@ describe('readJsonFields: the bounded streaming hook reader', () => {
       expect(await readJsonFields(chunks(bad, 2), PATHS, 100)).toBeNull();
     }
     expect(await readJsonFields(chunks('{"session_id": 7, "extra": {"user_message": ["x"]}}', 4), PATHS, 100)).toEqual({});
+  });
+});
+
+describe('readHookFields: counts and flags in the same streaming pass', () => {
+  const chunks = (text: string, size: number) => { const bytes = Buffer.from(text); return Readable.from(Array.from({ length: Math.ceil(bytes.length / size) }, (_, i) => bytes.subarray(i * size, (i + 1) * size))); };
+  const SPEC = { strings: ['extra.user_message'], counts: ['extra.conversation_history'], flags: ['extra.is_first_turn'] };
+
+  test('counts top-level items only (nested arrays and commas inside strings do not count) across any chunk boundary, and reads booleans', async () => {
+    const history = [{ role: 'user', content: 'a, b, [c], {d}' }, [1, [2, 3]], 'x,y', 4, null, { content: '\\",' }];
+    const text = JSON.stringify({ extra: { conversation_history: history, is_first_turn: false, user_message: 'hi' } });
+    for (const size of [1, 2, 5, 64 * 1024]) {
+      expect(await readHookFields(chunks(text, size), SPEC, 100)).toEqual({ strings: { 'extra.user_message': 'hi' }, counts: { 'extra.conversation_history': history.length }, flags: { 'extra.is_first_turn': false } });
+    }
+    for (const [doc, n] of [['[]', 0], ['[ ]', 0], [' [5]', 1], ['[{}]', 1], ['["",""]', 2]] as const) {
+      expect((await readHookFields(chunks('{"extra":{"conversation_history":' + doc + '}}', 1), SPEC, 100))?.counts).toEqual({ 'extra.conversation_history': n });
+    }
+  });
+
+  test('a 5 MB history is counted; a stream cut off inside it yields null; a non-array or non-boolean value is left out', async () => {
+    const item = { role: 'user', content: 'An earlier turn, with "quotes" and a , comma.' };
+    const big = Array.from({ length: Math.ceil(5e6 / JSON.stringify(item).length) }, () => item);
+    const text = JSON.stringify({ extra: { conversation_history: big, user_message: 'deploy', is_first_turn: true } });
+    expect(text.length).toBeGreaterThan(5e6);
+    expect(await readHookFields(chunks(text, 64 * 1024), SPEC, 100)).toEqual({ strings: { 'extra.user_message': 'deploy' }, counts: { 'extra.conversation_history': big.length }, flags: { 'extra.is_first_turn': true } });
+    expect(await readHookFields(chunks(text.slice(0, 3e6), 64 * 1024), SPEC, 100)).toBeNull();
+    expect(await readHookFields(chunks('{"extra":{"conversation_history":"many","is_first_turn":1}}', 3), SPEC, 100)).toEqual({ strings: {}, counts: {}, flags: {} });
   });
 });

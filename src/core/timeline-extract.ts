@@ -107,15 +107,39 @@ export function extractTimelineFromContent(content: string, slug: string): Extra
 type TimelineTuple = Pick<ExtractedTimelineEntry, 'date' | 'source' | 'summary'>;
 const tupleKey = (e: TimelineTuple) => JSON.stringify([e.date, e.source, e.summary]);
 
+const LEGACY_DASHES = '—–-';
+
 /**
- * #6226: the tuples the inline-citation pass of either parser filed for this
- * text before one citation could name several dated sources, and that the
- * current reading no longer produces (supersededInlineCitationEntries).
+ * #7949: how the file walk read a `- **YYYY-MM-DD** | text` bullet before #3280: cut at its first dash of any kind,
+ * spaced or not (`foo-bar.de` -> source `foo`, summary `bar.de`), as its lazy `(.+?)\s*[—–-]\s*(.+)$` did. Scanned
+ * by hand so a long line costs linear time.
  */
-export function supersededCitationTimeline(content: string): TimelineTuple[] {
+function legacySplitBullets(content: string): TimelineTuple[] {
+  const out: TimelineTuple[] = [];
+  for (const line of content.split(/\r?\n/)) {
+    const m = /^-\s+\*\*(\d{4}-\d{2}-\d{2})\*\*\s*\|(.*)$/.exec(line);
+    if (!m) continue;
+    const rest = m[2]!;
+    const start = rest.search(/\S/);
+    if (start < 0) continue;
+    let at = -1;
+    for (let i = start + 1; i < rest.length - 1; i++) if (LEGACY_DASHES.includes(rest[i]!)) { at = i; break; }
+    if (at < 0 && start > 0 && start < rest.length - 1 && LEGACY_DASHES.includes(rest[start]!)) at = start;
+    if (at >= 0) out.push({ date: m[1]!, source: rest.slice(0, at).trim(), summary: rest.slice(at + 1).trim() });
+  }
+  return out;
+}
+
+/**
+ * The tuples older readings of this text filed and the current one may no longer produce: the inline-citation pass of
+ * either parser before one citation could name several dated sources (#6226, supersededInlineCitationEntries) and the
+ * file walk's bullet split before #3280 (#7949, legacySplitBullets). Callers compare only rows the text does not keep.
+ */
+export function supersededTimelineReadings(content: string): TimelineTuple[] {
   return [
     ...supersededInlineCitationEntries(content, { skipLine: (line) => bulletLinePattern.test(line) }),
     ...supersededInlineCitationEntries(content, { skipLine: isDatedTimelineLine }),
+    ...legacySplitBullets(content),
   ];
 }
 
@@ -221,7 +245,7 @@ function keyDigest(key: string): [number, number] {
 }
 
 /**
- * What a page text says about its timeline rows: the tuples either parser yields, and the older citation readings it
+ * What a page text says about its timeline rows: the tuples either parser yields, and the older readings it
  * supersedes. Read from a segmented body (segmentedTimelineText) with `within`, both hold only those keys, and a
  * stored row whose key is not in `within` (one written after the read) is never retracted against them. `runs` holds
  * the keys of the body's runs whose blocks were their stored text, which a retained generation need not read again.
@@ -261,7 +285,7 @@ export async function segmentedTimelineText(engine: Pick<BrainEngine, 'executeRa
   let parsed = 0;
   for await (const block of bodyBlocks(engine as BrainEngine, page, { runKeys: runs, ...(opts.stop ? { stop: opts.stop } : {}) })) {
     for (const key of markdownTimelineKeys(block.text, page.slug)) if (!within) kept.add(key); else within.mark(key);
-    for (const entry of supersededCitationTimeline(block.text)) {
+    for (const entry of supersededTimelineReadings(block.text)) {
       const key = tupleKey(entry);
       if (!within || within.has(key)) superseded.add(key);
     }
@@ -347,12 +371,12 @@ export async function retractRemovedTimelineEntries(
       WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
   const wanted = new Set(extra.map(tupleKey));
   const produced = new Set<string>();
-  // #6226: rows the older citation reading filed for this text or a stored version.
-  const superseded = new Set(typeof current === 'string' ? supersededCitationTimeline(current).map(tupleKey)
+  // #6226, #7949: rows an older reading filed for this text or a stored version.
+  const superseded = new Set(typeof current === 'string' ? supersededTimelineReadings(current).map(tupleKey)
     : [...wanted].filter(key => current.superseded.has(key)));
   const addText = (text: string) => {
     for (const key of markdownTimelineKeys(text, slug)) if (wanted.has(key)) produced.add(key);
-    for (const entry of supersededCitationTimeline(text)) if (wanted.has(tupleKey(entry))) superseded.add(tupleKey(entry));
+    for (const entry of supersededTimelineReadings(text)) if (wanted.has(tupleKey(entry))) superseded.add(tupleKey(entry));
   };
   const seen = new Set(typeof current === 'string' ? [] : current.runs ?? []);
   for (const version of versions) {

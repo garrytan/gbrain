@@ -264,6 +264,7 @@ for (const kind of testBackends()) {
       for (const who of ['alice-example', 'client-alice', 'bot-all', 'floor']) {
         const out = await call(tokens[who], 'delta', { since, include_private: true });
         expect({ who, isError: out.isError, listed: out.text.includes(PRIVATE_SLUG) }).toEqual({ who, isError: false, listed: false });
+        if (who === 'alice-example') expect({ who, world: out.text.includes(TARGET_SLUG) }).toEqual({ who, world: true });
         for (const secret of Object.values(SECRET)) expect({ who, leaked: out.text.includes(secret) }).toEqual({ who, leaked: false });
       }
     });
@@ -282,13 +283,33 @@ for (const kind of testBackends()) {
           expect({ owner, slug, seen: out.text.includes(canary) }).toEqual({ owner, slug, seen: !slug.startsWith('questions/') });
         }
         const listed = await call(tokens[owner], 'list_pages', { slug_prefix: 'questions/' });
-        expect({ owner, listed: listed.text.includes('questions/harbor-pin') }).toEqual({ owner, listed: false });
+        expect({ owner, isError: listed.isError, listed: listed.text.includes('questions/harbor-pin') }).toEqual({ owner, isError: false, listed: false });
       }
       for (const other of ['bob-example', 'floor', 'alice-none']) {
         for (const [slug, canary] of extra) {
           const out = await call(tokens[other], 'get_page', { slug, source_id: ALICE });
           expect({ other, slug, leaked: out.text.includes(canary) }).toEqual({ other, slug, leaked: false });
         }
+      }
+    });
+
+    // Value: protects=#8104: get_versions in a granted source hides an older version that carried the pinned_question marker even when the
+    // live page no longer carries it; fails_when=the widened arm checks the marker on the live page only; why_new=the pinned-question case
+    // above keeps the marker on the live page; seam=none (owner edits through importFromContent); no_claim=how a marker leaves a question page
+    test('get_versions in a granted source hides a version that carried the pinned_question marker after the live page dropped it', async () => {
+      const slug = 'questions/harbor-unpinned';
+      const page = (marker: boolean, canary: string) => ['---', 'type: question', 'title: Harbor unpinned', 'visibility: private',
+        ...(marker ? ['pinned_question: pin-example'] : []), '---', '# Harbor unpinned', '', `Owner note ${canary}.`].join('\n');
+      await importFromContent(engine, slug, page(true, 'canarypinnedversion'), { sourceId: ALICE });
+      await engine.createVersion(slug, { sourceId: ALICE });
+      await importFromContent(engine, slug, page(false, 'canaryunpinnedversion'), { sourceId: ALICE });
+      await engine.createVersion(slug, { sourceId: ALICE });
+      const all = await local('get_versions', { slug, include_body: true });
+      expect({ pinned: all.includes('canarypinnedversion'), unpinned: all.includes('canaryunpinnedversion') }).toEqual({ pinned: true, unpinned: true });
+      for (const owner of ['alice-example', 'client-alice']) {
+        const out = await call(tokens[owner], 'get_versions', { slug, include_body: true });
+        expect({ owner, isError: out.isError, pinned: out.text.includes('canarypinnedversion'), unpinned: out.text.includes('canaryunpinnedversion') })
+          .toEqual({ owner, isError: false, pinned: false, unpinned: true });
       }
     });
 

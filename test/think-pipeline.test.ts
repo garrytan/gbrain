@@ -689,12 +689,18 @@ describe('think MCP op — #1698 C3 + #10', () => {
     logger: { info() {}, warn() {}, error() {}, debug() {} } as any,
   });
 
-  test('C3: remote caller with explicit bad model → op throws (modelExplicit wired)', async () => {
+  test('C3: local caller with explicit bad model → op throws (modelExplicit wired)', async () => {
     const op = operationsByName['think'];
     expect(op).toBeDefined();
     await expect(
-      op.handler(baseCtx(true) as any, { question: 'q', model: 'bogusprovider:foo' }),
+      op.handler(baseCtx(false) as any, { question: 'q', model: 'bogusprovider:foo' }),
     ).rejects.toThrow(/not usable.*unknown_provider/);
+  });
+
+  test('GBRA-437: remote caller with a model the host does not allow → host model, never a throw', async () => {
+    const op = operationsByName['think'];
+    const res: any = await withoutAnthropicKey(() => op.handler(baseCtx(true) as any, { question: 'q', model: 'bogusprovider:foo' }));
+    expect(res.warnings.some((w: string) => w.startsWith('MODEL_NOT_USABLE'))).toBe(false);
   });
 
   test('#10: local save with no synthesis → saved_slug is null, not "" + warning surfaced', async () => {
