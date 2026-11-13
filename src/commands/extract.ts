@@ -2153,7 +2153,8 @@ export async function extractStaleFromDB(
   const versionTs = linkExtractorWatermarkFor(grammar.generation);
 
   // Pre-flight count — cheap indexed COUNT. dry-run reports and returns.
-  const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs });
+  const managed = await managedPersistenceEnabled(engine), wantedProducers = managed || includeFrontmatter ? undefined : ['body']; // #9295
+  const totalStale = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs, wantedProducers });
   if (dryRun) {
     const m = await previewMentionPass(engine, sourceIdFilter), counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);
     if (jsonMode && !opts.quiet) {
@@ -2166,7 +2167,7 @@ export async function extractStaleFromDB(
   // Managed brains: the writer guard owns canonical rows, so links, missing
   // canonical timeline rows and the watermark publish on the one managed path
   // (the mention pass runs inside it).
-  if (await managedPersistenceEnabled(engine)) {
+  if (managed) {
     const { runManagedStaleExtraction, formatManagedStaleExtraction } = await import('../core/persistence/links-maintenance.ts');
     const r = await runManagedStaleExtraction(engine, { sourceId: sourceIdFilter, catchUp, timeBudgetMs, counts: !opts.quiet, retryHeld: opts.retryHeld, signal: opts.signal });
     if (!jsonMode) log(formatManagedStaleExtraction(r, false, false));
@@ -2241,7 +2242,7 @@ export async function extractStaleFromDB(
   for (;;) {
     await plannerTick(pagesProcessed);
     const rows = await engine.listStalePagesForExtraction({
-      batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs,
+      batchSize: STALE_BATCH_SIZE, afterPageId, sourceId: sourceIdFilter, versionTs, wantedProducers,
     });
     if (rows.length === 0) break;
     await loadSourceLinkPacks(engine, rows.map(page => page.source_id), packs);
@@ -2370,7 +2371,7 @@ export async function extractStaleFromDB(
   progress.finish();
   if (packUnavailable) throw new Error('Cannot extract links: active schema pack is unavailable.');
   const mentions = await runMentionPass(engine, { sourceId: sourceIdFilter, ...(catchUp ? {} : { deadline: opts.signal?.aborted ? 0 : startMs + timeBudgetMs }) });
-  const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs }) + mentions.remaining;
+  const staleRemaining = await engine.countStalePagesForExtraction({ sourceId: sourceIdFilter, versionTs, wantedProducers }) + mentions.remaining;
   const counts = opts.quiet ? null : await staleExtractionCounts(engine, sourceIdFilter);
 
   if (!jsonMode) {

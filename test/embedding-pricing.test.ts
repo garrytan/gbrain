@@ -112,6 +112,27 @@ describe('lookupEmbeddingPrice — azure-openai alias (#4032)', () => {
   });
 });
 
+describe('lookupEmbeddingPrice — voyageai alias for the OpenRouter slug (#7034)', () => {
+  // OpenRouter names Voyage's models voyageai/<model> and bills Voyage's rates.
+  test.each([
+    ['openrouter:voyageai/voyage-4', 0.06, 'voyage:voyage-4'],
+    ['openrouter:voyageai/voyage-4-large', 0.12, 'voyage:voyage-4-large'],
+    ['openrouter:voyageai/voyage-4-lite', 0.02, 'voyage:voyage-4-lite'],
+    ['openrouter:voyageai/voyage-code-4', 0.12, 'voyage:voyage-code-4'],
+  ])('%s resolves via the voyage row', (model, expected, key) => {
+    const r = lookupEmbeddingPrice(model as string);
+    expect(r.kind).toBe('known');
+    if (r.kind === 'known') {
+      expect(r.pricePerMTok).toBe(expected as number);
+      expect(r.key).toBe(key as string);
+    }
+  });
+
+  test('voyageai model with no voyage twin stays unknown', () => {
+    expect(lookupEmbeddingPrice('openrouter:voyageai/voyage-4-nano').kind).toBe('unknown');
+  });
+});
+
 describe('lookupEmbeddingPrice — nested gateway ids (#2504)', () => {
   // Router providers (openrouter, generic gateways) wrap the upstream vendor
   // in the model segment. The router bills the vendor's per-token rate, so

@@ -2924,6 +2924,18 @@ More: [docs/guides/sync-unblock-runbook.md#decision-table](../../docs/guides/syn
 
 More: [docs/guides/repair.md#known-as-of-unproven](../../docs/guides/repair.md#known-as-of-unproven)
 
+### label_edit_refused
+
+<a id="label_edit_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A label-only repair left a page unchanged because its file holds the page but cannot take the label edit line by line. | Operator label repairs (gbrain repair visibility, gbrain repair private-labels) change only the label lines of a page's file and never re-render it, so a person's formatting, key order and comments survive. A label line with a block or multi-line value or a duplicate key, a file with no frontmatter block, or a file that still differs from the page once its label lines are edited (a frontmatter key, the title, the type, the tags or the body; never a stamp gbrain keeps only in the database) cannot be edited that way. The repair counts the page as declined, writes nothing, and the next preview lists it as held with what blocks it. | Make the field the refusal names in the page's file match the page, or write the label line as one plain line, commit it, run gbrain sync for the source, then preview the repair again. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `file_differs`, `label_line`.
+
+More: [docs/guides/write-refusals.md#label_edit_refused](../../docs/guides/write-refusals.md#label_edit_refused)
+
 ### legacy_job_selection_invalid
 
 <a id="legacy_job_selection_invalid"></a>
@@ -5129,6 +5141,66 @@ More: [docs/guides/skill-resolver.md#skill_source_unreadable](../../docs/guides/
 | The qualified shared skill is not in this installation's current authorized view. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover)
+
+### skillpack_backup_corrupt
+
+<a id="skillpack_backup_corrupt"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A skillpack update backup does not hash to the journal's pre-update hash, so restore will not write it. | Restore only writes bytes it can prove are the file's pre-update content. Side effects: files restored before this one stay restored; this file and the rest are untouched. | Leave the file as it is, or compare it with gbrain skillpack reference <skill> and edit it by hand. Run: gbrain skillpack restore --list --json | agent | `gbrain doctor --json` | 2 | no |
+
+More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
+
+### skillpack_journal_not_found
+
+<a id="skillpack_journal_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No skillpack update backup has that id. | Backups live under ~/.gbrain/skillpack-backups/<id>/ and are kept 30 days or the newest 10. Side effects: none. | List the backups with gbrain skillpack restore --list. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
+
+### skillpack_restore_conflict
+
+<a id="skillpack_restore_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A file changed after the skillpack update it would restore, so restore refused. | Restore never overwrites an edit made after the update. Side effects: nothing was restored (a file that changes mid-restore stops the run; files already restored stay restored and a rerun is a no-op for them). | Keep the later edit and restore the rest: gbrain skillpack restore <id> --skip <file>. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
+
+### skillpack_state_locked
+
+<a id="skillpack_state_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another gbrain skillpack command holds the lock on ~/.gbrain/skillpack-state.json. | Scaffold, update, pin and restore read-modify-write the state file one at a time. Side effects: nothing was written by this command. A lock left by a crash is reclaimed after 10 minutes. | Wait for the other command to finish and run this one again. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | yes |
+
+More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
+
+### skillpack_update_incomplete
+
+<a id="skillpack_update_incomplete"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An earlier skillpack update of this skills root did not finish (a crash left its journal pending), so no new update runs. | Some files of the interrupted skill may hold the new version and others the old. Side effects: nothing was changed by this run; --dry-run still previews. | Run gbrain skillpack restore <id> (named in the message), then update again. Run: gbrain doctor --only skillpack_update_incomplete --json | agent | `repeat the read that failed` | 2 | no |
+
+More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
+
+### skillpack_workspace_locked
+
+<a id="skillpack_workspace_locked"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another gbrain skillpack command holds this workspace's writer lock (.gbrain-skillpack.lock). | One writer per skills root keeps an update and a restore from interleaving. Side effects: nothing was written. A lock left by a crash is reclaimed after 10 minutes. | Wait for the other command to finish and run this one again. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | yes |
+
+More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
 
 ### slug_page_mismatch
 

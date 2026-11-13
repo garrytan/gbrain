@@ -209,16 +209,18 @@ export interface RepairItemOutcome { applied: boolean; outcome: string; reason?:
  * every item-scoped failure the same way (`classifyItemFailure`); these codes are a subset of that, and the only
  * failures an apply bound to `--expect` continues past.
  * `page_body_segmented`: the item's page stores its body in segments and the kind rewrites the whole body as one string.
+ * `label_edit_refused` (GST-2603): a label-only repair's page file holds the page but cannot take the label edit line by line.
  */
-export const REPAIR_ITEM_FAILURE_CODES: ReadonlySet<string> = new Set(['invalid_params', 'source_changed', 'page_body_segmented']);
+export const REPAIR_ITEM_FAILURE_CODES: ReadonlySet<string> = new Set(['invalid_params', 'source_changed', 'page_body_segmented', 'label_edit_refused']);
 
 /**
  * GBRA-443: the item failures that are the page's own state declining the write (its file differs from the database or is
- * gone, or its body is stored in segments), never a fault of the run: nothing was written, and the next preview lists the
- * item again with its state. A preview-bound apply whose only failures are these is complete (`gbrain repair` exits 0)
- * and counts them in `declined`.
+ * gone, its body is stored in segments, or, GST-2603, its file cannot take a label edit line by line), never a fault of the
+ * run: nothing was written, and the next preview lists the item again with its state. A preview-bound apply whose only
+ * failures are these is complete (`gbrain repair` exits 0) and counts them in `declined`. A `label_edit_refused` page is
+ * never counted by the run's systemic-failure breaker: it is that page's own file.
  */
-export const REPAIR_DECLINE_CODES: ReadonlySet<string> = new Set(['source_changed', 'page_body_segmented']);
+export const REPAIR_DECLINE_CODES: ReadonlySet<string> = new Set(['source_changed', 'page_body_segmented', 'label_edit_refused']);
 
 /** GBRA-443: one item's result inside an `applyBatch`: what `apply` returned, or what it threw. */
 export type RepairSettlement = { value: boolean | RepairItemOutcome } | { error: unknown };
@@ -655,7 +657,7 @@ async function runRepairScoped(ctx: OperationContext, handler: RepairHandler, sc
           + `Pages of its batch after it that were already published are counted in this result. Fix this page, then rerun \`${result.apply_command}\`.`),
           fix: readFix(`Previews ${handler.kind} again (read-only) to show this page's current state.`, { argv: ['gbrain', 'repair', handler.kind, ...(opts.sourceFlag ? ['--source', opts.sourceFlag] : []), '--json'] }) });
       }
-      const carried = item.retried === true && error instanceof OperationError && REPAIR_DECLINE_CODES.has(error.code);
+      const carried = error instanceof OperationError && (error.code === 'label_edit_refused' || item.retried === true && REPAIR_DECLINE_CODES.has(error.code));
       const { failure, systemic: stop } = carried ? { failure: { ...classifyItemFailure(error), key: `${item.source_id}:${item.slug}` }, systemic: null }
         : items.record(`${item.source_id}:${item.slug}`, error);
       if (stop) {

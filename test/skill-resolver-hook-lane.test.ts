@@ -20,7 +20,7 @@
  * nothing.
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
@@ -256,6 +256,65 @@ describe('skill-resolver lane: turn settings from config', () => {
     const invalid = await ask(claude, 'd5');
     expect([invalid.exitCode, invalid.stdout]).toEqual([0, '']);
     expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'error', code: 'skill_resolver_config_invalid' });
+  });
+});
+
+describe('skill-resolver lane: top_gate from config', () => {
+  test('a gate above every score empties the block; per_harness 0 turns it off for one harness; a bad value is refused', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const config = (...args: string[]) => runCli(['config', ...args], { env: b.env, cwd: b.project });
+    const ask = (s: string) => hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: s }, WIDE);
+    expect((await config('set', 'skills.resolver.top_gate', '100')).exitCode).toBe(0);
+    const gated = await ask('tg1');
+    expect([gated.exitCode, gated.stdout]).toEqual([0, '']);
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'empty' });
+    expect((await config('set', 'skills.resolver.per_harness.claude-code.top_gate', '0')).exitCode).toBe(0);
+    expect(contextOf(await ask('tg2'))).toContain('deploy-widget');
+    for (const bad of ['high', '101']) {
+      const r = await config('set', 'skills.resolver.top_gate', bad);
+      expect(r.exitCode, bad).not.toBe(0);
+      expect(r.stderr).toContain('must be a number from 0 to 100');
+    }
+    expect((await config('set', 'skills.resolver.top_gate', '-1')).exitCode).not.toBe(0);
+    expect(JSON.parse(readFileSync(join(b.home, '.gbrain', 'config.json'), 'utf8')).skills.resolver).toMatchObject({ top_gate: 100, per_harness: { 'claude-code': { top_gate: 0 } } });
+  });
+});
+
+describe('skill-resolver lane: session GC before the process exits', () => {
+  test('a delivered turn deletes idle session files and stamps the pass; a turn within the interval leaves new ones', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const dir = join(b.home, '.gbrain', 'skill-index', 'sessions');
+    mkdirSync(dir, { recursive: true });
+    const old = (Date.now() - 8 * 86_400_000) / 1000;
+    const plant = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => { const p = join(dir, `${prefix}${String(i).padStart(63, '0')}.json`); writeFileSync(p, '{}'); utimesSync(p, old, old); return p; });
+    const idle = plant('a', 40);
+    const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'gc-a' }, WIDE);
+    expect(contextOf(r)).toContain('deploy-widget');
+    expect(idle.filter((p) => existsSync(p))).toEqual([]);
+    expect(existsSync(join(b.home, '.gbrain', 'skill-index', 'logs', 'session-gc.stamp'))).toBe(true);
+    const later = plant('b', 3);
+    await hook(b, cmd, { prompt: 'write a changelog entry for the release', session_id: 'gc-b' }, WIDE);
+    expect(later.filter((p) => existsSync(p))).toHaveLength(3);
+  });
+});
+
+describe('skill-resolver lane: a deadline during the session GC pass', () => {
+  test('the delivered turn is logged as delivered, the process still exits at the deadline, and the commit landed', async () => {
+    const b = box();
+    seedSkills(claudeSkills(b));
+    await setup(b, 'claude-code');
+    const cmd = wired(b, 'claude-code');
+    const r = await hook(b, cmd, { prompt: 'please deploy the widget to staging', session_id: 'sess-gc-stall' }, { GBRAIN_TEST_SKILL_LANE_STALL: 'gc', GBRAIN_TEST_SKILL_LANE_DEADLINE_MS: '3000' });
+    expect(r.exitCode).toBe(0);
+    expect(contextOf(r)).toContain('id: "deploy-widget"');
+    expect(laneLog(b).at(-1)).toMatchObject({ outcome: 'delivered' });
+    expect(sessions(b).filter((s) => s.endsWith('.json'))).toHaveLength(1);
   });
 });
 
