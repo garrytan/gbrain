@@ -1208,3 +1208,6 @@ src/core/setup/hermes-skill-pins.ts	fs_import	1	GBRA-435 Hermes skill pins: read
 src/core/setup/pi-skill-extension.ts	fs_import	1	GBRA-435 Pi skill-resolver extension: setup writes the extension files under the Pi agent dir and its state under GBRAIN_HOME (no brain or engine is opened); stays
 src/core/setup/pi-skill-extension.ts	process_env	4	GBRA-435 Pi skill-resolver extension: HOME and PI_CODING_AGENT_DIR locate Pi's skills and extensions, PATH finds pi and node, and the env is handed to the pi child and the self-test; stays
 src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver extension: setup runs the Node self-test and pi --help to confirm Pi loaded the extension; stays
+src/core/setup/cursor-skill-pins.ts	fs_import	1	GBRA-435 Cursor pinned skills: setup writes the project's pinned-skills rule, its git exclude line and the project record under GBRAIN_HOME (no brain or engine is opened); stays
+src/core/setup/cursor-skill-pins.ts	process_env	1	GBRA-435 Cursor pinned skills: HOME locates the user-level skill directories Cursor loads; stays
+src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills: setup runs git rev-parse to find the repository's info/exclude; stays
