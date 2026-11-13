@@ -608,7 +608,7 @@ export class PostgresEngine implements BrainEngine {
     let sqlText = getPostgresSchema(dims, model);
 
     // GBRA-467: the schema migration lock covers the bootstrap, the replay and the migrations (holdSchemaMigrationLock).
-    const { runMigrations, withSchemaMigrationLock } = await import('./migrate.ts'); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
+    const { runMigrations, withSchemaMigrationLock, registeredLatestVersion } = await import('./migrate.ts'); // engine-dynamic-import-ok: initSchema only, keeps the ~220 migration modules off every connect
     const t0 = Date.now();
     logConnectionEvent({
       pool: this.connectionManager?.isDualPoolActive() ? 'ddl' : 'read',
@@ -617,7 +617,7 @@ export class PostgresEngine implements BrainEngine {
     });
     try {
       await withSchemaMigrationLock(this, async () => {
-        await assertSchemaNotAhead((q) => pool.unsafe(q)); // #7776: an older binary never replays its schema over a newer one
+        await assertSchemaNotAhead((q) => pool.unsafe(q), registeredLatestVersion()); // #7776: an older binary never replays its schema over a newer one
         // Another initSchema may have recorded an identity between the read above and this lock: check it again here.
         const lockedIdentity = storedIdentity ? null : await readStoredEmbeddingIdentity(this);
         if (lockedIdentity?.model) {
