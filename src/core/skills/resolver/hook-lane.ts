@@ -14,7 +14,12 @@
  * by the bounded streaming reader (hook-input.ts) over Bun's native stdin
  * stream (about 4x faster than process.stdin on a multi-MB payload) so no
  * history size is refused, and takes {"context": block}. Hermes has no
- * compaction event.
+ * compaction event and compacts in place (same session id), so the same
+ * pass counts extra.conversation_history and reads extra.is_first_turn: a
+ * first turn, or a history shorter than the last committed turn saw
+ * (session.ts historyShrank), starts the session's dedupe fresh. With
+ * per_harness.hermes.owner_sender_ids set, a turn whose extra.sender_id is
+ * not listed (or is empty) gets no block, as in the OpenClaw plugin.
  *
  * It runs the resolver in this process (never over serve's IPC), so it works
  * with serve down and with no brain, and it always fails open: every path
@@ -81,11 +86,11 @@ import { spawn } from '../../spawn.ts';
 import { claudeManagedSettingsPaths, claudeUserSettingsPath, codexHooksPath } from '../../bootstrap/host-specs.ts';
 import { shellWords } from '../../setup/hook-launcher.ts';
 import { isSkillResolverCommand, isSkillResolverEntry } from '../../setup/skill-resolver-lane.ts';
-import { laneTurnSettings, type LaneTurnSettings } from './config.ts';
+import { laneOwnerSenders, laneTurnSettings, type LaneTurnSettings } from './config.ts';
 import { appendDailyLog, appendDailyLogSync, LANE_LOG } from './daily-log.ts';
-import { HOOK_FIELD_CAP, readJsonFields } from './hook-input.ts';
+import { HOOK_FIELD_CAP, readHookFields } from './hook-input.ts';
 import { assertCatalogName, catalogFile, CLAUDE_PLUGINS_CATALOG, logsDir, resolverHome, SHARED_CATALOG } from './paths.ts';
-import { type CommitHold, commitSessionAsync, sessionKey, type TurnDelta } from './session.ts';
+import { type CommitHold, commitSessionAsync, historyShrank, sessionKey, type TurnDelta } from './session.ts';
 import type { TurnOutput } from './resolve.ts';
 import type { LaneWorkerTurn } from './hook-worker.ts';
 import { laneWorkerFailed, startLaneWorker } from './lane-worker.ts';
@@ -201,7 +206,7 @@ async function readStdinBounded(stream: NodeJS.ReadableStream & { isTTY?: boolea
 
 type LaneStdin = NodeJS.ReadableStream & { isTTY?: boolean };
 /** One hook event's fields as the harness sent them, not yet checked. */
-interface HookEvent { prompt: string; sessionId?: unknown; cwd?: unknown; source?: unknown }
+interface HookEvent { prompt: string; sessionId?: unknown; cwd?: unknown; source?: unknown; history?: number; firstTurn?: boolean; senderId?: string }
 /** `stdin` is the injected stream, else undefined for the process's own. */
 interface HarnessIo { read: (stdin: LaneStdin | undefined) => Promise<HookEvent | null>; render: (block: string) => string }
 
@@ -223,8 +228,8 @@ const LANE_IO: Record<LaneHarness, HarnessIo> = {
   hermes: {
     read: async (stdin) => {
       const source = stdin ?? (process.stdin.isTTY ? process.stdin : Bun.stdin.stream());
-      const f = await readJsonFields(source, ['session_id', 'cwd', 'extra.user_message'], HOOK_FIELD_CAP);
-      return f && { prompt: f['extra.user_message'] ?? '', sessionId: f.session_id, cwd: f.cwd };
+      const f = await readHookFields(source, { strings: ['session_id', 'cwd', 'extra.user_message', 'extra.sender_id'], counts: ['extra.conversation_history'], flags: ['extra.is_first_turn'] }, HOOK_FIELD_CAP);
+      return f && { prompt: f.strings['extra.user_message'] ?? '', sessionId: f.strings.session_id, cwd: f.strings.cwd, history: f.counts['extra.conversation_history'], firstTurn: f.flags['extra.is_first_turn'], senderId: f.strings['extra.sender_id'] ?? '' };
     },
     render: (block) => JSON.stringify({ context: block }),
   },
@@ -331,6 +336,10 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     return { outcome: 'reset' };
   }
 
+  const owners = laneOwnerSenders(settings.section, harness);
+  if (owners && !owners.includes(hookEvent.senderId ?? '')) return { outcome: 'skipped_sender' };
+  const reset = harness === 'hermes' && !!sessionId && (hookEvent.firstTurn === true || await historyShrank(home, sessionKey('on', harness, sessionId), hookEvent.history));
+
   const prompt = hookEvent.prompt;
   if (!prompt.trim() || /^\s*<(task-notification|teammate-message)[\s>]/.test(prompt)) return { outcome: 'empty' };
   const spawnFn = io.spawn ?? spawnDetached;
@@ -355,7 +364,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
     worker.once('message', resolve);
     worker.once('error', () => resolve({ error: { code: 'skill_resolver_internal' } }));
     worker.once('exit', () => resolve({ error: { code: 'skill_resolver_internal' } }));
-    worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
+    worker.postMessage({ input: { message: prompt, harness, ...turnSettings, ...(sessionId ? { session_id: sessionId } : {}), ...(reset ? { reset_session: true } : {}) }, home, catalogs, deadlineMs: Math.max(1, deadlineMs - elapsed() - COMMIT_RESERVE_MS) } satisfies LaneWorkerTurn);
   });
   if (posted.error || !posted.output) return { outcome: 'error', code: posted.error?.code ?? 'skill_resolver_internal', catalogs };
   const out = posted.output;
@@ -371,7 +380,7 @@ async function laneTurn(event: 'user-prompt' | 'session-start', harness: LaneHar
   }
   const stall = env.GBRAIN_TEST_SKILL_LANE_STALL;
   if (stall === 'commit-held' || stall === 'commit-written') ctl.commit.at = (stage) => (`commit-${stage}` === stall ? new Promise(() => {}) : Promise.resolve());
-  if (posted.pending && !ctl.expired) await commitSessionAsync(home, posted.pending.key, posted.pending.delta, ctl.commit);
+  if (posted.pending && !ctl.expired) await commitSessionAsync(home, posted.pending.key, { ...posted.pending.delta, ...(hookEvent.history !== undefined ? { history: hookEvent.history } : {}) }, ctl.commit);
   return { outcome, catalogs };
 }
 

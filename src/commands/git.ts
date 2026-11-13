@@ -15,7 +15,7 @@
  */
 import { existsSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { commitAndPush, checkoutRoot, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
+import { commitAndPush, checkoutRoot, previewPaths, previewUntrack, pullShared, scopePaths, COMMIT_LOCK_NAME, SOURCE_ROOT_CONFIG, type Resolution } from '../core/git/commit-push.ts';
 import { guardStatus, installGuard, uninstallGuard } from '../core/git/commit-guard.ts';
 import { appendPushLog } from '../core/brain-repo-durability.ts';
 import { opError } from '../core/ops/contract.ts';
@@ -78,7 +78,8 @@ Flags:
                       .gitignore ignores; it commits there and never pushes.
   --dry-run           Print the paths, branch and lock that would be used, and the marker that makes the
                       checkout a managed canonical worktree (or none); take no lock, write nothing.
-                      With --untrack, the real run's path checks run first and refuse as it would.
+                      The real run's path checks run first and refuse as it would (a path outside the
+                      source root or a sparse-checkout definition, a moved --base, another writer's file).
   --json              One JSON result (or the error envelope) on stdout.
 
 Paths are relative to --path when it is given (like git -C), else to the current
@@ -268,6 +269,7 @@ export async function runGit(args: string[]): Promise<number> {
       const paths = p.pull || p.pushOnly || !p.paths.length ? [] : scopePaths(repo, p.paths, cwd);
       const managed = managedFilesystemRootFor(repo);
       const untracked = p.untrack && paths.length ? previewUntrack(repo, paths, { allowOutsideSourceRoot: p.allowOutside }) : undefined;
+      if (!p.untrack && paths.length) previewPaths(repo, paths, { allowOutsideSourceRoot: p.allowOutside, bases, cwd });
       emit(json, { dry_run: true, repo, branch, lock, paths, mode: p.pull ? 'pull' : p.pushOnly ? 'push-only' : p.untrack ? 'untrack' : 'commit-push', managed, ...(untracked ? { untracked } : {}) },
         `dry run: ${p.pull ? 'pull' : p.pushOnly ? 'push-only' : `${p.untrack ? 'untrack' : 'commit'} ${paths.join(' ')}`} on ${branch} in ${repo} (lock ${lock}); ${managed ? `managed canonical worktree (${managed.evidence})` : 'not a managed worktree'}; nothing written`);
       return 0;
