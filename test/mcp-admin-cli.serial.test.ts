@@ -177,6 +177,8 @@ test('people administration commands send owner-session requests to the access r
   const cases: Array<[string[], string, unknown]> = [
     [['attest', clientId, '--attest-actor', 'qm', '--attest-ops', 'memory_recall,memory_write', '--dry-run'], '/admin/api/access/attest', { clientId, dryRun: true, attestActor: 'qm', attestOps: ['memory_recall', 'memory_write'] }],
     [['attest', clientId, '--attest-actor', 'none'], '/admin/api/access/attest', { clientId, dryRun: false, attestActor: null }],
+    [['attest', clientId, '--attest-read', 'person', '--dry-run'], '/admin/api/access/attest', { clientId, dryRun: true, attestRead: 'person' }],
+    [['attest', clientId, '--attest-read', 'none'], '/admin/api/access/attest', { clientId, dryRun: false, attestRead: null }],
     [['members', '--all'], '/admin/api/access/members?all=1', undefined],
     [['member-add', 'alice-example', '--name', 'Alice Example', '--groups', 'team-a,team-b'], '/admin/api/access/members', { action: 'add', id: 'alice-example', name: 'Alice Example', groups: ['team-a', 'team-b'] }],
     [['member-disable', 'alice-example'], '/admin/api/access/members', { action: 'disable', id: 'alice-example' }],

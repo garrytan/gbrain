@@ -28,7 +28,7 @@ check() {
 
 check "llms.txt + llms-full.txt are fresh" "bun run build:llms" bun test --timeout 60000 test/build-llms.test.ts
 check "KEY_FILES and TESTING.md byte caps / current-state voice" "follow the check's message, then rerun bun run check:doc-history" bun run check:doc-history
-check "documented scripts/ and test/ paths exist" "fix or delete the reference the test names" bun test --timeout 60000 test/docs-repo-paths.test.ts
+check "documented scripts/ and test/ paths exist" "fix or delete the reference the test names" bun run check:docs-repo-paths
 check "skill references resolve" "follow the check's message, then rerun bun run check:skill-refs" bun run check:skill-refs
 check "privacy guard" "replace real names with placeholders (alice-example, acme-example), then rerun bun run check:privacy" bun run check:privacy
 check "fixture privacy guard" "replace real names with placeholders, then rerun bun run check:fixture-privacy" bun run check:fixture-privacy
