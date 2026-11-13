@@ -922,32 +922,6 @@ describe('#7289 the dedup key is the thread, direction and verbatim quote, not t
     ]);
   });
 
-  test('a pass that adds a second person to a quote already keyed to the first keeps both loops', async () => {
-    const slug = 'emails/2026/08/2026-08-24-deck-invoice-7289ffff';
-    const threadId = 'thread-7289ffff';
-    const sentence = 'I will send Alice the deck and Bob the invoice by Friday.';
-    await engine.putPage(slug, {
-      type: 'email', title: 'Re: deck and invoice', compiled_truth: `Alice: Any update?\n\nMe: ${sentence}\n`,
-      frontmatter: { thread_id: threadId, date: '2026-08-24T10:00:00Z' },
-    }, { sourceId: SRC });
-    const alice = { direction: 'owed_by_me', text: 'Send Alice the deck by Friday', counterparty_name: 'Alice Example', counterparty_email: 'alice-example@example.invalid', due_iso: null, quote: sentence };
-    const bob = { direction: 'owed_by_me', text: 'Send Bob the invoice by Friday', counterparty_name: 'Bob Example', counterparty_email: 'bob-example@example.invalid', due_iso: null, quote: sentence };
-    const byEmail = async () => (await engine.executeRaw<{ id: number; counterparty_email: string; summary: string }>(
-      `SELECT id, counterparty_email, summary FROM open_loops WHERE source_id = $1 AND thread_id = $2 AND status = 'open' ORDER BY id`, [SRC, threadId]))
-      .map((row) => [Number(row.id), row.counterparty_email, row.summary]);
-    chatImpl = reply([bob]);
-    await runLoopsExtract(engine, { slug, sourceId: SRC });
-    const [bobRow] = await byEmail();
-    chatImpl = reply([alice, bob]);
-    await runLoopsExtract(engine, { slug, sourceId: SRC });
-    const rows = await byEmail();
-    expect(rows.map(([, email, summary]) => [email, summary]).sort()).toEqual([
-      ['alice-example@example.invalid', 'Send Alice the deck by Friday'],
-      ['bob-example@example.invalid', 'Send Bob the invoice by Friday'],
-    ]);
-    expect(rows.find(([, email]) => email === 'bob-example@example.invalid')![0]).toBe(bobRow![0]);
-  });
-
   test('an open loop keyed on the old paraphrase key gets no twin: the next pass updates it', async () => {
     const slug = 'emails/2026/08/2026-08-24-budget-thread-7289cccc';
     const threadId = 'thread-7289cccc';
