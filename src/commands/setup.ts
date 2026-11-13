@@ -897,7 +897,7 @@ function removeBrainFirstFor(harness: BrainFirstHarness, where: { scope?: Wiring
  * It sits beside the brain-first block, so declining that block (--no-instructions) removes the index too.
  */
 function skillsFor(harness: BrainFirstHarness, flags: SetupFlags, launcher: string, where: { scope?: WiringScope; projectDir?: string }, brainFirst: BrainFirstOutcome | null): SkillsBlockOutcome | null {
-  if (harness === 'cursor' && flags.skillResolver === 'on') return null;
+  if (harness === 'cursor' && flags.skillResolver === 'on' && brainFirst?.decision.value !== 'declined') return null;
   const target = brainFirstTarget(harness, { ...where, workspace: flags.workspace });
   if ('error' in target) return null;
   return installerSkillsBlock({ target, launcher, writer: `gbrain setup ${harness}`, brainFirstDeclined: brainFirst?.decision.value === 'declined', skillLoading: flags.skillLoading, audience: isThinClient(loadConfig()) ? 'downstream' : 'owner', dryRun: flags.dryRun });

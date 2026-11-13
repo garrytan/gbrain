@@ -212,6 +212,10 @@ describe('gbrain setup cursor --skill-loading resolve (pinned skills only)', () 
     expect(again.exitCode).toBe(0);
     expect(readFileSync(rulePath(b), 'utf8')).toBe(rule);
     expect(readFileSync(join(b.project, BRAIN_FIRST), 'utf8')).toBe(index);
+    const declined = await setup(b, ['--skill-loading', 'resolve', '--no-instructions', '--gbrain-bin', launcher]);
+    expect(declined.exitCode).toBe(0);
+    expect(declined.doc.skills).toMatchObject({ action: 'remove' });
+    expect(existsSync(join(b.project, BRAIN_FIRST)) ? readFileSync(join(b.project, BRAIN_FIRST), 'utf8') : '').not.toContain('gbrain:skills');
   });
 
   test('a plain gbrain setup cursor writes no pins, and a project with no skill directory refuses resolve', async () => {
