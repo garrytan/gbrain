@@ -25,6 +25,7 @@ import { repairRunner } from '../src/core/repair/registry.ts';
 import { publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND } from '../src/core/generations/fence.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../src/core/generations/adapters/fact-rows.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+import { HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE } from '../src/core/page-state/versions.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
@@ -40,6 +41,8 @@ const claims = (n: number) => Array.from({ length: n }, (_, i) => `The pantry in
 const versionCount = async (ctx: OperationContext, slug: string) => (await call(ctx, 'get_versions', { slug, limit: 100 }) as unknown as unknown[]).length;
 const storedVersions = async (engine: BrainEngine, slug: string) => Number((await engine.executeRaw<{ n: number }>(
   `SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id = v.page_id WHERE p.source_id = 'default' AND p.slug = $1`, [slug]))[0]!.n);
+const versionIds = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ id: number }>(
+  `SELECT v.id FROM page_versions v JOIN pages p ON p.id = v.page_id WHERE p.source_id = 'default' AND p.slug = $1 ORDER BY v.id`, [slug])).map(r => Number(r.id));
 const gapSet = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ gap: boolean }>(
   `SELECT version_history_gap_at IS NOT NULL AS gap FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]))[0]!.gap;
 const activeRows = (engine: BrainEngine, slug: string) => engine.executeRaw<{ fact: string }>(
@@ -181,6 +184,36 @@ for (const backend of testBackends()) describe(`[${backend}] saves to a holding 
     for (const claim of claims(4).slice(1)) { await remember(ctx, claim); left.push(await storedVersions(engine, HOLD)); }
     expect(left).toEqual([151, 52, 5]);
     expect(await activeRows(engine, HOLD)).toEqual(claims(4));
+  }), 300_000);
+
+  test('a holding page that a forget and a hand-edit sync left above five saved versions comes back to five on the next save that adds a fact', () => strict(async ({ engine, ctx, root }) => {
+    const saved: Array<Record<string, any>> = [];
+    for (const claim of claims(8)) saved.push(await remember(ctx, claim));
+    await settleManagedGitEffects(engine);
+    const five = await versionIds(engine, HOLD);
+    expect(five).toHaveLength(5);
+    await call(ctx, 'forget', { id: String(saved[2]!.id) });
+    await settleManagedGitEffects(engine);
+    expect((await versionIds(engine, HOLD)).slice(0, 5)).toEqual(five);
+    const file = join(root, `${HOLD}.md`);
+    writeFileSync(file, `${readFileSync(file, 'utf8')}\nNotes kept by hand.\n`);
+    git(root, 'add', '-A'); git(root, 'commit', '-q', '-m', 'hand edit of the holding page');
+    await performSync(engine, { sourceId: 'default', repoPath: root, noPull: true, noEmbed: true } as never);
+    await settleManagedGitEffects(engine);
+    const above = await versionIds(engine, HOLD);
+    expect(above.length).toBeGreaterThan(5);
+    expect(above.length - 5).toBeLessThanOrEqual(HOLDING_PAGE_VERSIONS_PRUNED_PER_WRITE);
+    expect(above.slice(0, 5)).toEqual(five);
+    const active = [...claims(8).filter((_, i) => i !== 2), 'The pantry holds three jars of honey.'];
+    expect(await remember(ctx, active.at(-1)!)).toMatchObject({ status: 'inserted', page: HOLD });
+    await settleManagedGitEffects(engine);
+    expect(await storedVersions(engine, HOLD)).toBe(5);
+    expect(await fenceClaims(engine, HOLD)).toEqual(active);
+    expect(await activeRows(engine, HOLD)).toEqual(active);
+    const text = readFileSync(file, 'utf8');
+    for (const claim of active) expect(text).toContain(claim);
+    expect(text).toContain('Notes kept by hand.');
+    expect(await gapSet(engine, HOLD)).toBe(true);
   }), 300_000);
 });
 
