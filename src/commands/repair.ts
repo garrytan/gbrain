@@ -87,7 +87,7 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
        gbrain repair file-drift --source <id> (--slug <slug>... | --request <id>... | --all-drifted [--class <name>] [--since <ISO-8601|7d>]
                                 | --held [--side both|unknown|deleted [--state tombstone_edited|purged_differs|file_gone
                                          [--provenance never_committed|deleted_by_commit|deletion_uncommitted]]] [--cursor <next_cursor>])
-                                [--only <glob>]... [--skip <glob>]... --prefer file|database [--apply --expect <preview-hash>] [--json]
+                                [--only <glob>]... [--skip <glob>]... [--prefer file|database [--apply --expect <preview-hash>]] [--json]
        gbrain repair stuck-recovery [--source <id>] [--request-id <uuid>]
                                     [--keep prior|disk|withdrawn --apply --expect <preview-hash> --yes] [--json]
        gbrain repair ghost-pages --source <id> [--apply --expect <preview-hash> --yes] [--json]
@@ -158,7 +158,8 @@ Options:
   --prefer file|database, --request <id>, --all-drifted, --class <name>
                  file-drift: the side that wins; select conflict receipts by request id (repeatable), or every page
                  still drifted (refused across mixed drift classes unless --class keeps one). --keep is refused here:
-                 --prefer database keeps the database copy, --prefer file keeps the file.
+                 --prefer database keeps the database copy, --prefer file keeps the file. A selection without --prefer
+                 compares each page with its file, names the newer side and the next step, and writes nothing.
   --held [--side both|unknown|deleted] [--state tombstone_edited|purged_differs|file_gone]
                  file-drift: select the source's held file_drift pages of one Decision. --side deleted needs --state,
                  because --prefer file and --prefer database do opposite things in each state (tombstone_edited: restore

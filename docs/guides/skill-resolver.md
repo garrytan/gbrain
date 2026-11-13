@@ -10,7 +10,8 @@ model.
 - **Off by default.** Nothing changes until you build a catalog and wire a
   harness to call `gbrain skills resolve`, or turn on the hook lane with
   `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw and
-  Pi: the plugin and extension below). Setup writes nothing for it otherwise.
+  Pi: the plugin and extension below; Cursor: pinned skills only, below).
+  Setup writes nothing for it otherwise.
 - **Local and deterministic.** Word matching (BM25F) over the catalog's names,
   descriptions, triggers, routing rows and the first 4 KB of each body. No
   network, no model, no clock, no randomness on the turn path.
@@ -41,7 +42,7 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
 | Claude Code plugins | `gbrain skills index build --catalog claude-code-plugins --claude-plugins ~/.claude --harness claude-code` | The enabled user-scope plugins (`enabledPlugins` in `settings.json`, install paths from `plugins/installed_plugins.json`), each skill as `<plugin>:<skill>`. |
 | Codex | `gbrain skills index build --catalog codex-user --dir ~/.codex/skills --harness codex` | Suggestion lines carry the SKILL.md path; Codex opens it. |
 | Hermes, qm | `--dir <skills dir> --harness hermes` (or `qm`) | The id is the name the loader takes. |
-| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. For Pi, `gbrain setup pi --skill-loading resolve` builds `pi-user` for you (see below). |
+| Pi, Cursor | `--dir <skills dir> --harness pi` (or `cursor`) | Suggestion lines carry the SKILL.md path; the agent reads the file. For Pi, `gbrain setup pi --skill-loading resolve` builds `pi-user` for you (see below); for Cursor, `gbrain setup cursor --skill-loading resolve` builds the project's `cursor-project-<16 hex>` catalog for pinned skills. |
 | OpenClaw | `openclaw skills list --json \| gbrain skills index build --catalog openclaw-main --from-json - --dir <skills dir> --harness openclaw` | The list builds as is: the name is the id, and a skill OpenClaw hides from the model is skipped as ineligible. Each listed skill takes its body, path and triggers from the `--dir` skill of the same name; folder-only skills stay out. |
 | Other adapters | `gbrain skills index build --catalog <name> --from-json - --harness <h>` | The adapter pipes its skill list (schema below) and owns rebuilds. |
 | gbrain's own skills | `gbrain skills index build --catalog gbrain --bundled` | Rebuilt when the gbrain version changes. |
@@ -323,6 +324,37 @@ so those sessions get nothing, and doctor says so. `gbrain skills pin add <id>
 --catalog pi-user` updates the pins from Pi's next run. `gbrain setup pi
 --skill-loading off` removes the extension and the state; pins stay in
 config.json.
+
+## Cursor pinned skills
+
+Cursor gets pinned skills only. No Cursor hook can add text to the model's
+request, so there are no per-turn suggestions, and no check on this machine
+can see Cursor's request, so this route is unverified. Doctor reports Cursor
+as partial: pinned only, no per-turn hook, unverified.
+
+Run `gbrain setup cursor --skill-loading resolve` in the project:
+
+1. Setup builds the project's catalog, `cursor-project-<16 hex>`, from the skill
+   directories Cursor loads there: the project's `.agents/skills`,
+   `.cursor/skills`, `.claude/skills` and `.codex/skills`, then the same four
+   under your home directory. It records the project in
+   `~/.gbrain/cursor-skill-pins.json`.
+2. Pins come from `gbrain skills pin add <id> --catalog <that catalog>` (setup
+   prints the name). A pin the catalog does not hold is left out. With no pins
+   there is no rule file.
+3. The pins go in their own always-applied rule,
+   `.cursor/rules/gbrain-pinned-skills.mdc`, with each skill's SKILL.md path.
+   Your own rules and gbrain's brain-first rule are never touched, and a file
+   at that path that gbrain did not write is left alone (setup exits 1).
+4. Inside a git repository the rule's path goes in the repository's
+   `info/exclude` (never `.gitignore`), so it is never committed.
+
+`gbrain skills pin add|remove` rewrites the rule from any directory, and
+Cursor applies it from its next request. `gbrain setup cursor --skill-loading
+off` in the project removes the rule, its exclude line and the record; pins
+stay in config.json. The pins sit beside the skills index that
+`--skill-loading spring` writes into the brain-first rule: resolve leaves that
+index alone, and spring leaves the pins alone.
 
 ## Pinned skills
 

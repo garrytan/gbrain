@@ -419,6 +419,7 @@ describe('#7619 split rules', () => {
       'src/core/persistence/topology-filesystem.ts': 'git child argv',
       'src/core/persistence/worktree-refresh.ts': 'git child argv',
       'src/core/reason-trailers.ts': 'git child argv (the reason scan and its notice fix)',
+      'src/core/repair/file-drift-compare.ts': 'git child argv',
       'src/core/skillpack/bundle.ts': 'git child argv',
       'src/core/skillpack/tarball.ts': 'tar child argv',
       'src/core/source-health.ts': 'git child argv',

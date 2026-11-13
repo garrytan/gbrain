@@ -148,7 +148,7 @@ export interface SyncResult {
    */
   held?: import('../core/persistence/sync-holds.ts').GitHoldItem[];
   held_count?: number; held_needs_human?: number;
-  holds_outstanding?: number;
+  holds_outstanding?: number; holds_released?: number;
   holds_escalated?: boolean;
   holds_truncated?: boolean;
   /** A sliced run (`writer_yield`) has not screened every entry yet. */
