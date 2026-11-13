@@ -42,6 +42,10 @@ export const ERROR_CATALOGUE = {
   on_behalf_of_unknown_member: { code: 'on_behalf_of_unknown_member', docs: 'docs/guides/write-refusals.md#on_behalf_of_unknown_member' },
   on_behalf_of_not_permitted: { code: 'on_behalf_of_not_permitted', docs: 'docs/guides/write-refusals.md#on_behalf_of_not_permitted' },
   on_behalf_of_in_arguments: { code: 'on_behalf_of_in_arguments', docs: 'docs/guides/write-refusals.md#on_behalf_of_in_arguments' },
+  // GST-363: a brain that serves several people knows who is asking (remote reads, credential creation).
+  requester_scope_required: { code: 'requester_scope_required', docs: 'docs/guides/write-refusals.md#requester_scope_required' },
+  credential_scope_required: { code: 'credential_scope_required', docs: 'docs/guides/write-refusals.md#credential_scope_required' },
+  requester_scope_unknown: { code: 'requester_scope_unknown', docs: 'docs/guides/write-refusals.md#requester_scope_unknown' },
   // GST-359 C1 attested actor: the person a trusted system names (x-qm-actor) on a credential holding the attest right.
   actor_not_attested: { code: 'actor_not_attested', docs: 'docs/guides/write-refusals.md#actor_not_attested' },
   actor_unlinked: { code: 'actor_unlinked', docs: 'docs/guides/write-refusals.md#actor_unlinked' },

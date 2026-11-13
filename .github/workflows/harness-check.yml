@@ -65,9 +65,19 @@ jobs:
             exit 0
           fi
           echo "run=true" >> "$GITHUB_OUTPUT"
-      - name: Check out this pull request's gbrain
+      - id: checkout
+        name: Check out this pull request's gbrain
         if: steps.gate.outputs.run == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        timeout-minutes: 3
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 1

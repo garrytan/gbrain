@@ -28,7 +28,7 @@ reason.
 
 A remote `not_found` or a short result may be a page whose `readable_by` or folder rule excludes
 this credential or the audience it acts for: check `whoami` (`access.applied`) before telling the user there are no notes.
-On a brain that serves several people (`gbrain access serves`), a connection bound to a member (`whoami` names it) already reads as the person asking; an unbound one still needs the scoping above.
+On a brain that serves several people (`gbrain access serves`), a connection bound to a member (`whoami` names it) already reads as the person asking; an unbound one is refused `requester_scope_required` (after a 14-day grace noticed in `_meta.access.requester_scope`): relay its fix to the user.
 
 ## When to switch brain
 

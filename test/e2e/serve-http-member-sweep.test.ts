@@ -55,8 +55,8 @@ for (const [index, backend] of backends.entries()) {
       for (const id of ['alice-example', 'bob-example']) cli('access', 'member', 'add', id);
       bearer.alice = token(cli('auth', 'create', 'c2-alice-key', '--member', 'alice-example', '--scopes', 'read,write'));
       bearer.bob = token(cli('auth', 'create', 'c2-bob-key', '--member', 'bob-example', '--scopes', 'read,write'));
-      bearer.plain = token(cli('auth', 'create', 'c2-plain-key', '--scopes', 'read,write'));
-      const registered = cli('auth', 'register-client', 'c2-qm', '--grant-types', 'client_credentials', '--scopes', 'read write');
+      bearer.plain = token(cli('auth', 'create', 'c2-plain-key', '--scopes', 'read,write', '--reads-unscoped', '--yes'));
+      const registered = cli('auth', 'register-client', 'c2-qm', '--grant-types', 'client_credentials', '--scopes', 'read write', '--reads-unscoped', '--yes');
       const clientId = registered.match(/Client ID:\s+(\S+)/)![1]!;
       const clientSecret = registered.match(/Client Secret:\s+(\S+)/)![1]!;
       expect(cli('auth', 'rescope', '--client', clientId, '--attest-actor', 'qm', '--attest-ops', ATTESTABLE.map(op => op.name).join(','))).toContain('attests actor: qm');

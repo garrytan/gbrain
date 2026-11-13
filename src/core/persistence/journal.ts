@@ -748,7 +748,7 @@ const PASSES_QUEUED_SYNC = (earlier: string, r: string, priority: string, laneRo
  * run in the claiming process: there a foreground write also passes running lane groups that do not name its
  * page and publishes beside them on the process's shared worktree lock (group-publish.ts).
  */
-/** Same heartbeat as the v309 claim guard. A claim locks that heartbeat row until its UPDATE. */
+/** Same heartbeat as the relink claim guard. A claim locks that heartbeat row until its UPDATE. */
 const serveRelinkHeartbeat = (host: string) => {
   const { pid, nonce } = consumerIdentity();
   return `c.host_id=${host} AND c.pid=${pid} AND c.nonce='${nonce}'

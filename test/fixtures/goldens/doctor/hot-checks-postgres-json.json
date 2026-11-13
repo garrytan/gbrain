@@ -1127,6 +1127,24 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+            "name": "unscoped_shared_reads",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: config mcp.stdio_member is unset, so no stdio session on this host reads as a member.",
+            "name": "shared_stdio_binding",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no page names readers and no member exists.",
             "name": "access_may_act_for_wildcard",
             "readiness_state": "not_applicable",
@@ -6260,6 +6278,24 @@
             "elapsed_ms": "<volatile>",
             "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
             "name": "unlabeled_people_folders",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+            "name": "unscoped_shared_reads",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: config mcp.stdio_member is unset, so no stdio session on this host reads as a member.",
+            "name": "shared_stdio_binding",
             "readiness_state": "not_applicable",
             "severity": "info",
             "status": "ok"

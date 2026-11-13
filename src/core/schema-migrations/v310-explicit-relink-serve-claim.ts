@@ -2,8 +2,8 @@ import type { Migration } from './types.ts';
 
 // The legacy refresh/import predicate cannot release this deferred operation.
 // A protocol-aware Serve on the admitting host is the only initial claimant.
-export const v309: Migration = {
-  version: 309,
+export const v310: Migration = {
+  version: 310,
   name: 'explicit_relink_serve_claim',
   idempotent: true,
   sql: `
