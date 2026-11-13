@@ -264,7 +264,7 @@ src/core/facts/relink-publish.ts	prepareRelinkMutation	call:serializePageToMarkd
 src/core/facts/relink-publish.ts	prepareRelinkMutation	field	SEGW	
 src/core/facts/retire.ts	retireFactsFromPage	call:serializePageToMarkdown	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
 src/core/facts/retire.ts	retireFactsFromPage	field	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
-src/core/facts/subject-infer-write.ts	linkAllowed	field	STREAM	
+src/core/facts/subject-infer-write.ts	targetFenceClean	field	INLINE	the body materializedSnapshot read back within PAGE_MAX_BYTES on the managed path; a segmented page over the ceiling or on the unmanaged path is refused before any read
 src/core/facts/unfenced-facts.ts	auditUnadoptableFacts	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	fenceDatabaseOnlyPage	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	planFence	field	NONE	reads compiled_truth from the object withHeldFactsFence returns for the body string its caller passed; no stored page body is read here
