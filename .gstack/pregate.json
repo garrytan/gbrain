@@ -9,6 +9,9 @@
     "docs/contracts/qm-memory-provider/v1.json": [
       "test/qm-memory-contract.test.ts"
     ],
+    "docs/contracts/qm-memory-provider/v3.json": [
+      "test/qm-memory-contract.test.ts"
+    ],
     "src/cli.ts": [
       "test/cli-goldens.test.ts"
     ],
