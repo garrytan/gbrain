@@ -794,7 +794,7 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
-          "message": "Extraction lag not applicable (5 pages — too few to assess)",
+          "message": "Extraction lag not applicable (5 pages — too few to assess); 5 page(s) pending link extraction (gbrain extract --stale finishes them)",
           "name": "links_extraction_lag",
           "status": "ok"
         },
