@@ -12,7 +12,10 @@
  *   - a database copy that is provably newer still wins: the file holds the bytes sync imported, or gbrain's write of a
  *     revision the page has since moved past (a later, shorter database edit included, --all-drifted --only), or a blob
  *     sync adopted into the page's import record (with the version history pruned), and the repair is listed and applied
- *     as before.
+ *     as before;
+ *   - an unbound collision (a database-only page from an unbound write, and another writer's file at its slug path) whose
+ *     database side a reconcile refuses to take is resolved by the step that refusal names: --slug --prefer database,
+ *     which names the commit, needs the user's consent and records the file as the page's origin.
  * Real PGLite (and Postgres when DATABASE_URL is set), a managed worktree with real Git commits; no seams.
  */
 import { expect, test } from 'bun:test';
@@ -45,6 +48,8 @@ const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root
   '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const FIRST = '---\ntype: concept\ntitle: A\n---\n\nThe first body.\n';
 const EDIT = '---\ntype: concept\ntitle: A\n---\n\nAn edit by another writer.\n';
+const UNBOUND_DB = '---\ntype: note\ntitle: B\n---\n\nWritten while the source had no canonical owner.\n';
+const UNBOUND_FILE = '---\ntype: note\ntitle: B\n---\n\nWritten into the checkout by another writer.\n';
 const WRITER_LINE = 'A line only gbrain\'s own writer committed.';
 const WRITER = `---\ntype: concept\ntitle: A\n---\n\nThe first body.\n\n${WRITER_LINE}\n`;
 const setup = ({ root }: { root: string }) => {
@@ -197,7 +202,7 @@ for (const backend of testBackends()) {
     const preview = await runner(engine, { held: true, side: 'both', prefer: 'database' });
     expect(preview.affected).toBe(1);
     expect(preview.residuals.kept_newer_file).toBeUndefined();
-    expect(preview.listing!.find(entry => entry.item === 'default:notes/a')).toMatchObject({ class: 'prefer_database', detail: 'exactly the preferred side' });
+    expect(preview.listing!.find(entry => entry.item === 'default:notes/a')).toMatchObject({ class: 'prefer_database', detail: 'exactly the preferred side; drops 1 line(s) the file holds' });
     expect((await runner(engine, { held: true, side: 'both', prefer: 'database', expect: preview.preview_hash })).outcomes).toEqual({ repaired: 1 });
     await settle();
     expect(readFileSync(join(root, 'notes/a.md'), 'utf8')).toContain('A database-only edit.');
@@ -353,4 +358,42 @@ for (const backend of testBackends()) {
     expect((await engine.readPageSnapshot('notes/b', { sourceId: 'default' }))?.page.compiled_truth).toContain('Only ever in the working tree.');
     expect(fileHasEdit(root)).toBe(true);
   }), 240_000);
+
+  test(`${backend}: an unbound collision's database side wins only through --slug --prefer database, named and with the user's consent`, () => managedBrain(async ({ engine, ctx, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    // The database row an unbound write leaves: database-only, with the #5254 marker and no origin.
+    await submitPageMutation(ctx, { operation: 'put_page', params: { slug: 'notes/b', content: UNBOUND_DB, request_id: randomUUID() } });
+    await settleManagedGitEffects(engine);
+    await engine.executeRaw("UPDATE pages SET database_only_reason='unbound_source', source_path=NULL, source_uri=NULL WHERE source_id='default' AND slug='notes/b'");
+    // After binding, another writer commits a different file at its slug path, which no sync imported.
+    writeFileSync(join(root, 'notes/b.md'), UNBOUND_FILE);
+    git(root, 'add', '-A'); git(root, 'commit', '-qm', 'other writer file');
+    const commit = git(root, 'rev-parse', 'HEAD');
+    const fix = await cli(engine, async () => {
+      const fresh = await runReconcilePreview(engine, { source_id: 'default', slug: 'notes/b' });
+      const refused = await refusal(() => runReconcilePreview(engine, { source_id: 'default', slug: 'notes/b', from: fresh.preview,
+        decisions: (fresh.conflict_paths as string[]).map(path => ({ path, action: 'take_database' })) }));
+      expect(refused).toMatchObject({ code: 'source_changed', detail: 'unimported_file_edit' });
+      return refused.fix as { argv: string[] };
+    });
+    expect(fix.argv).toEqual(['gbrain', 'repair', 'file-drift', '--source', 'default', '--slug', 'notes/b', '--prefer', 'database']);
+    const preview = JSON.parse((await repairCli(engine, fix.argv.slice(3))).out).results[0];
+    expect(preview.affected).toBe(1);
+    const listed = preview.listing.find((entry: { item: string }) => entry.item === 'default:notes/b');
+    expect(listed.class).toBe('prefer_database');
+    expect(listed.detail).toContain(`discards commit ${commit.slice(0, 12)} by Other Writer`);
+    const apply = [...fix.argv.slice(3), '--apply', '--expect', preview.preview_hash];
+    const unconsented = await repairCli(engine, apply);
+    expect(unconsented.exitCode).toBe(3);
+    expect(unconsented.out).toContain(commit.slice(0, 12));
+    await settle();
+    expect(readFileSync(join(root, 'notes/b.md'), 'utf8')).toBe(UNBOUND_FILE);
+    expect(JSON.parse((await repairCli(engine, [...apply, '--yes'])).out).results[0].outcomes).toEqual({ repaired: 1 });
+    await settle();
+    expect(readFileSync(join(root, 'notes/b.md'), 'utf8')).toContain('Written while the source had no canonical owner.');
+    const [page] = await engine.executeRaw<{ source_path: string | null; database_only_reason: string | null }>(
+      "SELECT source_path, database_only_reason FROM pages WHERE source_id='default' AND slug='notes/b'");
+    expect(page).toEqual({ source_path: 'notes/b.md', database_only_reason: null });
+  }, backendOpts(backend)), 240_000);
 }

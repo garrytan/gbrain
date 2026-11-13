@@ -570,6 +570,8 @@ src/core/repair/extractor-facts.ts	restorePageFacts	sql	STREAM
 src/core/repair/fact-claim-dates.ts	movePage	call:serializePageToMarkdown	SEGW	refuses a segmented page: the plan lists it segmented_page and movePage keeps one as changed_since_preview
 src/core/repair/fences.ts	afterBytes	field	STREAM	
 src/core/repair/fences.ts	fencesRepair	field	STREAM	
+src/core/repair/file-drift-compare.ts	driftDifference	field	NONE	compares the compiled_truth and timeline of the reconcile reading (readReconcileState materializes a segmented page), never a stored body string
+src/core/repair/file-drift.ts	prepareDriftPage	call:serializePageToMarkdown	NONE	renders the reconcile reading of both sides and of the result (readReconcileState materializes a segmented page) to count lost lines; no stored page body is read here
 src/core/repair/frontmatter.ts	analyzeFile	field	LEAD	
 src/core/repair/frontmatter.ts	pagesByOrigin	sql	LEAD	
 src/core/repair/lost-fence-rows.ts	lostIn	field	NONE	walks the history scanLostFenceRows built (inline page_versions bodies and a materialized snapshot); no stored page body is read here
