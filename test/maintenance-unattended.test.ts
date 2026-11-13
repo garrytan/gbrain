@@ -170,6 +170,32 @@ for (const kind of testBackends()) {
       expect(await remaining()).toEqual(['notes/recent']);
     });
 
+    test('maintain --purge --expect purges the previewed page, not a same-slug page in another source that became eligible after the preview', async () => {
+      const purgeModule = await import('../src/core/persistence/purge-deleted.ts');
+      await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-b', 'source-b')");
+      await engine.putPage('notes/twin', { type: 'concept', title: 'Twin', compiled_truth: 'Deleted long ago.' });
+      await engine.putPage('notes/twin', { type: 'concept', title: 'Twin', compiled_truth: 'Deleted an hour ago.' }, { sourceId: 'source-b' });
+      await engine.softDeletePage('notes/twin');
+      await engine.softDeletePage('notes/twin', { sourceId: 'source-b' });
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE slug = 'notes/twin' AND source_id = 'default'");
+      const preview = await maintainJson(['--purge', '--json']);
+      expect(preview).toMatchObject({ mode: 'preview', count: 1, pages: [{ slug: 'notes/twin' }] });
+      let raced = 0;
+      const purge = purgeModule.purgeDeletedPagesCoordinated;
+      const spy = spyOn(purgeModule, 'purgeDeletedPagesCoordinated').mockImplementation(async (e, hours, opts) => {
+        await e.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE slug = 'notes/twin' AND source_id = 'source-b'");
+        raced += 1;
+        return purge(e, hours, opts);
+      });
+      _resetCliExitVerdictForTests();
+      try {
+        await maintainJson(['--purge', '--yes', '--expect', String(preview.hash), '--json']);
+      } finally { spy.mockRestore(); }
+      expect(raced).toBe(1);
+      expect(await engine.executeRaw("SELECT source_id, slug FROM pages WHERE slug = 'notes/twin'")).toEqual([{ source_id: 'source-b', slug: 'notes/twin' }]);
+      expect(preview.pages).toEqual([{ source_id: 'default', slug: 'notes/twin' }]);
+    });
+
     test('stamp honesty: a keyed brain keeps last_full_cycle_at and last_source_cycle_at', async () => {
       await keyed();
       await engine.setConfig('maintenance.embed_daily_usd', '0');

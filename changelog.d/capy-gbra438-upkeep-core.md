@@ -4,7 +4,7 @@
 
 - `gbrain maintain --status` shows when upkeep last ran, what each step did, what failed, and when the next run is due.
 - A new doctor check, `unattended_maintenance`, reports the same thing. It warns when upkeep hasn't run for 48 hours or a step keeps failing, and its fix is `gbrain maintain --unattended`. A brain where `maintenance.auto` is `false`, or where autopilot runs upkeep, reads as ok.
-- `gbrain maintain --purge` previews which soft-deleted pages are past their 72-hour window. `--yes --expect <hash>` purges exactly the previewed set, and refuses with `preview_changed` when the set moved since the preview. Upkeep never purges pages on its own.
+- `gbrain maintain --purge` previews which soft-deleted pages are past their 72-hour window. `--yes --expect <hash>` purges exactly the previewed set, matching each page by source and slug, and refuses with `preview_changed` when the set moved since the preview. Upkeep never purges pages on its own.
 
 ### Smaller changes
 
