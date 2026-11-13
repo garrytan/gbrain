@@ -505,7 +505,9 @@ export interface ScaffoldedFile {
  * byte-identical to the bundle. Shared dependencies, paired sources and
  * pre-existing files that differ are not recorded (they are not gbrain's
  * install). Without a `source` (the harness bridge's rendered files), the
- * written bytes on disk are the base.
+ * written bytes on disk are the base. The files are already written, so a
+ * state file that cannot be read or locked is a warning on stderr, not a
+ * failure: without a base, a later --update-untouched skips the skill.
  */
 export async function recordScaffoldBases(skillsRoot: string, files: readonly ScaffoldedFile[], opts: { statePath?: string } = {}): Promise<void> {
   const root = skillsRootKey(skillsRoot);
@@ -520,5 +522,9 @@ export async function recordScaffoldBases(skillsRoot: string, files: readonly Sc
     (bases[rel.split('/')[0]!] ??= {})[rel] = current;
   }
   if (Object.keys(bases).length === 0) return;
-  await updateState(state => ({ state: withSkillBases(state, root, bases), result: null }), opts);
+  try {
+    await updateState(state => ({ state: withSkillBases(state, root, bases), result: null }), opts);
+  } catch (err) {
+    console.error(`[skillpack] the skill files were written, but their install bases were not recorded (${(err as Error).message}); a later --update-untouched treats these skills as locally edited and skips them.`);
+  }
 }

@@ -83,6 +83,23 @@ const write = (env: Env, rel: string, body: string) => writeFileSync(join(env.ws
 const outcome = (result: Awaited<ReturnType<typeof update>>, slug: string) => result.skills.find(s => s.slug === slug)!;
 
 describe('base recording and whole-skill update', () => {
+  test('scaffold: a state file that cannot be read warns after the files are written instead of failing', async () => {
+    const env = setup();
+    mkdirSync(dirname(env.statePath), { recursive: true });
+    writeFileSync(env.statePath, JSON.stringify({ schema_version: 'gbrain-skillpack-state-v99' }));
+    const warnings: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => { warnings.push(args.join(' ')); };
+    try {
+      await scaffold(env);
+    } finally {
+      console.error = original;
+    }
+    expect(read(env, 'demo/SKILL.md')).toBe(V1['demo/SKILL.md']);
+    expect(warnings.some(w => w.includes('install bases were not recorded'))).toBe(true);
+    expect(JSON.parse(readFileSync(env.statePath, 'utf-8')).schema_version).toBe('gbrain-skillpack-state-v99');
+  });
+
   test('a state save that fails after the files land keeps the skill updated, leaves the next skill untouched and finishes the journal', async () => {
     const env = setup();
     await scaffold(env);
