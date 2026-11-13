@@ -509,11 +509,16 @@ when the inert setting is still present.
 broad `gbrain search` or `gbrain query` with common words takes about 8
 seconds and comes back with only vector hits; search metadata carries
 `keyword_arm_failed`, and the server log says `canceling statement due to
-statement timeout` (SQLSTATE 57014). The strict keyword statement ranks every
-matching chunk before its `LIMIT`, so its cost grows with how common the terms
-are, and the commonest terms cannot finish inside the keyword statement bound.
-An arm that timed out is not evidence of absence: the pages exist, the arm
-could not rank them in time.
+statement timeout` (SQLSTATE 57014). Keyword-mode paging and the strict page
+count rank every matching page, so their cost grows with how common the terms
+are. Hybrid search's keyword arm ranks at most 50,000 matching chunks (its metadata
+carries `keyword_candidates_incomplete` when that bound applies). A local
+caller's statement usually stops reading matches at that bound. A remote MCP
+caller's arm stops there when the call sets no type, frontmatter or date filter
+and no source scope narrower than every live source; with such a filter it
+can still read every match before ranking. (A remote caller's arm used to read
+every match in all cases, so a term in most chunks timed out.) An arm that timed out is not evidence of absence: the
+pages exist, the arm could not rank them in time.
 
 **Say to your agent:** *"Check whether keyword search is hitting its time
 limit"* — the agent runs `gbrain doctor` and reads the `keyword_plan` check.
@@ -546,12 +551,10 @@ range (exit 2, nothing written). It is read once per connection, so:
 3. Confirm with `gbrain doctor --only keyword_plan --json`: `details.timeout_ms`
    shows the value in effect.
 
-A longer bound buys time, not a cheaper statement: a query whose terms match
-most of the corpus still reads and ranks every match, so prefer narrowing with
-`--source-id` (MCP `source_id`) or `match: "keyword"` paging, and follow
-[#6495](https://github.com/garrytan/gbrain/issues/6495) for the bounded
-candidate set that will answer broad terms from a capped set instead of
-failing open.
+A longer bound buys time, not a cheaper statement: keyword-mode paging and the
+strict count still read every match of a term that matches most of the corpus,
+so prefer narrowing with `--source-id` (MCP `source_id`), `--types` or
+`--since`.
 
 **A timed-out keyword search is skipped for 10 minutes.** After hybrid search's
 keyword statement hits the bound, a serving process (`gbrain serve`, an MCP
