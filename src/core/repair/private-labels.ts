@@ -49,6 +49,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
+import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
+import { ownerMemberId } from '../access/owner.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { maintenancePreflight, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { isPlainLabelValue, type LabelEdit } from '../persistence/label-edit.ts';
@@ -463,6 +465,9 @@ export const privateLabelsRepair: RepairHandler = {
     const dependents = found?.counts ?? null;
     const exposed = dependents ? Object.values(dependents).reduce((sum, n) => sum + n, 0) : 0;
     const fileBacked = (await filesInCheckout(engine, window.map(entry => entry.page_id))).size;
+    const owner = await ownerMemberId(engine);
+    const twins = await openTwins(engine, restore ? window : [], owner ? [owner] : [],
+      (source, slugs) => `gbrain repair visibility --source ${source}${slugs.map(slug => ` --slug ${slug}`).join('')}`);
     const warnings = [
       ...(pastWindow ? [`This preview lists one window of ${window.length} item(s); ${pastWindow} more found past it. Apply this window (or decide not to), then preview again for the next one: ${command}`] : []),
       restore ? 'Restoring re-adds each recorded label, so remote callers that are not the brain owner stop reading these pages again.'
@@ -481,6 +486,7 @@ export const privateLabelsRepair: RepairHandler = {
       ...(retried ? [`${retried} listed page(s) were tried by an earlier apply and did not change (the ledger has their intent line and nothing after it); `
         + 'they are listed after every page not tried yet. Each is tried again and, if its page still declines, left unchanged with its reason; '
         + 'such a decline does not count toward the run\'s systemic-failure stop.'] : []),
+      ...openTwinsWarning(twins),
       ...(planned.unreadable ? [`${planned.unreadable} ledger line(s) could not be read and are not planned.`] : []),
       ...(restore && before.removed_after_restore ? [`${before.removed_after_restore} page(s) had their label removed after a restore landed (the page changed since the revision the restore wrote), `
         + 'so they are not listed; re-add the label by hand if that edit was a mistake.'] : []),
@@ -492,7 +498,7 @@ export const privateLabelsRepair: RepairHandler = {
       listing: window.map(entry => ({ item: `${entry.source_id}:${entry.slug}`, class: entry.class,
         detail: entry.mode === 'restore' ? `re-add ${describeLabels(entry.labels)}` : entry.labels.visibility ? 'remove access: private, visibility: private' : 'remove access: private' })),
       details: { counts: { before, after: projected }, window: { size, listed: window.length, pending_past_window: pastWindow, next_preview: command, file_backed: fileBacked, tried_before: retried },
-        ...(dependents ? { dependents } : {}),
+        ...(dependents ? { dependents } : {}), ...(twins.count ? { open_twins: twins } : {}),
         ledger: ledger?.path ?? null, class: selection.class } };
   },
   async apply(ctx, raw, opts): Promise<RepairItemOutcome> {
@@ -596,6 +602,7 @@ export const privateLabelsRepair: RepairHandler = {
     const rows = details.ledger_rows as { intent: number; committed: number } | undefined;
     return [...(counts ? [`  before: ${line(counts.before)}`, `  after (this window applied): ${line(counts.after)}`] : []),
       ...(dependents ? [`  also exposed by this window: ${line(dependents)}`] : []),
+      ...openTwinsLines(details.open_twins as OpenTwins | undefined),
       ...(details.ledger ? [`  ledger: ${String(details.ledger)}${rows ? ` (this run appended ${rows.intent + rows.committed} line(s): ${rows.intent} intent, ${rows.committed} committed)` : ''}`] : [])];
   },
 };

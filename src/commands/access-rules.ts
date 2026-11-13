@@ -23,6 +23,7 @@ import { usageError } from '../cli/cli-error.ts';
 import { opError } from '../core/ops/contract.ts';
 import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleCoversSql, parsePolicyYaml, serializePolicyYaml, sortRules, type FolderRule, type RuleChange } from '../core/access/folder-rules.ts';
 import { identityFor } from '../core/access/principals.ts';
+import { openTwins, openTwinsLines, OPEN_TWINS_PAGES, type OpenTwins } from '../core/access/open-twins.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
 import {
   appliedRules, applyApproved, getRevision, listRevisions, newOperationId, policyStatus, previewApply, proposeRevision, readAccessStore, resumePolicy,
@@ -112,6 +113,8 @@ export interface RulePreview {
   changes: RuleChange[];
   held: RuleChange[];
   matched_pages: Record<string, number>;
+  /** GST-2603: same-slug pages in other sources the narrowed rules leave readable (listed, never approved). */
+  open_twins: OpenTwins;
   unknown_readers: string[];
   members_losing: string[];
   credentials_losing: Array<{ member: string; kind: string; name: string }>;
@@ -140,8 +143,15 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   }
   const credentials: RulePreview['credentials_losing'] = [];
   for (const m of losing) for (const c of await boundCredentials(engine, m)) credentials.push({ member: m, kind: c.kind, name: c.name });
+  const twins: OpenTwins = { count: 0, twins: [], commands: [] };
+  for (const rule of cls.changes.filter(c => c.narrowing).map(c => cls.target.find(r => r.id === c.rule)).filter(r => r !== undefined)) {
+    const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
+    const found = await openTwins(engine, covered, rule.readable_by,
+      source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')} --source ${source}`);
+    Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
+  }
   return { source_id: sourceId, store, store_persisted: persisted, expect, desired, changes: cls.changes, held: cls.held, matched_pages: matched,
-    unknown_readers: unknown, members_losing: losing, credentials_losing: credentials };
+    unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, open_twins: twins };
 }
 
 function previewLines(p: RulePreview, rerun: string): string[] {
@@ -152,6 +162,7 @@ function previewLines(p: RulePreview, rerun: string): string[] {
     ...(p.unknown_readers.length ? [`  Unknown readers (no such member or group; they match nobody): ${p.unknown_readers.join(', ')}`] : []),
     ...(p.members_losing.length ? [`  Members losing access: ${p.members_losing.join(', ')}`] : []),
     ...(p.credentials_losing.length ? [`  Credentials losing access: ${p.credentials_losing.map(c => `${c.kind} ${c.name} (${c.member})`).join(', ')}`] : []),
+    ...openTwinsLines(p.open_twins),
     'Pages under no rule are unchanged; unbound credentials and stdio read no page under a rule.',
     `Nothing written. To approve, add --yes --expect ${p.expect} (${rerun}).`,
   ];

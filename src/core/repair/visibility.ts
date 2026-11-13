@@ -53,6 +53,8 @@ import { maintenancePreflight, publishMaintenancePages, submitDatabaseMaintenanc
 import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
+import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
+import { ownerMemberId } from '../access/owner.ts';
 import { filesInCheckout, labelFileRefusal, writeLabelFile, writeLabelPage, type LabelFileRefusal } from './label-write.ts';
 import { applyReaders, planReaders, raiseGuardOnly, raiseReadersGuard, readersBatch, readersGitCounts, readersGuardOnly, readersOutcome, readersWrite, retireReaders, READERS_PHASE, type ReadersItem, type ReadersWrite } from './readers.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
@@ -483,6 +485,10 @@ export const visibilityRepair: RepairHandler = {
     progress?.finish();
     if (held.length) Object.assign(residuals, { held_file_drift: held.filter(hold => hold.reason === 'file_database_drift').length, held_label_edit: held.filter(hold => hold.reason === 'label_edit_refused').length });
     const hash = previewHash(hashParts(scope, selection, items));
+    const owner = await ownerMemberId(engine);
+    const twins = await openTwins(engine, items.filter(item => item.target.phase !== 4 && item.change?.to === 'private'), owner ? [owner] : [],
+      (source, slugs) => `gbrain repair visibility --source ${source}${slugs.map(slug => ` --slug ${slug}`).join('')}`);
+    if (twins.count) residuals.open_twins = twins.count;
     if (items.length) await saveApprovedSet<ApprovedVisibility>(engine, { command: 'visibility', hash },
       items.map(item => ({ target: item.target, source_id: item.source_id, slug: item.slug, chars: item.chars, action: item.action, change: item.change!, selection })));
     const next = visibilityPreviewCommand(scope, selection, true);
@@ -491,12 +497,13 @@ export const visibilityRepair: RepairHandler = {
         + `Apply this window (or decide not to), then preview again for the next one: ${next}`] : []),
       ...timedOut.map(cls => `Class ${cls} did not finish within the ${PLAN_STATEMENT_MS} ms statement bound and is not listed; the other classes are. `
         + `Preview the others with --class, or run gbrain doctor --only derived_visibility for the counts.`),
+      ...openTwinsWarning(twins),
       ...(held.length ? [`${held.length} page(s) are held and not in this preview's set: their files would refuse the label write now. details.held names what differs for each and the step that clears it; preview again after it.`] : []),
     ];
     return { warnings, items: items.map((item, index) => ({ ...item, cursor: { phase: 0, id: index } })), preview_hash: hash,
       residuals,
       listing: items.map(item => ({ item: `${item.source_id}:${item.slug}`, class: CLASS_OF_PHASE[item.target.phase]!, detail: item.action })),
-      details: { window: { size, listed: items.length, pending, pending_past_window: pendingPastWindow, not_read: notRead, timed_out: timedOut, next_preview: next }, ...(held.length ? { held } : {}) } };
+      details: { window: { size, listed: items.length, pending, pending_past_window: pendingPastWindow, not_read: notRead, timed_out: timedOut, next_preview: next }, ...(held.length ? { held } : {}), ...(twins.count ? { open_twins: twins } : {}) } };
   },
   /** A --readers apply: how its managed writes reached Git (`details.git`, effect states; readers.ts readersGitCounts). */
   async report(ctx, scope, result, opts) {
@@ -506,6 +513,7 @@ export const visibilityRepair: RepairHandler = {
     const git = details.git as Record<string, number> | undefined;
     const held = (details.held as HeldVisibility[] | undefined) ?? [];
     return [...(git ? [`  git: ${Object.entries(git).map(([key, value]) => `${key}=${value}`).join(', ')} (file(s) by Git effect state; queued files commit together, up to 100 per commit)`] : []),
+      ...openTwinsLines(details.open_twins as OpenTwins | undefined),
       ...held.map(hold => `  held ${hold.item} (${hold.reason}${hold.keys.length ? `: ${hold.keys.join(', ')}` : ''}); next: ${hold.next}`)];
   },
   /**
