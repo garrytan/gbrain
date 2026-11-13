@@ -603,6 +603,9 @@ function resolveEntryInput(e: Record<string, unknown>): unknown {
   return flat;
 }
 
+/** The model's native tool-call elements, which this protocol never asks for and never dispatches. */
+const NATIVE_TOOL_MARKUP = /<(?:antml:)?(?:invoke\s+name=|function_calls>)/;
+
 /**
  * Locate and parse the `<use_tools>...</use_tools>` block in the assistant's
  * raw text response. Returns the parsed tool calls plus whatever prose
@@ -614,6 +617,8 @@ function extractToolCalls(raw: string): {
   toolCalls: ParsedToolCall[];
   beforeText: string;
   afterText: string;
+  /** No block parsed, but the reply holds the model's native tool-call markup (#9085). */
+  nativeMarkup?: boolean;
 } {
   const openTag = '<use_tools>';
   const closeTag = '</use_tools>';
@@ -662,7 +667,7 @@ function extractToolCalls(raw: string): {
     if (firstError !== null) {
       process.stderr.write(`[claude-cli] <use_tools> block failed to parse — tool call discarded: ${firstError}\n`);
     }
-    return { toolCalls: [], beforeText: raw.trim(), afterText: '' };
+    return { toolCalls: [], beforeText: raw.trim(), afterText: '', nativeMarkup: NATIVE_TOOL_MARKUP.test(raw.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '')) };
   }
 
   const beforeText = raw.slice(0, openIdx).trim();
@@ -778,7 +783,13 @@ export class ClaudeCliLanguageModel implements LanguageModelV2 {
         warnings: [],
       };
     }
-    const { toolCalls, beforeText, afterText } = extractToolCalls(answer.text);
+    const { toolCalls, beforeText, afterText, nativeMarkup } = extractToolCalls(answer.text);
+    // #9085: a turn that called tools in the model's native markup is not a clean answer; read as prose it ends the
+    // loop with no writes. Fail the turn (a transient error, so the job's attempt limit bounds the retries).
+    if (nativeMarkup && options.tools?.length) {
+      process.stderr.write('[claude-cli] reply carried tool-call markup with no parsable <use_tools> block — turn failed for retry\n');
+      throw new Error('claude-cli reply carried tool-call markup with no parsable <use_tools> block; the tool calls were not run');
+    }
 
     const content: LanguageModelV2Content[] = [];
     if (beforeText) content.push({ type: 'text', text: beforeText });

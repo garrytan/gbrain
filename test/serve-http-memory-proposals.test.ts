@@ -108,6 +108,7 @@ for (const kind of testBackends()) {
       const log = console.log, err = console.error;
       console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
       console.error = (...a: unknown[]) => { lines.push(a.join(' ')); };
+      setCliExitVerdict(0);
       try { await runMemoryProposals(engine, args); return { out: lines.join('\n'), exit: currentExitCode() }; }
       finally { console.log = log; console.error = err; setCliExitVerdict(0); }
     }
