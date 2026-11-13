@@ -2733,7 +2733,10 @@ page's takes fence when the page holds it, otherwise made inactive in the
 database. The preview lists those as `take_to_retire`. A fact or take that
 changed since the preview reports `changed_since_preview` and is kept; a fact
 that already reads as the agent's with its speaker note (a resumed apply whose
-accepted request committed meanwhile) reports `reattributed`.
+accepted request committed meanwhile) reports `reattributed`. A page stored in
+segments is read back whole, up to 24 MiB, and written back bound to that
+revision; a larger page reports `page_body_segmented` and its facts and takes
+are kept.
 
 <a id="redacted-facts"></a>
 ### Redacted facts

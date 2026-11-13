@@ -28,7 +28,7 @@ describe('upgrade autopilot opt-out propagation', () => {
       });
       expect(result.status, result.stderr + result.stdout).toBe(0);
       const calls = readFileSync(join(home, 'calls.log'), 'utf8');
-      expect(calls).toContain('bun:update gbrain:no-autopilot=1');
+      expect(calls).toContain('bun:update --backend=copyfile gbrain:no-autopilot=1');
       expect(calls).not.toContain('gbrain:apply-migrations');
       expect(calls).toContain('gbrain:post-upgrade --no-autopilot-install:no-autopilot=1');
     } finally {

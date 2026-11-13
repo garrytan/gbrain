@@ -112,6 +112,7 @@ test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-facts-fence-failure-health-8758.test.ts
+test/extract-stale-frontmatter-loop-9295.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
@@ -314,6 +315,7 @@ test/list-pages-empty-type-notice-gbra449.test.ts
 test/lower-tier-label-hold.test.ts
 test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
+test/managed-atom-release-resume-9079-9275.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
@@ -562,6 +564,7 @@ test/remember-segmented-entity-9213.test.ts
 test/remember-share-gst2243.test.ts
 test/remember-strict-held-gst2492.test.ts
 test/rename-atom-lineage-7462.test.ts
+test/repair-agent-session-facts-segmented-9027.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts
