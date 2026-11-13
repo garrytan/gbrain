@@ -49,7 +49,7 @@ import { readFix } from './ops/op-fix.ts';
 // Bundled into the --compile binary as the fallback taxonomy for repos that
 // don't ship their own — see resolveFilingRules().
 import filingRulesDoc from '../../skills/_brain-filing-rules.json';
-import { gitChildEnv } from './git-env.ts';
+import { GIT_PATHSPEC_ENV_VARS, gitChildEnv } from './git-env.ts';
 import { commitAndPush, commitPathsLocked, readIntegrateConflict, SOURCE_ROOT_CONFIG } from './git/commit-push.ts';
 
 export { execFileBounded, type BoundedExecOptions } from './bounded-child-exec.ts';
@@ -236,6 +236,7 @@ ${PROTOCOL_LINE}
 # commits for secrets first), exiting 4. It never runs pull --rebase, stash or reset. Guide: docs/guides/shared-checkout-git.md
 set -euo pipefail
 unset $(git rev-parse --local-env-vars) 2>/dev/null || true
+unset ${GIT_PATHSPEC_ENV_VARS.join(' ')}
 
 _managed_git="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
 if [ -e "$_managed_git/gbrain-managed.json" ] || [ -e .gbrain-managed ]; then
@@ -352,10 +353,15 @@ case "\${1:-}" in
   *)
     _msg="\${1:?usage: brain-commit-push.sh <message> <path> [paths...]}"; shift
     [ "$#" -gt 0 ] || { echo "refusing a repo-wide commit: pass explicit path(s)" >&2; exit 2; }
-    git add -A -- "$@"
+    _specs=()
+    for _p in "$@"; do
+      [ -n "$_p" ] || { echo "refusing a repo-wide commit: empty path" >&2; exit 2; }
+      _specs+=(":(literal)$_p")
+    done
+    git add -A -- "\${_specs[@]}"
     _commit=()
     _orphans="$(_unindexed "$@")"
-    for _p in "$@"; do printf '%s\\n' "$_orphans" | grep -xF -- "$_p" >/dev/null || _commit+=("$_p"); done
+    for _p in "$@"; do printf '%s\\n' "$_orphans" | grep -xF -- "$_p" >/dev/null || _commit+=(":(literal)$_p"); done
     if [ "\${#_commit[@]}" -eq 0 ] || git diff --cached --quiet -- "\${_commit[@]}"; then echo "nothing to commit"; else git commit --only -m "$_msg" -- "\${_commit[@]}"; fi
     _skipped="$(_unstaged "$@" | sort -u)" ;;
 esac
@@ -702,7 +708,7 @@ export function commitWriteThroughFile(
   repoPath: string,
   absPath: string,
   slug: string,
-  action: 'write-through' | 'delete write-through' = 'write-through',
+  action: 'write-through' | 'delete write-through' | 'restore write-through' = 'write-through',
 ): boolean {
   try {
     const rel = relative(repoPath, absPath);

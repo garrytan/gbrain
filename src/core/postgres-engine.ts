@@ -133,6 +133,7 @@ import { DELETE_BATCH_SIZE, TRAVERSE_PATH_ROW_CAP, TRAVERSE_WALK_ROW_CAP } from 
 import { PageMissingError } from './engine-errors.ts';
 import { EMBED_SKIP_FILTER_FRAGMENT } from './embed-skip.ts';
 import { holdSchemaMigrationSessionLock, holdSchemaMigrationTransactionLock } from './postgres-engine/init-schema-lock.ts';
+import { assertSchemaNotAhead } from './schema-client-behind.ts';
 import { isPipelinableSearchRead, SEARCH_JIT_OFF, withSearchJitOff, withSearchSettings, type SearchSettings } from './postgres-engine/search-settings.ts';
 import { loadKeywordStatementTimeout } from './postgres-engine/keyword-statement-timeout.ts';
 import { applyPostgresForwardReferenceBootstrap } from './engine-sql/bootstrap.ts';
@@ -616,6 +617,7 @@ export class PostgresEngine implements BrainEngine {
     });
     try {
       await withSchemaMigrationLock(this, async () => {
+        await assertSchemaNotAhead((q) => pool.unsafe(q)); // #7776: an older binary never replays its schema over a newer one
         // Another initSchema may have recorded an identity between the read above and this lock: check it again here.
         const lockedIdentity = storedIdentity ? null : await readStoredEmbeddingIdentity(this);
         if (lockedIdentity?.model) {

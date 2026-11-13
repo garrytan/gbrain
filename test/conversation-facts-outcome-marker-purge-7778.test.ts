@@ -26,8 +26,14 @@ import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { TERMINAL_AUDIT_SOURCE, outcomeMarkerSql } from '../src/core/facts/audit-sources.ts';
 import { GUARD_OUTCOME_MARKER_SQL } from '../src/core/facts/insert-guard-schema.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { replayPurgesInRestore, type PurgeMirrorLine } from '../src/core/belief/purge-mirror.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let engine: BrainEngine;
+const home = mkdtempSync(join(tmpdir(), 'gbrain-outcome-marker-purge-'));
 
 const KEPT = 'Owner Example sends the quarterly plan on Thursday';
 const PURGED = 'Alice Example reviews plans on Mondays';
@@ -71,6 +77,23 @@ async function markerTombstones() {
   return Number(row?.n ?? 0);
 }
 
+const PROSE = (title: string) => ['---', `title: ${title}`, 'type: meeting', 'date: 2026-09-28', '---',
+  '**Date:** 2026-09-28', '**Attendees:** Alice Example, Owner Example', '', '## Notes', 'Hiring, the support backlog and the launch dates.', ''].join('\n');
+
+async function outcomeRows() {
+  return (await engine.executeRaw<{ id: number | string; fact: string; slug: string }>(`SELECT id, fact, source_markdown_slug AS slug FROM facts
+    WHERE source_id='default' AND expired_at IS NULL AND ${outcomeMarkerSql('facts')} ORDER BY id`)).map(r => ({ ...r, id: Number(r.id) }));
+}
+
+/** #7831: the owner's confirmed purge_fact (dry run, then confirm with its token and revision). */
+async function confirmedPurge(id: number) {
+  return withEnv({ GBRAIN_HOME: home }, async () => {
+    const dry = await call('purge_fact', { id, dry_run: true });
+    expect(dry.confirm_token).toBeDefined();
+    return call('purge_fact', { id, confirm: dry.confirm_token, expected_revision: dry.expected_revision, request_id: randomUUID() });
+  });
+}
+
 /** Seeds the pre-#7778 wildcard marker tombstone, then runs twice: the first run completes both pages, the second makes no provider call. */
 async function convergesDespiteMarkerTombstone(put: (slug: string, title: string) => Promise<void>) {
   const slugs = ['meetings/run-1', 'meetings/run-2'];
@@ -105,7 +128,7 @@ for (const backend of testBackends()) {
       if (backend === 'postgres') template = await persistencePostgresTemplate(requirePostgresTestDatabase());
       else { pglite = new PGLiteEngine(); await pglite.connect({}); await pglite.initSchema(); }
     }, 120_000);
-    afterAll(async () => { resetGateway(); __setEmbedTransportForTests(null); await template?.dispose(); await pglite?.disconnect(); });
+    afterAll(async () => { resetGateway(); __setEmbedTransportForTests(null); await template?.dispose(); await pglite?.disconnect(); rmSync(home, { recursive: true, force: true }); });
     beforeEach(async () => {
       if (pglite) { engine = pglite; await disposePersistenceConsumer(engine); await resetPgliteState(pglite); }
       else { const c = await template!.clone(); engine = c.engine; close = c.close; }
@@ -172,6 +195,69 @@ for (const backend of testBackends()) {
       const [withdrawals] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM fact_withdrawals WHERE source_id='default'`);
       expect(Number(withdrawals?.n)).toBe(0);
       expect(await completed(['meetings/run-1'])).toEqual(['meetings/run-1']);
+    });
+
+    for (const marker of ['EXTRACTION_COMPLETE', 'EXTRACTION_NOT_APPLICABLE']) {
+      test(`#7831: purging a user claim whose text is ${marker} leaves every outcome row in place`, async () => {
+        await call('put_page', { slug: 'meetings/run-1', content: transcript('Run 1') });
+        await call('put_page', { slug: 'meetings/notes', content: PROSE('Planning notes') });
+        await extract(['meetings/run-1', 'meetings/notes'], [KEPT, marker], { n: 0 });
+        const before = await outcomeRows();
+        expect(before.map(r => [r.slug, r.fact])).toEqual([['meetings/run-1', 'EXTRACTION_COMPLETE'], ['meetings/notes', 'EXTRACTION_NOT_APPLICABLE']]);
+        const [claim] = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM facts WHERE source_id='default' AND fact=$1 AND NOT ${outcomeMarkerSql('facts')}`, [marker]);
+        expect(claim).toBeDefined();
+        const done = await confirmedPurge(Number(claim!.id));
+        expect(done.state).toBe('committed');
+        expect(done.subject).toBe('*');
+        expect(done.stores.find((s: any) => s.store === 'facts')).toMatchObject({ status: 'deleted', removed: 1 });
+        expect(done.residuals.find((s: any) => s.store === 'facts_other_scope')).toBeUndefined();
+        expect(['committed', 'complete']).toContain(done.completion);
+        expect(await outcomeRows()).toEqual(before);
+        expect(await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id='default' AND fact=$1 AND NOT ${outcomeMarkerSql('facts')}`, [marker])).toHaveLength(0);
+        const [tombstones] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*)::int AS n FROM fact_purges WHERE source_id='default' AND subject='*' AND fact_hash=gbrain_fact_fingerprint($1)`, [marker]);
+        expect(Number(tombstones?.n)).toBe(1);
+        const status = await withEnv({ GBRAIN_HOME: home }, () => call('purge_fact', { status: true, request_id: done.request_id }));
+        expect(status.fingerprint_probe).toEqual({ facts: 0, takes: 0 });
+        const again = { n: 0 };
+        expect((await extract(undefined, [KEPT], again)).pages_processed).toBe(0);
+        expect(again.n).toBe(0);
+        expect(await completed(['meetings/run-1'])).toEqual(['meetings/run-1']);
+      });
+    }
+
+    test('#7831: a restore replay of a purge of the marker text leaves the restored outcome rows in place', async () => {
+      await call('put_page', { slug: 'meetings/run-1', content: transcript('Run 1') });
+      await call('put_page', { slug: 'meetings/notes', content: PROSE('Planning notes') });
+      await extract(['meetings/run-1', 'meetings/notes'], [KEPT, 'EXTRACTION_COMPLETE'], { n: 0 });
+      const before = await outcomeRows();
+      expect(before).toHaveLength(2);
+      const [claim] = await engine.executeRaw<{ visibility: string; fact_hash: string }>(`SELECT visibility, gbrain_fact_fingerprint(fact) AS fact_hash FROM facts
+        WHERE source_id='default' AND fact='EXTRACTION_COMPLETE' AND NOT ${outcomeMarkerSql('facts')}`);
+      const [source] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation::text AS incarnation FROM sources WHERE id='default'");
+      const request = randomUUID();
+      const lines: PurgeMirrorLine[] = [
+        { kind: 'intent', request, request_id: request, source_id: 'default', source_incarnation: source!.incarnation, scope: 'fact', recorded_at: new Date().toISOString(),
+          purge_epoch: 1, facts: [{ fact_hash: claim!.fact_hash, visibility: claim!.visibility, subject: '*' }], takes: [], lifetimes: [] },
+        { kind: 'committed', request, recorded_at: new Date().toISOString() },
+      ];
+      const result = await engine.transaction(tx => replayPurgesInRestore(tx, { lines, archivedAt: new Date(Date.now() - 60_000).toISOString(), restoreId: randomUUID() }));
+      expect(result.replays.map(r => [r.request, r.outcome])).toEqual([[request, 'complete']]);
+      expect(await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id='default' AND fact='EXTRACTION_COMPLETE' AND NOT ${outcomeMarkerSql('facts')}`)).toHaveLength(0);
+      expect(await outcomeRows()).toEqual(before);
+    });
+
+    test('a wildcard EXTRACTION_NOT_APPLICABLE tombstone does not keep a not-extractable page from recording its outcome', async () => {
+      await tombstone('EXTRACTION_NOT_APPLICABLE');
+      await call('put_page', { slug: 'meetings/notes', content: PROSE('Planning notes') });
+      const first = { n: 0 };
+      const run1 = await extract(['meetings/notes'], [KEPT], first);
+      expect(run1.pages_failed).toBe(0);
+      expect(run1.facts_skipped_purged ?? 0).toBe(0);
+      expect((await outcomeRows()).map(r => [r.slug, r.fact])).toEqual([['meetings/notes', 'EXTRACTION_NOT_APPLICABLE']]);
+      const second = { n: 0 };
+      expect((await extract(undefined, [KEPT], second)).pages_processed).toBe(0);
+      expect(first.n + second.n).toBe(0);
+      expect(await markerTombstones()).toBe(1);
     });
 
     test('the facts insert guard exempts only the exact outcome row: another claim under the audit source is still refused', async () => {
