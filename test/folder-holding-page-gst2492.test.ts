@@ -43,6 +43,7 @@ import { setOwner, setOwnerReadsRestricted } from '../src/core/access/owner.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { resolveRepairScope, type RepairKind } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
@@ -97,6 +98,7 @@ async function members(engine: BrainEngine): Promise<(who: string, op: string, p
     const minted = await mintLegacyToken(engine, { name: `${name}-${randomUUID().slice(0, 6)}`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: ['default'] });
     tokens[name] = minted.token;
     if (member) await engine.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id = $1::uuid', [minted.id, member]);
+    else await readsUnscopedOnPurpose(engine, minted.id);
   }
   __resetPrivateVisibilityCacheForTests();
   const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
