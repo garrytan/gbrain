@@ -1,0 +1,9 @@
+### Label repairs no longer refuse pages over gbrain's own stamps
+
+**`gbrain repair visibility` and `gbrain repair private-labels` now label a page whose file differs from the database only by stamps gbrain keeps in the database, and they hold the pages they can't edit instead of failing the run (GST-2603).** A page retyped by a schema pack, a page with the `validate: false` grandfather stamp, or a page with a `legacy_type` retype record used to refuse every label repair, either as "cannot be made to the page's file line by line" or as `source_changed`. Enough of them in one window stopped the whole run as `item_failures_systemic`.
+- Those stamps no longer count as a difference. The page is labelled and its file still gains only the `visibility` line. A real difference (a date, the tags, the title, the body) still blocks the edit.
+- The preview checks every page in the window. A page whose file differs in a real key, or whose label line can't be edited as one line, is listed as held under `details.held` with the key that blocks it and its next step: `gbrain sources reconcile <id> <slug> --preview` for a file edited outside gbrain, or the line to fix. Held pages stay out of the preview hash and the approved set, so the rest of the window applies.
+- A page that starts refusing after the preview is declined with the new `label_edit_refused` code and nothing written. It never counts toward `item_failures_systemic`, the run exits 0, and the receipt names the pages that applied.
+- A brain without a repository writes the label to the database only, as before.
+
+<!-- behavior-change: label_repairs_hold_refusals_gst2603 -->

@@ -87,9 +87,20 @@ gbrain repair visibility --slug notes/a-example --readers none   # remove readab
 
 Every visibility write is label-only: the page keeps its trust tier, files no
 `lower_page` proposal, and its file changes only on the `visibility` line (a fact
-item: its fence row). A file that cannot take the change without being
-re-rendered (a label with a block value or a duplicate key, no frontmatter
-block) is refused with nothing written; make that edit by hand. `--slug` is the operator's way to make one page private;
+item: its fence row). Stamps gbrain keeps only in the database (a type a schema
+pack renamed, the `validate: false` grandfather stamp, a `legacy_type` retype
+record) do not count as a difference: such a page is labelled and its file
+still gains only the label line (GST-2603). A page whose file cannot take the
+change line by line (a label with a block value or a duplicate key, no
+frontmatter block, or a file that differs from the page in a real key such as a
+date, the tags, the title or the body) is held by the preview: it is listed
+under `details.held` with the key that blocks it and its next step
+(`gbrain sources reconcile <id> <slug> --preview` for a file edited outside
+gbrain, the field to fix for a label line), and it stays out of the hash and
+the approved set. A page that starts refusing after the preview is declined
+with [`label_edit_refused`](write-refusals.md#label_edit_refused) and nothing
+written; it never counts toward `item_failures_systemic`, so the rest of the
+window applies and the receipt names the pages that did. `--slug` is the operator's way to make one page private;
 a `put_page` that adds the label is an agent edit and lowers the page. On a brain
 without managed persistence, a page whose file sits in its source's checkout gets
 the same edit in that file and in the database together, so the next sync reads
@@ -2294,7 +2305,10 @@ database, so a page whose file sits in its source's checkout is held with
 outcome `file_backed`. The next sync or re-import would put the label back from
 the file, so edit the file's frontmatter, commit it, and run
 `gbrain sync --source <id>`. Repo-less pages clear as usual. A clear or restore
-changes only the label lines of the page's file and keeps its trust tier; a
+changes only the label lines of the page's file and keeps its trust tier, and
+gbrain's own database-only stamps never block it; a file that cannot take the
+edit line by line is declined with `label_edit_refused`, as in
+`repair visibility`; a
 restore whose label value isn't a plain word is held as `label_not_plain`, so
 add that label to the file by hand.
 
