@@ -33,6 +33,7 @@ import { readDecideConfig } from '../ai/decide/config.ts';
 import { hasTypesafeKey } from '../ai/decide/index.ts';
 import { isEngineDegraded } from '../degraded-marker.ts';
 import { hasPendingMigrations } from '../migrate-pending.ts';
+import { tryAcquireDbLock } from '../db-lock.ts';
 
 export const MAINTENANCE_LAST_RUN_KEY = 'maintenance.last_run';
 export const MAINTENANCE_AUTO_KEY = 'maintenance.auto';
@@ -273,7 +274,21 @@ function backedOff(failures: UpkeepFailure[], step: string, scope: string, now: 
   return !!entry && entry.count >= UPKEEP_BACKOFF_FAILURES && now.getTime() - Date.parse(entry.last_at) < UPKEEP_BACKOFF_MS;
 }
 
+/** One embed step at a time per brain, so overlapping runs cannot each spend the remaining daily cap. */
 async function runEmbedStep(engine: BrainEngine, now: Date, signal: AbortSignal | undefined): Promise<{ step: UpkeepStep; embed: { spent_today_usd: number; cap_usd: number } }> {
+  const lock = await tryAcquireDbLock(engine, 'gbrain-upkeep-embed', 60);
+  if (!lock) {
+    return { step: { name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' },
+      embed: { spent_today_usd: await readEmbedSpentToday(engine, now), cap_usd: await readEmbedDailyCapUsd(engine) } };
+  }
+  try {
+    return await embedWithinDailyCap(engine, now, signal);
+  } finally {
+    await lock.release();
+  }
+}
+
+async function embedWithinDailyCap(engine: BrainEngine, now: Date, signal: AbortSignal | undefined): Promise<{ step: UpkeepStep; embed: { spent_today_usd: number; cap_usd: number } }> {
   const cap = await readEmbedDailyCapUsd(engine);
   const spentBefore = await readEmbedSpentToday(engine, now);
   const embed = (spent: number) => ({ spent_today_usd: Math.round(spent * 1e6) / 1e6, cap_usd: cap });
@@ -310,7 +325,7 @@ async function runEmbedStep(engine: BrainEngine, now: Date, signal: AbortSignal 
     }
   } catch (error) {
     spent = Math.max(spent, costCap.spent());
-    if (!costCap.hit()) {
+    if (!costCap.hit() && !combined.signal.aborted) {
       status = 'fail';
       code = (error as { code?: string } | null)?.code ?? 'embed_failed';
     }
@@ -394,9 +409,19 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     const finished = items.every((item) => done.includes(item.key));
     let embed: UpkeepRecord['embed'];
     if (finished && plan.embedding && !opts.signal?.aborted) {
-      const result = await runEmbedStep(engine, now, opts.signal);
-      steps.push(result.step);
-      embed = result.embed;
+      if (Date.now() >= deadline) {
+        steps.push({ name: 'embed', scope: 'global', status: 'skipped', reason: 'budget_exhausted' });
+      } else {
+        const budget = Number.isFinite(deadline)
+          ? anyAbortSignal([...(opts.signal ? [opts.signal] : []), AbortSignal.timeout(Math.max(1, deadline - Date.now()))]) : null;
+        try {
+          const result = await runEmbedStep(engine, now, budget?.signal ?? opts.signal);
+          steps.push(result.step);
+          embed = result.embed;
+        } finally {
+          budget?.dispose();
+        }
+      }
     }
     const failed = steps.filter((step) => step.status === 'fail');
     const planned = new Map<string, string[]>([

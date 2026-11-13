@@ -334,6 +334,61 @@ for (const kind of testBackends()) {
       });
     });
 
+    describe('review fixes: the embed step and fact deferral', () => {
+      const quick: typeof runCycle = async () => ({ status: 'ok', phases: [] }) as never;
+
+      test('an edited fact on a keyed brain is replaced, not only expired, when upkeep defers its embedding', async () => {
+        await keyed();
+        await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'Alice works on search.\n\n' + FENCE('Alice leads the search team') });
+        let at = Date.now();
+        await upkeep(engine, { runner: 'test', providers: KEYED, now: () => new Date(at) });
+        expect(await engine.executeRaw('SELECT fact FROM facts WHERE expired_at IS NULL AND embedding IS NOT NULL')).toEqual([{ fact: 'Alice leads the search team' }]);
+        await engine.putPage('people/alice-example', { type: 'person', title: 'Alice', compiled_truth: 'Alice works on search.\n\n' + FENCE('Alice leads the ranking team') });
+        at += UPKEEP_INTERVAL_MS + HOUR;
+        await upkeep(engine, { runner: 'test', providers: KEYED, now: () => new Date(at) });
+        expect(await engine.executeRaw('SELECT fact FROM facts WHERE expired_at IS NULL')).toEqual([{ fact: 'Alice leads the ranking team' }]);
+      });
+
+      test('two overlapping runs embed once: the second skips the embed step instead of spending the cap again', async () => {
+        await keyed();
+        const [col] = await engine.executeRaw<{ dims: number }>("SELECT atttypmod AS dims FROM pg_attribute WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'");
+        __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          return { embeddings: values.map(() => new Array(Number(col!.dims)).fill(0.01)) };
+        }) as never);
+        await engine.putPage('notes/embed-me', { type: 'concept', title: 'Embed', compiled_truth: 'A page whose chunks need vectors.' });
+        const [a, b] = await Promise.all([1, 2].map(() => upkeep(engine, { runner: 'test', providers: KEYED, cycle: quick })));
+        const embedSteps = [a, b].map((o) => o.record!.steps.find((s) => s.name === 'embed'));
+        expect(embedSteps.filter((s) => s?.status === 'ok')).toHaveLength(1);
+        expect(embedSteps).toContainEqual({ name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' });
+      });
+
+      test('the embed step does not start once the run budget is spent', async () => {
+        await keyed();
+        await engine.putPage('notes/embed-me', { type: 'concept', title: 'Embed', compiled_truth: 'A page whose chunks need vectors.' });
+        const slowSource: typeof runCycle = async (e, o) => {
+          if (o.sourceId) await new Promise((resolve) => setTimeout(resolve, 120));
+          return quick(e, o);
+        };
+        const outcome = await upkeep(engine, { runner: 'test', providers: KEYED, cycle: slowSource, budgetMs: 60 });
+        expect(outcome.record!.cursor).toBeNull();
+        expect(outcome.record!.steps).toContainEqual({ name: 'embed', scope: 'global', status: 'skipped', reason: 'budget_exhausted' });
+        expect(calls).toEqual([]);
+      });
+    });
+
+    test('a purge limited to the previewed pages leaves a page that became eligible afterwards', async () => {
+      const { purgeDeletedPagesCoordinated } = await import('../src/core/persistence/purge-deleted.ts');
+      for (const slug of ['notes/previewed', 'notes/late']) {
+        await engine.putPage(slug, { type: 'concept', title: slug, compiled_truth: 'Deleted long ago.' });
+        await engine.softDeletePage(slug);
+      }
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE slug IN ('notes/previewed', 'notes/late')");
+      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true, only: (page) => page.slug === 'notes/previewed' });
+      expect(result.slugs).toEqual(['notes/previewed']);
+      expect(await engine.executeRaw("SELECT slug FROM pages WHERE slug LIKE 'notes/%' ORDER BY slug")).toEqual([{ slug: 'notes/late' }]);
+    });
+
     describe('doctor states with a fixed clock', () => {
       const NOW = Date.parse('2026-11-12T12:00:00.000Z');
       const record = (at: number, extra: Record<string, unknown> = {}) => engine.setConfig('maintenance.last_run', JSON.stringify({
