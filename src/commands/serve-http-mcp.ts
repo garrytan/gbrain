@@ -120,6 +120,10 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
     // min() can never go below the narrowest surface: a 'verbs' ceiling makes
     // the row/default resolution a no-op, so skip the awaited config read.
     if (ceiling === 'verbs') return { ceiling, effective: ceiling };
+    // A legacy bearer token has no oauth_clients row to pre-seed, so the DCR
+    // default (an OAuth-client setting) does not apply: it keeps the ceiling
+    // and is limited by its own scope, source and operation grants.
+    if (authInfo.principal?.kind === 'legacy_token') return { ceiling, effective: ceiling };
     const rowSurface = resolveClientRowSurface(authInfo.surface, authInfo.clientId);
     if (rowSurface !== null) return { ceiling, effective: minSurface(ceiling, rowSurface) };
     try {
