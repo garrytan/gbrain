@@ -52,7 +52,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { maintenancePreflight, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import { isPlainLabelValue, type LabelEdit } from '../persistence/label-edit.ts';
-import { filesInCheckout, writeLabelPage } from './label-write.ts';
+import { filesInCheckout, labelFileRefusal, writeLabelPage } from './label-write.ts';
 import { getWriteRequest } from '../persistence/journal.ts';
 import { isTerminal } from '../persistence/model.ts';
 import { requestPrincipalForContext } from '../persistence/page-mutations.ts';
@@ -362,7 +362,11 @@ async function prepareWrite(ctx: OperationContext, item: LabelsItem): Promise<Re
         + `so the next sync or re-import would undo it from the file. ${entry.mode === 'clear' ? `Remove ${describeLabels(labels)} from that file's frontmatter`
           : `Add ${describeLabels(labels)} back to that file's frontmatter if it is missing`}, commit it, then run: gbrain sync --source ${entry.source_id}` } };
   }
-  return { revision: snapshot.revision, content: serializePageToMarkdown({ ...snapshot.page, frontmatter: next }, snapshot.tags), labels };
+  const content = serializePageToMarkdown({ ...snapshot.page, frontmatter: next }, snapshot.tags);
+  // GST-2603: a file that holds the page but cannot take the label edit line by line declines here, before its intent line.
+  const refusal = await labelFileRefusal(ctx.engine, snapshot, content, labelEditOf(entry));
+  if (refusal?.reason === 'label_edit_refused') throw refusal.error;
+  return { revision: snapshot.revision, content, labels };
 }
 
 /** The item's ledger line under its deterministic request id (a resumed run replays the same request). */

@@ -623,7 +623,7 @@ src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a se
 src/core/repair/visibility.ts	planAliases	sql	META	
 src/core/repair/visibility.ts	planEvents	sql	META	
 src/core/repair/visibility.ts	planLineage	sql	META	
-src/core/repair/visibility.ts	visibilityRepair	call:serializePageToMarkdown	SEGW	
+src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
 src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts	v091	sql	NONE	not the page body: historical generation trigger
 src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not the page body: historical
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
