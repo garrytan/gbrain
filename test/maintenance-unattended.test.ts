@@ -23,7 +23,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { ALL_PHASES, PHASE_SCOPE, runCycle, type CyclePhase } from '../src/core/cycle.ts';
 import { MANAGED_PHASE_TABLE } from '../src/core/cycle/phase-table.ts';
 import {
-  MAINTAIN_SAFE_PHASES, MAINTENANCE_EMBED_SPEND_KEY, UPKEEP_INTERVAL_MS, readUpkeepRecord, runUnattendedMaintenance, unattendedPlan,
+  MAINTAIN_SAFE_PHASES, MAINTENANCE_EMBED_SPEND_KEY, UPKEEP_INTERVAL_MS, readEmbedSpentToday, readUpkeepRecord, runUnattendedMaintenance, unattendedPlan,
   type SafePhaseProviders,
 } from '../src/core/maintenance/run.ts';
 import { checkUnattendedMaintenance } from '../src/commands/doctor/checks/unattended-maintenance.ts';
@@ -361,6 +361,22 @@ for (const kind of testBackends()) {
         const embedSteps = [a, b].map((o) => o.record!.steps.find((s) => s.name === 'embed'));
         expect(embedSteps.filter((s) => s?.status === 'ok')).toHaveLength(1);
         expect(embedSteps).toContainEqual({ name: 'embed', scope: 'global', status: 'skipped', reason: 'embed_running' });
+      });
+
+      test('the ledger holds the rest of the cap while the step spends, so a run killed mid-step cannot spend it again', async () => {
+        await keyed();
+        const [col] = await engine.executeRaw<{ dims: number }>("SELECT atttypmod AS dims FROM pg_attribute WHERE attrelid = 'content_chunks'::regclass AND attname = 'embedding'");
+        const midStep: number[] = [];
+        __setEmbedTransportForTests((async ({ values }: { values: string[] }) => {
+          midStep.push(await readEmbedSpentToday(engine, new Date()));
+          return { embeddings: values.map(() => new Array(Number(col!.dims)).fill(0.01)) };
+        }) as never);
+        await engine.putPage('notes/embed-me', { type: 'concept', title: 'Embed', compiled_truth: 'A page whose chunks need vectors.' });
+        const outcome = await upkeep(engine, { runner: 'test', providers: KEYED, cycle: quick });
+        expect(outcome.record!.steps).toContainEqual(expect.objectContaining({ name: 'embed', status: 'ok' }));
+        expect(midStep.length).toBeGreaterThan(0);
+        expect(midStep.every((usd) => usd === 1)).toBe(true);
+        expect(await readEmbedSpentToday(engine, new Date())).toBeLessThan(1);
       });
 
       test('the embed step does not start once the run budget is spent', async () => {
