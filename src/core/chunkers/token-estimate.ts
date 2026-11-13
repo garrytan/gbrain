@@ -9,7 +9,14 @@
  * layer above cjk.ts (whose char classes they reuse) and below both chunkers.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
+import { init as liteInit } from '@dqbd/tiktoken/lite/init';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
+// Embedded so a `bun build --compile` binary carries the WASM itself: the
+// package's Node entry reads tiktoken_bg.wasm from the build machine's
+// node_modules, which is absent anywhere else.
+import liteWasmPath from '@dqbd/tiktoken/lite/tiktoken_bg.wasm' with { type: 'file' };
+import cl100kRanks from '@dqbd/tiktoken/encoders/cl100k_base.json';
 
 /**
  * Default hard budget for any emitted chunk's estimated embedding tokens.
@@ -39,9 +46,40 @@ function loadEncoder(): void {
     const m = require('@dqbd/tiktoken');
     tiktokenEncoder = m.get_encoding('cl100k_base');
   } catch {
-    tiktokenEncoder = null;
+    tiktokenEncoder = loadEmbeddedEncoder();
   }
   tiktokenInitialized = true;
+}
+
+/** True when the package's own Node loader can find its WASM on disk. */
+function packageWasmReadable(): boolean {
+  try {
+    return existsSync(require.resolve('@dqbd/tiktoken/tiktoken_bg.wasm'));
+  } catch {
+    return false;
+  }
+}
+
+// init() is async, so the embedded build is prepared once at module load and
+// only when the package loader could not read its own WASM (compiled binary).
+let embeddedTiktoken: { Tiktoken: new (ranks: string, special: Record<string, number>, pat: string) => NonNullable<typeof tiktokenEncoder> } | null = null;
+if (!packageWasmReadable()) {
+  try {
+    embeddedTiktoken = (await liteInit((imports) =>
+      WebAssembly.instantiate(readFileSync(liteWasmPath), imports),
+    )) as unknown as typeof embeddedTiktoken;
+  } catch {
+    embeddedTiktoken = null;
+  }
+}
+
+/** cl100k from the lite build, with WASM bytes from the bundled asset. */
+function loadEmbeddedEncoder(): typeof tiktokenEncoder {
+  try {
+    return embeddedTiktoken && new embeddedTiktoken.Tiktoken(cl100kRanks.bpe_ranks, cl100kRanks.special_tokens, cl100kRanks.pat_str);
+  } catch {
+    return null;
+  }
 }
 
 /** Whether estimateTokens counts with cl100k (false = the len/4 fallback). */
