@@ -9,7 +9,7 @@
 
 ### A write receipt says when its Git commit landed
 
-**A receipt read after the write (`gbrain write-request <id>`, `get_write_request`, `list_write_requests`) now reports where Git is.** For a page on an ordinary (not `canonical: git`) checkout, `persistence.git_state` used to stay `queued` forever, even after the background Git effect committed the file, and no commit was named anywhere. It now comes from the Git effect: `committed` with the commit in `persistence.git_commit`, or `superseded`, `skipped`, `failed` or `retrying` with the cause in `persistence.git_reason`, and `queued` only while the effect is queued. Nothing stored is rewritten: a Git effect from an earlier build reads `committed` with no commit. Receipts of `canonical: git` sources are unchanged.
+**A receipt read after the write (`gbrain write-request <id>`, `get_write_request`, `list_write_requests`) now reports where Git is.** For a page on an ordinary (not `canonical: git`) checkout, `persistence.git_state` used to stay `queued` forever, even after the background Git effect committed the file, and no commit was named anywhere. It now comes from the Git effect: `committed` with the commit in `persistence.git_commit`, or `superseded`, `skipped`, `failed` or `retrying` with the cause in `persistence.git_reason`, and `queued` only while the effect is queued. Nothing stored is rewritten: a Git effect from an earlier build, or one whose commit landed but whose push had to be retried, reads `committed` with no commit. Receipts of `canonical: git` sources are unchanged.
 
 Reported by @ethanbeard (#9227).
 

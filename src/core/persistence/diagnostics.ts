@@ -198,8 +198,9 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const hostId = existingHostIdFor(engine);
   const consumerRows = hostId ? await listHostConsumers(engine, hostId).catch(() => []) : [];
   const tracked = (engine as { getPoolDiagnostics?: () => { tracked?: unknown } | null }).getPoolDiagnostics?.()?.tracked ?? null;
+  const ownedHere = new Set((worktrees as Array<{ id: string; owner_host_id: string | null }>).filter(w => hostId !== null && w.owner_host_id === hostId).map(w => w.id));
   const claimStates = blockers.map(row => claimStateOf({ state: row.state, claim_phase: row.claim_phase, execution_token: row.execution_token, claim_lapsed: row.claim_lapsed,
-    publication_started: row.publication_started, abandoned: row.abandoned, probe_owner: true }));
+    publication_started: row.publication_started, abandoned: row.abandoned, probe_owner: row.worktree_id === null || ownedHere.has(row.worktree_id) }));
   const backends = await readOwnerBackends(engine, claimStates.flatMap(state => state?.owner ? [state.owner] : []));
   const headBlockers = await readQueuedHeadBlockers(engine, blockers, hostId);
   // C-NEW-4: the consumer is per process, so this is the answering process's own ingress, never proof the brain's owner is down.
