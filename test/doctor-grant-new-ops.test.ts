@@ -19,6 +19,8 @@ import { legacyTokenGrantsEntry } from '../src/commands/doctor/checks/legacy-tok
 import { DOCTOR_CHECK_REGISTRY } from '../src/commands/doctor/registry.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import { cliRenderContext, deriveNext, type Action } from '../src/core/agent-output.ts';
+import { bindCredential } from '../src/core/access/members.ts';
+import { grantOperationGaps } from '../src/core/harness/capabilities.ts';
 
 let engine: PGLiteEngine;
 let provider: GBrainOAuthProvider;
@@ -52,6 +54,44 @@ type Finding = { kind: string; id: string; name: string; blockers: any[]; grant_
 const grants = (details: Record<string, unknown> | undefined) => (details?.grants ?? []) as Finding[];
 
 describe('grant_new_ops_available', () => {
+  test('only an attestation grant that allows a QM write can have a snapshot gap for it', async () => {
+    const profile = writerProfile();
+    const snapshot = profile.allowedOperations!.filter(op => op !== 'memory_propose' && op !== 'memory_write');
+    const register = (name: string) => provider.registerClientManual(name, ['client_credentials'],
+      'read write', [], 'default', undefined, undefined, undefined, { ...profile, allowedOperations: snapshot });
+    const ordinary = await register('ordinary-writer');
+    expect((await checkGrantNewOps(engine, { cfg })).status).toBe('ok');
+
+    const qm = await register('attested-writer');
+    await bindCredential(engine, { kind: 'client', id: qm.clientId },
+      { attestActor: 'qm', attestOps: ['memory_propose'] });
+    const check = await checkGrantNewOps(engine, { cfg });
+    expect(check.status).toBe('warn');
+    const findings = grants(check.details);
+    expect(findings.map(f => f.id)).toEqual([qm.clientId]);
+    expect(findings[0].excluded_operations.operation_snapshot).toEqual(['memory_propose']);
+    expect((await readClientGrant(engine, ordinary.clientId)).allowedOperations).toEqual(snapshot);
+
+    const projected = await grantOperationGaps({ scopes: ['write'], allowedOperations: snapshot,
+      attestedOperations: ['memory_write'], clientSurface: 'full', serverSurface: 'full', disabled: new Set() });
+    expect(projected.snapshotExcluded).toEqual(['memory_write']);
+  });
+
+  test('an attested legacy token limited to named scopes does not get proposal rescope advice', async () => {
+    const snapshot = writerProfile().allowedOperations!.filter(op => op !== 'memory_write' && op !== 'memory_propose');
+    await mintLegacyToken(engine, { name: 'scoped-attestation', scopes: ['read', 'write'],
+      takesHolders: ['world'], allowedOperations: snapshot });
+    // A stale stored grant may still name a proposal. The verifier filters it
+    // out when scope sources are present, and Doctor should reach that result.
+    await engine.executeRaw(`UPDATE access_tokens SET attest_actor='qm',
+      attest_ops=ARRAY['memory_write','memory_propose']::text[],
+      attest_sources=ARRAY['default']::text[] WHERE name='scoped-attestation'`);
+    const findings = grants((await checkGrantNewOps(engine, { cfg })).details);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ kind: 'legacy_token', name: 'scoped-attestation' });
+    expect(findings[0].excluded_operations.operation_snapshot).toEqual(['memory_write']);
+  });
+
   test('a brain without grants, or with only fresh full-surface grants, is ok', async () => {
     expect((await checkGrantNewOps(engine, { cfg })).status).toBe('ok');
     await provider.registerClientManual('fresh-writer', ['client_credentials'], 'read write', [], 'default', undefined, undefined, undefined, writerProfile());

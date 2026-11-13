@@ -19,6 +19,7 @@ import { dispatchToolCall, type DispatchOpts } from '../src/mcp/dispatch.ts';
 import { NoticeLedger } from '../src/core/notice-ledger.ts';
 import { NOTICE_CODES } from '../src/core/error-registry.ts';
 import { ERROR_CATALOGUE } from '../src/core/error-catalogue.ts';
+import { bindCredential } from '../src/core/access/members.ts';
 
 let engine: PGLiteEngine;
 let provider: GBrainOAuthProvider;
@@ -74,6 +75,24 @@ describe('grant_blocked_operations', () => {
     expect(grantNotice(await read(opts()))).toEqual([]);
     const r = await dispatchToolCall(engine, 'put_pages', { pages: [] }, opts());
     expect(JSON.parse(r.content[0].text).code).not.toBe('unknown_tool');
+  });
+
+  test('a new verified attestation invalidates the diagnosis without widening the snapshot', async () => {
+    const snapshot = resolveGrantProfile({ profile: 'memory-writer', sourceId: 'default' }).allowedOperations!
+      .filter(op => op !== 'memory_propose');
+    const created = await client('attested-notice-example', 'memory-writer', { allowedOperations: snapshot });
+    const ledger = new NoticeLedger();
+    const before = (await connect(created, ledger))();
+    expect(grantNotice(await read(before))).toEqual([]);
+    await bindCredential(engine, { kind: 'client', id: created.clientId },
+      { attestActor: 'qm', attestOps: ['memory_propose'] });
+    const after = (await connect(created, ledger))();
+    expect(after.auth?.grantRevision).toBe(before.auth?.grantRevision);
+    expect(after.auth?.attest?.ops).toEqual(['memory_propose']);
+    const [notice] = grantNotice(await read(after));
+    expect(notice?.why).toContain('its operation snapshot (1)');
+    expect(grantNotice(await read(after))).toEqual([]);
+    expect((await readClientGrant(engine, created.clientId)).allowedOperations).toEqual(snapshot);
   });
 
   test('an operator-pinned old client is reported, not widened: client pin named, preview then apply, nothing changes', async () => {

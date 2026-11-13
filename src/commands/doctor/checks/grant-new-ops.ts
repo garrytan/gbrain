@@ -19,6 +19,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import { loadConfig, type GBrainConfig } from '../../../core/config.ts';
 import { grantFromRow, grantFromTokenRow } from '../../../core/grants/model.ts';
 import { readClientCatalogProvenance } from '../../../core/grants/service.ts';
+import { attestRightFrom } from '../../../core/access/actor-model.ts';
 import { ALL_OPERATIONS_CHOICE, grantAge, grantBlockers, grantOperationGaps, grantRescopeArgvs, type GrantGaps, type RescopeTarget } from '../../../core/harness/capabilities.ts';
 import { clampSurface, isMcpSurface, minSurface, resolveDefaultClientSurface, resolveSurface, surfaceWiderThan, type McpSurface } from '../../../mcp/surface.ts';
 import { disabledOpsForPublishGates } from '../../../mcp/publish-gates.ts';
@@ -78,13 +79,16 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
     const dcrDefault = await resolveDefaultClientSurface(engine, cfg);
     const findings: GrantFinding[] = [];
 
-    const clients = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id');
+    const clients = await engine.executeRaw<Record<string, unknown>>(
+      'SELECT *, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id');
     for (const row of clients) {
       const grant = grantFromRow(row);
       const client = isMcpSurface(grant.surface) ? grant.surface : null;
       const server = client ? ceiling : minSurface(ceiling, dcrDefault ?? ceiling);
+      const clientCredentials = row.confidential === true && Array.isArray(row.grant_types) && row.grant_types.includes('client_credentials');
       const gaps = await grantOperationGaps({
         scopes: grant.scopes, allowedOperations: grant.allowedOperations, boundSlugPrefixes: grant.boundSlugPrefixes ?? undefined,
+        attestedOperations: attestRightFrom(row, clientCredentials ? 'client_credentials' : null, row.member_id)?.ops,
         clientSurface: client, serverSurface: server, disabled,
       });
       if (!gaps.snapshotExcluded.length && !gaps.pinExcluded.length) continue;
@@ -103,7 +107,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
       // A drifted or malformed operations axis denies everything; legacy_token_grant_drift owns that report.
       if (grant.permissionsMalformed || grant.drift.includes('operations') || grant.allowedOperations === null) continue;
       const gaps = await grantOperationGaps({ scopes: grant.scopes, allowedOperations: grant.allowedOperations, clientSurface: null,
-        serverSurface: ceiling, disabled });
+        serverSurface: ceiling, disabled, attestedOperations: attestRightFrom(row, 'legacy', row.member_id)?.ops });
       if (!gaps.snapshotExcluded.length) continue;
       const name = String(row.name);
       const flag: ['--token' | '--id', string] = nameCounts.get(name) === 1 ? ['--token', name] : ['--id', grant.principal.id];

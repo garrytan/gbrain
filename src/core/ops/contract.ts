@@ -854,6 +854,8 @@ export interface Operation {
    */
   scope?: 'read' | 'write' | 'admin' | 'sources_admin' | 'users_admin' | 'agent';
   requiredScopes?: readonly string[];
+  /** A call also needs an attested actor authorized for this operation. */
+  requiresAttestedActor?: boolean;
   localOnly?: boolean;
   /**
    * Agent contract v1 (F5): the handler refuses every agent-facing caller,

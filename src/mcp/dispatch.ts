@@ -792,14 +792,15 @@ function grantSessionKey(auth: AuthInfo, principal: NonNullable<AuthInfo['princi
   return `${principal.kind}:${principal.id}|${sessionId ? `session:${sessionId.slice(0, SESSION_ID_MAX_CHARS)}` : `revision:${revision}`}`;
 }
 
-/** The shared capabilities resolver's diagnosis for this caller, computed once per D4 session and grant revision. */
+/** Recompute for a new revision or a different verified attestation on the same D4 session. */
 async function sessionGrantDiagnosis(engine: BrainEngine, opts: DispatchOpts) {
   const auth = opts.auth!;
   const { resolveGrantDiagnosis } = await import('../core/harness/capabilities.ts');
   const revision = Number.isSafeInteger(auth.grantRevision) ? String(auth.grantRevision) : 'none';
   const compute = () => resolveGrantDiagnosis(auth, engine, opts.config ?? loadConfig() ?? { engine: 'postgres' }, { surfaceCeiling: opts.surfaceCeiling });
   if (!auth.principal) return compute();
-  return (opts.noticeLedger ?? processNoticeLedger()).memoize(`grant_diagnosis|${grantSessionKey(auth, auth.principal, opts.sessionId)}|${revision}`, compute);
+  const attested = JSON.stringify([...(auth.attest?.ops ?? [])].sort());
+  return (opts.noticeLedger ?? processNoticeLedger()).memoize(`grant_diagnosis|${grantSessionKey(auth, auth.principal, opts.sessionId)}|${revision}|${attested}`, compute);
 }
 
 /**

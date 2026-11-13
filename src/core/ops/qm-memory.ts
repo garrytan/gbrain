@@ -245,6 +245,7 @@ function parseFacts(raw: unknown, actorId: string): Array<Record<string, unknown
 
 const memory_write: Operation = {
   name: 'memory_write',
+  requiresAttestedActor: true,
   mutating: true,
   idempotent: true,
   outputRedaction: 'no_stored_text',
@@ -356,6 +357,7 @@ const oneLine = (value: string) => !CONTROL_RE.test(value) && !UNPAIRED_SURROGAT
  */
 const memory_propose: Operation = {
   name: 'memory_propose',
+  requiresAttestedActor: true,
   mutating: true,
   idempotent: true,
   outputRedaction: 'no_stored_text',

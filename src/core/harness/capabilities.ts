@@ -64,6 +64,8 @@ export interface GrantGapInput {
   boundSlugPrefixes?: string[];
   fenceProjectionDegraded?: boolean;
   grantProjectionDegraded?: boolean;
+  /** Operations this credential can call with an attested actor. */
+  attestedOperations?: readonly string[];
   /** The client's own stored surface (`oauth_clients.surface`); null = none. */
   clientSurface: GrantSurface | null;
   /** The narrowest surface the server proves it applies to this grant; null = none proven. */
@@ -104,6 +106,7 @@ export async function grantOperationGaps(input: GrantGapInput): Promise<GrantGap
   ]);
   const fence = { boundSlugPrefixes: input.boundSlugPrefixes, fenceProjectionDegraded: input.fenceProjectionDegraded, grantProjectionDegraded: input.grantProjectionDegraded };
   const eligible = operations.filter(op => !op.localOnly && !input.disabled.has(op.name)
+    && (!op.requiresAttestedActor || input.attestedOperations?.includes(op.name))
     && operationScopesAllowed([...input.scopes], op) && opAllowedForBoundClient(fence, op));
   const outside = (surface: GrantSurface | null): string[] => {
     if (!surface || surface === 'full') return [];
@@ -312,6 +315,7 @@ export async function resolveGrantDiagnosis(auth: AuthInfo, engine: BrainEngine,
   const allowedOperations = Array.isArray(auth.allowedOperations) ? auth.allowedOperations : null;
   const gaps = await grantOperationGaps({
     scopes: auth.scopes, allowedOperations, boundSlugPrefixes: auth.boundSlugPrefixes,
+    attestedOperations: auth.attest?.ops,
     fenceProjectionDegraded: auth.fenceProjectionDegraded, grantProjectionDegraded: auth.grantProjectionDegraded,
     clientSurface, serverSurface, disabled: opts.disabled ?? await disabledOpsForPublishGates(engine, config),
   });
