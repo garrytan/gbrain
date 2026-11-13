@@ -16,6 +16,7 @@
  */
 
 import { listenOrRefuse, type AdoptableServer } from './serve-http-listen.ts';
+import { listenPrivateHttp, closePrivateHttpSafely } from './serve-http-unix.ts';
 import express from 'express';
 import type { Socket } from 'net';
 import type { Request, RequestHandler, CookieOptions } from 'express';
@@ -51,7 +52,7 @@ import * as db from '../core/db.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import { isUndefinedColumnError } from '../core/utils.ts';
 import { registerCleanup } from '../core/process-cleanup.ts';
-import { VERSION } from '../version.ts';
+import { formatServeHttpBanner } from './serve-http-banner.ts';
 import { NoticeLedger } from '../core/notice-ledger.ts';
 import { createReadinessCache, type ReadinessCache } from '../core/readiness.ts';
 import { withLocalScope } from '../core/engine-scope-store.ts';
@@ -858,30 +859,23 @@ export function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
     // ---------------------------------------------------------------------------
     const clientCount = await sql`SELECT count(*)::int as count FROM oauth_clients`;
 
+    // Optional local-only transport for a private tunnel. Same app, auth and engine.
+    const privateSocketPath = process.env.GBRAIN_HTTP_UNIX_SOCKET;
+    const privateHttp = privateSocketPath === undefined ? null : await listenPrivateHttp(app, privateSocketPath);
+    // All paths share one best-effort close. A UDS timeout must never skip
+    // disconnecting the engine or stopping the original resident services.
+    let privateClose: Promise<void> | undefined;
+    const closePrivate = () => privateClose ??= closePrivateHttpSafely(privateHttp);
+    const deregisterPrivateCleanup = privateHttp
+      ? registerCleanup('private-http-close', closePrivate) : () => {};
+    try {
     const httpServer = await listenOrRefuse(app, port, bind, options.adoptServer);
-    console.error(`
-╔══════════════════════════════════════════════════════╗
-║  GBrain MCP Server v${VERSION.padEnd(37)}║
-╠══════════════════════════════════════════════════════╣
-║  Port:      ${String(port).padEnd(40)}║
-║  Bind:      ${bind.padEnd(40)}║
-║  Engine:    ${(config.engine || 'pglite').padEnd(40)}║
-║  Issuer:    ${issuerUrl.origin.padEnd(40)}║
-║  Clients:   ${String((clientCount[0] as any).count).padEnd(40)}║
-║  DCR:       ${(enableDcr ? (enableDcrInsecure ? 'enabled (INSECURE: read-only M2M)' : 'enabled (consent; DCR max read write)') : 'disabled').padEnd(40)}║
-║  Skills:    ${skillStatus.bannerValue.padEnd(40)}║
-║  Token TTL: ${(tokenTtl + 's').padEnd(40)}║
-╠══════════════════════════════════════════════════════╣
-║  Admin:     http://localhost:${port}/admin${' '.repeat(Math.max(0, 19 - String(port).length))}║
-║  MCP:       http://localhost:${port}/mcp${' '.repeat(Math.max(0, 21 - String(port).length))}║
-║  Health:    http://localhost:${port}/health${' '.repeat(Math.max(0, 18 - String(port).length))}║
-╠══════════════════════════════════════════════════════╣
-${bootstrapFromEnv
-  ? '║  Admin Token: from $GBRAIN_ADMIN_BOOTSTRAP_TOKEN     ║\n╚══════════════════════════════════════════════════════╝'
-  : suppressBootstrapPrint
-    ? '║  Admin Token: hidden (non-TTY log-leak guard)        ║\n║  set $GBRAIN_ADMIN_BOOTSTRAP_TOKEN, or pass          ║\n║  --print-admin-token on a trusted terminal.          ║\n╚══════════════════════════════════════════════════════╝'
-    : `║  Admin Token (paste into /admin login):              ║\n║  ${bootstrapToken.substring(0, 50)}  ║\n║  ${bootstrapToken.substring(50).padEnd(50)}  ║\n╚══════════════════════════════════════════════════════╝`}
-`);
+    console.error(formatServeHttpBanner({
+      port, bind, engine: config.engine || 'pglite', issuerOrigin: issuerUrl.origin,
+      clientCount: (clientCount[0] as any).count, enableDcr, enableDcrInsecure,
+      skillBanner: skillStatus.bannerValue, tokenTtl,
+      bootstrapToken, bootstrapFromEnv, suppressBootstrapPrint,
+    }));
 
     // #4474: bind the resolve-IPC unix socket under --http too. This is the
     // exact posture `gbrain bootstrap harness` targets — without the listener
@@ -924,6 +918,7 @@ ${bootstrapFromEnv
     const { startServeHeadWatcher } = await import('../core/serve-head-watcher.ts');
     const headWatcher = startServeHeadWatcher(engine, { log: (line) => console.error(line), resident: 'serve-http' });
     const deregisterEngineCleanup = registerCleanup('pglite-engine-disconnect', async () => {
+      await closePrivate();
       await headWatcher.stop();
       movementWatch.stop();
       await factsDrain.stop();
@@ -932,6 +927,7 @@ ${bootstrapFromEnv
     try {
       await waitForHttpServerLifecycle(httpServer);
     } finally {
+      await closePrivate();
       await headWatcher.stop();
       movementWatch.stop();
       await factsDrain.stop();
@@ -940,6 +936,10 @@ ${bootstrapFromEnv
       ipcBinding.close();
       deregisterIpcCleanup();
       deregisterEngineCleanup();
+    }
+    } finally {
+      await closePrivate();
+      deregisterPrivateCleanup();
     }
   });
 }

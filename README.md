@@ -355,6 +355,7 @@ Start with `gbrain doctor`. For database access failures, use `gbrain engine sta
 - [`docs/integrations/`](docs/integrations/) — connecting external data sources (voice, email, calendar, embedding providers)
 - [MCP task guide](docs/mcp/README.md) — deployment and per-client setup (Claude Desktop, Code, Cursor, ChatGPT, Perplexity, Cowork)
 - [MCP administration](docs/mcp/ADMIN.md) — owner dashboard access, client registration, OAuth, permissions, and token recovery
+- [Private local HTTP transport](docs/guides/private-unix-http.md) — opt-in Unix socket access for an existing local proxy, with unchanged OAuth checks
 - [Evals](docs/eval/) and [research](docs/research/) — methods and results
 - [`docs/ethos/`](docs/ethos/) — philosophy (thin harness, fat skills, markdown as recipes, origin story)
 - [`AGENTS.md`](AGENTS.md) — entry point for non-Claude agents

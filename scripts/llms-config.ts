@@ -38,6 +38,7 @@ export const SECTIONS: DocSection[] = [
   {
     heading: "Choose your agent setup",
     entries: [
+      { title: "Private local HTTP transport", path: "docs/guides/private-unix-http.md", description: "Optional protected Unix-domain socket for an existing authorized local proxy: same HTTP application, OAuth and engine; path permissions, shutdown and limits. Does not provision a tunnel or client connection." },
       { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives." },
       // Linked, not inlined: these three guides only apply inside Grok Bot, Muse or another
       // hosted agent, and AGENTS.md (inlined) routes those agents to them. Dropping them from the
