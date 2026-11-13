@@ -49,7 +49,7 @@ import { readFix } from './ops/op-fix.ts';
 // Bundled into the --compile binary as the fallback taxonomy for repos that
 // don't ship their own — see resolveFilingRules().
 import filingRulesDoc from '../../skills/_brain-filing-rules.json';
-import { gitChildEnv } from './git-env.ts';
+import { GIT_PATHSPEC_ENV_VARS, gitChildEnv } from './git-env.ts';
 import { commitAndPush, commitPathsLocked, readIntegrateConflict, SOURCE_ROOT_CONFIG } from './git/commit-push.ts';
 
 export { execFileBounded, type BoundedExecOptions } from './bounded-child-exec.ts';
@@ -236,6 +236,7 @@ ${PROTOCOL_LINE}
 # commits for secrets first), exiting 4. It never runs pull --rebase, stash or reset. Guide: docs/guides/shared-checkout-git.md
 set -euo pipefail
 unset $(git rev-parse --local-env-vars) 2>/dev/null || true
+unset ${GIT_PATHSPEC_ENV_VARS.join(' ')}
 
 _managed_git="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
 if [ -e "$_managed_git/gbrain-managed.json" ] || [ -e .gbrain-managed ]; then

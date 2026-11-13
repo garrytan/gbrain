@@ -43,7 +43,7 @@ import {
   type AuditFix,
 } from '../core/brain-writer.ts';
 import { collectGitVisibleFiles } from '../core/git-visible-files.ts';
-import { literalPathspecs } from '../core/git-env.ts';
+import { GIT_PATHSPEC_ENV_VARS, literalPathspecs } from '../core/git-env.ts';
 import { isMarkdownFilePath, pruneDir, slugifyPath } from '../core/sync.ts';
 import { isPathContained } from '../core/path-confine.ts';
 
@@ -282,8 +282,10 @@ function findBrainRoot(start: string): string {
  * comes back with `content: null`.
  */
 function readStagedBlobs(paths: string[], cwd = process.cwd()): { root: string; files: Array<{ rel: string; content: string | null }> } {
+  const env = { ...process.env };
+  for (const name of GIT_PATHSPEC_ENV_VARS) delete env[name];
   const git = (args: string[], input?: string): Buffer =>
-    execFileSync('git', args, { cwd, input, maxBuffer: 1 << 30, env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    execFileSync('git', args, { cwd, input, maxBuffer: 1 << 30, env, stdio: ['pipe', 'pipe', 'pipe'] });
   const root = git(['rev-parse', '--show-toplevel']).toString('utf8').trim();
   const listed = paths.length > 0
     ? git(['ls-files', '--stage', '--full-name', '-z', '--', ...literalPathspecs(paths)])
