@@ -13,8 +13,11 @@ import type { Migration } from './types.ts';
 // several), sets access.serves_since once; nothing ever clears it, so disabling
 // and re-enabling a member does not restart the grace. One transaction lock
 // serializes the recount, so a member added while another is disabled is
-// counted once it commits instead of leaving `one` behind. Triggers on
-// access_members and on config access.serves call it. The one call below
+// counted once it commits instead of leaving `one` behind; a transaction above
+// read committed, whose count may miss a member committed after its snapshot,
+// never lowers the value. Triggers on access_members and on config
+// access.serves and access.serves_derived call it, so a hand edit or unset of
+// the derived key is derived again at once. The one call below
 // derives both keys for an existing brain (a brain that already serves several
 // people starts its 14-day grace at this upgrade). reads_unscoped records when
 // the brain operator let one credential read unscoped on purpose (gbrain auth
@@ -40,7 +43,7 @@ BEGIN
   IF derived = 'several' THEN
     INSERT INTO config (key, value) VALUES ('access.serves_derived', derived)
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value WHERE config.value IS DISTINCT FROM EXCLUDED.value;
-  ELSE
+  ELSIF current_setting('transaction_isolation') = 'read committed' THEN
     UPDATE config SET value = derived WHERE key = 'access.serves_derived' AND value IS DISTINCT FROM derived;
   END IF;
   SELECT lower(btrim(value)) INTO explicit FROM config WHERE key = 'access.serves';
@@ -62,10 +65,10 @@ CREATE TRIGGER access_members_refresh_serves AFTER INSERT OR DELETE OR UPDATE OF
   FOR EACH STATEMENT EXECUTE FUNCTION gbrain_access_refresh_serves_trigger();
 DROP TRIGGER IF EXISTS config_serves_refresh ON config;
 CREATE TRIGGER config_serves_refresh AFTER INSERT OR UPDATE ON config
-  FOR EACH ROW WHEN (NEW.key = 'access.serves') EXECUTE FUNCTION gbrain_access_refresh_serves_trigger();
+  FOR EACH ROW WHEN (NEW.key IN ('access.serves', 'access.serves_derived')) EXECUTE FUNCTION gbrain_access_refresh_serves_trigger();
 DROP TRIGGER IF EXISTS config_serves_refresh_delete ON config;
 CREATE TRIGGER config_serves_refresh_delete AFTER DELETE ON config
-  FOR EACH ROW WHEN (OLD.key = 'access.serves') EXECUTE FUNCTION gbrain_access_refresh_serves_trigger();
+  FOR EACH ROW WHEN (OLD.key IN ('access.serves', 'access.serves_derived')) EXECUTE FUNCTION gbrain_access_refresh_serves_trigger();
 SELECT gbrain_access_refresh_serves();
 `,
 };

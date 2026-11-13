@@ -2,7 +2,8 @@
  * GST-363: config access.serves_derived (kept by v309's gbrain_access_refresh_serves) never reads `one` on a brain
  * that serves several people after two transactions change members at once. Without the transaction lock, a member
  * disabled while another is being added counts the brain from a snapshot that misses the new member and writes
- * `one` after the add commits, so unbound reads stop being refused.
+ * `one` after the add commits, so unbound reads stop being refused. A transaction above read committed counts from a
+ * snapshot that can miss a member committed after it, so it never lowers the value.
  * Run: DATABASE_URL=... bun test test/e2e/serves-derived-concurrency.test.ts
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -35,8 +36,10 @@ describeE2E('access.serves_derived under concurrent member changes (Postgres)', 
     await admin?.end();
   }, 60_000);
 
+  const derived = async () => (await conn!.unsafe("SELECT value FROM config WHERE key = 'access.serves_derived'"))[0]?.value ?? null;
+  const enabled = async () => (await conn!.unsafe('SELECT count(*)::int AS n FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL'))[0]!.n;
+
   test('a member disabled while another is added leaves several, not one', async () => {
-    const derived = async () => (await conn!.unsafe("SELECT value FROM config WHERE key = 'access.serves_derived'"))[0]?.value ?? null;
     expect(await derived()).toBeNull();
     await conn!.unsafe("INSERT INTO access_members (id) VALUES ('alice-example'), ('bob-example')");
     expect(await derived()).toBe('several');
@@ -57,7 +60,24 @@ describeE2E('access.serves_derived under concurrent member changes (Postgres)', 
       adding.release();
       disabling.release();
     }
-    expect((await conn!.unsafe('SELECT count(*)::int AS n FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL'))[0]!.n).toBe(2);
+    expect(await enabled()).toBe(2);
+    expect(await derived()).toBe('several');
+  }, 60_000);
+
+  test('a repeatable-read disable whose snapshot misses a newly added member leaves several, not one', async () => {
+    expect({ enabled: await enabled(), derived: await derived() }).toEqual({ enabled: 2, derived: 'several' });
+    const disabling = await conn!.reserve();
+    try {
+      await disabling.unsafe('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      await disabling.unsafe('SELECT count(*) FROM access_members');
+      await conn!.unsafe("INSERT INTO access_members (id) VALUES ('dave-example')");
+      await disabling.unsafe("UPDATE access_members SET disabled_at = now() WHERE id = 'bob-example'");
+      await disabling.unsafe('COMMIT');
+    } finally {
+      await disabling.unsafe('ROLLBACK').catch(() => {});
+      disabling.release();
+    }
+    expect(await enabled()).toBe(2);
     expect(await derived()).toBe('several');
   }, 60_000);
 });

@@ -176,6 +176,15 @@ for (const kind of testBackends()) {
       await engine.unsetConfig('access.serves');
     }, 60_000);
 
+    test('the derived key unset or set to one by hand on a brain that serves several people is derived again at once', async () => {
+      expect(await engine.getConfig('access.serves_derived')).toBe('several');
+      await engine.unsetConfig('access.serves_derived');
+      expect(await engine.getConfig('access.serves_derived')).toBe('several');
+      await engine.setConfig('access.serves_derived', 'one');
+      expect(await engine.getConfig('access.serves_derived')).toBe('several');
+      expect((await brainServes(engine)).serves).toBe('several');
+    }, 60_000);
+
     test('over HTTP, an old unbound key inside the grace reads with a notice naming the fix and the date', async () => {
       await setSince(1);
       await backdate('old-unbound', 2);
