@@ -25,6 +25,8 @@ export interface InternalConfigState {
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
+  { key: 'maintenance.last_run', reason: 'the free-upkeep run record (steps, cursor, parked items, next due time) that maintenance/run.ts writes after each gbrain maintain --unattended run; maintain --status and doctor read it, so a hand edit would misreport upkeep' },
+  { key: 'maintenance.embed_spend', reason: 'the per-day dollar total the capped upkeep embed step has spent (maintenance/run.ts); the daily cap reads it, so a hand edit would let upkeep spend past maintenance.embed_daily_usd' },
   { key: 'heal.audit', reason: 'the bounded self-heal audit log (last 200 rows, 30 days) that heal-audit.ts writes for each heal; doctor reads it to count a heal\'s consecutive failures, so a hand edit would hide an escalation' },
   { key: 'access.serves_derived', reason: 'whether two or more members are enabled, kept by the v309 trigger on access_members (search/private-visibility.ts servesPolicyFrom); a hand edit would lie about whom the brain serves' },
   { key: 'access.serves_since', reason: 'when the brain first served several people, set once by the v309 trigger and never cleared; it starts the unscoped-read grace (access/requester-scope.ts)' },
