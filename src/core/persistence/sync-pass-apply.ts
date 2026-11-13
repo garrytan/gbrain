@@ -317,9 +317,11 @@ async function writePassHolds(engine: BrainEngine, level: ShadowLevel, input: Pa
       pending.push({ entry, code: 'file_drift', slug: entry.slug, kind: 'uncommitted', meta: { side: 'deleted', state: 'file_gone', reason: r.uncommitted, ...(entry.revision ? { page_revision: entry.revision } : {}) },
         message: `${path}: the file is gone, but ${why}, so its absence is no evidence that page ${entry.slug} was deleted; sync held it and kept the page instead of deleting it (#7130); the rest of the source synced.` });
     } else if (r.cls === 'delete_drift') {
+      const unrecorded = entry.state.record?.revision == null;
       pending.push({ entry, code: 'file_drift', slug: entry.slug, kind: 'file_gone', meta: { side: 'deleted', state: 'file_gone', ...(entry.revision ? { page_revision: entry.revision } : {}),
-        ...(r.heldDeletionRefused && entry.revision ? { held_deletion: { refused: r.heldDeletionRefused, page_revision: entry.revision } } : {}) },
-        message: `${path}: the file is gone, but page ${entry.slug} changed in the database since the file was last imported, so sync held the deletion instead of deleting the page; the rest of the source synced.` });
+        ...(r.heldDeletionRefused && entry.revision ? { held_deletion: { refused: r.heldDeletionRefused, page_revision: entry.revision } } : {}), ...(unrecorded ? { no_import_record: true as const } : {}) },
+        message: unrecorded ? `${path}: the file is gone, and page ${entry.slug} has no import record that says whether it changed in the database since the file was imported, so sync held the deletion instead of deleting the page; the rest of the source synced.`
+          : `${path}: the file is gone, but page ${entry.slug} changed in the database since the file was last imported, so sync held the deletion instead of deleting the page; the rest of the source synced.` });
     } else if (r.cls === 'deleted_edited') {
       const purged = r.state === 'purged_differs';
       const slug = purged ? (await readStoredMarker(engine, level, passEntryPaths(level, entry.path).sourcePath))?.slug ?? resolveSlugForPath(passEntryPaths(level, entry.path).sourcePath) ?? null : entry.slug;

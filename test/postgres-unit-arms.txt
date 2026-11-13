@@ -341,6 +341,7 @@ test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
 test/mirror-readonly-write-through-7098.test.ts
+test/moved-pages-gst2584.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts

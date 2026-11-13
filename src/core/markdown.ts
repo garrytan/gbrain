@@ -1093,7 +1093,7 @@ const GBRAIN_BASE_PATH_PREFIXES: ReadonlyArray<{ prefixes: string[]; type: PageT
   { prefixes: ['/life/diary/'], type: 'diary' },
 ];
 
-function inferType(filePath?: string): PageType {
+export function inferType(filePath?: string): PageType {
   return inferTypeWithPrefixes(filePath, GBRAIN_BASE_PATH_PREFIXES);
 }
 

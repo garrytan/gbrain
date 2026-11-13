@@ -221,6 +221,7 @@ work behind exits 0, so scripts should also check `results[].complete`.
 | `contextual-mode` | `contextual_retrieval_coverage` (pages with no recorded mode) | Stamps the contextual retrieval mode on markdown pages imported without one (for example by a large `--no-embed` sync, or by a connector source on an older gbrain), exactly as a fresh import of the page would: the page, source and brain settings decide, and the per-chunk synopsis tier lands at the free title tier. It rebuilds projections only: no page write, no new page version and no request ID. A page whose stored vectors already match the stamped convention keeps them and queues no re-embedding; a page whose embedding input changes has only those vectors cleared and is re-embedded once, unless you pass `--no-embed`. | `unsealed_projection`: pages whose chunks lag their text; `gbrain embed --stale` or `safe-chunks` seals them first, and the next run stamps them. `embed_skip`: pages marked to skip embedding keep their stored vectors and are not stamped. |
 | `file-drift` | `maintenance_write_drift` | Explicit-only, preview-bound. Resolves pages whose canonical file differs from the database copy (`source_changed` / `file_database_drift`) through canonical reconciliation, preferring the file or the database copy within reconcile's protections. `--all-drifted` refuses mixed drift classes unless `--class` keeps one; `--only`/`--skip` narrow by canonical file path glob. Opt-in `storage.keep_db` lets the owner host's resident consumer resolve drift under declared prefixes with the database copy. A page whose file is gone from the last commit: `--prefer database` recreates the file, `--prefer file` soft-deletes the page ([deleted canonical files](#deleted-canonical-files)). See [file drift](#file-drift). | Protected metadata, the tag union and protected takes or private fact rows, listed per page as `exceptions`; pages changed after the preview (`changed_since_preview`). |
 | `ghost-pages` | `ghost_pages` | Explicit-only, preview-bound, destructive consent. Soft-deletes live pages whose canonical file is missing on the owner host (ghost pages: every write refuses `canonical_file_missing` and no sync can import a file that is not there), through `delete_page` bound to the previewed owner, path and revision. `--apply --expect <hash> --yes`. See [ghost pages](#ghost-pages). | Declared db_only and never-filed derived pages (never listed); a page whose file came back before the apply (`file_restored`); pages changed after the preview (`changed_since_preview`). |
+| `moved-pages` | `ghost_pages` | Explicit-only, preview-bound, destructive consent. Folds a page left behind by a file that moved into the page the moved file imported as (GST-2584): when sync held the old page's deletion (`file_gone`), the new path imported as a fresh page. A page folds only on proof read from Git: its old path's last committed content is what one new path took at the move (or in that path's first commit), and the old page still holds it. Its links, relationship dates, timeline, raw data, files, user tags, aliases, facts and saved versions move to the moved page, its slug becomes an alias, its hold is cleared and it is soft-deleted (restorable for 72 h); no file is written. `--apply --expect <hash> --yes`. See [moved pages](#moved-pages). | Every other page whose file is gone, listed `held:<reason>`: `several_candidates`, `both_changed` (edited in the database after the move), `first_blob_differs`, `same_id_body_differs`, `evidence_conflicts`, `history_shallow`, `history_unknown`, `deletion_not_committed`, `not_moved`. |
 | `uncommitted-deletions` | `uncommitted_sync_deletions` | Explicit-only, preview-bound, consent. Restores soft-deleted pages a managed sync removed before #7130 although Git never held their recorded file (`.gitignore` excludes it, or no commit holds it and it is not on the disk), one `restore_page` with `detach` each, published database-only: the page comes back live, forgets its recorded file, and no file is written. `--apply --expect <hash> --yes`. See [uncommitted deletions](#uncommitted-deletions). | Pages another writer deleted (listed, restored only with `--include-ambiguous`); tombstones whose file Git once committed or that is on the disk again; paths Git could not answer for (`unknown`); purged pages (only a backup brings them back). |
 | `rows-behind` | `sync_rows_behind_checkpoint` | Explicit-only, preview-bound. Re-imports live pages of a managed source whose row holds an older version of its file than the sync checkpoint (`sources.last_commit`) says was imported, with no hold (#8071), from the file as committed at the checkpoint, through the managed file repair (no file is written). A file whose import is refused, or that is over the sync read bound, is held with that code instead. `--source <id>`, then `--apply --expect <hash>`. See [rows behind the checkpoint](#rows-behind). | Rows with no import record (`excluded:unproven`, joined with `--include-ambiguous`; one whose older version equals its committed file, so the database moved since, never joins: `excluded:database_moved`, nor one whose page and file both moved: `excluded:both_moved`), rows with an uncommitted working-tree edit (`excluded:worktree_differs`), rows whose import would keep page data the file does not carry (`excluded:import_overlay`); rows that moved after the preview (`changed_since_preview`). |
 | `receipt-compaction` | `persistence_capacity` (terminal bytes) | Explicit-only, preview-bound, destructive consent. Compacts terminal write receipts now instead of on the idle maintenance tick (#6696): the intent and error message are dropped, the outcome, error code and detail stay, and the unused reservation returns to the receipt-bytes counters. `--older-than <72h\|30d>` is floored at the configured retention unless `--force`; committed receipts only unless `--include-failures`. No admission, so it runs at a full cap. See [receipt compaction](#receipt-compaction). | `failures_kept`: failed, conflict and cancelled receipts left without `--include-failures`. Receipts of a run whose sync cursor is still open, and the newest sync receipt of each worktree, are never listed. |
@@ -1884,6 +1885,47 @@ origin; `CREATE UNIQUE INDEX CONCURRENTLY` on Postgres) only when the brain has 
 changes nothing and succeeds, and doctor's `origin_twins` check reports "Index pending". Once the last group is
 resolved, the repair's apply builds the index.
 
+### Moved pages
+
+Sync follows a file move when it happens. When the old page's deletion was held (a managed sync holds `file_gone` for a
+page it cannot prove unchanged, including one with no import record), the new path imports as a fresh page and nothing
+pairs the two again. Neither side of `repair file-drift` is right for that page: `--prefer file` soft-deletes it and drops
+its links, facts, timeline and versions, and `--prefer database` writes a stale duplicate back at the old path. So the
+file-drift preview lists such a page `moved_to`, resolves nothing for it, and names this repair instead:
+
+```bash
+gbrain repair moved-pages --source <id> [--slug <old-slug>]                         # preview, writes nothing
+gbrain repair moved-pages --source <id> --apply --expect <hash> --yes               # after the user agrees
+```
+
+A page folds only on two facts read from Git and the page, never on what the moved file holds today:
+
+1. **The move.** The old path's last committed content (its blob at the parent of the commit that deleted it) is the
+   content one new path took in that same commit, or in the first commit that holds the new path. A Git rename with the
+   same content is the first case. Later edits to the moved file don't matter.
+2. **The old page is untouched.** It still holds what that content imports (gbrain's own database-only artefacts, such
+   as the grandfather `validate: false` stamp and a renamed pack type, count as unchanged).
+
+Exactly one live page may descend from that content. The file name only explains a page with no candidate, because a
+move can rename the file too, and a matching frontmatter `id` alone never pairs two pages. Every other page whose file
+is gone is listed with why it is kept: `several_candidates`, `both_changed` (the old page was edited in the database
+after the move: decide with the user), `first_blob_differs` (a page with the same file name started from other content),
+`same_id_body_differs`, `evidence_conflicts` (a manual link or timeline entry that differs from the moved page's),
+`history_shallow` (run `git fetch --unshallow` and preview again), `history_unknown`, `deletion_not_committed` and
+`not_moved`.
+
+The apply re-checks the proof and both pages under their keys, then folds each pair in one write (a coordinated
+`managed_maintenance_fold_moved_page` maintenance write on a managed source, one maintenance transaction otherwise): the
+old page's links in every role, relationship dates, timeline rows, raw data, attachments, user tags, free-text aliases,
+facts other pages assert and saved versions move to the moved page, its slug becomes an alias (`get_page` and links
+by the old slug reach the moved page), its `file_gone` hold is cleared, and it is marked `origin_twin` and soft-deleted.
+No file is written. Each page gets a receipt (`moved_page_folded`) with the move commit, the blob and the restore
+command: `gbrain restore <old-slug>` within 72 h brings back its own text as a database-only page, and the alias then
+stops answering for it; references and versions moved to the moved page stay there. The apply refuses
+[`moved_pages_mass_fold_refused`](error-codes.md#moved_pages_mass_fold_refused) when its folds would soft-delete more
+than half of the source's file-backed pages, unless `GBRAIN_ALLOW_MASS_RECONCILE=1`. A source with no checkout (a
+repo-less source) has no file that could move, so the preview lists nothing.
+
 ### Slug path mismatch
 
 Doctor's `slug_path_mismatch` check (#7305) counts live pages whose slug their recorded file path does not derive. The
@@ -3471,6 +3513,9 @@ count. Read those lines before you agree to the apply.
 | `tombstone_edited` | Keeps the deletion and removes the file. | Restores the page and imports the file. |
 | `purged_differs` | Removes the file. | Imports the file as a new page. |
 | `file_gone` | Recreates the file from the page. | Soft-deletes the page (the mass-delete valve applies). |
+
+A `file_gone` page whose file moved is listed `moved_to <slug>` under either `--prefer` and resolved by neither: its
+line names [`gbrain repair moved-pages`](#moved-pages), which folds it into the moved page.
 
 `--prefer file` keeps the file's bytes: it adds only protected frontmatter keys the
 file lacks and database-only timeline rows, and refuses
