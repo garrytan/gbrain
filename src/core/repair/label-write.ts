@@ -22,7 +22,7 @@ import { withTrustKeep } from '../persistence/context.ts';
 import { existingHostIdFor } from '../persistence/identity.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { getWorktreeBinding, managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { fileSnapshotDifference, labelEditFit, prepareFileTarget } from '../persistence/page-prepare.ts';
+import { fileSnapshotDifference, labelEditFit, labelEditRefused, prepareFileTarget } from '../persistence/page-prepare.ts';
 import { readSyncFile } from '../persistence/sync-discovery.ts';
 import { maintenancePreflight, publishMaintenancePage, publishMaintenancePages, type MaintenanceAuthority } from '../persistence/prepared-maintenance.ts';
 import type { RepairItemOutcome } from './core.ts';
@@ -157,19 +157,6 @@ export async function labelFileRefusal(engine: BrainEngine, snapshot: PageSnapsh
   if (typeof fit === 'string') return null;
   const error = labelEditRefused(snapshot.page, fit.keys, edit);
   return { reason: 'label_edit_refused', keys: fit.keys, next: error.suggestion ?? '', error };
-}
-
-/** GST-2603: a label write's refusal when the page's file holds the page but cannot take `edit` line by line (`keys`: what still differs, empty when the label line itself cannot be edited). */
-export function labelEditRefused(page: { source_id: string; slug: string }, keys: string[], edit: LabelEdit): OperationError {
-  const ref = `${page.source_id}:${page.slug}`;
-  const labels = [...Object.keys(edit.set), ...edit.remove].join(', ') || 'the label';
-  return keys.length
-    ? opError('label_edit_refused', `${ref} was not written: with only its label lines edited, its file still differs from the page in ${keys.join(', ')}.`,
-      `In the page's file, make ${keys.join(', ')} match the page (gbrain get --source ${page.source_id} -- ${page.slug} prints it), commit it, run gbrain sync --source ${page.source_id}, then preview the repair again.`,
-      { reason: 'file_differs', detail: keys.join(',') })
-    : opError('label_edit_refused', `${ref} was not written: its file's ${labels} line cannot be edited as one line.`,
-      `In the page's file, write ${labels} as one plain line in the frontmatter block (no block or multi-line value, no duplicate key; add a frontmatter block if the file has none), commit it, run gbrain sync --source ${page.source_id}, then preview the repair again.`,
-      { reason: 'label_line', detail: labels });
 }
 
 /**

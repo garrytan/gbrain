@@ -318,14 +318,25 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
 export function labelEditFile(slug: string, before: Buffer | FileBytes, content: string, edit: LabelEdit, snapshot: PageSnapshot, activePack?: ParseOpts['activePack']): string {
   const fit = labelEditFit(slug, before, content, edit, snapshot, activePack);
   if (typeof fit === 'string') return fit;
-  const keys = fit.keys.join(', ');
-  throw opError('invalid_params', 'The label edit cannot be made to the page\'s file line by line.', fit.keys.length
-    ? `Nothing was written for ${slug}: with only its label lines edited, its file still differs from the page in ${keys}, so the label-only write refuses rather than re-render the file. Make ${keys} in the file match the page (or make the label change in the file by hand), commit it, and run gbrain sync for the source.`
-    : `Nothing was written for ${slug}: its file cannot take the change without being re-rendered (a label key with a block or multi-line value or a duplicate key, no frontmatter block, or a file too large to edit in memory), so the label-only write refuses. Make the change in the file by hand, commit it, and run gbrain sync for the source.`,
-    { detail: LABEL_EDIT_REFUSED });
+  throw labelEditRefused(snapshot.page, fit.keys, edit);
 }
-/** GST-2603: the detail of labelEditFile's refusal; repairs count it as the page declining the write (repair/core.ts). */
-export const LABEL_EDIT_REFUSED = 'label_edit_refused';
+/**
+ * GST-2603: a label write's refusal when the page's file holds the page but cannot take `edit` line by line (`keys`: what
+ * still differs, empty when the label line itself cannot be edited). Repairs count `label_edit_refused` as the page declining
+ * the write, never toward the run's systemic-failure stop (repair/core.ts), whether the preview's check, the apply's check or
+ * the managed publish (labelEditFile) refuses.
+ */
+export function labelEditRefused(page: { source_id: string; slug: string }, keys: string[], edit: LabelEdit): OperationError {
+  const ref = `${page.source_id}:${page.slug}`;
+  const labels = [...Object.keys(edit.set), ...edit.remove].join(', ') || 'the label';
+  return keys.length
+    ? opError('label_edit_refused', `${ref} was not written: with only its label lines edited, its file still differs from the page in ${keys.join(', ')}.`,
+      `In the page's file, make ${keys.join(', ')} match the page (gbrain get --source ${page.source_id} -- ${page.slug} prints it), commit it, run gbrain sync --source ${page.source_id}, then preview the repair again.`,
+      { reason: 'file_differs', detail: keys.join(',') })
+    : opError('label_edit_refused', `${ref} was not written: its file's ${labels} line cannot be edited as one line.`,
+      `In the page's file, write ${labels} as one plain line in the frontmatter block (no block or multi-line value, no duplicate key; add a frontmatter block if the file has none), commit it, run gbrain sync --source ${page.source_id}, then preview the repair again.`,
+      { reason: 'label_line', detail: labels });
+}
 /**
  * labelEditFile without the refusal: the file to publish, or the fields that keep the edited file from reading as `content`
  * (a frontmatter key, title, type, tags, body or timeline; never a stamp only the database holds, align-stored.ts), empty
