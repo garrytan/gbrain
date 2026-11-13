@@ -13,7 +13,7 @@ import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import { entityTypePredicateSql, resolveEntityTypes } from '../../../core/schema-pack/entity-types.ts';
 import { MIN_ENTITY_PAGES_FOR_COVERAGE } from '../../../core/types.ts';
 import type { Check } from '../../doctor.ts';
-import { connectedEngine, type DoctorContext, type DoctorEntry, doctorHealth } from '../context.ts';
+import { connectedEngine, type DoctorContext, type DoctorEntry, doctorHealth, doctorSourceIds } from '../context.ts';
 import { agentFix, brainScorePlanFix, checkError } from '../check-fix.ts';
 import { ORPHAN_FULL_SCAN_KEY, countLivePages, estimateOrphanRatio, orphanFullScanMaxPages, type OrphanEstimate } from './orphan-estimate.ts';
 
@@ -320,7 +320,7 @@ async function runTimelineHistory(ctx: DoctorContext): Promise<Check[]> {
     }
     // Wave checks registered in doctor/wave-checks.ts rather than inline here.
     const { runWaveChecks } = await import('../wave-checks.ts');
-    for (const finding of await runWaveChecks(engine, { only: 'wave', ids: only ?? undefined, sourceIds: orphanRatioSourceId ? [orphanRatioSourceId] : undefined })) checks.push(finding.check);
+    for (const finding of await runWaveChecks(engine, { only: 'wave', ids: only ?? undefined, sourceIds: doctorSourceIds(ctx) })) checks.push(finding.check);
   }
   return checks;
 }

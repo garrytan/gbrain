@@ -264,7 +264,7 @@ export const WAVE_CHECKS: readonly WaveCheckSpec[] = [
     count: d => (d.items ?? []).filter((item: { replays: number; bound: number }) => item.replays >= item.bound).length,
     impact: 'A dream phase write is still pending after its replay bound, so the phase submits nothing more for that source',
     instruction: 'Read the receipt with the `gbrain write-request` command doctor prints; if the writer is stuck, `gbrain sources writer status --source <id> --json` names why.',
-    run: async engine => (await import('./checks/dream-write-deferred.ts')).dreamWriteDeferredCheck(engine),
+    run: async (engine, scope) => (await import('./checks/dream-write-deferred.ts')).dreamWriteDeferredCheck(engine, scope.sourceIds),
   },
   {
     id: 'embedding_restamp_stalled', resolution: 'operator', registration: 'wave',

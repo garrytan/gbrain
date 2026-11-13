@@ -11,8 +11,8 @@ import { DREAM_WRITE_DEFERRAL_ENABLED_KEY, DREAM_WRITE_DEFERRAL_MAX_REPLAYS, dre
 import type { Check } from '../../doctor.ts';
 import { agentFix } from '../check-fix.ts';
 
-export async function dreamWriteDeferredCheck(engine: BrainEngine): Promise<Check> {
-  const deferrals = await readDreamWriteDeferrals(engine);
+export async function dreamWriteDeferredCheck(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
+  const deferrals = (await readDreamWriteDeferrals(engine)).filter(entry => !sourceIds || sourceIds.includes(entry.source_id));
   const items = deferrals.map(entry => ({ phase: entry.phase, source_id: entry.source_id, request_id: entry.request_id,
     replays: entry.replays, bound: DREAM_WRITE_DEFERRAL_MAX_REPLAYS, deferred_at: entry.deferred_at, status_command: writeStatusCommand(entry.request_id) }));
   const escalated = items.filter(item => item.replays >= DREAM_WRITE_DEFERRAL_MAX_REPLAYS);
