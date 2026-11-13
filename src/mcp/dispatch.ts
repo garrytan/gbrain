@@ -1036,8 +1036,8 @@ export async function dispatchToolCall(
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
       // GST-363: on a brain that serves several people, a read from a connection bound to nobody is refused (or, in its grace, noticed) before any work.
-      // An op this connection cannot reach (hidden by its surface, or localOnly off stdio) keeps the unknown-tool envelope instead.
-      const reachable = !!op && (!opts.allowedOps || opts.allowedOps.has(name)) && (!op.localOnly || opts.transport === 'stdio');
+      // An op this connection cannot reach (hidden by its surface, localOnly off stdio, or cliOnly over MCP) keeps its own refusal instead.
+      const reachable = !!op && (!opts.allowedOps || opts.allowedOps.has(name)) && (!op.localOnly || opts.transport === 'stdio') && !(op.cliOnly && opts.remote !== false);
       if (!attested?.actor && reachable && requiresRequesterScope(op, opts.auth)) {
         const credential = opts.auth ? await credentialScopeFor(engine, opts.auth) : undefined;
         access = await withServesReread(engine, access, credential);

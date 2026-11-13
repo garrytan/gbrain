@@ -326,7 +326,9 @@ for (const kind of testBackends()) {
       try {
         for (const op of operations.filter(o => (o.mutating === false || o.scope === 'read') && !o.localOnly)) {
           const out = shape(await dispatchToolCall(engine, op.name, {}, { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] }));
-          if (requiresRequesterScope(op, auth)) {
+          if (op.cliOnly) {
+            expect({ op: op.name, code: out.json.code }).toEqual({ op: op.name, code: 'trusted_local_only' });
+          } else if (requiresRequesterScope(op, auth)) {
             expect({ op: op.name, code: out.structured?.error?.code }).toEqual({ op: op.name, code: 'requester_scope_required' });
           } else answered.push(op.name);
         }
