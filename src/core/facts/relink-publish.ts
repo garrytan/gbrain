@@ -26,6 +26,7 @@ import type { GBrainConfig } from '../config.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { formatFenceDate, parseFactsFence, upsertFactRow } from '../facts-fence.ts';
+import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { withHeldFactsFence } from './unfenced-facts.ts';
 import { digest } from '../persistence/digest.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -37,6 +38,7 @@ import { appendContextNote } from './subject-infer.ts';
 import { normalizeTargetFences } from '../fence-repair/import-step.ts';
 import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 
 export const RELINK_OPERATION = 'relink_facts';
 
@@ -56,20 +58,45 @@ export function relinkFactHash(snapshot: FactSnapshot): string {
   return digest(snapshot.value);
 }
 
-export type RelinkSkipReason = 'revision_conflict' | 'withdrawn' | 'claim_unfenceable' | 'visibility_conflict';
+export type RelinkSkipReason = 'revision_conflict' | 'withdrawn' | 'claim_unfenceable' | 'validity_precision' | 'projection_loss' | 'visibility_conflict';
 
 type Classified =
   | { id: number; action: 'link'; value: Record<string, unknown> }
   | { id: number; action: 'retire'; duplicateOf: number }
   | { id: number; action: 'skip'; reason: RelinkSkipReason };
 
+/** PostgreSQL JSON can include an offset with seconds in a historical time zone. */
+function relinkTimestamp(value: unknown): number {
+  const iso = String(value);
+  const offset = /([+-]\d{2}:\d{2}):(\d{2})$/.exec(iso);
+  if (!offset) return Date.parse(iso);
+  const minuteOffset = iso.slice(0, -3);
+  const remainingSeconds = Number(offset[2]) * (offset[1]!.startsWith('-') ? -1 : 1);
+  return Date.parse(minuteOffset) - remainingSeconds * 1000;
+}
+
+/** Existing timestamps keep their millisecond precision when adopted. */
+function relinkFenceDate(value: unknown): string {
+  const date = new Date(relinkTimestamp(value));
+  return date.getUTCMilliseconds() === 0 ? formatFenceDate(date) : date.toISOString();
+}
+
+/** The fence projector uses JS Date; check the raw ISO value before conversion. */
+export function relinkValidityRepresentable(from: unknown, until: unknown): boolean {
+  return [from, ...(until == null ? [] : [until])].every(value => {
+    if (typeof value !== 'string' || !Number.isFinite(relinkTimestamp(value))) return false;
+    const fraction = /T\d{2}:\d{2}:\d{2}\.(\d+)/.exec(value)?.[1];
+    return !/[1-9]/.test(fraction?.slice(3) ?? '');
+  });
+}
+
 /** The fence cell a relinked row renders as. */
 function fenceRow(v: Record<string, unknown>, rowNum: number, context: string) {
   return {
     rowNum, claim: String(v.fact), kind: v.kind as never, confidence: Number(v.confidence ?? 1),
     visibility: v.visibility as never, notability: (v.notability ?? 'medium') as never,
-    validFrom: formatFenceDate(new Date(String(v.valid_from))),
-    validUntil: v.valid_until ? formatFenceDate(new Date(String(v.valid_until))) : undefined,
+    validFrom: relinkFenceDate(v.valid_from),
+    validUntil: v.valid_until ? relinkFenceDate(v.valid_until) : undefined,
     source: v.source == null ? undefined : String(v.source),
     context,
     ...(v.claim_metric ? { claimMetric: String(v.claim_metric) } : {}),
@@ -85,16 +112,26 @@ function fenceRow(v: Record<string, unknown>, rowNum: number, context: string) {
  * parsing back to the same active claim and visibility) would be expired and
  * re-inserted as a different fact by the page projection, so it is never moved.
  */
-function roundTrips(v: Record<string, unknown>, context: string): boolean {
+export function relinkFenceLoss(v: Record<string, unknown>, note: string, slug: string, sourceId: string): 'validity_precision' | 'claim_unfenceable' | 'projection_loss' | null {
+  if (!relinkValidityRepresentable(v.valid_from, v.valid_until)) return 'validity_precision';
+  const context = appendContextNote(v.context as string | null, note);
   const parsed = parseFactsFence(upsertFactRow('', fenceRow(v, 1, context)).body);
   const cell = parsed.facts[0];
-  return parsed.warnings.length === 0 && parsed.facts.length === 1 && cell!.active && cell!.claim === String(v.fact)
-    && cell!.visibility === v.visibility && (cell!.context ?? '') === context;
+  if (parsed.warnings.length || parsed.facts.length !== 1 || !cell?.active || cell.claim !== v.fact
+    || cell.visibility !== v.visibility || (cell.context ?? '') !== context) return 'claim_unfenceable';
+  // Page publication refreshes these fields on the adopted row. Compare the
+  // canonical projection so relink cannot silently normalize its payload.
+  const [projected] = extractFactsFromFenceText([cell], slug, sourceId);
+  if (projected!.valid_from?.getTime() !== relinkTimestamp(v.valid_from)
+    || (projected!.valid_until?.getTime() ?? null) !== (v.valid_until == null ? null : relinkTimestamp(v.valid_until))
+    || Math.fround(projected!.confidence ?? 1) !== Math.fround(Number(v.confidence ?? 1))) return 'projection_loss';
+  const fields = ['kind', 'notability', 'source', 'claim_metric', 'claim_value', 'claim_unit', 'claim_period', 'attributed_to'] as const;
+  return fields.some(field => (projected![field] ?? null) !== (v[field] ?? null)) ? 'projection_loss' : null;
 }
 
 function isActiveUnlinked(v: Record<string, unknown>, now: number): boolean {
   return v.entity_slug === null && v.row_num === null && v.source_markdown_slug === null && v.expired_at === null
-    && (v.valid_until === null || new Date(String(v.valid_until)).getTime() > now);
+    && (v.valid_until === null || v.valid_until === 'infinity' || relinkTimestamp(v.valid_until) > now);
 }
 
 async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent, lock: boolean): Promise<Classified[]> {
@@ -110,8 +147,9 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
     }
     const v = snap.value;
     const visibility = v.visibility as 'private' | 'world';
-    if (!roundTrips(v, appendContextNote(v.context as string | null, f.note))) {
-      out.push({ id: f.id, action: 'skip', reason: 'claim_unfenceable' });
+    const fenceLoss = relinkFenceLoss(v, f.note, row.slug, row.source_id);
+    if (fenceLoss) {
+      out.push({ id: f.id, action: 'skip', reason: fenceLoss });
       continue;
     }
     if (await isFactWithdrawn(db, row.source_id, visibility, String(v.fact), row.slug)) {
@@ -226,14 +264,16 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
       const f = byId.get(c.id)!;
       if (c.action === 'link') {
         const rowNum = rowNums.get(c.id)!;
-        const moved = await tx.executeRaw(`UPDATE facts SET entity_slug=$3, source_markdown_slug=$3, row_num=$4::integer, context=$5 ${guard}`,
-          [row.source_id, c.id, row.slug, rowNum, appendContextNote(c.value.context as string | null, f.note)]);
+        const moved = await withTrustKeep(tx, ['facts'], () =>
+          tx.executeRaw(`UPDATE facts SET entity_slug=$3, source_markdown_slug=$3, row_num=$4::integer, context=$5 ${guard}`,
+            [row.source_id, c.id, row.slug, rowNum, appendContextNote(c.value.context as string | null, f.note)]));
         if (moved.length !== 1) throw changed('A relinked fact was moved by another writer.');
         outcome.linked.push({ id: c.id, row_num: rowNum });
       } else if (c.action === 'retire') {
         const [current] = await tx.executeRaw<{ context: string | null }>('SELECT context FROM facts WHERE source_id=$1 AND id=$2', [row.source_id, c.id]);
-        const retired = await tx.executeRaw(`UPDATE facts SET entity_slug=$3, expired_at=now(), context=$4 ${guard}`,
-          [row.source_id, c.id, row.slug, appendContextNote(current?.context ?? null, `${f.note} (duplicate of #${c.duplicateOf})`)]);
+        const retired = await withTrustKeep(tx, ['facts'], () =>
+          tx.executeRaw(`UPDATE facts SET entity_slug=$3, expired_at=now(), context=$4 ${guard}`,
+            [row.source_id, c.id, row.slug, appendContextNote(current?.context ?? null, `${f.note} (duplicate of #${c.duplicateOf})`)]));
         if (retired.length !== 1) throw changed('A relinked fact was moved by another writer.');
         outcome.deduped.push({ id: c.id, duplicate_of: c.duplicateOf });
       } else {

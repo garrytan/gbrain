@@ -20,7 +20,7 @@ import { activatePersistence } from '../src/core/persistence/activation.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
+import { withCoordinatedWrite, withWriteTrust } from '../src/core/persistence/context.ts';
 import { TEST_WRITE_ATTRIBUTION } from './helpers/write-attribution.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -115,10 +115,24 @@ test(`${backend}: a managed brain publishes the same way through the coordinator
   await seedEntity('companies/basalt-example', 'Basalt Example', true);
   await registerLocalWriter(engine, 'cli');
   await activatePersistence(engine, { confirmQuiesced: true });
-  const id = await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], async () =>
-    (await tx.insertFact({ fact: 'Basalt Example signed a pilot', kind: 'fact', entity_slug: null, visibility: 'world', source: 'chat' } as never, { source_id: 'default' })).id, TEST_WRITE_ATTRIBUTION));
+  const id = await engine.transaction(tx => withCoordinatedWrite(tx, ['default'], () => withWriteTrust(tx, {
+    tier: 'external_untrusted', origin: { channel: 'derive:facts_backstop' },
+  }, async () => (await tx.insertFact({
+    fact: 'Basalt Example signed a pilot', kind: 'fact', entity_slug: null, visibility: 'private', source: 'chat',
+    claim_metric: 'deal_value', claim_value: 42, claim_unit: 'USD',
+    valid_from: new Date('2026-01-01T12:08:23.885Z'), valid_until: new Date('2099-01-02T12:08:23.123Z'),
+  }, { source_id: 'default' })).id), TEST_WRITE_ATTRIBUTION));
   expect((await relink()).linked).toBe(1);
   const rowNum = await expectAdopted(id, 'companies/basalt-example');
   const file = parseFactsFence(readFileSync(join(repo, 'companies/basalt-example.md'), 'utf8')).facts;
-  expect(file.find(f => f.rowNum === rowNum)?.claim).toBe('Basalt Example signed a pilot');
+  expect(file.find(f => f.rowNum === rowNum)).toMatchObject({
+    claim: 'Basalt Example signed a pilot', visibility: 'private', source: 'chat',
+    claimMetric: 'deal_value', claimValue: 42, claimUnit: 'USD',
+    validFrom: '2026-01-01T12:08:23.885Z', validUntil: '2099-01-02T12:08:23.123Z',
+  });
+  const [projected] = await engine.executeRaw('SELECT write_origin, trust_tier, valid_from, valid_until FROM facts WHERE id=$1', [id]);
+  expect(projected).toMatchObject({
+    write_origin: { channel: 'derive:facts_backstop' }, trust_tier: 'external_untrusted',
+    valid_from: new Date('2026-01-01T12:08:23.885Z'), valid_until: new Date('2099-01-02T12:08:23.123Z'),
+  });
 }));

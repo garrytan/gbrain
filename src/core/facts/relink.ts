@@ -18,7 +18,7 @@ import { inferFactSubject, recordedPageSlug } from './subject-infer.ts';
 import { entityLinkable } from './attribution.ts';
 import { RELINK_REASONS, type RelinkReason } from './relink-reasons.ts';
 import { estimateModelTokens, judgeBatch, MODEL_BATCH_SIZE, type ModelVerdict } from './relink-model.ts';
-import { relinkFactHash, submitRelinkGroup, type RelinkIntentFact } from './relink-publish.ts';
+import { relinkFactHash, relinkFenceLoss, relinkValidityRepresentable, submitRelinkGroup, type RelinkIntentFact } from './relink-publish.ts';
 
 export const RELINK_DEFAULT_LIMIT = 1000;
 export const RELINK_DEFAULT_MAX_USD = 1;
@@ -74,7 +74,10 @@ export interface RelinkReport {
   examples: Record<string, Example[]>;
 }
 
-interface Candidate { id: number; fact: string; visibility: 'private' | 'world'; context: string | null; source: string | null; attributed_to: FactAttribution | null }
+interface Candidate {
+  id: number; fact: string; visibility: 'private' | 'world'; context: string | null; source: string | null;
+  attributed_to: FactAttribution | null; valid_from: string; valid_until: string | null;
+}
 interface Planned { id: number; slug: string; tier: RelinkTier; model: string | null }
 
 const MODEL_VERDICT_SKIP = new Set<string>(['no_subject', 'ambiguous', 'unverified_match']);
@@ -91,7 +94,8 @@ function emptyReport(opts: RelinkOptions, runId: string): RelinkReport {
 export async function loadRelinkCandidates(engine: BrainEngine, opts: RelinkOptions): Promise<{ rows: Candidate[]; hasMore: boolean }> {
   const limit = opts.limit ?? RELINK_DEFAULT_LIMIT;
   const rows = await engine.executeRaw<Candidate & { id: number | string }>(
-    `SELECT id, fact, visibility, context, source, attributed_to FROM facts
+    `SELECT id, fact, visibility, context, source, attributed_to,
+        to_jsonb(valid_from)#>>'{}' AS valid_from, to_jsonb(valid_until)#>>'{}' AS valid_until FROM facts
       WHERE source_id = $1 AND entity_slug IS NULL AND expired_at IS NULL
         AND row_num IS NULL AND source_markdown_slug IS NULL
         AND (valid_until IS NULL OR valid_until > now())
@@ -136,6 +140,11 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
       opts.onProgress?.(i + 1, rows.length);
       continue;
     }
+    if (!relinkValidityRepresentable(c.valid_from, c.valid_until)) {
+      skip('validity_precision', c);
+      opts.onProgress?.(i + 1, rows.length);
+      continue;
+    }
     const r = await inferFactSubject(engine, opts.sourceId, { fact: c.fact, pageSlug: recordedPageSlug(c.context, c.source), mode: 'relink' });
     if (r.slug !== null) planned.push({ id: c.id, slug: r.slug, tier: r.via, model: null });
     else leftovers.push({ ...c, freeReason: r.reason, resolved: r.resolved });
@@ -151,23 +160,30 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
   for (const p of planned) groups.set(p.slug, [...(groups.get(p.slug) ?? []), p]);
   const queue = opts.conflictQueue !== false && await conflictSlotOn(engine);
   const linkedIds: number[] = [];
+  const plannedNote = (p: Planned) => `entity relinked ${p.tier === 'model' ? `by model (${p.model})` : `from ${p.tier}`}`;
   for (const [slug, group] of groups) {
     opts.signal?.throwIfAborted();
+    const { readFacts } = await import('../persistence/prepared-maintenance.ts');
+    const snaps = await readFacts(engine, opts.sourceId, group.map(p => p.id));
+    const snapshots = new Map(snaps.map(snap => [snap.id, snap]));
     if (opts.dryRun) {
       for (const p of group) {
+        const snap = snapshots.get(p.id);
+        const loss = snap ? relinkFenceLoss(snap.value, plannedNote(p), slug, opts.sourceId) : 'revision_conflict';
+        if (loss) {
+          skip(loss, byId.get(p.id)!);
+          continue;
+        }
         report.linked += 1;
         report.linked_by_tier[p.tier] += 1;
         note('linked', byId.get(p.id)!, slug);
       }
       continue;
     }
-    const { readFacts } = await import('../persistence/prepared-maintenance.ts');
-    const snaps = await readFacts(engine, opts.sourceId, group.map(p => p.id));
     const facts: RelinkIntentFact[] = group.flatMap(p => {
-      const snap = snaps.find(s => s.id === p.id);
+      const snap = snapshots.get(p.id);
       if (!snap) return [];
-      const how = p.tier === 'model' ? `by model (${p.model})` : `from ${p.tier}`;
-      return [{ id: p.id, hash: relinkFactHash(snap), tier: p.tier, model: p.model, note: `entity relinked ${how}` }];
+      return [{ id: p.id, hash: relinkFactHash(snap), tier: p.tier, model: p.model, note: plannedNote(p) }];
     });
     const result = await submitRelinkGroup(engine, opts.config, opts.sourceId, slug, { kind: 'relink_facts', run_id: runId, queue_conflict: queue, facts });
     if (!result.ok) {

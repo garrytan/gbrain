@@ -14,6 +14,7 @@ import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 import { readFacts } from '../src/core/persistence/prepared-maintenance.ts';
 import { relinkFactHash, submitRelinkGroup } from '../src/core/facts/relink-publish.ts';
+import { withWriteTrust } from '../src/core/persistence/context.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { __setChatTransportForTests, configureGateway, resetGateway, type ChatOpts, type ChatResult } from '../src/core/ai/gateway.ts';
 
@@ -51,6 +52,82 @@ afterEach(() => {
 });
 
 describe('relink free tiers', () => {
+  test('keeps original provenance and millisecond validity when moving a derived fact', async () => {
+    const id = await engine.transaction(tx => withWriteTrust(tx, {
+      tier: 'external_untrusted', origin: { channel: 'derive:facts_backstop' },
+    }, async () => (await tx.insertFact({
+      fact: 'Alice Example will verify the fixtures on Tuesday', kind: 'event', entity_slug: null,
+      visibility: 'private', source: 'mcp:put_page', context: 'meetings/fixture',
+      attributed_to: 'user', valid_from: new Date('2026-01-01T12:08:23.885Z'),
+      valid_until: new Date('2099-01-02T12:08:23.123Z'),
+    }, { source_id: 'default' })).id));
+    const before = await row(id);
+    expect(before.write_origin).toEqual({ channel: 'derive:facts_backstop' });
+    expect((await relink()).linked).toBe(1);
+    const after = await row(id);
+    expect(after).toMatchObject({
+      id, entity_slug: 'people/alice-example', visibility: 'private', source: before.source,
+      trust_tier: before.trust_tier, write_origin: before.write_origin,
+      created_at: before.created_at, valid_from: before.valid_from, valid_until: before.valid_until,
+    });
+  });
+
+  test.each([['valid_from', '2026'], ['valid_until', '2099']])('preserves sub-millisecond %s on an unlinked fact', async (column, year) => {
+    const id = await unlinked('Alice Example will verify the fixtures on Tuesday');
+    await engine.executeRaw(`UPDATE facts SET ${column}=$2::timestamptz WHERE id=$1`, [id, `${year}-01-01T12:08:23.123456Z`]);
+    const before = await row(id);
+    const preview = await relink({ dryRun: true });
+    expect(preview.linked).toBe(0);
+    expect(preview.skipped.validity_precision).toBe(1);
+    const report = await relink();
+    expect(report.linked).toBe(0);
+    expect(report.skipped.validity_precision).toBe(1);
+    expect(await row(id)).toEqual(before);
+    const [exact] = await engine.executeRaw<{ value: string }>(`SELECT ${column}::text AS value FROM facts WHERE id=$1`, [id]);
+    expect(exact.value).toContain('.123456');
+  });
+
+  test('date style does not turn the year into a fractional second', async () => {
+    await unlinked('Alice Example will verify the fixtures on Tuesday', { valid_from: new Date('2026-01-01T12:08:23.123Z') });
+    await engine.transaction(async tx => {
+      await tx.executeRaw("SET LOCAL DateStyle = 'German, DMY'");
+      const report = await runFactsRelink(tx, { sourceId: 'default', config, llm: false, dryRun: true });
+      expect(report.linked).toBe(1);
+      expect(report.skipped.validity_precision).toBeUndefined();
+    });
+  });
+
+  test('historical session time zone offsets preserve the UTC instant', async () => {
+    const from = new Date('1880-01-01T12:08:23.123Z');
+    const id = await unlinked('Alice Example will verify the fixtures on Tuesday', { valid_from: from });
+    try {
+      await engine.executeRaw("SET TIME ZONE 'Asia/Kolkata'");
+      const preview = await relink({ dryRun: true });
+      expect(preview.linked).toBe(1);
+      expect((await relink()).linked).toBe(1);
+    } finally {
+      await engine.executeRaw('RESET TIME ZONE');
+    }
+    expect((await row(id)).valid_from).toEqual(from);
+  });
+
+  test('keeps the original row active when the fence would normalize its typed claim', async () => {
+    const id = await unlinked('Acme Example measured a score of 42', {
+      claim_metric: 'Net Promoter Score', claim_value: 42,
+    });
+    const before = await row(id);
+    expect(before.claim_metric).toBe('Net Promoter Score');
+    const preview = await relink({ dryRun: true });
+    expect(preview.linked).toBe(0);
+    expect(preview.skipped.projection_loss).toBe(1);
+    const report = await relink();
+    expect(report.linked).toBe(0);
+    expect(report.skipped.projection_loss).toBe(1);
+    expect(await row(id)).toEqual(before);
+    const page = await engine.getPage('companies/acme-example', { sourceId: 'default' });
+    expect(parseFactsFence(page!.compiled_truth).facts).toHaveLength(0);
+  });
+
   test('moves the row by id onto the entity fence; reconcile changes nothing', async () => {
     const id = await unlinked('Acme Example raised a seed round');
     const report = await relink();
@@ -87,12 +164,15 @@ describe('relink free tiers', () => {
     const first = await unlinked('Acme Example raised a seed round');
     await relink();
     const dup = await unlinked('Acme Example raised a seed round');
+    const original = await row(dup);
     const report = await relink();
     expect(report.deduped).toBe(1);
     const r = await row(dup);
     expect(r.entity_slug).toBe('companies/acme-example');
     expect(r.expired_at).not.toBeNull();
     expect(r.row_num).toBeNull();
+    expect(r.write_origin).toEqual(original.write_origin);
+    expect(r.trust_tier).toBe(original.trust_tier);
     expect(String(r.context)).toContain(`duplicate of #${first}`);
     expect((await row(first)).expired_at).toBeNull();
   });

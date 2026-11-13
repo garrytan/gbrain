@@ -1,0 +1,1 @@
+Linking a saved fact to an entity now retains the fact row's original source attribution, trust tier, and validity timestamps through millisecond precision. A fact stays active and unlinked if its timestamp precision or stored fields cannot be carried through the facts fence. Preview and apply report the reason.

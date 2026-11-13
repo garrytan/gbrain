@@ -70,13 +70,16 @@ invented or injected name never links. Private facts stay out of the model
 tier unless you pass `--include-private`. Before the first model call relink
 prints the provider and an estimated cost.
 
-Each linked fact keeps its id, embedding and provenance and is written onto
-the entity page's `## Facts` fence exactly as a fresh `remember` with that
-entity would write it (the canonical file too, when the source writes
-through). Its context cell records how it was linked (`entity relinked from
+Each linked fact row keeps its ID, embedding, provenance, trust tier and
+millisecond validity when it moves onto the entity page's `## Facts` fence.
+When the source writes through, the canonical file receives the same fence
+row. Its context cell records how it was linked (`entity relinked from
 mention`, `... from page`, `... by model (<model>)`). An exact duplicate of a
 fact the entity already has is retired: expired, kept in history, never
 deleted. Relink never creates pages and never supersedes a fact.
+
+Preview and apply both report a fact that cannot survive the fence round trip
+without changing its stored fields or validity timestamps.
 
 ### Large brains: continue where you stopped
 
@@ -168,6 +171,8 @@ still finds it, and doctor `unlinked_facts` does not count it.
 | `unfenceable` | no | The source writes through to files but has no canonical owner. Bind the source (gbrain sources writer status <source> --json, then gbrain sources writer claim <source> --path <checkout> --admin-intent writer_claim --expected-state <admin_state>), then rerun. |
 | `fence_malformed` | no | The entity page has a ## Facts fence that cannot be normalized. Preview the fence repair of that page (`repair fences --slug <entity-slug>` on the brain host; read-only, and it names the exact edit for anything it will not repair), apply it, then rerun. |
 | `claim_unfenceable` | no | The claim text cannot be written to a fence row unchanged (for example it is wrapped in ~~). Forget it and remember a cleaned-up claim with --entity. |
+| `validity_precision` | no | The fact has a validity timestamp that a fence cannot preserve, such as sub-millisecond precision. The original fact stays active and unlinked. |
+| `projection_loss` | no | Publishing the fence row would change stored fact fields. The original fact stays active and unlinked. |
 | `visibility_conflict` | no | The entity already has the same claim from the same source with the other visibility, and a page indexes only one. Forget the copy you do not want, then rerun. |
 | `fence_owned` | no | The fact lives in another page fence or is a conversation page's extracted fact. Relink does not move fence-owned facts; conversation facts are linked by relink with --conversation (free, preview with --dry-run). |
 | `budget_exhausted` | no | The model tier reached --max-usd. Raise --max-usd (or pass off) and rerun with the printed continuation command. |
