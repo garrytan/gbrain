@@ -39,6 +39,7 @@ const BUN_TEST = ['bun', 'test', '--timeout=60000'];
 export const ARTIFACTS: Artifact[] = [
   { name: 'schema (src/schema-embedded)', regen: ['bun', 'run', 'scripts/build-schema.ts'], check: ['bash', 'scripts/check-schema-fresh.sh'] },
   { name: 'schema migrations bundle', regen: ['bun', 'run', 'scripts/build-schema-migrations.ts'], check: ['bash', 'scripts/check-schema-migrations-fresh.sh'] },
+  { name: 'behavior-change table (behavior-changes.d)', regen: ['bun', 'scripts/build-behavior-changes.ts'], check: ['bun', 'scripts/build-behavior-changes.ts', '--check'] },
   { name: 'error-code registry docs', regen: ['bun', 'scripts/build-error-codes.ts'], check: ['bun', 'scripts/build-error-codes.ts', '--check'] },
   { name: 'agent operator protocol blocks', regen: ['bun', 'scripts/build-agent-protocol.ts'], check: ['bun', 'scripts/build-agent-protocol.ts', '--check'] },
   { name: 'lookup table copies', regen: ['bun', 'scripts/build-lookup-table.ts'], check: ['bun', 'scripts/build-lookup-table.ts', '--check'] },

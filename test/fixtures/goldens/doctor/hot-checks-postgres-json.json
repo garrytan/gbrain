@@ -1172,6 +1172,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
+            "name": "access_labelled_only_members",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: no attest credential reads named sources as the person (--attest-read person).",
             "name": "attest_read_shared_scope",
             "readiness_state": "not_applicable",
@@ -6296,6 +6305,15 @@
             "elapsed_ms": "<volatile>",
             "message": "Not applicable: access.members_read_lineage is off; derived pages and facts of a page that names readers or sits under a rule are hidden from every member but the owner.",
             "name": "access_members_read_lineage",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: no member is labelled-only (gbrain access member labelled-only <id> on).",
+            "name": "access_labelled_only_members",
             "readiness_state": "not_applicable",
             "severity": "info",
             "status": "ok"

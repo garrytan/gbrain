@@ -610,6 +610,7 @@
       "gbrain_access_origin_closed_for(o_source text, o_slug text, o_frontmatter jsonb, o_readers text[], o_rules text[], p_identity text[], p_satisfied text[], p_open boolean, p_own_page text, p_audience_pages text[])": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=141ca5767c490e897b509cee46d2e7b54ce8ff12176c4c45ec36fb7b048cd660",
       "gbrain_access_origin_hidden_for(p_id integer, p_source_id text, p_type text, fm jsonb, p_identity text[], p_satisfied text[], p_open boolean, p_own_page text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=3eac3806fcfc6e54e07a28f06ce153b4ac415709cd53c50d3b24e4423646be3c",
       "gbrain_access_origin_hidden_for(p_id integer, p_source_id text, p_type text, fm jsonb, p_identity text[], p_satisfied text[], p_open boolean, p_own_page text, p_audience_pages text[])": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=74057c9cd464b1993aa10970e8d21cc5fb2f66c7c7fe91dc271680901f927188",
+      "gbrain_access_origin_labelled_for(p_id integer, p_source_id text, p_type text, fm jsonb, p_identity text[], p_satisfied text[])": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=5a96033dc414d3a00b9fe8c84cdd66d9429260c9d62ca3a9640562944d76ed2f",
       "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=506a29c639348746278d0c472b43a013bf2e39a8e83de4cd3641424116160c6d",
       "gbrain_access_pending_covers(p_source text, p_slug text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=57448e941169ad1e65fbdab4bbe4572cc7b6f164ef19fd61a3666640e85f253c",
       "gbrain_access_readers(fm jsonb)": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=18348cb56089106aaec6470076ee652d7ed3bfbcb20e950a24abd52a21e7a380",
@@ -1818,7 +1819,8 @@
           "5 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
           "7 email text/text NULL",
-          "8 kind text/text NOT NULL DEFAULT 'person'::text"
+          "8 kind text/text NOT NULL DEFAULT 'person'::text",
+          "9 labelled_only boolean/bool NOT NULL DEFAULT false"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

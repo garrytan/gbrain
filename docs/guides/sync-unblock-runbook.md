@@ -435,7 +435,8 @@ it, and a `--full` continues until every path it covers is settled.
   file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back), and `db_ahead` (the page changed in the database and the file
   did not; the sub-labels `pending`, `db_only` and `unproven` are
   informational, and `gbrain repair file-drift --prefer database` writes one
-  back to its file if the owner wants it).
+  back to its file if the owner wants it: its preview names any file change
+  sync never imported, and its apply asks for the owner's consent).
 - `owner`, sync finishes it by itself: `in_flight` (admitted, not yet
   published), `import`, `reparse` (an unchanged file whose page is imported
   again because its parser or schema pack changed, its origin moved, or an
