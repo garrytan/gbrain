@@ -20,6 +20,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { requestPersistenceOperation, startPersistenceIpcServer, type PersistenceIpcBinding, type PersistenceIpcRequest } from '../src/core/persistence/ipc.ts';
 
 const CANARY = 'OWNER_FAULT_CANARY_9224';
+const LEAK = 'hunter2';
 const BRAIN = randomUUID();
 const home = mkdtempSync(join(tmpdir(), 'gbrain-owner-fault-'));
 let ipc: PersistenceIpcBinding;
@@ -42,7 +43,7 @@ describe('an owner fault over the persistence socket (#9224)', () => {
   beforeAll(async () => {
     ipc = (await startPersistenceIpcServer(join(home, 'owner.sock'), {
       brainId: BRAIN,
-      dispatch: async () => { throw new TypeError(`${CANARY} at postgres://writer:hunter2@db.example.invalid/brain`); },
+      dispatch: async () => { throw new TypeError(`${CANARY} at postgres://writer:${LEAK}@db.example.invalid/brain`); },
     }))!;
   });
   afterAll(async () => { const closed = once(ipc.server, 'close'); ipc.close(); await closed; rmSync(home, { recursive: true, force: true }); });
@@ -61,11 +62,11 @@ describe('an owner fault over the persistence socket (#9224)', () => {
     expect(error.fix).toMatchObject({ argv: ['gbrain', 'sources', 'writer', 'status', '--json'], actor: 'agent', consent: [] });
     const wire = JSON.stringify(error.toJSON());
     expect(wire).not.toContain(CANARY);
-    expect(wire).not.toContain('hunter2');
+    expect(wire).not.toContain(LEAK);
     const line = logged.find(l => l.includes(incident!)) ?? '';
     expect(line).toContain('class=TypeError');
     expect(line).not.toContain(CANARY);
-    expect(line).not.toContain('hunter2');
+    expect(line).not.toContain(LEAK);
   });
 
   test('a write names its request ID to inspect before resubmitting', async () => {
