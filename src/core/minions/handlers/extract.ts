@@ -25,9 +25,12 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
       });
       // Internal 30-min budget hit with work remaining → chain a
       // continuation job so a very large deferred backlog converges without
-      // waiting for the next sync. Forward-progress guard (pagesProcessed >
-      // 0) prevents an infinite chain if the sweep can't advance.
-      if (!job.data.dryRun && r.staleRemaining > 0 && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)) {
+      // waiting for the next sync. Forward-progress guard: the run processed
+      // pages, and a continuation left fewer stale pages than its parent did.
+      // pagesProcessed alone is not progress: a page the sweep re-stamps but
+      // cannot clear is processed on every run, and the chain never ended.
+      const previous = typeof job.data.previous_stale_remaining === 'number' ? job.data.previous_stale_remaining : Infinity;
+      if (!job.data.dryRun && r.staleRemaining > 0 && r.staleRemaining < previous && (r.pagesProcessed > 0 || (r.mentions?.pages ?? 0) > 0)) {
         try {
           const queue = new MinionQueue(engine);
           // NO maxWaiting: with an unscoped (NULL-sourceId) payload the
@@ -37,7 +40,7 @@ export function makeExtractHandler(engine: BrainEngine): MinionHandler {
           // so there is no pile-up to guard against.
           await queue.add(
             'extract',
-            { ...job.data, continuation_of: job.id },
+            { ...job.data, continuation_of: job.id, previous_stale_remaining: r.staleRemaining },
             { timeout_ms: STALE_TIME_BUDGET_MS + 5 * 60 * 1000 },
           );
         } catch { /* best-effort: next sync/manual sweep picks up the rest */ }
