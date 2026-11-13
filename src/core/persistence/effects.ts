@@ -346,8 +346,10 @@ async function publishGitPage(engine: BrainEngine, effect: PersistenceEffect, bi
   const root = binding.local_path;
   if (!targetedWithdrawalEffect(effect) && !effect.data.source_scan) {
     const target = await singleFileGitTarget(engine, effect, { ...binding, local_path: root }, attempt);
-    if (target !== null) await completeEffect(engine, effect, await publishGitEffect(root, target, opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner,
-      effect.data.expected_hash));
+    if (target === null) return;
+    const commits = new Map<string, string>();
+    const outcome = await publishGitEffect(root, target, opts.signal, hardened, await gitCommitNote(engine, effect), undefined, owner, effect.data.expected_hash, commits);
+    await completeEffect(engine, effect, commits.has(target) ? { ...outcome, commit: commits.get(target) } : outcome);
     return;
   }
   // Only a page walk reads snapshots; a single-file effect completes by its recorded hash.
@@ -982,9 +984,10 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       }
       const notes = new Map<string, GitCommitNote>();
       for (const { effect, path } of targets) { const note = await gitCommitNote(engine, effect); if (note) notes.set(path, note); }
+      const commits = new Map<string, string>();
       const outcomes = targets.length ? await commitGitTargets(binding.local_path, targets.map(t => t.path), opts.signal, notes,
         { writerLock: lock, onReclaim: () => { reclaimed = true; } },
-        new Map(targets.flatMap(t => t.effect.data.expected_hash === undefined ? [] : [[t.path, t.effect.data.expected_hash] as const]))) : new Map();
+        new Map(targets.flatMap(t => t.effect.data.expected_hash === undefined ? [] : [[t.path, t.effect.data.expected_hash] as const])), commits) : new Map();
       const pending = unpushed.get(binding.local_path) ?? { binding, items: [] };
       // #7089: an absent target whose removal an earlier attempt committed (its push failed) joins the push like an
       // unchanged one while the root is ahead of its upstream; on a root that is not ahead it completes without a push.
@@ -994,7 +997,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
         const outcome = outcomes.get(path)!;
         if (outcome instanceof OperationError) await recordFailure(engine, effect, outcome, opts.signal, attempt.target);
         else if (outcome.reason === 'target_absent' && !ahead) await completeEffect(engine, effect, outcome);
-        else pending.items.push({ effect, outcome, target: attempt.target });
+        else pending.items.push({ effect, outcome: commits.has(path) ? { ...outcome, commit: commits.get(path) } : outcome, target: attempt.target });
       }
       for (const effect of committedAtPublication) pending.items.push({ effect, outcome: { git: 'committed', at: 'publication' } });
       if (pending.items.length) unpushed.set(binding.local_path, pending);

@@ -15,6 +15,7 @@ import { readWriteSwitchSnapshot } from './switches.ts';
 import { DATABASE_REFUSAL_HINT, DATABASE_TRIGGER_HINT, guardRefusalHint, ownerExceptionHint, unknownOriginHint } from './connector-errors.ts';
 import { readQueuedHeadBlockers } from './head-blocker.ts';
 import { SOURCE_CHANGED_ORIGINS } from './publication-failure.ts';
+import { abandonedClaimCutoff } from './effect-journal.ts';
 
 export const WRITER_NEXT_ACTIONS: Record<string, string> = {
   unexpected_staging_bytes: 'Keep the worktree blocked and retain its staging files and recovery capacity. Compare the recorded staging size and hash, then reconcile unexpected bytes explicitly before retrying; never discard unverified staging files.',
@@ -49,13 +50,17 @@ export function writerNextAction(reason: string | null | undefined): string {
  * ceiling or on `restart_required` the host admin restarts the named owner (`tell_user_to_run`); a lapsed claim resumes
  * on its own once its transaction ends or the owner exits, so the fix is the resume (`run`).
  */
-export interface ClaimNextAction { code: 'claim_running' | 'claim_overdue' | 'claim_lapsed'; why: string; retry_after_ms: number | null; fix: RenderedAction }
+export interface ClaimNextAction { code: 'claim_running' | 'claim_overdue' | 'claim_lapsed' | 'claim_owner_exited'; why: string; retry_after_ms: number | null; fix: RenderedAction }
 export function claimNextAction(claim: ClaimState, stall: ClaimStall | null, policy: { budgetMs: number | null; ceilingMs: number }, sourceId: string | null,
   owner: { row: ListedConsumer | null; live: boolean | null }, now = Date.now()): ClaimNextAction {
   const ctx = cliRenderContext();
   const status = ['gbrain', 'sources', 'writer', 'status', ...(sourceId ? ['--source', sourceId] : []), '--json'];
   const who = claim.owner ? `${claim.owner.kind} pid ${claim.owner.pid}` : 'the owner';
   const where = `${claim.step ? ` at step ${claim.step}` : ''}${claim.waiting_on !== 'unknown' ? ` (waiting on ${claim.waiting_on})` : ''}${claim.last_sql ? `, last statement ${claim.last_sql.label}` : ''}`;
+  if (claim.owner_exited) {
+    return { code: 'claim_owner_exited', retry_after_ms: null, why: `${who} has exited${where} and nothing renews the claim; the next write from this machine (or a gbrain process already running here, within seconds) releases it and runs the request again, so the source moves without anyone acting.`,
+      fix: renderAction({ argv: status, consent: [], actor: 'agent', requires_exclusive: false, why: 'Read-only: rerun after the next write from this machine to see the request requeued or committed.', verify: { argv: status } }, ctx) };
+  }
   if (claim.phase === 'publication_transaction') {
     return { code: 'claim_lapsed', retry_after_ms: null, why: `The claim lapsed while running; the request is requeued once the transaction holding its row ends or the owner exits, and the next consumer claims it.`,
       fix: renderAction({ argv: status, consent: [], actor: 'agent', requires_exclusive: false, why: 'Read-only: rerun to see the request requeued or claimed again.', verify: { argv: status } }, ctx) };
@@ -166,8 +171,9 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const blockers = await engine.executeRaw<{ id: string; request_id: string; worktree_id: string | null; source_id: string | null; state: WriteRequestState; created_at: Date | string; blocked_reason: string | null; error_code: string | null;
     operation: string; intent_kind: string | null; preparation_attempts: number | null } & Omit<ClaimRow, 'state'>>(
     `SELECT request_id,worktree_id,source_id,state,blocked_reason,error_code,created_at,claim_phase,execution_token,claim_expires_at<now() AS claim_lapsed,publication_started,
-      operation,intent->>'kind' AS intent_kind,preparation_attempts,id::text AS id
-    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`);
+      operation,intent->>'kind' AS intent_kind,preparation_attempts,id::text AS id,
+      ($1::timestamptz IS NOT NULL AND state='running' AND recovery IS NULL AND updated_at<$1::timestamptz) AS abandoned
+    FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering') OR blocked_reason IS NOT NULL ORDER BY sequence LIMIT 100`, [abandonedClaimCutoff(engine)?.toISOString() ?? null]);
   const queue = await engine.executeRaw(`SELECT state,COUNT(*)::integer AS count,COALESCE(SUM(intent_bytes),0)::text AS intent_bytes,
     MIN(created_at) AS oldest_request_at,
     MAX(EXTRACT(EPOCH FROM (now()-created_at))*1000)::bigint::text AS oldest_age_ms
@@ -192,7 +198,9 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
   const hostId = existingHostIdFor(engine);
   const consumerRows = hostId ? await listHostConsumers(engine, hostId).catch(() => []) : [];
   const tracked = (engine as { getPoolDiagnostics?: () => { tracked?: unknown } | null }).getPoolDiagnostics?.()?.tracked ?? null;
-  const claimStates = blockers.map(row => claimStateOf({ state: row.state, claim_phase: row.claim_phase, execution_token: row.execution_token, claim_lapsed: row.claim_lapsed, publication_started: row.publication_started }));
+  const ownedHere = new Set((worktrees as Array<{ id: string; owner_host_id: string | null }>).filter(w => hostId !== null && w.owner_host_id === hostId).map(w => w.id));
+  const claimStates = blockers.map(row => claimStateOf({ state: row.state, claim_phase: row.claim_phase, execution_token: row.execution_token, claim_lapsed: row.claim_lapsed,
+    publication_started: row.publication_started, abandoned: row.abandoned, probe_owner: row.worktree_id === null || ownedHere.has(row.worktree_id) }));
   const backends = await readOwnerBackends(engine, claimStates.flatMap(state => state?.owner ? [state.owner] : []));
   const headBlockers = await readQueuedHeadBlockers(engine, blockers, hostId);
   // C-NEW-4: the consumer is per process, so this is the answering process's own ingress, never proof the brain's owner is down.
@@ -205,7 +213,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
     limits: Object.fromEntries(Object.entries(limits).filter(([, value]) => Number.isFinite(value))), capacity: capacityDiagnostics(counters, limits), preparation_policy,
     recent_failures: failures.map(row => ({ ...row, next_action: recentFailureNextAction(row) })),
     backend_visibility: backends.visibility,
-    blockers: blockers.map(({ id: rowId, claim_phase: _phase, execution_token: _token, claim_lapsed: _lapsed, publication_started: _started, ...row }, index) => {
+    blockers: blockers.map(({ id: rowId, claim_phase: _phase, execution_token: _token, claim_lapsed: _lapsed, publication_started: _started, abandoned: _abandoned, ...row }, index) => {
       const health = writeHealth(row);
       const advice = writerNextAction(row.blocked_reason ?? row.error_code);
       // #6176: a running request names the phase its claim is in and how long it has held it; #6278: its step, wait cause, owner
@@ -219,7 +227,7 @@ export async function readWriterDiagnostics(engine: BrainEngine) {
       const ownerBackends = state?.owner ? backends.byOwner.get(`gbrain ${state.owner.kind}:${state.owner.pid}:${(state.owner.nonce ?? '').slice(0, 8)}`) ?? [] : [];
       const claim = state ? { ...state, ...(state.owner ? { owner: { ...state.owner, backend: ownerBackends, backend_visibility: backends.visibility } } : {}),
         ...(budget === null ? {} : { budget_ms: budget }), stall, ...claimPool(engine, state, ownerRow), pool_tracked_subset: tracked,
-        owner_live: ownerRow ? ownerRow.liveness === 'live' : null, owner_mode: ownerRow?.mode ?? null,
+        owner_live: state.owner_exited ? false : ownerRow ? ownerRow.liveness === 'live' : null, owner_mode: ownerRow?.mode ?? null,
         next: claimNextAction(state, stall, { budgetMs: budget, ceilingMs }, row.source_id, { row: ownerRow, live: ownerRow ? ownerRow.liveness === 'live' : null }) } : undefined;
       // #6543 (B2): a queued head names what keeps it unclaimed, and the cancel command only when this caller may cancel the blocking request.
       const head = headBlockers.get(rowId);
