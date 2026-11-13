@@ -1,0 +1,4 @@
+{
+  "$comment": "Matrix failures already tracked by an issue, so a nightly run stays green while the fix lands. Each entry names one check, explicit release tags and the tracking issue; validateKnownExceptions (scripts/upgrade-matrix/verdict.ts) refuses wildcards and setup errors. Remove an entry when its issue closes. Docs: docs/ci-upgrade-matrix.md#known-exceptions",
+  "exceptions": []
+}

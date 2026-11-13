@@ -1,0 +1,1 @@
+The dream cycle's `propose_takes` phase no longer puts a claim back in the review queue after you rejected the same claim text on the same page (#7299). Before, any edit to the page re-extracted it and the rejected claims came back as new proposals. A reworded claim is still proposed; the run reports how many it dropped as `rejected_claims_skipped`.

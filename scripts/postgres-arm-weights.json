@@ -80,6 +80,7 @@
   "test/doctor-image-embedding-coverage.test.ts": 8105,
   "test/doctor-keyword-plan-6495.test.ts": 4580,
   "test/doctor-routing-skill-pack-source.test.ts": 6433,
+  "test/doctor-session-lane-gbra133.test.ts": 3770,
   "test/doctor-strict-facts-outside-git.test.ts": 7643,
   "test/doctor-sync-freshness-skill-pack-6076.test.ts": 5394,
   "test/edge-whitespace-twins.test.ts": 9721,
