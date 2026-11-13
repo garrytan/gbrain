@@ -21,6 +21,7 @@
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
+import postgres from '#postgres';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,6 +50,8 @@ import { resolveRepairScope, type RepairKind } from '../src/core/repair/core.ts'
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { __setMaintenanceWriteWaitForTests } from '../src/core/persistence/maintenance-wait.ts';
+import { resetSyncPreparationBudget } from '../src/core/persistence/sync-waivers.ts';
+import { moveRuledSharedHeld } from '../src/core/facts/held-fact-move.ts';
 import { acquireWorktree, getWorktreeBinding } from '../src/core/persistence/ownership.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
@@ -277,6 +280,34 @@ for (const backend of testBackends()) describe(`[${backend}] the folder-rule hol
     expect((await runExtractFacts(engine, { sourceId: 'default' })).heldFactsMoved).toBe(1);
     expect(await reads(as, 'bob', 'clients/beta-example/memory/unattributed', other)).toEqual({ page: false, fact: false });
     expect((await as('bob', 'get_page', { slug: HOLD })).text).not.toContain('beta-example');
+  }), 300_000);
+
+  test.skipIf(backend !== 'postgres')('on the sync path a due held move ends at the sync preparation budget while another session locks pages; once the lock drops it moves', () => strict(async ({ engine, ctx }) => {
+    const entity = 'clients/acme-example/brief';
+    const claim = 'The acme-example brief carries a locked clause.';
+    expect(await remember(ctx, claim, entity)).toMatchObject({ page: HOLD });
+    policySeams.afterInstall = () => { throw new Error('interrupted'); };
+    await expect(rules(engine, [rule('clients', 'clients/acme-example/', ['alice-example'])])).rejects.toThrow('interrupted');
+    policySeams.afterInstall = undefined;
+    __resetPrivateVisibilityCacheForTests();
+    const budget = 1_000;
+    await engine.setConfig('persistence.sync_preparation_ms', String(budget));
+    resetSyncPreparationBudget();
+    const [{ db }] = await engine.executeRaw<{ db: string }>('SELECT current_database() AS db');
+    const url = new URL(databaseUrl!); url.pathname = `/${db}`;
+    const holder = postgres(url.toString(), { max: 1, prepare: false, onnotice: () => {} });
+    try {
+      const ended = await holder.begin(async sql => {
+        await sql.unsafe('LOCK TABLE pages IN ACCESS EXCLUSIVE MODE');
+        const started = performance.now();
+        const error = await caught(moveRuledSharedHeld(engine, 'default'));
+        return { code: error?.code, ms: performance.now() - started };
+      });
+      expect(ended.code).toBe('57014');
+      expect(ended.ms).toBeLessThan(budget + 3_000);
+    } finally { await holder.end(); resetSyncPreparationBudget(); }
+    expect(await moveRuledSharedHeld(engine, 'default')).toMatchObject({ rehomed: 1, unmovable: [], write_errors: 0 });
+    expect(await factRows(engine, claim)).toMatchObject([{ entity_slug: entity, source_markdown_slug: 'clients/acme-example/memory/unattributed' }]);
   }), 300_000);
 
   const versionBodies = (engine: BrainEngine, slug: string) => engine.executeRaw<{ id: number; body: string }>(

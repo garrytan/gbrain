@@ -16,7 +16,12 @@ import { folderHoldingSlug, holdingSlugSql, isHoldingSlug, UNATTRIBUTED_MEMORY_S
 import { maintenancePreflight, planHeldRowDrop, submitMaintenanceIntent, submitPlannedFactFenceAdoption, type HeldDrop } from '../persistence/prepared-maintenance.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
+import { isStatementTimeout } from '../persistence/bounded-reads.ts';
+import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
 import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
+
+/** The bound the sync path puts on each raw read of the held move (its preparation budget); a rule's apply and maintenance pass none. */
+export interface HeldMoveReads { timeoutMs?: number }
 
 export interface HeldFactMoveOutcome {
   moved: number;
@@ -42,17 +47,27 @@ export interface HeldFactMoveOutcome {
  * coverage covers the entity, its folder's holding page. An exact page rule on the entity's own slug, and an access state
  * this database role cannot read, are refused: no holding page carries their readers.
  */
-export async function holdingHome(engine: BrainEngine, sourceId: string, entity: string | null):
+export async function holdingHome(engine: BrainEngine, sourceId: string, entity: string | null, reads: HeldMoveReads = {}):
   Promise<{ slug: string } | { refused: 'page_rule' | 'access_unreadable' } | null> {
   if ((await getWorktreeBinding(engine, sourceId))?.canonical_git !== true) return null;
   if (/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true')) return null;
+  if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG
+    && (await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [sourceId, entity], reads)).length) return null;
+  return holdingPageFor(engine, sourceId, entity, reads);
+}
+
+/** The holding page holdingHome classifies `entity` to by its access rules alone, whether or not a writer holds rows now. */
+export async function holdingPageFor(engine: BrainEngine, sourceId: string, entity: string | null, reads: HeldMoveReads = {}):
+  Promise<{ slug: string } | { refused: 'page_rule' | 'access_unreadable' }> {
   if (entity === null || entity === UNATTRIBUTED_MEMORY_SLUG) return { slug: UNATTRIBUTED_MEMORY_SLUG };
-  if ((await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [sourceId, entity])).length) return null;
   const access = await engine.executeRaw<{ unreadable: boolean; page_rule: boolean; restricted: boolean }>(
     `SELECT gbrain_access_state_unreadable() AS unreadable,
        (EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id=$1 AND r.prefix=$2)
          OR EXISTS (SELECT 1 FROM access_pending_coverage c WHERE c.source_id=$1 AND c.prefix=$2)) AS page_rule,
-       (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted`, [sourceId, entity]).catch(() => null);
+       (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted`, [sourceId, entity], reads).catch((error: unknown) => {
+    if (reads.timeoutMs !== undefined && isStatementTimeout(error)) throw error;
+    return null;
+  });
   const row = access?.[0];
   if (!row || row.unreadable) return { refused: 'access_unreadable' };
   if (row.page_rule) return { refused: 'page_rule' };
@@ -64,8 +79,8 @@ export async function holdingHome(engine: BrainEngine, sourceId: string, entity:
  * name that way), the one page `remember` itself would resolve the name to. Two or more such pages: the row stays held and
  * the candidates are named. Null: no page yet.
  */
-export async function heldFactTarget(engine: BrainEngine, sourceId: string, key: string): Promise<{ slug: string } | { ambiguous: string[] } | null> {
-  if ((await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, key])).length) return { slug: key };
+export async function heldFactTarget(engine: BrainEngine, sourceId: string, key: string, reads: HeldMoveReads = {}): Promise<{ slug: string } | { ambiguous: string[] } | null> {
+  if ((await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, key], reads)).length) return { slug: key };
   if (key.includes('/')) return null;
   const { entityReferenceCandidates, resolveStrictEntityReference } = await import('../entities/resolve.ts');
   const strict = await resolveStrictEntityReference(engine, sourceId, key, { sameName: true });
@@ -109,9 +124,9 @@ export type HoldingHome = Awaited<ReturnType<typeof holdingHome>>;
  * force; a preview passes its desired rules). Null: the rows stay where they are.
  */
 export async function heldRowDestination(engine: BrainEngine, sourceId: string, key: string, from: string,
-  home: (key: string) => Promise<HoldingHome> = k => holdingHome(engine, sourceId, k)):
+  home: (key: string) => Promise<HoldingHome> = k => holdingHome(engine, sourceId, k), reads: HeldMoveReads = {}):
   Promise<{ slug: string; kind: 'page' | 'create' | 'rehome' } | { unmovable: string } | null> {
-  const target = await heldFactTarget(engine, sourceId, key);
+  const target = await heldFactTarget(engine, sourceId, key, reads);
   if (target && 'ambiguous' in target) return { unmovable: ambiguousHeldReason(target.ambiguous) };
   if (target) return { slug: target.slug, kind: 'page' };
   const h = await home(key);
@@ -134,27 +149,28 @@ export interface HeldMoveGroup {
  * decides a page-less entity's holding page (a preview passes its desired rules); `hidden` names pages the change makes
  * unreadable to some reader (a preview's desired rules), so their note is `moved`.
  */
-export async function planHeldMoves(engine: BrainEngine, sourceId: string, opts: { home?: (key: string) => Promise<HoldingHome>; hidden?: (slug: string) => boolean } = {}):
+export async function planHeldMoves(engine: BrainEngine, sourceId: string, opts: { home?: (key: string) => Promise<HoldingHome>; hidden?: (slug: string) => boolean } & HeldMoveReads = {}):
   Promise<{ groups: HeldMoveGroup[]; unmovable: HeldFactMoveOutcome['unmovable'] }> {
+  const reads = { timeoutMs: opts.timeoutMs };
   const onHolding = `f.source_id = $1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')})
     AND f.row_num IS NOT NULL AND f.dimension IS NULL AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')}`;
   const rows = await engine.executeRaw<HeldRow>(
     `SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
             claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
-       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`, [sourceId]);
+       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug, f.entity_slug, f.id`, [sourceId], reads);
   // A struck row keeps its facts row (expired) at its row number; one an active fact reuses is not struck.
   const struck = await engine.executeRaw<{ from_slug: string; entity_slug: string; row_num: number; fact: string }>(
     `SELECT DISTINCT ON (f.source_markdown_slug, f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
       WHERE ${onHolding} AND f.expired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id
         AND a.source_markdown_slug = f.source_markdown_slug AND a.row_num = f.row_num AND a.expired_at IS NULL)
-      ORDER BY f.source_markdown_slug, f.row_num, f.id DESC`, [sourceId]);
+      ORDER BY f.source_markdown_slug, f.row_num, f.id DESC`, [sourceId], reads);
   const keys = new Map<string, { from: string; key: string; group: HeldRow[]; struck: HeldDrop[] }>();
   const at = (from: string, key: string) => keys.get(`${from}\0${key}`) ?? keys.set(`${from}\0${key}`, { from, key, group: [], struck: [] }).get(`${from}\0${key}`)!;
   for (const row of rows) at(row.from_slug, row.entity_slug!).group.push(row);
   for (const s of struck) at(s.from_slug, s.entity_slug).struck.push({ row_num: Number(s.row_num), entity: s.entity_slug, claim: s.fact });
   const plan: Awaited<ReturnType<typeof planHeldMoves>> = { groups: [], unmovable: [] };
   for (const { from, key, group, struck: withdrawn } of keys.values()) {
-    const dest = await heldRowDestination(engine, sourceId, key, from, opts.home);
+    const dest = await heldRowDestination(engine, sourceId, key, from, opts.home ?? (k => holdingHome(engine, sourceId, k, reads)), reads);
     if (!dest) continue;
     if ('unmovable' in dest) {
       if (group.length) plan.unmovable.push({ code: 'held_fact_unmovable', slug: key, fact_ids: group.map(r => Number(r.id)), reason: dest.unmovable });
@@ -163,7 +179,7 @@ export async function planHeldMoves(engine: BrainEngine, sourceId: string, opts:
     // A fact moved into a page not every reader of the source can read, or off a folder's holding page, leaves the
     // holding page with no trace of where it went.
     const [page] = dest.kind === 'page' && from === UNATTRIBUTED_MEMORY_SLUG && !opts.hidden?.(dest.slug) ? await engine.executeRaw<{ visible: boolean }>(
-      `SELECT ${privatePagesFilterFragment('p')} AS visible FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL`, [sourceId, dest.slug]) : [];
+      `SELECT ${privatePagesFilterFragment('p')} AS visible FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL`, [sourceId, dest.slug], reads) : [];
     const note = page?.visible === true ? `moved to ${dest.slug}` : 'moved';
     if (group.length) plan.groups.push({ slug: dest.slug, kind: dest.kind, from, key, group, note, struck: note === 'moved' ? withdrawn : [] });
     else if (note === 'moved') plan.groups.push({ slug: from, kind: 'drop', from, key, group, note, struck: withdrawn });
@@ -183,19 +199,23 @@ export function heldMoveIncomplete(held: Pick<HeldFactMoveOutcome, 'segmented_pa
  * GST-2492 (B2): after a sync releases its lease, the held facts a rule it applied narrows below their holding page's
  * readers (a folder rule over the shared page, an exact page rule over a folder's holding page, or a pending narrowing)
  * leave that page at once instead of at the next maintenance cycle (still the fallback after a crash). Null when none is due.
+ * Each raw read it issues ends on the server at the sync preparation budget, so a lock another session holds on its tables
+ * never holds a statement of the sync past it (#6318): a read ended there while planning rejects, one inside a group's move
+ * leaves that group unmovable, and maintenance moves them later.
  */
 export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string): Promise<HeldFactMoveOutcome | null> {
+  const reads = { timeoutMs: await syncPreparationBudgetMs(engine) };
   const [due] = await engine.executeRaw<{ due: boolean }>(`SELECT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $1
       AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')})
       AND f.row_num IS NOT NULL AND f.dimension IS NULL AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')}
       AND (gbrain_access_folder_rules(f.source_id, f.entity_slug) IS DISTINCT FROM gbrain_access_folder_rules(f.source_id, f.source_markdown_slug)
-        OR (gbrain_access_pending_covers(f.source_id, f.entity_slug) AND NOT gbrain_access_pending_covers(f.source_id, f.source_markdown_slug)))) AS due`, [sourceId]);
-  return due?.due ? moveHeldFacts(engine, sourceId) : null;
+        OR (gbrain_access_pending_covers(f.source_id, f.entity_slug) AND NOT gbrain_access_pending_covers(f.source_id, f.source_markdown_slug)))) AS due`, [sourceId], reads);
+  return due?.due ? moveHeldFacts(engine, sourceId, reads) : null;
 }
 
-export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Promise<HeldFactMoveOutcome> {
+export async function moveHeldFacts(engine: BrainEngine, sourceId: string, reads: HeldMoveReads = {}): Promise<HeldFactMoveOutcome> {
   const outcome: HeldFactMoveOutcome = { moved: 0, moved_slugs: [], rehomed: 0, unmovable: [], write_errors: 0, segmented_versions_not_edited: 0, segmented_pages: [], pending: [] };
-  const plan = await planHeldMoves(engine, sourceId);
+  const plan = await planHeldMoves(engine, sourceId, reads);
   outcome.unmovable.push(...plan.unmovable);
   if (plan.groups.length === 0) return outcome;
   const authority = await maintenancePreflight(engine, sourceId);
@@ -224,12 +244,12 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Prom
         }
         if (kind === 'rehome') await ensurePageForHeldRows(engine, sourceId, slug);
         const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-          'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
+          'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug], reads);
         if (!page) { unmovable(slug, group.map(r => r.id), kind === 'rehome' ? 'holding_page_deleted' : 'entity_page_deleted'); continue; }
         // A held row in Git moved into a page kept out of Git would be struck there with no file holding the fact; a row
         // re-homed because a folder rule now covers it moves whatever the folder's storage class (the rule applies at once).
         const [held] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-          'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, from]);
+          'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, from], reads);
         if (kind !== 'rehome' && held && await pageHasFile(engine, sourceId, from, held) && !await pageHasFile(engine, sourceId, slug, page)) {
           unmovable(slug, group.map(r => r.id), 'entity_page_database_only'); continue;
         }
@@ -246,7 +266,7 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string): Prom
         else { outcome.moved += plan.fence.assignments.length; outcome.moved_slugs.push(slug); }
       }
       const [edited] = await engine.executeRaw<{ n: number | null }>(`SELECT (outcome->'held_versions_edited'->>'segmented_versions_not_edited')::int AS n
-        FROM persistence_requests WHERE request_id = $1::uuid`, [requestId]);
+        FROM persistence_requests WHERE request_id = $1::uuid`, [requestId], reads);
       const n = Number(edited?.n ?? 0), seen = outcome.segmented_pages.find(p => p.slug === from);
       if (n && seen) seen.versions = Math.max(seen.versions, n);
       else if (n) outcome.segmented_pages.push({ slug: from, versions: n });
