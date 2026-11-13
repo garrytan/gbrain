@@ -26,6 +26,7 @@ import { isSyncKnockOn, knockOnRoot, SYNC_CURSOR_FENCE_ORIGIN, SYNC_KNOCK_ON_ORI
 import { writeFailureDiagnostic } from './verb-errors.ts';
 import { publicCategory, type PublicCategory } from './public-category.ts';
 import { ownerMarkerRestoreFix } from './owner-marker.ts';
+import { FILE_DRIFT_APPLY_STEP } from './sync-holds.ts';
 
 export type TerminalCategory =
   | 'recovery_pending' | 'recovery_blocked'
@@ -127,7 +128,7 @@ function inspect(sourceId: string, why: string, userMessage?: string): Action {
  */
 export function driftSinceAction(sourceId: string, since: string): Action {
   return { argv: ['gbrain', 'repair', 'file-drift', '--source', sourceId, '--all-drifted', '--since', since, '--prefer', 'database'], consent: [], actor: 'agent', requires_exclusive: false,
-    why: `Previews keeping the database copy of every page still drifted since ${since} and writes nothing (it refuses a mix of drift classes and names --class for each); --prefer file previews importing the files instead. Decide with the user, then apply with the printed plan hash.`,
+    why: `Previews keeping the database copy of every page still drifted since ${since} and writes nothing (it refuses a mix of drift classes and names --class for each); --prefer file previews importing the files instead. Decide with the user. ${FILE_DRIFT_APPLY_STEP}`,
     verify: { argv: failuresArgv(sourceId) }, docs: 'docs/guides/write-refusals.md#file_database_drift' };
 }
 
@@ -260,7 +261,7 @@ function route(input: TerminalInput): Partial_ {
     if (known === 'file_database_drift' || known === 'canonical_path_occupied' || known === 'unbound_source') {
       return { category: 'file_conflict', code, origin: origin ?? known, ...row('file_database_drift'),
         action: { argv: ['gbrain', 'repair', 'file-drift', '--source', source, '--slug', input.slug, '--prefer', 'database'], consent: [], actor: 'agent', requires_exclusive: false,
-          why: `Previews keeping the database copy of ${input.slug} and rewriting its file, and writes nothing; --prefer file previews importing the file instead. Decide with the user, apply with the printed plan hash, then resubmit the write with a new request id.`,
+          why: `Previews keeping the database copy of ${input.slug} and rewriting its file, and writes nothing; --prefer file previews importing the file instead. Decide with the user. ${FILE_DRIFT_APPLY_STEP} Then resubmit the write with a new request id.`,
           verify: { argv: failuresArgv(source) }, docs: 'docs/guides/write-refusals.md#file_database_drift' } };
     }
     if (known === 'canonical_file_missing') {

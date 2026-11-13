@@ -208,6 +208,35 @@ a brain setup cannot read refuses (`setup_serves_unreadable`).
 `gbrain access serves several --members ...` does the labelling alone (preview, then
 `--yes`).
 
+On such a brain every remote read must say whom it reads for. A token, OAuth
+client or stdio server bound to no member is refused with
+[`requester_scope_required`](write-refusals.md#requester_scope_required) before
+any work, and `gbrain auth create` / `register-client` refuse to create one
+(`credential_scope_required`). A connection that existed when the brain started
+serving several people (config `access.serves_since`, or the upgrade that added
+the refusal) keeps reading for 14 days, with `_meta.access.requester_scope` on
+every answer naming the date and the fix; `gbrain doctor` fails
+`unscoped_shared_reads` and `gbrain post-upgrade` lists each one with its
+command. Bind each connection to its person
+(`gbrain auth rescope --token <name> --member <id>`). A stdio harness only one
+person uses is bound with `gbrain setup claude-code|codex --stdio-member <id>`,
+which writes the member into that one harness entry on that machine, on PGLite
+or Postgres. For a harness several people talk to, give each person a key over
+HTTP instead (`gbrain serve --http` with `gbrain auth create <name> --member <id>`
+keys). A brain pinned `access.serves one` never refuses, however many members
+it has.
+Nothing binds stdio on its own: upgrade, post-upgrade and doctor never write
+`mcp.stdio_member`, and `gbrain doctor` fails `shared_stdio_binding` when it is
+set on a host where OpenClaw or Hermes is installed and the brain serves several
+people (its fix is
+`gbrain config unset mcp.stdio_member`). A team that shares everything may
+mark one credential `gbrain auth rescope --token <name> --reads-unscoped --yes`
+(`--reads-unscoped none` takes it back); every change is recorded in the
+`access-reads-unscoped` audit file. Hosted brains keep
+`access.requester_scope_enforce false` until their control plane binds each
+connection to a member, so they see the notice and no refusal. Writes are not
+affected, and a one-person brain sees no change.
+
 ## Brain-first instructions
 
 Registering MCP makes the tools available; it does not make agents use them.

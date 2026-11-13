@@ -25,6 +25,8 @@ export interface InternalConfigState {
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
+  { key: 'access.serves_derived', reason: 'whether two or more members are enabled, kept by the v309 trigger on access_members (search/private-visibility.ts servesPolicyFrom); a hand edit would lie about whom the brain serves' },
+  { key: 'access.serves_since', reason: 'when the brain first served several people, set once by the v309 trigger and never cleared; it starts the unscoped-read grace (access/requester-scope.ts)' },
   { key: 'access.restrictions_present', reason: 'sticky member-access marker a v282 trigger sets once a page names readers or a member exists (search/private-visibility.ts); clearing it would send remote reads down the unrestricted fast path' },
   { key: '_internal.link_extraction_generation', reason: 'link-extraction watermark generation (link-extraction-watermark.ts)' },
   { key: 'code.cluster_generation', reason: 'code-intel traversal cache generation counter' },

@@ -51,8 +51,18 @@ export function takeBindingFlags(args: string[]): { args: string[]; patch: Bindi
   const out: string[] = [];
   const patch: BindingPatch = {};
   let seen = false;
+  let yes = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
+    if (a === '--yes') { yes = true; continue; }
+    // GST-363: --reads-unscoped (with --yes) lets one credential read unscoped on a brain that serves several people; none removes it.
+    if (a === '--reads-unscoped' || a.startsWith('--reads-unscoped=')) {
+      const value = a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[i + 1] === 'none' ? args[++i] : undefined;
+      if (value !== undefined && value !== 'none') throw usageError(`--reads-unscoped takes no value, or none (got ${value}).`, 'Pass --reads-unscoped --yes to let this credential read unscoped on purpose, or --reads-unscoped none to remove it.');
+      patch.readsUnscoped = value === undefined;
+      seen = true;
+      continue;
+    }
     const flag = FLAGS.find(f => a === f || a.startsWith(`${f}=`));
     if (!flag) { out.push(a); continue; }
     const value = a.includes('=') ? a.slice(a.indexOf('=') + 1) : args[++i];
@@ -65,6 +75,11 @@ export function takeBindingFlags(args: string[]): { args: string[]; patch: Bindi
     else patch.attestSources = parseAttestSources(value);
     seen = true;
   }
+  if (patch.readsUnscoped === true && !yes) {
+    throw usageError('--reads-unscoped needs --yes: on a brain that serves several people this credential then reads every page no rule restricts, for whoever is asking.',
+      'Bind it to the person it serves instead (--member <id>), or confirm with --reads-unscoped --yes.');
+  }
+  if (yes && patch.readsUnscoped === undefined) out.push('--yes');
   return { args: out, patch: seen ? patch : null };
 }
 
@@ -75,5 +90,6 @@ export async function checkBindingTarget(engine: BrainEngine, patch: BindingPatc
 
 export function bindingLine(b: BindingResult, dryRun = false): string {
   const attest = b.attest_actor ? `; attests actor: ${b.attest_actor} for ${(b.attest_ops ?? DEFAULT_ATTEST_OPS).join(', ')}; named sources read as: ${b.attest_read ?? 'scope (default)'}${b.attest_sources?.length ? `; scope sources: ${b.attest_sources.join(', ')}` : ''}` : '';
-  return `  Member: ${b.member ?? 'none'}; may act for: ${b.may_act_for?.join(', ') ?? 'none'}${attest}${b.changed ? (dryRun ? ' (preview, not written)' : ' (updated)') : ''}`;
+  const unscoped = b.reads_unscoped === undefined ? '' : `; reads unscoped: ${b.reads_unscoped ? 'yes (every page no rule restricts, for any asker)' : 'no'}`;
+  return `  Member: ${b.member ?? 'none'}; may act for: ${b.may_act_for?.join(', ') ?? 'none'}${attest}${unscoped}${b.changed ? (dryRun ? ' (preview, not written)' : ' (updated)') : ''}`;
 }

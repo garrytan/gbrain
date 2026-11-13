@@ -4,7 +4,8 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { Readable, Writable } from 'node:stream';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
-import { opError, type OperationMeta } from '../core/ops/contract.ts';
+import { OperationError, opError, type OperationMeta } from '../core/ops/contract.ts';
+import { transientDatabaseFailure } from '../core/persistence/transient-retry.ts';
 import { OPERATION_MANIFEST } from '../core/operation-manifest.generated.ts';
 import { isCallable, publishGatesFromDisabled } from '../core/ops/callable.ts';
 import { VERSION } from '../version.ts';
@@ -332,13 +333,18 @@ const READ_ONLY_SERVE_NOTE = '[gbrain-serve] read-only: no persistence consumer,
 
 /**
  * The ambient writeback section's options for a stdio serve: what the session can call, and whether the stdio member (`--stdio-member`, else mcp.stdio_member) binds
- * it to a member, whose writes stay private unless shared (GST-2243), so its rule never says "pass visibility: world".
+ * it to a member, whose writes stay private unless shared (GST-2243), so its rule never says "pass visibility: world". The lookup runs only when a
+ * member is named; one that fails with access_identity_unavailable or a transient database failure still reads as bound and serve starts, and any
+ * other error is thrown.
  */
 export async function stdioAmbientOpts(engine: BrainEngine, writeback: WritebackConfig, allowedOps: ReadonlySet<string> | undefined, stdioMember?: string) {
   return ambientOptsFrom(writeback, {
     remember: allowedOps ? allowedOps.has('remember') : true,
     extractFacts: allowedOps ? allowedOps.has('extract_facts') : true,
-    member: (await stdioMemberIdentity(engine, stdioMember)).some(p => p.startsWith('member:')),
+    member: await stdioMemberIdentity(engine, stdioMember).then(identity => identity.some(p => p.startsWith('member:')), (error: unknown) => {
+      if ((error instanceof OperationError && error.code === 'access_identity_unavailable') || transientDatabaseFailure(error)) return true;
+      throw error;
+    }),
   });
 }
 

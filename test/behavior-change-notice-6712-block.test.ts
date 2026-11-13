@@ -10,6 +10,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { BEHAVIOR_CHANGES, compareReleases } from '../src/core/behavior-change-notice.ts';
+import { RELEASED_BEHAVIOR_CHANGES } from '../src/core/behavior-changes.generated.ts';
 
 const MARKER = '// #6712 PR 4b (the level-triggered sync pass';
 const ROWS = 33;
@@ -25,7 +26,7 @@ function locateBlock(source: string): { rowLines: number; first: number; count: 
     const trimmed = line.trimStart();
     if (trimmed.startsWith(MARKER)) { inBlock = true; first = rowLines; continue; }
     if (trimmed.startsWith('//')) inBlock = false;
-    const rows = line.match(/\{ since: '/g)?.length ?? 0;
+    const rows = line.match(/\{ since: /g)?.length ?? 0;
     rowLines += rows;
     if (inBlock) count += rows;
   }
@@ -40,7 +41,7 @@ describe('#6712 PR 4b BEHAVIOR_CHANGES block', () => {
   const block = BEHAVIOR_CHANGES.slice(first, first + count);
 
   test('the narrow parse sees every exported row and finds the block', () => {
-    expect(rowLines).toBe(BEHAVIOR_CHANGES.length);
+    expect(rowLines).toBe(BEHAVIOR_CHANGES.length - RELEASED_BEHAVIOR_CHANGES.length);
     expect(first).toBeGreaterThan(0);
   });
 
