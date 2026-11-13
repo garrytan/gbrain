@@ -20,8 +20,9 @@
  */
 import { randomBytes } from 'node:crypto';
 import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, win32 } from 'node:path';
 import { configDir } from '../config.ts';
+import { msysToNativePath } from '../path-confine.ts';
 
 export const HOOK_LAUNCHER_NAME = 'gbrain-hook';
 export const HOOK_LAUNCHER_DIR = 'hook-launcher';
@@ -131,14 +132,21 @@ export function shellWords(command: string): string[] | null {
   return words;
 }
 
-/** An absolute path shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
-export function isHookLauncherPath(path: string): boolean {
-  return path.startsWith('/') && path.endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
+/** An absolute path (POSIX, or on Windows a drive or UNC path) shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
+export function isHookLauncherPath(path: string, platform: NodeJS.Platform = process.platform): boolean {
+  return (path.startsWith('/') || (platform === 'win32' && win32.isAbsolute(path))) && path.replace(/\\/g, '/').endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
 }
 
-/** The launcher a hook command runs gbrain through, or null for a command that starts gbrain in the session directory. */
-export function hookLauncherInCommand(command: string): string | null {
-  return shellWords(command)?.find(isHookLauncherPath) ?? null;
+/** A path as a hook command names it: Claude Code runs hooks through Git Bash on Windows, which (like the launcher's own check) wants /c/... for C:\... */
+export function hookShellPath(path: string): string {
+  const drive = /^([A-Za-z]):[\\/](.*)$/.exec(path);
+  return drive ? `/${drive[1]!.toLowerCase()}/${drive[2]!.replace(/\\/g, '/')}` : path;
+}
+
+/** The launcher a hook command runs gbrain through, as a path this platform's file calls can read, or null for a command that starts gbrain in the session directory. */
+export function hookLauncherInCommand(command: string, platform: NodeJS.Platform = process.platform): string | null {
+  const launcher = shellWords(command)?.find((word) => isHookLauncherPath(word, platform));
+  return launcher ? msysToNativePath(launcher, platform) : null;
 }
 
 export { HOOK_CWD_ENV, captureHookSessionCwd, hookSessionCwd } from '../session-cwd.ts';

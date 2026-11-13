@@ -2322,12 +2322,12 @@ deferred M-effort issues above are NOT repeated here.
   synthesized answers, graph annotations) contains them — catching join/
   snippet/synthesis leak classes a source_id check can't see. **Where:**
   `evals/brainbench/`. **Effort:** M. **Priority:** P3.
-- [ ] **P3 — OpenClaw native remote-MCP register block, when upstream ships
-  remote support.** **What:** `gbrain agent register` renders the honest
-  thin-client CLI block for openclaw today (`openclawThinClientBlock` in
-  `src/core/mcp-registration.ts`) because OpenClaw has no native remote-MCP
-  client; when upstream ships one, add a native client-credentials wiring
-  block and demote the CLI block to the fallback. Blocked upstream. **Where:**
+- [ ] **P3 — OpenClaw native remote-MCP register block.** **What:**
+  `gbrain agent register` renders the honest thin-client CLI block for
+  openclaw today (`openclawThinClientBlock` in
+  `src/core/mcp-registration.ts`). OpenClaw now ships a native remote-MCP
+  client (streamable HTTP, `openclaw mcp login`; docs/mcp/OPENCLAW.md), so
+  add a native wiring block and demote the CLI block to the fallback. **Where:**
   `src/core/mcp-registration.ts`, `src/commands/agent-register.ts`.
   **Effort:** S. **Priority:** P3.
 - [ ] **P3 — E2: `gbrain agent list` / `gbrain agent revoke` conveniences.**

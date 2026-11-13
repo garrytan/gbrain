@@ -137,11 +137,22 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   deadline the process prints nothing, exits and commits no session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
-  default every match) and `skills.resolver.pinned` (skill ids the harness
-  always loads itself, never suggested). `skills.resolver.per_harness.<harness>.top_k`
-  and `.min_match` override one harness; what it leaves out falls back to the
+  default every match), `skills.resolver.top_gate` (off unless set; see
+  [the gate](#top_gate-an-experimental-gate-off-by-default)) and
+  `skills.resolver.pinned` (skill ids the harness always loads itself, never
+  suggested). `skills.resolver.per_harness.<harness>.top_k`, `.min_match`
+  and `.top_gate` override one harness; what it leaves out falls back to the
   global key, and an entry that is not an object counts as unset. Set them with `gbrain config set`; a bad value makes the lane
   log `skill_resolver_config_invalid` and deliver nothing.
+- **Extra skill directories:** `gbrain config set
+  skills.resolver.per_harness.claude-code.dirs /abs/dir,/abs/other` (or
+  `.codex.dirs`; at most 32 absolute paths) adds directories to that
+  harness's user catalog. Setup builds the catalog from the default directory
+  plus every listed one that exists, records them in the catalog's rebuild
+  command (so the auto-rebuild keeps them), and keeps them on every later
+  setup run; unset the key and run setup again to drop them.
+- **Session cleanup:** after the dedupe commit the lane runs one session GC
+  pass before it exits, at most 64 files and never past the deadline.
 - **Payload:** at most `skills.resolver.lane_payload_chars` characters of hook
   output (default 4000, 500 to 10,000); a larger block is dropped whole and
   counted as `payload_dropped`.
@@ -361,7 +372,7 @@ The JSON Schemas are checked in under `docs/schemas/`:
 
 - `skill-resolver.v1.turn-input.json`: `{message, previous_user_message?,
   session_id?, harness?, top_k (1-8, default 5), exclude? (up to 1,024 ids),
-  min_match_strength?, shadow?, expected_catalog_hash?, reset_session?}` for
+  min_match_strength?, top_gate?, shadow?, expected_catalog_hash?, reset_session?}` for
   `--input-json -` or the library.
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
   `meta` is byte-identical for the same index, input and session state.
@@ -380,15 +391,45 @@ Within v1, changes are additive only.
 (`"no_match"`). There is no score threshold: a weak match is still
 suggested, and each suggestion's `match_strength` says how it matched
 (`named` in the turn, else the first of `name`, `triggers`, `routing`,
-`description`, `body`). `min_match_strength` (`--min-match`) sets a floor:
-weaker matches are dropped before the cut to `top_k`, so `description` drops
-body-only matches and the stronger ones still fill the block. A skill named in
+`description`, `body`). `min_match_strength` (`--min-match`) filters
+candidates: weaker matches are dropped before the cut to `top_k` and the
+stronger ones still fill the block, so `description` drops body-only matches.
+It is not a gate: in a large catalog some skill almost always matches a
+message on its name somewhere in the ranking, so even `name` rarely empties
+the block and instead swaps good description hits for weaker name hits. A
+skill named in
 the turn (`$name`, `@name`, a leading `/name`, "the name skill", or its full
 id) ranks first. When the message matches no catalog word (a follow-up such
 as "do it again"), `previous_user_message` (`--previous`) is ranked instead.
 
+### top_gate: an experimental gate, off by default
+
+`top_gate` (`--top-gate`, `skills.resolver.top_gate`) empties the block
+when the best skill the block would show (after `exclude`, pinned skills,
+`min_match_strength`, session dedupe and pacing) has a score that, divided by its catalog's maximum
+idf, `ln(1 + (n - 0.5) / 1.5)` for a catalog of `n` skills, is below the
+threshold (0 to 100; unset or 0 is off). With merged catalogs it takes the
+highest of those candidates. A skill named in the turn bypasses it. The
+division keeps the number comparable across catalog sizes; it does not undo
+message length, so long messages still score higher.
+
+It stays off by default because no threshold has yet shown that it removes
+suggestions on no-skill turns without hiding many right ones. Two offline
+measurements disagree:
+
+| Source | Turns | Gate fitted on | False suggestions on no-skill turns | hit@5 on skill turns, gated (ungated) |
+|---|---|---|---|---|
+| [gbrain-evals `2026-11-07-skill-ranker-offline`](https://github.com/garrytan/gbrain-evals/tree/main/docs/benchmarks/2026-11-07-skill-ranker-offline), gate probe | 320 test and gate-stress turns (terse skill requests, long no-skill messages), 250 / 750 / 1,500 skills | dev and stress-dev, at threshold 1.33 | 0.19 / 0.17 / 0.19 | 0.26 / 0.27 / 0.28 (0.515 / 0.555 / 0.611) |
+| harness-evals set P dev half, HARN-52 (descriptive) | 146 turns, one 349-skill catalog | the same rows it is scored on, as a raw score of 4.16 (top_gate 0.76 on that catalog) | 0.03 | 0.71 (0.78) |
+
+The first is a held-out score on turns written to break length-based gates;
+the second is fitted and scored on the same rows. Treat `top_gate` as a
+setting to measure, not one to turn on: the threshold that fits one catalog
+and one kind of turn is not known to fit another.
+
 An empty block carries `block_reason`: `ack`, `no_match`, `filtered` (every
-match was excluded or below `min_match_strength`), `deduped` (every match was
+match was excluded or below `min_match_strength`), `weak_top_match` (the best
+skill scored below `top_gate`), `deduped` (every match was
 already suggested in the session), `paced` (past half the budget and the top
 match is not on a name, trigger or routing row), `budget_exhausted`, `shadow`
 (the live output of a `--shadow` turn) or `error`. It is null when the block
@@ -434,8 +475,9 @@ With `--session <id>` the resolver remembers which skills it suggested:
 The key is `sha256(on|shadow, harness, session id)`: the same id under two
 harnesses is two sessions, and merged catalogs share one. Session files idle
 for 7 days are deleted: after a commit (at most once every 10 minutes per
-home, at most 1,000 files a pass, with async I/O after the commit settles),
-and on each build and status.
+home, at most 1,000 files a pass, with async I/O after the commit settles;
+the hook lane awaits a 64-file pass before it exits), and on each build and
+status.
 
 Measured block size at k=5 over the Step 1 test turns on gbrain's own skills:
 median 267 tokens (Claude Code), 268 (Hermes), 270 (qm), 334 (Codex) and 339
@@ -614,7 +656,9 @@ The `--from-json` catalog or routing file is malformed or over its size bound
 ### skill_resolver_config_invalid
 
 `skills.resolver.session_token_budget` is not 0 or 100-50,000, a lane turn
-setting (`top_k`, `min_match`, `pinned`, `per_harness`) is out of range, or
+setting (`top_k`, `min_match`, `top_gate`, `pinned`, `per_harness`, including a
+`dirs` list that is not absolute paths or names a harness other than
+`claude-code` or `codex`) is out of range, or
 GBRAIN_HOME is not an absolute path.
 
 ### skill_resolver_config_unreadable
