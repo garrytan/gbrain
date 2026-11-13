@@ -19,6 +19,7 @@ import { mountAdminApi } from '../src/commands/serve-http-admin-api.ts';
 import type { ServeHttpContext } from '../src/commands/serve-http.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { MCP_LOG_RETENTION_KEY, runMcpLogRetention } from '../src/core/mcp-request-log-retention.ts';
+import { readFileSync } from 'node:fs';
 
 let engine: PGLiteEngine;
 let server: Server;
@@ -86,4 +87,12 @@ describe('admin dashboard across a request-log prune', () => {
     expect(log.retention_days).toBe(30);
     expect(Date.parse(log.pruned_before)).toBeLessThan(Date.now() - 30 * 86_400_000);
   }, 60_000);
+});
+
+describe('admin Request Log page', () => {
+  test('shows the retention window and prune date the endpoint returns', () => {
+    const page = readFileSync('admin/src/pages/RequestLog.tsx', 'utf8');
+    expect(page).toContain('data.retention_days');
+    expect(page).toContain('data.pruned_before');
+  });
 });

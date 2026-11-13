@@ -390,6 +390,8 @@ function renderText(groups: CounterpartyGroup[], none: NoCounterpartyLoops | nul
   return lines.join('\n');
 }
 
+const OPEN_LOOPS_ROW_CAP = 500;
+
 const open_loops: Operation = {
   name: 'open_loops',
   mutating: false,
@@ -481,10 +483,10 @@ const open_loops: Operation = {
       ...(p.loop_type ? { loopType: p.loop_type as LoopType } : {}),
       ...(p.counterparty ? { counterparty: p.counterparty as string } : {}),
       ...(loopId === undefined ? {} : { loopId }),
-      limit: 501,
+      limit: OPEN_LOOPS_ROW_CAP + 1,
     });
-    const capped = loops.length > 500;
-    if (capped) loops.length = 500;
+    const capped = loops.length > OPEN_LOOPS_ROW_CAP;
+    if (capped) loops.length = OPEN_LOOPS_ROW_CAP;
     const freshness = await googleSourceFreshness(ctx, scope);
     const noGoogleSources = freshness.sources.length === 0;
     if (!trusted && noGoogleSources && !freshness.failed && loops.length === 0) ctx.emitNotice?.(noGoogleInScopeNotice(scope.sourceIds ?? (scope.sourceId ? [scope.sourceId] : [])));
