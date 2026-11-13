@@ -2,7 +2,8 @@
  * mcp-usage.ts — the ONE shared reader over `mcp_request_log` (amendment 30).
  *
  * Consumed by three surfaces that must never disagree on what counts as an
- * "operation call":
+ * "operation call" (each reads it through readClientOpUsageWithCoverage, so a
+ * window that reaches back past pruned history says so):
  *   - `gbrain auth clients --usage` (E4, src/commands/auth.ts)
  *   - the advisor starter-fit collector (E3, src/core/advisor/collect-mcp-client-fit.ts)
  *   - `scripts/derive-starter-ops.ts` (amendment 23 / D12)
@@ -36,6 +37,13 @@
  * (`context_pack` / `delta`) is flagged `likely_automation` and excluded from
  * starter-set derivation + advisor fit findings. The threshold and op set are
  * exported so consumers cite one definition.
+ *
+ * Retention (src/core/mcp-request-log-retention.ts): an opt-in prune removes
+ * rows past cycle.purge.mcp_request_log_retention_days (never fewer than 30
+ * days, so the built-in 30-day windows stay complete) and never the
+ * AUDIT_LOG_OPERATIONS rows. Coverage reads the newest pruned row
+ * (mcp_request_log_rollup.pruned_through); a brain that never pruned reports
+ * every window complete.
  */
 
 import type { BrainEngine } from './engine.ts';
@@ -43,18 +51,21 @@ import type { BrainEngine } from './engine.ts';
 /** Default trailing window for every usage-derived surface. */
 export const MCP_USAGE_DEFAULT_WINDOW_DAYS = 30;
 
+/**
+ * Operator audit rows that ride the request log and are never pruned: ENG-8
+ * surface changes (src/core/surface-audit.ts), GBRA-219 memory setting
+ * changes (src/core/facts/writeback-settings.ts) and GST-1094 owner access
+ * administration (src/commands/serve-http-access.ts).
+ */
+export const AUDIT_LOG_OPERATIONS: ReadonlySet<string> = new Set(['surface_change', 'memory_setting_change', 'access_admin']);
+
 /** JSON-RPC method / server-plane rows that are not operation calls. */
 export const NON_OP_LOG_ROWS: ReadonlySet<string> = new Set([
   'tools/list',
   'initialize',
   'notifications/initialized',
   'ping',
-  // ENG-8 surface-change audit rows (src/core/surface-audit.ts).
-  'surface_change',
-  // GBRA-219 memory settings audit rows (src/core/facts/writeback-settings.ts).
-  'memory_setting_change',
-  // GST-1094 owner access administration audit rows (src/commands/serve-http-access.ts).
-  'access_admin',
+  ...AUDIT_LOG_OPERATIONS,
 ]);
 
 /** Legacy bearer transport row prefix — 'tools/call:query' means op 'query'. */
@@ -175,4 +186,45 @@ export async function readClientOpUsage(
   }
   out.sort((a, b) => b.total_calls - a.total_calls || (a.token_name < b.token_name ? -1 : 1));
   return out;
+}
+
+/** How much of a requested usage window the request log still holds in detail. */
+export interface McpUsageCoverage {
+  requested_days: number;
+  /** Whole days back from now the log holds in full (requested_days when not truncated). */
+  covered_days: number;
+  truncated: boolean;
+  /** ISO time of the newest pruned row; null on a brain that never pruned. */
+  pruned_before: string | null;
+}
+
+const DAY_MS = 86_400_000;
+
+/** Coverage of a trailing window. A brain without the tally table (before its migration) never pruned. */
+export async function readMcpUsageCoverage(engine: BrainEngine, days: number): Promise<McpUsageCoverage> {
+  const [probe] = await engine.executeRaw<{ present: boolean; now: unknown }>(
+    "SELECT to_regclass('mcp_request_log_rollup') IS NOT NULL AS present, now() AS now");
+  const [row] = probe?.present
+    ? await engine.executeRaw<{ pruned_before: unknown }>('SELECT max(pruned_through) AS pruned_before FROM mcp_request_log_rollup')
+    : [];
+  if (!row?.pruned_before) return { requested_days: days, covered_days: days, truncated: false, pruned_before: null };
+  const prunedBefore = toIso(row.pruned_before);
+  const keptDays = Math.floor((Date.parse(toIso(probe!.now)) - Date.parse(prunedBefore)) / DAY_MS);
+  const truncated = keptDays < days;
+  return { requested_days: days, covered_days: truncated ? Math.max(1, keptDays) : days, truncated, pruned_before: prunedBefore };
+}
+
+/** readClientOpUsage plus the window's coverage, for every surface that shows a window to a person. */
+export async function readClientOpUsageWithCoverage(
+  engine: BrainEngine,
+  opts: { days?: number } = {},
+): Promise<{ clients: ClientOpUsage[]; coverage: McpUsageCoverage }> {
+  const clients = await readClientOpUsage(engine, opts);
+  return { clients, coverage: await readMcpUsageCoverage(engine, opts.days ?? MCP_USAGE_DEFAULT_WINDOW_DAYS) };
+}
+
+/** The one truncation sentence: what was pruned, the exact window that is complete, and that raising retention restores nothing. */
+export function truncatedWindowNote(coverage: McpUsageCoverage): string {
+  return `window truncated: details before ${coverage.pruned_before} were pruned, so the ${coverage.requested_days}-day window holds only the last ${coverage.covered_days} day(s) in full. ` +
+    `For an exact report use --days ${coverage.covered_days}. Raising cycle.purge.mcp_request_log_retention_days cannot restore pruned detail.`;
 }

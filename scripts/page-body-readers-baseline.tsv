@@ -253,11 +253,11 @@ src/core/facts/proposal-supersede.ts	prepareProposalMutation	field	SEGW	segmente
 src/core/facts/proposal-supersede.ts	undoUnmanaged	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge-verify.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/facts/purge-verify.ts	verifyPagePurge	sql	STREAM	segmented pages probed through their segment texts (withSegmentedProse)
-src/core/facts/purge.ts	redactPageVersions	field	SEGW	lane 1e: segmented versions carry no body
-src/core/facts/purge.ts	redactPageVersions	sql	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/purge.ts	rewritePageBodies	call:contentHash	META	inline pages only (see sql row)
 src/core/facts/purge.ts	rewritePageBodies	field	SEGW	segmented page: getter throws page_body_segmented
 src/core/facts/purge.ts	rewritePageBodies	sql	SEGW	refuses a segmented target with page_body_segmented before rewriting (segment purge in PR 2)
+src/core/facts/purge.ts	rewriteVersionBodies	field	SEGW	lane 1e: segmented versions carry no body
+src/core/facts/purge.ts	rewriteVersionBodies	sql	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/reconcile-watermark.ts	readFactsReconcileBacklog	sql	STREAM	
 src/core/facts/reconcile-watermark.ts	selectFactsReconcileDrain	sql	STREAM	
 src/core/facts/relink-publish.ts	prepareRelinkMutation	call:serializePageToMarkdown	SEGW	
@@ -705,3 +705,6 @@ src/cli/enforced-member.ts	checkEnforcedWrite	field	INLINE	the stored page comes
 src/cli/enforced-member.ts	markdownLabels	field	NONE	not a stored page body: the parsed markdown a put or a committed file submits
 src/cli/enforced-member.ts	pageLabels	field	INLINE	reads a page from storedPage (segmented refused by assertInlineBody) or parsed submitted markdown
 src/cli/enforced-member.ts	storedPage	sql	INLINE	refuses a segmented page with assertInlineBody before its body is read
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	call:contentHash	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	field	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
+src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	sql	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body

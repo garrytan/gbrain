@@ -48,7 +48,7 @@ import { rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { liveStagingSql } from '../page-body/schema.ts';
 import { escapeFenceCell } from '../fence-shared.ts';
-import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { holdingSlugSql } from '../facts-fence.ts';
 import { carriesClaimSql, claimNeedles, purgeCompletion, reasonNeedle, verifyFactPurge, type PurgeReceipt, type StoreCount } from './purge-verify.ts';
 import { noteBelief, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
@@ -306,6 +306,36 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
 
 const VERSION_REDACTION_BATCH = 5000;
 
+/**
+ * The one reader and rewriter of inline saved-version bodies, for purge's redaction and the held-fact move
+ * (fence-fact-append.ts heldRowsInVersions): the inline versions of source $1 matching `where` in keyset batches by id,
+ * `edit` applied to each body part, and the version rewritten when either part changed, unless `write` is false (a
+ * preview). `visit` sees each version's edited parts. `keepNullTimeline` (the held-row edit) writes a NULL timeline back as
+ * NULL. Segmented versions are each caller's own pass.
+ */
+export async function rewriteVersionBodies<X extends object>(tx: BrainEngine,
+  query: { columns?: string; where: string; params: (after: number) => unknown[]; lock?: boolean; keepNullTimeline?: boolean },
+  edit: (text: string, slug: string) => Promise<string> | string,
+  visit: (v: X & { id: number; slug: string }, edited: [string, string], changed: boolean) => void, write = true): Promise<void> {
+  for (let after = 0; ;) {
+    const rows = await tx.executeRaw<X & { id: number; slug: string; compiled_truth: string; timeline: string | null }>(`SELECT v.id,p.slug,v.compiled_truth,v.timeline${query.columns ? `,${query.columns}` : ''}
+      FROM page_versions v JOIN pages p ON p.id=v.page_id
+      WHERE p.source_id=$1 AND v.body_storage='inline' AND ${query.where}
+      ORDER BY v.id LIMIT ${VERSION_REDACTION_BATCH}${query.lock ? ' FOR UPDATE OF v' : ''}`, query.params(after));
+    if (!rows.length) break;
+    after = Number(rows[rows.length - 1].id);
+    for (const v of rows) {
+      const compiled = await edit(v.compiled_truth, v.slug);
+      const timeline = await edit(v.timeline ?? '', v.slug);
+      const changed = compiled !== v.compiled_truth || timeline !== (v.timeline ?? '');
+      if (changed && write) await tx.executeRaw('UPDATE page_versions SET compiled_truth=$2,timeline=$3 WHERE id=$1',
+        [v.id, compiled, query.keepNullTimeline && v.timeline === null && timeline === '' ? null : timeline]);
+      visit(v, [compiled, timeline], changed);
+    }
+    if (rows.length < VERSION_REDACTION_BATCH) break;
+  }
+}
+
 /** Redact the row from every retained snapshot that carries the claim; returns redacted and still-carrying (prose) counts. */
 export async function redactPageVersions(tx: BrainEngine, sourceId: string, claim: string, pageIds: number[]):
   Promise<{ redacted: number; prose: Array<{ slug: string; version_id: number }>; segmentedPages: number[]; replaced: Uint8Array[] }> {
@@ -316,25 +346,14 @@ export async function redactPageVersions(tx: BrainEngine, sourceId: string, clai
   [sourceId, needle, reasonNeedle(claim)])).map(row => Number(row.id)));
   let redacted = reasons.size;
   const prose: Array<{ slug: string; version_id: number }> = [];
-  for (let after = 0; ;) {
-    const rows = await tx.executeRaw<{ id: number; slug: string; compiled_truth: string; timeline: string | null; metadata: boolean }>(`SELECT v.id,p.slug,v.compiled_truth,v.timeline,
-        (strpos(lower(COALESCE(v.title,'')),$4)>0 OR strpos(lower(COALESCE(v.frontmatter::text,'')),$5)>0) AS metadata
-      FROM page_versions v JOIN pages p ON p.id=v.page_id
-      WHERE p.source_id=$1 AND v.body_storage='inline' AND v.id>$3 AND (v.page_id=ANY($2::int[]) OR ${carriesClaimSql('v', 4)})
-      ORDER BY v.id LIMIT ${VERSION_REDACTION_BATCH}`, [sourceId, pageIds, after, needle, escaped]);
-    if (!rows.length) break;
-    after = Number(rows[rows.length - 1].id);
-    for (const v of rows) {
-      const compiled = await dropPurgedFenceRows(tx, sourceId, v.compiled_truth, v.slug);
-      const timeline = await dropPurgedFenceRows(tx, sourceId, v.timeline ?? '', v.slug);
-      if (compiled !== v.compiled_truth || timeline !== (v.timeline ?? '')) {
-        await tx.executeRaw('UPDATE page_versions SET compiled_truth=$2,timeline=$3 WHERE id=$1', [v.id, compiled, timeline]);
-        if (!reasons.has(Number(v.id))) redacted++;
-      }
-      if (v.metadata || compiled.toLowerCase().includes(needle) || timeline.toLowerCase().includes(needle)) prose.push({ slug: v.slug, version_id: Number(v.id) });
-    }
-    if (rows.length < VERSION_REDACTION_BATCH) break;
-  }
+  await rewriteVersionBodies<{ metadata: boolean }>(tx, {
+    columns: `
+        (strpos(lower(COALESCE(v.title,'')),$4)>0 OR strpos(lower(COALESCE(v.frontmatter::text,'')),$5)>0) AS metadata`,
+    where: `v.id>$3 AND (v.page_id=ANY($2::int[]) OR ${carriesClaimSql('v', 4)})`, params: after => [sourceId, pageIds, after, needle, escaped],
+  }, (text, slug) => dropPurgedFenceRows(tx, sourceId, text, slug), (v, [compiled, timeline], changed) => {
+    if (changed && !reasons.has(Number(v.id))) redacted++;
+    if (v.metadata || compiled.toLowerCase().includes(needle) || timeline.toLowerCase().includes(needle)) prose.push({ slug: v.slug, version_id: Number(v.id) });
+  });
   // Wave B (spec 11): a segmented version references a generation; that generation is rebuilt with the rows dropped,
   // once per generation (versions sharing one share its rebuild and its prose probe), in the same keyset batches.
   const carries = new Map<string, boolean>();
@@ -531,11 +550,11 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
         VALUES ($1,$2,$3,$4,$5::uuid,$6,$7) ON CONFLICT DO NOTHING`,
       [p.sourceId, current.visibility, plan.subject, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason]);
-      // GST-2492: a fact memory/unattributed holds for an entity with no page is purged from the holding page as well.
+      // GST-2492: a fact a holding page holds for an entity with no page is purged from that holding page as well.
       if (plan.subject !== '*') await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
-        SELECT $1::text,$2::text,$3::text,$4::text,$5::uuid,$6::text,$7::text WHERE EXISTS (SELECT 1 FROM facts
-          WHERE id=ANY($8::bigint[]) AND source_id=$1 AND source_markdown_slug=$3 AND entity_slug IS NOT NULL) ON CONFLICT DO NOTHING`,
-      [p.sourceId, current.visibility, UNATTRIBUTED_MEMORY_SLUG, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason, plan.factIds]);
+        SELECT DISTINCT $1::text,$2::text,f.source_markdown_slug,$3::text,$4::uuid,$5::text,$6::text FROM facts f
+          WHERE f.id=ANY($7::bigint[]) AND f.source_id=$1 AND ${holdingSlugSql('f.source_markdown_slug')} AND f.entity_slug IS NOT NULL ON CONFLICT DO NOTHING`,
+      [p.sourceId, current.visibility, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason, plan.factIds]);
       await tx.executeRaw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING`,
         [p.sourceId, plan.subject, current.fact_hash, admitted.id]);
       const takes = plan.takes.length ? (await tx.executeRaw('DELETE FROM takes WHERE id=ANY($1::bigint[]) RETURNING id', [plan.takes.map(t => t.id)])).length : 0;

@@ -90,6 +90,23 @@ describe('parseRunFlags', () => {
     expect(rest).toEqual(['summarize']);
   });
 
+  // Value: protects=a value flag written after the prompt (or after a word parseRunFlags does not read, such as --json) refuses instead of becoming prompt text; fails_when=agent run "do X" --tools read submits a job with every tool; why_new=only the = spelling refused at the CLI entry (#7672 items 1 and 2); seam=none; no_claim=the job submit path
+  test('#7672: a value flag in the prompt throws with both escapes', () => {
+    for (const args of [['summarize X', '--tools', 'read'], ['fix', 'the', '--model', 'opus', 'bug'], ['--json', '--tools', 'read', 'go'], ['--model', 'm', 'go', '--source', 'source-a', '--detach'], ['go', '--max-turns', '2', '--', 'more']]) {
+      expect(() => agentTesting.parseRunFlags(args)).toThrow(/is in the prompt, so it and its value would be prompt text.*before the prompt.*or put -- before the prompt/);
+    }
+    expect(agentTesting.parseRunFlags(['--', 'explain', '--tools', 'read']).rest).toEqual(['explain', '--tools', 'read']);
+    expect(agentTesting.parseRunFlags(['explain', '--', '--tools', 'read']).rest).toEqual(['explain', '--', '--tools', 'read']);
+    expect(agentTesting.parseRunFlags(['explain the --tools read flag']).rest).toEqual(['explain the --tools read flag']);
+  });
+
+  test('#7672: --json=true ahead of a value flag refuses instead of dropping it', async () => {
+    const { cliOnlyFlagArgs } = await import('../src/cli/main.ts');
+    const r = await cliOnlyFlagArgs('agent', ['run', '--json=true', '--tools', 'read', 'go']);
+    if ('refusal' in r) throw new Error(r.refusal.message);
+    expect(() => agentTesting.parseRunFlags(r.args.slice(1))).toThrow(/--tools is in the prompt/);
+  });
+
   test('#1738: a --switch mid-prompt (not trailing) stays verbatim', () => {
     const { flags, rest } = agentTesting.parseRunFlags(['summarize', '--detach', 'the', 'doc']);
     expect(flags.detach).toBe(false);

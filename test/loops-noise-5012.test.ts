@@ -315,6 +315,27 @@ describe('gbrain waiting reports the loops the rule would not have opened', () =
       senders: [{ email: 'alerts@bank-example.test', source_id: 'g1', open_loops: 2 }] });
   });
 
+  test('#7285: JSON lists every recorded sender by open loop count; the human render caps at 10', async () => {
+    const record: Record<string, { reason: string; count: number; last_ms: number }> = {};
+    const senders = [...Array.from({ length: 11 }, (_, i) => `alerts-${String(i).padStart(2, '0')}@bank-example.test`), 'zz-top@bank-example.test'];
+    let n = 0;
+    for (const email of senders) {
+      record[email] = { reason: 'automated_mail', count: 1, last_ms: 1 };
+      for (let k = 0; k < (email.startsWith('zz-') ? 3 : 1); k++) {
+        await upsertOpenLoop(engine, loop({ threadId: `18c2f4a9b3d2${(0x2000 + n++).toString(16)}`, counterpartyEmail: email }));
+      }
+    }
+    writeFileSync(join(stateDir, '.google-source.json'), JSON.stringify({ loop_withheld_senders: record }));
+    const j = await captured(() => runWaiting(engine, ['--json']));
+    const noise = JSON.parse(j.out).withheld_noise;
+    expect(noise).toMatchObject({ loop_count: 14, sender_count: 12 });
+    expect(noise.senders.map((s: { email: string }) => s.email)).toEqual(['zz-top@bank-example.test', ...senders.slice(0, 11)]);
+    expect(noise.senders[0]).toMatchObject({ open_loops: 3, preview_command: 'gbrain loops drop sender zz-top@bank-example.test --source g1 --dry-run' });
+    const r = await captured(() => runWaiting(engine, []));
+    expect(r.out.split('\n').filter((line) => line.includes('gbrain loops drop sender')).length).toBe(10);
+    expect(r.out).toContain('  … and 2 more sender(s); every sender: gbrain waiting --json');
+  });
+
   test('the one-shot sender backfill queues the newest thread of each sender with open reply-owed loops', async () => {
     await upsertOpenLoop(engine, loop({ lastActivityAt: '2026-08-01T00:00:00Z' }));
     await upsertOpenLoop(engine, loop({ threadId: '18c2f4a9b3d21e14', lastActivityAt: '2026-08-02T00:00:00Z' }));

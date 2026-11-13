@@ -104,6 +104,7 @@ test/embedding-completion-atomic.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-sql-facts-keyset.test.ts
 test/extract-all-stamp-intersection.serial.test.ts
+test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
 test/extract-atoms-world-fence-rows.test.ts
@@ -117,6 +118,7 @@ test/fact-fence-adoption-exits.test.ts
 test/fact-purge-lookup-timeout-6511.test.ts
 test/fact-reads-page-access.test.ts
 test/facts-absorb-stalled-receipt-7439.test.ts
+test/facts-embedding-refusal-heal-8526.test.ts
 test/facts-entity-moved-7602.test.ts
 test/facts-home-review-gst2492.test.ts
 test/facts-insert-guards-7105.test.ts
@@ -130,6 +132,7 @@ test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
+test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
 test/frontmatter-reserved-keys-6454.test.ts
@@ -156,7 +159,9 @@ test/git-door-strict-gbra133.test.ts
 test/git-door-write-cost.test.ts
 test/git-gap-census.test.ts
 test/git-gap-direction-evidence-d4.test.ts
+test/google-classic-purged-item-8644.test.ts
 test/google-connector-facts-fence-7292.test.ts
+test/google-withdrawn-fence-carry-8645.test.ts
 test/grade-takes-window.test.ts
 test/graduation-copy.test.ts
 test/graduation-digest.test.ts
@@ -509,6 +514,7 @@ test/persistence-write-stall.test.ts
 test/persistence-writer-fences.test.ts
 test/physical-root-birth-tolerance-6501.test.ts
 test/physical-root-copied-brain-fix-7671.test.ts
+test/physical-root-moved-8625.test.ts
 test/privacy-label-ignored.test.ts
 test/provenance-drift-7891.test.ts
 test/provenance-stamps-7873.test.ts
@@ -518,6 +524,7 @@ test/purge-global-marker.test.ts
 test/purge-missing-cache-6911.test.ts
 test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
+test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-attest-write-boundary.test.ts
@@ -549,6 +556,7 @@ test/remember-pageless-entity-gst2446.test.ts
 test/remember-segmented-entity-9213.test.ts
 test/remember-share-gst2243.test.ts
 test/remember-strict-held-gst2492.test.ts
+test/rename-atom-lineage-7462.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts
@@ -691,6 +699,7 @@ test/sync-waiver-run-imports.test.ts
 test/take-resolution-survives-publish.test.ts
 test/takes-vector-lifecycle-5885.serial.test.ts
 test/terminal-failures-6650.test.ts
+test/think-remote-model.test.ts
 test/timeline-chunk-reuse.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
