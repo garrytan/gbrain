@@ -28,6 +28,7 @@ import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
@@ -225,6 +226,7 @@ for (const kind of testBackends()) {
           tokens[name] = minted.token;
           tokenIds[name] = minted.id;
           if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+          else await readsUnscopedOnPurpose(engine, minted.id);
         }
         await setOwner(engine, OWNER);
       }, 300_000);
@@ -332,6 +334,7 @@ for (const kind of testBackends()) {
         const minted = await mintLegacyToken(engine, { name, scopes: ['read'], takesHolders: ['world'], sourceGrant: [MSRC] });
         tokens[name] = minted.token;
         if (member) await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+        else await readsUnscopedOnPurpose(engine, minted.id);
       }
       await setOwner(engine, OWNER);
     }, 300_000);

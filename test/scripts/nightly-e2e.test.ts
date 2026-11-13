@@ -162,7 +162,10 @@ describe('nightly E2E scheduling', () => {
     const workflow = load(readFileSync(join(repo, '.github/workflows/e2e.yml'), 'utf8')) as any;
     expect(workflow.on.workflow_dispatch.inputs.full_corpus).toMatchObject({ type: 'boolean', default: false });
     for (const name of ['coverage-full-unit', 'coverage-full-serial', 'coverage-full-slow', 'coverage-full-e2e']) expect(workflow.jobs[name].if).toBe(fullProfile);
-    for (const step of workflow.jobs['e2e-status'].steps.slice(1)) expect(step.if).toBe(fullProfile);
+    const [, firstCheckout, retryCheckout, ...rest] = workflow.jobs['e2e-status'].steps;
+    expect(firstCheckout.if).toBe(fullProfile);
+    expect(retryCheckout.if).toBe(`steps.${firstCheckout.id}.outcome == 'failure'`);
+    for (const step of rest) expect(step.if).toBe(fullProfile);
     const selection = workflow.jobs['prepare-e2e'].steps.find((step: any) => step.id === 'select');
     const select = selection.run;
     expect(selection.env.FULL_CORPUS).toBe('${{ ' + fullProfile + ' }}');

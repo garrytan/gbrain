@@ -87,6 +87,8 @@
       "  [INFO] access_policy_invalid: Not applicable: no source has a folder rule.",
       "  [INFO] access_policy_store_mismatch: Not applicable: no source has a folder rule.",
       "  [INFO] unlabeled_people_folders: Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+      "  [INFO] unscoped_shared_reads: Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
+      "  [INFO] shared_stdio_binding: Not applicable: config mcp.stdio_member is unset, so no stdio session on this host reads as a member.",
       "  [INFO] access_may_act_for_wildcard: Not applicable: no page names readers and no member exists.",
       "  [INFO] access_owner_reads_restricted: Not applicable: the owner opt-in (access.owner_reads_restricted) is off; the owner reads a page that names readers or sits under a rule only when listed.",
       "  [INFO] access_raw_only_rules: Not applicable: every folder and page rule also keeps the pages and facts derived from its pages to its readers (no rule has covers_derived: false).",
