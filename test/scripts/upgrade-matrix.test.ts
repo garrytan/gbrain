@@ -16,6 +16,7 @@ import { diffCatalog, diffContent, takeSnapshot, type Query } from '../../script
 import { CHECKS, doctorVerdict, judgeCell, loadKnownExceptions, summarize, validateKnownExceptions, type CellSummary } from '../../scripts/upgrade-matrix/verdict.ts';
 import { buildSummary, type Plan } from '../../scripts/upgrade-matrix.ts';
 
+const ROOT = join(import.meta.dir, '..', '..');
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-10-27T00:00:00Z');
 /** 80 releases v0.60.1.0 .. v0.60.80.0, one a day, newest last. */
@@ -206,6 +207,20 @@ describe('preservation and mixed-version snapshots (real PGLite)', () => {
       await db.close();
     }
   }, 60_000);
+
+  test('snapshot-child.ts opens a PGLite brain with the installed release, runs --exec statements in order and prints the snapshot', () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'um-child-'));
+    const child = ['run', join(ROOT, 'scripts/upgrade-matrix/snapshot-child.ts'), '--pglite', dataDir, '--install', ROOT];
+    try {
+      const exec = execFileSync(process.execPath, [...child, '--exec', "CREATE TABLE config (key text PRIMARY KEY, value text); INSERT INTO config VALUES ('version', '270'); CREATE TABLE pages (id serial PRIMARY KEY, source_id text, slug text, type text, title text, deleted_at timestamptz); INSERT INTO pages (source_id, slug, type, title) VALUES ('default', 'concepts/alpha-example', 'concept', 'Alpha')"], { encoding: 'utf8' });
+      expect(exec).toBe('');
+      const snap = JSON.parse(execFileSync(process.execPath, [...child, '--catalog'], { encoding: 'utf8' }));
+      expect(snap.content.pages.rows.map((r: { slug: string; deleted: boolean }) => [r.slug, r.deleted])).toEqual([['concepts/alpha-example', false]]);
+      expect(snap.catalog.schema_version).toEqual({ version: '270' });
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 const cell = (id: string, verdict: CellSummary['verdict'], extra: Partial<CellSummary> = {}): CellSummary => ({ id, from: 'v0.60.1.0', roles: ['N-1'], shape: 'pglite keyless repo-less', verdict, open: [], excepted: [], ...extra });
@@ -227,7 +242,7 @@ describe('verdicts', () => {
     expect(validateKnownExceptions([{ ...good, issue: 'https://example.com/1' }])[0]).toContain('issue');
     expect(validateKnownExceptions([{ ...good, check: 'setup' }])[0]).toContain('never excepted');
     expect(validateKnownExceptions([{ ...good, check: 'nope' }])[0]).toContain('check must be one of');
-    for (const e of loadKnownExceptions()) expect(Object.keys(CHECKS)).toContain(e.check);
+    for (const e of loadKnownExceptions(join(ROOT, 'scripts/upgrade-matrix/known-exceptions.json'))) expect(Object.keys(CHECKS)).toContain(e.check);
   });
 
   test('a cell passes only with no open failures; an exception covers only its own check and releases', () => {
