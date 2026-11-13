@@ -111,6 +111,39 @@ describe('atom extraction structured output (#5627)', () => {
     expect(rows[0].frontmatter.source_quote_verified).toBe(true);
   });
 
+  test.each([409, 503])('a capped extraction gives HTTP %i one metered attempt and leaves it retryable', async (status) => {
+    const model = 'deepseek:deepseek-flash';
+    const port = await findFreePort();
+    let requests = 0;
+    const server = Bun.serve({ hostname: '127.0.0.1', port, fetch() {
+      requests++;
+      if (requests === 1) {
+        return Response.json({ error: { message: 'Try again later' } }, { status, headers: { 'Retry-After': '0' } });
+      }
+      return Response.json({
+        id: 'synthetic-retry', object: 'chat.completion', created: 0, model: 'deepseek-flash',
+        choices: [{ index: 0, message: { role: 'assistant', content: '{"atoms":[]}' }, finish_reason: 'stop' }],
+        usage: { prompt_tokens: 20, completion_tokens: 20, total_tokens: 40 },
+      });
+    } });
+    try {
+      configureGateway({ chat_model: model, env: { DEEPSEEK_API_KEY: 'synthetic' },
+        base_urls: { deepseek: `http://127.0.0.1:${server.port}/v1` } });
+      await engine.setConfig('models.dream.extract_atoms', model);
+      await engine.setConfig('cycle.extract_atoms.budget_usd', '0.30');
+      const first = await extract();
+      expect(requests).toBe(1);
+      expect(first.details?.failures).toEqual([expect.objectContaining({ error: expect.stringContaining('[transient — retried next run]') })]);
+      expect(first.details?.aborted_global_error).toBeUndefined();
+      expect(first.details?.tombstoned_transcripts).toEqual([]);
+      const second = await extract();
+      expect(requests).toBe(2);
+      expect(second.details?.failures).toEqual([]);
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test('an ignored schema cannot turn malformed output into successful completion', async () => {
     respond('not valid JSON');
     const outcome = await extract();
