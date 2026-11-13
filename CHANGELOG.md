@@ -10,17 +10,6 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
-## [Unreleased]
-
-### Cursor can keep a project's pinned skills in front of the agent
-
-**`gbrain setup cursor --skill-loading resolve`, run in a project, gives Cursor the skills you pin for that project on every request.** Cursor gets no per-turn suggestions: none of its hooks can add text to the model's request.
-
-- Setup builds a catalog for the project from the skill folders Cursor loads there (`.agents`, `.cursor`, `.claude` and `.codex` skills in the project and your home directory) and prints its name. `gbrain skills pin add <id> --catalog <name>` checks the id against that catalog.
-- The pins go in their own always-applied rule, `.cursor/rules/gbrain-pinned-skills.mdc`, with each skill's SKILL.md path. In a git repository its path goes in `.git/info/exclude`, so it is never committed. Your own rules are never touched, and with no pins there is no file.
-- `gbrain doctor` reports Cursor as partial: pinned only, no per-turn hook, unverified. Nothing on this machine can see Cursor's request to confirm the rule reaches the model.
-- `gbrain setup cursor --skill-loading off` removes the rule and its exclude line; the pins stay in config.json. Nothing opens a brain, so a keyless or brainless install stays as it is.
-
 ## [0.60.707.0] - 2026-11-13
 
 **A pull request that is behind master's newest release no longer fails `verify`.**
