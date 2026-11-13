@@ -24,7 +24,7 @@ const DECIDED: Record<string, { count: number; why: string }> = {
   'src/core/generations/managed-retire.ts': { count: 1, why: 'maintenance producer, never deferred' },
   'src/core/minions/handlers/subagent-oneshot.ts': { count: 1, why: 'receipt state' },
   'src/core/minions/tool-write-identity.ts': { count: 1, why: 'receipt state' },
-  'src/core/persistence/atom-maintenance.ts': { count: 3, why: 'maintenance producer, never deferred' },
+  'src/core/persistence/atom-maintenance.ts': { count: 2, why: 'explicit retry of maintenance producer, never deferred' },
   'src/core/persistence/atom-retry.ts': { count: 2, why: 'receipt state' },
   'src/core/persistence/checkpoint-validation.ts': { count: 2, why: 'managed sync' },
   'src/core/persistence/journal.ts': { count: 7, why: 'claim and head selectors pair the list with RELEASED_DEFERRED (EARLIER_HEAD with its own EARLIER_DEFERRED probe); the two named-sync lists match sync rows, never deferred; the rest are recovery rules' },
