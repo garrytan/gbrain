@@ -96,8 +96,7 @@ export const movedPagesRepair: RepairHandler = {
     const refusal = ghostScanRefusal(scan);
     if (refusal) throw refusal;
     const owner = scan.owner!, root = scan.root!;
-    const named = slugs ? await Promise.all(slugs.map(async slug => (await ghostPageNow(engine, sourceId, slug)).ghost)) : [];
-    const ghosts = slugs ? named.filter(ghost => ghost !== null) : scan.ghosts.slice(0, GHOST_REPAIR_LIMIT);
+    const ghosts = scan.ghosts.filter(ghost => !slugs || slugs.includes(ghost.slug)).slice(0, GHOST_REPAIR_LIMIT);
     const provenance = await readDeletionProvenance(root, ghosts.map(ghost => ghost.path));
     const observedAt = new Date().toISOString();
     const pairs: MovedPair[] = [], held: HeldPage[] = [];
@@ -121,7 +120,7 @@ export const movedPagesRepair: RepairHandler = {
       const hash = previewHash(hashParts(scope, slugs, owner, pairs, held));
       if (pairs.length) await saveApprovedSet<ApprovedPair>(engine, { command: 'moved-pages', hash }, pairs.map(pair => ({ ...pair, owner, selection: scope.source_ids })));
       const warnings = [
-        ...(missing.length ? [`Not a live page whose file is gone in source ${sourceId}, so nothing to fold: ${missing.join(', ')}.`] : []),
+        ...(missing.length ? [`Not a live page whose file is gone in source ${sourceId}${scan.truncated ? ` among the first ${GHOST_REPAIR_LIMIT} checked (preview the whole source after applying)` : ''}, so nothing to fold: ${missing.join(', ')}.`] : []),
         ...(mass ? [`${pairs.length} fold(s) against ${scan.file_backed} file-backed page(s) (more than ${Math.round(MASS_RECONCILE_RATIO * 100)}%): the apply refuses unless GBRAIN_ALLOW_MASS_RECONCILE=1; check the source first.`] : []),
         ...((scan.truncated || scan.ghosts.length > ghosts.length) && !slugs ? [`More pages whose file is gone may exist past the first ${GHOST_REPAIR_LIMIT} checked; apply this set, then preview again.`] : []),
         ...(held.length ? [`${held.length} page(s) whose file is gone are not proven moved and are never folded by this apply; each lists why.`] : []),

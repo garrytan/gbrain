@@ -324,4 +324,24 @@ for (const backend of testBackends()) {
     for (const [path, content] of Object.entries({ 'notes/alpha.md': ALPHA, 'notes/beta.md': BETA })) { mkdirSync(join(root, path, '..'), { recursive: true }); writeFileSync(join(root, path), content); }
     git(root, 'add', '-A'); git(root, 'commit', '-qm', 'later');
   } }), 240_000);
+
+  test(`${backend}: two old pages deleted in separate commits that started one page stay held, and fold once the other is retired`, () => managedBrain(async ({ engine, root }) => {
+    await registerLocalWriter(engine, 'cli');
+    expect((await performManagedSync(engine, SYNC)).status).toBe('first_sync');
+    const before = await engine.executeRaw<{ slug: string; timeline: string }>("SELECT slug, timeline FROM pages WHERE source_id='default' AND slug IN ('notes/alpha', 'notes/alpha-copy')");
+    await raw(engine, "UPDATE pages SET timeline='An edit only the database holds.', knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug IN ('notes/alpha', 'notes/alpha-copy')");
+    mkdirSync(join(root, 'archive'), { recursive: true }); writeFileSync(join(root, 'archive/alpha.md'), ALPHA); git(root, 'add', '-A'); git(root, 'commit', '-qm', 'copy');
+    git(root, 'rm', '-q', 'notes/alpha.md'); git(root, 'commit', '-qm', 'delete one');
+    git(root, 'rm', '-q', 'notes/alpha-copy.md'); git(root, 'commit', '-qm', 'delete the other');
+    await performManagedSync(engine, SYNC);
+    for (const row of before) await raw(engine, "UPDATE pages SET timeline=$1, knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug=$2", [row.timeline, row.slug]);
+    const preview = await runner(engine, 'moved-pages', {});
+    expect(preview.affected).toBe(0);
+    expect(listed(preview, 'notes/alpha')).toMatchObject({ class: 'held:shared_survivor' });
+    expect(listed(preview, 'notes/alpha-copy')).toMatchObject({ class: 'held:shared_survivor' });
+    expect(listed(await runner(engine, 'moved-pages', { slugs: ['notes/alpha'] }), 'notes/alpha')).toMatchObject({ class: 'held:shared_survivor' });
+    await raw(engine, "UPDATE pages SET deleted_at=now(), knowledge_revision=gen_random_uuid() WHERE source_id='default' AND slug='notes/alpha-copy'");
+    const after = await runner(engine, 'moved-pages', {});
+    expect(listed(after, 'notes/alpha')).toMatchObject({ class: 'moved_to' });
+  }, opts(backend, { 'notes/alpha.md': ALPHA, 'notes/alpha-copy.md': ALPHA, 'notes/beta.md': BETA })), 240_000);
 }

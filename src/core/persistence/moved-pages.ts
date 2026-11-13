@@ -38,30 +38,31 @@ const git = (root: string, args: string[]): string | null => { try { return sync
 const shallow = (root: string) => git(root, ['rev-parse', '--is-shallow-repository'])?.trim() === 'true';
 const short = (sha: string) => sha.slice(0, 12);
 
-/** Paths (relative to `root`) that took `blob` in `commit` itself (added or changed to it there), and those it deleted holding `blob`. */
-function sameCommitPaths(root: string, commit: string, blob: string): { paths: string[]; deleted: string[] } | null {
+/** Paths (relative to `root`) that took `blob` in `commit` itself (added or changed to it there). */
+function sameCommitPaths(root: string, commit: string, blob: string): string[] | null {
   const out = git(root, ['diff-tree', '-r', '--no-renames', '--no-commit-id', '--relative', '-z', `${commit}^`, commit]);
   if (out === null) return null;
   const fields = out.split('\0');
-  const paths: string[] = [], deleted: string[] = [];
+  const paths: string[] = [];
   for (let i = 0; i + 1 < fields.length; i += 2) {
-    const [, , previous, next, status] = fields[i]!.split(' ');
+    const [, , , next, status] = fields[i]!.split(' ');
     if (next === blob && status !== 'D') paths.push(fields[i + 1]!);
-    if (previous === blob && status === 'D') deleted.push(fields[i + 1]!);
   }
-  return { paths, deleted };
+  return paths;
 }
 
-/** Paths (relative to `root`) whose first commit in HEAD's history added them with `blob`, with that commit. */
-function firstCommitPaths(root: string, blob: string): Map<string, string> | null {
+/** Paths (relative to `root`) whose first commit in HEAD's history added them with `blob`, with that commit, and every path a commit deleted holding `blob`. */
+function firstCommitPaths(root: string, blob: string): { first: Map<string, string>; deleted: Set<string> } | null {
   const out = git(root, ['log', '--no-renames', '--relative', '--raw', '--no-abbrev', '--format=commit %H', `--find-object=${blob}`, 'HEAD']);
   if (out === null) return null;
-  const added = new Map<string, string>();
+  const added = new Map<string, string>(), deleted = new Set<string>();
   let commit = '';
   for (const line of out.split('\n')) {
     if (line.startsWith('commit ')) { commit = line.slice(7).trim(); continue; }
     const match = /^:\d+ \d+ [0-9a-f]+ ([0-9a-f]+) A\t(.+)$/.exec(line);
     if (match && match[1] === blob && !match[2]!.startsWith('"')) added.set(match[2]!, commit);
+    const gone = /^:\d+ \d+ ([0-9a-f]+) [0-9a-f]+ D\t(.+)$/.exec(line);
+    if (gone && gone[1] === blob && !gone[2]!.startsWith('"')) deleted.add(gone[2]!);
   }
   const first = new Map<string, string>();
   for (const [path, commitOf] of added) {
@@ -69,7 +70,7 @@ function firstCommitPaths(root: string, blob: string): Map<string, string> | nul
     if (history === null) return null;
     if (history.split('\n').find(Boolean)?.trim() === commitOf) first.set(path, commitOf);
   }
-  return first;
+  return { first, deleted };
 }
 
 /** Of `paths`, those HEAD still holds (relative to `root`). */
@@ -102,13 +103,13 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
   const added = git(root, ['log', '--no-renames', '--relative', '--diff-filter=A', '--format=%H', '-1', `${commit}^`, '--', ...literalPathspecs([old.path])])?.trim();
   if (same === null || first === null || !added) return held('history_unknown', `Git could not read which paths took ${old.path}'s content (blob ${short(blob)})`);
   const evidence = new Map<string, { evidence: MovedEvidence; commit: string }>();
-  for (const [path, at] of first) {
+  for (const [path, at] of first.first) {
     if (path === old.path || at === added) continue;
     const base: string | undefined = git(root, ['merge-base', added, at])?.trim();
     if (!base) return held('history_unknown', `Git could not order ${path}'s first commit ${short(at)} against the commit that added ${old.path}`);
     if (base === added) evidence.set(path, { evidence: 'first_commit', commit: at });
   }
-  for (const path of same.paths) if (path !== old.path) evidence.set(path, { evidence: 'same_commit', commit });
+  for (const path of same) if (path !== old.path) evidence.set(path, { evidence: 'same_commit', commit });
   const present = inHead(root, [...evidence.keys()]);
   const rows = present.size ? await engine.executeRaw<{ id: number; slug: string; revision: string; source_path: string }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path
     FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2 AND source_path=ANY($3::text[]) ORDER BY id`, [sourceId, old.page_id, [...present]]) : [];
@@ -128,8 +129,11 @@ export async function readMovedPage(engine: BrainEngine, input: { sourceId: stri
     return held('not_moved', `no live page of the source started from ${old.path}'s last committed content (blob ${short(blob)}), so commit ${short(commit)} deleted it rather than moving it`);
   }
   const row = rows[0]!;
-  const others = same.deleted.filter(path => path !== old.path);
-  if (others.length) return held('shared_survivor', `commit ${short(commit)} deleted ${[old.path, ...others].join(', ')} with the same content (blob ${short(blob)}), so which of them moved to ${row.source_path} is a person's decision`, [row.slug]);
+  const gone = [...first.deleted].filter(path => path !== old.path);
+  const back = inHead(root, gone);
+  const others = gone.length ? await engine.executeRaw<{ source_path: string }>(`SELECT source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id<>$2
+    AND source_path=ANY($3::text[]) ORDER BY source_path`, [sourceId, old.page_id, gone.filter(path => !back.has(path))]) : [];
+  if (others.length) return held('shared_survivor', `${[old.path, ...others.map(other => other.source_path)].join(', ')} were deleted holding the same content (blob ${short(blob)}) and each still backs a live page, so which of them moved to ${row.source_path} is a person's decision`, [row.slug]);
   const [storage] = await engine.executeRaw<{ segmented: boolean }>(`SELECT EXISTS (SELECT 1 FROM pages WHERE id=$1 AND body_storage<>'inline')
     OR EXISTS (SELECT 1 FROM page_versions WHERE page_id=$1 AND body_storage<>'inline') AS segmented`, [old.page_id]);
   if (storage?.segmented) return held('segmented_versions', `${old.path} moved to ${row.source_path}, but page ${old.slug} or one of its saved versions is stored in segments (over 1 MiB), whose body generations belong to ${old.slug} and cannot move to ${row.slug}; fold it by hand with the user`, [row.slug]);
