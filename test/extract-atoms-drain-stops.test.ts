@@ -124,6 +124,29 @@ describe('soft stop: the window', () => {
     expect(batches).toBe(1);
     expect(result).toMatchObject({ stopped: 'window', extracted: 1, remaining: 5 });
   });
+
+  it('#7826: a window that closes after the loop check but before the batch starts is a window stop, not no_progress', async () => {
+    let clock = 0;
+    let counts = 0;
+    let batchSawStop: boolean | null = null;
+    const result = await runExtractAtomsDrain(
+      {
+        withLock: (work) => work(new AbortController().signal),
+        countRemaining: async () => {
+          if (++counts === 1) { await new Promise(resolve => setTimeout(resolve, 80)); clock = 1_000; }
+          return 5;
+        },
+        runBatch: async ({ stopSignal }) => {
+          batchSawStop = stopSignal.aborted;
+          return { extracted: 0, skipped: 0 };
+        },
+        now: () => clock,
+      },
+      { windowMs: 20 },
+    );
+    expect(batchSawStop as boolean | null).toBe(true);
+    expect(result).toMatchObject({ stopped: 'window', batches: 1, extracted: 0, remaining: 5 });
+  });
 });
 
 describe('bounded backlog counts', () => {

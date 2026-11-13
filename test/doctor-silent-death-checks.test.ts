@@ -21,6 +21,7 @@ import {
   effectiveDbOnlyDirs,
   findDbOnlyCollisions,
 } from '../src/core/storage-config.ts';
+import { publishesDatabaseOnly } from '../src/core/persistence/page-prepare.ts';
 
 let engine: PGLiteEngine;
 const tempDirs: string[] = [];
@@ -295,6 +296,20 @@ describe('undeclared_db_only_pages (#2784)', () => {
     await addPage('concepts/generated-theme', { sourceId: 'src-a' });
     const c = await checkUndeclaredDbOnlyPages(engine);
     expect(c.status).toBe('ok');
+  });
+
+  test('#8054: the drift phase report is implicitly declared, the rest of reports/ is not', async () => {
+    const repo = makeRepo();
+    await addSource('src-a', repo);
+    await addPage('reports/drift-2026-10-01', { sourceId: 'src-a' });
+    expect((await checkUndeclaredDbOnlyPages(engine)).status).toBe('ok');
+    expect(publishesDatabaseOnly(repo, 'reports/drift-2026-10-01', { page: { deleted_at: null, source_path: null, source_uri: null } })).toBe(true);
+    expect(publishesDatabaseOnly(repo, 'reports/drift-2026-10-01', { page: { deleted_at: null, source_path: 'reports/drift-2026-10-01.md', source_uri: null } })).toBe(false);
+    await addPage('reports/weekly-review', { sourceId: 'src-a' });
+    const c = await checkUndeclaredDbOnlyPages(engine);
+    expect(c.status).toBe('warn');
+    expect(c.details).toMatchObject({ total: 1, sample_slugs: ['reports/weekly-review (src=src-a)'] });
+    expect(publishesDatabaseOnly(repo, 'reports/weekly-review', { page: { deleted_at: null, source_path: null, source_uri: null } })).toBe(false);
   });
 
   test('declared db_only prefix in gbrain.yml keeps the check quiet', async () => {

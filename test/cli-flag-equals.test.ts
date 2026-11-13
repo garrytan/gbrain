@@ -295,6 +295,8 @@ describe('#7619 split rules', () => {
       'src/commands/doctor.ts': ['doctor'],
       'src/commands/doctor/budget.ts': ['doctor'],
       'src/commands/doctor/registry.ts': ['doctor'],
+      'src/commands/doctor/alert.ts': ['doctor'],
+      'src/commands/doctor/remote-tier.ts': 'doctor argv the alert tier passes to buildChecks (--scope=brain), not a CLI reader',
       'src/commands/edge-proposals.ts': ['edge-proposals list'],
       'src/commands/embed.ts': ['embed'],
       'src/commands/eval-conversation-parser.ts': ['eval conversation-parser'],

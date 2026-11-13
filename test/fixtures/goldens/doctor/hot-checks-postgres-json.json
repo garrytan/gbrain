@@ -9,6 +9,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [
@@ -738,7 +744,9 @@
               },
               "covering_index": null,
               "deleted_page_chunks": {
+                "held": 0,
                 "past_window": 0,
+                "purgeable": 0,
                 "window_hours": 72,
                 "within_window": 0
               },
@@ -1890,6 +1898,30 @@
           {
             "category": "ops",
             "details": {
+              "bound": 3,
+              "enabled": true,
+              "items": [],
+              "pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No deferred dream writes",
+            "name": "dream_write_deferred",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The embedding signature restamp is running clean",
+            "name": "embedding_restamp_stalled",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "count": 0,
               "floor": "0.60.5.0",
               "hosts": [],
@@ -2913,7 +2945,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
             "name": "undeclared_db_only_pages",
             "status": "ok"
           },
@@ -3708,6 +3740,14 @@
             "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
             "name": "host_identity_mismatch",
             "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": "<live-census>",
+            "elapsed_ms": "<volatile>",
+            "message": "<live-census>",
+            "name": "session_lane_budget",
+            "status": "<live-census>"
           },
           {
             "category": "ops",
@@ -5196,6 +5236,12 @@
       ],
       "exit_code": 1,
       "report": {
+        "alert": {
+          "docs": "docs/guides/troubleshooting.md#doctor-alert",
+          "items": [],
+          "level": "none",
+          "unknown": []
+        },
         "brain_checks_score": 45,
         "budget_ms": "<volatile>",
         "capped_by": [
@@ -5925,7 +5971,9 @@
               },
               "covering_index": null,
               "deleted_page_chunks": {
+                "held": 0,
                 "past_window": 0,
+                "purgeable": 0,
                 "window_hours": 72,
                 "within_window": 0
               },
@@ -7077,6 +7125,30 @@
           {
             "category": "ops",
             "details": {
+              "bound": 3,
+              "enabled": true,
+              "items": [],
+              "pending": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No deferred dream writes",
+            "name": "dream_write_deferred",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
+              "bound": 3,
+              "enabled": true
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "The embedding signature restamp is running clean",
+            "name": "embedding_restamp_stalled",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": {
               "count": 0,
               "floor": "0.60.5.0",
               "hosts": [],
@@ -8100,7 +8172,7 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
-            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/).",
+            "message": "Every DB page is file-backed or under a declared/default db_only path (derive-phase defaults: life/events/ atoms/ concepts/ extracts/ dream-cycle-summaries/ reports/drift-).",
             "name": "undeclared_db_only_pages",
             "status": "ok"
           },
@@ -8907,6 +8979,14 @@
             "message": "This process's host identity (<home>/.gbrain/persistence/host.json) owns every binding this filesystem holds.",
             "name": "host_identity_mismatch",
             "status": "ok"
+          },
+          {
+            "category": "ops",
+            "details": "<live-census>",
+            "elapsed_ms": "<volatile>",
+            "message": "<live-census>",
+            "name": "session_lane_budget",
+            "status": "<live-census>"
           },
           {
             "category": "ops",

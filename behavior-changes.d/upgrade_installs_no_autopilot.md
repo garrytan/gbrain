@@ -1,0 +1,1 @@
+An upgrade no longer installs autopilot on a Postgres brain that has none, even with sync.repo_path set: the v0.11.0 migration's Phase F is skipped (reason not_installed), prints the install command and records it, and `gbrain doctor` shows it as a minions_migration line until you run it. An autopilot already installed for the brain is reinstalled as before.
