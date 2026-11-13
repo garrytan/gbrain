@@ -16,9 +16,13 @@ import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import {
   readClientOpUsage,
+  readClientOpUsageWithCoverage,
+  truncatedWindowNote,
   normalizeLoggedOperation,
+  AUDIT_LOG_OPERATIONS,
   AUTOMATION_FRACTION_THRESHOLD,
   MCP_USAGE_DEFAULT_WINDOW_DAYS,
+  NON_OP_LOG_ROWS,
 } from '../src/core/mcp-usage.ts';
 
 let engine: PGLiteEngine;
@@ -164,5 +168,37 @@ describe('readClientOpUsage', () => {
     await expect(readClientOpUsage(engine, { days: 0 })).rejects.toThrow(/days must be an integer/);
     await expect(readClientOpUsage(engine, { days: 1.5 })).rejects.toThrow(/days must be an integer/);
     await expect(readClientOpUsage(engine, { days: 10_000 })).rejects.toThrow(/days must be an integer/);
+  });
+});
+
+describe('readClientOpUsageWithCoverage (request-log retention)', () => {
+  test('a brain that never pruned reports a complete window, with the same clients readClientOpUsage returns', async () => {
+    const { clients, coverage } = await readClientOpUsageWithCoverage(engine, { days: 90 });
+    expect(coverage).toEqual({ requested_days: 90, covered_days: 90, truncated: false, pruned_before: null });
+    expect(clients).toEqual(await readClientOpUsage(engine, { days: 90 }));
+  });
+
+  test('a window that starts before the newest pruned row is truncated to the days it covers, and says what to do', async () => {
+    await engine.executeRaw(
+      `INSERT INTO mcp_request_log_rollup (token_name, requests, last_used_at, pruned_through)
+       VALUES ('client-pruned', 5, now() - interval '40 days', now() - interval '40 days')`);
+    try {
+      const wide = await readClientOpUsageWithCoverage(engine, { days: 365 });
+      expect(wide.coverage).toMatchObject({ requested_days: 365, covered_days: 40, truncated: true });
+      expect(Date.parse(wide.coverage.pruned_before!)).toBeLessThan(Date.now() - 39 * 86_400_000);
+      expect(wide.clients).toEqual(await readClientOpUsage(engine, { days: 365 }));
+      const note = truncatedWindowNote(wide.coverage);
+      expect(note).toContain('window truncated');
+      expect(note).toContain('--days 40');
+      expect(note).toContain('cannot restore');
+      expect((await readClientOpUsageWithCoverage(engine, { days: 30 })).coverage.truncated).toBe(false);
+    } finally {
+      await engine.executeRaw("DELETE FROM mcp_request_log_rollup WHERE token_name = 'client-pruned'");
+    }
+  });
+
+  test('audit rows are named once: the prune exemption and the usage hygiene read the same set', () => {
+    expect([...AUDIT_LOG_OPERATIONS].sort()).toEqual(['access_admin', 'memory_setting_change', 'surface_change']);
+    for (const op of AUDIT_LOG_OPERATIONS) expect(NON_OP_LOG_ROWS.has(op)).toBe(true);
   });
 });

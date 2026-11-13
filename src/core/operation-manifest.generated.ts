@@ -4541,7 +4541,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "model": {
         "type": "string",
-        "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus."
+        "description": "Model override (alias or full id). Falls through models.think → models.default → GBRAIN_MODEL → opus. Remote callers get the host think model unless the host lists this one in think.remote_models."
       },
       "since": {
         "type": "string",
@@ -7405,7 +7405,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "limit": {
         "type": "number",
-        "description": "Grouped: max groups (default 3). Flat: max loops (default 50). The internal fetch is capped at 500 rows; `truncated: true` marks a hit."
+        "description": "Grouped: max groups (default 3). Flat: max loops (default 50); `count` is the number matched (at most 500) and `truncated: true` marks a list cut by this limit or by the 500-row internal cap (then `count` is a lower bound)."
       },
       "include_context": {
         "type": "boolean",

@@ -241,7 +241,9 @@ for (const backend of backends) {
       });
       const slug = `notes/fk-race-${backend}`;
       const key = `ingest:webhook:client-example:${racingSource}:fk-race`;
-      const result = await makeIngestCaptureHandler(racing)(jobCtx(5, captureData(note('Racing capture', 'Racing body.'), slug, racingSource), key));
+      // A webhook capture refuses instead of falling back (GST-2113); a capture of another kind keeps the fallback.
+      const data = captureData(note('Racing capture', 'Racing body.'), slug, racingSource);
+      const result = await makeIngestCaptureHandler(racing)(jobCtx(5, { ...data, event: { ...data.event, source_kind: 'url-fetch' } }, key));
       expect(attempts).toBe(2);
       expect(result.status).toBe('imported');
       expect(result.source_fallback).toEqual({ requested: racingSource, effective: 'default', reason: 'fk_violation' });

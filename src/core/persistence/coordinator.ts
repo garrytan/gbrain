@@ -417,7 +417,8 @@ export function decoratePublicationOutcome(row: WriteRequest, prepared: Prepared
   if (final) outcome.revision = final.revision;
   outcome.persistence = { mode: fileCount ? 'filesystem' : 'database', ...(fileCount ? { file_written: !prepared.noop } : {}), ...(skill ? { git_state: 'not_requested' } : {}) };
   outcome.write_through = fileCount ? { written: !prepared.noop, ...(row.authority.heldFor ? { held_for: row.authority.heldFor } : {}) }
-    : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
+    : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? (row.authority.heldFor ? 'db_only' : 'no_repo_configured'),
+      ...(row.authority.heldFor ? { held_for: row.authority.heldFor } : {}) };
   if (prepared.databaseOnlyReason === 'mirror_read_only') outcome.storage = 'database_only';
   if ((row.operation === 'put_page' || row.operation === 'edit_page' || row.operation === 'append_page') && row.authority.remote && (row.authority.databaseOnlyReason === 'no_repo_configured' || row.authority.databaseOnlyReason === 'relative_root')) outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
   if ((outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {

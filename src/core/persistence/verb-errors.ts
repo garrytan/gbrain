@@ -12,7 +12,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { readsPageInPieces } from '../page-body/page-shape.ts';
 import { codeEntry, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { SOURCE_CHECKOUT_MISSING, type CheckoutRefusalOrigin } from './publication-failure.ts';
-import { ownershipRecordNotPrivateError, physicalRootDirectoryChangedError } from './physical-root-record.ts';
+import { ownershipRecordNotPrivateError, physicalRootDirectoryChangedError, PHYSICAL_ROOT_MOVED_MESSAGE } from './physical-root-record.ts';
 
 /** GST-465: a page write to a source whose canonical checkout is missing on this host. The path is left to the read-only fix, which a remote caller cannot run. */
 export function sourceCheckoutMissingRefusal(sourceId: string, slug: string | null): OperationError {
@@ -167,6 +167,9 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
   // #6501: a checkout recreated (or drifted beyond the birth tolerance) at its recorded path; the #5914 relocated-root self-transfer is the exit.
   if (code === 'recovery_required' && message?.startsWith('The checkout directory at the recorded root is not the one this owner stamped')) return { reason: 'physical_root_directory_changed', message,
     suggestion: 'On the brain host, gbrain sources writer status <source> --json shows the filled commands: gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root, then transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <digest from prepare> --self-transfer --confirm-relocated-root (each with its admin intent). Retry the original write with the same request_id afterwards; never remove the ownership markers.' };
+  // #8625: the source's folder holds the stamp of a checkout moved from its recorded path; the path-free refusal of the automatic claim.
+  if (code === 'recovery_required' && message === PHYSICAL_ROOT_MOVED_MESSAGE) return { reason: 'physical_root_moved', message,
+    suggestion: 'Nothing was written. On the brain host, the owner runs the same gbrain sources add, set-path or writer claim with --dry-run in a terminal: it names the recorded path and the commands that bring the checkout back (a symlink and set-path, or moving the folder back). Moving folders is the user\'s decision; never remove the ownership markers.' };
   if (code === 'owner_unavailable' && message === UNBOUND_PUBLICATION_MESSAGE) return { reason: 'unbound_source', message,
     suggestion: 'Read the page again and submit the write with a new request_id; a bound source publishes it to its canonical file.' };
   if (code === 'owner_unavailable') return { reason: code, message: 'The accepted source owner is unavailable or changed.',
@@ -296,6 +299,13 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       const fenced = verbError('unavailable', error.message, error.suggestion ?? 'Retry the same request_id after retry_after_ms.', error.detail);
       Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true, requestId: error.requestId });
       throw markNotAdmitted(fenced);
+    }
+    // GST-2492: a strict source that has no file to hold the fact (an exact page rule on a page-less entity) or cannot read
+    // its access state refuses before admission; the frozen code stays and the canonical code, reason and fix ride along.
+    if (error.code === 'git_home_required' || error.code === 'access_policy_pending') {
+      const strict = verbError(error.code === 'git_home_required' ? 'invalid_params' : 'unavailable', error.message, error.suggestion ?? 'Inspect writer status before retrying.');
+      Object.assign(strict, { canonical: error.code, reason: error.reason, why: error.why, docs: error.docs, fix: error.fix });
+      throw strict;
     }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)

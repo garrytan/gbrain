@@ -164,6 +164,7 @@ src/core/brain-resolver.ts	process_env	1	W6: settings plane out of the core
 src/core/brain-score-recommendations.ts	process_env	1	W6: settings plane out of the core
 src/core/brain-writer.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/brainstorm/checkpoint.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/brainstorm/domain-bank.ts	module_collection	1	#7838: the slug-prefix cache is a WeakMap keyed by engine, so mounts never share an entry; W6: per-engine state
 src/core/brainstorm/orchestrator.ts	process_global	1	W7: process-wide effects move to src/cli
 src/core/budget/budget-tracker.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/budget/budget-tracker.ts	module_collection	1	W6: per-engine state, or mark as a constant table

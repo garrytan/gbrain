@@ -138,7 +138,10 @@ shared brain, and it binds the owner too: the owner reads such a page only when 
 turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; on an existing page the brain host sets or removes it with
 `gbrain repair visibility --slug <page> --readers <list>` (or `--slugs-file`), which keeps the page's trust tier and
-changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. A credential bound to a
+changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. On a git-canonical
+source, a fact held for an entity that has no page yet sits on the holding page of the entity's folder
+(`<folder>/memory/unattributed`), which the folder's rules cover; a new rule's preview lists the held facts it would move
+there (`held_facts_moving`) and its apply moves them (`held_facts` in the result) ([details](git-canonical.md#how-writes-reach-a-strict-source)). A credential bound to a
 member with `default` or a federated source as its write source gets it on the pages it creates there (`readable_by: [member:<id>]`),
 except the owner's, whose new pages stay shared (`POST /ingest` still refuses both). See
 [company brain, Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape).

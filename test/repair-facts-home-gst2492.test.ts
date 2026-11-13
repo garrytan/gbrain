@@ -26,6 +26,7 @@ import { performSync } from '../src/commands/sync.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { publishManagedEntityFacts } from '../src/core/facts/managed-fact-write.ts';
+import { scanFactsHome } from '../src/core/facts/facts-home.ts';
 import { resolveRepairScope, type RepairKind } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
@@ -110,7 +111,7 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     await seeded(b);
     const before = { head: git(root, 'rev-parse', 'HEAD'), pageless: await factRow(engine, PAGELESS), subjectless: await factRow(engine, SUBJECTLESS) };
     const preview = await repair(engine);
-    expect(classes(preview)).toEqual(['cannot_render', 'entity_page_exists', 'entity_page_missing', 'folder_restricted', 'held_over_30_days', 'no_entity']);
+    expect(classes(preview)).toEqual(['cannot_render', 'entity_page_exists', 'entity_page_missing', 'entity_page_missing', 'held_over_30_days', 'no_entity']);
     const old = preview.listing.find((entry: { class: string }) => entry.class === 'held_over_30_days');
     expect(old.detail).toContain('people/dana-example');
     expect(git(root, 'rev-parse', 'HEAD')).toBe(before.head);
@@ -125,8 +126,10 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     expect(lineOf(file, PAGELESS)).toContain('notes/kitchen-remodel');
     expect(lineOf(file, SUBJECTLESS)).toContain(SUBJECTLESS);
     for (const text of [PAGED, UNRENDERABLE, RESTRICTED, 'secret/project-x']) expect(file).not.toContain(text);
-    expect(await factRow(engine, RESTRICTED)).toMatchObject({ row_num: null });
-    expect(classes(await repair(engine))).toEqual(['cannot_render', 'entity_page_exists', 'folder_restricted', 'held_over_30_days']);
+    // An entity under a folder access rule is held on its folder's holding page, never on the shared one.
+    expect(await factRow(engine, RESTRICTED)).toMatchObject({ entity_slug: 'secret/project-x', source_markdown_slug: 'secret/memory/unattributed' });
+    expect(lineOf(head(root, 'secret/memory/unattributed.md'), RESTRICTED)).toContain('secret/project-x');
+    expect(classes(await repair(engine))).toEqual(['cannot_render', 'entity_page_exists', 'held_over_30_days']);
     expect(await rebuild(root, databaseUrl, [PAGELESS, SUBJECTLESS])).toEqual({ [PAGELESS]: 'notes/kitchen-remodel', [SUBJECTLESS]: null });
   }), 240_000);
 
@@ -167,6 +170,19 @@ for (const backend of testBackends()) describe(`[${backend}] gbrain repair facts
     await settleManagedGitEffects(engine);
     expect(lineOf(head(root, HOLD_FILE), SUBJECTLESS)).toContain(SUBJECTLESS);
     expect(await factRow(engine, SUBJECTLESS)).toMatchObject({ entity_slug: null, source_markdown_slug: HOLD, row_num: 1 });
+  }), 120_000);
+
+  test('with write-through off, a fact for an entity under an exact page rule is listed folder_restricted and never homed on a holding page', () => brain(async ({ engine }) => {
+    await engine.executeRaw(`INSERT INTO access_policy_state(source_id) VALUES('default') ON CONFLICT DO NOTHING`);
+    await engine.executeRaw(`INSERT INTO access_rules(source_id,rule_id,prefix,readable_by,revision) VALUES('default','r1','clients/acme-example',ARRAY['member:alice-example'],1)`);
+    __resetPrivateVisibilityCacheForTests();
+    await legacy(engine, RESTRICTED, 'clients/acme-example');
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id='default'`);
+    await engine.setConfig('sync.write_through', 'false');
+    const scan = await scanFactsHome(engine, 'default');
+    expect(scan.rows.filter(row => row.entity_slug === 'clients/acme-example')).toMatchObject([{ group: 'folder_restricted', reason: 'page_rule' }]);
+    expect(scan.homeable).toEqual([]);
+    expect(classes(await repair(engine))).toEqual(['folder_restricted']);
   }), 120_000);
 
   test('a source that is not strict lists nothing, writes nothing and names the census', () => brain(async ({ engine }) => {
