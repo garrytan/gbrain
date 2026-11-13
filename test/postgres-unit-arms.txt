@@ -528,7 +528,6 @@ test/purge-read-surfaces.test.ts
 test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
-test/put-page-parent-casing-9286.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
 test/qm-memory-tools.test.ts
