@@ -261,6 +261,42 @@ for (const kind of testBackends()) {
         expect(check).toMatchObject({ status: 'warn', details: { state: 'failing' } });
         expect(check.message).toContain('orphans');
       });
+
+      test('a cycle that threw three times reads failing until the next clean run clears it', async () => {
+        let throws = 3;
+        const flaky: typeof runCycle = async (e, o) => {
+          if (throws > 0 && !o.sourceId) { throws -= 1; throw Object.assign(new Error('connection reset'), { code: 'db_connection_reset' }); }
+          return runCycle(e, o);
+        };
+        let at = Date.now();
+        for (let i = 0; i < 3; i++) {
+          const outcome = await upkeep(engine, { runner: 'test', providers: KEYLESS, cycle: flaky, now: () => new Date(at) });
+          expect(outcome).toMatchObject({ status: 'ran', exit: 1, code: 'db_connection_reset' });
+          at += UPKEEP_INTERVAL_MS + HOUR;
+        }
+        expect(await checkUnattendedMaintenance(engine, { nowMs: at })).toMatchObject({ status: 'warn', details: { state: 'failing' } });
+        const clean = await upkeep(engine, { runner: 'test', providers: KEYLESS, cycle: flaky, now: () => new Date(at) });
+        expect(clean).toMatchObject({ status: 'ran', exit: 0 });
+        expect(clean.record!.consecutive_failures).toEqual([]);
+        expect(await checkUnattendedMaintenance(engine, { nowMs: at })).toMatchObject({ status: 'ok', details: { state: 'ok' } });
+      });
+
+      test('a failing step that is held back afterwards no longer keeps doctor failing', async () => {
+        const failing: typeof runCycle = async (e, o) => {
+          const report = await runCycle(e, o);
+          return { ...report, phases: report.phases.map((p) => p.phase === 'fence_repair' ? { ...p, status: 'fail' as const, code: 'fence_probe_failed' } : p) };
+        };
+        let at = Date.now();
+        for (let i = 0; i < 3; i++) {
+          await upkeep(engine, { runner: 'test', providers: KEYLESS, cycle: failing, now: () => new Date(at) });
+          at += UPKEEP_INTERVAL_MS + HOUR;
+        }
+        expect((await readUpkeepRecord(engine))!.consecutive_failures).toEqual([expect.objectContaining({ step: 'fence_repair', count: 3 })]);
+        const held = await upkeep(engine, { runner: 'test', providers: { ...KEYLESS, fenceRepairModel: true }, now: () => new Date(at) });
+        expect(held.record!.held).toContain('fence_repair');
+        expect(held.record!.consecutive_failures).toEqual([]);
+        expect(await checkUnattendedMaintenance(engine, { nowMs: at })).toMatchObject({ status: 'ok', details: { state: 'ok' } });
+      });
     });
 
     describe('decision D: the embedding cap', () => {

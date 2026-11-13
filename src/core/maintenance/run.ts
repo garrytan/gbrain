@@ -351,6 +351,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
     const deadline = opts.budgetMs !== undefined ? Date.now() + opts.budgetMs : Infinity;
     const steps: UpkeepStep[] = [];
     const done = [...round.done];
+    const cycled = new Set<string>();
     let lockBusy = false;
     for (const item of items) {
       if (Date.now() >= deadline || opts.signal?.aborted) break;
@@ -371,6 +372,7 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
         if (phases.length > 0) {
           const report = await (opts.cycle ?? runCycle)(engine, cycleOpts);
           if (report.status === 'skipped' && report.reason === 'cycle_already_running') { lockBusy = true; break; }
+          cycled.add(scope);
           steps.push(...stepsFrom(report, scope));
           if (report.reason === 'aborted' || report.reason === 'lock_stolen') break;
         }
@@ -397,7 +399,12 @@ export async function runUnattendedMaintenance(engine: BrainEngine, opts: Upkeep
       embed = result.embed;
     }
     const failed = steps.filter((step) => step.status === 'fail');
+    const planned = new Map<string, string[]>([
+      ...sources.map((source): [string, string[]] => [source.id, [...plan.source, 'cycle']]),
+      ['global', [...plan.global, 'cycle', ...(plan.embedding ? ['embed'] : [])]],
+    ]);
     const nextFailures: UpkeepFailure[] = failures
+      .filter((f) => planned.get(f.scope)?.includes(f.step) && !(f.step === 'cycle' && cycled.has(f.scope)))
       .filter((f) => !steps.some((s) => s.name === f.step && s.scope === f.scope && s.status !== 'fail' && s.reason !== 'backed_off'));
     for (const step of failed) {
       const entry = nextFailures.find((f) => f.step === step.name && f.scope === step.scope);
