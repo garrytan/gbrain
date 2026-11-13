@@ -100,6 +100,20 @@ describe('doctor embedding_state', () => {
     expect(c.fix?.verify?.argv).toEqual(['gbrain', 'doctor', '--only', 'embedding_state', '--json']);
   });
 
+  test('#7825: chunks of a held derived retirement past the window are information, not a purge warning', async () => {
+    await chunk(await page('atoms/held-retirement', { deletedHoursAgo: 120, frontmatter: { retired_by: 'managed-reextract' } }), true);
+    const held = await run('standard');
+    expect(held.status).not.toBe('warn');
+    expect(held.details.deleted_page_chunks).toMatchObject({ past_window: 1, purgeable: 0, held: 1 });
+    expect(held.message).not.toContain('purge-deleted');
+    await chunk(await page('notes/deleted-old', { deletedHoursAgo: 100 }), true);
+    const mixed = await run('standard');
+    expect(mixed.status).toBe('warn');
+    expect(mixed.details.code).toBe('deleted_page_chunks_overdue');
+    expect(mixed.details.deleted_page_chunks).toMatchObject({ past_window: 2, purgeable: 1, held: 1 });
+    expect(mixed.message).toContain('1 chunk(s) belong to pages soft-deleted more than 72h ago');
+  });
+
   test('a chunkless page with body text warns on a keyed brain and is info on a keyless one', async () => {
     await page('notes/stub-with-body');
     const keyed = await run('standard');

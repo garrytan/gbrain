@@ -425,6 +425,8 @@ export async function runExtractAtomsDrain(
           // skips but the backlog still counts re-skipped every batch, so the
           // drain ran to max_batches holding the cycle lock.
           if (r.extracted === 0) {
+            // #7826: the window closed before this batch started its first item; that is a window stop, not a stall.
+            if (soft.signal.aborted) { stopped = 'window'; break; }
             const after = await count();
             if (hard.signal.aborted) break;
             if (after !== null) lastCount = after;
