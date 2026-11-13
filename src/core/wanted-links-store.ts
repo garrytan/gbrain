@@ -29,6 +29,13 @@ export interface WantedLinksReplacement {
    * origin and one the read already saw does not. Required when rows has a name.
    */
   readAt?: string;
+  /**
+   * Move `checked_at` of the origin's rows from other producers to `readAt`. Only the stale sweep
+   * sets it, and only on a brain that never extracts frontmatter links in the sweep
+   * (`incremental_extract_include_frontmatter` off): there no stale-driven extraction can resolve
+   * those rows, and WANTED_ORIGIN_IS_STALE would keep their origin stale after every sweep.
+   */
+  settleOtherProducers?: boolean;
 }
 
 /** The database clock as a UTC ISO string with microseconds, independent of the session's DateStyle. */
@@ -96,6 +103,15 @@ export async function replaceWantedLinks(
           WHERE v.producer = w.producer AND v.ref_kind = w.ref_kind
             AND v.target_source_id = w.target_source_id AND v.target_ref = w.target_ref)`,
   [origin.pageId], [{ rows, producers: replacement.producers }]);
+  // The body-only stale sweep keeps the other producers' rows, but WANTED_ORIGIN_IS_STALE counts every
+  // producer. Unless their check time moves to this read, a frontmatter row whose target changed keeps its
+  // origin stale after every sweep, and the stale job chains for ever. The row stays for a
+  // frontmatter-aware extraction (put_page, or the flag) to resolve.
+  if (replacement.settleOtherProducers && replacement.readAt) {
+    await tx.executeRaw(`UPDATE wanted_links SET checked_at = $3::timestamptz
+        WHERE origin_page_id = $1 AND NOT (producer = ANY($2::text[])) AND checked_at < $3::timestamptz`,
+    [origin.pageId, [...replacement.producers], replacement.readAt]);
+  }
   if (!rows.length) return 0;
   const written = await executeRawJsonb<{ id: number }>(tx, `INSERT INTO wanted_links
       (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at)
