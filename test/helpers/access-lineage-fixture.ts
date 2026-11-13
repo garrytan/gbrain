@@ -22,6 +22,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../../src/core/search/private-visibility.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
 import { bindCredential } from '../../src/core/access/members.ts';
+import { readsUnscopedOnPurpose } from './reads-unscoped.ts';
 import { applyApproved, getRevision, previewApply, proposeRevision, type ProposalResult } from '../../src/core/access/policy.ts';
 import { POLICY_FILE, syncGitPolicy, writeApprovedFile, writeGitRules } from '../../src/core/access/policy-git.ts';
 import { serializePolicyYaml, type FolderRule } from '../../src/core/access/folder-rules.ts';
@@ -174,6 +175,7 @@ export async function buildLineageBrain(spec: LineageSpec): Promise<LineageBrain
     tokenIds[c.name] = minted.id;
     if (c.member || c.mayActFor) await bindCredential(engine, { kind: 'token', id: minted.id }, { ...(c.member ? { member: c.member } : {}), ...(c.mayActFor ? { mayActFor: c.mayActFor } : {}) });
     if (c.grantedSources) await rescopeLegacyToken(engine, parseRescopeTokenArgs([c.name, '--private-pages', 'granted-sources']));
+    if (!c.member && !c.audience?.length) await readsUnscopedOnPurpose(engine, minted.id);
   }
   if (spec.owner) await setOwner(engine, spec.owner);
   const provider = () => new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });

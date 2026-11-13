@@ -561,6 +561,7 @@ test/repair-rename-identity-6729.test.ts
 test/repair-secret-spans.test.ts
 test/repair-unwithdrawn-facts-8819.test.ts
 test/request-tools-combined-gbra449.test.ts
+test/requester-scope.test.ts
 test/retrieval-coverage-notices.test.ts
 test/schema-missing-tables.test.ts
 test/schema-replay-deadlock-6143.test.ts

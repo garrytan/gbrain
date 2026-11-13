@@ -143,6 +143,8 @@ import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
 import { folderAccessEntry } from './checks/folder-access.ts';
 import { unlabeledPeopleFoldersEntry } from './checks/unlabeled-people-folders.ts';
+import { unscopedSharedReadsEntry } from './checks/unscoped-shared-reads.ts';
+import { sharedStdioBindingEntry } from './checks/shared-stdio-binding.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
 import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
@@ -232,6 +234,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   memberAccessEntry,
   folderAccessEntry,
   unlabeledPeopleFoldersEntry,
+  unscopedSharedReadsEntry,
+  sharedStdioBindingEntry,
   sharedAgentAccessEntry,
   ownerReadsRestrictedEntry,
   accessLineageEntry,
