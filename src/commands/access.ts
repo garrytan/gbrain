@@ -31,6 +31,7 @@ import { mayActForCovers, singleMemberAudience, type AudiencePrincipal } from '.
 import { linkMember, linkMemberByEmail, listMemberLinks, unlinkMember } from '../core/access/actor.ts';
 import { bindMemberSource, listMemberSources, unbindMemberSource } from '../core/access/member-sources.ts';
 import { clearOwner, ownerMemberId, ownerReadsRestrictedOn, ownerView, setOwner, setOwnerReadsRestricted, type OwnerView } from '../core/access/owner.ts';
+import { stdioBindRoute } from '../core/access/stdio-bind-route.ts';
 import {
   addGroup, addMember, assertAccessId, disableMember, enableMember, existingMember, getMember, legacyTokenByName, listGroups, listMembers,
   parseIdList, previewRemoveGroup, previewRemoveMember, removeGroup, removeGroupMembers, removeMember, setMemberEmail, setMemberKind, type MemberRecord,
@@ -221,6 +222,8 @@ export interface AccessCheckResult {
   identity: string[];
   may_act_for: string[] | null;
   verdict: 'reads_as_member' | 'unbound' | 'refused';
+  /** GST-363: marked with auth rescope --reads-unscoped --yes, so it reads unscoped on purpose on a brain that serves several people. */
+  reads_unscoped: boolean;
   /** GST-2059: the credential reads as the brain owner (config access.owner_member). */
   owner: boolean;
   /** GST-2490: access.owner_reads_restricted is on, so the owner's credentials read past readers lists and rules. */
@@ -247,7 +250,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   } else {
     const client = await readClientGrant(engine, target.client!);
     if (client.revoked) throw opError('client_not_found', `OAuth client "${target.client}" is revoked.`, 'List the clients with gbrain auth clients --json.');
-    [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, may_act_for FROM oauth_clients WHERE client_id = $1', [client.clientId]) as [Record<string, unknown>];
+    [row] = await engine.executeRaw<Record<string, unknown>>('SELECT member_id, may_act_for, reads_unscoped FROM oauth_clients WHERE client_id = $1', [client.clientId]) as [Record<string, unknown>];
     grant = grantFromClient(client);
     credential = { kind: 'client', id: client.clientId, name: client.clientName };
   }
@@ -258,12 +261,14 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
   const identity = live ? identityFor(member!.id, member!.groups) : [];
   const mayActFor = Array.isArray(row.may_act_for) ? (row.may_act_for as string[]) : null;
   const verdict: AccessCheckResult['verdict'] = !member ? 'unbound' : live ? 'reads_as_member' : 'refused';
+  const readsUnscoped = row.reads_unscoped != null;
   const ownerId = await ownerMemberId(engine);
   const owner = live && member!.id === ownerId;
   const ownerReadsRestricted = !!ownerId && await ownerReadsRestrictedOn(engine);
   const memberLineage = await membersReadLineageOn(engine);
   const labelledOnly = live && !owner && rec?.labelled_only === true;
   const explanation = verdict === 'unbound' ? 'Bound to no member: reads every page its grant allows except pages that name readers (readable_by).'
+      + (readsUnscoped ? ' Marked --reads-unscoped: on a brain that serves several people it reads every page no rule restricts, for any asker (gbrain auth rescope --reads-unscoped none removes the mark).' : '')
     : verdict === 'refused' ? `Bound to member "${member!.id}", which is ${member!.status}: the credential is refused at verification (access_member_disabled).`
     : `Reads as member "${member!.id}"${member!.groups.length ? ` (groups: ${member!.groups.join(', ')})` : ''}: pages naming readers are visible when they list the member or one of its groups, within the grant below.`
       + (owner ? ' It is the brain owner: it also reads visibility: private pages, privacy-alias pages, derived and pinned-question pages and private facts in every source the grant reads.' : '')
@@ -278,7 +283,7 @@ export async function accessCheck(engine: BrainEngine, target: { token?: string;
     credential,
     grant: { scopes: grant.scopes, sources: grant.sources, takes_holders: grant.takesHolders, private_pages: grant.privatePages,
       operations: grant.allowedOperations ?? 'unrestricted', revision: grant.revision },
-    member, identity, may_act_for: mayActFor, verdict, owner, owner_reads_restricted: ownerReadsRestricted, members_read_lineage: memberLineage, labelled_only: labelledOnly, explanation,
+    member, identity, may_act_for: mayActFor, verdict, reads_unscoped: readsUnscoped, owner, owner_reads_restricted: ownerReadsRestricted, members_read_lineage: memberLineage, labelled_only: labelledOnly, explanation,
   };
   if (target.as !== undefined) {
     const audience: NonNullable<AccessCheckResult['audience']> = [];
@@ -425,7 +430,7 @@ async function memberSourceCmd(engine: BrainEngine, args: string[], json: boolea
   }
 }
 
-function ownerLines(v: OwnerView): string[] {
+export function ownerLines(v: OwnerView): string[] {
   if (!v.owner) return v.inactive ? [`Owner: none in effect. access.owner_member names "${v.inactive.value}": ${v.inactive.reason}`, 'Fix it with gbrain access owner set <member> or gbrain access owner clear.']
     : ['Owner: none. Every remote caller reads under the ordinary policy (no visibility: private page without a grant).', 'Name one: gbrain access owner set <member>'];
   return [`Owner: ${v.owner}`,
@@ -433,7 +438,7 @@ function ownerLines(v: OwnerView): string[] {
     v.reads_restricted
       ? '  Owner reads member-restricted pages: on (access.owner_reads_restricted). Its credentials read pages that readers lists and folder or page rules keep to other members, and their derived pages and facts; never another member\'s own member page. Turn off: gbrain access owner reads-restricted off'
       : '  Owner reads member-restricted pages: off. It reads a page that names readers or sits under a rule only when listed. Turn on: gbrain access owner reads-restricted on',
-    `  Bind one: gbrain auth rescope --token <name> --member ${v.owner} (a stdio server: gbrain config set mcp.stdio_member ${v.owner})`];
+    `  Bind one: gbrain auth rescope --token <name> --member ${v.owner}. Stdio: ${stdioBindRoute(v.owner).text}`];
 }
 
 async function ownerCmd(engine: BrainEngine, sub: string | undefined, args: string[], json: boolean): Promise<void> {

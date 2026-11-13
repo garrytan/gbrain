@@ -33,6 +33,7 @@ const SOURCE = 'default';
 const IDEA = 'wiki/originals/ideas/alice-example-idea';
 const PLAN = 'wiki/originals/ideas/acme-example-plan';
 const SUMMARY = 'dream-cycle-summaries/2026-09-07';
+const MIRROR = 'source-b';
 
 interface Brain {
   engine: BrainEngine;
@@ -89,6 +90,8 @@ const lastCommitPaths = (b: Brain) => b.git('show', '--no-renames', '--name-only
 const dirty = (b: Brain) => b.git('status', '--porcelain', '--untracked-files=all');
 const filesUnder = (dir: string): string[] => !existsSync(dir) ? [] : readdirSync(dir, { recursive: true, withFileTypes: true })
   .filter(e => e.isFile() && e.name.endsWith('.md')).map(e => e.name);
+const setMirror = (engine: BrainEngine, sourceId: string, readOnly: boolean) =>
+  engine.executeRaw(`UPDATE sources SET config = $2::jsonb WHERE id = $1`, [sourceId, JSON.stringify(readOnly ? { mirror_read_only: true } : {})]);
 const failedHolds = (held: string[], slug: string) => held.filter(h => h.startsWith(`${slug} (write_through_failed`));
 
 function refuseCommits(b: Brain): void {
@@ -202,6 +205,65 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       await withBrain(databaseUrl, 'plain', async b => {
         const result = await b.reverseWrite([IDEA]);
         expect({ written: result.written, held: result.held, file: existsSync(b.path(IDEA)) }).toEqual({ written: 1, held: [], file: true });
+      });
+    }, 180_000);
+
+    test('#8935: a read-only mirror gets no dream file and no commit, and the pages stay in the database', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await setMirror(b.engine, SOURCE, true);
+        const head = b.git('rev-parse', 'HEAD');
+        const result = await b.reverseWrite([IDEA, PLAN]);
+        const summary = await writeDreamPageFile(b.engine, b.brainDir, SUMMARY, SOURCE,
+          { nativeSourceId: SOURCE, markdown: serializePageToMarkdown((await b.engine.getPage(SUMMARY, { sourceId: SOURCE }))!, []) });
+        expect({ written: result.written, held: result.held, summary: summary.written, files: filesUnder(b.root), head: b.git('rev-parse', 'HEAD'), dirty: dirty(b) })
+          .toEqual({ written: 0, held: [], summary: false, files: ['README.md'], head, dirty: '' });
+        expect((await b.engine.getPage(PLAN, { sourceId: SOURCE }))?.title).toBe('Acme Example plan');
+      });
+    }, 180_000);
+
+    test('#8935: a read-only mirror keeps a tracked dream file as it is (no rewrite, no removal) until the source is writable again', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await b.reverseWrite([IDEA]);
+        const tracked = readFileSync(b.path(IDEA), 'utf8');
+        await importFromContent(b.engine, IDEA, page('Alice Example idea', 'A revision the dream made in the database.'), { noEmbed: true, sourceId: SOURCE });
+        await setMirror(b.engine, SOURCE, true);
+        const head = b.git('rev-parse', 'HEAD');
+        const rewrite = await b.reverseWrite([IDEA]);
+        const removal = await removeDreamPageFile(b.engine, b.brainDir, IDEA, SOURCE, SOURCE);
+        expect({ written: rewrite.written, held: rewrite.held, removed: removal.removed, bytes: existsSync(b.path(IDEA)) ? readFileSync(b.path(IDEA), 'utf8') : null, head: b.git('rev-parse', 'HEAD'), dirty: dirty(b) })
+          .toEqual({ written: 0, held: [], removed: false, bytes: tracked, head, dirty: '' });
+        await setMirror(b.engine, SOURCE, false);
+        expect({ written: (await b.reverseWrite([IDEA])).written, revised: readFileSync(b.path(IDEA), 'utf8').includes('A revision the dream made in the database.'), dirty: dirty(b) })
+          .toEqual({ written: 1, revised: true, dirty: '' });
+      });
+    }, 180_000);
+
+    test('#8935: a read-only mirror with no checkout gets nothing in the brain directory fallback, while a writable source in the same pass publishes', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await b.engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"mirror_read_only": true}'::jsonb)`, [MIRROR]);
+        await importFromContent(b.engine, IDEA, page('Alice Example mirror idea', 'Kept in the database only.'), { noEmbed: true, sourceId: MIRROR });
+        const held: string[] = [];
+        const written = await reverseWriteDreamRefs(b.engine, b.brainDir, [{ slug: IDEA, source_id: MIRROR }, { slug: PLAN, source_id: SOURCE }],
+          { phase: 'synthesize', nativeSourceId: SOURCE, render: (p, tags) => serializePageToMarkdown(p, tags), held });
+        expect({ written, held, fallback: existsSync(join(b.root, '.sources', MIRROR)), plan: existsSync(b.path(PLAN)), dirty: dirty(b) })
+          .toEqual({ written: 1, held: [], fallback: false, plan: true, dirty: '' });
+        expect((await b.engine.getPage(IDEA, { sourceId: MIRROR }))?.title).toBe('Alice Example mirror idea');
+      });
+    }, 180_000);
+
+    test('#8935: a writable source with no checkout gets no brain directory fallback file when that directory is a read-only mirror', async () => {
+      await withBrain(databaseUrl, 'git', async b => {
+        await setMirror(b.engine, SOURCE, true);
+        await b.engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1)', [MIRROR]);
+        await importFromContent(b.engine, IDEA, page('Alice Example other idea', 'Kept in the database only.'), { noEmbed: true, sourceId: MIRROR });
+        const head = b.git('rev-parse', 'HEAD');
+        const held: string[] = [];
+        const written = await reverseWriteDreamRefs(b.engine, b.brainDir, [{ slug: IDEA, source_id: MIRROR }],
+          { phase: 'synthesize', nativeSourceId: SOURCE, render: (p, tags) => serializePageToMarkdown(p, tags), held });
+        const removal = await removeDreamPageFile(b.engine, b.brainDir, IDEA, MIRROR, SOURCE);
+        expect({ written, held, removed: removal.removed, fallback: existsSync(join(b.root, '.sources', MIRROR)), head: b.git('rev-parse', 'HEAD'), dirty: dirty(b) })
+          .toEqual({ written: 0, held: [], removed: false, fallback: false, head, dirty: '' });
+        expect((await b.engine.getPage(IDEA, { sourceId: MIRROR }))?.title).toBe('Alice Example other idea');
       });
     }, 180_000);
   });

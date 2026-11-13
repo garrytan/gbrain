@@ -25,7 +25,7 @@ import { gbrainPath } from '../config.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { DELETION_INVENTORY, DELETION_INVENTORY_BY_TABLE, OUT_OF_REACH_RESIDUALS, type InventoryEntry } from '../deletion-inventory.ts';
 import type { PurgePlan, PurgeTarget } from './purge.ts';
-import { gitChildEnv } from '../git-env.ts';
+import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { segmentedBodyContains } from '../page-body/segment-rewrite.ts';
 import { derivationAfterSql, derivationBatchRows, derivationNeedles, derivationPurgeState, recordDerivationStatement,
   type DerivationKey, type DerivationPendingReason, type DerivationStallReason, type DerivationSweepState } from '../page-body/segment-derive.ts';
@@ -35,6 +35,7 @@ import { claimForms, quotes, type LedgerPurgeReport } from '../belief/purge.ts';
 import { CARRYING_FIELDS } from '../belief/keys.ts';
 import { relationExists } from '../persistence/rebuildable-cache.ts';
 import { canonicalChangeReason } from '../persistence/change-reason.ts';
+import { outcomeMarkerSql } from './audit-sources.ts';
 
 export type StoreCount = Record<string, number>;
 export type StoreStatus = 'deleted' | 'would_remove' | 'retained_inactive' | 'unverified' | 'out_of_reach' | 'out_of_scope' | 'not_present' | 'incomplete';
@@ -405,7 +406,7 @@ export async function gitResidualCommits(root: string, paths: readonly string[],
   if (!paths.length || !existsSync(join(root, '.git'))) return { store: 'git_history', status: 'out_of_reach', reason: 'no_repository', detail: 'No brain repository is recorded for these pages.' };
   const needles = [escapeFenceCell(claim).toLowerCase(), claim.toLowerCase()];
   return new Promise(resolve => {
-    const child = spawn('git', ['-C', root, '--literal-pathspecs', 'log', '--all', '--format=commit %H %cI', '-p', '--no-color', '--no-ext-diff', '--', ...paths],
+    const child = spawn('git', ['-C', root, 'log', '--all', '--format=commit %H %cI', '-p', '--no-color', '--no-ext-diff', '--', ...literalPathspecs(paths)],
       { stdio: ['ignore', 'pipe', 'ignore'], env: gitChildEnv({ GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' }) });
     const commits: Array<{ commit: string; committed_at: string }> = [];
     let current: { commit: string; committed_at: string } | null = null, bytes = 0, tail = '', bounded: string | null = null;
@@ -499,7 +500,7 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     else if (result.count) stores.push({ store, removed: removedCount ?? 0, remaining: result.count, ...onRemaining });
     else stores.push({ store, status: removedCount ? 'deleted' : 'not_present', removed: removedCount ?? 0 });
   };
-  await swept('facts', `SELECT 1 FROM facts WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4)`,
+  await swept('facts', `SELECT 1 FROM facts WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3 AND ($4='*' OR entity_slug=$4) AND NOT ${outcomeMarkerSql('facts')}`,
     [src, target.visibility, target.fact_hash, plan.subject], plan.factIds.length, removed.facts);
   await swept('takes', `SELECT 1 FROM takes k JOIN pages p ON p.id=k.page_id WHERE p.source_id=$1 AND gbrain_fact_fingerprint(k.claim)=$2 AND ($3='*' OR p.slug=$3)`,
     [src, target.fact_hash, plan.subject], plan.takes.length, removed.takes);
@@ -551,7 +552,7 @@ export async function verifyFactPurge(engine: BrainEngine, input: { target: Purg
     stores.push(await probeInventoryStore(engine, entry, src, [claim], deadline));
   }
   const [other] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND gbrain_fact_fingerprint(fact)=$2
-    AND NOT (visibility=$3 AND ($4='*' OR entity_slug=$4))`, [src, target.fact_hash, target.visibility, plan.subject]);
+    AND NOT (visibility=$3 AND ($4='*' OR entity_slug=$4)) AND NOT ${outcomeMarkerSql('facts')}`, [src, target.fact_hash, target.visibility, plan.subject]);
   const files = await pageFilePaths(engine, src, plan.pages.map(page => page.page_id));
   stores.push(...onDiskReports(files.files, claim, dryRun));
   let vacuumed: string | null = null;
@@ -746,7 +747,7 @@ export async function purgeCompletion(engine: BrainEngine, row: Pick<WriteReques
   let fingerprint: Record<string, number> | undefined;
   if (purge?.fact_hash) {
     const [probe] = await engine.executeRaw<{ facts: number; takes: number }>(`SELECT
-      (SELECT count(*)::int FROM facts WHERE source_id=$1 AND gbrain_fact_fingerprint(fact)=$2 AND ($3='*' OR entity_slug=$3)) AS facts,
+      (SELECT count(*)::int FROM facts WHERE source_id=$1 AND gbrain_fact_fingerprint(fact)=$2 AND ($3='*' OR entity_slug=$3) AND NOT ${outcomeMarkerSql('facts')}) AS facts,
       (SELECT count(*)::int FROM takes k JOIN pages p ON p.id=k.page_id WHERE p.source_id=$1 AND gbrain_fact_fingerprint(k.claim)=$2 AND ($3='*' OR p.slug=$3)) AS takes`,
     [row.source_id, purge.fact_hash, purge.subject ?? '*']);
     fingerprint = { facts: Number(probe?.facts ?? 0), takes: Number(probe?.takes ?? 0) };

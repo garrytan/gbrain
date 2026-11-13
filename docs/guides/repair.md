@@ -1224,7 +1224,13 @@ The preview lists a terminal request as `refused` with the reason and offers
 no choice for it. After `--keep disk` the database page still holds the
 content from before the write, so the page shows as file/database drift until
 you reconcile it: `gbrain sources reconcile <source> <slug> --brain host
---preview`. The command never reports the page as repaired.
+--preview`. On a git-canonical (strict) source Git is the parent, so the kept
+bytes are an uncommitted edit instead: publish it with
+`gbrain git commit-push --path <checkout> -m "<message>" -- <path>`, or discard
+it with `git -C <checkout> restore -- <path>`, then run
+`gbrain sync --source <source> --no-pull`; `git status --porcelain -- <path>`
+and `gbrain sync status --source <source> --json` verify it. The item's `fix`
+asks the user which (#7715). The command never reports the page as repaired.
 
 The apply runs under the worktree lock, so the resident recovery pass cannot
 interleave. Each step is journaled (`op_checkpoints`, op
@@ -1580,7 +1586,10 @@ again for the rest. Sync never removes ghost pages by itself.
 A code or image page (a synced `.json`, `.ts` or `.png` file) is checked at
 the file it records, never at `<slug>.md`: while that file is there the page
 is not a ghost. It is a ghost only when its recorded file is gone and no file
-sits at its slug path either, and the preview lists it at the recorded path. A
+sits at its slug path either, and the preview lists it at the recorded path.
+The apply retires it at that recorded file too: a recorded file restored
+before publication keeps the page (`file_restored`), and the commit records the
+removal of the recorded file. A
 page whose recorded path names no file inside the source (an absolute path, a
 path with `..`) is never a ghost and is never removed: doctor, `gbrain pages
 ghosts` and the preview list it apart with code `recorded_path_unresolvable`.
@@ -2634,7 +2643,9 @@ Then each take of kind `fact` held by you that is still active and unresolved,
 and whose every contributing fact is no longer yours, is retired: struck in its
 page's takes fence when the page holds it, otherwise made inactive in the
 database. The preview lists those as `take_to_retire`. A fact or take that
-changed since the preview reports `changed_since_preview` and is kept.
+changed since the preview reports `changed_since_preview` and is kept; a fact
+that already reads as the agent's with its speaker note (a resumed apply whose
+accepted request committed meanwhile) reports `reattributed`.
 
 <a id="redacted-facts"></a>
 ### Redacted facts
@@ -3013,7 +3024,7 @@ candidate one class:
 | `superseded` | A later write or delete of the page committed or is pending; for `put_page`, also a later failed `put_page` (newer content) or a page changed since the caller read it. | Kept; re-issue by hand if still wanted. |
 | `unpinned_target` | A `remember` saved unattributed; replaying would infer its subject again and could pick another page. | Kept. Re-issue it with an explicit `entity` if it is still wanted. |
 | `file_database_drift` | Its last replay hit `source_changed` and the file still differs from the database. | Kept until the file matches again (a reconcile that writes only the file counts) or the page changes; reconcile it first. |
-| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job). | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull`). A refused fact extraction (`extract_facts`, including one refused `revision_conflict` because another write moved, replaced or deleted its entity page) keeps its extracted facts: when its page write's facts-absorb job is dead and can recover them, the row says `recover: gbrain facts retry-dead --reset 'facts-absorb:write:<id>'` (the retried job re-admits the retained facts at the page's current revision without a model call); while that job still runs it says `pending:`; otherwise (the extraction has no page write or its job completed or is gone, the entity page was replaced, the page was written again since or the job would skip its page write for another reason, the follow-up batches were refused as well, or the extraction also holds refusals of another kind, such as a sibling refused for a held file) it says `re-extract:` with the `extract_facts` call to make (one model call), or `not recoverable:` when the entity page of a page write's extraction was deleted. A fact request a later request of the same extraction committed is not listed. |
+| `producer_owned` | gbrain produced it (sync or file import, reconcile, relink, maintenance page, job), or it is a caller's `forget`, which is not replayed. | Kept. The preview prints the command that produces it again from current content (sync: `gbrain sync --source <id> --no-pull`). A refused `forget` says `resubmit:`: nothing produces it again, so read the fact and submit the forget again with a new request_id if it is still wanted. A refused fact extraction (`extract_facts`, including one refused `revision_conflict` because another write moved, replaced or deleted its entity page) keeps its extracted facts: when its page write's facts-absorb job is dead and can recover them, the row says `recover: gbrain facts retry-dead --reset 'facts-absorb:write:<id>'` (the retried job re-admits the retained facts at the page's current revision without a model call); while that job still runs it says `pending:`; otherwise (the extraction has no page write or its job completed or is gone, the entity page was replaced, the page was written again since or the job would skip its page write for another reason, the follow-up batches were refused as well, or the extraction also holds refusals of another kind, such as a sibling refused for a held file) it says `re-extract:` with the `extract_facts` call to make (one model call), or `not recoverable:` when the entity page of a page write's extraction was deleted. A fact request a later request of the same extraction committed is not listed. |
 
 The apply replays exactly the previewed set. Each write is classified again
 and its original caller's authority is checked again first: a write that
@@ -3123,8 +3134,10 @@ again. A file whose HEAD bytes would not import as its page is listed under the
 hold's code (`visibility_noncanonical` for a `Visibility: private` that page privacy
 does not read): apply keeps its rows database-only and restores the file from
 HEAD so the clone can pull the upstream fix, but does not import HEAD, reports
-`held` with the code and leaves the page at its last imported version; sync
-holds the file until upstream fixes it (#7897). Each restored file is first backed up under
+`held` with the code and leaves the page at its last imported version. The
+restored file equals HEAD, so sync does not screen it again and records no
+hold; the page changes once an upstream fix is pulled and synced (#7897). Such
+a file is an apply item, not a residual (#7910). Each restored file is first backed up under
 `~/.gbrain/backups/url-clone-fences/`. Its rows stay active and recallable as
 database-only facts, HEAD's bytes are imported as the page (as sync would
 import them, except for a held file above), and only then is the file restored; each step is idempotent, so

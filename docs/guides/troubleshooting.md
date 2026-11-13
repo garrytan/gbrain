@@ -252,7 +252,7 @@ Two calls, no SQL: the doctor or `sources status` row names the command, and `wr
 
 - **Active blockers** hold work now: a receipt still holding a publication recovery record (it blocks every queued write on its root), or a receipt that blocks a managed sync's checkpoint. Doctor warns whenever one exists, whatever the trend, and its `fix.command` is the next step (for a recovery record, `gbrain sync --source <id> --no-pull`, which runs the owner pass that clears it; a `recovery_blocked` record names the file to inspect instead).
 - **Unresolved rows** are terminal receipts in the window (`persistence.terminal_failures.window_days`, default 7, never longer than `persistence.receipt_retention_days`) that no later write superseded. Doctor warns when any of them is a gbrain-defect class (`owner_exception`, `database_refusal`, `writer_guard`, `outside_fence`, `gbrain_defect`): report those with the receipt ids. The rest are ordinary refusals the caller already received (`caller_conflict`, `caller_refusal`, `operator_cancelled`) or sync faults a rerun retries. A `schema_missing` row (#6904) is a write that met a missing table or column: when the schema is behind, its fix is `gbrain apply-migrations --yes` as the database role that owns the gbrain tables, then resubmit; at head, it asks the user and points at doctor's `schema_missing_tables` check and the `gbrain repair missing-tables` preview.
-- **Historical rows** do not block: a later write superseded them (`superseded`, `already_written`, `duplicate`), or they came from a build older than the release that fixed their cause (sync knock-on cancels before 0.60.216.0, the `Publication failed (P0001)` refusal before 0.60.40.0). Doctor counts them and never warns on them.
+- **Historical rows** do not block: a later write superseded them (`superseded`, `already_written`, `duplicate`), or they came from a build older than the release that fixed their cause (sync knock-on cancels before 0.60.216.0, the `Publication failed (P0001)` refusal before 0.60.40.0), or they refused a write gbrain retired (`retired_operation`: a v0.13.1 grandfather request an older build queued, which now ends without writing; nothing to do). Doctor counts them and never warns on them.
 
 A spike warns only on its own: when at least `persistence.terminal_failures.spike_min` (default 25) receipts ended in the last 24 h and that is more than `persistence.terminal_failures.spike_factor` (default 3) times the median of the 7 days before. When most of those receipts were written by a gbrain build older than the release that fixed their class, the warning says an older write owner is still producing them and names the build; its fix is the read-only `gbrain sources writer status --source <id> --json` that names the owner, so upgrade or restart that process. A `file_database_drift` row is the page-drift class: [file drift](repair.md#file-drift) resolves it with `gbrain repair file-drift`. A read that does not finish within its deadline (5 s per statement, 2 s to get a connection) reports `unknown`, never a clean pile; rerun it.
 
@@ -509,11 +509,16 @@ when the inert setting is still present.
 broad `gbrain search` or `gbrain query` with common words takes about 8
 seconds and comes back with only vector hits; search metadata carries
 `keyword_arm_failed`, and the server log says `canceling statement due to
-statement timeout` (SQLSTATE 57014). The strict keyword statement ranks every
-matching chunk before its `LIMIT`, so its cost grows with how common the terms
-are, and the commonest terms cannot finish inside the keyword statement bound.
-An arm that timed out is not evidence of absence: the pages exist, the arm
-could not rank them in time.
+statement timeout` (SQLSTATE 57014). Keyword-mode paging and the strict page
+count rank every matching page, so their cost grows with how common the terms
+are. Hybrid search's keyword arm ranks at most 50,000 matching chunks (its metadata
+carries `keyword_candidates_incomplete` when that bound applies). A local
+caller's statement usually stops reading matches at that bound. A remote MCP
+caller's arm stops there when the call sets no type, frontmatter or date filter
+and no source scope narrower than every live source; with such a filter it
+can still read every match before ranking. (A remote caller's arm used to read
+every match in all cases, so a term in most chunks timed out.) An arm that timed out is not evidence of absence: the
+pages exist, the arm could not rank them in time.
 
 **Say to your agent:** *"Check whether keyword search is hitting its time
 limit"* — the agent runs `gbrain doctor` and reads the `keyword_plan` check.
@@ -546,12 +551,10 @@ range (exit 2, nothing written). It is read once per connection, so:
 3. Confirm with `gbrain doctor --only keyword_plan --json`: `details.timeout_ms`
    shows the value in effect.
 
-A longer bound buys time, not a cheaper statement: a query whose terms match
-most of the corpus still reads and ranks every match, so prefer narrowing with
-`--source-id` (MCP `source_id`) or `match: "keyword"` paging, and follow
-[#6495](https://github.com/garrytan/gbrain/issues/6495) for the bounded
-candidate set that will answer broad terms from a capped set instead of
-failing open.
+A longer bound buys time, not a cheaper statement: keyword-mode paging and the
+strict count still read every match of a term that matches most of the corpus,
+so prefer narrowing with `--source-id` (MCP `source_id`), `--types` or
+`--since`.
 
 **A timed-out keyword search is skipped for 10 minutes.** After hybrid search's
 keyword statement hits the bound, a serving process (`gbrain serve`, an MCP
@@ -901,13 +904,20 @@ A path that is absolute only on another operating system (a Windows drive path
 such as `C:\brain-example`, set by another host sharing the brain, read on Linux
 or macOS) is refused the same way, as not an absolute path on this host. Use
 `set-path` with this host's directory (or `gbrain config set sync.repo_path` for
-the legacy key); `--clear` refuses such a path. An explicit absolute `--repo`
+the legacy key); `--clear` refuses such a path. If the other host owns the
+source, leave the path and sync it there. Doctor warns about such a path on the
+`default` source and leaves another source's to the host that set it.
+On Windows, a root-relative path (`\brain` or `/brain`) names a folder on
+whatever drive gbrain runs from, so it counts as relative. An explicit absolute `--repo`
 passes the refusal, but it never advances the sync position of a source whose
-stored path is relative.
+stored path is relative, or of a `default` source with no path behind a relative
+`sync.repo_path`. A queued `sync` job for such a source completes as a skip
+(`reason: sync_anchor_relative`) carrying the same ask-the-user fix, and
+`gbrain sync --all --json` gives the source's entry its `code` and `fix`.
 
 Until the path is absolute, the main readers do not treat the folder gbrain
 runs from as the source either: page and fact writes skip the file and stay in
-the database (`repo_not_found`, `no_repo_configured`), a captured file keeps
+the database (`repo_not_found`, `no_repo_configured`, `relative_root`), a captured file keeps
 no origin path, matching a folder to its source ignores the path, fence repair
 edits stored pages, managed activation refuses it (`source_changed`, detail
 `source_path_missing`), the dream, autopilot, per-phase and global

@@ -356,6 +356,15 @@ export function indexOfOutsideCode(
   return at;
 }
 
+/** How many times `needle` occurs in `body` outside markdown code: the count the fence readers see (indexOfOutsideCode). */
+export function countOutsideCode(body: string, needle: string, code?: MarkdownCodeMap): number {
+  let n = 0;
+  if (!body.includes(needle)) return n;
+  code ??= scanMarkdownCode(body);
+  for (let at = indexOfOutsideCode(body, needle, 0, code); at !== -1; at = indexOfOutsideCode(body, needle, at + needle.length, code)) n++;
+  return n;
+}
+
 /**
  * Offset where an unclosed fenced code block opens (it runs to EOF), or -1.
  * Fence writers insert a new fence above it so the fence is not rendered as

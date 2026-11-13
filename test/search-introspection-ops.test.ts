@@ -66,8 +66,9 @@ describe('search_stats on a pre-telemetry brain degrades gracefully', () => {
     // errors, but the missing-telemetry-table case stays a healthy-empty
     // dashboard (an earlier gap-closure rethrow that broke this was reverted).
     const bareEngine = {
-      async executeRaw() {
-        throw new Error('relation "search_telemetry" does not exist');
+      async executeRaw(sql: string) {
+        if (sql.includes('search_telemetry')) throw new Error('relation "search_telemetry" does not exist');
+        return [];
       },
       // readGraphSignalsStats reads config (not the telemetry table); stub it
       // so the op's graph-signals section resolves via the mode-default path.

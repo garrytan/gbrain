@@ -214,11 +214,21 @@ member's token. This is the supported production setup today: one
 never learns who is asking from the request itself.
 
 ```bash
-gbrain auth create bot-alice-example
+gbrain auth create bot-alice-example --member alice-example
 gbrain auth rescope --token bot-alice-example --sources source-a
 # OAuth client instead of a bearer token:
-gbrain auth rescope --client <client_id> --sources source-a
+gbrain auth rescope --client <client_id> --sources source-a --member alice-example
 ```
+
+Once the brain has two or more enabled members (or config `access.serves` is
+`several`), a remote read through a token, OAuth client or stdio server bound to
+no member is refused with
+[`requester_scope_required`](write-refusals.md#requester_scope_required), and
+`gbrain auth create` refuses an unbound token. A connection that existed when the
+brain started serving several people reads for 14 more days, with a notice on
+every answer (`_meta.access.requester_scope`) naming the date and the command that
+binds it. Bind every member's token with `--member`. A brain for one person sees
+no change, however many sources it holds.
 
 The token's grant is the security boundary: the server scopes every call to
 the grant of the token that made it, whatever the call's arguments say.
@@ -486,6 +496,15 @@ writes (for example a `forget`) complete as skipped. The flag is off by default.
 With `sync.write_through` off, sync keeps that canonical metadata in the
 database for every source, mirror or not, and never rewrites a checkout file.
 
+On a brain without managed persistence the flag holds the same way: page
+write-through (`sync --full` re-exports, `brainstorm --save`), fact fences,
+timeline entries, `forget`, the extract cycle's fence pass and owner trust
+repairs leave the checkout untouched and keep the write in the database (a
+trust repair is listed `needs_review` instead), reporting `mirror_read_only`
+(#7098). The dream cycle leaves such a checkout alone too: its synthesis,
+patterns and cycle-summary pages stay in the database, retired pages' files
+are kept, and no fallback file is written under `.sources/` inside it (#8935).
+
 A managed brain never pulls inside a cycle. Advance a managed checkout with
 one command on its owner host:
 
@@ -667,8 +686,8 @@ writers, Git effects belong to the persistence outbox; generated legacy push
 helpers refuse to run rather than bypass that ownership boundary. See the
 [concurrent-write guide](concurrent-writes.md). On a managed root the owner
 commits and pushes page writes (`gbrain sources writer git-durability <source>
---enable`), files that are not pages are committed with plain git and ride the
-owner's next push, the checkout is never pulled or rebased, and the durability
+--enable`), files that are not pages are committed with
+`gbrain git commit-push -m "<msg>" -- <paths>` and ride the owner's next push, the checkout is never pulled or rebased, and the durability
 block below is regenerated in its managed form by that verb; see
 [files that are not pages](../architecture/topologies.md#files-that-are-not-pages).
 
