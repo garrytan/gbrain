@@ -106,7 +106,8 @@ with `/usr/bin/env`:
 `/usr/bin/env GBRAIN_HOOK_LANE=skill-resolver <launcher> /abs/path/to/gbrain hook user-prompt --harness hermes`.
 When config.yaml already has a `hooks:` section of yours, setup refuses with
 the entry to paste under it; once pasted, the next run approves and keeps it.
-A Hermes with no SOUL.md still gets the resolver. `hermes hooks doctor` checks
+`--skill-loading off` withdraws that approval but leaves your own section
+alone, so delete the pasted entry yourself. A Hermes with no SOUL.md still gets the resolver. `hermes hooks doctor` checks
 the entry on the Hermes host, and gbrain's doctor `skill_resolver` check
 covers Hermes.
 

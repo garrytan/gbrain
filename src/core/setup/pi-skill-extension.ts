@@ -131,7 +131,6 @@ export async function syncPiSkillExtension(opts: PiSkillSyncOptions): Promise<Pi
     if (e instanceof ResolverError && e.code === 'skill_resolver_config_invalid') return fail('skill_resolver_config_invalid', `${e.message} Nothing was written.`);
     throw e;
   }
-  const prior = readPiSkillState(home);
   const catalog = PI_SKILL_CATALOG;
   const status = existsSync(join(skillIndexRoot(home), catalog, 'receipt.json')) ? await catalogStatus(catalog, { home }) : null;
   const fresh = !!status?.fresh && JSON.stringify(status.receipt?.source.dirs ?? null) === JSON.stringify(dirs) && (status.receipt?.skill_count ?? 0) > 0;
@@ -161,7 +160,7 @@ export async function syncPiSkillExtension(opts: PiSkillSyncOptions): Promise<Pi
     return out;
   }
   let lib: { sha256: string; wrote: boolean; path: string };
-  try { lib = await ensureResolverLibrary(home, prior?.library_sha256 ?? null); } catch (e) {
+  try { lib = await ensureResolverLibrary(home); } catch (e) {
     return fail('skill_resolver_setup_incomplete', `The skill resolver library could not be built (${(e as Error).message}). The catalog was built; the state file and the extension were not written.`);
   }
   out.steps.push({ step: 'library', action: lib.wrote ? 'write' : 'keep', detail: lib.path });

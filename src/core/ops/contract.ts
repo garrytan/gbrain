@@ -305,6 +305,13 @@ export interface AuthInfo {
   /** GBRA-218: the stored `may_act_for` audience list (shared agents, PR B); stored and reported only. */
   mayActFor?: string[] | null;
   /**
+   * GST-363: the brain operator let this credential read unscoped on purpose (`reads_unscoped` is set, gbrain auth
+   * rescope --reads-unscoped --yes). Undefined when no verifier read it; access/requester-scope.ts then looks it up.
+   */
+  readsUnscoped?: boolean;
+  /** GST-363: when the credential was created, epoch seconds (access_tokens.created_at, oauth_clients.client_id_issued_at); null = unknown, which counts as old. */
+  createdAt?: number | null;
+  /**
    * GST-359 C1: the live right to name the person a call serves (x-qm-actor), joined by the verifier: the system and
    * the operations an attested call may run, and (GST-1158 F3) how it reads named sources. Null when the credential holds none, is bound to a member, or (an OAuth
    * client) its token did not come from the client-credentials grant. Undefined when no verifier joined it.

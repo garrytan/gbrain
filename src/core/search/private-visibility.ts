@@ -1026,6 +1026,19 @@ const strictEngines = new Set<BrainEngine>();
 /** GBRA-218: set once a page names readers or a member exists (sticky; a trigger and `gbrain access` write it). */
 export const ACCESS_RESTRICTIONS_KEY = 'access.restrictions_present';
 
+/**
+ * GST-363: whom the brain serves. SERVES_KEY is the explicit `one` or `several` (`gbrain setup --serves several`
+ * writes it, and it wins); SERVES_DERIVED_KEY is `several` while two or more members are enabled, `one` otherwise;
+ * SERVES_SINCE_KEY is when the brain first served several people, set once and never cleared. A trigger on
+ * access_members and on config access.serves keeps the last two (migration v309), so a request reads them from its
+ * config snapshot with no query. REQUESTER_SCOPE_ENFORCE_KEY `false` turns the unscoped-read refusal into a notice
+ * (hosted, until its control plane binds each connection to a member).
+ */
+export const SERVES_KEY = 'access.serves';
+export const SERVES_DERIVED_KEY = 'access.serves_derived';
+export const SERVES_SINCE_KEY = 'access.serves_since';
+export const REQUESTER_SCOPE_ENFORCE_KEY = 'access.requester_scope_enforce';
+
 /** @internal exported for tests: engines the process-wide policy sets hold. */
 export function __aliasPolicyEngineCountForTests(): number {
   return honorAliasEngines.size + aliasOptOutEngines.size + exposeEngines.size + strictEngines.size;
@@ -1084,22 +1097,50 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
   return expose;
 }
 
-export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean }
+/** GST-363: whom the brain serves, as a remote request reads it from config (no query). `since` is epoch seconds. */
+export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
+
+/** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean; serves?: ServesPolicy; servesUnknown?: boolean }
+
+/** GST-363: an explicit access.serves wins over the trigger-kept member count; enforcement is on unless set to false. */
+export function servesPolicyFrom(config: Record<string, string | undefined>): ServesPolicy {
+  const explicit = config[SERVES_KEY]?.trim().toLowerCase();
+  const fromConfig = explicit === 'one' || explicit === 'several';
+  const since = Date.parse(config[SERVES_SINCE_KEY]?.trim() ?? '');
+  return {
+    several: (fromConfig ? explicit : config[SERVES_DERIVED_KEY]?.trim()) === 'several',
+    from: fromConfig ? 'config' : 'members',
+    since: Number.isFinite(since) ? Math.floor(since / 1000) : null,
+    enforce: !['false', '0', 'off', 'no'].includes(config[REQUESTER_SCOPE_ENFORCE_KEY]?.trim().toLowerCase() ?? ''),
+  };
+}
 
 /**
  * The remote read policy read fresh, for publication: whether an operator
  * relaxed privacy (the env hatch or the config opt-out, uncached) and whether
  * the brain holds member-access restrictions. Takes any executeRaw engine (a
  * transaction included). An unreadable config counts as not opted out and
- * restricted (fail closed); the env hatch needs no read.
+ * restricted (fail closed); the env hatch needs no read. Whom the brain serves
+ * is then unknown (servesUnknown, GST-363): the requester-scope gate reads the
+ * serves keys once more (readServesPolicy) and refuses an unbound read when that
+ * fails too, because a timeout or a dropped pooled connection can fail this one
+ * statement while the next read succeeds.
  */
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
-    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY]]);
+    const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
+      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
-    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false };
+    return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, servesUnknown: true };
   }
+}
+
+/** GST-363: whom the brain serves, read on its own (the requester-scope gate's re-read after an unreadable policy read). Throws when unreadable. */
+export async function readServesPolicy(engine: Pick<BrainEngine, 'executeRaw'>): Promise<ServesPolicy> {
+  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
+  return servesPolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
 }
 
 /**
@@ -1117,7 +1158,7 @@ function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
   const owner = config[OWNER_MEMBER_KEY]?.trim();
   return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',
     ownerMember: owner && ACCESS_ID_RE.test(owner) ? owner : null, ownerReadsRestricted: config[OWNER_READS_RESTRICTED_KEY]?.trim() === '1',
-    membersReadLineage: config[MEMBERS_READ_LINEAGE_KEY]?.trim() === '1' };
+    membersReadLineage: config[MEMBERS_READ_LINEAGE_KEY]?.trim() === '1', serves: servesPolicyFrom(config) };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

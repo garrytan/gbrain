@@ -172,8 +172,8 @@ export function openclawSkillPluginRegistered(dir = openclawSkillPluginDir()): b
   } catch { return false; }
 }
 
-/** Build the library from this gbrain's source and keep it at <lib>/<sha256>.mjs, writable by its owner only. */
-export async function ensureResolverLibrary(home: string, previous: string | null): Promise<{ sha256: string; wrote: boolean; path: string }> {
+/** Build the library from this gbrain's source and keep it at <lib>/<sha256>.mjs, writable by its owner only; the prune keeps every library a consumer's state (OpenClaw, Pi) still names. */
+export async function ensureResolverLibrary(home: string): Promise<{ sha256: string; wrote: boolean; path: string }> {
   const { buildResolverLibrary, LIBRARY_FILE } = await import('../../commands/skill-resolver-library.ts');
   const dir = openclawSkillLibDir(home);
   const built = await buildResolverLibrary(join(dir, LIBRARY_FILE));
@@ -181,8 +181,10 @@ export async function ensureResolverLibrary(home: string, previous: string | nul
   const wrote = !existsSync(target);
   if (wrote) copyFileSync(built.path, target);
   chmodSync(target, 0o644);
+  const { readPiSkillState } = await import('./pi-skill-extension.ts');
+  const keep = new Set([built.sha256, readOpenclawSkillState(home)?.library_sha256, readPiSkillState(home)?.library_sha256].map((s) => `${s}.mjs`));
   for (const f of readdirSync(dir)) {
-    if (/^[0-9a-f]{64}\.mjs$/.test(f) && f !== `${built.sha256}.mjs` && f !== `${previous}.mjs`) rmSync(join(dir, f), { force: true });
+    if (/^[0-9a-f]{64}\.mjs$/.test(f) && !keep.has(f)) rmSync(join(dir, f), { force: true });
   }
   return { sha256: built.sha256, wrote, path: target };
 }
@@ -322,7 +324,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   }
 
   let lib: { sha256: string; wrote: boolean; path: string };
-  try { lib = await ensureResolverLibrary(home, prior?.library_sha256 ?? null); } catch (e) {
+  try { lib = await ensureResolverLibrary(home); } catch (e) {
     return fail({ code: e instanceof ResolverError && e.code === 'skill_source_unreadable' ? 'skill_source_unreadable' : 'skill_resolver_setup_incomplete',
       message: `The skill resolver library could not be built (${(e as Error).message}). The catalogs were built; the state file and the plugin were not written.` });
   }

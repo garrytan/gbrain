@@ -48,7 +48,7 @@ import { assertBundleRecoveryBinding, bundleFileHash, prepareBundleRecovery, pub
 import { assertKnowledgePublicationAllowed } from '../shared-skills/knowledge-guard.ts';
 import { classifyMirrorPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { headCommit, landedCommit, PENDING_IMPORT, SYNC_HELD } from './pending-import.ts';
-import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
+import { CANONICAL_FILE_MISSING, CHECKOUT_REFUSAL_ORIGINS, type CheckoutRefusalOrigin, GRANDFATHER_RETIRED, SOURCE_CHANGED_ORIGINS, type SourceChangedDetail, type SourceChangedOrigin, databaseRefusal, ownerExceptionFailure, stagingFailureDetail, withAttempt, type PublicationFailure, type PublicationFailureDetail, type PublicationStage } from './publication-failure.ts';
 import { SYNC_CURSOR_REPLACED, SYNC_PASS_SUPERSEDED } from './sync-checkpoint-replaced.ts';
 import { fenceFailureDetail } from '../fence-repair/refusal.ts';
 import { withdrawalFailureDetail } from '../facts/withdrawal.ts';
@@ -232,7 +232,7 @@ function requestError(error: unknown): PublicationFailure {
   if (error instanceof OperationError) {
     // #6188: a typed fence refusal keeps its location in the bounded detail, which outlives receipt compaction.
     const detail = fenceFailureDetail(error) ?? withdrawalFailureDetail(error) ?? (error.syncRefusal as PublicationFailure['detail'] | undefined)
-      ?? (error.detail === CANONICAL_FILE_MISSING ? { origin: CANONICAL_FILE_MISSING } : undefined)
+      ?? (error.detail === CANONICAL_FILE_MISSING || error.detail === GRANDFATHER_RETIRED ? { origin: error.detail } : undefined)
       ?? ((CHECKOUT_REFUSAL_ORIGINS as readonly unknown[]).includes(error.detail) ? { origin: error.detail as CheckoutRefusalOrigin } : undefined)
       // #6693: a refusal on a page whose file awaits import or is held by sync; the replay after import selects on it.
       ?? (error.code === 'source_changed' && (error.reason === PENDING_IMPORT || error.reason === SYNC_HELD) ? { origin: error.reason } : undefined)
@@ -419,7 +419,7 @@ export function decoratePublicationOutcome(row: WriteRequest, prepared: Prepared
   outcome.write_through = fileCount ? { written: !prepared.noop, ...(row.authority.heldFor ? { held_for: row.authority.heldFor } : {}) }
     : { written: false, skipped: prepared.databaseOnlyReason ?? row.authority.databaseOnlyReason ?? 'no_repo_configured' };
   if (prepared.databaseOnlyReason === 'mirror_read_only') outcome.storage = 'database_only';
-  if ((row.operation === 'put_page' || row.operation === 'edit_page' || row.operation === 'append_page') && row.authority.remote && row.authority.databaseOnlyReason === 'no_repo_configured') outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
+  if ((row.operation === 'put_page' || row.operation === 'edit_page' || row.operation === 'append_page') && row.authority.remote && (row.authority.databaseOnlyReason === 'no_repo_configured' || row.authority.databaseOnlyReason === 'relative_root')) outcome.write_through = withNoRepoWriteThroughWarning(outcome.write_through as { written: boolean; skipped?: string }, row.source_id, row.operation);
   if ((outcome.write_through as { skipped?: string }).skipped === 'unbound_source') {
     outcome.write_through = { ...outcome.write_through as object, warning: unboundWriteWarning(row.operation, row.source_id, row.authority.databaseOnlyReason === 'unbound_source') };
   }
@@ -869,14 +869,19 @@ export async function recoverPublication(engine: BrainEngine, id: string, hostId
       // Withdrawal is authoritative DB state and is never rolled back here.
       const failure: PublicationFailure | undefined = terminalError ?? (current.error_code ? {code:current.error_code,message:current.error_message ?? 'Publication failed before database completion.',
         ...(current.error_detail ? { detail: current.error_detail as unknown as PublicationFailureDetail } : {})} : undefined);
+      // GST-2517: a door commit that landed in this attempt put the write in Git, so the row follows by replay unless the door
+      // itself refused after landing (a git_* code, whose receipt names the commit); the replay makes no second commit, so a
+      // failure of its own is final.
+      const replayLanded = landed !== null && !failure?.code.startsWith('git_');
       // #8767: so is a local edit adoption's own commit (local-edit-adoption.ts), on a failure and on the requeued replay.
       landed ??= adoption?.landed ?? null;
       // G7b: a door commit that landed before its row is named on the receipt, whatever the replay's outcome.
       const kept = landed ? { persistence: { git_state: 'committed', git_commit: landed, landed_before_row: true } } : null;
-      if (failure) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
+      if (failure && !replayLanded) return completeWrite(tx, current, failureState(failure.code), kept ?? {}, failure);
       for (const key of ['brain', `worktree:${current.worktree_id}`]) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1', [key, Number(current.recovery_bytes)]);
       const [queued] = await tx.executeRaw<WriteRequest>(`UPDATE persistence_requests SET state='queued',execution_token=NULL,
-        claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),updated_at=now()
+        claim_expires_at=NULL,recovery=NULL,recovery_bytes=0,publication_started=false,blocked_reason=NULL,outcome=COALESCE($2::text::jsonb,outcome),
+        ${failure ? 'error_code=NULL,error_message=NULL,error_detail=NULL,' : ''}updated_at=now()
         WHERE id=$1::uuid RETURNING *`, [id, kept ? JSON.stringify(kept) : null]);
       return queued;
     });

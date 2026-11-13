@@ -122,6 +122,12 @@ describe('one hooks: block, two lanes (hermes-turn-hook.ts)', () => {
     expect(syncHermesHook({ hermesHome: d, lane: 'skill-resolver', command: resolver, dryRun: false }).action).toBe('keep');
     expect(read(join(d, 'config.yaml'))).toBe(pasted);
     expect(inspectHermesResolverHook(d)).toMatchObject({ state: 'approved', command: resolver });
+    const off = removeHermesHook({ hermesHome: d, lane: 'skill-resolver', dryRun: false });
+    expect(off.action).toBe('skip');
+    expect(off.detail).toContain('delete it there');
+    expect(read(join(d, 'config.yaml'))).toBe(pasted);
+    expect(approvals(d)).not.toContain(resolver);
+    expect(inspectHermesResolverHook(d).state).toBe('unapproved');
   });
 
   test.skipIf(!Bun.which('python3'))('the command splits the way Hermes splits it (shlex, no shell), /usr/bin/env first', () => {

@@ -87,3 +87,63 @@ export function buildKeywordChunkMatch(ftsLang: string, excludePrivate: boolean 
     modality: '',
   };
 }
+
+/**
+ * #7082: the candidate rows of the Postgres keyword statement, before the
+ * KEYWORD_RANK_CANDIDATES bound. `pageJoin` is the statement that joins every
+ * matching chunk to its page under all filters. The bound only saves work when
+ * the statement stops reading after it, and for excludePrivate (remote)
+ * callers it did not: the private-visibility subplans priced the pages side so
+ * high that the planner hashed the entire OFFSET 0 match before the first row
+ * passed (680k rows for a term in a third of 2.1M chunks; about 10 s, past the
+ * keyword statement timeout, for a term in nearly all of them).
+ *
+ * For those callers the GIN match streams through an OFFSET 0 subquery (only
+ * the columns the score and the visibility clause read), and each matching
+ * chunk's page is probed by primary key in a LATERAL subquery whose LIMIT 1
+ * keeps it from being pulled up into a join. Every page filter, the visibility
+ * clause included, runs in that probe, before the bound, so the rows that
+ * reach the bound are exactly the ones the join admits, and the outer LIMIT
+ * stops the scan at the bound. Under the bound the ranked set is identical; at
+ * the bound the sample is the first matches in index order instead of another
+ * plan's.
+ *
+ * The statement runs with enable_seqscan off (PostgresEngine.searchKeyword), as
+ * the relaxed attempt does: for a term in nearly every chunk the planner picks a
+ * seq scan, whose ring buffer leaves the heap uncached, so reaching the bound
+ * took 4.5 s after a restart; the bitmap scan reaches it in about 0.3 s and
+ * keeps the pages it reads in shared buffers.
+ *
+ * Probing every match costs more than hashing a small page set, so this runs
+ * only when no page filter can be selective: no type, frontmatter or date
+ * filter (`pageFiltered`), and a source scope (`scope`: the parameter index of
+ * the source id or ids) that leaves no live source out, decided per execution
+ * by a one-time filter over the UNION ALL (a NULL id in the scope counts as
+ * leaving sources out). Local callers keep the join, which plans well without
+ * the visibility subplans.
+ */
+export function keywordCandidatesSql(ftsLang: string, c: {
+  excludePrivate?: boolean; pageFiltered: boolean; score: string; pageJoin: string; chunkFilters: string; pageFilters: string;
+  scope: { idx: number; many: boolean } | null;
+}): string {
+  if (!c.excludePrivate || c.pageFiltered) return c.pageJoin;
+  // chunk-visibility-ok: pageFilters carries buildVisibilityClause(..., { chunkAlias: 'cc' }), applied to every candidate in the page probe
+  const chunkDriven = `SELECT p.id AS page_id, cc.id AS chunk_id, ${c.score} AS score
+        FROM (
+          SELECT cc.id, cc.page_id, cc.search_vector, cc.body_generation
+          FROM content_chunks cc
+          WHERE cc.search_vector @@ websearch_to_tsquery('${ftsLang}', $1) AND cc.modality = 'text' ${c.chunkFilters}
+          OFFSET 0
+        ) cc
+        CROSS JOIN LATERAL (
+          SELECT p.id, p.slug, p.frontmatter
+          FROM pages p JOIN sources s ON s.id = p.source_id
+          WHERE p.id = cc.page_id ${c.pageFilters}
+          LIMIT 1
+        ) p`;
+  if (!c.scope) return chunkDriven;
+  const allSources = `NOT EXISTS (SELECT 1 FROM sources ls WHERE NOT ls.archived AND (ls.id <> ${c.scope.many ? `ALL($${c.scope.idx}::text[])` : `$${c.scope.idx}`}) IS NOT FALSE)`;
+  return `SELECT * FROM (${chunkDriven} WHERE ${allSources}
+        UNION ALL
+        ${c.pageJoin} AND NOT ${allSources}) arms`;
+}

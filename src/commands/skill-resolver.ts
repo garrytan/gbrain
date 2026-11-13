@@ -30,7 +30,6 @@ import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
 import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extension.ts';
 import { HERMES_PINS_CATALOG, syncHermesPins } from '../core/setup/hermes-skill-pins.ts';
 import { CURSOR_PINS_CATALOG_PREFIX, cursorPinnedBlock, refreshCursorPins } from '../core/setup/cursor-skill-pins.ts';
-import { hermesHomeDir } from '../core/setup/skill-resolver-hook.ts';
 
 const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
 
@@ -354,7 +353,7 @@ async function runPin(args: string[]): Promise<void> {
   const agents = sub === 'list' ? [] : refreshOpenclawPins(home);
   const piUpdated = sub !== 'list' && catalog === PI_SKILL_CATALOG && refreshPiPins(home);
   const hermesOn = catalog === HERMES_PINS_CATALOG && sub !== 'list' && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes('hermes');
-  const soul = hermesOn ? syncHermesPins({ home, hermesHome: hermesHomeDir(), dryRun: false }) : null;
+  const soul = hermesOn ? syncHermesPins({ home, hermesHome: (await import('../core/setup/skill-resolver-hook.ts')).hermesHomeDir(), dryRun: false }) : null;
   const cursorRule = cursor && sub !== 'list' ? refreshCursorPins(home, catalog) : null;
   const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
   if (json) { await write(`${JSON.stringify(doc)}\n`); return; }
