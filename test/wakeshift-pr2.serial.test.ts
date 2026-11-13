@@ -261,6 +261,17 @@ describe('gbrain.cron.finished', () => {
     expect(fake.calls).toHaveLength(0);
   });
 
+  test('cron remove ends the open watches on it and tells Wakeshift, and a later run wakes nobody', async () => {
+    await cli(['cron', 'add', 'nightly-digest']);
+    expect(body(await call('watch_cron', { name: 'nightly-digest' }))).toMatchObject({ watching: true });
+    expect((await cli(['cron', 'remove', 'nightly-digest'])).out).toContain('ended 1 open watch(es)');
+    expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'cron_removed' }]);
+    expect(paths('/event-subscriptions/end')).toHaveLength(1);
+    await cli(['emit', 'cron.finished', '--name', 'nightly-digest', '--status', 'ok']);
+    expect((await drain()).delivered).toBe(0);
+    expect(emits()).toHaveLength(0);
+  });
+
   test('an unregistered emit is recorded with a stderr hint, and doctor names it', async () => {
     const r = await cli(['emit', 'cron.finished', '--name', 'typo-cron', '--status', 'ok']);
     expect(r.err).toContain('gbrain wakeshift cron add typo-cron');
@@ -415,6 +426,18 @@ describe('status, doctor and the gate', () => {
     await engine.executeRaw("INSERT INTO wake_forgets (wake_user, created_at) VALUES ('0123456789abcdef0123456789abcdef', now() - interval '2 days')");
     const checks = await doctorChecks();
     expect(checks[0]).toMatchObject({ status: 'warn', details: { stale_forgets: 1 } });
+  });
+
+  test('doctor warns about a forget that died, and about queued forgets while reporting back is off', async () => {
+    await engine.executeRaw("INSERT INTO wake_forgets (wake_user, state, last_error) VALUES ('0123456789abcdef0123456789abcdef', 'dead', 'bad_request')");
+    const dead = await doctorChecks();
+    expect(dead[0]).toMatchObject({ status: 'warn', details: { dead_forgets_30d: 1 } });
+    expect(dead[0]!.message).toContain('gbrain wakeshift test');
+    await engine.executeRaw("INSERT INTO wake_forgets (wake_user) VALUES ('fedcba9876543210fedcba9876543210')");
+    writeConfig({ enabled: false, url: fake.url });
+    const off = await doctorChecks();
+    expect(off[0]).toMatchObject({ status: 'warn', details: { enabled: false, pending_forgets: 1 } });
+    expect(off[0]!.message).toContain('gbrain wakeshift enable');
   });
 
   test('the manifest carries both new events, personal and deleted on delivery', () => {
