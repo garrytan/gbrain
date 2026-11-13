@@ -129,7 +129,10 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
   const keys = [...new Set([...referenced, ...initial.candidates.map(retarget).flatMap(c => [c.targetSlug, c.fromSlug ?? slug])])].sort();
   // Another source's same-slug page only decides a slug the origin lacks (a counted cross_source drop) or one a link names there.
   const endpointRows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(LINK_ENDPOINTS_SQL,
-    [sourceId, keys, [...new Set(initial.candidates.filter(c => c.targetSourceId && c.targetSourceId !== sourceId).map(c => c.targetSlug))]]);
+    [sourceId, keys, [...new Set(initial.candidates.flatMap(c => [
+      ...(c.targetSourceId && c.targetSourceId !== sourceId ? [c.targetSlug] : []),
+      ...(c.fromSourceId && c.fromSourceId !== sourceId && c.fromSlug ? [c.fromSlug] : []),
+    ]))]]);
   const endpoints = indexLinkSources(endpointRows);
   const policy = await loadLinkSourcePolicy(engine, sourceId);
   const metadata = new Map(endpointRows.map(row => [`${row.source_id}\0${row.slug}`, row]));

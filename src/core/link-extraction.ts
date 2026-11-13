@@ -105,7 +105,8 @@ export { parseInlineCitationTimelineEntries, type InlineCitationTimelineCandidat
 // belongs to another link in the window no longer types this one; "joined [X] as <role>" reads as works_at.
 // 2026-10-08: held-out-confirmed Q2 units U1, U3, U4 (core/link-typing-units.ts). Re-extract so pages pick these up.
 // A bump needs its entry in EXTRACTOR_BUMP_NOTES (link-extraction-watermark.ts), copied into the CHANGELOG at ship.
-export const LINK_EXTRACTOR_VERSION_TS = '2026-10-08T00:00:00Z';
+// #9267: source-qualified frontmatter references retain their exact endpoint source.
+export const LINK_EXTRACTOR_VERSION_TS = '2026-11-13T00:00:00Z';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -642,6 +643,8 @@ export interface LinkCandidate {
    * fromSlug is `people/pedro-franceschi`, not the company.
    */
   fromSlug?: string;
+  /** Exact source of an incoming frontmatter subject; never inferred from a same-slug page. */
+  fromSourceId?: string;
   /** Target page slug (no .md, no ../). */
   targetSlug: string;
   targetSourceId?: string;
@@ -1060,7 +1063,7 @@ export async function frontmatterLinks(slug: string, frontmatter: Record<string,
 
 /** The within-page dedup key: candidates sharing it collapse to the first. */
 export function candidateKey(c: LinkCandidate): string {
-  return `${c.fromSlug ?? ''}\u0000${c.targetSourceId ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}\u0000${c.canonicalAttendance ?? false}`;
+  return `${c.fromSourceId ?? ''}\u0000${c.fromSlug ?? ''}\u0000${c.targetSourceId ?? ''}\u0000${c.targetSlug}\u0000${c.linkType}\u0000${c.linkSource ?? ''}\u0000${c.canonicalAttendance ?? false}`;
 }
 
 export function dedupeCandidates(candidates: LinkCandidate[]): LinkCandidate[] {
@@ -1090,7 +1093,7 @@ export function resolvedLinkCandidate(candidate: LinkCandidate, originSlug: stri
     from_source_id: resolved.fromSourceId, to_source_id: resolved.toSourceId,
     link_type: candidate.linkType, context: candidate.context, link_source: candidate.linkSource,
     origin_slug: candidate.canonicalAttendance ? originSlug : candidate.originSlug,
-    origin_source_id: originSourceId, origin_field: candidate.originField, resolution_type: candidate.targetSourceId ? 'qualified' as const : 'unqualified' as const,
+    origin_source_id: originSourceId, origin_field: candidate.originField, resolution_type: candidate.targetSourceId || candidate.fromSourceId ? 'qualified' as const : 'unqualified' as const,
   };
   return candidate.canonicalAttendance ? orientCanonicalAttendance(row) : row;
 }
@@ -1634,6 +1637,8 @@ export interface ResolveOptions {
 }
 
 export interface SlugResolver {
+  /** A source-qualified address: exact live slug or rename alias only, never name search. */
+  resolveQualified?(sourceId: string, slug: string): Promise<string | null>;
   resolveAttendance?(name: string, dirHint?: string | string[]): Promise<string | null>;
   /**
    * Resolve a display name to a canonical slug.
@@ -1783,6 +1788,14 @@ export function makeResolver(
   }
 
   return {
+    async resolveQualified(sourceId, slug) {
+      if (!isValidSourceId(sourceId) || !slug || slug.trim() !== slug || /[\\\x00-\x1f\x7f]/.test(slug)
+        || slug.includes(':') || slug.split('/').some(part => !part || part === '.' || part === '..')) return null;
+      if (await engine.getPage(slug, { sourceId })) return slug;
+      if (typeof engine.resolveSlugWithAlias !== 'function') return null;
+      const canonical = await engine.resolveSlugWithAlias(slug, sourceId);
+      return canonical !== slug && await engine.getPage(canonical, { sourceId }) ? canonical : null;
+    },
     async resolveAttendance(name: string, dirHint?: string | string[]): Promise<string | null> {
       let value = name.trim();
       const colon = value.indexOf(':');
@@ -1979,7 +1992,7 @@ export async function extractFrontmatterLinks(
   resolver: SlugResolver,
   globalBasename = false,
   pack?: LinkExtractionPack | null,
-  targetType?: (slug: string) => string | undefined,
+  targetType?: (slug: string, sourceId?: string) => string | undefined,
   onResolvedTarget?: (slug: string) => void,
 ): Promise<FrontmatterExtractResult> {
   const candidates: LinkCandidate[] = [];
@@ -2044,11 +2057,14 @@ export async function extractFrontmatterLinks(
         // through unchanged; the original `name` is preserved for the
         // unresolved report and edge context.
         const linkTarget = unwrapWikilink(name);
+        const colon = linkTarget.indexOf(':');
+        const qualifiedSource = colon > 0 && isValidSourceId(linkTarget.slice(0, colon)) ? linkTarget.slice(0, colon) : undefined;
         const canonicalAttendance = mapping.type === 'attended' && mapping.direction === 'incoming';
-        let resolved = await (canonicalAttendance && resolver.resolveAttendance
+        let resolved = qualifiedSource ? await resolver.resolveQualified?.(qualifiedSource, linkTarget.slice(colon + 1)) ?? null
+          : await (canonicalAttendance && resolver.resolveAttendance
           ? resolver.resolveAttendance(linkTarget, mapping.dirHint)
           : resolver.resolve(linkTarget, mapping.dirHint, globalBasename ? { globalBasename, selfSlug: slug } : undefined));
-        if (!resolved && globalBasename && !(canonicalAttendance && resolver.resolveAttendance)
+        if (!resolved && !qualifiedSource && globalBasename && !(canonicalAttendance && resolver.resolveAttendance)
           && typeof resolver.resolveBasenameMatches === 'function') {
           // Issue #972 follow-up: extend global_basename resolution to
           // frontmatter link fields. resolve() can't reach a bare-title
@@ -2073,8 +2089,8 @@ export async function extractFrontmatterLinks(
         const packTargetType = packMappings.includes(mapping)
           ? pack?.link_types.find(lt => lt.name === mapping.type)?.inference?.target_type : undefined;
         const expectedType = canonicalAttendance ? 'person' : packTargetType;
-        if (expectedType && (targetType || packTargetType) && targetType?.(resolved) !== expectedType) {
-          if (targetType?.(resolved) === undefined && mapping.type === 'attended') attendanceComplete = false;
+        if (expectedType && (targetType || packTargetType) && targetType?.(resolved, qualifiedSource) !== expectedType) {
+          if (targetType?.(resolved, qualifiedSource) === undefined && mapping.type === 'attended') attendanceComplete = false;
           unresolved.push({ field, name, reason: 'target_type_mismatch' });
           continue;
         }
@@ -2089,6 +2105,7 @@ export async function extractFrontmatterLinks(
         candidates.push({
           fromSlug,
           targetSlug: toSlug,
+          ...(qualifiedSource ? mapping.direction === 'outgoing' ? { targetSourceId: qualifiedSource } : { fromSourceId: qualifiedSource } : {}),
           linkType: mapping.type,
           context,
           linkSource: 'frontmatter',

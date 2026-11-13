@@ -5426,7 +5426,7 @@
         "kind": "variable",
         "name": "LINK_EXTRACTOR_VERSION_TS",
         "signature": [
-          "\"2026-10-08T00:00:00Z\""
+          "\"2026-11-13T00:00:00Z\""
         ]
       },
       {
@@ -5436,6 +5436,7 @@
           "canonicalAttendance?: boolean | undefined",
           "context: string",
           "fromSlug?: string | undefined",
+          "fromSourceId?: string | undefined",
           "linkSource?: string | undefined",
           "linkType: string",
           "originField?: string | undefined",
@@ -5522,7 +5523,8 @@
         "members": [
           "resolve: (name: string, dirHint?: string | string[], opts?: ResolveOptions) => Promise<string | null>",
           "resolveAttendance?: ((name: string, dirHint?: string | string[]) => Promise<string | null>) | undefined",
-          "resolveBasenameMatches?: ((name: string) => Promise<string[]>) | undefined"
+          "resolveBasenameMatches?: ((name: string) => Promise<string[]>) | undefined",
+          "resolveQualified?: ((sourceId: string, slug: string) => Promise<string | null>) | undefined"
         ],
         "name": "SlugResolver"
       },
@@ -5650,7 +5652,7 @@
         "kind": "function",
         "name": "extractFrontmatterLinks",
         "signature": [
-          "(slug: string, pageType: PageType, frontmatter: Record<string, unknown>, resolver: SlugResolver, globalBasename?: boolean, pack?: LinkExtractionPack | null, targetType?: (slug: string) => string | undefined, onResolvedTarget?: (slug: string) => void) => Promise<FrontmatterExtractResult>"
+          "(slug: string, pageType: PageType, frontmatter: Record<string, unknown>, resolver: SlugResolver, globalBasename?: boolean, pack?: LinkExtractionPack | null, targetType?: (slug: string, sourceId?: string) => string | undefined, onResolvedTarget?: (slug: string) => void) => Promise<FrontmatterExtractResult>"
         ]
       },
       {

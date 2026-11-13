@@ -18,17 +18,29 @@ export interface LinkPageMetadata {
   type: string;
   title: string;
   aliases?: unknown;
+  rename_aliases?: string[];
   knowledge_revision: string;
 }
 
 export async function loadLinkPageMetadata(engine: Pick<BrainEngine, 'executeRaw'>, sourceId?: string): Promise<LinkPageMetadata[]> {
-  return engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision FROM pages
-    WHERE deleted_at IS NULL${sourceId ? ' AND source_id=$1' : ''} ORDER BY source_id, slug`, sourceId ? [sourceId] : []);
+  return engine.executeRaw<LinkPageMetadata>(`WITH renames AS (
+    SELECT source_id, canonical_slug, array_agg(alias_slug) AS names FROM slug_aliases
+    ${sourceId ? 'WHERE source_id=$1' : ''} GROUP BY source_id, canonical_slug)
+    SELECT p.slug, p.source_id, p.type, p.title, p.frontmatter->'aliases' AS aliases, p.knowledge_revision,
+      coalesce(r.names, '{}'::text[]) AS rename_aliases FROM pages p
+    LEFT JOIN renames r ON r.source_id=p.source_id AND r.canonical_slug=p.slug
+    WHERE p.deleted_at IS NULL${sourceId ? ' AND p.source_id=$1' : ''} ORDER BY p.source_id, p.slug`, sourceId ? [sourceId] : []);
 }
 
 export function makeIndexedLinkResolver(pages: readonly LinkPageMetadata[], sourceId: string): SlugResolver {
   const index = buildSourceLocalReferenceIndex(pages.filter(page => page.source_id === sourceId));
+  const exact = new Set(pages.map(page => `${page.source_id}\0${page.slug}`));
+  const aliases = new Map<string, string>(pages.flatMap(page => (page.rename_aliases ?? []).map(alias => [`${page.source_id}\0${alias}`, page.slug] as const)));
   return {
+    async resolveQualified(source, slug) {
+      const key = `${source}\0${slug}`;
+      return exact.has(key) ? slug : aliases.get(key) ?? null;
+    },
     async resolveAttendance(name, dirHint) { return this.resolve(name, dirHint); },
     async resolve(name, dirHint) {
       if (!name) return null;
@@ -379,6 +391,12 @@ export function resolveCandidateSources(
   if (!allSlugs.has(fromSlug)) return { ok: false, reason: 'missing_from' };
   const fromSources = slugToSources.get(fromSlug) ?? [];
   const targetSources = slugToSources.get(c.targetSlug) ?? [];
+  if (c.fromSourceId) {
+    if (!fromSources.includes(c.fromSourceId)) return { ok: false, reason: 'missing_from' };
+    if (!targetSources.includes(pageSourceId)) return { ok: false, reason: 'missing_target' };
+    if (c.fromSourceId !== pageSourceId && !allowCrossSource && !opts.crossSource) return { ok: false, reason: 'cross_source' };
+    return { ok: true, fromSlug, fromSourceId: c.fromSourceId, toSourceId: pageSourceId };
+  }
   if (c.targetSourceId) {
     if (!targetSources.includes(c.targetSourceId)) return { ok: false, reason: 'missing_target' };
     if (!fromSources.includes(pageSourceId)) return { ok: false, reason: 'missing_from' };
