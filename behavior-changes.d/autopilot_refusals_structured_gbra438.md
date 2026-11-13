@@ -1,0 +1,1 @@
+`gbrain autopilot --install` refusals (a PGLite brain without --force, no repo path) now go through the agent error contract: codes `autopilot_pglite_daemon` and `autopilot_no_repo`, a why, a fix and `--json` output, instead of a bare line on stderr; PGLite and repo-less users are pointed to `gbrain maintain --status`.

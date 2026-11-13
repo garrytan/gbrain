@@ -11,7 +11,7 @@ rg -n -F 'src/core/ops/pages.ts' docs/architecture/key-files/
 
 Ranges use each entry's first path. Search when a path crosses subsystems.
 Edit the subsystem entry, not this page, when behavior changes.
-Keep entries current-state: history belongs in `CHANGELOG.md` and Git.
+Keep entries current-state: history belongs in CHANGELOG and Git.
 Where a new storage method, migration, doctor check, command, route or sync
 phase goes: [CONTRIBUTING.md](../../CONTRIBUTING.md#where-does-my-change-go).
 A branch from before refactor wave 1 follows the generated
@@ -27,12 +27,12 @@ from its last line; never raise the cap.
 | [Company-brain ingestion](key-files/company-brain.md) | Inspection, admission, receipts, derived relationships and schema; [operator guide](../guides/company-brain-ingestion.md) |
 | [Agent operator contract](key-files/agent-contract.md) | `agent-output.ts`, error registry + docs, notice ledger, `isCallable`, `--json` guard, contract scanner |
 | [Commands (1/6)](key-files/commands-1.md) | `agent-logs.ts` to `db-repair.ts` |
-| [Commands (2/6)](key-files/commands-2.md) | `src/commands/doctor.ts` and `src/commands/doctor/` |
+| [Commands (2/6)](key-files/commands-2.md) | `doctor.ts`, `doctor/`; [alert](key-files/doctor-alert.md) |
 | [Commands (2/6, continued)](key-files/commands-2-continued.md) | More `doctor/checks/*`, `dream-retriage.ts` to `embed.ts`; [tiers and budgets](key-files/doctor-budgets.md) |
-| [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` through `extract.ts` |
-| [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract-timeline-db.ts` through `frontmatter-install-hook.ts` |
-| [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `pages-unsearchable.ts` |
-| [Commands (4/6, continued)](key-files/commands-4-continued.md) | `pages-status.ts` to `reindex-search-vector.ts`, `init-mode-picker.ts`, `core/embedding-migration-cli.ts` |
+| [Commands (3/6)](key-files/commands-3.md) | `src/commands/engine-status.ts` to `extract-conversation-facts.ts` |
+| [Commands (3/6, continued)](key-files/commands-3-continued.md) | `src/commands/extract.ts` through `frontmatter-install-hook.ts` |
+| [Commands (4/6)](key-files/commands-4.md) | `src/commands/frontmatter.ts` through `pages-status.ts` |
+| [Commands (4/6, continued)](key-files/commands-4-continued.md) | `persistence-admin.ts` to `reindex-search-vector.ts`, `init-mode-picker.ts`, `core/embedding-migration-cli.ts` |
 | [Commands (5/6)](key-files/commands-5.md) | `repair.ts` to `skillpack.ts`; [continued](key-files/commands-5-continued.md) |
 | [Commands (6/6)](key-files/commands-6.md) | `sync.ts` to `whoknows.ts` |
 | [Core Ai](key-files/core-ai.md) | `src/core/ai/` gateway, embedding, dims, errors, fallbacks |

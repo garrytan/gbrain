@@ -30,8 +30,9 @@ import { slugifySegment } from '../sync.ts';
 const siblingCanonical: typeof import('../mentions/siblings.ts').siblingCanonical = async (...args) =>
   (await import('../mentions/siblings.ts')).siblingCanonical(...args);
 import { isMissingSchemaObject } from '../utils.ts';
-import { privatePagesFilterForCaller, privatePagesFilterFragment } from '../search/private-visibility.ts';
+import { privatePagesFilterForCaller, remoteReadFloorSql } from '../search/private-visibility.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
+import { isHoldingSlug } from '../facts-fence.ts';
 
 /**
  * Canonicalize a free-form entity reference to a page slug.
@@ -166,7 +167,7 @@ const NAME_NOISE_TOKENS = new Set(['the', 'inc', 'llc', 'ltd', 'co', 'corp', 'co
 
 /** True for pages that name one real-world person, company, fund or organization. */
 export function isIdentityEntity(slug: string, type?: string | null): boolean {
-  return (type != null && IDENTITY_TYPES.has(type)) || IDENTITY_DIRS.some(dir => slug.startsWith(dir));
+  return !isHoldingSlug(slug) && ((type != null && IDENTITY_TYPES.has(type)) || IDENTITY_DIRS.some(dir => slug.startsWith(dir)));
 }
 
 const FACT_ENTITY_TYPES = new Set(['concept', 'project', 'deal']);
@@ -174,8 +175,8 @@ const FACT_ENTITY_DIRS = ['hosts/', 'projects/', 'concepts/', 'deals/'];
 
 /** Pages a fuzzy fact attribution may land on: entities, never meetings, notes or other documents. */
 export function isFactEntityPage(slug: string, type: string | null): boolean {
-  return isIdentityEntity(slug, type) || (type != null && FACT_ENTITY_TYPES.has(type))
-    || FACT_ENTITY_DIRS.some(dir => slug.startsWith(dir));
+  return !isHoldingSlug(slug) && (isIdentityEntity(slug, type) || (type != null && FACT_ENTITY_TYPES.has(type))
+    || FACT_ENTITY_DIRS.some(dir => slug.startsWith(dir)));
 }
 
 function nameTokens(value: string): string {
@@ -492,7 +493,7 @@ export async function resolveStrictEntityReference(
 ): Promise<StrictResolution> {
   const trimmed = raw.trim();
   if (!trimmed) return { slug: null, miss: 'no_page' };
-  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}` : '';
+  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
   const live = async (slugs: string[]) => slugs.length === 0 ? [] : engine.executeRaw<{ slug: string; type: string | null }>(
     `SELECT p.slug, p.type FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug = ANY($2::text[]) ${privacy}`,
@@ -574,7 +575,7 @@ export async function entityReferenceCandidates(
   const trimmed = raw.trim();
   const token = slugify(trimmed);
   if (!token) return [];
-  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : privatePagesFilterFragment('p')}` : '';
+  const privacy = opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : '';
   const aliases = await aliasHitSlugs(engine, source_id, trimmed).catch(() => [] as string[]);
   const prefixed = (await findPrefixCandidates(engine, source_id, token)).map(c => c.slug);
   const named = await engine.executeRaw<{ slug: string }>(

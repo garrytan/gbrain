@@ -211,6 +211,27 @@ describe('synthesize paid-loop breaker', () => {
     } finally { await rig.cleanup(); }
   }, 90_000);
 
+  test('W3: a transcript that grew between dying runs (a new content key each time) trips its per-transcript key', async () => {
+    const rig = await setupRig();
+    try {
+      const growing = await seedPassingFile(rig, '2026-08-14-growing.txt');
+      // Three dead runs, each on an earlier, shorter edition of the same file: no single content key reached the bound.
+      for (const [i, hash] of ['00000000000000a1', '00000000000000a2', '00000000000000a3'].entries()) {
+        await seedDead(rig, `dream:synth-v2:default:filename:2026-08-14-growing.txt:${hash}`, `dream-inline-${i + 1}`);
+      }
+      const fileKey = 'dream:synth-v2:@file:default:2026-08-14-growing.txt';
+      const details = await runPhase(rig);
+      expect(details.children_submitted).toBe(0);
+      expect(await liveRows(rig, keyFor('2026-08-14-growing.txt'))).toBe(0);
+      const refusal = details.skips.find(s => s.filePath === growing)!;
+      expect(refusal.reason).toStartWith('dream_breaker_tripped: 3 dead submissions');
+      expect(refusal.reason).toContain(`gbrain dream reset-key '${fileKey}'`);
+      const { resetDreamBreakerKey } = await import('../src/core/cycle/dream-breaker.ts');
+      await resetDreamBreakerKey(rig.engine, fileKey);
+      expect((await runPhase(rig)).children_submitted).toBe(1);
+    } finally { await rig.cleanup(); }
+  }, 90_000);
+
   test('the daily cap counts dead rows whose key the queue released', async () => {
     const rig = await setupRig();
     try {

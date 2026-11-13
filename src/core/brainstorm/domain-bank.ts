@@ -23,10 +23,10 @@
  *      fall back to LLM-invented domains — that undercuts the brain-native
  *      thesis.
  *
- * Prefix enumeration cached in the `config` table with 1h TTL (D3 +
- * codex round 2 #7 — source-scoped). Cache miss does a full
- * `SELECT DISTINCT substring(slug from '^[^/]+/[^/]+') FROM pages` (~100-500ms
- * on 30K-page brains); 99%+ of brainstorm calls hit the cache.
+ * Prefix enumeration cached in the process with 1h TTL (D3 + codex round 2
+ * #7 — source-scoped; #7838 moved it out of the `config` table). Cache miss
+ * does a full `SELECT DISTINCT substring(slug from '^[^/]+/[^/]+') FROM pages`
+ * (~100-500ms on 30K-page brains), once per process and scope.
  *
  * Far-page content sanitized via INJECTION_PATTERNS from `think/sanitize.ts`
  * — same trust boundary as takes content (v0.28.8).
@@ -135,64 +135,41 @@ interface PrefixCacheEntry {
   cached_at: number;
 }
 
-function prefixCacheKey(sourceId: string | undefined): string {
-  // Source-scoped per codex round 2 #7. Federated/mounted brains MUST use
-  // the per-source key to avoid serving prefixes from a foreign source.
-  return `brainstorm.domain_bank.prefixes:${sourceId ?? 'default'}`;
+/**
+ * Per engine and source scope, in this process (#7838). Not the `config`
+ * table: every command reads that table whole, so a large brain's prefix list
+ * there travelled with every call. The scope is every field enumeration
+ * honors, so a federated `sourceIds` call never shares the unscoped entry.
+ */
+let prefixCache = new WeakMap<BrainEngine, Map<string, PrefixCacheEntry>>();
+
+/** Test-only: forget every cached prefix list. */
+export function _resetPrefixCacheForTests(): void {
+  prefixCache = new WeakMap();
 }
 
 /**
- * Read + validate the cached prefix list for `sourceId`. Returns null on
- * cache miss, expired entry, parse failure, or invalid shape.
+ * The prefix list for this scope, from the process cache or enumerated. A
+ * miss also removes the row versions before #7838 cached in `config`.
  */
-async function readPrefixCache(
+async function cachedPrefixes(
   engine: BrainEngine,
-  sourceId: string | undefined,
+  opts: { sourceId?: string; sourceIds?: string[] },
   ttlMs: number
-): Promise<string[] | null> {
-  let raw: string | null;
+): Promise<string[]> {
+  const scope = JSON.stringify([opts.sourceIds ? [...opts.sourceIds].sort() : null, opts.sourceId ?? null]);
+  let entries = prefixCache.get(engine);
+  if (!entries) prefixCache.set(engine, entries = new Map());
+  const hit = entries.get(scope);
+  if (hit && Date.now() - hit.cached_at <= ttlMs) return hit.prefixes;
+  const prefixes = await enumeratePrefixes(engine, opts);
+  entries.set(scope, { prefixes, cached_at: Date.now() });
   try {
-    raw = await engine.getConfig(prefixCacheKey(sourceId));
+    await engine.unsetConfig(`brainstorm.domain_bank.prefixes:${opts.sourceId ?? 'default'}`);
   } catch {
-    return null;
+    // Best effort: the old row is only dead weight in the config table.
   }
-  if (!raw) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-  if (
-    typeof parsed !== 'object'
-    || parsed === null
-    || !Array.isArray((parsed as PrefixCacheEntry).prefixes)
-    || typeof (parsed as PrefixCacheEntry).cached_at !== 'number'
-  ) {
-    return null;
-  }
-  const entry = parsed as PrefixCacheEntry;
-  if (Date.now() - entry.cached_at > ttlMs) return null;
-  // Type-narrow: every entry must be a string.
-  for (const p of entry.prefixes) {
-    if (typeof p !== 'string') return null;
-  }
-  return entry.prefixes;
-}
-
-async function writePrefixCache(
-  engine: BrainEngine,
-  sourceId: string | undefined,
-  prefixes: string[]
-): Promise<void> {
-  const entry: PrefixCacheEntry = { prefixes, cached_at: Date.now() };
-  try {
-    await engine.setConfig(prefixCacheKey(sourceId), JSON.stringify(entry));
-  } catch (err) {
-    // Cache-write failures are non-fatal — next call re-enumerates.
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[domain-bank] prefix-cache write failed (non-fatal): ${msg}`);
-  }
+  return prefixes;
 }
 
 /**
@@ -344,16 +321,7 @@ export async function fetchFar(
   if (opts.prefixListOverride) {
     allPrefixes = opts.prefixListOverride;
   } else {
-    const cached = await readPrefixCache(engine, opts.sourceId, ttlMs);
-    if (cached) {
-      allPrefixes = cached;
-    } else {
-      allPrefixes = await enumeratePrefixes(engine, {
-        sourceId: opts.sourceId,
-        sourceIds: opts.sourceIds,
-      });
-      void writePrefixCache(engine, opts.sourceId, allPrefixes);
-    }
+    allPrefixes = await cachedPrefixes(engine, { sourceId: opts.sourceId, sourceIds: opts.sourceIds }, ttlMs);
   }
   const totalPrefixes = allPrefixes.length;
 

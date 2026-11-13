@@ -44,6 +44,8 @@ export interface SessionState {
   last: Record<string, number>;
   /** Skill ids already re-suggested once. */
   again: Record<string, 1>;
+  /** Hermes: the conversation history length the last committed turn saw (a shorter one means Hermes compacted in place). */
+  history?: number;
 }
 
 export const freshState = (): SessionState => ({ v: 1, turn: 0, spent: 0, last: {}, again: {} });
@@ -60,13 +62,34 @@ export function loadSession(home: string, key: string): SessionState {
     if (statSync(p).size > STATE_CAP_BYTES) return freshState();
     const s = JSON.parse(readFileSync(p, 'utf8')) as SessionState;
     if (s?.v !== 1 || typeof s.turn !== 'number' || typeof s.spent !== 'number' || !s.last || typeof s.last !== 'object') return freshState();
-    return { v: 1, turn: s.turn, spent: s.spent, last: s.last, again: s.again && typeof s.again === 'object' ? s.again : {} };
+    return { v: 1, turn: s.turn, spent: s.spent, last: s.last, again: s.again && typeof s.again === 'object' ? s.again : {}, ...historyOf(s) };
   } catch {
     return freshState();
   }
 }
 
-export interface TurnDelta { tokens: number; suggested: string[]; resuggested: string[]; reset: boolean }
+export interface TurnDelta { tokens: number; suggested: string[]; resuggested: string[]; reset: boolean; history?: number }
+
+const historyOf = (s: { history?: unknown }) => (Number.isSafeInteger(s.history) && (s.history as number) >= 0 ? { history: s.history as number } : {});
+
+/**
+ * Whether a Hermes turn must start the session fresh: Hermes compacts in
+ * place (same session id) and sends hooks no compaction event, so a history
+ * shorter than the one the last committed turn saw is the compaction. A
+ * session with no stored length (a new one, or state from before this field)
+ * or a turn whose length is unknown never resets.
+ */
+export async function historyShrank(home: string, key: string, length: number | undefined): Promise<boolean> {
+  if (length === undefined) return false;
+  try {
+    const p = statePath(home, key);
+    if ((await stat(p)).size > STATE_CAP_BYTES) return false;
+    const stored = historyOf(JSON.parse(await readFile(p, 'utf8')) as { history?: unknown }).history;
+    return stored !== undefined && length < stored;
+  } catch {
+    return false;
+  }
+}
 
 /** Apply one delivered turn. False when the commit was skipped (busy lock, file cap). */
 export async function commitSession(home: string, key: string, delta: TurnDelta): Promise<boolean> {
@@ -95,6 +118,7 @@ function applyDelta(s: SessionState, delta: TurnDelta): SessionState {
   s.spent += delta.tokens;
   for (const id of delta.resuggested) s.again[id] = 1;
   for (const id of delta.suggested) if (id in s.last || Object.keys(s.last).length < MAX_SESSION_IDS) s.last[id] = s.turn;
+  if (delta.history !== undefined) s.history = delta.history;
   return s;
 }
 
@@ -132,7 +156,7 @@ async function commitAsync(home: string, key: string, delta: TurnDelta, hold: Co
         try {
           if ((await stat(p)).size <= STATE_CAP_BYTES) {
             const raw = JSON.parse(await readFile(p, 'utf8')) as SessionState;
-            if (raw?.v === 1 && typeof raw.turn === 'number' && typeof raw.spent === 'number' && raw.last && typeof raw.last === 'object') s = { v: 1, turn: raw.turn, spent: raw.spent, last: raw.last, again: raw.again && typeof raw.again === 'object' ? raw.again : {} };
+            if (raw?.v === 1 && typeof raw.turn === 'number' && typeof raw.spent === 'number' && raw.last && typeof raw.last === 'object') s = { v: 1, turn: raw.turn, spent: raw.spent, last: raw.last, again: raw.again && typeof raw.again === 'object' ? raw.again : {}, ...historyOf(raw) };
           }
         } catch { /* none or unreadable: fresh */ }
       }

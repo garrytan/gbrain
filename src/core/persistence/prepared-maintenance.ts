@@ -4,19 +4,19 @@ import { boundedReads } from './bounded-reads.ts';
 import { join } from 'node:path';
 import type { BrainEngine, FactRow } from '../engine.ts';
 import { loadConfig, type GBrainConfig } from '../config.ts';
-import { opError, type OperationContext, type OperationError } from '../ops/contract.ts';
+import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { readFix, trustedCliRequired } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { parseMarkdown, serializePageToMarkdown } from '../markdown.ts';
 import { fenceOperationError, scanCanonicalFences } from '../fence-repair/refusal.ts';
-import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
-import { prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
+import { fenceCellReadBackProblem, formatFenceDate, parseFactsFence, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { heldRowsInVersions, prepareFenceRowRetirement } from '../facts/fence-fact-append.ts';
 import { noteBelief } from '../belief/ledger.ts';
 import { extractFactsFromFenceText } from '../facts/extract-from-fence.ts';
 import { submissionAuthority, authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { currentVerifiedLocalWriter, hostIdFor, registerLocalWriter } from './identity.ts';
-import { getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, getWorktreeBinding, managedPersistenceEnabled, type WorktreeBinding } from './ownership.ts';
 import { checkOwner, ownerUnavailableError } from './owner-refusal.ts';
 import { admitWrite, admitWriteInTransaction, assertReplayIntent, getWriteRequest, intentDigest, type WriteAdmission } from './journal.ts';
 import { assertRefusalBreakerClosed } from './refusal-breaker.ts';
@@ -125,7 +125,15 @@ export async function maintenancePreflight(engine: BrainEngine, sourceId: string
         { fix: ownerStatusFix(sourceId) });
     }
     await nativeLockCapability();
-    assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    try {
+      assertPhysicalRoot(owner.binding.local_path, { worktreeId: owner.binding.worktree_id, coordinationPath: owner.binding.coordination_path });
+    } catch (error) {
+      // #7760: a device-only change takes the ordinary write's locked, ownership-verified re-stamp (#5604); a busy lock keeps the refusal.
+      if (!(error instanceof OperationError) || error.detail !== 'physical_root_device_changed') throw error;
+      const lock = await acquireWorktree(owner.binding, 0, undefined, engine);
+      if (!lock) throw error;
+      await lock.release();
+    }
   }
   if (!writeThrough) writer.databaseOnlyReason = 'disabled_by_config';
   else if (!binding) writer.databaseOnlyReason = 'no_repo_configured';
@@ -419,6 +427,16 @@ export async function submitMaintenanceConsolidation(engine: BrainEngine, author
 export interface FactFenceAssignment { id: number; row_num: number; hash: string }
 
 /**
+ * The row hash an adoption or held-move plan pins. `valid_from` and `valid_until` count to the second, the precision a fence
+ * cell keeps: the facts reconcile rewrites a new row's sub-second time to its cell's, and a request still pending across
+ * that reconcile commits instead of ending revision_conflict beside a second request for the same move (GST-2492).
+ */
+const SUBSECOND = /\.\d+(?=Z$|[+-]\d\d(?::?\d\d)?$)/;
+const toSecond = (time: unknown) => (typeof time === 'string' ? time.replace(SUBSECOND, '') : time);
+const pinnedFactHash = (value: Record<string, unknown> | null | undefined) =>
+  digest(value ? { ...value, valid_from: toSecond(value.valid_from), valid_until: toSecond(value.valid_until) } : null);
+
+/**
  * v0.32.2 on a managed brain: publish the page with its rendered facts fence
  * and adopt the legacy rows in place, so the canonical projection matches
  * them by (source, page, row_num) instead of inserting duplicates.
@@ -435,6 +453,8 @@ export const FACT_FENCE_PLANNER = 2;
  * no page) into their entity page's fence: the rows keep their ids and move in place, and their holding rows are struck.
  */
 export const HELD_FACT_MOVE = 'managed_maintenance_move_held_fact';
+/** A struck (withdrawn) held row that leaves its holding page with its entity's live rows (GST-2492). */
+export type HeldDrop = { row_num: number; entity: string; claim: string };
 /** How long a refused adoption is held back; the owner that refused it may since have restarted onto code that adopts it. */
 const ADOPTION_REFUSAL_HOLD_MS = 24 * 60 * 60 * 1000;
 
@@ -457,12 +477,13 @@ export type FactFenceAdoptionPlan =
  * every cycle, so the page waits a day or a planner change.
  */
 export async function planFactFenceAdoption(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
-  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string } }): Promise<FactFenceAdoptionPlan> {
+  options: { content: string; expectedRevision: string; assignments: Array<{ id: number; row_num: number }>; move?: { note: string; from_entity?: string; from_slug?: string; drop?: readonly HeldDrop[] } }): Promise<FactFenceAdoptionPlan> {
   const current = await readFacts(engine, authority.writer.sourceId, options.assignments.map(a => a.id));
-  const facts: FactFenceAssignment[] = options.assignments.map(a => ({ ...a, hash: digest(current.find(f => f.id === a.id)?.value ?? null) }));
+  const facts: FactFenceAssignment[] = options.assignments.map(a => ({ ...a, hash: pinnedFactHash(current.find(f => f.id === a.id)?.value) }));
   const intent = { kind: options.move ? HELD_FACT_MOVE : 'managed_maintenance_adopt_fact_fence', expected_revision: options.expectedRevision,
     source_incarnation: authority.writer.sourceIncarnation, content: options.content, facts, planner: FACT_FENCE_PLANNER,
-    ...(options.move ? { note: options.move.note, ...(options.move.from_entity ? { from_entity: options.move.from_entity } : {}) } : {}) };
+    ...(options.move ? { note: options.move.note, ...(options.move.from_entity ? { from_entity: options.move.from_entity } : {}),
+      ...(options.move.from_slug ? { from_slug: options.move.from_slug } : {}), ...(options.move.drop?.length ? { drop: options.move.drop } : {}) } : {}) };
   for (let attempt = 0; ; attempt++) {
     const requestId = maintenanceRequestId({ authority: authority.writer, slug, intent, ...(attempt ? { attempt } : {}) });
     const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
@@ -472,6 +493,16 @@ export async function planFactFenceAdoption(engine: BrainEngine, authority: Main
       return { kind: 'suppressed', prior };
     }
   }
+}
+
+/**
+ * GST-2492: the struck held rows of an entity with no live row left on holding page `from`, removed from it (and its saved
+ * versions) once a rule narrows the entity below that page's readers. The request id is returned before the wait.
+ */
+export function planHeldRowDrop(authority: MaintenanceAuthority, from: string, revision: string, drop: readonly HeldDrop[]) {
+  const intent = { kind: HELD_FACT_MOVE, expected_revision: revision, source_incarnation: authority.writer.sourceIncarnation, facts: [], drop,
+    note: 'moved', planner: FACT_FENCE_PLANNER, ...(from === UNATTRIBUTED_MEMORY_SLUG ? {} : { from_slug: from }) };
+  return { intent, requestId: maintenanceRequestId({ authority: authority.writer, slug: from, intent }) };
 }
 
 export async function submitPlannedFactFenceAdoption(engine: BrainEngine, authority: MaintenanceAuthority, slug: string,
@@ -512,11 +543,31 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
       `Fact-fence adoption request ${row.request_id} for ${row.slug} in ${row.source_id} was refused before publication; nothing changed. The plan itself is malformed, so report the request ID to the user rather than running the same backfill again.`,
       { fix: receiptFix(row) });
   }
+  // The holding page a held row moves off (`from_slug`, memory/unattributed when absent), and the struck rows of the
+  // entity that leave it with the live ones (GST-2492): withdrawn, so they are removed rather than moved.
+  const fromSlug = held && typeof p.from_slug === 'string' && isHoldingSlug(p.from_slug) ? p.from_slug : UNATTRIBUTED_MEMORY_SLUG;
+  const drop = held && Array.isArray(p.drop) ? p.drop as HeldDrop[] : [];
+  const scrubbing = (keys: Array<{ entity: string; claim: string }>, after: PreparedMutation['afterEffects']) => async (tx: BrainEngine, outcome: Record<string, unknown>) => {
+    await after?.(tx, outcome);
+    const edited = await heldRowsInVersions(tx, row.source_id, fromSlug, [...keys, ...drop], true);
+    outcome.held_versions_edited = { slug: fromSlug, moved_to: facts.length ? row.slug : null, fact_ids: facts.map(f => f.id), rows: edited.rows, versions: edited.versions,
+      ...(drop.length ? { struck_rows: drop.length } : {}), ...(edited.segmented ? { segmented_versions_not_edited: edited.segmented } : {}) };
+  };
+  const unhold = (tx: BrainEngine) => tx.executeRaw('UPDATE facts SET row_num=NULL WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=ANY($3::int[]) AND expired_at IS NOT NULL',
+    [row.source_id, fromSlug, drop.map(d => d.row_num)]);
+  if (held && !facts.length) {
+    const page = await prepareFenceRowRetirement(unbounded, { ...row, intent: { kind: 'managed_maintenance_page' } }, config, fromSlug,
+      { note: 'moved', rowNum: [], validUntil: null, drop: drop.map(d => d.row_num) });
+    if (!page) throw opError('revision_conflict', 'The struck held rows already left their holding page.',
+      `The struck rows of request ${row.request_id} are no longer on ${fromSlug} in ${row.source_id}; nothing was written. The next maintenance run plans from the current page.`, { fix: receiptFix(row) });
+    return { ...page.mutation, afterEffects: scrubbing([], page.mutation.afterEffects), apply: async (tx, preimage) => { await unhold(tx); return page.mutation.apply(tx, preimage); } };
+  }
   enterClaimStep(clock, 'adoption_parse_fence');
   const fence = new Map(parseFactsFenceFor(p.content as string, { slug: row.slug }).facts.map(f => [f.rowNum, f]));
   // GST-2492 PR 2 (gbrain repair facts-home): a database-only fact with no entity, or whose entity has no page, is adopted
-  // onto memory/unattributed; its cell must name the fact's entity (none for a fact with no entity), so the projection keeps it.
-  const holdingAdoption = !held && row.slug === UNATTRIBUTED_MEMORY_SLUG;
+  // onto a holding page; its cell must name the fact's entity (none for a fact with no entity), so the projection keeps it.
+  // A held move onto a holding page (a held row whose entity a folder rule now covers) keeps its entity the same way.
+  const holdingAdoption = isHoldingSlug(row.slug);
   // A held row keyed by a bare name (`from_entity`) moves to the page that name resolved to, and is re-keyed to it.
   const fromEntity = held && typeof p.from_entity === 'string' ? p.from_entity : null;
   const ownsRow = (value: Record<string, unknown>, rowNum: number) => holdingAdoption
@@ -528,8 +579,8 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
     const current = await readFacts(db, row.source_id, facts.map(f => f.id), lock);
     for (const assignment of facts) {
       const fact = current.find(f => f.id === assignment.id);
-      if (!fact || digest(fact.value) !== assignment.hash || !ownsRow(fact.value, assignment.row_num) || fact.value.expired_at !== null
-        || (held ? fact.value.source_markdown_slug !== UNATTRIBUTED_MEMORY_SLUG || fact.value.row_num === null : fact.value.row_num !== null)) {
+      if (!fact || pinnedFactHash(fact.value) !== assignment.hash || !ownsRow(fact.value, assignment.row_num) || fact.value.expired_at !== null
+        || (held ? fact.value.source_markdown_slug !== fromSlug || fact.value.row_num === null : fact.value.row_num !== null)) {
         throw opError('revision_conflict', 'A legacy fact changed, was already adopted or moved to another owner before adoption.',
           `A legacy fact on ${row.slug} in ${row.source_id} changed before fact-fence adoption request ${row.request_id} published; nothing was written. The next fact backfill run re-reads the facts and plans a fresh request.`,
           { fix: receiptFix(row) });
@@ -554,22 +605,28 @@ async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteReques
   await check(engine, false);
   const pageRow = { ...row, intent: { kind: 'managed_maintenance_page', content: p.content, expected_revision: p.expected_revision } };
   const prepared = await preparePageMutation(unbounded, pageRow, config, undefined, undefined, { clock });
-  const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, UNATTRIBUTED_MEMORY_SLUG, { note: String(p.note), remove: p.note === 'moved',
-    rowNum: (await readFacts(engine, row.source_id, facts.map(f => f.id))).map(f => Number(f.value.row_num)), validUntil: null }) : null;
-  return { ...prepared, ...(holding ? { companions: [holding] } : {}), validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
+  const holding = held ? await prepareFenceRowRetirement(unbounded, pageRow, config, fromSlug, { note: String(p.note), remove: p.note === 'moved',
+    rowNum: (await readFacts(engine, row.source_id, facts.map(f => f.id))).map(f => Number(f.value.row_num)), validUntil: null, drop: drop.map(d => d.row_num) }) : null;
+  // GST-2492 (A2): a row removed from its holding page (it moved where not every reader of that page can read) leaves the
+  // page's saved versions too, in this transaction; the receipt records which rows, how many versions and where they went.
+  const afterEffects = held && p.note === 'moved'
+    ? scrubbing(facts.map(f => ({ entity: holdingAdoption ? fence.get(f.row_num)!.entity ?? '' : fromEntity ?? row.slug, claim: fence.get(f.row_num)!.claim })), prepared.afterEffects)
+    : prepared.afterEffects;
+  return { ...prepared, ...(afterEffects ? { afterEffects } : {}), ...(holding ? { companions: [holding] } : {}), validate: async tx => { await prepared.validate?.(tx); await check(tx, true); }, apply: async tx => {
     // Runs ahead of the page import and its canonical projection, so the
     // projection's expiry pass and insertFacts see the adopted positions.
     // The fence cell's parsed text is written back with the row number: the
     // projection expires any row whose (row_num, fact, visibility) differs from
     // its fence row and inserts a new one, which would lose the legacy id.
-    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2,fact=a.fact${held ? ',entity_slug=$2' : ''}
+    const adopted = await tx.executeRaw(`UPDATE facts f SET row_num=a.row_num,source_markdown_slug=$2,fact=a.fact${held && !holdingAdoption ? ',entity_slug=$2' : ''}
       FROM jsonb_to_recordset($3::text::jsonb) AS a(id integer,row_num integer,fact text)
       WHERE f.source_id=$1 AND f.id=a.id AND ${held ? 'f.source_markdown_slug=$4' : 'f.row_num IS NULL'} RETURNING f.id`,
-    [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num, fact: fence.get(row_num)!.claim }))), ...(held ? [UNATTRIBUTED_MEMORY_SLUG] : [])]);
+    [row.source_id, row.slug, JSON.stringify(facts.map(({ id, row_num }) => ({ id, row_num, fact: fence.get(row_num)!.claim }))), ...(held ? [fromSlug] : [])]);
     if (adopted.length !== facts.length) throw opError('revision_conflict', 'A legacy fact was adopted by another run.',
       `Another run adopted a legacy fact on ${row.slug} in ${row.source_id} while request ${row.request_id} was publishing, so its transaction rolled back. Read the receipt with gbrain write-request -- ${row.request_id} for the final state before planning any new adoption.`,
       { fix: receiptFix(row) });
-    if (held) noteBelief({ kind: 'transferred', fromSlug: UNATTRIBUTED_MEMORY_SLUG, table: 'facts', ids: facts.map(f => f.id) });
+    if (held) noteBelief({ kind: 'transferred', fromSlug, table: 'facts', ids: facts.map(f => f.id) });
+    if (drop.length) await unhold(tx);
     const outcome = await prepared.apply(tx);
     return { ...outcome, facts_adopted: facts.length };
   } };
@@ -662,6 +719,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   if (row.intent?.kind === 'managed_maintenance_file_drift_detach') return (await import('../repair/file-drift.ts')).prepareDriftDetach(engine, row);
   if (row.intent?.kind === 'managed_maintenance_merge_legacy_twin') return (await import('../repair/legacy-twins.ts')).prepareLegacyTwinMerge(engine, row, config);
   if (row.intent?.kind === 'managed_maintenance_resolve_origin_twin') return (await import('../repair/origin-twins.ts')).prepareOriginTwinResolve(engine, row, config);
+  if (row.intent?.kind === 'managed_maintenance_fold_moved_page') return (await import('../repair/moved-pages.ts')).prepareMovedPageFold(engine, row, config);
   if (row.intent?.kind !== 'managed_maintenance_consolidate') throw opError('invalid_params', 'Unsupported maintenance request.',
     `Request ${row.request_id} for ${row.slug} in ${row.source_id} carries a maintenance kind this gbrain version does not publish (likely queued by a newer release); nothing changed. Upgrade gbrain on the brain host, and read the receipt before submitting anything new.`,
     { fix: receiptFix(row) });

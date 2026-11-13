@@ -12,9 +12,20 @@
  * gateway.ts) read the same table, so a preflight prices the cap the call
  * sends.
  *
- * Routes whose option turns reasoning off keep the requested cap:
- *   - native Anthropic (`anthropic`) and DeepSeek (`deepseek`; thinking is on
- *     by default for v4): `thinking: { type: 'disabled' }`
+ * Native Anthropic (`anthropic`) rows follow Anthropic's extended-thinking docs
+ * per model, with `effort: 'low'` pinned on the 5.5 rows so a configured
+ * xhigh or max effort cannot invalidate the setting (#7567):
+ *   - Claude Sonnet 5.5: `thinking: { type: 'between_tools' }` (`disabled` is
+ *     a 400; between_tools at effort high or below is its off), reasoning off
+ *   - Claude Haiku 5.5: `thinking: { type: 'disabled' }` (accepted only at
+ *     effort high or below), reasoning off
+ *   - older Claude: `thinking: { type: 'disabled' }`, reasoning off
+ * Claude Opus 5.5 cannot turn thinking off and still gets `disabled` here:
+ * pricing it with the thinking headroom puts the default fence-repair model
+ * over its default per-page cap, so that row waits on its own fix.
+ * Other routes whose option turns reasoning off keep the requested cap:
+ *   - DeepSeek (`deepseek`; thinking is on by default for v4):
+ *     `thinking: { type: 'disabled' }`
  *   - OpenRouter-hosted DeepSeek (`openrouter` with a `deepseek/` model): same
  *   - Gemini 2.5 Flash and Flash-Lite: `thinkingConfig: { thinkingBudget: 0 }`
  *   - OpenAI models that accept `reasoningEffort: 'none'` (gpt-5.1, 5.2, 5.4,
@@ -58,6 +69,15 @@ export interface ThinkingOffControl {
 }
 
 const THINKING_DISABLED: Record<string, unknown> = { thinking: { type: 'disabled' } };
+
+const CLAUDE_55_RE = /^claude-(sonnet|haiku)-5-5(?:-\d{8})?$/;
+const CLAUDE_55_THINKING: Readonly<Record<string, string>> = { sonnet: 'between_tools', haiku: 'disabled' };
+
+function anthropicControl(model: string): ThinkingOffControl {
+  const family = CLAUDE_55_RE.exec(model)?.[1];
+  if (!family) return { set: { namespace: 'anthropic', options: THINKING_DISABLED }, disables: true };
+  return { set: { namespace: 'anthropic', options: { thinking: { type: CLAUDE_55_THINKING[family] }, effort: 'low' } }, disables: true };
+}
 
 const GEMINI_ID_RE = /^gemini-(\d+(?:\.\d+)?)-(flash-lite|flash|pro)(?:-|$)/;
 const GEMINI_NON_CHAT_RE = /-(?:image|tts|audio|live|transcribe|computer-use)(?:-|$)/;
@@ -113,7 +133,8 @@ export function thinkingOffControl(modelStr: string): ThinkingOffControl | undef
   const { provider, model: rawModel } = splitProviderModelId(modelStr);
   if (!provider) return undefined;
   const model = rawModel.trim().toLowerCase();
-  if (provider === 'anthropic' || provider === 'deepseek') return { set: { namespace: provider, options: THINKING_DISABLED }, disables: true };
+  if (provider === 'anthropic') return anthropicControl(model);
+  if (provider === 'deepseek') return { set: { namespace: provider, options: THINKING_DISABLED }, disables: true };
   if (provider === 'openrouter') return model.startsWith('deepseek/') ? { set: { namespace: provider, options: THINKING_DISABLED }, disables: true } : undefined;
   if (provider === 'google') return googleControl(model);
   if (provider === 'openai') return openaiControl(model);

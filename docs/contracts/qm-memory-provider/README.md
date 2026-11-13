@@ -30,6 +30,15 @@ answers, the proposal states (a state not listed means unknown, not published) a
 never as the person. Each `memory_recall` fact carries `own_page`, true when the fact
 sits on the person's own member page, which is exactly when `forget_fact` accepts it on
 ownership (it can still ask the owner for a fact more trusted than the person's own writes).
+`x-qm-audience` is not an input in v4: a request carrying it is refused
+(`actor_not_attested`, reason `audience_not_supported`), with or without `x-qm-actor`.
+
+`v5.json` keeps all of v4 and marks `context_pack` `scope_read: true`: a call that
+names `source_id` reads only that source (entities, cards, core memory, the
+counterparty brief and hot facts) as its audience. Each `entity_refs` entry must
+carry that same `source_id`, and `entity_refs` without `source_id`, an entry in
+another source, or `session_id` is refused with `invalid_params` before anything
+is read.
 
 They are generated from the live operation registry by
 `bun scripts/build-qm-memory-contract.ts` (part of `bun run regen:all`), and

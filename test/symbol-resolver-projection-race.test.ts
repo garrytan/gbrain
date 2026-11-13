@@ -111,7 +111,8 @@ describe('symbol resolver and projection replacement serialization', () => {
       };
       return wrapped;
     });
-    const resolver = resolveSymbolEdgesIncremental(resolverEngine, { sourceId, maxChunks: snapshot.chunks.length });
+    const owners = new Set(originalEdges.map(edge => edge.from_chunk_id)).size;
+    const resolver = resolveSymbolEdgesIncremental(resolverEngine, { sourceId, maxChunks: owners });
     void resolver.catch(() => {});
     let publisher: Promise<void> | undefined;
     try {
@@ -172,7 +173,7 @@ describe('symbol resolver and projection replacement serialization', () => {
       expect(await resolveCodeReadiness(engine, { sourceId, kind: 'edge', count: 0, remote: false }))
         .toMatchObject({ status: 'indexing', ready: false, pending_edges: true });
       const next = await resolveSymbolEdgesIncremental(engine, { sourceId });
-      expect(next.chunks_walked).toBe(snapshot.chunks.length);
+      expect(next.chunks_walked).toBe(owners);
       expect(next.edges_resolved).toBe(1);
       expect(typeof (await edges(engine, sourceId))[0].edge_metadata?.resolved_chunk_id).toBe('number');
       expect(await resolveCodeReadiness(engine, { sourceId, kind: 'edge', count: 0, remote: false }))

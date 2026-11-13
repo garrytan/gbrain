@@ -42,7 +42,7 @@ import { digest } from '../persistence/digest.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { withCoordinatedWrite, withTrustKeep, withWriteAttribution } from '../persistence/context.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
-import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
+import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { applySegmentedBody, sealSegmentedPage } from '../persistence/segmented-apply.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { materializeSegmentedBody, prepareSegmentedBody } from '../page-body/ingest.ts';
@@ -420,7 +420,7 @@ export const secretSpansRepair: RepairHandler = {
     const { page, hash, last } = entry as SpanItem;
     const rules = resolveSecretRules((entry as SpanItem).rules);
     const detail = { spans: spansOf(page), fields: page.fields.length, rules: ruleText(page.rules) };
-    try {
+    return retireAfterLastItem(ctx.engine, 'secret-spans', hash, last, async () => {
       if ((await receiptsOf(ctx.engine, hash, [page])).has(page.id)) return { applied: true, outcome: 'redacted', detail };
       const written = await ctx.engine.transaction(async tx => {
         const managed = await readManagedMode(tx, { refusal: { subject: 'repair secret-spans' } });
@@ -459,9 +459,7 @@ export const secretSpansRepair: RepairHandler = {
       const residual = await residualScan(ctx.engine, page.source_id, page.slug, rules);
       return { applied: true, outcome: 'redacted', detail: { ...detail, projection, embedded, residual: residual.total,
         ...(residual.total ? { residual_rules: ruleText(residual.rules), residual_stores: ruleText(residual.stores) } : {}) } };
-    } finally {
-      if (last) await clearApprovedSet(ctx.engine, { command: 'secret-spans', hash });
-    }
+    });
   },
   render(details) {
     return ((details.pages ?? []) as PlannedPage[]).flatMap(page => [`  ${page.source_id}:${page.slug} (${page.storage}): ${changeDetail(page)}`,

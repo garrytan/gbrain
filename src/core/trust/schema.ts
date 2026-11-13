@@ -104,7 +104,7 @@ const SETTINGS = `
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='gbrain trust setting names no tier', CONSTRAINT='trust_tier_guard';
   END IF;`;
 
-const STAMP_TIER_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public AS $fn$
+const STAMP_TIER_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE writer text; origin_text text; promo text; backfill boolean; keep boolean; changed boolean; effective text;
 BEGIN${SETTINGS}
   IF ${rank('writer')} > ${rank(`'${OWNER_TIER_FLOOR}'`)} AND (promo IS NULL OR ${rank('writer')} > ${rank('promo')}) THEN

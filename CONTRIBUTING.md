@@ -440,7 +440,7 @@ to a sibling module. Every row also adds a behavior test of its own; the
 | CLI-only command | The implementation in `src/commands/<name>.ts`; the dispatch module `src/cli/commands/<name>.ts`; a help line in `printHelp` (`src/cli.ts`, so raise its `module-size-limits.tsv` ceiling by one) | A record in `CLI_COMMANDS` (`src/cli/command-table.ts`): `phase: 'pre-connect'` when the command never touches the database, `'post-connect'` when its `run(engine, args, ctx)` needs an engine; `thinClient: 'none'` unless remote brains must refuse it (`'refuse'`, or `'route-then-refuse'` for subcommand routing); `selfHelp: true` when the command has flags or subcommands (its `run` then prints its own `--help`); optional `skipStartupHooks`; `load: () => import('<literal>')` | `bun run build:flag-registry`; the CLI goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/cli-goldens.test.ts test/cli-dispatch-phase.test.ts test/cli-dispatch-thin-client.test.ts` | `test/<name>.test.ts` spawning `bun src/cli.ts <name>` and asserting output and exit code, plus `bun test test/cli-command-table.test.ts test/cli-flag-validation.test.ts` |
 | HTTP route (`gbrain serve --http`) | The route inside `mount<Area>(app, ctx)` in `src/commands/serve-http-<area>.ts` (`/admin/api/*` goes in `serve-http-admin-api.ts`, `/mcp` in `serve-http-mcp.ts`, OAuth in `serve-http-oauth.ts`); a new area is a new module plus one mount call in `buildServeHttpApp` (`src/commands/serve-http.ts`). An `/admin` route takes `ctx.requireAdmin` before its handler | None for a route in an existing area; a new area adds its mount call in `buildServeHttpApp` (order matters) | The route goldens, deliberately: `GBRAIN_TEST_UPDATE_GOLDENS=1 bun test test/serve-http-route-golden.test.ts test/serve-http-route-runtime-golden.test.ts` | A behavior test (`test/serve-http-<area>-<route>.test.ts`: mount the area on a bare `express()` app with a stub ctx; `mountAdminApi` reads `requireAdmin`, `sseClients` and `mcpResourceUrl` at mount time) plus `bun test test/serve-http-admin-route-guard.test.ts`, which finds the new route by itself |
 | Sync phase | A module under `src/commands/sync/` taking `(run, Pick<SyncPlan, ...>, ...)` and returning `SyncResult \| undefined`; state it shares across awaits becomes a field on `SyncRun` (`src/commands/sync/sync-run.ts`). A value for the final summary flows `SyncRun` field -> `finalizeIncrementalSync` (`sync/finalize.ts`) -> `SyncResult` (`src/commands/sync.ts`, raise its ceiling) -> `printSyncResult` (`sync/report.ts`) when it should print | The phase call order in `performSyncInner` (`src/commands/sync/incremental.ts`) | Nothing | A case in `test/sync-run-ordering.serial.test.ts` (it has the git-repo + PGLite harness: `commitPages`, `performSync`), plus `bun test test/sync.test.ts test/sync-run-ordering.serial.test.ts` |
-| Release version and migration numbers | Nothing by hand: when your PR is next to merge, `bun run release:restamp` (preview with `--dry-run`) merges `origin/master`, sets the PATCH version, renumbers your own migrations and commits once | None: it rewrites every required row of the CLAUDE.md "Version locations" table | It runs the generators itself and prints the golden-regeneration reason for the PR body | `bun run verify`; `bun test test/scripts/release-restamp.test.ts` when you change restamp itself ([docs](docs/RELEASING.md#release-restamp)) |
+| Release version and migration numbers | `changelog.d/<branch-slug>.md` (your entry, no version heading; /ship writes it) and one `behavior-changes.d/<id>.md` per new upgrade-notice row; number a new migration master's latest + 1 | None: the release PR writes every version stamp; never edit VERSION, the manifests or a released CHANGELOG section | On a migration-number collision, `bun run migrations:renumber`; a PR stamped the old way converts with `bun run release:unstamp` | `bun run verify` (check:regen-all builds the behavior-change table); `bun test test/scripts/release-restamp.test.ts test/scripts/build-behavior-changes.test.ts` when you change those scripts ([docs](docs/RELEASING.md#releases-per-batch)) |
 | Stress-test a touched test (flake hunt) | Nothing: `bun run test:stress [files…] [--iterations N] [--base <ref>] [--postgres]` (defaults: files changed versus `origin/master`, 10 iterations, a fresh database per iteration) | None | Nothing | The same command; a failing iteration prints its reproduce line |
 
 The PR stress gate (`stress-changed-tests`) runs every test file the PR adds or
@@ -706,7 +706,7 @@ accepted contribution is credited in `CHANGELOG.md`.
 
 ### gstack repo config (`.gstack/`)
 
-Two committed files tell gstack (1.94.16.0 or later) about gbrain's own gates;
+Two committed files tell gstack (1.98.0.0 or later) about gbrain's own gates;
 gstack reads both from master, so a branch's edits take effect after it merges.
 
 - `.gstack/pregate.json`: `gstack-pregate run --allow-repo-commands` runs a
@@ -732,15 +732,14 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   `ship_lanes_from` maps /ship's unit, serial, slow and E2E lane commands to
   those runs, so /ship carries a lane from full-ci instead of running it again
   ([/ship lanes](docs/ci-event-parity.md#ship-lanes)).
-- `.gstack/ship-policy.json`: the stamp rule (the release stamp files and
-  version patterns) and the migration numbering `gstack-pregate regate` and
-  `gstack-tree-receipt` use to decide whether a restamped head is the same tree
-  that passed the gate, plus `min_gstack_version` (1.94.16.0, the first gstack
-  that reads `stamp_placeholders`; 1.94.0.0 is the first that reads
-  `ship_lanes_from`; an older one refuses with an upgrade fix).
-  `stamp_placeholders: ["TBD"]` lets a branch's own `since: 'TBD'` row become
-  `since: '<version>'` at the slot and still count as a stamp, so /ship's
-  finish step does not read the restamp as a change made after review.
+- `.gstack/ship-policy.json`: releases per batch (`changelog_fragments` in
+  `changelog.d`, `merge: "direct"`, `restamp_command` and `release_tool` /
+  `release_outputs` for the release PR; [how](docs/RELEASING.md#releases-per-batch)),
+  the stamp rule (the release stamp files and version patterns) and the
+  migration numbering `gstack-pregate regate` and `gstack-tree-receipt` use
+  to decide whether a head is the same tree that passed the gate, plus
+  `min_gstack_version` (1.98.0.0, the gstack this policy was checked
+  against; an older one refuses with an upgrade fix).
   `review_exclude_paths: ["docs/**", "test/fixtures/goldens/**"]` (gstack
   1.93.33.0 or newer, read from master only) keeps docs and generated goldens
   out of /ship's reviewer diffs, so a large wave stays under the reviewers'

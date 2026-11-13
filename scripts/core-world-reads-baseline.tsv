@@ -164,6 +164,7 @@ src/core/brain-resolver.ts	process_env	1	W6: settings plane out of the core
 src/core/brain-score-recommendations.ts	process_env	1	W6: settings plane out of the core
 src/core/brain-writer.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/brainstorm/checkpoint.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/brainstorm/domain-bank.ts	module_collection	1	#7838: the slug-prefix cache is a WeakMap keyed by engine, so mounts never share an entry; W6: per-engine state
 src/core/brainstorm/orchestrator.ts	process_global	1	W7: process-wide effects move to src/cli
 src/core/budget/budget-tracker.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/budget/budget-tracker.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -302,6 +303,7 @@ src/core/cycle/budget-meter.ts	module_collection	1	W6: per-engine state, or mark
 src/core/cycle/calibration-profile.ts	load_config	1	W6: settings plane out of the core
 src/core/cycle/decide-datasets.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/cycle/derived-write-through.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/cycle/derived-write-through.ts	process_env	1	W7: the commit-lock marker a parent git commit-push exports to its child (COMMIT_LOCK_ENV) is process state; it moves with the filesystem boundary
 src/core/cycle/derived-write-through.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/cycle/edge-contradictions.ts	process_env	1	W6: settings plane out of the core
 src/core/cycle/extract-atoms-generation.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -873,6 +875,7 @@ src/core/remote-token-cache.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/repair/agent-session-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/captured-facts.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/fences.ts	process_env	2	W6: settings plane out of the core
+src/core/repair/file-drift-compare.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/repair/file-drift.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/repair/frontmatter.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -1173,6 +1176,7 @@ src/core/transcripts/hermes.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/transcripts/openclaw.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/recover.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/trust/marker-repair.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/trust/page-handlers.ts	fs_import	1	W7: filesystem boundary moves to the local app (#7960 restores the page file a failed owner repair wrote)
 src/core/trust/proposals.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/uncommitted-deletions.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/url-clone.ts	spawn_import	1	W7: process-wide effects move to src/cli
@@ -1203,3 +1207,10 @@ src/core/setup/openclaw-skill-plugin.ts	fs_import	1	GBRA-435 OpenClaw skill-reso
 src/core/setup/openclaw-skill-plugin.ts	process_env	3	GBRA-435 OpenClaw skill-resolver plugin: PATH to find openclaw and node, and the env handed to the openclaw child and the self-test; stays
 src/core/setup/openclaw-skill-plugin.ts	spawn_import	1	GBRA-435 OpenClaw skill-resolver plugin: setup runs the openclaw CLI (install, enable, allow, inspect) and the Node self-test; stays
 src/core/setup/skill-pins.ts	fs_import	1	GBRA-435 skill pins: reads a catalog's receipt under GBRAIN_HOME/skill-index to check pin names (no brain or engine is opened); stays
+src/core/setup/hermes-skill-pins.ts	fs_import	1	GBRA-435 Hermes skill pins: reads SOUL.md under HERMES_HOME to place or remove the pinned-skills block (no brain or engine is opened); stays
+src/core/setup/pi-skill-extension.ts	fs_import	1	GBRA-435 Pi skill-resolver extension: setup writes the extension files under the Pi agent dir and its state under GBRAIN_HOME (no brain or engine is opened); stays
+src/core/setup/pi-skill-extension.ts	process_env	4	GBRA-435 Pi skill-resolver extension: HOME and PI_CODING_AGENT_DIR locate Pi's skills and extensions, PATH finds pi and node, and the env is handed to the pi child and the self-test; stays
+src/core/setup/pi-skill-extension.ts	spawn_import	1	GBRA-435 Pi skill-resolver extension: setup runs the Node self-test and pi --help to confirm Pi loaded the extension; stays
+src/core/setup/cursor-skill-pins.ts	fs_import	1	GBRA-435 Cursor pinned skills: setup writes the project's pinned-skills rule, its git exclude line and the project record under GBRAIN_HOME (no brain or engine is opened); stays
+src/core/setup/cursor-skill-pins.ts	process_env	1	GBRA-435 Cursor pinned skills: HOME locates the user-level skill directories Cursor loads; stays
+src/core/setup/cursor-skill-pins.ts	spawn_import	1	GBRA-435 Cursor pinned skills: setup runs git rev-parse to find the repository's info/exclude; stays

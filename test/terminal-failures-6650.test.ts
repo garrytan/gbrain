@@ -38,6 +38,31 @@ const base: TerminalInput = { source_id: 'src', slug: 'notes/a', operation: 'put
   blocked_reason: null, compacted: false };
 
 describe('classifyTerminal', () => {
+  // #7646: a fault no sync and no caller retries must not advertise a retry; a compacted put_page (intent kind gone, so it may be
+  // a reconcile or managed write) gets the inspect, never the resubmit advice.
+  test('safe_actions follow the fix on non-sync faults, and a compacted put_page gets the inspect only', () => {
+    const stalled = { ...base, error_code: 'preparation_stalled' };
+    const live = classifyTerminal(stalled)!;
+    expect(live.safe_actions).toEqual(['retry', 'upgrade']);
+    expect(live.action.why).toContain('resubmit the same put_page with a new request_id');
+    const compacted = classifyTerminal({ ...stalled, compacted: true, intent_kind: null })!;
+    expect(compacted.action.argv).toEqual(['gbrain', 'sources', 'writer', 'status', '--source', 'src', '--json']);
+    expect(compacted.action.why).not.toContain('resubmit');
+    expect(compacted.safe_actions).toEqual(['none']);
+    const facts = classifyTerminal({ ...stalled, operation: 'extract_facts' })!;
+    expect(facts.action.why).toContain('it was not part of a sync');
+    expect(facts.safe_actions).toEqual(['none']);
+    expect(classifyTerminal({ ...stalled, operation: 'submit_job' })!.safe_actions).toEqual(['retry', 'upgrade']);
+  });
+
+  test('a retryable fault on a caller-submitted loop, proposal, trust or relink write keeps its resubmit advice', () => {
+    for (const operation of ['loops_close', 'decide_proposal', 'trust_owner_page', 'trust_release', 'relink_facts']) {
+      const verdict = classifyTerminal({ ...base, error_code: 'preparation_stalled', operation })!;
+      expect(verdict.action.why).toContain(`resubmit the same ${operation} with a new request_id`);
+      expect(verdict.safe_actions).toEqual(['retry', 'upgrade']);
+    }
+  });
+
   test('routes storage_error by origin, and an origin-less compacted one is diagnosis_required', () => {
     expect(classifyTerminal({ ...base, error_code: 'storage_error', error_detail: { origin: 'owner_exception', error_class: 'TypeError' } }))
       .toMatchObject({ category: 'owner_exception', defect: true, needs_human: true });
@@ -470,6 +495,8 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
       if (rows.status !== 'ok') throw new Error('unknown');
       expect(rows.rows!.length).toBe(g.rows);
       expect(rows.rows!.map(r => r.operation)).toEqual(['put_page']);
+      // #7646: a consumer that re-queries with the group's filter object gets the same rows as its drill-down.
+      expect(g.filter).toMatchObject({ operation: 'put_page' });
     }
   });
 
@@ -518,15 +545,18 @@ for (const kind of testBackends()) describe(`the aggregate, doctor and the drill
     await seed({ slug: 'h6', operation: 'submit_job', state: 'cancelled', code: 'cancelled', detail: knock, build: 'dev-build' });
     await seed({ slug: 'h7', operation: 'submit_job', state: 'failed', code: 'fence_unrenderable', message: 'The adopted fence row does not render its legacy fact.', build: '0.60.217.0' });
     await seed({ slug: 'h8', operation: 'submit_job', state: 'failed', code: 'fence_unrenderable', message: 'The adopted fence row does not render its legacy fact.', build: '0.60.218.0' });
+    await seed({ slug: 'h9', state: 'conflict', code: 'revision_conflict', detail: { origin: 'grandfather_retired' }, compacted: true, build: '0.60.500.0' });
+    await seed({ slug: 'h9b', state: 'conflict', code: 'revision_conflict', kind: 'managed_grandfather', build: '0.60.500.0' });
+    await seed({ slug: 'h9c', state: 'conflict', code: 'revision_conflict', build: '0.60.500.0' });
     const all = Object.values(TERMINAL_HISTORICAL_SQL).map(sql => sql('b')).join(' OR ');
     const rows = await engine.executeRaw<{ slug: string; flag: boolean; state: string; error_code: string; error_message: string | null; error_detail: Record<string, unknown> | null; operation: string;
       compacted: boolean; build: string | null }>(`SELECT b.*, (${all}) AS flag FROM (SELECT r.slug, r.state, r.error_code, r.error_message, r.error_detail, r.operation, r.compacted,
-        r.error_detail->>'origin' AS origin, r.recovery IS NOT NULL AS has_recovery, ${terminalKnockOnSql('r')} AS knock_on,
+        r.error_detail->>'origin' AS origin, r.intent->>'kind' AS intent_kind, r.recovery IS NOT NULL AS has_recovery, ${terminalKnockOnSql('r')} AS knock_on,
         CASE WHEN r.error_detail IS NULL AND r.error_message LIKE 'Publication failed (P0001)%' THEN 'Publication failed (P0001)' END AS routed_message,
         COALESCE(r.error_detail->'attempt'->>'consumer_version', r.admitter_version) AS build FROM persistence_requests r) b ORDER BY b.slug`);
     const ts = rows.map(row => [row.slug, classifyTerminal({ ...base, ...row, recovery: null, blocked_reason: null })!.historical]);
     expect(rows.map(row => [row.slug, row.flag])).toEqual(ts as never);
-    expect(ts).toEqual([['h1', true], ['h2', false], ['h3', true], ['h4', true], ['h5', false], ['h6', false], ['h7', true], ['h8', false]]);
+    expect(ts).toEqual([['h1', true], ['h2', false], ['h3', true], ['h4', true], ['h5', false], ['h6', false], ['h7', true], ['h8', false], ['h9', true], ['h9b', true], ['h9c', false]]);
   });
 
   test('the extracted supersession rule is the one failed-writes applies', async () => {

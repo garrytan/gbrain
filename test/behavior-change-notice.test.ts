@@ -325,6 +325,23 @@ describe('per-release content', () => {
     expect(all.why).toContain(noticeHeader('0', true));
     expect(all.fix?.argv).toEqual(['unset', 'GBRAIN_CHAT_FALLBACK_CHAIN']);
   });
+
+  // Value: protects=the verbs-listing notice only promises the request_tools reveal where it exists; fails_when=the text says a described tool joins the session's list with no transport, and HTTP has no reveal; why_new=#7983 item 7; seam=none; no_claim=the reveal itself (mcp server tests)
+  test('the verbs-listing notice scopes the request_tools reveal to stdio', () => {
+    const text = BEHAVIOR_CHANGES.find(c => c.id === 'registration_lists_verbs_gbra199')!.text as string;
+    expect(text).toContain("on stdio a tool it describes joins the session's list");
+  });
+
+  // #7646: table order is not release order (rows land out of order across merges), so the notice sorts releases itself.
+  test('the disclosure lists releases oldest first, whatever the table order', () => {
+    const listed = (why: string) => [...why.matchAll(/(?:^| )v(\d+\.\d+\.\d+\.\d+): \(/g)].map(m => m[1]!);
+    const sinces = [...new Set(BEHAVIOR_CHANGES.map(c => c.since))].sort(compareReleases);
+    for (const after of ['0', sinces.at(-6)!, sinces.at(-3)!]) {
+      const shown = listed(behaviorChangesNotice(null, { after })!.why);
+      expect(shown.length).toBeGreaterThan(1);
+      expect(shown).toEqual([...shown].sort(compareReleases));
+    }
+  });
 });
 
 describe('concurrent initializations', () => {

@@ -57,6 +57,19 @@ export function serveServiceRestartArgv(service: { platform: string; home: strin
   return null;
 }
 
+/**
+ * True when the installed serve service starts `wrapper` (this brain's `wrapperPath()` by default). The launchd
+ * label and the systemd unit are one per OS user, so on a host with several brains the service may start another
+ * GBRAIN_HOME's wrapper; false then, and for a missing or unreadable service file.
+ */
+export function serveServiceRunsWrapper(platform: string, home: string, wrapper: string = wrapperPath()): boolean {
+  try {
+    if (platform === 'darwin') return readFileSync(launchdPlistPath(home), 'utf8').includes(`<string>${escapeXml(wrapper)}</string>`);
+    if (platform === 'linux') return readFileSync(systemdUnitPath(home), 'utf8').split('\n').includes(`ExecStart=${systemdArg(wrapper)}`);
+  } catch { /* no readable service file: not this brain's */ }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Target detection (pure — probe results are passed in)
 // ---------------------------------------------------------------------------

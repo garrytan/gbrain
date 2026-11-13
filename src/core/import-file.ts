@@ -488,7 +488,7 @@ export async function importFromContent(
     // put (get_page → edit body → put_page without `type:`) silently regressed
     // a curated type to the path-inferred default ('concept' for bare slugs).
     // Explicit frontmatter type stays an override; new pages still infer. The stored subtype and grandfather stamp are kept too.
-    if (existing) alignWithStored(parsed, existing, false);
+    if (existing) alignWithStored(parsed, existing, false, opts.sourcePath !== undefined, true);
     else resolveParsedSubtype(parsed, existing);
     // Alias-footgun visibility: an explicit frontmatter `type:` that is an
     // ALIAS of a canonical pack type (or entirely undeclared) is stored
@@ -1094,7 +1094,7 @@ export async function importFromFile(
   const preInferenceParsed = parseMarkdown(content, relativePath, { validate: true });
   const preInferenceHold = classifyImportHold(preInferenceParsed);
   if (preInferenceHold) {
-    return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: 'invalid_frontmatter' };
+    return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: preInferenceHold.code };
   }
   const privateHold = noncanonicalPrivateHold(content, preInferenceParsed.frontmatter);
   if (privateHold) return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
@@ -1138,7 +1138,7 @@ export async function importFromFile(
   let fallbackReason: 'path slugified empty' | 'normalization-equivalent identity restore' =
     'path slugified empty';
 
-  if (frontmatterHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: frontmatterHold.message, refusal: frontmatterHold, skip_reason: 'invalid_frontmatter' };
+  if (frontmatterHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: frontmatterHold.message, refusal: frontmatterHold, skip_reason: frontmatterHold.code };
 
   if (expectedSlug === '') {
     if (parsed.slug && parsed.slug.length > 0) {

@@ -84,6 +84,10 @@ function formatModesText(report: SearchModesReport): string {
       lines.push(`Reranker: ${rr.model} (enabled but NOT running) — ${rr.fix ?? 'see gbrain doctor'}`);
     }
   }
+  if (report.synopsis_coverage) {
+    lines.push('');
+    lines.push(report.synopsis_coverage.line);
+  }
   lines.push('');
   lines.push('Mode bundles (frozen — set via `gbrain config set search.mode <mode>`):');
   for (const mode of SEARCH_MODES) {

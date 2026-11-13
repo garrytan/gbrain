@@ -9,9 +9,10 @@ import { FACT_WITHDRAWN_SUGGESTION } from '../facts/withdrawal.ts';
 import { CHECKPOINT_MOVED_MESSAGE } from './sync-slug-mode.ts';
 import { PAGE_CHANGED_AFTER_READ_MESSAGE, PAGE_CHANGED_DURING_PREPARATION_MESSAGE } from '../page-state/types.ts';
 import { readFix } from '../ops/op-fix.ts';
+import { readsPageInPieces } from '../page-body/page-shape.ts';
 import { codeEntry, ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { SOURCE_CHECKOUT_MISSING, type CheckoutRefusalOrigin } from './publication-failure.ts';
-import { ownershipRecordNotPrivateError, physicalRootDirectoryChangedError } from './physical-root-record.ts';
+import { ownershipRecordNotPrivateError, physicalRootDirectoryChangedError, PHYSICAL_ROOT_MOVED_MESSAGE } from './physical-root-record.ts';
 
 /** GST-465: a page write to a source whose canonical checkout is missing on this host. The path is left to the read-only fix, which a remote caller cannot run. */
 export function sourceCheckoutMissingRefusal(sourceId: string, slug: string | null): OperationError {
@@ -166,6 +167,9 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
   // #6501: a checkout recreated (or drifted beyond the birth tolerance) at its recorded path; the #5914 relocated-root self-transfer is the exit.
   if (code === 'recovery_required' && message?.startsWith('The checkout directory at the recorded root is not the one this owner stamped')) return { reason: 'physical_root_directory_changed', message,
     suggestion: 'On the brain host, gbrain sources writer status <source> --json shows the filled commands: gbrain sources writer transfer prepare <source> --self-transfer --confirm-relocated-root, then transfer accept <source> --path <root> --expected-epoch <epoch> --manifest <digest from prepare> --self-transfer --confirm-relocated-root (each with its admin intent). Retry the original write with the same request_id afterwards; never remove the ownership markers.' };
+  // #8625: the source's folder holds the stamp of a checkout moved from its recorded path; the path-free refusal of the automatic claim.
+  if (code === 'recovery_required' && message === PHYSICAL_ROOT_MOVED_MESSAGE) return { reason: 'physical_root_moved', message,
+    suggestion: 'Nothing was written. On the brain host, the owner runs the same gbrain sources add, set-path or writer claim with --dry-run in a terminal: it names the recorded path and the commands that bring the checkout back (a symlink and set-path, or moving the folder back). Moving folders is the user\'s decision; never remove the ownership markers.' };
   if (code === 'owner_unavailable' && message === UNBOUND_PUBLICATION_MESSAGE) return { reason: 'unbound_source', message,
     suggestion: 'Read the page again and submit the write with a new request_id; a bound source publishes it to its canonical file.' };
   if (code === 'owner_unavailable') return { reason: code, message: 'The accepted source owner is unavailable or changed.',
@@ -196,7 +200,7 @@ export function writeFailureDiagnostic(code: string, message?: string | null): {
   if (code === 'source_writeback_required' && message?.startsWith('Canonical preparation would normalize a facts or takes fence (')) return { reason: code, message,
     suggestion: 'A company-brain source never rewrites repository files: fix the named fence in the repository, commit it, and resume the sync.' };
   // Wave B: a page whose body is stored in segments refuses a whole-body write; a deliberate per-page verdict, never a server fault.
-  if (code === 'page_body_segmented') return { reason: code, message: message ?? SEGMENTED_WRITE_MESSAGE, suggestion: SEGMENTED_WRITE_SUGGESTION };
+  if (code === 'page_body_segmented') return { reason: code, message: message ?? SEGMENTED_WRITE_MESSAGE, suggestion: message?.includes('24 MiB') ? SEGMENTED_WRITE_SUGGESTION : SEGMENTED_PATH_SUGGESTION };
   // #8522: a page whose segment rows readable here do not cover its body refuses every whole-body write the same way; the message names the page.
   if (code === 'page_body_rows_unreadable') return { reason: code, message: message ?? codeEntry(code)!.summary, suggestion: codeEntry(code)!.suggestion };
   // #5575: a purged claim or page content is refused for good; the owner alone can clear its tombstone.
@@ -216,6 +220,9 @@ const SEGMENTED_WRITE_MESSAGE = 'The target page stores its body in segments, an
 const SEGMENTED_WRITE_SUGGESTION = 'The target page stores its body in segments over the 24 MiB limit up to which this write reads the body whole, so retrying refuses the same way. '
   + 'For remember: save the claim without an entity (omit entity, infer_entity: false); it is filed under memory/unattributed, and remembering it with entity once that page accepts fact rows replaces that copy. '
   + "Read the page with get_page body: 'auto' or a window.";
+/** A segmented target refused by a write path that reads the body whole (pageBodySegmentedError), below the ceiling too. */
+const SEGMENTED_PATH_SUGGESTION = 'The target page stores its body in segments, and this write reads the body whole on a path that cannot read a page stored in segments yet, so retrying refuses the same way. '
+  + 'For remember: save the claim without an entity (omit entity, infer_entity: false); it is filed under memory/unattributed, and remembering it with entity once that page accepts fact rows replaces that copy.';
 
 /** What the unattributed retry must keep from the refused call, so the retry is never broader than the original. */
 export interface RememberCarry { visibility: 'world' | 'private'; kind?: string; ttl?: string; valid_from?: string }
@@ -281,8 +288,9 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
     }
     // Wave B: a segmented target is a caller-class refusal; the frozen wire code is invalid_params and the canonical code says why.
     if (error.canonicalCode === 'page_body_segmented') {
-      const segmented = verbError('invalid_params', error.message, error.suggestion ?? SEGMENTED_WRITE_SUGGESTION);
-      Object.assign(segmented, { canonical: 'page_body_segmented', writeError: 'page_body_segmented', fix: error.fix ?? segmentedRememberFix() });
+      const readStep = readsPageInPieces(error.fix);
+      const segmented = verbError('invalid_params', error.message, !readStep && error.suggestion ? error.suggestion : writeFailureDiagnostic('page_body_segmented', error.message).suggestion);
+      Object.assign(segmented, { canonical: 'page_body_segmented', writeError: 'page_body_segmented', fix: !readStep && error.fix ? error.fix : segmentedRememberFix() });
       throw segmented;
     }
     // GST-1387: a refresh fence is a retryable wait, not an outage: the frozen code stays unavailable, and the canonical code,
@@ -291,6 +299,13 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       const fenced = verbError('unavailable', error.message, error.suggestion ?? 'Retry the same request_id after retry_after_ms.', error.detail);
       Object.assign(fenced, { canonical: 'worktree_refreshing', docs: error.docs, fix: error.fix, retryable: true, requestId: error.requestId });
       throw markNotAdmitted(fenced);
+    }
+    // GST-2492: a strict source that has no file to hold the fact (an exact page rule on a page-less entity) or cannot read
+    // its access state refuses before admission; the frozen code stays and the canonical code, reason and fix ride along.
+    if (error.code === 'git_home_required' || error.code === 'access_policy_pending') {
+      const strict = verbError(error.code === 'git_home_required' ? 'invalid_params' : 'unavailable', error.message, error.suggestion ?? 'Inspect writer status before retrying.');
+      Object.assign(strict, { canonical: error.code, reason: error.reason, why: error.why, docs: error.docs, fix: error.fix });
+      throw strict;
     }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)
@@ -319,7 +334,13 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
   const code = ['source_changed','permission_denied','scope_denied','writer_registration_required'].includes(writeError) ? 'scope_denied'
     : ['revision_required', 'revision_conflict', 'idempotency_conflict','invalid_params','page_identity_changed','purged_content','page_body_segmented'].includes(writeError) || writeError.startsWith('core_')
       ? 'invalid_params' : 'unavailable';
-  const diagnostic = writeFailureDiagnostic(writeError, message);
+  const failure = writeFailureDiagnostic(writeError, message);
+  // GST-2517: a door commit that landed before the row put the write in Git, so "nothing was saved" would be false.
+  const landed = receipt.outcome?.persistence as { landed_before_row?: unknown; git_commit?: unknown } | undefined;
+  const diagnostic = !pending && landed?.landed_before_row === true && typeof landed.git_commit === 'string' ? { ...failure,
+    message: `The write did not finish: it ended with ${failure.reason} after Git commit ${landed.git_commit.slice(0, 12)} took its file change, and the database has not recorded it.`,
+    suggestion: 'Git holds the change, and the next sync of the source imports it. Read the target before writing again: an append submitted again with a new request_id '
+      + `adds its text twice, while a forget submitted again records its withdrawal without a second commit. ${failure.suggestion}` } : failure;
   const suggestion = pending
     ? pendingWriteHint(receipt)
     : receipt.state === 'cancelled'

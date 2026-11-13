@@ -17,6 +17,8 @@ import { clearLinkExtractionHolds, linkExtractionRetryFix, recordLinkExtractionF
 export type { LinkExtractionFailure };
 
 export interface ManagedLinkExtraction { pages: number; created: number; removed: number; timeline: number; skipped: number; remaining: number;
+  /** #6820: of `skipped`, the pages skipped for unresolved attendance (the rest changed while the run read them). */
+  attendance_skipped?: number;
   /** The mention pass (absent when the caller ran links only, as sync does). */
   mentions?: MentionPassResult; mention_due?: number; mention_last_pass_at?: string | null;
   /** #6803 (D3): the terminal counts (`gbrain extract --stale` only; sync's tail does not read them). */
@@ -56,7 +58,8 @@ export function formatManagedStaleExtraction(result: ManagedLinkExtraction, dryR
       mention_last_pass_at: result.mention_last_pass_at ?? null } : {
       action: 'extract_stale_done', links_created: result.created, links_removed: result.removed, timeline_created: result.timeline,
       pages_processed: result.pages, stale_remaining: result.remaining + (result.mentions?.remaining ?? 0),
-      ...(result.skipped ? { skipped_changed: result.skipped } : {}), ...(result.mentions ? mentionJsonFields(result.mentions) : {}),
+      ...(changedSkips(result) ? { skipped_changed: changedSkips(result) } : {}), ...(result.attendance_skipped ? { skipped_attendance_incomplete: result.attendance_skipped } : {}),
+      ...(result.mentions ? mentionJsonFields(result.mentions) : {}),
       ...(result.failed ? { failed: result.failed, failures: result.failures } : {}), ...(result.systemic?.length ? { systemic: result.systemic } : {}),
     }), ...(counts ?? {}) });
   }
@@ -67,9 +70,13 @@ export function formatManagedStaleExtraction(result: ManagedLinkExtraction, dryR
   }
   const mentionLine = result.mentions ? formatMentionSummary(result.mentions) : null;
   return `Extract --stale: ${result.created} link(s) created, ${result.removed} removed, ${result.timeline} timeline entr(ies) from ${result.pages} page(s).` +
-    (result.skipped ? ` Skipped ${result.skipped} page(s) edited during extraction or with unresolved attendance; they stay stale.` : '') +
+    (changedSkips(result) ? ` Skipped ${changedSkips(result)} page(s) edited during extraction; they stay stale.` : '') +
+    (result.attendance_skipped ? ` Skipped ${result.attendance_skipped} page(s) with unresolved attendance; they wait for the attendee's person page.` : '') +
     (result.remaining ? ` ${result.remaining} page(s) remain stale (raw total).` : '') + formatLinkFailures(result) + (mentionLine ? `\n${mentionLine}` : '') + countsLine;
 }
+
+/** Pages a run skipped because they changed while it read them (the rest of `skipped` waits on attendance). */
+const changedSkips = (result: ManagedLinkExtraction) => result.skipped - (result.attendance_skipped ?? 0);
 
 /** The failure lines of a run: each listed page with its code and state, then each source the breaker stopped, each with its fix. */
 function formatLinkFailures(result: ManagedLinkExtraction): string {
@@ -107,7 +114,7 @@ export const MANAGED_LINK_EXTRACTION_WIDTH = 4;
  */
 export async function extractManagedStaleLinks(engine: BrainEngine,
   opts: { sourceId?: string; slugs?: readonly string[]; maxPages?: number; timeBudgetMs?: number; signal?: AbortSignal; mentions?: boolean } = {}): Promise<ManagedLinkExtraction> {
-  const result: ManagedLinkExtraction = { pages: 0, created: 0, removed: 0, timeline: 0, skipped: 0, remaining: 0 };
+  const result: ManagedLinkExtraction = { pages: 0, created: 0, removed: 0, timeline: 0, skipped: 0, attendance_skipped: 0, remaining: 0 };
   const startMs = Date.now();
   const withMentions = opts.mentions !== false;
   const deadline = withMentions ? await linkPhaseDeadline(engine, opts.sourceId, startMs, opts.timeBudgetMs)
@@ -134,7 +141,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
       if (current?.revision !== snapshot.revision) return null;
       if (!prepared.attendanceComplete) {
         await tx.markPagesAttendanceBlocked([{ slug, source_id: sourceId, revision: current.revision }]);
-        return null;
+        return 'attendance' as const;
       }
       const written = await prepared.apply(tx);
       if (written.errors) return null;
@@ -145,7 +152,7 @@ export async function extractManagedStaleLinks(engine: BrainEngine,
       await tx.markPagesExtractedBatch([{ slug, source_id: sourceId, extractedAt: at }], at);
       return { ...written, timeline: added };
     }, attribution));
-    if (!outcome) { result.skipped++; return; }
+    if (!outcome || outcome === 'attendance') { result.skipped++; if (outcome) result.attendance_skipped!++; return; }
     result.pages++;
     result.created += outcome.created;
     result.removed += outcome.removed;

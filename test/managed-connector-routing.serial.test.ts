@@ -112,6 +112,7 @@ test('deliberate activation and public sync route unbound API sources without cr
         if (url.pathname.endsWith('/settings/sendAs')) return json({ sendAs: [] });
         // #5686: the managed Google run resolves the credential's account before sweeping.
         if (url.pathname.endsWith('/people/me')) return json({ emailAddresses: [{ value: googleConfig.g_account, metadata: { primary: true } }] });
+        if (url.pathname.endsWith('/v1/userinfo')) return json({ email: googleConfig.g_account });
         if (url.pathname.endsWith('/people/me/connections')) return json({ connections: [{ resourceName: 'people/routing', names: [{ displayName: 'Connector Example' }], emailAddresses: [{ value: 'connector@example.invalid' }] }], nextSyncToken: 'routing-contacts' });
         if (url.pathname.endsWith('/issues')) return json([issue]);
         if (url.pathname.endsWith('/pulls') || url.pathname.endsWith('/comments')) return json([]);
