@@ -55,7 +55,9 @@ const whoami: Operation = {
     // while access.members_read_lineage is on, that members read the derived pages of pages listed to them.
     const withApplied = async <T extends object>(view: T) => ({ ...view, applied: await appliedAccessSummary(ctx.engine, ctx.auth, [ctx.sourceId, ...(ctx.localFederatedSourceIds ?? [])]),
       ...await (await import('../access/owner.ts')).ownerReadsRestrictedNotice(ctx.engine),
-      ...await (await import('../access/lineage.ts')).membersReadLineageNotice(ctx.engine) });
+      ...await (await import('../access/lineage.ts')).membersReadLineageNotice(ctx.engine),
+      // GST-363: and, remotely, what the requester-scope gate does with this connection's reads.
+      requester_scope: await (await import('../access/requester-scope.ts')).requesterScopeView(ctx.engine, (await import('../search/private-visibility.ts')).currentCallerAccess(), ctx.auth, ctx.transport) });
     if (ctx.remote === false) {
       // GBRA-218: a local --as <member> preview reports the member it reads as; the plain local CLI reads every page.
       const access = ctx.applyRemoteReadPolicy && ctx.accessIdentity?.length ? accessView(ctx.accessIdentity, 'as')

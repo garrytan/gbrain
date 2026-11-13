@@ -227,6 +227,8 @@ for (const backend of testBackends()) {
       const put = await cli(['put', 'notes/huge-private', '--file', file('huge-private.md', `---\nVisibility: Private\n---\n${hugeBody('Huge private')}`)]);
       expect(put.code).not.toBe(0);
       expect(put.stderr).toContain('visibility_not_applied');
+      expect(put.stderr).toContain('page notes/huge-private would stay world-readable, so nothing was written');
+      expect(put.stderr).not.toContain('import the file again');
       expect(await sql<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE slug = $1', ['notes/huge-private'])).toEqual([{ n: 0 }]);
     }, 600_000);
 

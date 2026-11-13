@@ -326,7 +326,13 @@ export function frozenVerbWriteError(receipt: WriteReceipt, reason?: WriteErrorC
   const code = ['source_changed','permission_denied','scope_denied','writer_registration_required'].includes(writeError) ? 'scope_denied'
     : ['revision_required', 'revision_conflict', 'idempotency_conflict','invalid_params','page_identity_changed','purged_content','page_body_segmented'].includes(writeError) || writeError.startsWith('core_')
       ? 'invalid_params' : 'unavailable';
-  const diagnostic = writeFailureDiagnostic(writeError, message);
+  const failure = writeFailureDiagnostic(writeError, message);
+  // GST-2517: a door commit that landed before the row put the write in Git, so "nothing was saved" would be false.
+  const landed = receipt.outcome?.persistence as { landed_before_row?: unknown; git_commit?: unknown } | undefined;
+  const diagnostic = !pending && landed?.landed_before_row === true && typeof landed.git_commit === 'string' ? { ...failure,
+    message: `The write did not finish: it ended with ${failure.reason} after Git commit ${landed.git_commit.slice(0, 12)} took its file change, and the database has not recorded it.`,
+    suggestion: 'Git holds the change, and the next sync of the source imports it. Read the target before writing again: an append submitted again with a new request_id '
+      + `adds its text twice, while a forget submitted again records its withdrawal without a second commit. ${failure.suggestion}` } : failure;
   const suggestion = pending
     ? pendingWriteHint(receipt)
     : receipt.state === 'cancelled'

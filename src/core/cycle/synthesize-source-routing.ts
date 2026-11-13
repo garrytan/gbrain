@@ -130,7 +130,32 @@ export async function refuseChangedSessionSource(engine: BrainEngine,
   const pin = data.corpus_source ?? { raw_source: data.dream_output!.raw_source,
     corpus_dir: await engine.getConfig('dream.synthesize.session_corpus_dir').catch(() => null) };
   const changed = await corpusSourceChanged(engine, pin, sourceId);
-  if (changed) throw new UnrecoverableError(`session_source_changed: ${changed}: the session of ${pin.raw_source} no longer resolves to source ${sourceId} as it did when this job was queued, so nothing was synthesized or written. It synthesizes when the dream runs for its own source, or after gbrain sweep --assign-corpus <source> maps it.`);
+  if (!changed) return;
+  const release = corpusHoldRelease([changed]);
+  throw new UnrecoverableError(`session_source_changed: ${changed}: the session of ${pin.raw_source} no longer resolves to source ${sourceId} as it did when this job was queued, so nothing was synthesized or written. ${changed === 'corpus_source_other' ? 'It synthesizes when the dream runs for its own source.'
+    : release.fix.length ? `It synthesizes after ${release.fix.at(-1)}.` : `It stays held: ${release.stays[0] ?? changed}.`}`);
+}
+
+/**
+ * What releases a held corpus file, by hold reason (#7849). The operator mapping fills only records naming no source, so it
+ * releases only unstamped legacy files and unresolved sessions; an archived source's sessions wait for its restore; nothing
+ * releases the rest, since a session's frozen source is never rewritten.
+ */
+const HOLD_RELEASE: Record<string, { fix: string[] } | { why: string }> = {
+  corpus_legacy_unstamped: { fix: ['gbrain sweep --assign-corpus <source>'] },
+  corpus_source_unresolved: { fix: ['gbrain sweep --assign-corpus <source>'] },
+  corpus_source_archived: { fix: ['gbrain sources archived', 'gbrain sources restore <archived-source>'] },
+  corpus_source_incarnation_changed: { why: 'their source was removed and re-created under the same id' },
+  corpus_source_missing: { why: 'the source they name is not in this brain' },
+  corpus_stamp_missing: { why: 'their spool name carries no source' },
+  corpus_path_unresolvable: { why: 'their real path could not be read; check the corpus folder\'s permissions' },
+};
+
+/** The commands that release these held reasons, and why the others stay held. */
+export function corpusHoldRelease(reasons: string[]): { fix: string[]; stays: string[] } {
+  const release = reasons.map(reason => [reason, HOLD_RELEASE[reason]] as const);
+  return { fix: [...new Set(release.flatMap(([, r]) => r && 'fix' in r ? r.fix : []))],
+    stays: release.flatMap(([reason, r]) => r && 'why' in r ? [`${reason}: ${r.why}`] : []) };
 }
 
 /** Names every corpus file the phase left out, with the command that synthesizes (or extracts) or releases it. */
@@ -143,17 +168,19 @@ export function withSessionSourceRouting(result: PhaseResult, routing: SessionSo
   const otherCount = others.reduce((n, [, c]) => n + c, 0);
   const heldCount = held.reduce((n, [, c]) => n + c, 0);
   const memberCount = members.reduce((n, [, c]) => n + c, 0);
+  const release = corpusHoldRelease(held.map(([r]) => r));
   const fix = [
     ...others.map(([id]) => `gbrain dream --source ${id} --phase ${phase}`),
-    ...(heldCount ? ['gbrain sweep --assign-corpus <source>'] : []),
+    ...release.fix,
     ...(memberCount ? [`gbrain doctor --only generation_pending --json`] : []),
   ];
   const parts = [
     ...(otherCount ? [`${otherCount} corpus file(s) belong to other sources (${others.map(([id, c]) => `${id}: ${c}`).join(', ')}) and ${phase === 'synthesize' ? 'synthesize' : 'extract'} only under their own source`] : []),
     ...(heldCount ? [`${heldCount} held with no frozen session source (${held.map(([r, c]) => `${r}: ${c}`).join(', ')})`] : []),
+    ...(release.stays.length ? [`nothing releases ${release.stays.join('; ')}`] : []),
     ...(memberCount ? [`${memberCount} pending generation member(s) held, not resubmitted: their transcript no longer resolves to this source (${members.map(([r, c]) => `${r}: ${c}`).join(', ')})`] : []),
   ];
-  process.stderr.write(`[dream] ${phase} for source ${sourceId}: ${parts.join('; ')}. Fix: ${fix.join(' | ')}\n`);
+  process.stderr.write(`[dream] ${phase} for source ${sourceId}: ${parts.join('; ')}.${fix.length ? ` Fix: ${fix.join(' | ')}` : ''}\n`);
   return { ...result, summary: `${result.summary}; ${parts.join('; ')}`,
     details: { ...result.details, source_routing: { source_id: sourceId, ...routing, fix } } };
 }

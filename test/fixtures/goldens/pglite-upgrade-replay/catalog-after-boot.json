@@ -610,6 +610,8 @@
       "gbrain_access_origin_restricted(p_id integer, p_source_id text, p_type text, fm jsonb)": "RETURNS boolean kind=f lang=plpgsql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=506a29c639348746278d0c472b43a013bf2e39a8e83de4cd3641424116160c6d",
       "gbrain_access_pending_covers(p_source text, p_slug text)": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=57448e941169ad1e65fbdab4bbe4572cc7b6f164ef19fd61a3666640e85f253c",
       "gbrain_access_readers(fm jsonb)": "RETURNS text[] kind=f lang=sql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=18348cb56089106aaec6470076ee652d7ed3bfbcb20e950a24abd52a21e7a380",
+      "gbrain_access_refresh_serves()": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=84f560a40c85f6b17461f0061dd93f9ccb23ece584d434e5d24faae0618780b3",
+      "gbrain_access_refresh_serves_trigger()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=cfc246e282936cd9beb99ac87c59f8121412adf0d7bca856ee70cd939039e764",
       "gbrain_access_stamp_folder_rules()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=7fb49ce62f4f6153ef0c844a1816f5f5bb7d765b8610ff66fec137283469fc09",
       "gbrain_access_state_unreadable()": "RETURNS boolean kind=f lang=sql volatility=s secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=fa6c6edac062270a2fcf9ff3e9c29f16242156e817a3710c273d8da9f5203943",
       "gbrain_advance_page_revision()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2a431195dc4c4150e3428251d0dec0a685cdc2992525c1b4b54dff103d5d99c9",
@@ -1910,7 +1912,8 @@
           "19 attest_actor text/text NULL",
           "20 attest_ops ARRAY/_text NULL",
           "21 attest_sources ARRAY/_text NULL",
-          "22 attest_read text/text NULL"
+          "22 attest_read text/text NULL",
+          "23 reads_unscoped timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
@@ -3186,7 +3189,8 @@
           "36 attest_actor text/text NULL",
           "37 attest_ops ARRAY/_text NULL",
           "38 attest_sources ARRAY/_text NULL",
-          "39 attest_read text/text NULL"
+          "39 attest_read text/text NULL",
+          "40 reads_unscoped timestamp with time zone/timestamptz NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -4686,9 +4690,12 @@
     },
     "triggers": {
       "access_members.access_members_mark_restricted": "CREATE TRIGGER access_members_mark_restricted AFTER INSERT ON public.access_members FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted()",
+      "access_members.access_members_refresh_serves": "CREATE TRIGGER access_members_refresh_serves AFTER INSERT OR DELETE OR UPDATE OF disabled_at, tombstoned_at ON public.access_members FOR EACH STATEMENT EXECUTE FUNCTION gbrain_access_refresh_serves_trigger()",
       "access_pending_coverage.access_pending_coverage_mark_restricted": "CREATE TRIGGER access_pending_coverage_mark_restricted AFTER INSERT ON public.access_pending_coverage FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted()",
       "access_rules.access_rules_mark_restricted": "CREATE TRIGGER access_rules_mark_restricted AFTER INSERT ON public.access_rules FOR EACH ROW EXECUTE FUNCTION gbrain_access_mark_restricted()",
       "access_tokens.trust_generation_update": "CREATE CONSTRAINT TRIGGER trust_generation_update AFTER UPDATE ON public.access_tokens DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.min_trust IS DISTINCT FROM new.min_trust)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
+      "config.config_serves_refresh": "CREATE TRIGGER config_serves_refresh AFTER INSERT OR UPDATE ON public.config FOR EACH ROW WHEN ((new.key = ANY (ARRAY['access.serves'::text, 'access.serves_derived'::text]))) EXECUTE FUNCTION gbrain_access_refresh_serves_trigger()",
+      "config.config_serves_refresh_delete": "CREATE TRIGGER config_serves_refresh_delete AFTER DELETE ON public.config FOR EACH ROW WHEN ((old.key = ANY (ARRAY['access.serves'::text, 'access.serves_derived'::text]))) EXECUTE FUNCTION gbrain_access_refresh_serves_trigger()",
       "config.trust_generation_delete": "CREATE CONSTRAINT TRIGGER trust_generation_delete AFTER DELETE ON public.config DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.key ~~ 'trust.%'::text)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "config.trust_generation_insert": "CREATE CONSTRAINT TRIGGER trust_generation_insert AFTER INSERT ON public.config DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((new.key ~~ 'trust.%'::text)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "config.trust_generation_update": "CREATE CONSTRAINT TRIGGER trust_generation_update AFTER UPDATE ON public.config DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((((old.key ~~ 'trust.%'::text) OR (new.key ~~ 'trust.%'::text)) AND ((old.key IS DISTINCT FROM new.key) OR (old.value IS DISTINCT FROM new.value)))) EXECUTE FUNCTION gbrain_bump_trust_generation()",

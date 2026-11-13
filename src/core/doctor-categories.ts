@@ -102,6 +102,10 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_store_mismatch',
   // GST-363: a brain that serves several people keeps each people/<name>/ folder to its readers (doctor/checks/unlabeled-people-folders.ts).
   'unlabeled_people_folders',
+  // GST-363: credentials bound to nobody on a brain that serves several people (doctor/checks/unscoped-shared-reads.ts).
+  'unscoped_shared_reads',
+  // GST-363: config mcp.stdio_member set on a host where OpenClaw or Hermes is installed (doctor/checks/shared-stdio-binding.ts).
+  'shared_stdio_binding',
   // GBRA-231: shared agents (doctor/checks/shared-agent-access.ts).
   'access_may_act_for_wildcard',
   // GST-2490: the owner opt-in (doctor/checks/owner-reads-restricted.ts).
@@ -508,6 +512,8 @@ export const META_CHECK_NAMES: ReadonlySet<string> = new Set([
   // #5216: the resumable pages.knowledge_revision backfill (resumed by apply-migrations --force-schema).
   'revision_backfill',
   'schema_columns',
+  // #7776: function bodies an older gbrain's schema replay reverted (init --migrate-only reinstalls them).
+  'schema_function_bodies',
   // #6911: tables the applied migrations created that are missing (repair missing-tables recreates rebuildable caches).
   'schema_missing_tables',
   'schema_pack_active',

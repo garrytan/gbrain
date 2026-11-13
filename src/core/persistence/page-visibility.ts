@@ -1,4 +1,4 @@
-import { opError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, labelledOnlyForSql, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
 import { anyLabelledOnlyMember, labelledOnlyFor } from '../access/labelled-only.ts';
 import { hostFix } from '../ops/op-fix.ts';
@@ -89,13 +89,18 @@ export async function writerReadPolicySql(engine: SqlEngine, authority: WriteAut
 
 /**
  * GBRA-108 design 1: a stored write is labelled-only when its credential's member, or a member it writes for, carries
- * the grant (labelledOnlyFor); never the owner.
+ * the grant (labelledOnlyFor); never the owner. The members it writes for are taken from the stored authority (the
+ * audience's member entries, the attested actor's member) as well as from their re-resolved identities, so a
+ * re-resolution that reads as the guest identity never makes a labelled-only member's write unlabelled.
  */
 async function writerLabelledOnly(engine: SqlEngine, authority: WriteAuthority, identities: readonly (readonly string[])[]): Promise<boolean> {
-  const bound = authority.actingFor && !Array.isArray(authority.actingFor) ? [] : await memberIdentityFor(engine, authority);
+  const attested = authority.actingFor && !Array.isArray(authority.actingFor);
+  const bound = attested ? [] : await memberIdentityFor(engine, authority);
+  const actor = attested ? parseStoredActor(authority.actingFor) : null;
+  const stored = actor ? [`member:${actor.member}`] : Array.isArray(authority.actingFor) ? authority.actingFor.filter(p => p.startsWith('member:')) : [];
   const [owner] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [OWNER_MEMBER_KEY]);
   const ownerId = owner?.value?.trim();
-  const members = [...identities, bound].filter(id => !(ownerId && id.includes(`member:${ownerId}`)));
+  const members = [...identities, bound, ...stored.map(p => [p])].filter(id => !(ownerId && id.includes(`member:${ownerId}`)));
   return labelledOnlyFor(engine, members);
 }
 
@@ -109,9 +114,7 @@ async function writerLabelledOnly(engine: SqlEngine, authority: WriteAuthority, 
 export async function assertLabelledOnlyCreate(engine: SqlEngine, authority: WriteAuthority, slug: string,
   stored: { deleted_at?: unknown } | null | undefined, frontmatter: unknown): Promise<void> {
   if (!authority.remote || (stored && stored.deleted_at == null)) return;
-  // A labelled-only member is a member, and adding one marks the brain restricted for good, so a request whose ambient
-  // policy shows no restrictions needs no probe; stored writes and replays carry no ambient policy and probe.
-  if (currentCallerAccess().remotePolicy?.restricted === false || !await anyLabelledOnlyMember(engine)) return;
+  if (!await anyLabelledOnlyMember(engine)) return;
   const identities = await writerIdentities(engine, authority);
   if (!await writerLabelledOnly(engine, authority, identities)) return;
   const named = new Set(identities.flat());
@@ -137,21 +140,24 @@ export async function remoteLabelsChecked<T extends { parsedPage: { frontmatter:
 
 /**
  * The identities a stored write is checked under, re-resolved live: the principal's member, or (GBRA-231) every entry
- * of the audience it was accepted for, bounded by the principal's live may_act_for. An audience no longer permitted
- * or naming a disabled member resolves to the guest identity, which reads no restricted page (fail closed).
+ * of the audience it was accepted for, bounded by the principal's live may_act_for. An audience no longer permitted,
+ * naming a disabled member or an actor no longer covered (a coded refusal) resolves to the guest identity, which reads
+ * no restricted page (fail closed; writerLabelledOnly still reads the stored members). A database failure is rethrown,
+ * so the write is retried or fails instead of being checked as the guest.
  */
 async function writerIdentities(engine: SqlEngine, authority: WriteAuthority): Promise<string[][]> {
+  const refusedAsGuest = (error: unknown): string[] => { if (error instanceof OperationError) return []; throw error; };
   if (authority.actingFor && !Array.isArray(authority.actingFor)) {
     // GST-359 C1: an attested write reads as its member only while actorCoverage still covers the same member.
     const actor = parseStoredActor(authority.actingFor);
-    return [actor ? await storedActorIdentity(engine, authority.principal, actor).catch(() => []) : []];
+    return [actor ? await storedActorIdentity(engine, authority.principal, actor).catch(refusedAsGuest) : []];
   }
   if (!authority.actingFor?.length) return [await memberIdentityFor(engine, authority)];
   try {
     return await resolveAudienceIdentities(engine, { principal: authority.principal, transport: authority.principal.kind === 'local_stdio' ? 'stdio' : 'http' },
       authority.actingFor as AudiencePrincipal[]);
-  } catch {
-    return [[]];
+  } catch (error) {
+    return [refusedAsGuest(error)];
   }
 }
 

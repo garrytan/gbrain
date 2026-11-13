@@ -84,6 +84,8 @@ export { MIGRATIONS };
 export const LATEST_VERSION = MIGRATIONS.length > 0
   ? Math.max(...MIGRATIONS.map(m => m.version))
   : 1;
+/** The newest migration runMigrations would apply now, read from the live registry (LATEST_VERSION is fixed at load). */
+export const registeredLatestVersion = (): number => Math.max(1, ...MIGRATIONS.map(m => m.version));
 
 /**
  * Row returned by `getIdleBlockers`. The shape is the public contract

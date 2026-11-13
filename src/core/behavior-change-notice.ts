@@ -67,6 +67,7 @@ import {
 import { mergedProviderEnv } from './ai/provider-env.ts';
 import { FENCE_REPAIR_MEASURED } from './fence-repair/measured.ts';
 import { CONTENT_REPAIR_MEASURED } from './content-repair/measured.ts';
+import { BEHAVIOR_CHANGE_RELEASES, RELEASED_BEHAVIOR_CHANGES } from './behavior-changes.generated.ts';
 
 /** The measured re-ingest page multiplier, as prose (scripts/measure-transcript-split-cost.ts: 4 → 27 pages on a 1 MB session). */
 export const TRANSCRIPT_REINGEST_MULTIPLIER = 'about 6.75x';
@@ -222,7 +223,14 @@ const DOCTOR_ARGV = ['gbrain', 'doctor', '--only', BEHAVIOR_NOTICE_CODE, '--json
 
 type ChangeText = string | ((chain: ChainDisclosure | null, remote: boolean) => string | null);
 
-/** Every disclosed behavior change, with the release that introduced it. Append new rows; never edit a shipped `since`. */
+/** A function row's release: the version whose CHANGELOG section marks its id (behavior-changes.d/README.md), 'TBD' until a release does. */
+const releasedIn = (id: string): string => (Object.hasOwn(BEHAVIOR_CHANGE_RELEASES, id) ? BEHAVIOR_CHANGE_RELEASES[id]! : 'TBD');
+
+/**
+ * Every disclosed behavior change, with the release that introduced it; never edit a shipped `since`. A new plain-text
+ * row is a behavior-changes.d/<id>.md fragment (RELEASED_BEHAVIOR_CHANGES once a release dates it); a new function row
+ * goes here as `{ since: releasedIn('<id>'), id: '<id>', text: ... }`.
+ */
 export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText; id?: string }> = [
   { since: '0.60.68.0', text: (chain, remote) => {
     if (!chain) return null;
@@ -1565,7 +1573,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText; 
   { since: '0.60.694.0', id: 'page_label_widening_held_gst2518', text: 'A local agent write (`put_page`, `capture`, `edit_page`, `append_page`, `revert_version`, `restore_page`) less trusted than a page that drops or widens its `visibility`, `access`, `confidentiality` or `readable_by` now publishes with the page\'s earlier labels kept, in the database and in the committed file, and its receipt lists them under `privacy_labels_kept`; so does a maintenance job\'s derived page publication, and a page whose tier is still `unknown` counts as the owner\'s. A soft delete no longer lowers the page\'s tier. Before, the page became readable to remote callers and other members at once, and only a `lower_page` item waited for the owner. That item now records the requested labels: `gbrain trust confirm tp<id>` applies them if the page has not changed since, `gbrain trust drop tp<id>` keeps the earlier ones, and undoing a confirm restores them while the page is unchanged since. Narrowing writes, label-neutral writes, writers at or above the page\'s tier, synced owner edits and `gbrain repair visibility` are unchanged.' },
   { since: '0.60.704.0', id: 'qm_context_pack_scope_read_gst2407', text: 'An attested `context_pack` that names `source_id` now reads that one source as its audience instead of being refused on a client that reads named sources as the scope: its entities and `entity_refs`, the core block, the counterparty brief and hot facts come from that source only, with no member-page fact, no page restricted to named readers and privacy never relaxed. A call that sends `entity_refs` without `source_id`, an `entity_refs` entry in another source, or `session_id` is refused with `invalid_params` before anything is read. A client set `--attest-read person` reads as the person, narrowed to that source the same way. Contract `docs/contracts/qm-memory-provider/v5.json` marks `context_pack` `scope_read: true`; v1 to v4 are unchanged.' },
   { since: '0.60.704.0', id: 'qm_admin_attest_read_gst2407', text: 'The owner can now set how a client reads named sources from another machine: `gbrain mcp admin attest <client> --attest-read person|scope|none`, backed by `attestRead` on `/admin/api/access/attest`. It refuses what `gbrain auth rescope --attest-read` refuses (no attest right, or a client with scope sources set to person), previews with `--dry-run` and logs `attest_read` in the `access_admin` row.' },
-  { since: 'TBD', id: 'folder_holding_page_gst2492', text: 'On a source whose pages are canonical in Git (`canonical: git`), a fact for an entity with no page under a folder access rule is no longer kept in the database only: it is held on the holding page of the entity\'s folder (`partners/memory/unattributed` for `partners/acme-example`), in Git (or database-only where the folder is) with exactly the readers the entity\'s page would have. The reply names that `page`. `gbrain access rule add` previews the held facts a new rule covers (`held_facts_moving`) and its apply moves them off their holding page (`held_facts`), as do `gbrain access apply`, `gbrain access resume` and a sync that applies a rule from Git; the moved rows and those entities\' struck rows also leave that page\'s saved versions in the database (`held_versions_editing`, `held_versions_edited`), and Git history is not rewritten. A saved version stored in segments is not edited: the preview names how many (`segmented_versions_not_edited`) and the apply says `complete: false`. A move still pending is reported with its request id (`pending`, `HELD_FACT_PENDING`), not counted as moved. A held fact is now also hidden from a caller who cannot read its holding page, even under a rule with `covers_derived: false`. `gbrain repair facts-home` writes such facts to their folder\'s page and lists as `folder_restricted` only an exact page rule or unreadable rules. A `remember` for a page-less entity under an exact page rule now refuses `git_home_required` with a fix that creates the page, and one whose access rules this database role cannot read refuses `access_policy_pending`; both wrote the fact to the database before. An existing page whose slug ends in `/memory/unattributed` is now read as a holding page: a row with no `entity` cell becomes a fact with no entity, a row naming an entity in the page\'s own folder becomes that entity\'s held fact, and a row naming an entity of another folder is a fence problem. Non-strict sources and brains with no Git repository are unchanged.' },
+  ...RELEASED_BEHAVIOR_CHANGES,
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */
@@ -1603,10 +1611,12 @@ export function behaviorChangesNotice(chain: ChainDisclosure | null, opts: { rem
     byRelease.set(change.since, [...(byRelease.get(change.since) ?? []), text]);
   }
   if (byRelease.size === 0) return null;
-  const count = [...byRelease.values()].reduce((n, texts) => n + texts.length, 0);
+  // #7646: rows sit in table order, which is not always release order; the disclosure lists releases oldest first.
+  const releases = [...byRelease].sort(([a], [b]) => compareReleases(a, b));
+  const count = releases.reduce((n, [, texts]) => n + texts.length, 0);
   let n = 0;
-  const why = `gbrain ${releaseSpan([...byRelease.keys()])} changed ${count} behavior${count === 1 ? '' : 's'} on this brain. All stay on; this is a one-time disclosure, not a request for consent. ` +
-    [...byRelease].map(([since, texts]) => (byRelease.size > 1 ? `v${since}: ` : '') + texts.map(t => `(${++n}) ${t}`).join(' ')).join(' ') +
+  const why = `gbrain ${releaseSpan(releases.map(([since]) => since))} changed ${count} behavior${count === 1 ? '' : 's'} on this brain. All stay on; this is a one-time disclosure, not a request for consent. ` +
+    releases.map(([since, texts]) => (releases.length > 1 ? `v${since}: ` : '') + texts.map(t => `(${++n}) ${t}`).join(' ')).join(' ') +
     ' gbrain doctor --only behavior_changes shows this again.';
   const fix: Action = chain && namesChain && !opts.remote
     ? chatFallbackRemovalFix(chain.plane, chain.filePath)
