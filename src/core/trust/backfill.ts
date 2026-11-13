@@ -182,17 +182,20 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
   const least = (terms: string[]) => (terms.length ? `LEAST(${terms.join(', ')})` : 'NULL::int');
   /**
    * #9284: a legacy Life Chronicle event is model-extracted from its depth page (`event.depth`, a live page in the
-   * same source), so it ranks no higher than that page: its stored tier (when classified) and its frontmatter caps.
-   * A missing depth page adds no cap (the event's own agent_written cap still applies).
+   * same source), so it ranks no higher than that page: its stored tier and frontmatter caps when classified, else
+   * what the same statement classifies it as (its frontmatter caps and page signals: source kind, connector source,
+   * write request), since an UPDATE reads the depth page as it was before. A missing depth page adds no cap (the
+   * event's own agent_written cap still applies).
    */
-  const chronicleDepthCap = (p: string) => {
-    const d = 'chronicle_depth';
+  const chronicleDepthCap = (p: string, s: string) => {
+    const d = 'chronicle_depth', dr = 'chronicle_depth_r';
     const depthCaps = least(frontmatterTrustCapsSql(`${d}.frontmatter`));
+    const projected = least([...frontmatterTrustCapsSql(`${d}.frontmatter`), ...pageTerms(d, s, dr)]);
     return `CASE WHEN ${p}.type = 'event' AND jsonb_typeof(${p}.frontmatter->'captured_via') = 'string'
         AND ${edgeTrimSql(`${p}.frontmatter->>'captured_via'`)} = '${CHRONICLE_CAPTURED_VIA}'
         AND jsonb_typeof(${p}.frontmatter->'event') = 'object' AND jsonb_typeof(${p}.frontmatter->'event'->'depth') = 'string'
-      THEN (SELECT ${cols.has('pages', 'trust_tier') ? `CASE WHEN ${d}.trust_tier <> 'unknown' THEN LEAST(${trustRankSql(`${d}.trust_tier`)}, ${depthCaps}) ELSE ${depthCaps} END` : depthCaps}
-        FROM pages ${d} WHERE ${d}.source_id = ${p}.source_id AND ${d}.slug = ${p}.frontmatter->'event'->>'depth'${cols.has('pages', 'deleted_at') ? ` AND ${d}.deleted_at IS NULL` : ''}
+      THEN (SELECT ${cols.has('pages', 'trust_tier') ? `CASE WHEN ${d}.trust_tier <> 'unknown' THEN LEAST(${trustRankSql(`${d}.trust_tier`)}, ${depthCaps}) ELSE ${projected} END` : projected}
+        FROM pages ${d} ${requestJoin('pages', 'revision_write_request_id', dr, d)} WHERE ${d}.source_id = ${p}.source_id AND ${d}.slug = ${p}.frontmatter->'event'->>'depth'${cols.has('pages', 'deleted_at') ? ` AND ${d}.deleted_at IS NULL` : ''}
         LIMIT 1) END`;
   };
   /**
@@ -204,7 +207,7 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
     const terms = pageTerms(p, s, r);
     const c = claimed(s);
     if (!c) return least(terms);
-    const caps = cols.has('pages', 'frontmatter') ? [...frontmatterTrustCapsSql(`${p}.frontmatter`), chronicleDepthCap(p)] : [];
+    const caps = cols.has('pages', 'frontmatter') ? [...frontmatterTrustCapsSql(`${p}.frontmatter`), chronicleDepthCap(p, s)] : [];
     return `CASE WHEN ${c} AND ${legacyRowSql('pages', p, ceilings)} THEN ${least([String(rank('operator_curated')), ...caps, ...terms])} ELSE ${least(terms)} END`;
   };
   const hasTrust = cols.has('pages', 'trust_tier');

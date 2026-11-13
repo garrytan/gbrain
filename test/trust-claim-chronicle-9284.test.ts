@@ -102,6 +102,17 @@ for (const backend of testBackends()) {
       expect((await relowerClaimedRows(engine, { dryRun: true })).rows).toBe(0);
     }, 120_000);
 
+    test('an unclassified depth page caps its event by the tier the same claim gives it, not by its old snapshot', async () => {
+      await source('source-w');
+      const depth = await page('source-w', 'inbox/acme-example-webhook', 'note', {});
+      await engine.executeRaw("UPDATE pages SET source_kind = 'webhook' WHERE id = $1", [depth]);
+      const event = await page('source-w', 'life/events/2026-09-09-ffff6666', 'event', eventFm('inbox/acme-example-webhook'));
+      await recordSourceClaims(engine, ['source-w']);
+      await liftClaimedSources(engine);
+      expect((await tier('pages', depth)).t).toBe('external_untrusted');
+      expect((await tier('pages', event)).t).toBe('external_untrusted');
+    }, 120_000);
+
     test('relower lowers an event a claim already lifted to its depth page tier, and doctor counts it with the dry-run command', async () => {
       await source('source-b');
       const depth = await page('source-b', 'email/acme-example-inbound', 'email', {});

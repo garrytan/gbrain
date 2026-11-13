@@ -53,10 +53,10 @@ const ctx = (engine: BrainEngine): OperationContext => ({ engine, sourceId: 'def
   logger: { info() {}, warn() {}, error() {} } } as OperationContext);
 const op = (name: string) => operations.find(o => o.name === name)!;
 
-/** A write-gate hold for the slug created `ago` before now, labelled `when`, with its receipt. */
+/** A write-gate hold for the slug created and last seen `ago` before now, labelled `when`, with its receipt. */
 async function hold(engine: BrainEngine, sourceId: string, slug: string, when: string, ago = '0 seconds') {
-  const [row] = await engine.executeRaw<{ id: string }>(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, created_at)
-    VALUES ('fact', $1, $2, $3, 1, 'quarantine', $4::text::jsonb, now() - $5::interval) RETURNING id::text AS id`,
+  const [row] = await engine.executeRaw<{ id: string }>(`INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, payload, created_at, last_seen_at)
+    VALUES ('fact', $1, $2, $3, 1, 'quarantine', $4::text::jsonb, now() - $5::interval, now() - $5::interval) RETURNING id::text AS id`,
   [sourceId, slug, randomUUID(), JSON.stringify({ when }), ago]);
   await engine.executeRaw(`INSERT INTO write_gate_receipts (target_table, target_id, source_id, content_hash, tier, detector_version, verdict, request_id)
     VALUES ('write_gate_holds', $1, $2, $3, 'quarantine', 1, 'quarantine', $4)`, [row.id, sourceId, randomUUID(), `${slug}|${when}`]);
@@ -146,6 +146,23 @@ describe('#9146 every hard delete removes the page\'s slug-keyed stores', () => 
       expect(purged.slugs).toContain(slug);
       expect({ engine: engine.kind, residue: await residue(engine, slug) })
         .toEqual({ engine: engine.kind, residue: only(['source-b'], ['default:after', 'source-b:before']) });
+      await otherUntouched(engine);
+    }
+  }), 120_000);
+
+  test('(B) the expired-tombstone purge keeps a hold the same content re-opened after the soft delete', () => withEnv({ GBRAIN_HOME: home }, async () => {
+    for (const engine of engines) {
+      const slug = 'people/erin-example';
+      await seed(engine, slug);
+      await engine.softDeletePage(slug, { sourceId: 'default' });
+      await engine.executeRaw(`UPDATE write_gate_holds SET status = 'held', last_seen_at = now(), seen_count = seen_count + 1,
+        payload = jsonb_set(payload, '{when}', '"reopened"') WHERE source_id = 'default' AND slug = $1`, [slug]);
+      await engine.executeRaw(`UPDATE write_gate_receipts SET request_id = $1 WHERE target_table = 'write_gate_holds'
+        AND target_id IN (SELECT id::text FROM write_gate_holds WHERE source_id = 'default' AND slug = $2)`, [`${slug}|reopened`, slug]);
+      const purged = await purgeDeletedPagesCoordinated(engine, 0);
+      expect(purged.slugs).toContain(slug);
+      expect({ engine: engine.kind, residue: await residue(engine, slug) })
+        .toEqual({ engine: engine.kind, residue: only(['source-b'], ['default:reopened', 'source-b:before']) });
       await otherUntouched(engine);
     }
   }), 120_000);

@@ -35,8 +35,8 @@ export async function scrubPurgedSlugStores(
 /**
  * #9146: the write-gate holds of hard-deleted pages and their receipts. An immediate hard delete drops every hold of
  * the slug, as the direct purge does. A tombstone expiry passes each page's `deletedAt` (text, so microseconds
- * survive) and drops only holds created up to it: a hold that arrived after the soft delete is a later write, kept
- * for review.
+ * survive) and drops only holds last seen up to it: a hold that arrived, or was re-opened by the same content
+ * arriving again, after the soft delete is a later write, kept for review.
  */
 export async function scrubPurgedSlugHolds(
   engine: Pick<BrainEngine, 'executeRaw'>,
@@ -45,7 +45,7 @@ export async function scrubPurgedSlugHolds(
 ): Promise<{ write_gate_holds: number; write_gate_receipts: number }> {
   if (!pages.length) return { write_gate_holds: 0, write_gate_receipts: 0 };
   const holds = (await engine.executeRaw<{ id: string }>(`DELETE FROM write_gate_holds h USING unnest($2::text[], $3::timestamptz[]) AS d(slug, upto)
-    WHERE h.source_id = $1 AND h.slug = d.slug AND (d.upto IS NULL OR h.created_at <= d.upto) RETURNING h.id::text AS id`,
+    WHERE h.source_id = $1 AND h.slug = d.slug AND (d.upto IS NULL OR GREATEST(h.created_at, h.last_seen_at) <= d.upto) RETURNING h.id::text AS id`,
   [sourceId, pages.map(p => p.slug), pages.map(p => p.deletedAt ?? null)])).map(h => h.id);
   const receipts = holds.length ? (await engine.executeRaw("DELETE FROM write_gate_receipts WHERE target_table = 'write_gate_holds' AND target_id = ANY($1::text[]) RETURNING 1", [holds])).length : 0;
   return { write_gate_holds: holds.length, write_gate_receipts: receipts };

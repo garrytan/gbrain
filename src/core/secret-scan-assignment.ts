@@ -89,7 +89,9 @@ export const HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE = /[^0-9]/;
 // value never takes `%26` (the next encoded parameter; `&` is outside both
 // classes), and a quoted value never opens there. The escapes and the encoded
 // separator sit in group 1, so offsets and fingerprints stay on the stored
-// bytes. A URL-encoded URL (`https%3A%2F%2F…`) is a reference like a plain one.
+// bytes. A URL-encoded URL (`https%3A%2F%2F…`) is a reference like a plain one,
+// unless it carries userinfo (`%40`): the plain form's userinfo is caught by
+// db_url_credentials, which never sees the encoded form.
 export const assignmentKey = (boundary: string) =>
   `${boundary}(?:(?:secret|token|passwd|password|passphrase|credential|api[_-]?key|apikey)[A-Za-z0-9_-]{0,64}|[A-Za-z][A-Za-z0-9_-]{0,63}[_-]key)(?:\\\\{0,3}["'])?(?:\\s*[:=]\\s*|%3[AaDd])`;
 export const ASSIGNMENT_QUOTED_SOURCE = (key: string) => `(${key}(?<!%3[AaDd])\\\\{0,3}["'])([^"'\\s]{11,4095}[^"'\\s\\\\])`;
@@ -114,7 +116,8 @@ const DOTTED_IDENTIFIER_RE = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/;
  * with a letter is the accepted miss.
  */
 export function assignmentValueIsSecretShaped(value: string): boolean {
-  if (/^[A-Za-z][A-Za-z0-9+.-]{0,31}(?::\/\/|%3A%2F%2F)/i.test(value)) return false;
+  if (/^[A-Za-z][A-Za-z0-9+.-]{0,31}:\/\//.test(value)) return false;
+  if (/^[A-Za-z][A-Za-z0-9+.-]{0,31}%3A%2F%2F/i.test(value) && !/%40/i.test(value)) return false;
   if (value.startsWith('./') || value.startsWith('~/') || value.startsWith('${') || value.startsWith('$(')) return false;
   if (value.startsWith('<REDACTED:') || DOTTED_IDENTIFIER_RE.test(value)) return false;
   return !(value.startsWith('/') && !LEGACY_ASSIGNMENT_VALUE_RE.test(value));

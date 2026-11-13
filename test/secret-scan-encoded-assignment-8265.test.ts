@@ -66,6 +66,12 @@ describe('#8265 URL-encoded separators', () => {
     expect(redactFindings(`client_secret%3D${v}%26x%3D1`, OPTS).text).toBe(`client_secret%3D${MARK}%26x%3D1`);
   });
 
+  test('a URL-encoded URL that carries userinfo is still claimed', () => {
+    const v = secret();
+    expect(found(`password=postgres%3A%2F%2Fu%3A${v}%40db.example%2Fapp`)).toContain('high_entropy_assignment');
+    expect(found(`api_key%3Dhttps%3A%2F%2Fu%3A${v}%40x.example`)).toContain('high_entropy_assignment');
+  });
+
   test('a plain separator still keeps a %26 that sits inside the value', () => {
     const v = `${alnum(10)}%26${alnum(10)}4`;
     expect(redactFindings(`password=${v} next`, OPTS).text).toBe(`password=${MARK} next`);

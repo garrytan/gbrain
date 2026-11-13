@@ -43,9 +43,11 @@ beforeEach(async () => {
   await resetPgliteState(engine);
 });
 
-async function seed(engine: BrainEngine, tier: TrustTier) {
-  await engine.transaction(tx => withWriteTrust(tx, { tier, origin: { channel: 'sync' } }, async () => {
-    const page = await tx.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'A person at Acme.', timeline: '', frontmatter: {} });
+/** The judged page at `tier`; its take and timeline evidence at `rowsTier` (default: the page's). */
+async function seed(engine: BrainEngine, tier: TrustTier, rowsTier: TrustTier = tier) {
+  const page = await engine.transaction(tx => withWriteTrust(tx, { tier, origin: { channel: 'sync' } }, () =>
+    tx.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'A person at Acme.', timeline: '', frontmatter: {} })));
+  await engine.transaction(tx => withWriteTrust(tx, { tier: rowsTier, origin: { channel: 'sync' } }, async () => {
     await tx.addTakesBatch([{ page_id: page.id, row_num: 1, claim: 'Acme will ship the widget this year', kind: 'take', holder: 'world', weight: 0.6 }]);
     await tx.addTimelineEntriesBatch([{ slug: 'people/alice-example', date: '2031-04-10', source: 'meeting', summary: 'Widget launch slipped' }]);
   }));
@@ -85,4 +87,20 @@ describe('#9208 drift report carries a derive:drift derivation', () => {
       }, { setup: ({ engine }) => seed(engine, input) });
     }, 180_000);
   }
+
+  test('the take and timeline evidence the judge read cap the report and are its recorded inputs', async () => {
+    await seed(engine, 'operator_curated', 'external_untrusted');
+    const [take] = await engine.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM takes');
+    expect(take!.trust_tier).toBe('external_untrusted');
+    expect(await drift(engine)).toEqual({ tier: 'external_untrusted', channel: 'derive:drift' });
+    const inputs = await engine.executeRaw<{ input_table: string }>(`SELECT DISTINCT d.input_table FROM derivation_inputs d
+      JOIN pages p ON d.derived_table = 'pages' AND d.derived_id = p.id::text WHERE p.slug = $1 ORDER BY 1`, [REPORT]);
+    expect(inputs.map(r => r.input_table)).toEqual(['pages', 'takes', 'timeline_entries']);
+  }, 120_000);
+
+  test('managed: the take and timeline evidence the judge read cap the report', async () => {
+    await managedBrain(async ({ engine }) => {
+      expect(await drift(engine)).toEqual({ tier: 'external_untrusted', channel: 'derive:drift' });
+    }, { setup: ({ engine }) => seed(engine, 'operator_curated', 'external_untrusted') });
+  }, 180_000);
 });
