@@ -67,6 +67,7 @@ import {
 import { mergedProviderEnv } from './ai/provider-env.ts';
 import { FENCE_REPAIR_MEASURED } from './fence-repair/measured.ts';
 import { CONTENT_REPAIR_MEASURED } from './content-repair/measured.ts';
+import { BEHAVIOR_CHANGE_RELEASES, RELEASED_BEHAVIOR_CHANGES } from './behavior-changes.generated.ts';
 
 /** The measured re-ingest page multiplier, as prose (scripts/measure-transcript-split-cost.ts: 4 → 27 pages on a 1 MB session). */
 export const TRANSCRIPT_REINGEST_MULTIPLIER = 'about 6.75x';
@@ -222,7 +223,14 @@ const DOCTOR_ARGV = ['gbrain', 'doctor', '--only', BEHAVIOR_NOTICE_CODE, '--json
 
 type ChangeText = string | ((chain: ChainDisclosure | null, remote: boolean) => string | null);
 
-/** Every disclosed behavior change, with the release that introduced it. Append new rows; never edit a shipped `since`. */
+/** A function row's release: the version whose CHANGELOG section marks its id (behavior-changes.d/README.md), 'TBD' until a release does. */
+const releasedIn = (id: string): string => (Object.hasOwn(BEHAVIOR_CHANGE_RELEASES, id) ? BEHAVIOR_CHANGE_RELEASES[id]! : 'TBD');
+
+/**
+ * Every disclosed behavior change, with the release that introduced it; never edit a shipped `since`. A new plain-text
+ * row is a behavior-changes.d/<id>.md fragment (RELEASED_BEHAVIOR_CHANGES once a release dates it); a new function row
+ * goes here as `{ since: releasedIn('<id>'), id: '<id>', text: ... }`.
+ */
 export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText; id?: string }> = [
   { since: '0.60.68.0', text: (chain, remote) => {
     if (!chain) return null;
@@ -1565,6 +1573,7 @@ export const BEHAVIOR_CHANGES: ReadonlyArray<{ since: string; text: ChangeText; 
   { since: '0.60.694.0', id: 'page_label_widening_held_gst2518', text: 'A local agent write (`put_page`, `capture`, `edit_page`, `append_page`, `revert_version`, `restore_page`) less trusted than a page that drops or widens its `visibility`, `access`, `confidentiality` or `readable_by` now publishes with the page\'s earlier labels kept, in the database and in the committed file, and its receipt lists them under `privacy_labels_kept`; so does a maintenance job\'s derived page publication, and a page whose tier is still `unknown` counts as the owner\'s. A soft delete no longer lowers the page\'s tier. Before, the page became readable to remote callers and other members at once, and only a `lower_page` item waited for the owner. That item now records the requested labels: `gbrain trust confirm tp<id>` applies them if the page has not changed since, `gbrain trust drop tp<id>` keeps the earlier ones, and undoing a confirm restores them while the page is unchanged since. Narrowing writes, label-neutral writes, writers at or above the page\'s tier, synced owner edits and `gbrain repair visibility` are unchanged.' },
   { since: '0.60.704.0', id: 'qm_context_pack_scope_read_gst2407', text: 'An attested `context_pack` that names `source_id` now reads that one source as its audience instead of being refused on a client that reads named sources as the scope: its entities and `entity_refs`, the core block, the counterparty brief and hot facts come from that source only, with no member-page fact, no page restricted to named readers and privacy never relaxed. A call that sends `entity_refs` without `source_id`, an `entity_refs` entry in another source, or `session_id` is refused with `invalid_params` before anything is read. A client set `--attest-read person` reads as the person, narrowed to that source the same way. Contract `docs/contracts/qm-memory-provider/v5.json` marks `context_pack` `scope_read: true`; v1 to v4 are unchanged.' },
   { since: '0.60.704.0', id: 'qm_admin_attest_read_gst2407', text: 'The owner can now set how a client reads named sources from another machine: `gbrain mcp admin attest <client> --attest-read person|scope|none`, backed by `attestRead` on `/admin/api/access/attest`. It refuses what `gbrain auth rescope --attest-read` refuses (no attest right, or a client with scope sources set to person), previews with `--dry-run` and logs `attest_read` in the `access_admin` row.' },
+  ...RELEASED_BEHAVIOR_CHANGES,
 ];
 
 /** The newest disclosed change's release: the notice id moves only when a release adds rows. */

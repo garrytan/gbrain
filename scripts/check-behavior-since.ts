@@ -18,15 +18,23 @@
  *     the base ref's VERSION (a stamped PR head, stamped by tool or by hand).
  * Otherwise VERSION equals the base's (an unstamped branch) and TBD rows pass.
  *
+ * Under .gstack/ship-policy.json `merge: direct` versions are written at release, which never edits this file, so
+ * a TBD row is refused on every tree: a plain-text row is a behavior-changes.d/<id>.md fragment and a function row
+ * is dated `since: releasedIn('<id>')` (behavior-changes.d/README.md). With --stamped (the Release workflow) the
+ * release commit must also hold no unfolded changelog.d fragment and a fresh behavior-change table, and a missing or
+ * unparsable .gstack/ship-policy.json is refused rather than read as "not direct".
+ *
  * Base ref: $GBRAIN_RELEASE_BASE_REF, default origin/master. When it is
  * unavailable the check fails under CI=true and skips locally.
  * Exit: 0 ok or skipped, 1 refused, 2 usage. Docs: docs/RELEASING.md#release-restamp
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { build, CHANGELOG_FRAGMENT_DIR, OUT } from './build-behavior-changes.ts';
 
 export const NOTICE_FILE = 'src/core/behavior-change-notice.ts';
+const POLICY_FILE = '.gstack/ship-policy.json';
 const TBD = /since:\s*'TBD'/;
 const SEE = 'See:  docs/RELEASING.md#release-restamp';
 
@@ -56,7 +64,35 @@ export function main(argv: string[], opts: { cwd?: string; env?: Record<string, 
     log(SEE);
     return 1;
   }
+  const policy = (() => { try { return { merge: JSON.parse(read(POLICY_FILE)).merge }; } catch (e) { return { error: existsSync(join(root, POLICY_FILE)) ? `cannot be parsed (${e instanceof Error ? e.message : String(e)})` : 'is missing' }; } })();
+  if ('error' in policy && argv.includes('--stamped')) {
+    log(`FAIL: ${POLICY_FILE} ${policy.error}, so this check cannot tell whether the release commit must have folded its changelog.d fragments and regenerated its behavior-change table.`);
+    log('Why:  --stamped guards a stamp or a release; reading no policy as `merge` unset would skip those checks without saying so.');
+    log(`Fix:  restore ${POLICY_FILE} from master (git checkout origin/master -- ${POLICY_FILE}; a sparse checkout must include .gstack), then rerun.`);
+    log(SEE);
+    return 1;
+  }
+  const direct = !('error' in policy) && policy.merge === 'direct';
+  if (direct && argv.includes('--stamped')) {
+    const unfolded = existsSync(join(root, CHANGELOG_FRAGMENT_DIR)) ? readdirSync(join(root, CHANGELOG_FRAGMENT_DIR)).filter((f) => f.endsWith('.md') && f !== 'README.md') : [];
+    const table = build(root);
+    const stale = table.problems.length > 0 || read(OUT) !== table.text;
+    if (unfolded.length || stale) {
+      log(`FAIL: the release commit (VERSION ${read('VERSION').trim()}) ${unfolded.length ? `still holds ${unfolded.length} unfolded ${CHANGELOG_FRAGMENT_DIR} fragment(s): ${unfolded.join(', ')}` : `has a stale ${OUT}`}${table.problems.length ? ` (${table.problems[0]})` : ''}.`);
+      log('Why:  a release folds every changelog fragment into its CHANGELOG section and dates its behavior-change rows; a commit that did not is not a release.');
+      log('Fix:  open the release again with gstack-release-stamp open, which stamps a fresh checkout of master; never edit a release/<version> branch by hand.');
+      log('See:  docs/RELEASING.md#releases-per-batch');
+      return 1;
+    }
+  }
   const lines = tbdLines(read(NOTICE_FILE));
+  if (direct && lines.length) {
+    log(`FAIL: ${lines.length} BEHAVIOR_CHANGES row(s) in ${NOTICE_FILE} say since: 'TBD' (line ${lines.join(', ')}).`);
+    log('Why:  under merge: direct the release writes versions and never edits this file, so a TBD row would never be dated or disclosed.');
+    log("Fix:  move a plain-text row to behavior-changes.d/<id>.md and name <!-- behavior-change: <id> --> in your changelog.d fragment; a function row keeps its line as since: releasedIn('<id>') with the same marker (bun run release:unstamp converts a branch).");
+    log('See:  behavior-changes.d/README.md');
+    return 1;
+  }
   if (lines.length === 0) {
     log(`check-behavior-since: ok (no since: 'TBD' row in ${NOTICE_FILE})`);
     return 0;
