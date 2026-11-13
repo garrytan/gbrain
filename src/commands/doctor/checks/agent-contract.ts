@@ -27,6 +27,7 @@ const USD_INPUT = 'usd';
 type Event = AgentContractEvent & { ts: string };
 
 function who(e: Event): string { return e.op ?? e.command ?? 'unknown'; }
+function isInternalError(e: Event): boolean { return e.code === 'internal_error' || e.code === 'internal'; }
 
 function top(events: readonly Event[], n = 3): string {
   const counts = new Map<string, number>();
@@ -59,7 +60,7 @@ function preapproveInstall(): Action {
 export function agentContractCheck(events: readonly Event[], now = Date.now()): Check {
   const since = now - AGENT_CONTRACT_WINDOW_DAYS * 86_400_000;
   const recent = events.filter((e) => Date.parse(e.ts) >= since);
-  const faults = recent.filter((e) => e.code === 'internal_error' || e.code === 'internal' || e.has_suggestion === false);
+  const faults = recent.filter((e) => isInternalError(e) || e.has_suggestion === false);
   const refused = recent.filter((e) => e.code === 'confirmation_required' && (e.outcome === 'refused' || e.outcome === 'declined'));
   const paidRefused = refused.filter((e) => e.effects?.includes('paid'));
   const installRefused = refused.filter((e) => e.effects?.includes('persistent_install') && !e.effects.includes('paid'));
@@ -70,7 +71,15 @@ export function agentContractCheck(events: readonly Event[], now = Date.now()): 
     internal_errors: faults.length, consent_refused: refused.length, derived_cap_exhausted: capped.length, json_document_missing: noDoc.length,
   };
   const parts: string[] = [];
-  if (faults.length) parts.push(`${faults.length} error(s) reached an agent without a specific next step (${top(faults)}); report them to the user with \`gbrain doctor --json\` output`);
+  if (faults.length) {
+    const internal = faults.filter(isInternalError).length;
+    const missingSuggestion = faults.filter((event) => event.has_suggestion === false).length;
+    const kinds = [
+      internal ? `${internal} internal error(s)` : '',
+      missingSuggestion ? `${missingSuggestion} without a next-step suggestion` : '',
+    ].filter(Boolean).join(', ');
+    parts.push(`${faults.length} agent fault(s) (${top(faults)}) including ${kinds}. Report them to the user with \`gbrain doctor --json\` output`);
+  }
   if (refused.length) parts.push(`${refused.length} unattended run(s) stopped for consent (${top(refused)})`);
   if (capped.length) parts.push(`${capped.length} paid run(s) hit their derived spend cap (${top(capped)})`);
   if (noDoc.length) parts.push(`${noDoc.length} \`--json\` run(s) printed no JSON document (${top(noDoc)})`);

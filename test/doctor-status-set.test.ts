@@ -168,6 +168,20 @@ describe('agent_contract check (E11)', () => {
     ], now);
     expect(c).toMatchObject({ status: 'warn', fix_unavailable_reason: 'operator_judgement', details: { internal_errors: 1 } });
     expect(c.message).toContain('find_orphans');
+    expect(c.message).toContain('1 internal error(s)');
+    expect(c.message).not.toContain('without a next-step suggestion');
+    expect(c.message).not.toContain('without a specific next step');
+  });
+  test('missing suggestions are counted only when explicitly logged', () => {
+    const c = agentContractCheck([
+      { ts, op: 'find_orphans', transport: 'stdio', code: 'internal_error', has_suggestion: false },
+      { ts, op: 'recall', transport: 'stdio', code: 'internal_error' },
+      { ts, op: 'search', transport: 'stdio', code: 'invalid_params', has_suggestion: false },
+    ], now);
+    expect(c).toMatchObject({ status: 'warn', details: { internal_errors: 3 } });
+    expect(c.message).toContain('3 agent fault(s)');
+    expect(c.message).toContain('2 internal error(s)');
+    expect(c.message).toContain('2 without a next-step suggestion');
   });
 });
 
