@@ -153,7 +153,7 @@ for (const kind of testBackends()) {
       expect(out.isError).toBe(false);
       expect(out.text).toContain('canaryalpha');
       expect(out.meta?.access?.requester_scope).toBeUndefined();
-      expect(await engine.getConfig('access.serves_derived')).toBe('one');
+      expect(await engine.getConfig('access.serves_derived')).toBeNull();
       expect(await engine.getConfig('access.serves_since')).toBeNull();
     }, 60_000);
 
