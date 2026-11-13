@@ -98,7 +98,7 @@ function invalid(path: string, message: string, reason: string): OperationError 
     'Fix that field and send the card again; gbrain storage-register --help shows the card fields.', { reason });
 }
 
-/** Every string in `value` with its path, and every object key (command keys are refused wherever they appear). */
+/** Every string in `value` and every object key, each with its path (command keys are refused wherever they appear). */
 function walk(value: unknown, path: string, visit: (path: string, text: string) => void): void {
   if (typeof value === 'string') { visit(path, value); return; }
   if (Array.isArray(value)) { value.forEach((item, i) => walk(item, `${path}[${i}]`, visit)); return; }
@@ -106,6 +106,7 @@ function walk(value: unknown, path: string, visit: (path: string, text: string) 
     for (const [key, item] of Object.entries(value)) {
       const at = path ? `${path}.${key}` : key;
       if (isCommandKey(key)) throw invalid(at, 'a card carries no commands; restore runs through restore.skill and restore.args', 'command_field');
+      visit(`${path || '(card)'} (a key)`, key);
       walk(item, at, visit);
     }
   }

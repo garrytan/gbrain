@@ -29,10 +29,15 @@ interface ParsedLine { line: number; id: string | null; card: CardInput | null; 
 
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 
-/** One line per card on the shelf, sorted by id, keys sorted; pages on the shelf that hold no card are listed in `skipped`. */
-export async function exportShelfJsonl(engine: BrainEngine): Promise<{ lines: string[]; skipped: string[] }> {
+/**
+ * One line per card on the shelf, sorted by id, keys sorted. Pages on the shelf that hold no card are listed in
+ * `skipped`, and cards that fail the card rules (a page written outside the storage verbs) in `invalid`: neither is exported.
+ */
+export async function exportShelfJsonl(engine: BrainEngine): Promise<{ lines: string[]; skipped: string[]; invalid: string[] }> {
   const rows = await readShelfCards(engine);
-  return { lines: rows.flatMap((row) => row.card ? [canonicalJson(row.card)] : []), skipped: rows.filter((row) => !row.card).map((row) => row.id) };
+  const valid = rows.filter((row) => row.card && cardContent(row.card));
+  return { lines: valid.map((row) => canonicalJson(row.card)), skipped: rows.filter((row) => !row.card).map((row) => row.id),
+    invalid: rows.filter((row) => row.card && !valid.includes(row)).map((row) => row.id) };
 }
 
 function invalidLine(line: number, id: string | null, reason: string, message: string, code = 'storage_record_invalid'): ParsedLine {

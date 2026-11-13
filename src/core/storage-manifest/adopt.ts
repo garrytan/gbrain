@@ -2,15 +2,19 @@
  * `gbrain storage adopt` (GST-1943): moves interim storage records onto the shelf. An interim record is a page of type
  * `stored-object` under a slug prefix (default `storage-manifest/`) in an ordinary source, written before the shelf
  * existed, holding its record as JSON in a fenced json block under a `## Record` heading (other sections, such as
- * `## Restore`, are ignored). Records use the draft schema: card fields, plus free-text `restore.command` and other
- * fields the card refuses. Trusted local CLI only; three steps, each preview-first and bound to its plan_hash:
+ * `## Restore`, are not read; the finalize preview names them). Records use the draft schema: card fields, plus
+ * free-text `restore.command` and other fields the card refuses. Trusted local CLI only; three steps, each
+ * preview-first and bound to its plan_hash:
  *
  *   preview   (default) per page the mapped card and every refused field with its reason; writes nothing.
  *   apply     registers each card through registerCard (the storage_register path) with origin `adopt`, then tags the
  *             original `storage-manifest-adopted` through its source's page door. Deletes nothing. Refused fields must
  *             each be named with `--drop-field`; a credential-shaped value or an invalid record always refuses.
  *   finalize  soft-deletes the tagged originals through the page door (restorable for 72 h), only when every adopted
- *             card is on the shelf and matches its original's mapped card.
+ *             card is on the shelf and matches its original's mapped card (a restore the card recorded since does not
+ *             count as a difference). The preview names each original's other sections (a `## Restore`, notes), which
+ *             the card does not carry, and the plan_hash binds each original's content, so an original edited after
+ *             the preview refuses preview_changed.
  *
  * Idempotent: a card already on the shelf that matches is skipped, and so is an original already tagged. A card on
  * the shelf that differs is a conflict: reported, never overwritten, its original left untagged. The plan_hash covers
@@ -48,7 +52,7 @@ export interface AdoptApplyResult {
   results: Array<{ slug: string; card_id: string | null; outcome: 'registered' | 'retagged' | 'skipped' | 'conflict' }>;
   conflicts: string[]; failure?: StepFailure; rerun?: string[]; finalize?: string[];
 }
-export interface FinalizeEntry { slug: string; card_id: string | null; state: 'delete' | 'deleted' | 'unverified' | 'not_adopted' }
+export interface FinalizeEntry { slug: string; card_id: string | null; state: 'delete' | 'deleted' | 'unverified' | 'not_adopted'; other_sections?: string[]; content?: string }
 export interface FinalizePlan { action: 'finalize'; dry_run: true; source_id: string; prefix: string; entries: FinalizeEntry[]; plan_hash: string; summary: string[]; apply?: string[] }
 export interface FinalizeApplyResult {
   action: 'finalize'; dry_run: false; source_id: string; prefix: string; plan_hash: string; side_effects: SideEffects;
@@ -71,6 +75,18 @@ export function adoptArgv(opts: AdoptOptions): string[] {
 
 function previewFix(opts: AdoptOptions, finalize = false) {
   return readFix('Prints the current plan and its plan_hash; changes nothing.', { argv: [...adoptArgv(opts), ...(finalize ? ['--finalize'] : []), '--json'] });
+}
+
+/** The `##` headings of a page other than `## Record`: text the card does not carry, which finalize deletes with the page. */
+export function otherSections(body: string): string[] {
+  return [...body.matchAll(/^##[ \t]+(.+?)[ \t]*$/gm)].map((m) => m[1]!).filter((title) => title !== 'Record');
+}
+
+/** Whether the shelf card still matches the original it was adopted from, ignoring restores storage_update recorded since (and the `restored` status they set). */
+function matchesAdopted(shelf: CardInput, original: CardInput): boolean {
+  if (!shelf.restores?.length) return cardDigest(shelf) === cardDigest(original);
+  const strip = ({ restores: _restores, status, ...rest }: CardInput) => cardDigest((shelf.status === 'restored' ? rest : { ...rest, status }) as CardInput);
+  return strip(shelf) === strip(original);
 }
 
 /** The JSON text of a page's `## Record` section, or null when the page has none in its first 64 KiB. */
@@ -258,15 +274,20 @@ export async function previewFinalize(ctx: OperationContext, opts: AdoptOptions)
   const entries: FinalizeEntry[] = (await listInterim(ctx, opts, true)).flatMap((row): FinalizeEntry[] => {
     if (!row.tagged) return row.deleted ? [] : [{ slug: row.slug, card_id: null, state: 'not_adopted' }];
     const { card } = mapInterimPage(row, opts.prefix);
-    if (row.deleted) return [{ slug: row.slug, card_id: card?.id ?? null, state: 'deleted' }];
+    const content = sha256(JSON.stringify([row.title, row.frontmatter, row.body]));
+    if (row.deleted) return [{ slug: row.slug, card_id: card?.id ?? null, state: 'deleted', content }];
     const onShelf = card ? shelf.get(card.id) : undefined;
     const existing = onShelf ? cardContent(onShelf) : null;
-    return [{ slug: row.slug, card_id: card?.id ?? null, state: card && existing && cardDigest(existing) === cardDigest(card) ? 'delete' : 'unverified' }];
+    const state = card && existing && matchesAdopted(existing, card) ? 'delete' : 'unverified';
+    const other = otherSections(row.body ?? '');
+    return [{ slug: row.slug, card_id: card?.id ?? null, state, ...(other.length ? { other_sections: other } : {}), content }];
   });
   const count = (state: FinalizeEntry['state']) => entries.filter((e) => e.state === state).length;
   const plan_hash = sha256(JSON.stringify({ v: 1, kind: 'finalize', source_id: opts.sourceId, prefix: opts.prefix,
-    entries: entries.filter((e) => e.state !== 'not_adopted').map((e) => ({ slug: e.slug, card_id: e.card_id, unverified: e.state === 'unverified' })) }));
+    entries: entries.filter((e) => e.state !== 'not_adopted').map((e) => ({ slug: e.slug, card_id: e.card_id, unverified: e.state === 'unverified', content: e.content })) }));
   const summary = [`${count('delete')} adopted original(s) to soft-delete (restorable for 72 hours), ${count('deleted')} already deleted, ${count('unverified')} whose card is missing or differs, ${count('not_adopted')} not adopted yet (kept).`];
+  const dropping = entries.filter((e) => e.state === 'delete' && e.other_sections);
+  if (dropping.length) summary.push(`${dropping.length} original(s) to delete hold sections the card does not carry (${[...new Set(dropping.flatMap((e) => e.other_sections!))].join(', ')}): show the user, and move what matters into the card with gbrain storage-update before finalizing.`);
   if (count('unverified')) summary.push('Finalize refuses while an adopted original has no matching card; compare it with gbrain storage-get and fix the card or the record first.');
   const apply = count('unverified') || !count('delete') ? undefined : [...adoptArgv(opts), '--finalize', '--expect', plan_hash];
   return { action: 'finalize', dry_run: true, source_id: opts.sourceId, prefix: opts.prefix, entries, plan_hash, summary, ...(apply ? { apply } : {}) };

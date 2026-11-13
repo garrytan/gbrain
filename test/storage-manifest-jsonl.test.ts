@@ -96,4 +96,13 @@ describe('storage shelf JSONL export and import', () => {
     expect((await call(target, 'storage_get', { id: 'dataset-a' })).card.reason ?? null).toBeNull();
     expect((await call(target, 'storage_get', { id: 'dataset-d' })).origin).toBe('import');
   }, 60_000);
+
+  test('export leaves out a card that fails the card rules and names it', async () => {
+    await call(source, 'storage_register', { card: card('dataset-e') });
+    await source.executeRaw(`UPDATE pages SET frontmatter = jsonb_set(frontmatter, '{storage,restore,command}', '"restore-data --id dataset-e"') WHERE source_id = 'storage' AND slug = 'dataset-e'`);
+    const exported = await exportShelfJsonl(source);
+    expect(exported.lines.map((l) => JSON.parse(l).id)).toEqual(['acme-example-runs', 'dataset-a', 'dataset-b']);
+    expect(exported.invalid).toEqual(['dataset-e']);
+    expect(exported.skipped).toEqual([]);
+  }, 60_000);
 });

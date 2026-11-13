@@ -4,10 +4,13 @@
  *     round-trips through storage_get with registered_by and origin stamped by gbrain;
  *   - storage_find ranks exact id, then exact alias, then most of the phrase's words; a miss says not_found and lists
  *     the closest cards; storage_list filters by store and status;
- *   - validation refuses a missing field, a command field, a stamped field, a scanner secret and every credential shape
- *     (env assignment, credential variable, URL userinfo, presigned URL), without echoing the value;
- *   - the write guard: put_page and remember into the shelf are refused storage_source_managed, a forged parameter
- *     does not open it, and the storage verbs still write;
+ *   - validation refuses a missing field, a command field, a stamped field, a scanner secret (in a value or an object
+ *     key) and every credential shape (env assignment, credential variable, URL userinfo, presigned URL), without
+ *     echoing the value;
+ *   - the write guard: put_page, remember and forget_fact into the shelf are refused storage_source_managed, a forged
+ *     parameter does not open it, and the storage verbs still write;
+ *   - a shelf creation that stopped before marking its role (a crash, a concurrent first register) is finished by the
+ *     next register or storage init, while a `storage` source holding someone's pages stays refused;
  *   - storage_get refuses a stored card that fails the card rules (a hand-edited card file with a command field)
  *     with storage_record_invalid, locally and remotely, without echoing the value, and its revision repairs it;
  *   - register never overwrites (storage_card_exists); update binds to the revision it read (storage_revision_conflict
@@ -126,6 +129,7 @@ describe('storage shelf on a repo-less brain', () => {
       [card('a-7', { restore: { skill: 'restore-data', args: { id: 'a-7', key: '$B2_APPLICATION_KEY' } } }), 'storage_record_secret', 'credential_variable'],
       [card('a-8', { locations: [{ store: 's3', path: 'https://user:@example.invalid/x', tool: 'object', size_bytes: 1 }] }), 'storage_record_secret', 'url_userinfo'],
       [card('a-9', { locations: [{ store: 's3', path: 'https://example.invalid/x?X-Amz-Signature=abc', tool: 'object', size_bytes: 1 }] }), 'storage_record_secret', 'presigned_url'],
+      [card('a-10', { details: { AKIAIOSFODNN7EXAMPLE: 'b2 key' } }), 'storage_record_secret', 'secret_scanner'],
     ];
     for (const [input, code, reason] of cases) {
       const r = await refusal(call('storage_register', { card: input }));
@@ -146,8 +150,34 @@ describe('storage shelf on a repo-less brain', () => {
     const remember = await refusal(call('remember', { fact: 'The item moved.', entity: 'guarded-item', source_id: 'storage', provenance: 'test', request_id: randomUUID() }));
     expect(remember?.message).toContain('is the storage manifest; only the storage verbs write it');
     expect(await engine.executeRaw("SELECT 1 FROM facts WHERE source_id='storage'")).toEqual([]);
+    const forget = await refusal(call('forget_fact', { id: 1, source_id: 'storage', request_id: randomUUID() }));
+    expect(forget?.code).toBe('storage_source_managed');
     const got = await call('storage_get', { id: 'guarded-item' });
     expect(got.card.title).toBe('Dataset guarded-item');
+  }, 30_000);
+
+  test('a shelf creation stopped before its role is finished by the next register or init; a storage source with pages stays refused', async () => {
+    const { addSource } = await import('../src/core/sources-ops.ts');
+    const { initStorageSource } = await import('../src/core/storage-manifest/source.ts');
+    const role = async () => (await engine.executeRaw<{ role: string | null; federated: string | null }>("SELECT config->>'role' AS role, config->>'federated' AS federated FROM sources WHERE id='storage'"))[0];
+    await addSource(engine, { id: 'storage', name: 'Storage manifest', federated: false });
+    expect((await role())?.role ?? null).toBeNull();
+    expect(await initStorageSource(engine, { dryRun: true })).toMatchObject({ action: 'none', dry_run: true, apply: ['gbrain', 'storage', 'init'] });
+    expect((await role())?.role ?? null).toBeNull();
+    await call('storage_register', { card: card('after-crash') });
+    expect(await role()).toMatchObject({ role: 'storage_manifest', federated: 'false' });
+    expect((await call('storage_get', { id: 'after-crash' })).card.title).toBe('Dataset after-crash');
+
+    await resetPgliteState(engine);
+    await addSource(engine, { id: 'storage', name: 'Someone else', federated: false });
+    await call('put_page', { slug: 'notes', source_id: 'storage', content: '---\ntype: note\ntitle: Notes\n---\nKept.\n', request_id: randomUUID() });
+    for (const attempt of [call('storage_register', { card: card('blocked-item') }), initStorageSource(engine, { dryRun: false })]) {
+      const r = await refusal(attempt);
+      expect(r?.code).toBe('storage_manifest_missing');
+      expect(r!.message).not.toContain('remove');
+    }
+    expect((await role())?.role ?? null).toBeNull();
+    expect(await engine.executeRaw("SELECT slug FROM pages WHERE source_id='storage'")).toEqual([{ slug: 'notes' }]);
   }, 30_000);
 
   test('storage_get never serves a stored card that fails the card rules (a hand-edited card file)', async () => {

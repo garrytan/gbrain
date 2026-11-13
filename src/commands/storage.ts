@@ -575,11 +575,12 @@ async function runStorageJsonl(engine: BrainEngine, subcommand: 'export' | 'impo
     if (subcommand === 'export') {
       const out = flagValue(args, '--out');
       if (out && existsSync(out)) throw opError('invalid_params', `${out} already exists; export never overwrites a file.`, 'Pass --out with a path that does not exist yet, or omit --out to write to stdout.');
-      const { lines, skipped } = await jsonl.exportShelfJsonl(engine);
+      const { lines, skipped, invalid } = await jsonl.exportShelfJsonl(engine);
       const text = lines.length ? `${lines.join('\n')}\n` : '';
       if (!out) { process.stdout.write(text); }
       else { writeFileSync(out, text, { flag: 'wx' }); console.error(`Wrote ${lines.length} card(s) to ${out}.`); }
       if (skipped.length) console.error(`Skipped ${skipped.length} page(s) on the shelf that hold no card: ${skipped.join(', ')}`);
+      if (invalid.length) console.error(`Skipped ${invalid.length} card(s) that fail the card rules (gbrain doctor --only storage_manifest names why): ${invalid.join(', ')}`);
       return;
     }
     const file = flagValue(args, '--jsonl');

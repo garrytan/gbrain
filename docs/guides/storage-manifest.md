@@ -32,7 +32,9 @@ carry commands or credentials, and gbrain never contacts a store. After the rest
 
 On a repo-less brain, including a fresh keyless install whose content directory (created by `gbrain init`) holds no
 Git checkout, the database is the record: the first `storage-register` (or `gbrain storage init`) creates the
-`storage` source, database-only and not federated, and every verb works there.
+`storage` source, database-only and not federated, and every verb works there. If that first creation stopped part
+way (a crash, two first registers at once), the next register or `gbrain storage init` finishes it. A `storage` source
+that already holds someone else's pages is never taken over: the verbs refuse `storage_manifest_missing`.
 
 On a brain with a Git checkout, Git stays the parent. `gbrain storage init --dir <absolute path> --dry-run` previews a
 hosted Git repository for the shelf, and the printed `--expect <plan_hash>` command creates it after the user agrees
@@ -55,7 +57,10 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
    always refuses, whatever is dropped: fix the source page first.
 3. `gbrain storage adopt --finalize` previews soft-deleting the tagged originals; its `--expect <plan_hash>` run deletes
    them (restorable for 72 hours with `gbrain restore`), only when every adopted card is on the shelf and matches its
-   original's mapped card.
+   original's mapped card. A restore recorded with `storage-update` since adoption is not a difference. The preview
+   names any `##` section of an original other than `## Record` (notes the card does not carry, which go with the
+   page), and the plan_hash binds each original's content, so an original edited after the preview refuses
+   `preview_changed`.
 
 A rerun skips cards already on the shelf that match and originals already tagged. A card on the shelf that differs is
 a conflict: it is reported and never overwritten, and its original stays untagged. Every apply reports
@@ -67,7 +72,8 @@ a conflict: it is reported and never overwritten, and its original stays untagge
 gbrain stamps (`registered_by`, `origin`). `gbrain storage import --jsonl <file>` previews each line as
 `create`, `identical`, `conflict` or `invalid` with a `plan_hash`; `--apply --expect <plan_hash>` registers the
 missing cards with `origin: import` (gbrain stamps both fields again), never overwrites a differing card, and skips
-invalid lines without showing their values. Export from one brain and import into an empty one reproduces every card.
+invalid lines without showing their values. Export leaves out a stored card that fails the card rules (a hand-edited card file, say) and names it. Export
+from one brain and import into an empty one reproduces every valid card.
 
 ## Doctor
 
