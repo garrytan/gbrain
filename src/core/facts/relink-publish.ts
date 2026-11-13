@@ -39,6 +39,10 @@ import { normalizeTargetFences } from '../fence-repair/import-step.ts';
 import { refuseUnparsedRewrite } from '../fence-repair/refusal.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { withTrustKeep } from '../persistence/context.ts';
+import { withPendingFenceRows } from '../eligibility/fence-overlay.ts';
+import { activationSuppressedSql } from '../eligibility/sql.ts';
+import { storedTrustTier, type TrustTier } from '../trust/tier.ts';
+import { storedPageTier } from '../trust/page-write.ts';
 
 export const RELINK_OPERATION = 'relink_facts';
 
@@ -202,6 +206,14 @@ async function classify(db: BrainEngine, row: WriteRequest, intent: RelinkIntent
 const classKey = (c: Classified[]) => JSON.stringify(c.map(x => x.action === 'link' ? [x.id, 'link']
   : x.action === 'retire' ? [x.id, 'retire', x.duplicateOf] : [x.id, 'skip', x.reason]));
 
+async function relinkChunkTrust(db: BrainEngine, sourceId: string, rowNums: ReadonlyMap<number, number>) {
+  if (!rowNums.size) return new Map<number, { tier: TrustTier; unconfirmed: boolean }>();
+  const rows = await db.executeRaw<{ id: number | string; trust_tier: unknown; unconfirmed: boolean }>(
+    `SELECT f.id, f.trust_tier, ${activationSuppressedSql('facts', 'f')} AS unconfirmed
+      FROM facts f WHERE f.source_id=$1 AND f.id=ANY($2::integer[]) ORDER BY f.id`, [sourceId, [...rowNums.keys()]]);
+  return new Map(rows.map(row => [rowNums.get(Number(row.id))!, { tier: storedTrustTier(row.trust_tier), unconfirmed: row.unconfirmed }]));
+}
+
 export async function prepareRelinkMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
   const intent = row.intent as unknown as RelinkIntent | null;
   const rerun = `The next gbrain facts relink --source ${row.source_id} run re-plans from current state; preview it with --dry-run (no model calls, no writes).`;
@@ -244,15 +256,31 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
         () => upsertFactRow(body, fenceRow(v, rowNum, appendContextNote(v.context as string | null, byId.get(link.id)!.note))).body);
     }
   }
-  const page = links.length ? await (await import('../persistence/page-prepare.ts')).preparePageMutation(engine, { ...row, intent: {
-    content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body, timeline }, snapshot.tags), expected_revision: observedRevision, force: false,
-  } }, config) : undefined;
+  // Adopted rows are still unpositioned when page preparation chunks the fence.
+  const publicRowNums = new Map(links.filter(link => link.value.visibility === 'world').map(link => [link.id, rowNums.get(link.id)!]));
+  const pendingTrust = await relinkChunkTrust(engine, row.source_id, publicRowNums);
+  if (pendingTrust.size !== publicRowNums.size) throw changed('A relinked fact disappeared during preparation.');
+  const pageTier = publicRowNums.size ? await storedPageTier(engine, row.source_id, row.slug) : null;
+  if (publicRowNums.size && !pageTier) throw changed('The relink target page disappeared during preparation.');
+  const prepare = async () => {
+    const { preparePageMutation } = await import('../persistence/page-prepare.ts');
+    return preparePageMutation(engine, { ...row, intent: {
+      content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body, timeline }, snapshot.tags), expected_revision: observedRevision, force: false,
+    } }, config);
+  };
+  const page = pageTier ? await withPendingFenceRows({ sourceId: row.source_id, slug: row.slug, byRow: pendingTrust, pageTier }, prepare)
+    : links.length ? await prepare() : undefined;
   if (page && page.observedRevision !== observedRevision) throw changed('The relink target page changed during preparation.');
 
   const validate = async (tx: BrainEngine) => {
     if (classKey(await classify(tx, row, intent, true)) !== classKey(planned)) {
       throw changed('A relinked fact changed during preparation.');
     }
+    if (pageTier && await storedPageTier(tx, row.source_id, row.slug) !== pageTier) {
+      throw changed('The relink target page changed trust during preparation.');
+    }
+    const lockedTrust = await relinkChunkTrust(tx, row.source_id, publicRowNums);
+    if (digest([...pendingTrust]) !== digest([...lockedTrust])) throw changed('A relinked fact changed trust during preparation.');
     await page?.validate?.(tx);
   };
   const apply = async (tx: BrainEngine): Promise<Record<string, unknown>> => {
@@ -297,7 +325,7 @@ export async function prepareRelinkMutation(engine: BrainEngine, row: WriteReque
     return { ...published, status: 'relinked', slug: row.slug, ...outcome, ...normalized };
   };
   if (!page) return { observedRevision, validate, apply };
-  return { ...page, validate, apply };
+  return { ...page, exclusiveSources: page.exclusiveSources, validate, apply };
 }
 
 export type RelinkGroupResult =

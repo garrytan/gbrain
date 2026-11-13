@@ -9,7 +9,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
-import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
+import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustFromText, fenceTrustMarker } from './fence-overlay.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
 
@@ -18,6 +18,7 @@ const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagge
 interface PageRef {
   page_id?: number | null; source_id?: string | null; slug: string; chunk_text?: string | null;
   trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested;
+  delivered?: unknown;
   /** A saved-fact row (search/facts-arm.ts): labeled with the fact's own tier, not a page's. */
   fact_row?: { id: number };
 }
@@ -73,11 +74,11 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
     const fields = (typeof row.page_id === 'number' ? found?.byId.get(row.page_id) : undefined)
       ?? found?.byKey.get(key(row.source_id, row.slug))
       ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' };
-    const marked = lowestFenceTrustMarker(row.chunk_text);
-    const lowered = marked !== null && compareTrust(marked, fields.trust_tier) < 0;
-    row.trust_tier = lowered ? marked : fields.trust_tier;
+    const marked = fenceTrustFromText(row.chunk_text);
+    const lowered = marked !== null && compareTrust(marked.tier, fields.trust_tier) < 0;
+    row.trust_tier = lowered ? marked.tier : fields.trust_tier;
     row.origin = lowered ? FENCE_TRUST_ORIGIN : fields.origin;
-    if (fields.unconfirmed) row.unconfirmed = true;
+    if (fields.unconfirmed || marked?.unconfirmed) row.unconfirmed = true;
   }
   await applyFenceRowTrust(engine, pageRows);
   return floor ? rows.filter(row => admitsTrust(row.trust_tier as TrustTier, floor)) : rows;
@@ -117,25 +118,28 @@ async function applyFenceRowTrust<T extends PageRef>(engine: Exec, rows: T[]): P
   const perRow = rows.map(row => fenceRowNumbers(row.chunk_text));
   const keys: Array<[string, string, number]> = [];
   rows.forEach((row, i) => { for (const n of perRow[i]!) keys.push([row.source_id ?? 'default', row.slug, n]); });
-  if (!keys.length) return;
-  let found: Array<{ source_id: string; slug: string; row_num: number; trust_tier: string; flagged: boolean; contested: string | null }>;
-  try { found = await engine.executeRaw(FENCE_ROW_SQL, [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2])]); } catch { return; }
+  let found: Array<{ source_id: string; slug: string; row_num: number; trust_tier: string; flagged: boolean; contested: string | null }> = [];
+  if (keys.length) {
+    try { found = await engine.executeRaw(FENCE_ROW_SQL, [keys.map(k => k[0]), keys.map(k => k[1]), keys.map(k => k[2])]); } catch { /* keep stored markers */ }
+  }
   const state = new Map(found.map(f => [`${f.source_id}\u0000${f.slug}\u0000${Number(f.row_num)}`, f]));
   rows.forEach((row, i) => {
     const facts = perRow[i]!.map(n => state.get(`${row.source_id ?? 'default'}\u0000${row.slug}\u0000${n}`)).filter(f => f !== undefined);
-    if (!facts.length) return;
+    const marker = chunkFenceMarker(row.chunk_text);
+    if (!facts.length && !marker) return;
     const before = storedTrustTier(row.trust_tier);
     const tier = minTrust(before, ...facts.map(f => storedTrustTier(f.trust_tier)));
     if (compareTrust(tier, before) < 0) { row.trust_tier = tier; row.origin = FENCE_TRUST_ORIGIN; }
-    const unconfirmed = facts.some(f => f.flagged === true);
+    const unconfirmed = marker?.unconfirmed === true || facts.some(f => f.flagged === true);
     if (unconfirmed) row.unconfirmed = true;
     const contested = facts.map(f => parseContested(f.contested)).find(c => c !== undefined);
     if (contested) row.contested = contested;
-    const marker = chunkFenceMarker(row.chunk_text);
-    if (!marker || typeof row.chunk_text !== 'string') return;
+    // The delivery stage already assigned text offsets and token counts.
+    // Its output wrapper quotes low-trust text and updates those offsets.
+    if (!marker || typeof row.chunk_text !== 'string' || row.delivered) return;
     const body = row.chunk_text.slice(row.chunk_text.indexOf('\n') + 1);
     const shown = storedTrustTier(row.trust_tier);
-    row.chunk_text = `${fenceTrustMarker(shown, unconfirmed || marker.unconfirmed)}\n${needsDataEnvelope(shown) ? renderTrustedText(body, { trust_tier: shown, origin: FENCE_TRUST_ORIGIN }) : body}`;
+    row.chunk_text = `${fenceTrustMarker(shown, unconfirmed)}\n${needsDataEnvelope(shown) ? renderTrustedText(body, { trust_tier: shown, origin: FENCE_TRUST_ORIGIN }) : body}`;
   });
 }
 

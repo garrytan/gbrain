@@ -74,14 +74,21 @@ export function chunkTrustMarker(chunkText: unknown): TrustTier | null {
  * evidence can join several chunks into one delivered text, so every line is
  * read, not just the first; a marker only ever lowers a label.
  */
-export function lowestFenceTrustMarker(text: unknown): TrustTier | null {
+export function fenceTrustFromText(text: unknown): { tier: TrustTier; unconfirmed: boolean } | null {
   if (typeof text !== 'string' || !text.includes(FENCE_TRUST_ORIGIN)) return null;
   let lowest: TrustTier | null = null;
+  let unconfirmed = false;
   for (const line of text.split('\n')) {
-    const tier = MARKERS.get(line)?.tier;
-    if (tier && (!lowest || compareTrust(tier, lowest) < 0)) lowest = tier;
+    const marker = MARKERS.get(line);
+    if (!marker) continue;
+    lowest = lowest ? minTrust(lowest, marker.tier) : marker.tier;
+    unconfirmed ||= marker.unconfirmed;
   }
-  return lowest;
+  return lowest ? { tier: lowest, unconfirmed } : null;
+}
+
+export function lowestFenceTrustMarker(text: unknown): TrustTier | null {
+  return fenceTrustFromText(text)?.tier ?? null;
 }
 
 /** Prefix every piece of a low-tier fence text with its marker line. */
@@ -152,17 +159,21 @@ function worldFenceRows(text: string | null | undefined): ParsedFact[] {
   return withdrawalFenceBlocks(text).flatMap(block => block.parsed.warnings.length ? [] : block.parsed.facts.filter(row => row.visibility === 'world'));
 }
 
-/** `unconfirmed`: the write gate flagged the appended rows (instruction family), so their marker says unconfirmed. */
-interface PendingFenceRows { sourceId: string; slug: string; rowNums: readonly number[]; tier: TrustTier; unconfirmed?: boolean }
-const pendingRows = new AsyncLocalStorage<PendingFenceRows>();
+interface PendingFenceTrust { tier: TrustTier; unconfirmed?: boolean }
+type PendingFenceRows = { sourceId: string; slug: string } & (
+  | ({ rowNums: readonly number[] } & PendingFenceTrust)
+  | { byRow: ReadonlyMap<number, PendingFenceTrust>; pageTier: TrustTier }
+);
+const pendingRows = new AsyncLocalStorage<{ sourceId: string; slug: string; byRow: ReadonlyMap<number, PendingFenceTrust>; pageTier?: TrustTier }>();
 
 /**
- * Inside `fn`, chunk preparation for (sourceId, slug) treats `rowNums` as
- * rows of tier `tier`: a fence writer appends them in the same publication,
- * so their facts rows do not exist yet when the page's chunks are prepared.
+ * Inside `fn`, chunk preparation uses the supplied trust for each row that
+ * will take its fence position in the same publication.
  */
 export function withPendingFenceRows<T>(rows: PendingFenceRows, fn: () => Promise<T>): Promise<T> {
-  return pendingRows.run(rows, fn);
+  if ('byRow' in rows) return pendingRows.run(rows, fn);
+  const byRow = new Map(rows.rowNums.map(n => [n, { tier: rows.tier, unconfirmed: rows.unconfirmed }]));
+  return pendingRows.run({ sourceId: rows.sourceId, slug: rows.slug, byRow }, fn);
 }
 
 /**
@@ -239,19 +250,21 @@ export async function loadFenceChunkOverlay(
   const found = await engine.executeRaw<{ row_num: number; page_tier: string | null; row_tier: string | null; row_flagged: boolean | null; purged: boolean; held: boolean }>(
     fingerprint ? OVERLAY_SQL_WITH_HOLDS : OVERLAY_SQL_WITHOUT_HOLDS, [page.sourceId, page.slug, JSON.stringify(incoming)]);
   const pending = pendingRows.getStore();
-  const pendingHere = pending && pending.sourceId === page.sourceId && pending.slug === page.slug ? new Set(pending.rowNums) : null;
+  const pendingHere = pending && pending.sourceId === page.sourceId && pending.slug === page.slug ? pending : null;
   const omit = new Set<number>();
   const demote = new Map<number, TrustTier>();
   const unconfirmed = new Set<number>();
   for (const row of found) {
     const rowNum = Number(row.row_num);
     if (row.purged === true || row.held === true) { omit.add(rowNum); continue; }
-    if (!isTrustTier(row.page_tier)) continue;
-    const isPending = pendingHere?.has(rowNum) === true;
-    const rowTier = isPending ? pending!.tier : isTrustTier(row.row_tier) ? row.row_tier : null;
-    if (!rowTier || compareTrust(rowTier, row.page_tier) >= 0) continue;
-    demote.set(rowNum, rowTier);
-    if (isPending ? pending!.unconfirmed === true : row.row_flagged === true) unconfirmed.add(rowNum);
+    const pendingTrust = pendingHere?.byRow.get(rowNum);
+    const pageTier = pendingTrust && pendingHere?.pageTier ? pendingHere.pageTier : row.page_tier;
+    if (!isTrustTier(pageTier)) continue;
+    const rowTier = pendingTrust?.tier ?? (isTrustTier(row.row_tier) ? row.row_tier : null);
+    const flagged = pendingTrust ? pendingTrust.unconfirmed === true : row.row_flagged === true;
+    if (!rowTier || (!flagged && compareTrust(rowTier, pageTier) >= 0)) continue;
+    demote.set(rowNum, minTrust(rowTier, pageTier));
+    if (flagged) unconfirmed.add(rowNum);
   }
   return omit.size || demote.size ? { omit, demote, ...(unconfirmed.size ? { unconfirmed } : {}) } : undefined;
 }

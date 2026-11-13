@@ -6,6 +6,10 @@
  * PGLite, database-only source (no repo). Synthetic data only.
  */
 import { describe, test, expect, beforeAll, beforeEach, afterAll, afterEach } from 'bun:test';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { runFactsRelink } from '../src/core/facts/relink.ts';
@@ -13,9 +17,17 @@ import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { parseFactsFence } from '../src/core/facts-fence.ts';
 import { recordFactWithdrawal } from '../src/core/facts/withdrawal.ts';
 import { readFacts } from '../src/core/persistence/prepared-maintenance.ts';
-import { relinkFactHash, submitRelinkGroup } from '../src/core/facts/relink-publish.ts';
-import { withWriteTrust } from '../src/core/persistence/context.ts';
+import { prepareRelinkMutation, RELINK_OPERATION, relinkFactHash, submitRelinkGroup } from '../src/core/facts/relink-publish.ts';
+import { submissionAuthority } from '../src/core/persistence/authority.ts';
+import { admitWrite, claimNextWrite } from '../src/core/persistence/journal.ts';
+import { localHostId, registerLocalWriter } from '../src/core/persistence/identity.ts';
+import { publishMutation } from '../src/core/persistence/coordinator.ts';
+import type { OperationContext } from '../src/core/ops/contract.ts';
+import { withTrustBackfill, withWriteTrust } from '../src/core/persistence/context.ts';
+import { chunkFenceMarker } from '../src/core/eligibility/fence-overlay.ts';
+import { stampPageTrust } from '../src/core/eligibility/stamp.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { __setChatTransportForTests, configureGateway, resetGateway, type ChatOpts, type ChatResult } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
@@ -52,6 +64,73 @@ afterEach(() => {
 });
 
 describe('relink free tiers', () => {
+  test('marks every search chunk of a moved public fact with its own trust', async () => {
+    const slug = 'companies/acme-example';
+    await engine.transaction(tx => withTrustBackfill(tx, () => tx.executeRaw(
+      "UPDATE pages SET trust_tier='operator_curated' WHERE source_id='default' AND slug=$1", [slug])));
+    const claim = 'Acme Example reported ' + 'ordinary synthetic words '.repeat(390) + 'bluebuttonfixture';
+    const { id } = await engine.transaction(tx => withWriteTrust(tx, {
+      tier: 'external_untrusted', origin: { channel: 'derive:facts_backstop' },
+    }, () => tx.insertFact({ fact: claim, kind: 'fact', visibility: 'world', entity_slug: null, source: 'fixture' }, { source_id: 'default' })));
+    await engine.executeRaw(`INSERT INTO write_gate_receipts
+      (target_table,target_id,source_id,content_hash,tier,detector_version,verdict,reason_families)
+      VALUES ('facts',$1,'default','fixture','external_untrusted',1,'flag',ARRAY['standing_instruction'])`, [String(id)]);
+    const confirmed = 'Acme Example opened a second office ownerfixture';
+    await engine.transaction(tx => withWriteTrust(tx, {
+      tier: 'operator_curated', origin: { channel: 'cli:fixture' },
+    }, () => tx.insertFact({ fact: confirmed, kind: 'fact', visibility: 'world', entity_slug: null, source: 'fixture' }, { source_id: 'default' })));
+    expect((await relink()).linked).toBe(2);
+    const chunks = await engine.getChunks(slug, { sourceId: 'default' });
+    const tail = chunks.find(chunk => chunk.chunk_text.includes('bluebuttonfixture'));
+    expect(tail?.chunk_text).not.toContain('gbrain:facts:begin');
+    expect(chunkFenceMarker(tail?.chunk_text)).toEqual({ tier: 'external_untrusted', unconfirmed: true });
+    const low = await engine.searchKeyword('bluebuttonfixture', { limit: 20 });
+    expect(low).toHaveLength(1);
+    const [stamped] = await stampPageTrust(engine, low.map(hit => ({ ...hit })));
+    expect(stamped).toMatchObject({ trust_tier: 'external_untrusted', unconfirmed: true });
+    expect(stamped?.chunk_text).toContain('<external-data trust="external_untrusted" origin="facts-fence">');
+    const [combined] = await stampPageTrust(engine, low.map(hit => ({ ...hit, chunk_text: `A company.\n${hit.chunk_text}` })));
+    expect(combined).toMatchObject({ trust_tier: 'external_untrusted', unconfirmed: true });
+    const text = low[0]!.chunk_text;
+    const start = text.indexOf('bluebuttonfixture');
+    const delivered = { match_spans: [{ start, end: start + 'bluebuttonfixture'.length }], tokens: 100 };
+    const [withOffsets] = await stampPageTrust(engine, [{ ...low[0]!, delivered }]);
+    expect(withOffsets).toMatchObject({ chunk_text: text, delivered, trust_tier: 'external_untrusted', unconfirmed: true });
+    expect(await stampPageTrust(engine, low, 'operator_curated')).toHaveLength(0);
+    const owner = await engine.searchKeyword('ownerfixture', { limit: 20 });
+    expect(await stampPageTrust(engine, owner, 'operator_curated')).toHaveLength(1);
+  });
+
+  test('rechecks page trust under the publish lock even when its revision has not changed', async () => {
+    const slug = 'companies/acme-example';
+    const id = await unlinked('Acme Example opened a second office');
+    const snapshot = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+    const [source] = await engine.executeRaw<{ incarnation: string }>("SELECT incarnation FROM sources WHERE id='default'");
+    const ctx: OperationContext = { engine, config, dryRun: false, remote: false, sourceId: 'default', logger: { info() {}, warn() {}, error() {} } };
+    const [fact] = await readFacts(engine, 'default', [id]);
+    const intent = { kind: RELINK_OPERATION, run_id: randomUUID(), queue_conflict: false,
+      facts: [{ id, hash: relinkFactHash(fact!), tier: 'mention', model: null, note: 'entity relinked from mention' }] };
+    const home = mkdtempSync(join(tmpdir(), 'gbrain-relink-trust-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        await registerLocalWriter(engine, 'cli');
+        const authority = await submissionAuthority(ctx, RELINK_OPERATION, 'default', source!.incarnation, slug);
+        await admitWrite(engine, { principal: authority.principal, authority, operation: RELINK_OPERATION, sourceId: 'default',
+          sourceIncarnation: source!.incarnation, slug, pageId: snapshot.page.id, requestId: randomUUID(), callerIntent: intent, intent });
+        const request = (await claimNextWrite(engine, localHostId()))!;
+        const prepared = await prepareRelinkMutation(engine, request, config);
+        await engine.transaction(tx => withTrustBackfill(tx, () => tx.executeRaw(
+          "UPDATE pages SET trust_tier='operator_curated' WHERE source_id='default' AND slug=$1", [slug])));
+        expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))?.revision).toBe(snapshot.revision);
+        const result = await publishMutation(engine, request, prepared);
+        expect(result).toMatchObject({ state: 'conflict', error_code: 'revision_conflict' });
+        expect((await row(id)).entity_slug).toBeNull();
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('keeps original provenance and millisecond validity when moving a derived fact', async () => {
     const id = await engine.transaction(tx => withWriteTrust(tx, {
       tier: 'external_untrusted', origin: { channel: 'derive:facts_backstop' },
