@@ -15,7 +15,7 @@
  */
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -69,6 +69,9 @@ async function stateHash(engine: BrainEngine): Promise<string> {
   ]);
   return JSON.stringify(rows);
 }
+
+/** A printed command's argv as a POSIX shell reads it (printf, so nothing runs). */
+const argv = (command: string): string[] => execFileSync('bash', ['-c', `printf '%s\\0' ${command}`], { encoding: 'utf8' }).split('\0').slice(0, -1);
 
 async function capture(fn: () => Promise<unknown>): Promise<string> {
   const lines: string[] = [];
@@ -143,13 +146,13 @@ for (const kind of testBackends()) {
         expect(s.source).toBe(SRC);
         expect(statSync(s.file).mode & 0o777).toBe(0o600);
         expect(s.file.startsWith(join(home, '.gbrain', 'visibility-proposals') + '/')).toBe(true);
-        expect(s.command).toBe(`gbrain repair visibility --source ${SRC} --slugs-file ${s.file} --readers ${s.readers.join(',')}`);
+        expect(argv(s.command)).toEqual(['gbrain', 'repair', 'visibility', '--source', SRC, '--slugs-file', s.file, '--readers', s.readers.join(',')]);
       }
       expect(readdirSync(join(home, '.gbrain', 'visibility-proposals')).sort()).toEqual(p.sets.map(s => basename(s.file)).sort());
       expect(Object.fromEntries(p.unmatched.map(u => [u.slug, u.addresses]))).toEqual({
         'emails/e2': ['stranger@example.com'], 'emails/e3': ['carol@example.com'], 'meetings/m2': ['alice-example'] });
-      expect(p.folders).toEqual([{ source: SRC, folder: 'chats/team-a/', pages: 2,
-        command: `gbrain access rule add --prefix chats/team-a/ --readers owner-example,<list> --source ${SRC}` }]);
+      expect(p.folders.map(f => ({ ...f, command: argv(f.command) }))).toEqual([{ source: SRC, folder: 'chats/team-a/', pages: 2,
+        command: ['gbrain', 'access', 'rule', 'add', '--prefix', 'chats/team-a/', '--readers', 'owner-example,<list>', '--source', SRC] }]);
       expect(JSON.stringify(p)).not.toContain('notes/plain');
       const all = [...p.sets.flatMap(s => readFileSync(s.file, 'utf8').trim().split('\n')), ...p.unmatched.map(u => u.slug)];
       expect(all).not.toContain('labelled/m3');
@@ -197,29 +200,60 @@ for (const kind of testBackends()) {
     test('each printed command parses with the real flag tables, previews, and applying one closes exactly its pages', async () => {
       const p = await propose(['--source', SRC]);
       for (const s of p.sets) {
-        const argv = s.command.split(' ');
-        expect(argv.slice(0, 3)).toEqual(['gbrain', 'repair', 'visibility']);
-        const parsed = parseRepairArgs(argv.slice(2));
+        const args = argv(s.command);
+        expect(args.slice(0, 3)).toEqual(['gbrain', 'repair', 'visibility']);
+        const parsed = parseRepairArgs(args.slice(2));
         expect(parsed).toMatchObject({ kind: 'visibility', source: SRC, slugsFile: s.file, readers: s.readers.join(','), apply: false, propose: false });
-        for (const flag of argv.filter(a => a.startsWith('--'))) expect(CLI_FLAG_REGISTRY.repair).toContain(flag);
+        for (const flag of args.filter(a => a.startsWith('--'))) expect(CLI_FLAG_REGISTRY.repair).toContain(flag);
       }
       for (const f of p.folders) {
-        const argv = f.command.replace('<list>', 'alice-example').split(' ');
-        expect(argv.slice(0, 4)).toEqual(['gbrain', 'access', 'rule', 'add']);
-        for (const flag of argv.filter(a => a.startsWith('--'))) expect(CLI_FLAG_REGISTRY.access).toContain(flag);
+        const args = argv(f.command).map(a => a.replace('<list>', 'alice-example'));
+        expect(args.slice(0, 4)).toEqual(['gbrain', 'access', 'rule', 'add']);
+        for (const flag of args.filter(a => a.startsWith('--'))) expect(CLI_FLAG_REGISTRY.access).toContain(flag);
         const before = await stateHash(engine);
-        const preview = JSON.parse(await capture(() => runAccessRules(engine, 'rule', [...argv.slice(3), '--json'], true)));
+        const preview = JSON.parse(await capture(() => runAccessRules(engine, 'rule', [...args.slice(3), '--json'], true)));
         expect(preview.applied).toBe(false);
         expect(await stateHash(engine)).toBe(before);
       }
       const set = p.sets.find(s => s.readers.length === 3)!;
-      const preview = JSON.parse(await repair([...set.command.split(' ').slice(2), '--json'])).results[0];
+      const preview = JSON.parse(await repair([...argv(set.command).slice(2), '--json'])).results[0];
       expect(preview.affected).toBe(2);
-      await repair([...set.command.split(' ').slice(2), '--apply', '--expect', preview.preview_hash, '--json']);
+      await repair([...argv(set.command).slice(2), '--apply', '--expect', preview.preview_hash, '--json']);
       const rows = await engine.executeRaw<{ slug: string; r: unknown }>("SELECT slug, frontmatter->'readable_by' AS r FROM pages WHERE source_id = $1 AND slug IN ('meetings/m1', 'meetings/m5') ORDER BY slug", [SRC]);
       for (const row of rows) expect(row.r).toEqual(['owner-example', 'alice-example', 'bob-example']);
       const again = await propose(['--source', SRC]);
       expect(again.sets.map(s => s.readers.join(',')).sort()).toEqual(['owner-example,alice-example', 'owner-example,bob-example']);
     }, 120_000);
+    test('a slug with shell syntax stays one literal argument in every printed command, and nothing runs', async () => {
+      const marker = join(tempDir('gbrain-propose-shell-'), 'ran');
+      await importFromContent(engine, `chats/$(touch ${marker})/day-1`, fm('dm'), { sourceId: 'default', noEmbed: true });
+      await importFromContent(engine, `meetings/$(touch ${marker})`, fm('meeting', 'attendees: [bob@example.com]\n'), { sourceId: 'default', noEmbed: true });
+      const out = join(tempDir('gbrain-propose-out $(x)-'), 'sets');
+      const p = await propose(['--source', 'default', '--out', out]);
+      const folder = p.folders.find(f => f.folder.includes('$('))!;
+      expect(argv(folder.command)).toEqual(['gbrain', 'access', 'rule', 'add', '--prefix', folder.folder, '--readers', 'owner-example,<list>', '--source', 'default']);
+      for (const s of p.sets) expect(argv(s.command)).toEqual(['gbrain', 'repair', 'visibility', '--source', 'default', '--slugs-file', s.file, '--readers', s.readers.join(',')]);
+      expect(p.sets.some(s => readFileSync(s.file, 'utf8').includes('$('))).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+    }, 60_000);
+
+    test('a symlink planted at a slugs file name is replaced, never followed', async () => {
+      const out = join(tempDir('gbrain-propose-link-'), 'sets');
+      const first = await propose(['--source', SRC, '--out', out]);
+      const target = first.sets[0]!.file;
+      const victim = join(tempDir('gbrain-propose-victim-'), 'victim.txt');
+      writeFileSync(victim, 'victim\n', { mode: 0o644 });
+      const before = readFileSync(target, 'utf8');
+      unlinkSync(target);
+      symlinkSync(victim, target);
+      const again = await propose(['--source', SRC, '--out', out]);
+      expect(again.sets[0]!.file).toBe(target);
+      expect(readFileSync(victim, 'utf8')).toBe('victim\n');
+      expect(statSync(victim).mode & 0o777).toBe(0o644);
+      expect(lstatSync(target).isSymbolicLink()).toBe(false);
+      expect(lstatSync(target).mode & 0o777).toBe(0o600);
+      expect(readFileSync(target, 'utf8')).toBe(before);
+      expect(readdirSync(out).filter(n => n.endsWith('.tmp'))).toEqual([]);
+    }, 60_000);
   });
 }

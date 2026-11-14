@@ -15,11 +15,13 @@
  * one pinned to access.serves one, gets "nothing to propose" before any pages query (brainServes, the gate open-pages.ts
  * callers use). Everything it reads is database state, so a repo-less brain gets it unchanged.
  */
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { closeSync, fchmodSync, mkdirSync, openSync, renameSync, writeSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import { configDir } from '../core/config.ts';
 import { opError } from '../core/ops/contract.ts';
+import { shellQuote } from '../core/agent-output.ts';
 import { digest } from '../core/persistence/digest.ts';
 import { privacyPartSql } from '../core/search/private-visibility.ts';
 import { SENSITIVE_PAGE_TYPES } from '../core/grants/shared-exposure.ts';
@@ -65,6 +67,19 @@ function entries(value: unknown): string[] {
 }
 
 const canonical = (entry: string): string | null => { try { return assertMemberEmail(entry); } catch { return null; } };
+
+/** Writes one slugs file (0600) through a new exclusive temp file renamed over the name, so a planted file or symlink there is replaced, never followed. */
+function writeSlugs(file: string, slugs: string[]): void {
+  const temp = `${file}.${randomBytes(6).toString('hex')}.tmp`;
+  const fd = openSync(temp, 'wx', 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeSync(fd, `${slugs.join('\n')}\n`);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(temp, file);
+}
 
 /** Refuses a proposals directory inside a git work tree, as member keys are refused (access-serves.ts). */
 function assertOutsideGit(dir: string): void {
@@ -113,8 +128,8 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
       const folder = cut > 0 ? row.slug.slice(0, cut + 1) : '(root)';
       const key = JSON.stringify([row.source, folder]);
       const f = folders.get(key) ?? { source: row.source, folder, pages: 0, command: folder === '(root)'
-        ? `gbrain repair visibility --source ${row.source} --slug <slug> --readers ${ownerFirst}<list>`
-        : `gbrain access rule add --prefix ${folder} --readers ${ownerFirst}<list> --source ${row.source}` };
+        ? shellQuote(['gbrain', 'repair', 'visibility', '--source', row.source, '--slug', '<slug>', '--readers', `${ownerFirst}<list>`])
+        : shellQuote(['gbrain', 'access', 'rule', 'add', '--prefix', folder, '--readers', `${ownerFirst}<list>`, '--source', row.source]) };
       folders.set(key, f);
       f.pages++;
       continue;
@@ -142,10 +157,9 @@ export async function proposeVisibility(engine: BrainEngine, opts: { source?: st
     for (let i = 0; i < parts; i++) {
       const slugs = g.slugs.slice(i * READERS_MAX_PAGES, (i + 1) * READERS_MAX_PAGES);
       const file = join(dir, `${g.source}-${digest([g.source, g.readers]).slice(0, 12)}${parts > 1 ? `-${i + 1}` : ''}.txt`);
-      writeFileSync(file, `${slugs.join('\n')}\n`, { mode: 0o600 });
-      chmodSync(file, 0o600);
+      writeSlugs(file, slugs);
       sets.push({ source: g.source, readers: g.readers, pages: slugs.length, file,
-        command: `gbrain repair visibility --source ${g.source} --slugs-file ${file} --readers ${g.readers.join(',')}` });
+        command: shellQuote(['gbrain', 'repair', 'visibility', '--source', g.source, '--slugs-file', file, '--readers', g.readers.join(',')]) });
     }
   }
   const sorted = [...folders.values()].sort((a, b) => a.source.localeCompare(b.source) || b.pages - a.pages || a.folder.localeCompare(b.folder));
