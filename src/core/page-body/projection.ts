@@ -212,6 +212,33 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
   return claimLost ? { chunks: staged.rows, retired, sealed: false, claimLost: true } : { chunks: staged.rows, retired, sealed };
 }
 
+/** The bounded queue census ended before selecting jobs; no projection was attempted. */
+export class ProjectionListingDeadlineError extends Error {
+  constructor(cause: unknown) {
+    super('The segmented projection queue listing exhausted its read budget.', { cause });
+    this.name = 'ProjectionListingDeadlineError';
+  }
+}
+
+/** Bound the queue census, not an already-started page rebuild. */
+async function listSegmentedJobs<T>(engine: BrainEngine, sql: string, params: unknown[], remainingMs?: number): Promise<T[]> {
+  if (remainingMs === undefined || engine.kind !== 'postgres') return engine.executeRaw<T>(sql, params);
+  if (remainingMs <= 0) return [];
+  // The pool wait counts too; statement_timeout alone starts only after checkout.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('Projection listing budget exhausted', 'TimeoutError')), remainingMs);
+  timer.unref();
+  try {
+    return await engine.executeRaw<T>(sql, params, { timeoutMs: remainingMs, deadlineAt: Date.now() + remainingMs, signal: controller.signal });
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    // reserveWithCancellation wraps the local timer reason as AbortError.
+    if ((controller.signal.aborted && error instanceof DOMException && error.name === 'AbortError') ||
+      error === controller.signal.reason || code === '57014' || code === '55P03') throw new ProjectionListingDeadlineError(error);
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+
 /**
  * The projection queue's segmented route: the queued rows of live segmented
  * pages (failed rows after their retry window, unless `retryCooldown` is
@@ -220,7 +247,9 @@ async function buildClaimedProjection(engine: BrainEngine, ref: { sourceId: stri
  * `rebuild_failed` like the inline route; a page whose revision moved is
  * left to the row the trigger queued for its new revision. `listed` names
  * every row this call took (`<source_incarnation>/<slug>`), for a caller that
- * tries each row once (`exclude`: `gbrain projections drain`).
+ * tries each row once (`exclude`: `gbrain projections drain`). On Postgres a
+ * deadline also bounds the census's pool wait and statement; a census timeout
+ * throws ProjectionListingDeadlineError without changing any queue row.
  */
 export async function rebuildPendingSegmentedProjections(engine: BrainEngine, limit: number,
   opts: { deadlineMs?: number; now?: () => number; notAfter?: string; reasons?: readonly string[]; retryCooldown?: boolean; exclude?: readonly string[];
@@ -232,10 +261,11 @@ export async function rebuildPendingSegmentedProjections(engine: BrainEngine, li
   if (opts.notAfter !== undefined) filters.push(`j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`);
   if (opts.reasons) filters.push(`j.reason=ANY($${params.push(opts.reasons)}::text[])`);
   if (opts.exclude?.length) filters.push(`NOT (j.source_incarnation::text || '/' || j.slug)=ANY($${params.push(opts.exclude)}::text[])`);
-  const jobs = await engine.executeRaw<{ source_id: string; source_incarnation: string; slug: string; revision: string }>(`SELECT s.id AS source_id,
+  const jobs = await listSegmentedJobs<{ source_id: string; source_incarnation: string; slug: string; revision: string }>(engine, `SELECT s.id AS source_id,
       j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
     FROM page_projection_jobs j ${SEGMENTED_JOB_PROBES}
-    WHERE ${filters.join(' AND ')} ORDER BY j.updated_at, j.slug LIMIT $1`, params);
+    WHERE ${filters.join(' AND ')} ORDER BY j.updated_at, j.slug LIMIT $1`, params,
+  opts.deadlineMs === undefined ? undefined : opts.deadlineMs - (now() - startedAt));
   let rebuilt = 0, failed = 0;
   const listed: string[] = [];
   for (const [index, job] of jobs.entries()) {
