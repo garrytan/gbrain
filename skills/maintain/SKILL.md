@@ -302,8 +302,12 @@ a colon (`Source: Summary`) is prose, so the row keeps `source: markdown` and th
 whole text as its summary.
 Note: extracted entries improve structured queries (`gbrain timeline`), not vector search.
 
-### Autopilot check
-Verify autopilot is running:
+### Upkeep and autopilot check
+`gbrain maintain --status` shows the last free-upkeep run, which an open
+`gbrain serve` does while idle; an item serve could not finish in 30 slices is
+listed as parked, and `gbrain maintain --unattended` finishes it. For a brain
+no agent opens most days, offer `gbrain maintain --schedule` (asks consent). On a Postgres brain with a repo,
+verify autopilot:
 ```bash
 gbrain autopilot --status
 ```

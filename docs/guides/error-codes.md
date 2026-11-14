@@ -3072,6 +3072,14 @@ More: [docs/guides/cron-schedule.md#dream-beside-autopilot](../../docs/guides/cr
 |---|---|---|---|---|---|---|
 | An autopilot keeps this brain maintained (its brain-wide pass stamped autopilot.last_global_at within 48 hours), so free upkeep did nothing. | One owner per brain: the autopilot already runs the free phases and more, on any host sharing the database. | Nothing to do; gbrain autopilot --status shows the daemon. | agent | `repeat the read that failed` | 0 | no |
 
+### maintenance_owned_by_serve
+
+<a id="maintenance_owned_by_serve"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A live gbrain serve owns this brain and runs free upkeep while idle, so the scheduled upkeep run did nothing (serve owns upkeep). | One runner at a time: the serve holds the brain (the PGLite lock, or the warm CLI socket on Postgres) and runs the same free upkeep on its idle tick. | Nothing to do; gbrain maintain --status shows the last run and its runner. | agent | `repeat the read that failed` | 0 | no |
+
 ### managed_failure_unsettled
 
 <a id="managed_failure_unsettled"></a>
@@ -4563,6 +4571,24 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 | Long-running gbrain processes on this host run different builds, or one runs an older build than its install holds on disk: serve, the jobs supervisor, worker parents (in memory) and the job children they spawn from the install (on disk). | A process keeps the code it loaded at start, and `gbrain jobs run-child` spawns a fresh process from the install on disk for every job, so after a checkout reset or an upgrade on disk newer job code runs under an older worker and next to an older serve until each process restarts. | Restart the process the check names (serve with its service command, the supervisor with `gbrain jobs supervisor stop` then `gbrain jobs supervisor start --detach`, a worker by stopping its pid so its supervisor respawns it), then each other listed process on an older build; nothing restarts automatically. Run: gbrain doctor --only runtime_build_skew --json | agent | `gbrain doctor --only runtime_build_skew --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/troubleshooting.md#runtime-build-skew)
+
+### schedule_install_failed
+
+<a id="schedule_install_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain maintain --schedule wrote its files, but the operating-system scheduler (launchctl, systemctl --user or crontab) refused the job. | The scheduler belongs to the host: a missing user session bus, a locked crontab or a launchd error stops the job from loading. | Read the scheduler error in the message, fix it on the host, then run gbrain maintain --schedule --yes again (gbrain maintain --unschedule removes the files). | user | `gbrain doctor --json` | 1 | no |
+
+### schedule_unsupported
+
+<a id="schedule_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain maintain --schedule installed nothing: on Windows and in containers it has no installer, and it schedules the host brain only. | Windows gets the schtasks line to add by hand (minimal Windows support). In a container an operating-system schedule does not survive a redeploy, so the resident gbrain serve is the upkeep runner there. The scheduled job runs without --brain, so a mounted brain gets no schedule. | On Windows, add the printed schtasks line yourself. In a container, keep gbrain serve running; it runs free upkeep while idle. For a mounted brain, schedule gbrain --brain <id> maintain --unattended yourself. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `windows`, `container`, `mount`.
 
 ### schema_lock_blocked
 

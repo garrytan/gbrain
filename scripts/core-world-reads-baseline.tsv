@@ -414,6 +414,7 @@ src/core/fence-scan.ts	process_env	1	W6: settings plane out of the core
 src/core/file-resolver.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/filing-audit.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/fix-routing.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/foreground-activity.ts	module_collection	1	GBRA-438: the process-wide foreground-request listeners idle upkeep aborts on, alongside the module's process-wide in-flight counter; moves with per-engine serve state in W6
 src/core/forward-progress.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/friction.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/friction.ts	process_env	1	W6: settings plane out of the core

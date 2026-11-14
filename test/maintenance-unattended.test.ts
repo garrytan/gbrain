@@ -477,8 +477,8 @@ for (const kind of testBackends()) {
         await record(Date.now() - HOUR);
         const out = await maintainJson(['--status', '--json']);
         expect(Object.keys(out).sort()).toEqual(['embed_daily_cap_usd', 'embed_spend_today_usd', 'failing', 'held', 'last_run', 'message', 'next_due_at',
-          'paid_phases_opt_in', 'pending_purge_count', 'runner', 'state', 'steps']);
-        expect(out).toMatchObject({ state: 'ok', runner: 'cli', embed_spend_today_usd: null, embed_daily_cap_usd: null, pending_purge_count: 0 });
+          'paid_phases_opt_in', 'parked', 'pending_purge_count', 'runner', 'state', 'steps']);
+        expect(out).toMatchObject({ state: 'ok', runner: 'cli', embed_spend_today_usd: null, embed_daily_cap_usd: null, pending_purge_count: 0, parked: [] });
         expect(out.paid_phases_opt_in).toContain('embed');
       });
 
