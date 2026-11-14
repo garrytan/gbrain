@@ -52,6 +52,7 @@ import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscri
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
+import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -76,7 +77,7 @@ const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
  * under lock by the admission transaction or by publication.
  */
 const BATCH_SHARED_READS = new Set([
-  "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1",
+  "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1",
   'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
@@ -424,12 +425,14 @@ export async function preparePageAdmission(ctx: OperationContext,
     return { prior };
   }
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
-    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null }>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) {
     throw new OperationError('source_changed', 'The write source is not active.',
       `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
   }
+  // GST-1943: the storage manifest takes page writes only from the storage verbs (and the owner's import of its own commits).
+  assertStorageSourceWriter(ctx, sourceId, source.role, { managedFileImport: input.managedFileImport });
   // After the replay check: the request digest covers what the caller sent, so a retry matches whatever the page's type is by then.
   if (input.operation === 'put_page' && ctx.remote !== false && typeof p.content === 'string' && typeof p.slug === 'string') {
     p.content = await unquotedPutContent(ctx.engine, sourceId, p.slug.toLowerCase(), p.content);

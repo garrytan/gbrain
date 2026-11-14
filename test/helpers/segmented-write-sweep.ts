@@ -160,6 +160,8 @@ export const NO_PAGE_TARGET: Record<string, string> = {
   run_onboard: 'onboarding job', run_skillopt: 'skill optimizer',
   loops_close: 'open-loop rows', loops_mute: 'open-loop rows', loops_unmute: 'open-loop rows',
   questions_pin: 'pinned questions', questions_refresh: 'pinned questions', questions_unpin: 'pinned questions',
+  storage_register: 'storage cards on the storage shelf, keyed by card id; a card (details capped at 64 KiB) is never segmented',
+  storage_update: 'storage cards on the storage shelf, keyed by card id; a card (details capped at 64 KiB) is never segmented',
 };
 
 /** segmentedRevertRefusal's message (src/core/page-state/versions.ts). */

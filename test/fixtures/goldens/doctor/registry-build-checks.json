@@ -1203,6 +1203,10 @@
       },
       {
         "category": "brain",
+        "name": "storage_manifest"
+      },
+      {
+        "category": "brain",
         "name": "fence_integrity"
       },
       {

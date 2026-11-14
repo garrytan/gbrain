@@ -44,12 +44,23 @@ async function unfinished(engine: BrainEngine, sourceId: string): Promise<{ id: 
   return { ...row, receipts: (typeof row.receipts === 'string' ? JSON.parse(row.receipts) : row.receipts) as Record<string, unknown> ?? {} };
 }
 
-export async function previewMigrate(engine: BrainEngine, sourceId: string): Promise<MigratePreview> {
+/**
+ * The direction is the unfinished migration's, else `requested` (GST-2638: `--to database` sets the database store from
+ * unset with no commit and no file, for a checkout that cannot take commits), else the other store (git when unset).
+ */
+export async function previewMigrate(engine: BrainEngine, sourceId: string, requested?: AccessStore): Promise<MigratePreview> {
   const from = await readAccessStore(engine, sourceId);
   const root = await sourcePolicyRoot(engine, sourceId);
   const gitRoot = root && isGitWorkTree(root) ? root : null;
   const pending = await unfinished(engine, sourceId).catch(() => null);
-  const to: AccessStore = pending ? (pending.direction === 'to_git' ? 'git' : 'database') : from === 'git' ? 'database' : 'git';
+  const to: AccessStore = pending ? (pending.direction === 'to_git' ? 'git' : 'database') : requested ?? (from === 'git' ? 'database' : 'git');
+  if (pending && requested && requested !== to) {
+    throw opError('invalid_params', `Source ${sourceId} has an unfinished migration ${pending.id} to the ${to} store, so it cannot move to the ${requested} store now; nothing was written.`,
+      `Finish it first with gbrain access rule migrate --source ${sourceId} --yes, then run gbrain access rule migrate --to ${requested} --source ${sourceId}.`);
+  }
+  if (!pending && requested && requested === from) {
+    throw opError('invalid_params', `Source ${sourceId} already keeps its folder rules in the ${from} store; nothing was written.`, `gbrain access rule status --source ${sourceId} shows the store and its rules.`);
+  }
   if (to === 'git' && !gitRoot) {
     throw opError('invalid_params', `Source ${sourceId} has no git work tree at its root (${root ?? 'no local path'}), so its folder rules stay in the database store.`,
       'Initialize or clone the repository at the source root first, then run gbrain access rule migrate again.');
@@ -60,8 +71,8 @@ export async function previewMigrate(engine: BrainEngine, sourceId: string): Pro
   return { source_id: sourceId, from, to, root: gitRoot, desired, approved, resume: pending ? { id: pending.id, phase: pending.phase } : null };
 }
 
-export async function migrateAccessStore(engine: BrainEngine, sourceId: string): Promise<{ id: string; from: AccessStore | null; to: AccessStore; phase: string; receipts: Record<string, unknown> }> {
-  const p = await previewMigrate(engine, sourceId);
+export async function migrateAccessStore(engine: BrainEngine, sourceId: string, requested?: AccessStore): Promise<{ id: string; from: AccessStore | null; to: AccessStore; phase: string; receipts: Record<string, unknown> }> {
+  const p = await previewMigrate(engine, sourceId, requested);
   await ensurePolicyState(engine, sourceId);
   let job = await unfinished(engine, sourceId);
   if (!job) {

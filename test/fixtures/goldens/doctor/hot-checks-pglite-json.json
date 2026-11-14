@@ -165,6 +165,7 @@
                 "skillpack-check",
                 "skillpack-harvest",
                 "soul-audit",
+                "storage-manifest",
                 "strategic-reading",
                 "testing",
                 "two-tier-extraction",
@@ -174,7 +175,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn"
           },
@@ -528,7 +529,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 197727
+                "used_bytes": 198727
               },
               "inspected": 2,
               "outstanding": [],
@@ -538,7 +539,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 197727 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 198727 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -4384,6 +4385,18 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/storage-manifest.md#doctor"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No storage shelf and no interim storage records on this brain.",
+            "name": "storage_manifest",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -4994,14 +5007,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.5.0+4604112a is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.6.0+b2cec967 is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 23)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 24)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -5235,7 +5248,7 @@
             "tier": "symptom"
           },
           {
-            "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn",
             "tier": "symptom"
@@ -5491,6 +5504,7 @@
                 "skillpack-check",
                 "skillpack-harvest",
                 "soul-audit",
+                "storage-manifest",
                 "strategic-reading",
                 "testing",
                 "two-tier-extraction",
@@ -5500,7 +5514,7 @@
             },
             "elapsed_ms": "<volatile>",
             "fix_unavailable_reason": "unstructured",
-            "message": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "message": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn"
           },
@@ -5854,7 +5868,7 @@
                 "explicit_retention_days": null,
                 "over_target": false,
                 "target_bytes": 8589934592,
-                "used_bytes": 197727
+                "used_bytes": 198727
               },
               "inspected": 2,
               "outstanding": [],
@@ -5864,7 +5878,7 @@
               "verify": "gbrain doctor --only persistence_capacity --json"
             },
             "elapsed_ms": "<volatile>",
-            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 197727 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
+            "message": "No cumulative write cap is set (the default), so receipt storage never refuses or pauses a write; it holds 198727 reserved bytes, and receipts not yet compacted are under the housekeeping target of 8589934592.",
             "name": "persistence_capacity",
             "status": "ok"
           },
@@ -9722,6 +9736,18 @@
           {
             "category": "brain",
             "details": {
+              "docs": "docs/guides/storage-manifest.md#doctor"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No storage shelf and no interim storage records on this brain.",
+            "name": "storage_manifest",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "auto_repair": {
                 "active": false,
                 "enabled": true,
@@ -10332,14 +10358,14 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "Active pack gbrain-base-v2@1.5.0+4604112a is current (no successor declared)",
+            "message": "Active pack gbrain-base-v2@1.6.0+b2cec967 is current (no successor declared)",
             "name": "pack_upgrade_available",
             "status": "ok"
           },
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "5 distinct typed values (pack gbrain-base-v2 declares 23)",
+            "message": "5 distinct typed values (pack gbrain-base-v2 declares 24)",
             "name": "type_proliferation",
             "status": "ok"
           },
@@ -10573,7 +10599,7 @@
             "tier": "symptom"
           },
           {
-            "fix": "64 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +56 more. Add them with `gbrain skillpack sync`.",
+            "fix": "65 new built-in skill(s) available that this workspace hasn't installed: academic-verify, archive-crawler, article-enrichment, ask-user, blog-ingest, book-mirror, brain-ingest-gate, brain-link-discipline, … +57 more. Add them with `gbrain skillpack sync`.",
             "name": "skill_currency",
             "status": "warn",
             "tier": "symptom"

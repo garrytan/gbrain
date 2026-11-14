@@ -10,6 +10,54 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.719.0] - 2026-11-14
+
+**A brain owner can now make member CLIs read-only: with `access.enforced_member_writes` set to `refuse`, every write under `GBRAIN_ENFORCED_MEMBER` refuses.**
+
+### Added
+- `gbrain config set access.enforced_member_writes refuse` makes enforced member mode refuse `put`, `link`, `unlink`, `tag`, `untag`, `timeline-add`, `remember`, `edit_page`, `append_page` and `git commit-push` with named paths, with exit 3 and reason `writes_off`. `refuse_pages` refuses the same page writes and leaves named-path `git commit-push` to its usual checks, for a host whose member turns still commit files. The refusal comes before any page, path or source lookup, so it reads the same for a new, readable or hidden target and names none. The key lives in the brain's database, so it works on a brain with no repository, and a member can't change it because `config` is refused under the mode. Unset or `checked` keeps today's checked writes; any other value, or a config read that fails, counts as `refuse`. Reads, a CLI without the variable, `git commit-push --pull` and `--dry-run`, `sync`, `sources refresh` and `write-request` are unchanged. See docs/guides/enforced-member.md#writes-off.
+
+**Upgrading from an older release (about v0.60.150 to v0.60.248) no longer ends in exit 1, and doctor no longer reports a stopped serve as a second running build.**
+
+### Fixed
+- `gbrain upgrade` run from an older release finishes with exit 0 again. Those releases load one more file from the new install into the old process after the swap, and that file pulled in code needing functions the old process didn't have, so the upgrade printed an `internal_error` and exited 1 even though the new binary and its migrations were in place. That file now loads nothing but the line it prints (GST-2688).
+- `gbrain doctor`'s `runtime_build_skew` check no longer counts a process that has already exited as a running build. An older serve stopped with SIGTERM can leave its heartbeat row looking fresh for up to 30 seconds; a row whose process the check can prove is gone (same machine boot, pid gone or reused) is now skipped, while a row it can't prove dead still counts (GST-2688).
+
+**On a source whose pages are canonical in Git, a fact the Google loops extraction saves for a person or company with no page is no longer thrown away when the database has a brief hiccup while gbrain prepares the write.**
+
+### Fixed
+
+- On a `canonical: git` source, a fact for an entity with no page is kept on a holding page (`memory/unattributed`, or its folder's holding page under a folder access rule) until the entity's page exists. Choosing that page takes one read of the access rules. If that read hit a passing database error while the write was being prepared (a cancelled statement, a stale cached plan, a lock or serialization conflict, a dropped connection, a pooler's client limit), gbrain treated it as "the access rules cannot be read" and refused the write for good with `access_policy_pending`. For the Google loops extraction, the only writer on that path, the commitment fact was dropped while the loop row stayed, so the open loop pointed at no fact.
+- Now that error is handed back to the write queue, which releases the write and prepares it again, the same way it already retries every other passing database error. The fact lands on the holding page with its entity, committed to Git, and the loop row points at it. A statement that keeps getting cancelled still stops after `persistence.max_transient_retries` tries and ends `write_interrupted` with nothing written.
+- Real refusals are unchanged. An exact page rule on the entity still refuses `git_home_required`, and an access state the database role really cannot read (for example permission denied on the access tables) still refuses `access_policy_pending`.
+- A hiccup on the same read earlier, while the loops job first hands the fact to gbrain, still loses that one fact as it did before. The loops job keeps the loop row and logs `fact projection failed`.
+- Facts dropped this way before the fix are not recovered by this change.
+- On the same kind of source, an owner's `gbrain trust release` of a held fact for an entity with no page used to report `released` while saving the fact only in the database, with no row in Git, whenever no holding page could carry it: an exact page rule on the entity, or access rules the database role could not read. Now the release refuses with nothing written and the fact stays held: `git_home_required` names the entity's page to create, and `access_policy_pending` asks you to retry. Creating that page does not unlock the release, because a page under its own rule counts as private for a release (`page_not_found`); drop the hold and remember the fact on the page instead. Facts released this way before the fix are not changed; `gbrain repair facts-home` lists them as `folder_restricted`. (GST-2676)
+
+**When a shallow checkout hides a folder's access-rule history, the first import now refuses with a code and the exact command to fix it, `gbrain access rule migrate` moves rules between git and the database, renamed pages keep their atom lineage, connection strings lose their password whatever the scheme, and a policy-only mirror no longer trips the git convergence check.** Community wave W-A1, second part: bug reports verified on master and fixed with our own code.
+
+### Fixed
+- **First access-rule import (GST-2638).** The first import of a source's access rules refused when it could not read their git history. It now tells a missing history apart from an unreadable one. An unreadable history refuses with the new code `access_policy_history_unreadable`, and the fix it names is `git -C <source root> fetch --unshallow` and then the same command again. A plain sync on a shallow checkout whose rules do have committed history still fails closed. `gbrain access rule migrate --to git|database` moves the rules from one store to the other, the preview shows when only the owner can read pending pages, and the command exits 1 when the result would be invalid.
+- **Policy-only mirrors (GST-2634).** `gbrain doctor`'s git_convergence check no longer flags a source whose mirror holds only access policy.
+- **Ingest refusals (#8982).** A refused `POST /ingest` now carries a code, a fix and a docs link.
+- **Renamed pages, config secrets and root metadata deletes (#8920).** When a later rename onto an old slug drops its alias, an atom is still judged by the private page its origin moved to. A concept is still judged as before: by its input atoms and their origins' rename aliases only. Config secret keys are redacted, and the password in a connection URL is removed for any scheme. Deleting a root metadata file publishes the change to the database only.
+
+<!-- behavior-change: access_first_import_history_gst2638 -->
+
+### Name the room on the CLI, and think answers and writes carry room marks too
+
+**`--room <list>` now works on every gbrain operation command, and `think`, `put_page` and `remember` answers are marked for the room like reads are.** A harness that runs gbrain as a command, or a person checking what a group chat could see, gets the same marks an MCP caller gets, and the agent writing into a room can tell which parts of a synthesized answer came from pages the room cannot read.
+
+- `gbrain <command> --room alice-example,group:team-a` prints exactly what the command prints without it. With `--json` every item carries `room_access` and the document carries `_meta.room` (a list becomes `{ results, _meta }`); without it stderr names what the room cannot read. The local CLI marks the brain owner's view, or the member `--as` names; with no owner set, every item is unknown and the notice says to run `gbrain access owner set`.
+- A trailing `--room` with no value is never dropped. The command runs, every item is marked unknown (`invalid`), the degraded stamp shows and it exits 0.
+- It works through a running `gbrain serve` that owns a PGLite brain (the owner marks the answer) and on a thin client (sent as `_meta.room`). A host or owner that predates room marks leaves every item unknown (`not_supported`).
+- A `think` answer is marked at the strictest class of everything its synthesis retrieved or was shown (the anchor and the graph pages its prompt names, each under its own source); an answer built partly from takes or a calibration profile, or with no recorded evidence, is unknown. `put_page` and `remember` mark the page or fact they wrote and are never stamped degraded for it, so a committed write never reads as one to retry.
+- The shipped access-policy and agent templates now say how an agent acts on its owner's own turn in a group chat (at the owner's scope, written for the room, with truly private material offered in a private chat and never a refusal; everyone else is answered at the group's level) and that a send the principal asks for in their own verified message goes out as asked, with no approval phrase or draft-first step. Existing installs keep their own files.
+- Guide: [docs/guides/rooms.md](docs/guides/rooms.md).
+
+<!-- behavior-change: room_cli_think_writes_gst2639 -->
+<!-- behavior-change: owner_turn_sends_templates_gst2656 -->
+
 ## [0.60.718.0] - 2026-11-14
 
 **Three ways a commit could reach the remote past the push secret scan are closed, and the scan can no longer be skipped.** In a managed root that sits in a subfolder of its repository, a commit could change that root's own `.gbrain-scan-allow` (for example to allow every path) and be pushed along with the secret it hid; it is now held for review like one at the top level. A strict (`canonical: git`) source's commit is now trusted only when its files are exactly what gbrain wrote, so anything a Git clean filter added is scanned. Git replace refs can no longer slip files into a page-write commit the scan trusts. `commitAndPush` also lost its unscanned mode, so no caller and no push handed over from a busy publish lock can publish without the scan; it reads only the commits the remote lacks, fetching a missing remote-tracking branch first.
