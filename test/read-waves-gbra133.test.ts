@@ -1,7 +1,7 @@
 /**
  * GBRA-133 lane C: reads a run issues back to back are dependent round trips at a remote database's RTT. Each case
- * counts the waves a read issues (a call started while none is in flight opens a wave) and keeps the result the read
- * returned before. Both backends; test/e2e/read-waves-gbra133-postgres.test.ts runs the Postgres arm in the E2E lane.
+ * counts the waves a read issues (its dependent round trips: a call that needs an earlier result opens a wave) and
+ * keeps the result the read returned before. Both backends; test/e2e/read-waves-gbra133-postgres.test.ts runs the Postgres arm in the E2E lane.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -18,20 +18,39 @@ import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { requestConfigRows, requestConfigValue } from '../src/core/config-snapshot.ts';
 
+/** How long a wave stays open after its statements settle, for statements \`fn\` issues without waiting on a result. */
+const WAVE_QUIET_MS = 25;
+
 /**
- * Counts the statements \`fn\` sends and the waves they form (a statement started while none is in flight opens a wave);
- * a config read a request snapshot answers sends nothing and is not counted. The engine's own methods are restored after.
+ * Counts the statements \`fn\` sends and the waves they form: the dependent round trips. Each statement runs at once, but
+ * its result is held until its wave closes (every statement in it has settled and none was sent for WAVE_QUIET_MS), and
+ * the wave's results are released together, so a statement that needs an earlier result always opens the next wave and
+ * statements sent together always share one, however fast the database answers. A config read a request snapshot
+ * answers sends nothing and is not counted. The engine's own methods are restored after.
  */
 async function recordWaves<T>(engine: BrainEngine, fn: () => Promise<T>): Promise<{ result: T; waves: number; statements: string[] }> {
-  let inFlight = 0;
   let waves = 0;
   const statements: string[] = [];
+  let wave: { sent: Promise<unknown>[]; released: Promise<void> } | null = null;
+  const settle = async (sent: Promise<unknown>[]) => {
+    for (let seen = -1; seen !== sent.length;) {
+      seen = sent.length;
+      await Promise.all(sent);
+      await Bun.sleep(WAVE_QUIET_MS);
+    }
+    wave = null;
+  };
   const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
   const send = (text: string, run: () => Promise<unknown>) => {
-    if (inFlight === 0) waves++;
-    inFlight++;
     statements.push(text);
-    return run().finally(() => { inFlight--; });
+    const result = run();
+    if (!wave) {
+      waves++;
+      const sent: Promise<unknown>[] = [];
+      wave = { sent, released: Promise.resolve().then(() => settle(sent)) };
+    }
+    wave.sent.push(result.catch(() => undefined));
+    return wave.released.then(() => result);
   };
   const originals = { executeRaw: target.executeRaw!, getConfig: target.getConfig!, getAllConfig: target.getAllConfig! };
   target.executeRaw = function (this: unknown, ...args: unknown[]) {
