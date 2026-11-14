@@ -423,7 +423,9 @@ export function parseSyncFanoutFlags(args: string[], syncAll: boolean) {
     console.error(`--timeout requires either --source <id> or --all to scope the per-source budget.`);
     process.exit(1);
   }
-  return { serialFlag, noAutoEmbed, maxSources, strategyArg, srcSubpath, excludePatterns, includeHiddenPatterns, concurrency, timeoutSeconds, explicitSourceArg };
+  // --parallel N caps concurrent sources like --max-sources (which wins when both are given).
+  const effectiveMaxSources = maxSources ?? parallelOverride;
+  return { serialFlag, noAutoEmbed, maxSources: effectiveMaxSources, strategyArg, srcSubpath, excludePatterns, includeHiddenPatterns, concurrency, timeoutSeconds, explicitSourceArg };
 }
 
 export type SyncFanoutFlags = ReturnType<typeof parseSyncFanoutFlags>;
