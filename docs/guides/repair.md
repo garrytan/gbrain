@@ -139,6 +139,23 @@ and its own keys would stop reading the page; a group the owner belongs to does
 not count. Pass `--allow-without-owner` when that is what you want. A page whose
 readers changed after the preview is skipped.
 
+<a id="propose-readers"></a>
+**Proposed readers.** On a brain that serves several people, `gbrain repair visibility --propose [--source <id>] [--out <dir>] [--json]`
+suggests readers for the pages every member's key can read (no `readable_by`, no
+folder or page rule). It reads each such page's `participants`, `attendees`, `to`, `from` and
+`cc` addresses and matches each one to an enabled member by the email declared on it
+(`gbrain access member set <id> --email <address>`), exactly and ignoring case. Pages
+whose addresses all match are grouped by reader set, with the owner first in every set. Each set gets
+a slugs file (mode 0600, in `<config dir>/visibility-proposals/` or `--out`, never inside a
+git work tree) and the `--readers` command above to preview it, then apply it with
+`--apply --expect <hash>`. A page with any address that names no enabled member is
+listed as unmatched and gets no proposal. DM, chat and mail pages with no address list are listed by
+folder with a `gbrain access rule add --prefix <folder>/ --readers <owner>,<list>` command to fill in.
+Labelling a page also hides its derived atoms, facts and chronicle events from every remote caller
+except the owner, unless `access.members_read_lineage` is on. `--propose` itself labels nothing
+and changes nothing any key reads. A one-person brain, or one with `access.serves` set to `one`, gets
+"nothing to propose". It works the same on a repo-less brain.
+
 No lock or transaction spans the run, so a long list does not hold up other
 writers. On a managed brain the apply admits a source's pages together, one
 admission window at a time; on Postgres the owner publishes them in groups of

@@ -4492,6 +4492,16 @@ Reasons: `rename_source_changed`.
 
 More: [docs/guides/troubleshooting.md#repair-preview-timeout](../../docs/guides/troubleshooting.md#repair-preview-timeout)
 
+### repair_propose_dir_in_git
+
+<a id="repair_propose_dir_in_git"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain repair visibility --propose was pointed at a directory inside a git work tree for its slugs files, so nothing was written. | The slugs files list page slugs and who would read them; a file inside a checkout can be committed and pushed. | Pass --out <dir> outside any git checkout, or leave --out off to use the gbrain config directory (with GBRAIN_HOME outside any checkout). | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/repair.md#propose-readers](../../docs/guides/repair.md#propose-readers)
+
 ### request_already_submitted
 
 <a id="request_already_submitted"></a>
