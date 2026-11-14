@@ -30,7 +30,7 @@ const REASON_TEXT: Record<EnforcedReason, string> = {
   as_flag: '--as is refused under this mode.',
   arguments_not_allowed: 'These arguments are not allowed under this mode.',
   remember_needs_entity: 'remember needs --entity naming the exact slug of a page this member reads.',
-  writes_off: 'This brain refuses every write under this mode: its config access.enforced_member_writes is not checked, or could not be read.',
+  writes_off: 'This brain turned off page writes under this mode: its config access.enforced_member_writes is not checked, or could not be read.',
 };
 
 /** The mode's member value, or undefined when the mode is off (the variable unset). */

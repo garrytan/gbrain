@@ -670,6 +670,25 @@ for (const kind of testBackends()) {
       expect({ exit: pull.exitCode, out: pull.stdout, err: pull.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: git commit-push finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
     }, 300_000);
 
+    test('access.enforced_member_writes refuse leaves git commit-push and sync as they are', async () => {
+      const set = await cli(['config', 'set', 'access.enforced_member_writes', 'refuse'], null);
+      expect({ exit: set.exitCode, err: set.exitCode === 0 ? '' : set.stderr }).toEqual({ exit: 0, err: '' });
+      try {
+        writeFileSync(join(checkout, 'notes', 'alice-git-refuse.md'), note('Alice git refuse'));
+        const r = await cli(['git', 'commit-push', '--path', checkout, '-m', 'alice note under refuse', '--', 'notes/alice-git-refuse.md']);
+        expect({ exit: r.exitCode, out: r.stdout, err: r.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: git commit-push finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
+        expect(git('log', '--format=%s', '-1').trim()).toBe('alice note under refuse');
+        const refused = await cli(['git', 'commit-push', '--path', checkout, '-m', 'x', '--', 'notes/bob-git.md']);
+        expect({ exit: refused.exitCode, first: refused.stderr.split('\n')[0] }).toEqual({ exit: 3, first: FIRST(MEMBER, 'git commit-push') });
+        const sync = await cli(['sync', '--source', 'repo-src', '--no-pull', '--no-embed']);
+        expect({ exit: sync.exitCode, out: sync.stdout, err: sync.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: sync finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
+      } finally {
+        const engine = await createEngine(config as never);
+        await engine.connect(config as never);
+        try { await engine.executeRaw("DELETE FROM config WHERE key = 'access.enforced_member_writes'"); } finally { await disposePersistenceConsumer(engine); await engine.disconnect(); }
+      }
+    }, 300_000);
+
     test('sync runs with its output withheld; sync status is refused', async () => {
       const r = await cli(['sync', '--source', 'repo-src', '--no-pull', '--no-embed']);
       expect({ exit: r.exitCode, out: r.stdout, err: r.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: sync finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });

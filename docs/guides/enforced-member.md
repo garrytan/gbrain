@@ -68,7 +68,7 @@ brain's config, from a direct session (one without `GBRAIN_ENFORCED_MEMBER`):
 gbrain config set access.enforced_member_writes refuse
 ```
 
-Then every write under the mode refuses: `put` (a new slug, a page the member
+Then every page write under the mode refuses: `put` (a new slug, a page the member
 reads and a page it can't read alike), `link`, `unlink`, `tag`, `untag`,
 `timeline-add`, `remember`, and `edit_page` and `append_page`. The refusal
 comes before any page or source lookup, so it reads the same for every target
@@ -76,7 +76,7 @@ and names none:
 
 ```
 gbrain: refused under GBRAIN_ENFORCED_MEMBER=alice-example: writes are off for members on this brain; nothing was saved [GBRAIN_ENFORCED_REFUSED]
-Why: This brain refuses every write under this mode: its config access.enforced_member_writes is not checked, or could not be read.
+Why: This brain turned off page writes under this mode: its config access.enforced_member_writes is not checked, or could not be read.
 Fix: ask the brain owner to save it in a direct session (one without GBRAIN_ENFORCED_MEMBER).
 Recovery: nothing was saved; the same call refuses every time, so do not retry here.
 Docs: docs/guides/enforced-member.md#refused
