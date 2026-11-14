@@ -117,6 +117,7 @@ export const WRITE_RECEIPT_SCHEMA = {
         file_written: { type: 'boolean' },
         git_state: { type: 'string' },
         git_commit: { type: 'string' },
+        git_reason: { type: 'string' },
       },
     },
     created_at: { type: 'string' },

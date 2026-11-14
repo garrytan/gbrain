@@ -63,7 +63,7 @@ import { readSessionSource } from '../context/corpus-source.ts';
 import { parseCorpusTurns } from '../context/corpus-turns.ts';
 import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote } from '../context/session-speaker.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
-import { isSegmentedPage } from '../page-body/page-shape.ts';
+import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
 import { shellQuote } from '../shell-quote.ts';
 import { pruneDir } from '../sync.ts';
 import { CAPTURE_LANES, captureSessionId } from './captured-facts.ts';
@@ -495,12 +495,13 @@ export async function prepareAgentSessionFactsWrite(engine: BrainEngine, row: Wr
 /**
  * Fenced facts: set `attributed_to: other` and append the note on each still-matching, still user-attributed active
  * fence row and publish the page once, bound to the revision read; the canonical projection rewrites the rows in
- * place. Returns the facts that now read back as `other`. A page stored in segments is not rewritten.
+ * place. Returns the facts that now read back as `other`. A page stored in segments (#9027) is read back whole, as
+ * every fence write through the put path reads it, and one over 24 MiB declines `page_body_segmented`, its rows kept.
  */
 async function rewriteFencedFacts(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, page: ApprovedPage, facts: AgentSessionFactCandidate[]): Promise<number[]> {
   const engine = ctx.engine;
-  const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
-  if (!snapshot || isSegmentedPage(snapshot.page)) return [];
+  const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }), 'repair agent-session-facts');
+  if (!snapshot) return [];
   const rows = await engine.executeRaw<{ id: number | string; fact: string; row_num: number }>(
     'SELECT id, fact, row_num FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL', [page.source_id, facts.map(f => f.id)]);
   let body = snapshot.page.compiled_truth ?? '';
@@ -526,12 +527,11 @@ async function rewriteFencedFacts(ctx: Parameters<RepairHandler['apply']>[0], it
 /**
  * Takes: a take the page's takes fence holds (same row and claim, active) is struck there by one revision-bound
  * `put_page` (the projection sets `active = false`); the rest are retired in the database. A page stored in
- * segments is not rewritten. Returns the retired takes.
+ * segments is read back whole, as rewriteFencedFacts reads it. Returns the retired takes.
  */
 async function retireTakes(ctx: Parameters<RepairHandler['apply']>[0], item: RepairItem, page: ApprovedPage, hash: string, takes: AgentSessionTake[]): Promise<number[]> {
   const engine = ctx.engine;
-  const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
-  if (snapshot && isSegmentedPage(snapshot.page)) return [];
+  const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }), 'repair agent-session-facts');
   const body = snapshot ? serializePageToMarkdown(snapshot.page, snapshot.tags) : '';
   const fence = parseTakesFence(body);
   const fenced = takes.filter(t => fence.takes.some(row => row.rowNum === t.row_num && row.claim.trim() === t.claim.trim() && row.active));

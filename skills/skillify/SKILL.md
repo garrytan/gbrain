@@ -74,7 +74,7 @@ times. Each run:
 
 1. Detects existing artifacts (SKILL.md, tests, evals, code, resolver entries)
 2. Identifies what's new: bug report, user feedback, new input, or quality gap
-3. Improves existing files rather than rewriting from scratch
+3. Improves existing files rather than rewriting from scratch, following the update ladder (CONTRIBUTING.md, "Changing a skill"): fix it below the skill first, then edit the existing line instead of appending
 4. Preserves what works, fixes what's broken
 5. Re-runs the checklist and only touches items that fail
 

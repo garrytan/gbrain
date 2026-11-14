@@ -329,6 +329,11 @@ export const SKILL_CHECK_NAMES: ReadonlySet<string> = new Set([
   'skills_manifest_integrity',
   'skill_currency',
   'skill_preconditions',
+  // Skill size, growth since the last diet, triggers, and drift against this gbrain (gbrain skillpack health).
+  'skill_health',
+  // Skillpack update journals (crash-pending updates, kept backups).
+  'skillpack_update_incomplete',
+  'skillpack_backups',
   'whoknows_health',
 ]);
 
@@ -456,6 +461,8 @@ export const OPS_CHECK_NAMES: ReadonlySet<string> = new Set([
   'global_maintenance_timeouts',
   // GBRA-130 C-6: no completed brain-wide pass while jobs fail or a phase keeps blocking it.
   'global_maintenance_stalled',
+  // GBRA-438: free unattended upkeep (maintenance.last_run) overdue or failing.
+  'unattended_maintenance',
   'embed_backfill_stalled',
   // #7117: the content-drift sweep's latest batch failed.
   'content_drift_sweep',

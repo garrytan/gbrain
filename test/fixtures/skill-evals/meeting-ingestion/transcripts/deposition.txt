@@ -1,0 +1,12 @@
+Recorder: notetaker-a
+Recording ID: rec-1021-a
+Title: Deposition prep with counsel
+Date: 2026-10-21 15:00 ET
+Duration: 40m
+Attendees: Bob Example <bob@acme-example.com>, Alice Example <alice@acme-example.com>
+
+[00:00] Bob Example: Counsel asked us to keep this privileged. This is prep for the contractor deposition next week.
+[00:30] Alice Example: I'll walk through the timeline of the contractor's access to the ledger systems.
+[01:15] Bob Example: Stick to dates and documents. Counsel will handle the rest.
+[02:00] Alice Example: The access was granted on March 3 and revoked on June 12.
+[02:45] Bob Example: Good. Send the document list to counsel by Friday.

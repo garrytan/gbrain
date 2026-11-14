@@ -223,12 +223,16 @@ export function inspectHermesResolverHook(hermesHome: string): { state: 'absent'
   }
 }
 
-/** Read-only: is the marked hook in config.yaml, and does Hermes's allowlist approve its exact command? */
-export function inspectHermesTurnHook(hermesHome: string): { state: 'absent' | 'unapproved' | 'approved'; path: string; command?: string } {
+/** Read-only: is the marked hook in config.yaml (or, without one, the exact entry setup printed for `access`, added by hand to the user's hooks: section), and does Hermes's allowlist approve its exact command? */
+export function inspectHermesTurnHook(hermesHome: string, access?: BrainFirstAccess): { state: 'absent' | 'unapproved' | 'approved'; path: string; command?: string } {
   const path = join(hermesHome, 'config.yaml');
   try {
-    const probe = probeBlock(MARKERS, existsSync(path) ? readFileSync(path, 'utf8') : '');
-    const command = probe.state === 'present' ? commandIn(probe.interior) : null;
+    const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
+    const probe = probeBlock(MARKERS, text);
+    const printed = access && probe.state === 'absent' ? hermesTurnHookCommand(access) : null;
+    const pasted = printed ? (loadBoundedYaml(text) as { hooks?: Record<string, unknown> } | null)?.hooks?.[EVENT] : undefined;
+    const command = probe.state === 'present' ? commandIn(probe.interior)
+      : Array.isArray(pasted) && pasted.some((e) => (e as { command?: unknown } | null)?.command === printed) ? printed : null;
     if (!command) return { state: 'absent', path };
     return { state: readAllowlist(join(hermesHome, ALLOWLIST)).approvals.some((e) => approves(e, command)) ? 'approved' : 'unapproved', path, command };
   } catch {

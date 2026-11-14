@@ -33,6 +33,7 @@ import { serializeMarkdown } from '../markdown.ts';
 import { OperationError } from '../ops/contract.ts';
 import { DRIFT_REPORT_KIND, publishSinglePage } from '../generations/adapters/single-page.ts';
 import { publishOrHold, type PublicationHold } from '../persistence/accepted-pending.ts';
+import { declareDerivation, deriveTrust } from '../trust/taint.ts';
 
 export interface DriftPhaseOpts {
   brainDir?: string;
@@ -232,25 +233,27 @@ async function findDriftCandidates(
     }));
 }
 
-/** Format the candidate page's recent timeline entries as judge evidence. */
+/** Format the candidate page's recent timeline entries as judge evidence, with the ids of the rows it quotes. */
 async function loadEvidence(
   engine: BrainEngine,
   pageId: number,
   cutoffIso: string,
-): Promise<string> {
-  const rows = await engine.executeRaw<{ date: string; source: string; summary: string }>(
-    `SELECT date::text AS date, source, summary FROM timeline_entries
+): Promise<{ text: string; ids: number[] }> {
+  const rows = await engine.executeRaw<{ id: number | string; date: string; source: string; summary: string }>(
+    `SELECT id, date::text AS date, source, summary FROM timeline_entries
      WHERE page_id = $1 AND date >= $2::date
      ORDER BY date DESC LIMIT 12`,
     [pageId, cutoffIso],
   );
-  if (rows.length === 0) return '(no timeline entries in window)';
-  return rows.map(r => `- ${r.date} [${r.source}] ${r.summary}`).join('\n');
+  if (rows.length === 0) return { text: '(no timeline entries in window)', ids: [] };
+  return { text: rows.map(r => `- ${r.date} [${r.source}] ${r.summary}`).join('\n'), ids: rows.map(r => Number(r.id)) };
 }
 
 interface JudgedCandidate {
   candidate: DriftCandidate;
   verdict: DriftVerdict;
+  /** The timeline rows the judge's prompt quoted. */
+  evidenceIds: number[];
 }
 
 function buildReportBody(
@@ -342,7 +345,7 @@ export async function runPhaseDrift(
   let budgetExhausted = false;
   let failed = 0;
   for (const candidate of candidates.slice(0, config.maxPerCycle)) {
-    const evidence = await loadEvidence(engine, candidate.pageId, cutoffIso);
+    const { text: evidence, ids: evidenceIds } = await loadEvidence(engine, candidate.pageId, cutoffIso);
     const check = meter.check({
       modelId,
       // ~4 chars per token over the prompt the judge actually sends.
@@ -356,7 +359,7 @@ export async function runPhaseDrift(
     }
     try {
       const verdict = await judge({ candidate, evidence, modelHint: modelId, maxOutputTokens });
-      judged.push({ candidate, verdict });
+      judged.push({ candidate, verdict, evidenceIds });
     } catch (e) {
       failed += 1;
       process.stderr.write(`[drift] judge failed on take ${candidate.takeId}: ${(e as Error).message}\n`);
@@ -372,17 +375,20 @@ export async function runPhaseDrift(
     // Typed `note` (+ report_type) so the default pack declares it (#5881).
     // Lands in the default source (brain-global artifact, same-day re-runs
     // upsert the same slug).
+    const derivation = await deriveTrust(engine, judged.flatMap(j => [{ table: 'pages' as const, id: j.candidate.pageId },
+      { table: 'takes' as const, id: j.candidate.takeId }, ...j.evidenceIds.map(id => ({ table: 'timeline_entries' as const, id }))]),
+      { channel: 'derive:drift' });
     if (maintenance) {
       const snapshot = await engine.readPageSnapshot(reportSlug, { sourceId: 'default' });
       const report = serializeMarkdown({ report_type: 'drift' }, buildReportBody(judged, config, modelId), '',
         { type: 'note', title: `Drift report ${cycleDate}`, tags: [] });
       // #6052: a held report is not on the page yet, so it is neither linked nor counted as written.
       reportHold = await publishOrHold(() => publishMaintenancePage(engine, maintenance, reportSlug!, report,
-        { expectedRevision: snapshot?.revision ?? null, file: false }));
+        { expectedRevision: snapshot?.revision ?? null, file: false, derivation: declareDerivation(derivation.trust, derivation.inputs) }));
       if (reportHold) reportSlug = undefined;
     } else {
       try {
-        await publishSinglePage(engine, { kind: DRIFT_REPORT_KIND, sourceId: 'default', slug: reportSlug, expectedRevision: reportRevision,
+        await publishSinglePage(engine, { kind: DRIFT_REPORT_KIND, sourceId: 'default', slug: reportSlug, expectedRevision: reportRevision, derivation,
           page: { type: 'note', frontmatter: { report_type: 'drift' }, title: `Drift report ${cycleDate}`, compiled_truth: buildReportBody(judged, config, modelId) } });
       } catch (e) {
         if (!(e instanceof OperationError && e.code === 'generation_fenced')) throw e;

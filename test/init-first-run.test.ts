@@ -5,7 +5,7 @@
  * offering 'defaults'. Pure: no engine, no filesystem.
  */
 import { describe, expect, test } from 'bun:test';
-import { buildInitFirstRunNotices, setupFirstRunNotices } from '../src/commands/init-first-run.ts';
+import { buildInitFirstRunNotices, setupFirstRunNotices, upkeepLine } from '../src/commands/init-first-run.ts';
 import { costMatrixSentence } from '../src/core/search/mode-advice.ts';
 
 const searchMode = { mode: 'balanced' as const, reason: 'Balanced default for a new brain.' };
@@ -48,6 +48,41 @@ describe('buildInitFirstRunNotices', () => {
     const [bundle] = buildInitFirstRunNotices({ searchMode, writeback: true, skillsScaffold: scaffold });
     const argvs = bundle.decisions!.flatMap(d => d.options.map(o => o.argv ?? []));
     expect(argvs.some(a => a.includes('remember'))).toBe(false);
+  });
+});
+
+describe('the upkeep line (GBRA-438)', () => {
+  test('rides the bundle last as a setting in effect: the plan\'s wording, default on, off through config set', () => {
+    const [bundle] = buildInitFirstRunNotices({ searchMode, upkeep: { embedding: false } });
+    expect(bundle.decisions!.map(d => d.id)).toEqual(['search_mode', 'upkeep']);
+    const upkeep = bundle.decisions!.find(d => d.id === 'upkeep')!;
+    expect(upkeep.question).toBe(
+      "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. "
+      + 'Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.',
+    );
+    expect(upkeep.question).not.toContain('?');
+    expect(upkeep.default).toBe('on');
+    expect(upkeep.options.find(o => o.id === 'on')!.argv).toBeUndefined();
+    expect(upkeep.options.find(o => o.id === 'off')!.argv).toEqual(['gbrain', 'config', 'set', 'maintenance.auto', 'false']);
+    expect(bundle.user_message).toContain('upkeep: on');
+  });
+
+  test('a keyed brain\'s line names the one capped paid step', () => {
+    expect(upkeepLine(true)).toContain('the only paid step is embedding new text, capped at $1 a day (maintenance.embed_daily_usd)');
+    expect(upkeepLine(true)).not.toContain('paid for without you');
+  });
+
+  test('upkeep alone never opens a bundle', () => {
+    expect(buildInitFirstRunNotices({ writeback: false, skillsScaffold: null, upkeep: { embedding: false } })).toEqual([]);
+  });
+
+  test('setup states it once in the settings it relays, never as a question', () => {
+    const [bundle] = buildInitFirstRunNotices({ searchMode, upkeep: { embedding: false } });
+    const [n] = setupFirstRunNotices([{ ...bundle, contract_version: 1 }], 'Claude Code');
+    expect(n.user_message!.split(upkeepLine(false)).length).toBe(2);
+    expect(n.user_message).toContain("Nothing needs an answer now");
+    const [alone] = setupFirstRunNotices([{ ...bundle, decisions: bundle.decisions!.filter(d => d.id === 'upkeep'), contract_version: 1 }], 'Claude Code');
+    expect(alone.user_message).toBe(`gbrain is set up and Claude Code is wired, so memory works now. ${upkeepLine(false)} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`);
   });
 });
 

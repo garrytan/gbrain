@@ -7,7 +7,7 @@
  *   skills.resolver.session_token_budget, skills.resolver.auto_rebuild
  *                                      (PR A's settings, src/core/skills/resolver/config.ts)
  *   skills.resolver.lane_payload_chars the hook lane's payload budget (500..10000, default 4000)
- *   skills.resolver.top_k, min_match, pinned, per_harness.<harness>.{top_k,min_match}
+ *   skills.resolver.top_k, min_match, top_gate, pinned, per_harness.<harness>.{top_k,min_match,top_gate,dirs}
  *                                      the hook lane's turn settings (src/core/skills/resolver/config.ts)
  *
  * A missing file is created with only these keys: no engine, no database, so
@@ -20,7 +20,7 @@ import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { setCliExitVerdict } from '../cli-force-exit.ts';
-import { laneTurnSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateSessionTokenBudget, validateTopK } from '../skills/resolver/config.ts';
+import { laneTurnSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateSessionTokenBudget, validateSkillDirs, validateTopGate, validateTopK } from '../skills/resolver/config.ts';
 
 const CONFIG_CAP_BYTES = 1024 * 1024;
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -48,7 +48,7 @@ export function readResolverConfig(home: string): ResolverConfigRead {
   }
 }
 
-function resolverSection(doc: Record<string, unknown>): Record<string, unknown> {
+export function resolverSection(doc: Record<string, unknown>): Record<string, unknown> {
   const r = (doc.skills as { resolver?: unknown } | undefined)?.resolver;
   return r && typeof r === 'object' && !Array.isArray(r) ? r as Record<string, unknown> : {};
 }
@@ -89,8 +89,8 @@ export function setResolverHarness(read: Exclude<ResolverConfigRead, { state: 'u
 
 export const SKILL_RESOLVER_KEY_PREFIX = 'skills.resolver.';
 /** The leaves `gbrain config set|unset|get` accepts (harnesses is setup's: --skill-loading resolve|off). */
-export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.hermes.owner_sender_ids'] as const;
-const PER_HARNESS_LEAF = /^per_harness\.([a-z-]+)\.(top_k|min_match|owner_sender_ids)$/;
+export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'top_gate', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.<harness>.top_gate', 'per_harness.<harness>.dirs', 'per_harness.hermes.owner_sender_ids'] as const;
+const PER_HARNESS_LEAF = /^per_harness\.([a-z-]+)\.(top_k|min_match|top_gate|dirs|owner_sender_ids)$/;
 
 function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean | number | string | string[] } | { ok: false; error: string } {
   const turnKey = leaf.match(PER_HARNESS_LEAF)?.[2] ?? leaf;
@@ -98,6 +98,8 @@ function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean
   try {
     if (turnKey === 'top_k') return { ok: true, value: validateTopK(/^\d+$/.test(value) ? Number(value) : NaN, key) };
     if (turnKey === 'min_match') return { ok: true, value: validateMinMatch(value, key) };
+    if (turnKey === 'top_gate') return { ok: true, value: validateTopGate(/^\d+(\.\d+)?$/.test(value) ? Number(value) : NaN, key) };
+    if (turnKey === 'dirs') return { ok: true, value: validateSkillDirs(value.split(',').map(s => s.trim()).filter(Boolean), key) };
     if (leaf === 'pinned') return { ok: true, value: validatePinned(value.split(',').map(s => s.trim()).filter(Boolean), key) };
     if (turnKey === 'owner_sender_ids') return { ok: true, value: validateOwnerSenders(value.split(',').map(s => s.trim()).filter(Boolean), key) };
   } catch (e) { return { ok: false, error: (e as Error).message.slice(key.length + 1) }; }

@@ -40,6 +40,7 @@ import { OWNER_MEMBER_KEY } from '../core/search/private-visibility.ts';
 import { operations, operationsByName, opAllowedForBoundClient } from '../core/operations.ts';
 import { scopeDeniedError } from '../core/ops/op-fix.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
+import { ROOM_HEADER } from '../core/access/room.ts';
 import { ACTOR_HEADER, QM_AUDIENCE_HEADER, withAttestRight } from '../core/access/actor-model.ts';
 import { parseAgentLabel, AGENT_LABEL_HEADER } from '../core/persistence/attribution.ts';
 import { qmMemoryToolResult } from '../core/ops/qm-memory.ts';
@@ -570,7 +571,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           transport: 'http', inboundFrameBytes: bodyCap,
           takesHoldersAllowList: auth.takesHoldersAllowList,
           sourceId: auth.sourceId, agentLabel: parseAgentLabel(req.headers.get(AGENT_LABEL_HEADER)),
-          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta }, mcpCaller: { client: auth.auth?.clientName, userAgent: req.headers.get('user-agent') ?? undefined, meta: params?._meta },
+          ...(localFederated ? { localFederatedSourceIds: localFederated } : {}), onBehalfOf: { header: req.headers.get(ON_BEHALF_OF_HEADER) ?? undefined, requestMeta: params?._meta }, room: { header: req.headers.get(ROOM_HEADER) ?? undefined, requestMeta: params?._meta }, mcpCaller: { client: auth.auth?.clientName, userAgent: req.headers.get('user-agent') ?? undefined, meta: params?._meta },
           actor: { header: req.headers.get(ACTOR_HEADER) ?? undefined, audience: req.headers.get(QM_AUDIENCE_HEADER) ?? undefined }, // #1336: thread the token's federated_read grant so read ops scope
           // to the operator-granted sources via sourceScopeOpts.
           auth: auth.auth,

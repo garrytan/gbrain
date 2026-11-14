@@ -69,6 +69,7 @@
         "OPENAI_BASE_URL",
         "OPENROUTER_API_KEY",
         "OPENROUTER_BASE_URL",
+        "PARTICLE_API_KEY",
         "PATH",
         "PERPLEXITY_API_KEY",
         "PPLX_API_KEY",

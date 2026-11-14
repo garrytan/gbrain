@@ -182,7 +182,7 @@ off until the user opts in, and paid enrichment is a separate choice.
 | "Extract links", "build link graph", "populate timeline" | `skills/maintain/SKILL.md` (extraction sections) |
 | "Run dream", "process today's session", "synthesize my conversations", "consolidate yesterday's conversations", "what patterns did you see", "did the dream cycle run", "retriage the backlog", "re-score the triage" | `skills/maintain/SKILL.md` (dream cycle section) |
 | "Brain health", "what features am I missing", "brain score" | Run `gbrain features --json` |
-| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain autopilot --install --repo ~/brain` |
+| "Set up autopilot", "run brain maintenance", "keep brain updated" | Run `gbrain maintain --status`. An open `gbrain serve` runs free upkeep while idle. For a brain no agent opens most days, offer `gbrain maintain --schedule` (asks consent). A Postgres brain with a repo can use `gbrain autopilot --install --repo ~/brain` |
 | "Upgrade gbrain", "update gbrain", "gbrain update available", `UPGRADE_AVAILABLE`, "is gbrain up to date" | `skills/gbrain-upgrade/SKILL.md` |
 | Agent identity, "who am I", customize agent | `skills/soul-audit/SKILL.md` |
 | "Populate links", "extract links", "backfill graph" | `skills/maintain/SKILL.md` (graph population phase) |

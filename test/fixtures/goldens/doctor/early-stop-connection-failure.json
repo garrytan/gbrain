@@ -138,6 +138,23 @@
     },
     {
       "details": {
+        "scope": "managed",
+        "totals": {
+          "bytes": 100,
+          "drift": 0,
+          "invocations": 0,
+          "size": 0,
+          "skills": 1,
+          "subcommands_unverified": 0
+        }
+      },
+      "elapsed_ms": "<volatile>",
+      "message": "1 skill(s), 0 KB (commands and flags not checked outside the CLI); no findings",
+      "name": "skill_health",
+      "status": "ok"
+    },
+    {
+      "details": {
         "enabled": false,
         "out_of_band_settable": true,
         "reason": "disabled"
