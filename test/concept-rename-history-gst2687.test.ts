@@ -32,6 +32,8 @@ import { bindCredential } from '../src/core/access/members.ts';
 import { renamePageOntoSlug } from '../src/commands/sync/rename-collision.ts';
 import { derivedVisibilityCheck } from '../src/commands/doctor/checks/derived-visibility.ts';
 import { runMigrations } from '../src/core/migrate.ts';
+import { hasPendingMigrations } from '../src/core/migrate-pending.ts';
+import { withEngineScope } from '../src/core/engine-scope.ts';
 import { v311 } from '../src/core/schema-migrations/v311-concept-inputs-private.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
@@ -190,11 +192,13 @@ for (const kind of testBackends()) {
       await engine.setConfig('version', String(v311.version - 1));
       try {
         __resetPrivateVisibilityCacheForTests();
-        const visible = await engine.transaction(async tx => {
+        expect(await hasPendingMigrations(engine)).toBe(true); // the connect gate's read records the version, as for a CLI call
+        const visible = await withEngineScope(engine, () => engine.transaction(async tx => {
+          expect(privatePagesFilterFragment('p')).not.toContain('gbrain_concept_inputs_private(');
           const rows = await tx.executeRaw<{ slug: string }>(`SELECT p.slug FROM pages p WHERE p.source_id = $1 AND ${privatePagesFilterFragment('p')}`, [SRC]);
           expect(await tx.executeRaw<{ ok: number }>('SELECT 1 AS ok')).toEqual([{ ok: 1 }]);
           return rows.map(row => row.slug);
-        });
+        }));
         expect({ concept: visible.includes(CONCEPT), atom: visible.includes(ATOM) }).toEqual({ concept: false, atom: false });
       } finally {
         await runMigrations(engine);
@@ -210,6 +214,17 @@ for (const kind of testBackends()) {
       const visible = await withCallerAccess(scope, async () => (await engine.executeRaw<{ slug: string }>(
         `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND ${privatePagesFilterFragment('p')}`, [SRC])).map(row => row.slug));
       expect(visible.includes(CONCEPT)).toBe(false);
+    }, 60_000);
+
+    test('(k) on a v311 brain a local read with no caller record takes the function form in its engine scope and hides the concept', async () => {
+      __resetPrivateVisibilityCacheForTests();
+      expect(await hasPendingMigrations(engine)).toBe(false);
+      const usesFunction = (scope: object) => withEngineScope(scope, () => privatePagesFilterFragment('p')).includes('gbrain_concept_inputs_private(');
+      expect({ engine: usesFunction(engine), unrecorded: usesFunction({}) }).toEqual({ engine: true, unrecorded: false });
+      expect(privatePagesFilterFragment('p')).not.toContain('gbrain_concept_inputs_private(');
+      const visible = await withEngineScope(engine, () => engine.transaction(async tx => (await tx.executeRaw<{ slug: string }>(
+        `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND ${privatePagesFilterFragment('p')}`, [SRC])).map(row => row.slug)));
+      expect({ concept: visible.includes(CONCEPT), atom: visible.includes(ATOM) }).toEqual({ concept: false, atom: false });
     }, 60_000);
   });
 }

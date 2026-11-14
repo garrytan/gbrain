@@ -22,7 +22,8 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../engine.ts';
-import { embeddedKey, embeddedKeyInScope, unscopedWithOpenEmbeddedEngines } from '../engine-scope-store.ts';
+import { embeddedKey, embeddedKeyInScope, engineScopeStore, unscopedWithOpenEmbeddedEngines } from '../engine-scope-store.ts';
+import { schemaVersionSeen } from '../migrate-pending.ts';
 import { requestConfigRows } from '../config-snapshot.ts';
 import { isValidSourceId } from '../source-id.ts';
 import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
@@ -701,15 +702,18 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * move whose alias a later rename onto the old slug dropped (#8920). A concept's
  * inputs are judged the same way, moved origins included (GST-2687), by the SQL
  * function gbrain_concept_inputs_private (migration v311), one planned call per
- * page instead of the subplans, under a caller record that carries a schema version at or above v311 (a remote
- * request, a scope or attested read). Over a shadowed `pages` (privacyPartSql), for a local caller, and on a brain
- * whose schema predates v311 or whose version could not be read, the same test runs inline, as gbrain_access_origin_restricted is
+ * page instead of the subplans, when the read's schema version is at or above v311: the one its remote, scope or
+ * attested caller record carries, or, with no remote policy, the one the engine in scope recorded at connect or
+ * migration (schemaVersionSeen). Over a shadowed `pages` (privacyPartSql), outside an engine scope, and on a brain
+ * whose schema predates v311 or whose version was not read, the same test runs inline, as gbrain_access_origin_restricted is
  * skipped inside a request on a brain that never set access.restrictions_present.
  */
 function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
-  const schema = currentCallerAccess().remotePolicy?.schemaVersion;
+  const { remotePolicy } = currentCallerAccess();
+  const scoped = engineScopeStore.getStore();
+  const schema = remotePolicy ? remotePolicy.schemaVersion : scoped ? schemaVersionSeen(scoped) : undefined;
   const conceptInputsPrivate = !shadowedPages && schema !== undefined && schema >= v311.version ? `gbrain_concept_inputs_private((${p}.id)::integer)`
     : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
@@ -1141,7 +1145,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
 export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
 
 /** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
-/** `schemaVersion`: config `version` as the request read it; below v311, or absent, the concept-input test runs inline (derivedOriginPrivateSql). */
+/** `schemaVersion`: config `version` as the request read it; below v311, or absent, the concept-input test runs inline (derivedOriginPrivateSql). A local read has no policy and uses its engine's recorded version instead. */
 export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean; serves?: ServesPolicy; servesUnknown?: boolean; schemaVersion?: number }
 
 /** GST-363: an explicit access.serves wins over the trigger-kept member count; enforcement is on unless set to false. */
