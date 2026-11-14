@@ -2,9 +2,10 @@
  * guest_source doctor check (GBRA-504 slice 4, read-only).
  *
  * For every guest source (a guest_sources row, or a source whose config says guest: true):
- *  - fail: the source config lacks guest, federated or the external_untrusted trust_ceiling, it has a local path, the
- *    config says guest with no guest_sources row, the brain's guests.present marker is unset (reads would skip the
- *    guest warning), a writer names a removed or unknown credential, or a writer's grant reaches beyond the guest source;
+ *  - fail: the two guest records disagree (config guest: true with no guest_sources row, or a guest_sources row whose
+ *    config lacks guest: true; either alone still marks reads, and gbrain guests init restores both), the config lacks
+ *    federated or the external_untrusted trust_ceiling, it has a local path, a writer names a removed or unknown
+ *    credential, or a writer's grant reaches beyond the guest source;
  *  - warn: the writer list is empty or names a principal that is not a remote credential, no brain owner is set, a
  *    credential bound to the owner cannot read the source (with the exact grant command, and
  *    gbrain guests grant-owner-clients for all of them), or its min_trust floor hides guest notes (F9).
@@ -15,7 +16,7 @@ import type { BrainEngine } from '../../../core/engine.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { authSourcesFromGrant, grantFromClient, grantFromRow, grantFromTokenRow } from '../../../core/grants/model.ts';
-import { GUEST_SOURCES_PRESENT_KEY } from '../../../core/guests/marker.ts';
+import { guestSourceSql } from '../../../core/guests/marker.ts';
 import { GUEST_TRUST_CEILING } from '../../../core/guests/sources.ts';
 import { ownerCredentials } from '../../../core/guests/owner-credentials.ts';
 
@@ -41,13 +42,14 @@ async function writerFindings(engine: BrainEngine, source: string, writer: strin
   return [{ level: 'fail', text: 'writer ' + writer + ' is granted ' + [...new Set([auth.sourceId, ...reads])].join(', ') + ', not exactly ' + source }];
 }
 
-async function sourceFindings(engine: BrainEngine, s: GuestSourceRow, present: boolean): Promise<Finding[]> {
+async function sourceFindings(engine: BrainEngine, s: GuestSourceRow): Promise<Finding[]> {
   const out: Finding[] = [];
   const init = ['gbrain', 'guests', 'init', '--source', s.id, '--yes'];
   const config = json(s.config);
-  if (s.writers === null) return [{ level: 'fail', text: 'source ' + s.id + ' says guest: true in its config but is not a guest source (no guest_sources row), so nothing enforces its writer list or ceiling', fix: init }];
-  if (!present) out.push({ level: 'fail', text: 'source ' + s.id + ' is a guest source but config ' + GUEST_SOURCES_PRESENT_KEY + ' is unset, so reads skip the guest warning', fix: init });
-  const flags = [config.guest === true ? null : 'guest', config.federated === true ? null : 'federated',
+  const repair = '; its notes still read as guest notes, repair: ' + init.join(' ');
+  if (s.writers === null) return [{ level: 'fail', text: 'source ' + s.id + ' says guest: true in its config but has no guest_sources row, so the two guest records disagree and nothing enforces its writer list or ceiling' + repair, fix: init }];
+  if (config.guest !== true) out.push({ level: 'fail', text: 'source ' + s.id + ' has a guest_sources row but its config does not say guest: true, so the two guest records disagree' + repair, fix: init });
+  const flags = [config.federated === true ? null : 'federated',
     config.trust_ceiling === GUEST_TRUST_CEILING && s.ceiling === GUEST_TRUST_CEILING ? null : 'trust_ceiling ' + GUEST_TRUST_CEILING].filter(Boolean);
   if (flags.length) out.push({ level: 'fail', text: 'source ' + s.id + ' is missing ' + flags.join(', '), fix: init });
   if (s.local_path) out.push({ level: 'fail', text: 'source ' + s.id + ' has a local path; a guest source is database-only' });
@@ -72,11 +74,10 @@ export async function guestSourceCheck(engine: BrainEngine): Promise<Check> {
   try {
     const sources = await engine.executeRaw<GuestSourceRow>(
       'SELECT s.id, s.local_path, s.config, g.writers, g.trust_ceiling AS ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id = s.id '
-        + "WHERE g.source_id IS NOT NULL OR s.config->>'guest' = 'true' ORDER BY s.id");
+        + 'WHERE ' + guestSourceSql('s.config', 's.id') + ' ORDER BY s.id');
     if (!sources.length) return infoCheck(name, 'Not applicable: this brain has no guest source (gbrain guests init).', 'not_applicable');
-    const present = (await engine.getConfig(GUEST_SOURCES_PRESENT_KEY)) === 'true';
     const findings: Finding[] = [];
-    for (const s of sources) findings.push(...await sourceFindings(engine, s, present));
+    for (const s of sources) findings.push(...await sourceFindings(engine, s));
     const ids = sources.map(s => s.id).join(', ');
     const details = { sources: sources.map(s => ({ source: s.id, writers: s.writers ?? [] })), findings: findings.map(f => ({ level: f.level, text: f.text })) };
     if (!findings.length) return { name, status: 'ok', message: 'Guest source(s) ' + ids + ': flags, ceiling and writers in place, and every owner credential reads them.', details };

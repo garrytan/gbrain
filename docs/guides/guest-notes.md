@@ -239,10 +239,13 @@ source other than `guests`. A credential with a `min_trust` floor above
 gbrain doctor --only guest_source --json
 ```
 
-The `guest_source` check reads, and changes nothing. It fails when a guest source
-is missing its `guest`, `federated` or `trust_ceiling` flags, has a local
-path, is marked guest without its database record, or the brain's
-`guests.present` marker is unset (reads would skip the warning); and when a
+The `guest_source` check reads, and changes nothing. A source is a guest source
+when its config says `guest: true` or it has a guest source record, so its
+notes keep their warning if one of the two is lost. The check fails when the
+two disagree (one is there without the other) and names the repair,
+`gbrain guests init --source <id> --yes`, which restores both and keeps the
+writer list. It also fails when a guest source is missing its `federated` or
+`trust_ceiling` flags or has a local path, and when a
 writer names a removed credential or one whose grant reaches beyond the guest
 source. It warns when the writer list is empty, no owner is set, a credential bound
 to you can't read the guest source (it prints the exact

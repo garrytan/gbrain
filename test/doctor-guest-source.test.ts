@@ -2,9 +2,10 @@
  * guest_source doctor check (GBRA-504 slice 4).
  *
  * Protects: not_applicable without a guest source; ok for a guest source with its flags, ceiling and a live writer
- * whose grant is exactly the guest source, read by every owner credential; fail when a source is marked guest but the
- * brain's guests.present marker is unset (reads would skip the warning), when a source says guest without its
- * guest_sources row, when a writer names a removed client, or when a writer's grant reaches another source; warn, with
+ * whose grant is exactly the guest source, read by every owner credential; fail, naming gbrain guests init as the
+ * repair, when the two guest records disagree (a guest_sources row whose config lost guest: true, or a config that says
+ * guest with no guest_sources row), when a writer names a removed client, or when a writer's grant reaches another
+ * source; warn, with
  * the exact grant command, when an owner credential cannot read the guest source, and when its min_trust floor hides
  * guest notes (F9). The check reads only: no grant changes. PGLite in-memory, no repository.
  */
@@ -16,7 +17,6 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { initGuestSource } from '../src/core/guests/sources.ts';
-import { GUEST_SOURCES_PRESENT_KEY } from '../src/core/guests/marker.ts';
 import { guestSourceCheck } from '../src/commands/doctor/checks/guest-source.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import { setMinTrust } from '../src/core/trust/min-trust.ts';
@@ -64,21 +64,24 @@ describe('guest_source doctor check', () => {
     expect({ status: check.status, message: check.message }).toEqual({ status: 'ok', message: expect.stringContaining(SRC) });
   }, 60_000);
 
-  test('a source marked guest while guests.present is unset fails', async () => {
+  test('a guest_sources row whose config lost guest: true fails as a disagreement and names the repair', async () => {
     await healthyBrain();
-    await engine.executeRaw('DELETE FROM config WHERE key = $1', [GUEST_SOURCES_PRESENT_KEY]);
+    await engine.executeRaw("UPDATE sources SET config = config - 'guest' WHERE id = $1", [SRC]);
     const check = await guestSourceCheck(engine);
     expect(check.status).toBe('fail');
-    expect(check.message).toContain(GUEST_SOURCES_PRESENT_KEY);
+    expect(check.message).toContain('source ' + SRC + ' has a guest_sources row but its config does not say guest: true');
+    expect(check.message).toContain('repair: gbrain guests init --source ' + SRC + ' --yes');
     expect(check.fix?.argv).toEqual(['gbrain', 'guests', 'init', '--source', SRC, '--yes']);
   }, 60_000);
 
-  test('a source whose config says guest but has no guest_sources row fails', async () => {
+  test('a source whose config says guest but has no guest_sources row fails as a disagreement and names the repair', async () => {
     await healthyBrain();
     await engine.executeRaw("UPDATE sources SET config = config || '{\"guest\": true}'::jsonb WHERE id = $1", [PLAIN]);
     const check = await guestSourceCheck(engine);
     expect(check.status).toBe('fail');
-    expect(check.message).toContain(PLAIN);
+    expect(check.message).toContain('source ' + PLAIN + ' says guest: true in its config but has no guest_sources row');
+    expect(check.message).toContain('repair: gbrain guests init --source ' + PLAIN + ' --yes');
+    expect(check.fix?.argv).toEqual(['gbrain', 'guests', 'init', '--source', PLAIN, '--yes']);
   }, 60_000);
 
   test('a writer naming a removed client, or a writer granted another source, fails', async () => {
