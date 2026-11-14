@@ -46,6 +46,7 @@ import {
 } from '../mcp/surface.ts';
 import { getBrainHotMemoryMeta } from '../core/facts/meta-hook.ts';
 import { ON_BEHALF_OF_HEADER } from '../core/access/audience.ts';
+import { ROOM_HEADER } from '../core/access/room.ts';
 import { ACTOR_HEADER, EXTERNAL_ID_RE, QM_AUDIENCE_HEADER } from '../core/access/actor-model.ts';
 import { parseAgentLabel, AGENT_LABEL_HEADER } from '../core/persistence/attribution.ts';
 import { qmMemoryToolResult } from '../core/ops/qm-memory.ts';
@@ -76,6 +77,8 @@ interface McpRequestState {
   thinClient: boolean;
   /** GBRA-231: the X-Gbrain-On-Behalf-Of header (a shared agent's audience); bounded by the credential's may_act_for in dispatch. */
   onBehalfOfHeader: string | undefined;
+  /** GBRA-498: the X-Gbrain-Room header (the room an answer goes into); it only marks results, never narrows or widens them. */
+  roomHeader: string | undefined;
   /** GST-359 C1: the x-qm-actor header (a trusted system names the person); honoured in dispatch only for an attest credential. */
   actorHeader: string | undefined;
   /** GST-359 D: the x-qm-audience header (QM's channel audience, wave 2); any request carrying it is refused before any work. */
@@ -204,7 +207,7 @@ export function mountMcp(app: Express, ctx: ServeHttpContext): void {
       surface === 'full' && authInfo.allowedOperations == null ? undefined : new Set(mcpOperations.map(o => o.name));
     const thinClient = isGbrainThinClient(req.get(GBRAIN_CLIENT_HEADER));
     const state: McpRequestState = { authInfo, agentName, startTime, mcpOperations, surface, surfaceCeiling, surfaceAllowedOps, resultRows, thinClient,
-      onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER), actorHeader: req.get(ACTOR_HEADER), audienceHeader: req.get(QM_AUDIENCE_HEADER),
+      onBehalfOfHeader: req.get(ON_BEHALF_OF_HEADER), roomHeader: req.get(ROOM_HEADER), actorHeader: req.get(ACTOR_HEADER), audienceHeader: req.get(QM_AUDIENCE_HEADER),
       userAgent: req.get('user-agent'), agentLabel: parseAgentLabel(req.get(AGENT_LABEL_HEADER)) };
     const server = createMcpRequestServer(ctx, state, writeback, writeback?.enabled ? await engine.getConfig(OWNER_MEMBER_KEY).catch(() => null) : null);
     await serveMcpRequest(server, req, res);
@@ -459,6 +462,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
       ...(sessionId ? { sessionId } : {}),
       ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}),
       onBehalfOf: { header: state.onBehalfOfHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
+      room: { header: state.roomHeader, requestMeta: (request.params as { _meta?: unknown })._meta },
       mcpCaller: { client: authInfo.clientName, userAgent: state.userAgent, meta: (request.params as { _meta?: Record<string, unknown> })._meta },
       actor: { header: state.actorHeader, audience: state.audienceHeader },
       ...(state.agentLabel ? { agentLabel: state.agentLabel } : {}),
