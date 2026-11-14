@@ -749,7 +749,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       return;
     }
     const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(enforcedReadOf ? await enforcedReadOf(p) : await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
-    const output = paged ? '' : formatResult(op.name, result, params);
+    const output = paged ? '' : require('./guest-lines.ts').withGuestLines(op.name, result, params, formatResult(op.name, result, params));
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
     // writeStdoutFinal.
@@ -855,7 +855,7 @@ async function runThinClientRouted(
     hintAmbientNarrowing(op, params, result, ambientScope);
     const skew = (await import('../core/search/evidence-delivery.ts')).deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');
-    const output = formatResult(op.name, result, params);
+    const output = require('./guest-lines.ts').withGuestLines(op.name, result, params, formatResult(op.name, result, params));
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);

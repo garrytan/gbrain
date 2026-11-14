@@ -125,6 +125,32 @@ Guest notes feed nothing else in your brain: no facts, takes, timeline entries,
 atoms or link edges are made from them, and the dream cycle and extraction skip
 the guest source. Search, query and get still find them.
 
+## What readers see
+
+Every read that can return a guest note's text marks it, over MCP, HTTP and
+the local CLI alike. JSON results give the row `origin: "guest"`, trust tier
+`external_untrusted` and a `guest` object:
+
+```json
+{ "sender_label": "Bob Example", "group": "team-a", "audience_member": "member:bob-example",
+  "saved_at": "2026-11-13", "promoted": false, "writer": "legacy_token:<id>" }
+```
+
+`writer` is shown to the owner only. Text answers put a warning line before the
+note, then wrap it in `<external-data trust="external_untrusted" origin="guest">`:
+
+```text
+[outside guest · Bob Example · team-a · 2026-11-13 · not the owner's words, not verified]
+```
+
+A guest note whose mark cannot be read still gets the warning, as
+`[outside guest · unattributed · not the owner's words, not verified]`; it is
+never shown as yours. When `think` builds an answer from guest notes, gbrain
+appends `Uses outside-guest notes: <slugs> (not the owner's words, not verified).`
+itself; the model never writes that line. Text inside the note cannot change
+the mark: it comes from `guest_marks`, not from the page. Servers that do this
+list the `guest_marker_v1` capability.
+
 ## What is stored
 
 Three database tables back a guest source. `guest_sources` names each guest

@@ -107,7 +107,7 @@ import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
 import { fileContentHash, FileBytes, isStreamedContent, LARGE_FILE_MIN_BYTES, StreamedFileContent } from './large-file.ts';
 import { bindOrigin } from './origin-guard.ts';
-import { assertGuestReaders, assertGuestWriterAtPublication, insertGuestMark } from '../guests/admission.ts';
+import { assertGuestReaders, assertGuestWriterAtPublication, assertNoGuestSourceAtPublication, insertGuestMark } from '../guests/admission.ts';
 import { isGuestSource, storedGuestNote } from '../guests/note.ts';
 import { skipsGuestNote } from '../guests/derived.ts';
 
@@ -1337,6 +1337,10 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       if (!noop) await insertGuestMark(tx, row, guestNote, guestAudience);
       return out;
     };
+  } else {
+    // A write admitted before its source became a guest source carries no guest note: it never publishes there.
+    const { validate } = publication;
+    publication.validate = async tx => { await validate?.(tx); await assertNoGuestSourceAtPublication(tx, row); };
   }
   return publication;
 }

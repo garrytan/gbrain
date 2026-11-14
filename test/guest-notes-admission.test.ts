@@ -314,4 +314,25 @@ describe('guest write admission (pglite, repo-less)', () => {
       expect(await pageRow(slug)).toBeNull();
     } finally { await changeGuestWriters(engine, SRC, { add: [writer] }); }
   }, 60_000);
+
+  test('a plain write admitted before its source became a guest source refuses at publication', async () => {
+    const carry = 'source-b';
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [carry]);
+    const minted = await mintLegacyToken(engine, { name: 'carry', scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [carry] });
+    tokens.carry = { id: minted.id, token: minted.token };
+    await readsUnscopedOnPurpose(engine, minted.id);
+    const slug = slugOf();
+    const auth = await verify('carry');
+    const params = { slug, content: '---\ntype: note\ntitle: Plain\n---\n# Plain\n\nPlain words.', request_id: randomUUID() };
+    const ctx = buildOperationContext(engine, params, { remote: true, transport: 'http', auth, sourceId: carry, takesHoldersAllowList: ['world'] });
+    const access = await remoteCallerAccess(engine, auth, undefined, 'http', parseAudience({}), undefined, false);
+    const row = await withCallerAccess(access, async () => {
+      const prepared = await preparePageAdmission(ctx, { operation: 'put_page', params });
+      return admitWrite(engine, prepared.admission!);
+    });
+    await initGuestSource(engine, carry, [`legacy_token:${minted.id}`]);
+    const settled = await waitForWrite(engine, row, ctx.config, 10_000);
+    expect({ state: settled.state, code: settled.error_code }).toEqual({ state: 'failed', code: 'guest_attribution_missing' });
+    expect(await pageRow(slug, carry)).toBeNull();
+  }, 60_000);
 });

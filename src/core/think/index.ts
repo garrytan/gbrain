@@ -43,6 +43,7 @@ import { evidenceTitlesEnabled } from '../search/evidence-date.ts';
 import { startThinkDecide, thinkAbstainResult, type ThinkAbstention } from './decide.ts';
 import { classifyIntent } from './intent.ts';
 import { deriveTrust, type TaintRef } from '../trust/taint.ts';
+import { guestAnswerLine, type GuestStamp } from '../guests/marker.ts';
 import { publishSinglePage, THINK_SYNTHESIS_KIND } from '../generations/adapters/single-page.ts';
 
 /** Anthropic Messages client interface — same shape used by subagent.ts so test stubs can be shared. */
@@ -230,6 +231,8 @@ export interface ThinkResult {
    * `think.excerpt_ceiling_chars`) and soft; see think/pages-budget.ts.
    */
   evidence_truncated?: boolean;
+  /** GBRA-504: the outside-guest notes that reached the prompt; `answer` then ends with the fixed guest line gbrain appends. */
+  guest_evidence?: Array<{ source_id: string; slug: string; guest: GuestStamp }>;
   /** Gathered pages with the revision retrieved, for retrieval-feedback recording; the op layer strips it. */
   feedback_evidence?: Array<{ source_id: string; slug: string; content_hash: string | null }>;
   /** #5575 I2: every page, take and trajectory fact placed in the synthesis prompt; `persistSynthesis` taints from them. The op layer strips it. */
@@ -683,6 +686,10 @@ export async function runThink(
   if (gather.diagnostics.window?.dropped) warnings.push(`WINDOW_EXCLUDED_${gather.diagnostics.window.dropped}_PAGES`);
   // #5575 A6: every page and take reaches the prompt with its trust tier.
   await stampPageTrust(engine, gather.pages);
+  // GBRA-504: the guest notes among them; the answer names them in a line gbrain appends after synthesis.
+  const guestEvidence = gather.pages.flatMap(pg => pg.guest ? [{ source_id: pg.source_id ?? 'default', slug: pg.slug, guest: pg.guest }] : []);
+  const guestAnswer = (answer: string) => guestEvidence.length
+    ? { answer: `${answer.trimEnd()}\n\n${guestAnswerLine(guestEvidence.map(g => g.slug))}`, guest_evidence: guestEvidence } : { answer };
   gather.takes = await stampRowTrust(engine, 'takes', gather.takes, t => ('take_id' in t ? t.take_id : (t as { id: number }).id));
 
   // Render evidence blocks for the prompt. #4510: the per-page excerpt is
@@ -893,9 +900,9 @@ export async function runThink(
       // Degrade gracefully: return the gather without synthesis. Better than throwing.
       return {
         question: opts.question,
-        answer: modelProblem
+        ...guestAnswer(modelProblem
           ? `(model "${modelUsed}" not usable — ${detail}${fix})`
-          : '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)',
+          : '(no LLM available — set ANTHROPIC_API_KEY or pass `client`)'),
         citations: [],
         gaps: [
           modelProblem
@@ -1032,10 +1039,11 @@ export async function runThink(
   const extractive = synthesisStatus !== 'ok'
     ? composeExtractiveFallback(gather.pages, opts.question, opts.remote !== false)
     : null;
+  const grounded: Partial<ThinkResult> = synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [opts.question, pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {};
 
   return {
     question: opts.question,
-    answer: response.answer, ...(synthesisStatus === 'ok' ? await groundThinkAnswer(engine, response.answer, [opts.question, pagesBlock, takesBlock, graphBlock ?? '', trajectoryBlock], warnings) : {}),
+    ...grounded, ...guestAnswer(grounded.answer ?? response.answer),
     citations: resolved.citations,
     gaps: response.gaps,
     pagesGathered: gather.pages.length,

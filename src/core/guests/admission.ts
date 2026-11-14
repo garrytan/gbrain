@@ -149,6 +149,19 @@ export async function assertGuestWriterAtPublication(tx: Pick<BrainEngine, 'exec
   if (!guest || !guest.writers.includes(`${row.principal_kind}:${row.principal_id}`)) throw sourceWriterRestricted(row.source_id);
 }
 
+/**
+ * Publication's check for a write that carries no guest note (it was admitted before its source became a guest
+ * source): a listed writer's put_page is guest_attribution_missing, any other listed writer's write is
+ * guest_page_immutable, and anyone else is source_writer_restricted. Nothing publishes.
+ */
+export async function assertNoGuestSourceAtPublication(tx: Pick<BrainEngine, 'executeRaw'>, row: { source_id: string; operation: string; principal_kind: string; principal_id: string }): Promise<void> {
+  const [guest] = await tx.executeRaw<{ writers: string[] }>('SELECT writers FROM guest_sources WHERE source_id = $1 FOR SHARE', [row.source_id]);
+  if (!guest) return;
+  if (!guest.writers.includes(`${row.principal_kind}:${row.principal_id}`)) throw sourceWriterRestricted(row.source_id);
+  if (row.operation === 'put_page') throw guestAttributionMissing('the source became a guest source after this write was submitted');
+  throw guestPageImmutable(`${row.operation} on a source that became a guest source after this write was submitted`);
+}
+
 /** The guest mark, written in the publication transaction right after the page row. */
 export async function insertGuestMark(tx: Pick<BrainEngine, 'executeRaw'>, row: { source_id: string; slug: string; principal_kind: string; principal_id: string; request_id: string },
   note: GuestAttribution, audience: string): Promise<void> {

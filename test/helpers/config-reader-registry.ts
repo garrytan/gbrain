@@ -30,6 +30,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'heal.audit', reason: 'the bounded self-heal audit log (last 200 rows, 30 days) that heal-audit.ts writes for each heal; doctor reads it to count a heal\'s consecutive failures, so a hand edit would hide an escalation' },
   { key: 'access.serves_derived', reason: 'whether two or more members are enabled, kept by the v309 trigger on access_members (search/private-visibility.ts servesPolicyFrom); a hand edit would lie about whom the brain serves' },
   { key: 'access.serves_since', reason: 'when the brain first served several people, set once by the v309 trigger and never cleared; it starts the unscoped-read grace (access/requester-scope.ts)' },
+  { key: 'guests.present', reason: 'sticky marker initGuestSource sets in the same transaction as the first guest source (guests/sources.ts); reads stamp guest notes only when it is set, so clearing it would show guest text without its warning' },
   { key: 'access.restrictions_present', reason: 'sticky member-access marker a v282 trigger sets once a page names readers or a member exists (search/private-visibility.ts); clearing it would send remote reads down the unrestricted fast path' },
   { key: '_internal.link_extraction_generation', reason: 'link-extraction watermark generation (link-extraction-watermark.ts)' },
   { key: 'code.cluster_generation', reason: 'code-intel traversal cache generation counter' },
