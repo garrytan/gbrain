@@ -165,7 +165,7 @@ export function proposalLines(p: VisibilityProposal, limit = 20): string[] {
   if (p.sets.length) lines.push('', `Reader sets (slugs files in ${p.dir}). Preview each, then run the --apply --expect <hash> it prints:`);
   for (const s of p.sets) lines.push(`  ${s.source}: ${plural(s.pages, 'page')} -> ${s.readers.join(', ')}`, `    ${s.command}`);
   if (p.unmatched.length) {
-    lines.push('', `Unmatched (${p.unmatched.length}): an address names no enabled member's declared email, so nothing is proposed. Declare it on the right member (gbrain access member set <id> --email <address>) and run --propose again, or label these by hand:`);
+    lines.push('', `Unmatched (${p.unmatched.length}): an address names no enabled member's declared email, so nothing is proposed. Declare it on the right member (gbrain access member set <id> --email <address>) and preview again, or label these by hand:`);
     for (const u of p.unmatched.slice(0, limit)) lines.push(`  ${u.source}:${u.slug} (${u.addresses.join(', ')})`);
     if (p.unmatched.length > limit) lines.push(`  ... and ${p.unmatched.length - limit} more (--json lists every one)`);
   }
