@@ -1,15 +1,15 @@
 /**
  * GST-2476 G2: what gbrain git commit-push may do under GBRAIN_ENFORCED_MEMBER. Named-path commits, --dry-run and
- * --pull run (their output withheld by the caller); every other publishing mode is refused. Each named path (a
- * directory expands to its changed files) must map to a source the member reads, must not be an access policy file,
- * must not be a page the member cannot read or a new page under a folder rule it does not satisfy, and its access and
- * privacy labels must equal those at HEAD.
+ * --pull run (their output withheld by the caller); every other publishing mode is refused, and a named-path commit
+ * refuses when the brain's access.enforced_member_writes is refuse. Each named path (a directory expands to its changed
+ * files) must map to a source the member reads, must not be an access policy file, must not be a page the member cannot
+ * read or a new page under a folder rule it does not satisfy, and its access and privacy labels must equal those at HEAD.
  */
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { execFileSync } from '../core/spawn.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import { enforcedAccess, markdownLabels, memberPageView, refuseEnforced } from './enforced-member.ts';
+import { enforcedAccess, enforcedWritesMode, markdownLabels, memberPageView, refuseEnforced, refuseWritesOff } from './enforced-member.ts';
 
 const VALUE_FLAGS = new Set(['-m', '--message', '--path', '--repo', '--base', '--branch', '--resolve', '--expect-remote']);
 const REFUSED_FLAGS = new Set(['--pending', '--push-only', '--resolve', '--expect-remote', '--allow-outside-source-root', '--keep-checkout', '--branch', '--scan-secrets', '--install', '--uninstall', '--untrack']);
@@ -45,6 +45,7 @@ export async function checkEnforcedCommitPush(engine: BrainEngine, args: readonl
   }
   if (pull && !named.length) return;
   if (!named.length) return dryRun ? undefined : refuseEnforced(command, 'arguments_not_allowed', { engine });
+  if (!dryRun && await enforcedWritesMode(engine) === 'refuse') return refuseWritesOff(engine, command, 'refuse');
   const { checkoutRoot, scopePaths } = await import('../core/git/commit-push.ts');
   let repo: string;
   let files: string[];
