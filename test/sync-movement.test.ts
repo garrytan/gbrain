@@ -33,7 +33,7 @@ import { claimWorktree } from '../src/core/persistence/ownership.ts';
 import { syncLockId, tryAcquireDbLock, type DbLockHandle } from '../src/core/db-lock.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { judgeMovement, readSourceMovement, startMovementWatch, formatSourceMovement, MOVEMENT_WATERMARK_SQL } from '../src/core/persistence/sync-movement.ts';
-import { movementReport, movementWindowMs, parseMovementArgs, runMovementCheck, runWriterMovementCli, MOVEMENT_HELP, MOVEMENT_SUPERVISOR_STEP } from '../src/commands/sources-writer-movement.ts';
+import { movementReport, movementWindowMs, parseMovementArgs, runMovementCheck, runWriterMovementCli, MOVEMENT_HELP, MOVEMENT_SUPERVISOR_STEP } from '../src/commands/sources-writer-movement-cli.ts';
 import { managedSyncMovementEntry } from '../src/commands/doctor/checks/managed-sync-movement.ts';
 import { deriveNext, cliRenderContext } from '../src/core/agent-output.ts';
 import { CODES } from '../src/core/error-registry.ts';

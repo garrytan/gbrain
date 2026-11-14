@@ -26,7 +26,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { MANAGED_SYNC_PASS_OP, writePassRow, type ManagedSyncPassValue } from '../src/core/persistence/sync-pass-row.ts';
 import { readManagedSyncBacklog } from '../src/core/persistence/sync-drain.ts';
 import { readSourceMovement } from '../src/core/persistence/sync-movement.ts';
-import { movementReport } from '../src/commands/sources-writer-movement.ts';
+import { movementReport } from '../src/commands/sources-writer-movement-cli.ts';
 import { managedSyncMovementEntry } from '../src/commands/doctor/checks/managed-sync-movement.ts';
 import { managedSyncBlockedEntry } from '../src/commands/doctor/checks/managed-sync-blocked.ts';
 import { gitHeldFilesCheck } from '../src/commands/doctor/checks/git-holds.ts';
