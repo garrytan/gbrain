@@ -16,6 +16,7 @@ import { folderHoldingSlug, holdingSlugSql, isHoldingSlug, UNATTRIBUTED_MEMORY_S
 import { maintenancePreflight, planHeldRowDrop, submitMaintenanceIntent, submitPlannedFactFenceAdoption, type HeldDrop } from '../persistence/prepared-maintenance.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
+import { assertStrictGitHome } from '../persistence/git-declared.ts';
 import { isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
@@ -87,9 +88,19 @@ export async function heldFactTarget(engine: BrainEngine, sourceId: string, key:
   return strict.miss === 'ambiguous' ? { ambiguous: await entityReferenceCandidates(engine, sourceId, key) } : null;
 }
 
+/**
+ * The refusal of every fact writer for an entity holdingHome refused to hold (remember, and GST-2635 the managed facts
+ * writer's attribute fallback), before anything is written: an exact page rule on a strict source refuses
+ * `git_home_required` naming the entity's page to create; otherwise the access state cannot be read, so retry.
+ */
+export async function refuseUnheldFact(engine: BrainEngine, sourceId: string, entity: string, refused: 'page_rule' | 'access_unreadable', remote: boolean): Promise<never> {
+  if (refused === 'page_rule') await assertStrictGitHome(engine, { source_id: sourceId, slug: entity }, remote);
+  throw accessStateUnreadable(sourceId, entity);
+}
+
 /** holdingHome's `access_unreadable`: the folder rules covering the entity cannot be read now, so nothing was written; retry. */
-export function accessStateUnreadable(sourceId: string): OperationError {
-  return opError('access_policy_pending', `The folder access rules of source ${sourceId} cannot be read right now, so gbrain cannot tell which holding page keeps this fact to its entity's readers; nothing was written.`,
+function accessStateUnreadable(sourceId: string, entity: string): OperationError {
+  return opError('access_policy_pending', `The folder access rules of source ${sourceId} that cover ${entity} cannot be read right now, so gbrain cannot tell which holding page keeps this fact to its entity's readers; nothing was written.`,
     'Retry the same request shortly; if it keeps failing, the brain host checks the folder access tables (gbrain doctor names the check).',
     { docs: 'docs/guides/write-refusals.md#access_policy_pending', fix: { argv: ['gbrain', 'access', 'rule', 'status', '--source', sourceId, '--json'], consent: [], actor: 'provider',
       requires_exclusive: false, why: 'Shows the folder rules and anything pending; changes nothing. The write succeeds once the rules read again.' } });

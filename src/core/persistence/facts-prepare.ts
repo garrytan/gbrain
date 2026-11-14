@@ -8,7 +8,7 @@ import type { RegistryCode } from '../error-registry.ts';
 import { withHeldFactsFence } from '../facts/unfenced-facts.ts';
 import { factsFenceEditor, factsFenceSection, parseFactsFenceFor, formatFenceDate, isHoldingSlug } from '../facts-fence.ts';
 import { getWorktreeBinding } from './ownership.ts';
-import { holdingHome } from '../facts/held-fact-move.ts';
+import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { wholeBodySnapshot } from './segmented-apply.ts';
 import { assertFactNotWithdrawn, decideSingleFact, factWithdrawnRefusal, type FactCandidate } from '../facts/single-prepare.ts';
@@ -177,6 +177,8 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
   const holdable = async (fact: { entity_slug: string | null }) => {
     if (!holding) return false;
     const home = await holdingHome(engine, row.source_id, fact.entity_slug === row.slug ? null : fact.entity_slug);
+    // GST-2635: a fallback fact whose home became refused after admission refuses here too, never stored outside Git.
+    if (home && 'refused' in home && fallback(fact)) await refuseUnheldFact(engine, row.source_id, fact.entity_slug!, home.refused, false);
     return home !== null && 'slug' in home && home.slug === row.slug;
   };
   if (!facts.length || facts.some(fact => !fallback(fact) && (fact.entity_slug !== null && fact.entity_slug !== row.slug || fact.entity_slug !== null && !stored))) {

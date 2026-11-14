@@ -27,7 +27,6 @@ import { grantedWriteSource, writeGrantRefusal } from './write-grant.ts';
 import type { WriteRequest } from './model.ts';
 import { prepareMemoryMutation } from './memory-prepare.ts';
 import { ownerReachesFact, readForgetTarget, refuseForgetReachingOtherCopies } from './forget-prepare.ts';
-import { assertStrictGitHome } from './git-declared.ts';
 import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withFolderRestricted } from '../search/private-visibility.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
@@ -128,11 +127,10 @@ async function planRememberTarget(ctx: OperationContext, sourceId: string, sourc
   // authority above ran on the entity (decision D1); the holding row is gbrain's own companion write, authorized as a write
   // to that entity. A folder's holding page takes the folder's storage class (database-only under storage.db_only or a path
   // Git ignores, as the entity's own page would be); a shared one kept out of Git keeps the fact database-only, as before.
-  const { accessStateUnreadable, holdingHome } = await import('../facts/held-fact-move.ts');
+  const { holdingHome, refuseUnheldFact } = await import('../facts/held-fact-move.ts');
   const home = !inferred && memberPage === null && entitySlug !== null && !snapshot && writeThrough ? await holdingHome(ctx.engine, sourceId, entitySlug) : null;
   // An exact page rule on the entity, or an access state this role cannot read: no holding page carries those readers.
-  if (home && 'refused' in home && home.refused === 'page_rule') await assertStrictGitHome(ctx.engine, { source_id: sourceId, slug: entitySlug! }, ctx.remote !== false);
-  if (home && 'refused' in home) throw accessStateUnreadable(sourceId);
+  if (home && 'refused' in home) await refuseUnheldFact(ctx.engine, sourceId, entitySlug!, home.refused, ctx.remote !== false);
   const holdingSlug = home && 'slug' in home ? home.slug : null;
   const holding = holdingSlug ? await ctx.engine.readPageSnapshot(holdingSlug, { sourceId, includeDeleted: true }) ?? 'absent' : null;
   const held = holding !== null && (holding === 'absent' || !holding.page.deleted_at && (Boolean(holding.page.source_path) || holdingSlug !== UNATTRIBUTED_MEMORY_SLUG));
