@@ -134,7 +134,7 @@ describe('gbrain skills (CLI)', () => {
     expect(rec.block).toContain('gbrain:deploy');
   }, 60_000);
 
-  test('with no --top-gate and no config, a request that only matches skill bodies weakly gets no block (exit 0, weak_top_match) on a brainless, repo-less home', () => {
+  test('with no --top-gate, a request that only matches skill bodies weakly gets no block (exit 0, weak_top_match) on a brainless, repo-less home; skills.resolver.top_gate and per_harness override the default, and --top-gate overrides both', () => {
     const h = tmp();
     const skills = JSON.stringify([
       { id: 'x:dinner-split', name: 'dinner-split', description: 'Split a restaurant bill between friends' },
@@ -147,6 +147,12 @@ describe('gbrain skills (CLI)', () => {
     expect([quiet.code, doc.block, doc.block_reason]).toEqual([0, '', 'weak_top_match']);
     expect(cli(h, ['skills', 'resolve', '--text', 'how much does each person owe']).out).toBe('');
     expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'split the restaurant bill', '--json']).out).block).toContain('x:dinner-split');
+    writeFileSync(join(h, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: { per_harness: { codex: { top_gate: 0 } } } } }));
+    expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'how much does each person owe', '--harness', 'codex', '--json']).out).block).toContain('x:deploy');
+    expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'how much does each person owe', '--json']).out).block_reason).toBe('weak_top_match');
+    writeFileSync(join(h, '.gbrain', 'config.json'), JSON.stringify({ skills: { resolver: { top_gate: 0 } } }));
+    expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'how much does each person owe', '--json']).out).block).toContain('x:deploy');
+    expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'how much does each person owe', '--top-gate', '100', '--json']).out).block_reason).toBe('weak_top_match');
   }, 60_000);
 
   test('--top-gate empties the block with block_reason weak_top_match, and the output validates', () => {

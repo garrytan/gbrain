@@ -25,6 +25,7 @@ import {
 } from '../core/skills/resolver/index.ts';
 import { validCatalogName } from '../core/skills/resolver/paths.ts';
 import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
+import { laneTurnSettings } from '../core/skills/resolver/config.ts';
 import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
 import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
 import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extension.ts';
@@ -78,8 +79,8 @@ and no brain connection is needed.
                        stronger matches still fill the block, so it never empties it
   --top-gate <x>       empty the block when the best skill it would show (after
                        --exclude, --min-match and session dedupe) scores below x over its catalog's
-                       maximum word weight (0-100; default 0.6, 0 turns it off); a skill
-                       named in the turn bypasses it
+                       maximum word weight (0-100; default skills.resolver.top_gate, else 0.6;
+                       0 turns it off); a skill named in the turn bypasses it
   --shadow             compute the block without injecting it (block "" on stdout);
                        --shadow-log <file> appends what would have been injected
   --expect-catalog <h> refuse with skill_catalog_mismatch unless the catalog hash is h
@@ -261,6 +262,14 @@ async function runResolve(args: string[]): Promise<void> {
     const minMatch = one(p, '--min-match'); if (minMatch !== undefined) input.min_match_strength = minMatch;
     const topGate = one(p, '--top-gate');
     if (topGate !== undefined) { if (!/^\d+(\.\d+)?$/.test(topGate)) throw new ResolverError('skill_resolve_invalid_input', '--top-gate takes a number from 0 to 100.', { suggestion: 'Example: --top-gate 1.5' }); input.top_gate = Number(topGate); }
+    if (input.top_gate === undefined) {
+      const read = readResolverConfig(resolverHome());
+      const section = read.state === 'ok' ? (read.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {} : {};
+      try {
+        const configured = laneTurnSettings(section, typeof input.harness === 'string' ? input.harness : '').top_gate;
+        if (configured !== undefined) input.top_gate = configured;
+      } catch (err) { if (!failOpen) throw err; }
+    }
     if (p.bools.has('--shadow')) input.shadow = true;
     if (p.bools.has('--reset-session')) input.reset_session = true;
     const expect = one(p, '--expect-catalog'); if (expect !== undefined) input.expected_catalog_hash = expect;

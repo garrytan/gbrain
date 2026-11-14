@@ -210,6 +210,8 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     writeFileSync(join(gbrainHome(off), 'config.json'), JSON.stringify({ skills: { resolver: { top_gate: 0 } } }));
     expect((await setup(off, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
     expect(readState(off).agents.main).toMatchObject({ top_gate: 0 });
+    const shown = drive(off, [['turn', { text: 'deploy the service to production', id: 'g2' }]]);
+    expect(shown[0]?.appendContext ?? '').toContain('deploy-service');
   });
 
   test('--dry-run writes nothing', async () => {
