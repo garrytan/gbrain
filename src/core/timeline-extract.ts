@@ -366,9 +366,10 @@ export async function retractRemovedTimelineEntries(
   const rows = opts.storedRows ?? await storedTimelineRows(engine, sourceId, slug);
   const extra = rows.filter(row => !kept.has(tupleKey(row)) && (!within || within.has(tupleKey(row))));
   if (!extra.length) return [];
-  const versions = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null; body_storage: string; page_id: number; generation: number | null }>(
-    `SELECT DISTINCT v.compiled_truth, v.timeline, v.body_storage, v.page_id, v.body_generation AS generation FROM page_versions v JOIN pages p ON p.id = v.page_id
-      WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
+  // Bodies are read one version at a time: a DISTINCT over every full body cannot finish inside the publication's statement timeout.
+  const versions = await engine.executeRaw<{ id: number; body_storage: string; page_id: number; generation: number | null }>(
+    `SELECT v.id, v.body_storage, v.page_id, v.body_generation AS generation FROM page_versions v JOIN pages p ON p.id = v.page_id
+      WHERE p.source_id = $1 AND p.slug = $2 ORDER BY v.id`, [sourceId, slug]);
   const wanted = new Set(extra.map(tupleKey));
   const produced = new Set<string>();
   // #6226, #7949: rows an older reading filed for this text or a stored version.
@@ -379,8 +380,17 @@ export async function retractRemovedTimelineEntries(
     for (const entry of supersededTimelineReadings(text)) if (wanted.has(tupleKey(entry))) superseded.add(tupleKey(entry));
   };
   const seen = new Set(typeof current === 'string' ? [] : current.runs ?? []);
+  const readGenerations = new Set<string>();
   for (const version of versions) {
-    if (version.body_storage !== 'segmented') { addText(`${version.compiled_truth}\n${version.timeline ?? ''}`); continue; }
+    if (version.body_storage !== 'segmented') {
+      const [body] = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null }>(
+        'SELECT compiled_truth, timeline FROM page_versions WHERE id = $1', [version.id]);
+      if (body) addText(`${body.compiled_truth}\n${body.timeline ?? ''}`);
+      continue;
+    }
+    const generationKey = `${version.page_id}:${version.generation}`;
+    if (readGenerations.has(generationKey)) continue;
+    readGenerations.add(generationKey);
     for await (const block of retainedGenerationBlocks(engine, { id: Number(version.page_id), slug, sourceId }, Number(version.generation),
       { seen, ...(opts.stop ? { stop: opts.stop } : {}) })) addText(block);
   }
