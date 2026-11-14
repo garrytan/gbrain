@@ -18,6 +18,8 @@ import {
   formatDbAccessMarker,
   shouldEmitDbAccessMarker,
 } from '../core/pg-access-classify.ts';
+import { GBrainError } from '../core/types.ts';
+import { getCode, getMessage, isConnectionCode } from '../core/retry-matcher.ts';
 import { redactUrlsInText } from '../core/url-redact.ts';
 import { redactConnectionInfo } from '../core/audit/redact-connection-info.ts';
 import { suggestNearest } from '../core/levenshtein.ts';
@@ -144,6 +146,32 @@ export function unknownFlagError(command: string, flag: string, message: string,
     code: 'unknown_flag',
     fix: { argv: ['gbrain', command, '--help'], consent: [], actor: 'agent', why: 'The help lists every flag this command accepts.', requires_exclusive: false },
   });
+}
+
+/**
+ * A read-only probe can safely be reissued once its PostgreSQL target
+ * is ready. Classify only known connection failures on the actual engine.
+ */
+export function classifyPostgresReadError(
+  error: unknown,
+  engineKind: string | null,
+  command: 'jobs stats' | 'sources writer status',
+): unknown {
+  // Human stderr retains the existing DB access marker and remediation.
+  if (engineKind !== 'postgres' || error instanceof RemoteMcpError || !jsonRequested(process.argv.slice(2))) return error;
+  const cause = error instanceof GBrainError && error.cause !== undefined ? error.cause : error;
+  const code = getCode(cause);
+  const missingPgSocket = code === 'ENOENT' && /^connect ENOENT \/.*\/\.s\.PGSQL\.\d+$/.test(getMessage(cause));
+  // A startup timeout is diagnosed as network_unreachable, not a dropped session.
+  const droppedConnection = code !== 'ETIMEDOUT' && isConnectionCode(code);
+  if (!missingPgSocket && !droppedConnection
+      && !['ECONNREFUSED', '57P01', '57P02', '57P03', '08000', '08001', '08003', '08006'].includes(code ?? '')) return error;
+  const { reason } = classifyPgAccessError(cause);
+  const subject = command === 'jobs stats' ? 'job statistics' : 'source writer status';
+  const scope = command === 'jobs stats' ? 'queue' : 'source';
+  return opError('database_error', `PostgreSQL was unavailable while reading ${subject}.`,
+    `Once the database is ready, retry \`gbrain ${command} --json\` with the same brain and ${scope}. If it persists, run \`gbrain engine status --probe\` for that brain.`,
+    { reason: missingPgSocket ? 'socket_missing' : reason, retryable: true });
 }
 
 /**
