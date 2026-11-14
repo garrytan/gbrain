@@ -223,6 +223,25 @@ for (const kind of testBackends()) {
       await expectCarried(k, base.before, base.state, base.proposals);
     }, 240_000);
 
+    test('an expiring private page whose slug reads as a number too large to hold does not park the other origins in the purge', async () => {
+      const k = 'bignum';
+      await seed(k);
+      const base = await baseline(k);
+      const origin = slugOf(k, 'origin'), big = '1e999999';
+      const imported = await importFromContent(engine, big, ['---', 'title: big number', 'visibility: private', '---', '# big number', ''].join('\n'), { sourceId: SRC, noEmbed: true });
+      expect(imported.status).toBe('imported');
+      await softDelete(origin);
+      await backdate(origin);
+      await softDelete(big);
+      await backdate(big);
+      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+      expect(result.blocked.filter(b => b.code === 'derived_origin_parked')).toEqual([]);
+      expect(result.slugs).toEqual(expect.arrayContaining([origin, big]));
+      await nothingKept(origin);
+      expect(await row(big)).toBeUndefined();
+      await expectCarried(k, base.before, base.state, base.proposals);
+    }, 240_000);
+
     test('a remote delete stamps the derived pages as maintenance and its response names none of them and counts none', async () => {
       const k = 'remote';
       await seed(k);

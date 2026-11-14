@@ -232,7 +232,8 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
  * slugs, 100 at a time, make one jsonpath filter that idx_pages_frontmatter answers in a single scan (every GIN scan reads
  * the index's whole pending list, so a scan per slug and shape cost more than the full read it replaced on a brain with
  * recent writes). A slug that reads as a JSON number or boolean is also matched as that scalar, since `->>` and
- * jsonb_array_elements_text read one as its text.
+ * jsonb_array_elements_text read one as its text; a number with an exponent over three digits is matched as text only,
+ * since the jsonpath cast of one (`1e999999`) overflows numeric and would fail the whole lookup.
  */
 function namingSql(from: string, depthOnly = false): string {
   const test = depthOnly ? `'@.event.depth == ' || f.v`
@@ -240,7 +241,7 @@ function namingSql(from: string, depthOnly = false): string {
   return `SELECT p.id, p.source_id, p.slug, p.frontmatter ? 'derived_from' AS declares FROM (
       SELECT n.source_id, ('$ ? (' || string_agg(${test}, ' || ') || ')')::jsonpath AS path
         FROM (SELECT DISTINCT source_id, slug, (dense_rank() OVER (PARTITION BY source_id ORDER BY slug) - 1) / 100 AS part FROM ${from} r) n
-        CROSS JOIN LATERAL (SELECT to_jsonb(n.slug)::text AS v UNION ALL SELECT n.slug WHERE n.slug ~ '^(-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]+)?|true|false)$') f
+        CROSS JOIN LATERAL (SELECT to_jsonb(n.slug)::text AS v UNION ALL SELECT n.slug WHERE n.slug ~ '^(-?(0|[1-9][0-9]*)(\\.[0-9]+)?([eE][+-]?[0-9]{1,3})?|true|false)$') f
         GROUP BY n.source_id, n.part) q
       JOIN LATERAL (SELECT p.id, p.source_id, p.slug, p.frontmatter FROM pages p WHERE p.frontmatter @? q.path AND p.source_id = q.source_id OFFSET 0) p ON true`;
 }
