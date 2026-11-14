@@ -102,6 +102,7 @@
         "getTimelineForDate",
         "getUnverifiedExtractionPageIds",
         "getVersions",
+        "holdsDatastoreLock",
         "initSchema",
         "insertFact",
         "insertFacts",

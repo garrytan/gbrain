@@ -29,7 +29,7 @@
       "code": "first_run_decisions",
       "kind": "ask",
       "why": "The brain is ready. These settings were applied with defaults or need the user's choice; none blocks using the brain.",
-      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.",
+      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip; upkeep: on), or tell me what to change.",
       "decisions": [
         {
           "id": "search_mode",
@@ -128,6 +128,29 @@
           ],
           "default": "skip",
           "default_reason": "No agent harness was detected."
+        },
+        {
+          "id": "upkeep",
+          "question": "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.",
+          "options": [
+            {
+              "id": "on",
+              "label": "Keep free upkeep on (in effect now)"
+            },
+            {
+              "id": "off",
+              "label": "Turn free upkeep off",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "maintenance.auto",
+                "false"
+              ]
+            }
+          ],
+          "default": "on",
+          "default_reason": "In effect now: the agent's gbrain serve runs the free upkeep tier while idle; nothing needs an answer."
         }
       ],
       "contract_version": 1

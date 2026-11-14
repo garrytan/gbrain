@@ -238,7 +238,7 @@ exec "$_gbrain"${programTail ? ` ${programTail}` : ''} ${serveArgs}
 `;
 }
 
-function escapeXml(s: string): string {
+export function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
@@ -267,7 +267,7 @@ export function renderServeLaunchdPlist(p: LaunchdParams): string {
 export interface SystemdParams { wrapperPath: string; logPath: string; errPath: string }
 
 /** systemd specifier escaping (`%h` etc. expand in every path-like setting): `%` → `%%`. */
-function systemdSpecifierEscape(s: string): string {
+export function systemdSpecifierEscape(s: string): string {
   return s.replace(/%/g, '%%');
 }
 
@@ -275,7 +275,7 @@ function systemdSpecifierEscape(s: string): string {
  * ExecStart quoting: `%` → `%%` (specifiers), `$` → `$$` (environment
  * expansion), then double-quote when the path carries whitespace or quotes.
  */
-function systemdArg(s: string): string {
+export function systemdArg(s: string): string {
   const escaped = systemdSpecifierEscape(s).replace(/\$/g, '$$$$');
   return /[\s"'\\]/.test(escaped) ? `"${escaped.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : escaped;
 }

@@ -338,7 +338,9 @@ export async function publishManagedAtomGeneration(engine: BrainEngine, session:
     approved: generation.approved, release: generation.release }, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, scope: generation.approved ? null : claim.runKey, locator: generation.locator ?? (origin.kind === 'transcript' ? origin.locator : null) });
   if (plan.kind === 'held') return { state: 'held', reason: plan.outcome.reason, holdId: plan.outcome.holdId, receipts: [] };
   if (plan.kind === 'unchanged') return { state: 'unchanged', receipts: generation.approved ? [] : await publishManagedAtoms(engine, session, origin, []) };
-  const runKey = generation.approved ? digest(['managed-atoms-approved', plan.intent.activationId]) : claim.runKey;
+  // #9079: a release is its own run; under the drain's key its completion collides with the drain's for this input.
+  const runKey = generation.approved ? digest(['managed-atoms-approved', plan.intent.activationId])
+    : generation.release ? digest(['managed-atoms-release', plan.intent.activationId]) : claim.runKey;
   const advance = !generation.approved && claim.checkpointKey ? { checkpointKey: claim.checkpointKey, expectedCheckpoint: claim.expectedCheckpoint ?? null } : {};
   const { activationId } = plan.intent;
   const bySlug = new Map(atoms.map(atom => [atom.slug, atom]));

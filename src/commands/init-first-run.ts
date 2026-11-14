@@ -9,7 +9,9 @@
  * `writeback` (recommended `salient`, offered on a personal brain whose
  * operator has not answered), `harness_wiring` (the A7 readiness fix) and the
  * optional `skills_scaffold` (recommended skills missing from the detected
- * agent workspace; default skip). Human output renders the same bundle
+ * agent workspace; default skip), then `upkeep` (GBRA-438: the free upkeep
+ * line, a setting in effect whose default `on` needs no answer; it rides a
+ * bundle that has another entry and never opens one alone). Human output renders the same bundle
  * (`[AGENT]` block without a terminal, `Note` lines on one); it replaces
  * init's separate writeback ask and skills pointer. Extend
  * `buildInitFirstRunNotices` rather than adding a second notice.
@@ -34,6 +36,30 @@ export interface InitFirstRunInputs {
   skillsScaffold?: { missing: string[]; argv: string[] } | null;
   /** `gbrain init --surface`: the surface the harness registration pins (default REGISTRATION_SURFACE). */
   surface?: McpSurface;
+  /** GBRA-438: the upkeep line, relayed with the block as a setting in effect; `embedding` says the capped embedding step applies. */
+  upkeep?: { embedding: boolean };
+}
+
+/** GBRA-438: what runs on its own, stated as a setting in effect (the plan's wording; the keyed form names the one capped paid step). */
+export function upkeepLine(embedding: boolean): string {
+  return "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. "
+    + (embedding
+      ? 'Nothing is deleted without you, and the only paid step is embedding new text, capped at $1 a day (maintenance.embed_daily_usd). '
+      : 'Nothing is deleted or paid for without you. ')
+    + 'Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.';
+}
+
+function upkeepDecision(embedding: boolean): Decision {
+  return {
+    id: 'upkeep',
+    question: upkeepLine(embedding),
+    options: [
+      { id: 'on', label: 'Keep free upkeep on (in effect now)' },
+      { id: 'off', label: 'Turn free upkeep off', argv: ['gbrain', 'config', 'set', 'maintenance.auto', 'false'] },
+    ],
+    default: 'on',
+    default_reason: 'In effect now: the agent\'s gbrain serve runs the free upkeep tier while idle; nothing needs an answer.',
+  };
 }
 
 function searchModeDecision(applied: { mode: SearchMode; reason: string }): Decision {
@@ -103,6 +129,7 @@ export function buildInitFirstRunNotices(inputs: InitFirstRunInputs): Notice[] {
   }
   if (inputs.skillsScaffold?.missing.length) decisions.push(skillsScaffoldDecision(inputs.skillsScaffold));
   if (decisions.length === 0) return [];
+  if (inputs.upkeep) decisions.push(upkeepDecision(inputs.upkeep.embedding));
   const defaults = decisions.map(d => `${d.id}: ${d.default}`).join('; ');
   return [{
     code: 'first_run_decisions',
@@ -126,18 +153,19 @@ export function setupFirstRunNotices(initNotices: readonly unknown[], harness: s
   const decisions = (bundle?.decisions ?? []).filter(d => d.id !== 'harness_wiring');
   if (decisions.length === 0) return [];
   const searchMode = decisions.find(d => d.id === 'search_mode');
+  const upkeep = decisions.find(d => d.id === 'upkeep');
   const inEffect = [
     ...(searchMode ? [`search mode ${searchMode.default}`] : []),
     ...(decisions.some(d => d.id === 'writeback') ? ['agents save only what you ask them to remember, until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance)'] : []),
   ];
-  if (inEffect.length === 0) return [];
+  if (inEffect.length === 0 && !upkeep) return [];
   return [{
     code: 'first_run_decisions',
     kind: 'ask',
     why: `Setup is complete: the brain is ready and ${harness} is wired, so memory works now. These first-run settings are in effect as listed; none blocks memory or needs a new session to answer. `
       + 'Relay them once, in the reply that reports this install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
       + 'When the user picks an option, run its command. Automatic saving (`writeback`) is separate from setup\'s capture decision (Stop/SessionEnd hooks); while unanswered it comes back in a later session until the user answers or mutes it.',
-    user_message: `gbrain is set up and ${harness} is wired, so memory works now. In effect: ${inEffect.join('; ')}.${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    user_message: `gbrain is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''}${upkeep ? ` ${upkeep.question}` : ''}${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }
@@ -157,7 +185,10 @@ export function deferredEmbeddingHint(cfg: GBrainConfig): string {
 export async function firstRunBundle(engine: BrainEngine, searchMode: { mode: SearchMode; reason: string } | undefined, surface?: McpSurface): Promise<Notice[]> {
   const { writebackAskApplies } = await import('../core/onboard/writeback-nudge.ts');
   const { initSkillsScaffold } = await import('../core/skillpack/post-install-advisory.ts');
-  return buildInitFirstRunNotices({ searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold(), surface });
+  const { isAvailable } = await import('../core/ai/gateway.ts');
+  let embedding = false;
+  try { embedding = isAvailable('embedding'); } catch { /* gateway not configured: keyless */ }
+  return buildInitFirstRunNotices({ searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold(), surface, upkeep: { embedding } });
 }
 
 /** D2/G5: the bundle rendered into init's --json document (`notices`, empty → omitted). */
