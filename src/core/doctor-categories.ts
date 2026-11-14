@@ -219,6 +219,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'parked_effects',
   // #6741: managed purges parked after repeated failures (doctor/checks/purge-parks.ts).
   'purge_parked_pages',
+  // GST-2689: origins kept from the purge because a page derived from them could not be labelled private (doctor/checks/purge-parks.ts).
+  'derived_origin_parked',
   // Wave B PR 4: fact purge sweeps of stored derivation results still pending or stalled (doctor/checks/derivation-purge-sweeps.ts).
   'derivation_purge_sweeps',
   'partial_embedding',

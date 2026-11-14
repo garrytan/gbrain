@@ -164,7 +164,7 @@ import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
 import { unindexedFilesEntry } from './checks/unindexed-files.ts';
 import { syncLandingGapsEntry } from './checks/landing-gaps.ts';
-import { purgeParkedPagesEntry } from './checks/purge-parks.ts';
+import { derivedOriginParkedEntry, purgeParkedPagesEntry } from './checks/purge-parks.ts';
 import { derivationPurgeSweepsEntry } from './checks/derivation-purge-sweeps.ts';
 import { missingRecordedFilesEntry } from './checks/missing-recorded-files.ts';
 import { uncommittedSyncDeletionsEntry } from './checks/uncommitted-sync-deletions.ts';
@@ -342,6 +342,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   slugPathMismatchEntry,
   renameIdentityDowngradesEntry,
   purgeParkedPagesEntry,
+  derivedOriginParkedEntry,
   derivationPurgeSweepsEntry,
   missingRecordedFilesEntry,
   uncommittedSyncDeletionsEntry,

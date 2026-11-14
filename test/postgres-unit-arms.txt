@@ -89,6 +89,8 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/derived-link-reconciliation.test.ts
+test/derived-origin-carry-managed.test.ts
+test/derived-origin-carry-private.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
