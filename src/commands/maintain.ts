@@ -238,6 +238,8 @@ export async function runMaintain(engine: BrainEngine, args: string[]): Promise<
        gbrain maintain --unattended [--runner <name>] [--json]
        gbrain maintain --status [--json]
        gbrain maintain --purge [--yes --expect <hash>] [--json]
+       gbrain maintain --schedule [--yes | --dry-run] [--json]
+       gbrain maintain --unschedule [--json]
 
 Conservative self-healing maintenance.
 
@@ -253,6 +255,11 @@ Modes:
   --status      Show the last upkeep run, the next due time and what waits for you.
   --purge       Preview the page purge (soft-deleted pages past purge.retention_hours);
                 apply it with --yes --expect <hash> from the preview.
+  --schedule    Opt in to an operating-system schedule (launchd, systemd user timer or
+                crontab) that runs --unattended every 6 hours; --yes approves the
+                install, --dry-run shows what it writes. A running gbrain serve
+                already runs free upkeep while idle, so most installs need none.
+  --unschedule  Remove that schedule.
   --json        Emit a structured before/action/after report.
 
 Not auto-applied:
@@ -340,16 +347,19 @@ async function runUnattendedCli(engine: BrainEngine, opts: MaintainOptions): Pro
 
 async function runStatusCli(engine: BrainEngine, opts: MaintainOptions): Promise<void> {
   const status = await readUpkeepStatus(engine);
-  const { fix, ...rest } = status;
+  const { fix, alternative_fix: alternative, ...rest } = status;
   if (opts.json) {
-    console.log(JSON.stringify({ ...rest, ...(fix ? { fix: renderAction(fix, cliRenderContext()) } : {}) }, null, 2));
+    console.log(JSON.stringify({ ...rest, ...(fix ? { fix: renderAction(fix, cliRenderContext()) } : {}),
+      ...(alternative ? { alternative_fix: renderAction(alternative, cliRenderContext()) } : {}) }, null, 2));
     return;
   }
   console.log(status.message);
   if (status.last_run) console.log(`Last run: ${status.last_run} (${status.runner}), next due: ${status.next_due_at}`);
+  for (const p of status.parked) console.log(`Parked: ${p.key} since ${p.since} (${p.slices} slices)`);
   if (status.held.length) console.log(`Held back on this brain (they would call a provider): ${status.held.join(', ')}`);
   console.log(`Left for you (paid, opt-in; gbrain dream or an autopilot runs them): ${status.paid_phases_opt_in.join(', ')}`);
   if (fix) console.log(`Fix: ${fix.argv!.join(' ')}: ${fix.why}`);
+  if (alternative) console.log(`Or: ${alternative.argv!.join(' ')}: ${alternative.why}`);
 }
 
 /** Hash of exactly what a purge would remove, so --expect binds the apply to the preview the person saw. */

@@ -1301,6 +1301,7 @@ async function runPhaseSync(
   dryRun: boolean,
   pull: boolean,
   willRunExtractPhase: boolean,
+  signal?: AbortSignal,
 ): Promise<SyncPhaseResult> {
   try {
     const { performSync } = await import('../commands/sync.ts');
@@ -1322,6 +1323,7 @@ async function runPhaseSync(
                                            // If extract isn't scheduled (e.g. `gbrain dream --phase sync`),
                                            // sync's inline extract still runs to preserve prior behavior.
       drainHolder: { kind: 'cycle', id: null }, // #6712 PR 1: a busy drain lease skips like a busy sync lock
+      ...(signal ? { signal } : {}),
     });
     const syncedCount = result.added + result.modified;
     // #3068: a pull_failed partial means the internal git pull failed and the
@@ -1473,7 +1475,7 @@ async function runPhaseExtract(
         includeFrontmatter,
         sourceIdFilter: sourceId,
         catchUp: false,
-        timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS,
+        timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS, signal, // GBRA-438: idle upkeep's budget and a tool call stop the drain
       });
       staleRemaining = drained.staleRemaining;
       staleDetails = {
@@ -2278,8 +2280,8 @@ async function runCycleUnscoped(
         // coverage. Raced like the other five: an abandoned wait is safe —
         // sync checkpoints its progress, holds its own per-source lock (the
         // successor's sync phase skips with lock-busy), and its stall
-        // watchdog bounds the dangling import. Signal threading lands in W6.
-        const { result, duration_ms } = await racedTimePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract')), 'sync');
+        // watchdog bounds the dangling import. The cycle signal stops the import between files (GBRA-438).
+        const { result, duration_ms } = await racedTimePhase(() => runPhaseSync(engine, brainDir, dryRun, pull, phases.includes('extract'), cycleSignal), 'sync');
         result.duration_ms = duration_ms;
         // Capture changed slugs for incremental extract.
         syncPagesAffected = (result as SyncPhaseResult).pagesAffected;
@@ -2361,7 +2363,7 @@ async function runCycleUnscoped(
           details: { reason: 'no_database' },
         });
       } else if (brainDir === null) {
-        const { result, duration_ms } = await timePhase(async () => (await import('./cycle/connector-extract.ts')).runPhaseExtractDatabaseOnly(engine, { dryRun, sourceId: cycleSourceId, timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS }), 'extract');
+        const { result, duration_ms } = await timePhase(async () => (await import('./cycle/connector-extract.ts')).runPhaseExtractDatabaseOnly(engine, { dryRun, sourceId: cycleSourceId, timeBudgetMs: CYCLE_STALE_DRAIN_BUDGET_MS, signal: cycleSignal }), 'extract');
         phaseResults.push({ ...result, duration_ms });
       } else {
         // No sync (or a failed one) and no source window (#8573): syncPagesAffected

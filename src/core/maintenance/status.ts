@@ -14,7 +14,7 @@ import {
 /** Past this age, an upkeep run (or a brain with none) reads as overdue. */
 export const UPKEEP_OVERDUE_MS = 48 * 60 * 60 * 1000;
 
-export type UpkeepState = 'ok' | 'never' | 'off' | 'autopilot' | 'overdue' | 'failing';
+export type UpkeepState = 'ok' | 'never' | 'off' | 'autopilot' | 'overdue' | 'failing' | 'parked';
 
 export interface UpkeepStatus {
   state: UpkeepState;
@@ -25,11 +25,15 @@ export interface UpkeepStatus {
   held: string[];
   next_due_at: string | null;
   failing: UpkeepFailure | null;
+  /** Items the serve's budgeted runs gave up on; an unbudgeted run finishes them. */
+  parked: NonNullable<UpkeepRecord['parked']>;
   pending_purge_count: number | null;
   paid_phases_opt_in: string[];
   embed_spend_today_usd: number | null;
   embed_daily_cap_usd: number | null;
   fix?: Action;
+  /** The second option beside `fix` when upkeep is overdue: the opt-in operating-system schedule. */
+  alternative_fix?: Action;
 }
 
 function ago(ms: number): string {
@@ -65,6 +69,19 @@ export function upkeepFix(paid: boolean): Action {
   };
 }
 
+/** Overdue means no serve ran upkeep: name both ways back. */
+const SCHEDULE_NOTE = ' It runs while an agent\'s gbrain serve is open and idle; run it now with gbrain maintain --unattended, or add the opt-in schedule with gbrain maintain --schedule.';
+
+/** The second option: install the opt-in schedule, a persistent_install the user approves. */
+export function scheduleFix(): Action {
+  return {
+    argv: ['gbrain', 'maintain', '--schedule'], consent: ['persistent_install'], actor: 'agent', requires_exclusive: false,
+    preview_argv: ['gbrain', 'maintain', '--schedule', '--dry-run'],
+    why: 'Installs an operating-system schedule (launchd, systemd user timer or crontab) that runs free upkeep every 6 hours when no gbrain serve is running; gbrain maintain --unschedule removes it.',
+    verify: { argv: ['gbrain', 'doctor', '--only', 'unattended_maintenance', '--json'] },
+  };
+}
+
 export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date.now()): Promise<UpkeepStatus> {
   const now = new Date(nowMs);
   const [record, enabled, owner, pending, cap, spent] = await Promise.all([
@@ -74,7 +91,7 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
   const keyed = isAvailable('embedding');
   const base = {
     runner: record?.runner ?? null, last_run: record?.at ?? null, steps: record?.steps ?? [], held: record?.held ?? [],
-    next_due_at: record?.next_due_at ?? null, failing: null as UpkeepFailure | null, pending_purge_count: pending,
+    next_due_at: record?.next_due_at ?? null, failing: null as UpkeepFailure | null, parked: record?.parked ?? [], pending_purge_count: pending,
     paid_phases_opt_in: [...PAID_PHASES], embed_spend_today_usd: keyed ? spent : null, embed_daily_cap_usd: keyed ? cap : null,
   };
   const purgeNote = pending
@@ -94,11 +111,16 @@ export async function readUpkeepStatus(engine: BrainEngine, nowMs: number = Date
     if (age === null || age < UPKEEP_OVERDUE_MS) {
       return { ...base, state: 'never', message: `Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge).${purgeNote}` };
     }
-    return { ...base, fix, state: 'overdue', message: `No free upkeep run is recorded on this brain, which is ${ago(age)} old.${purgeNote}` };
+    return { ...base, fix, alternative_fix: scheduleFix(), state: 'overdue', message: `No free upkeep run is recorded on this brain, which is ${ago(age)} old.${SCHEDULE_NOTE}${purgeNote}` };
   }
   const age = nowMs - Date.parse(record.at);
   if (age > UPKEEP_OVERDUE_MS) {
-    return { ...base, fix, state: 'overdue', message: `Free upkeep last ran ${ago(age)} ago (${record.runner}), past its 48h window.${purgeNote}${spendNote}` };
+    return { ...base, fix, alternative_fix: scheduleFix(), state: 'overdue', message: `Free upkeep last ran ${ago(age)} ago (${record.runner}), past its 48h window.${SCHEDULE_NOTE}${purgeNote}${spendNote}` };
+  }
+  if (base.parked.length) {
+    const named = base.parked.map((p) => `${p.key} after ${p.slices} slices`).join(', ');
+    return { ...base, fix, alternative_fix: scheduleFix(), state: 'parked',
+      message: `Upkeep inside serve parked ${named}; serve tries it again next round, and gbrain maintain --unattended finishes it now.${purgeNote}${spendNote}` };
   }
   const ran = record.steps.filter((s) => s.status === 'ok' || s.status === 'warn').length;
   const due = Date.parse(record.next_due_at) - nowMs;
