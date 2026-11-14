@@ -237,10 +237,12 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
  * GST-2689 `remove`: the postimage is the pages table with the cleared pages removed instead (their rows, so the links to
  * them go too), `keys` is unused, an atom also ties to the page a rename moved its `source_slug` to (slug_aliases and
  * slug_rename_history, read before a purge scrubs them). A page that names readers is judged by the same privacy rules,
- * since readable_by never relaxes them: it is returned when the removal would open it to its listed readers.
+ * since readable_by never relaxes them: it is returned when the removal would open it to its listed readers. A soft-deleted
+ * page is a candidate too, since a restore brings it back with the origin row gone.
  */
 export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
   const remove = mode === 'remove';
+  const live = (sql: string) => remove ? '' : sql;
   return `WITH cleared AS MATERIALIZED (
       SELECT * FROM unnest($1::integer[], $2::text[], $3::text[], $4::text[]) AS c(id, source_id, slug, keys)),
     refs AS MATERIALIZED (SELECT p.id, p.source_id, p.slug, p.deleted_at, r.kind, r.ref FROM pages p
@@ -259,10 +261,10 @@ export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
     provenance AS MATERIALIZED (SELECT l.from_page_id, x.cleared_id, x.source_id
       FROM (SELECT c.id, c.id AS cleared_id, c.source_id FROM cleared c UNION ALL SELECT h.id, h.cleared_id, h.source_id FROM hits h WHERE h.kind = 'source_slug') x
       JOIN links l ON l.to_page_id = x.id WHERE l.link_source = 'concept-provenance' AND l.link_type = 'synthesized_from'),
-    ties AS (SELECT h.id, h.cleared_id FROM hits h WHERE h.deleted_at IS NULL
+    ties AS (SELECT h.id, h.cleared_id FROM hits h${live(' WHERE h.deleted_at IS NULL')}
       UNION ALL SELECT r.id, h.cleared_id FROM hits h JOIN refs r ON r.source_id = h.source_id AND r.kind = 'depth' AND r.ref = h.slug
-        WHERE h.kind = 'declared' AND r.deleted_at IS NULL
-      UNION ALL SELECT p.id, t.cleared_id FROM provenance t JOIN pages p ON p.id = t.from_page_id AND p.source_id = t.source_id AND p.deleted_at IS NULL),
+        WHERE h.kind = 'declared'${live(' AND r.deleted_at IS NULL')}
+      UNION ALL SELECT p.id, t.cleared_id FROM provenance t JOIN pages p ON p.id = t.from_page_id AND p.source_id = t.source_id${live(' AND p.deleted_at IS NULL')}),
     candidates AS MATERIALIZED (SELECT DISTINCT t.id, t.cleared_id FROM ties t WHERE NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = t.id)),
     public_after AS MATERIALIZED (WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
           CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter

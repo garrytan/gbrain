@@ -32,7 +32,7 @@ const EDIT: LabelEdit = { set: { visibility: 'private' }, remove: [] };
 const originSql = (alias: string) => `(${alias}.type = 'atom' OR NOT ${privacyPartSql(alias)})`;
 
 interface Origin { id: number; source_id: string; slug: string }
-interface Dependent { id: number; origin_id: number; source_id: string; slug: string }
+interface Dependent { id: number; origin_id: number; source_id: string; slug: string; deleted: boolean }
 interface Failure { code: string | null; reason: string }
 export interface CarryBlock extends Failure { slug: string | null }
 
@@ -40,10 +40,10 @@ const failureOf = (error: unknown): Failure => ({ code: typeof (error as { code?
   reason: error instanceof Error ? error.message : String(error) });
 
 async function dependentsOf(engine: BrainEngine, origins: Origin[]): Promise<Dependent[]> {
-  const rows = await engine.executeRaw<{ id: number; cleared_id: number; source_id: string; slug: string }>(
-    `SELECT d.id, d.cleared_id, p.source_id, p.slug FROM (${dependentsSql('remove')}) d JOIN pages p ON p.id = d.id WHERE d.category <> 'life_chronicle' ORDER BY d.id`,
+  const rows = await engine.executeRaw<{ id: number; cleared_id: number; source_id: string; slug: string; deleted: boolean }>(
+    `SELECT d.id, d.cleared_id, p.source_id, p.slug, p.deleted_at IS NOT NULL AS deleted FROM (${dependentsSql('remove')}) d JOIN pages p ON p.id = d.id WHERE d.category <> 'life_chronicle' ORDER BY d.id`,
     [origins.map(o => o.id), origins.map(o => o.source_id), origins.map(o => o.slug), origins.map(() => '')], bounded);
-  return rows.map(row => ({ id: Number(row.id), origin_id: Number(row.cleared_id), source_id: row.source_id, slug: row.slug }));
+  return rows.map(row => ({ id: Number(row.id), origin_id: Number(row.cleared_id), source_id: row.source_id, slug: row.slug, deleted: row.deleted === true }));
 }
 
 /** Labels each page private through the label door; the failures by page id. */
@@ -62,9 +62,12 @@ async function stamp(engine: BrainEngine, pages: Dependent[], batch: string): Pr
     try {
       const authority = await maintenancePreflight(engine, sourceId);
       if (authority) {
-        const settled = await publishMaintenancePages(engine, authority, group.map(({ page, revision, content }) => ({ slug: page.slug, content, expectedRevision: revision,
-          requestId: randomUUID(), keepTrust: true as const, labelEdit: EDIT })), { batch });
-        settled.forEach((entry, index) => { if ('error' in entry) failed.set(group[index]!.page.id, failureOf(entry.error)); });
+        for (let i = 0; i < group.length; i += 200) {
+          const part = group.slice(i, i + 200);
+          const settled = await publishMaintenancePages(engine, authority, part.map(({ page, revision, content }) => ({ slug: page.slug, content, expectedRevision: revision,
+            requestId: randomUUID(), keepTrust: true as const, labelEdit: EDIT })), { batch });
+          settled.forEach((entry, index) => { if ('error' in entry) failed.set(part[index]!.page.id, failureOf(entry.error)); });
+        }
         continue;
       }
       const files = await filesInCheckout(engine, group.map(entry => entry.page.id));
@@ -84,7 +87,8 @@ async function stamp(engine: BrainEngine, pages: Dependent[], batch: string): Pr
 
 /**
  * Labels private every page each origin is the only privacy of, as if the origin rows were gone; the origins still
- * blocked afterwards, by origin id, with the first page that still would open and why. Runs outside any caller's view.
+ * blocked afterwards, by origin id, with the first page that still would open and why. A soft-deleted dependent is not
+ * labelled: it blocks its origin until it is purged or restored. Runs outside any caller's view.
  */
 export async function carryPrivate(engine: BrainEngine, origins: Origin[], batch: string): Promise<Map<number, CarryBlock>> {
   if (!origins.length) return new Map();
@@ -93,7 +97,9 @@ export async function carryPrivate(engine: BrainEngine, origins: Origin[], batch
     try {
       const pages = [...new Map((await dependentsOf(engine, origins)).map(page => [page.id, page])).values()];
       if (!pages.length) return new Map<number, CarryBlock>();
-      const failed = await stamp(engine, pages, batch);
+      const failed = await stamp(engine, pages.filter(page => !page.deleted), batch);
+      for (const page of pages) if (page.deleted) failed.set(page.id, { code: 'dependent_soft_deleted',
+        reason: `${page.slug} is soft-deleted and private only through this page; kept until ${page.slug} is purged or restored.` });
       const blocked = new Map<number, CarryBlock>();
       for (const page of await dependentsOf(engine, origins)) {
         if (!blocked.has(page.origin_id)) blocked.set(page.origin_id, { slug: page.slug,
@@ -134,7 +140,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const { finishPagePurge } = await import('../persistence/page-purge.ts');
   p.request_id ??= randomUUID();
   const batch = `derived-origin-carry:${String(p.request_id)}`;
-  const origin = typeof p.slug === 'string' ? await originOf(ctx.engine, sourceId, p.slug) : null;
+  const origin = typeof p.slug === 'string' ? await originOf(ctx.engine, sourceId, p.slug.toLowerCase()) : null;
   if (p.purge !== true) {
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });
     if (origin && (await originOf(ctx.engine, sourceId, origin.slug))?.deleted) await carryPrivate(ctx.engine, [origin], batch);
@@ -155,8 +161,9 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
 }
 
 /**
- * Before a purge: the expired soft-deleted origins get their dependents labelled private, 200 at a time; each one still
- * blocked is parked (the purge skips it) and the rest lose any earlier park. The parks written this run.
+ * Before a purge: the expired soft-deleted origins get their dependents labelled private, judged against every expired
+ * origin at once (a page private through two of them opens only when both go); each one still blocked is parked (the
+ * purge skips it) and the rest lose any earlier park. The parks written this run.
  */
 export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<DerivedOriginPark[]> {
   await pruneDerivedOriginParks(engine);
@@ -168,16 +175,14 @@ export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHour
   });
   const parks: DerivedOriginPark[] = [];
   const batch = `derived-origin-carry:purge-${randomUUID()}`;
-  for (let i = 0; i < origins.length; i += 200) {
-    const chunk = origins.slice(i, i + 200).map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
-    const blocked = await carryPrivate(engine, chunk, batch);
-    for (const origin of chunk) {
-      const block = blocked.get(origin.id);
-      if (!block) continue;
-      await parkDerivedOrigin(engine, parked(origin, block));
-      parks.push({ ...parked(origin, block), parked_at: new Date().toISOString() });
-    }
-    await clearDerivedOriginParks(engine, chunk.filter(origin => !blocked.has(origin.id)).map(origin => origin.id));
+  const expired = origins.map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+  const blocked = await carryPrivate(engine, expired, batch);
+  for (const origin of expired) {
+    const block = blocked.get(origin.id);
+    if (!block) continue;
+    await parkDerivedOrigin(engine, parked(origin, block));
+    parks.push({ ...parked(origin, block), parked_at: new Date().toISOString() });
   }
+  await clearDerivedOriginParks(engine, expired.filter(origin => !blocked.has(origin.id)).map(origin => origin.id));
   return parks;
 }

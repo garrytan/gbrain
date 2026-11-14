@@ -242,6 +242,59 @@ for (const kind of testBackends()) {
       await expectCarried(k, base.before, base.state, base.proposals);
     }, 240_000);
 
+    test('a purge sent with a mixed-case slug stamps the derived pages first, as the lowercase slug does', async () => {
+      const k = 'mixedcase';
+      await seed(k);
+      const base = await baseline(k);
+      const origin = slugOf(k, 'origin');
+      const out = await localCall('delete_page', { slug: 'MixedCase/Origin', purge: true, request_id: randomUUID(), expected_revision: await revision(origin) });
+      expect(out.isError ? out.text : '').toBe('');
+      expect(JSON.parse(out.text).status).toBe('purged');
+      await nothingKept(origin);
+      await expectCarried(k, base.before, base.state, base.proposals);
+    }, 240_000);
+
+    test('a derived page soft-deleted when its origin expires parks the origin; restored, it is stamped before the origin goes', async () => {
+      const k = 'tomb';
+      await seed(k);
+      const origin = slugOf(k, 'origin'), digest = slugOf(k, 'digest');
+      await softDelete(origin);
+      await backdate(origin);
+      await softDelete(digest);
+      const held = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+      expect(held.slugs).not.toContain(origin);
+      expect(held.blocked.find(b => b.slug === origin)?.code).toBe('derived_origin_parked');
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      const doctor = await checkDerivedOriginParked(engine);
+      expect((doctor.details as { origins: Array<{ slug: string; blocking_slug: string }> }).origins)
+        .toContainEqual(expect.objectContaining({ slug: origin, blocking_slug: digest }));
+      const restored = await localCall('restore_page', { slug: digest, request_id: randomUUID(), expected_revision: await revision(digest) });
+      expect(restored.isError ? restored.text : '').toBe('');
+      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+      expect(result.slugs).toContain(origin);
+      await nothingKept(origin);
+      expect((await fm(digest)).visibility).toBe('private');
+      __resetPrivateVisibilityCacheForTests();
+      for (const who of ['unbound', 'alice'] as const) expect({ who, seen: await seen(who, k, 'digest') }).toEqual({ who, seen: none });
+      expect({ owner: await seen('owner', k, 'digest') }).toEqual({ owner: every });
+    }, 240_000);
+
+    test('a page private through two expired origins more than 200 apart is stamped before both rows go', async () => {
+      const k = 'wide', first = 'wide/first', last = 'wide/last', page = 'wide/joined';
+      const privatePage = (slug: string) => importFromContent(engine, slug, ['---', `title: ${slug}`, 'type: note', 'visibility: private', '---', `# ${slug}`, '', 'Private origin.'].join('\n'), { sourceId: SRC, noEmbed: true });
+      expect((await privatePage(first)).status).toBe('imported');
+      for (let i = 0; i < 199; i++) expect((await privatePage(`wide/filler-${i}`)).status).toBe('imported');
+      expect((await privatePage(last)).status).toBe('imported');
+      expect((await importFromContent(engine, page, ['---', 'title: joined', 'type: note', `derived_from: [${first}.md, ${last}.md]`, '---', '# joined', '',
+        `Harbor ledger planning notes ${canaryOf(k, 'digest')} for the roadmap.`].join('\n'), { sourceId: SRC, noEmbed: true })).status).toBe('imported');
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '100 hours' WHERE source_id=$1 AND slug LIKE 'wide/%' AND slug <> $2", [SRC, page]);
+      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+      expect(result.slugs).toEqual(expect.arrayContaining([first, last]));
+      expect((await fm(page)).visibility).toBe('private');
+      __resetPrivateVisibilityCacheForTests();
+      for (const who of ['unbound', 'alice'] as const) expect({ who, get_page: (await call(who, 'get_page', { slug: page })).text.includes(canaryOf(k, 'digest')) }).toEqual({ who, get_page: false });
+    }, 240_000);
+
     test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and purges', async () => {
       const k = 'park';
       await seed(k);
