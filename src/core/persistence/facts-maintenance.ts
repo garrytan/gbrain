@@ -620,7 +620,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
   if (embedded) await assertManagedFactsEmbedding(engine, session.config, session.embedding);
   const sourceId = session.authority.sourceId;
   const groups = new Map<string, FrozenExtractedFact[]>();
-  const { holdingHome } = await import('../facts/held-fact-move.ts');
+  const { holdingHome, refuseUnheldFact } = await import('../facts/held-fact-move.ts');
   for (const fact of facts) {
     if (ctx.abortSignal?.aborted) throw new DOMException('Fact extraction was aborted before admission.', 'AbortError');
     if (ctx.notabilityFilter === 'high-only' && fact.notability !== 'high' || ctx.notabilityFilter === 'medium-and-up' && fact.notability === 'low') continue;
@@ -629,6 +629,8 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
     const attributed = entitySlug ?? (options.attributeFallback && resolved ? resolved.slug : null);
     // GST-2492: on a strict source a kept fallback entity is held on its holding page (its folder's under a folder rule).
     const home = !entitySlug && attributed ? await holdingHome(engine, sourceId, attributed) : null;
+    // GST-2635: one no holding page can carry (an exact page rule, an unreadable access state) refuses as remember does, before admission.
+    if (home && 'refused' in home) await refuseUnheldFact(engine, sourceId, attributed!, home.refused, ctx.remote !== false);
     const slug = entitySlug ?? (home && 'slug' in home ? home.slug : 'memory/unattributed');
     await authorizeWrite(engine, session.authority, 'extract_facts', slug);
     await authorizePageVisibility(engine, session.authority, slug);

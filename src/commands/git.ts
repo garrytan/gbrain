@@ -289,7 +289,6 @@ export async function runGit(args: string[]): Promise<number> {
       ...(p.pending ? { pending: true } : {}),
       ...(p.allowOutside ? { allowOutsideSourceRoot: true } : {}),
       ...(p.keepCheckout ? { keepCheckout: true } : {}),
-      scanSecrets: true,
       ...(p.scanTimeout ? { scanTimeoutMs: Number(p.scanTimeout) * 1000 } : {}),
       scanProgress: (line: string) => process.stderr.write(`[gbrain] ${line}\n`),
       ...(p.untrack ? { untrack: true } : {}),

@@ -189,7 +189,11 @@ mode scans either way.
 A finding that is not a secret: add its fingerprint (`sha256:` and 16 hex
 characters, as the preview prints it) as a line of `.gbrain-scan-allow` at the
 checkout root (`#` starts a comment). The scan reads the file from the working
-tree, so the next push uses it without a commit. Keep it out of commits (list it
+tree, so the next push uses it without a commit. That is deliberate: the file is
+the local user's answer to the scan, and writing it takes local write access to
+the checkout, which could push directly anyway. In a managed root below the
+repository's top level the file sits at that root and its path globs match
+paths relative to it. Keep it out of commits (list it
 in `.git/info/exclude`): a commit that changes it changes what the scan sees, so
 no automatic push publishes it. A fingerprint accepts that exact value wherever
 it appears; a line without `sha256:` is a path glob and accepts every finding in
