@@ -16,6 +16,7 @@ import type { AuthInfo } from '../ops/contract.ts';
 import type { Action, Notice } from '../agent-output.ts';
 import { logAudienceAssertion, normalizePrincipals, type AudiencePrincipal } from './audience.ts';
 import { audienceCallerAccess, resolveAudienceIdentities } from './caller.ts';
+import { ownerMemberId } from './owner.ts';
 import { factVisibilitySql } from './member-facts.ts';
 import { hiddenPersonalSources } from './member-sources.ts';
 import {
@@ -37,7 +38,7 @@ export const ROOM_MAX_REFS = 2_000;
 export type RoomReason = 'readers' | 'folder_rule' | 'labelled_only' | 'private_label' | 'derived' | 'personal_source';
 /** Why an item, or the whole answer, could not be judged. */
 export type RoomUnknownReason = 'invalid' | 'not_permitted' | 'unknown_principal' | 'unbound' | 'mark_failed' | 'deadline' | 'response_cap'
-  | 'op_not_covered' | 'not_found' | 'not_identified' | 'over_limit';
+  | 'op_not_covered' | 'not_found' | 'not_identified' | 'over_limit' | 'not_supported';
 export type RoomAccess = { readable: true } | { readable: false; reason: RoomReason } | { readable: 'unknown'; reason: RoomUnknownReason };
 
 /** The room channels a transport saw: the header and request-level _meta (its `room` key). */
@@ -97,8 +98,37 @@ export function readRoomDeclaration(channels: RoomChannels | undefined, args: Re
 type PageRef = { kind: 'page'; source_id: string; slug: string } | { kind: 'page_id'; id: number };
 type FactRef = { kind: 'fact'; id: number };
 type Ref = PageRef | FactRef;
-/** One marked item: its own ref, plus the other pages that gate it (a timeline event's page, a link's target and origin). */
-interface Slot { holder: Record<string, unknown>; ref: Ref | null; also?: Ref[] }
+/**
+ * One marked item: its own ref, plus the other pages that gate it (a timeline event's page, a link's target and origin).
+ * `unknown` marks it unknown whatever its refs decide (a think answer built partly from takes, which carry no page or fact id here).
+ */
+interface Slot { holder: Record<string, unknown>; ref: Ref | null; also?: Ref[]; unknown?: RoomUnknownReason }
+
+/** What a think answer was built from: every page, take and fact its synthesis retrieved (the trust taint refs). */
+export type RoomEvidence = ReadonlyArray<{ table: 'pages'; sourceId: string; slug: string } | { table: string; id: number }>;
+const ROOM_EVIDENCE = Symbol('gbrain.room_evidence');
+/**
+ * Keeps a think answer's evidence on its result for room marking. Symbol-keyed, so object spread keeps it while JSON
+ * and structuredClone drop it: it never reaches a response, a stored write or a log.
+ */
+export function keepRoomEvidence<T extends object>(result: T, evidence: RoomEvidence | undefined): T {
+  if (evidence) (result as Record<symbol, unknown>)[ROOM_EVIDENCE] = evidence;
+  return result;
+}
+/** A think answer is marked at the strictest class of all its evidence; without recorded evidence, or with a take, it is unknown. */
+function thinkSlot(r: unknown, original: unknown): Slot | null {
+  if (!isObj(r)) return null;
+  const evidence = isObj(original) ? (original as Record<symbol, unknown>)[ROOM_EVIDENCE] : undefined;
+  if (!Array.isArray(evidence) || evidence.length === 0) return { holder: r, ref: null };
+  const refs: Ref[] = [];
+  let takes = false;
+  for (const e of evidence as RoomEvidence) {
+    if (e.table === 'pages' && 'slug' in e) refs.push({ kind: 'page', source_id: e.sourceId, slug: e.slug });
+    else if (e.table === 'facts' && 'id' in e) refs.push({ kind: 'fact', id: e.id });
+    else takes = true;
+  }
+  return { holder: r, ref: refs[0] ?? null, also: refs.slice(1), ...(takes ? { unknown: 'not_identified' as const } : {}) };
+}
 
 const str = (v: unknown) => typeof v === 'string' && v ? v : undefined;
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
@@ -148,8 +178,11 @@ function walk(v: unknown, src: string, out: Slot[], depth = 0): void {
   }
 }
 
-/** Read ops whose items room marking covers, and where their items are. Every other op answers op_not_covered. */
-const EXTRACTORS: Record<string, (result: unknown, src: string) => Array<Slot | null>> = {
+/**
+ * Ops whose items room marking covers, and where their items are (`original` is the handler's own object, for evidence
+ * kept off the response). Every other op answers op_not_covered.
+ */
+const EXTRACTORS: Record<string, (result: unknown, src: string, original: unknown) => Array<Slot | null>> = {
   get_page: (r, src) => [pageSlot(r, src)],
   search: (r, src) => listOf(r).map(i => pageSlot(i, src)),
   query: (r, src) => listOf(r).map(i => pageSlot(i, src)),
@@ -160,7 +193,12 @@ const EXTRACTORS: Record<string, (result: unknown, src: string) => Array<Slot | 
   get_backlinks: (r, src) => listOf(r).map(i => linkSlot(i, src)),
   recall: (r, src) => isObj(r) ? [...arr(r.facts).map(factSlot), ...arr(r.results).map(i => pageSlot(i, src))] : [],
   entity: (r, src) => { const out: Slot[] = []; walk(r, src, out); return out; },
+  think: (r, _src, original) => [thinkSlot(r, original)],
+  put_page: (r, src) => [pageSlot(r, src)],
+  remember: r => isObj(r) && Array.isArray(r.items) ? r.items.map(factSlot) : [factSlot(r)],
 };
+/** Writes mark their own result, but a write's answer is never stamped degraded for its marks: a committed write must not read as one to retry. */
+const ROOM_WRITE_OPS: ReadonlySet<string> = new Set(['put_page', 'remember']);
 export const ROOM_COVERED_OPS: ReadonlySet<string> = new Set(Object.keys(EXTRACTORS));
 
 const refKey = (r: Ref) => r.kind === 'page' ? `p:${r.source_id}:${r.slug}` : r.kind === 'page_id' ? `i:${r.id}` : `f:${r.id}`;
@@ -223,6 +261,11 @@ export interface RoomCaller {
   stdioMember?: string;
   /** An attested actor call (x-qm-actor): never marked. */
   attested?: boolean;
+  /**
+   * The trusted local CLI: it marks the view it reads, the brain owner's (or the member `--as` names), so it needs no
+   * may_act_for. With no owner set and no `--as`, it is bound to no one and every item is unknown.
+   */
+  local?: true;
 }
 
 export interface RoomMeta {
@@ -252,14 +295,20 @@ class RoomUnavailable extends Error {
   constructor(readonly reason: RoomUnknownReason, readonly detail?: string, readonly fix?: Action) { super(reason); }
 }
 
+const OWNER_SET_FIX: Action = { ask_user: true, argv: ['gbrain', 'access', 'owner', 'set', '<MEMBER>'], consent: [], actor: 'user', requires_exclusive: false,
+  inputs: [{ name: 'MEMBER', how: 'Ask the user which enabled member is the brain owner (gbrain access member list), or pass --as <member> to mark that member\'s view instead.' }],
+  why: 'Names the brain owner, whose view the CLI compares with the room. Choosing the owner is the user\'s decision.' };
+
 async function roomAccessFor(engine: BrainEngine, caller: RoomCaller, principals: AudiencePrincipal[]): Promise<Partial<CallerAccess>> {
   if (caller.attested) throw new RoomUnavailable('unbound', 'an attested actor call is not marked for a room');
-  const bound = caller.access.owner || caller.access.identity.some(p => p.startsWith('member:'));
+  const bound = caller.access.owner || caller.access.identity.some(p => p.startsWith('member:'))
+    || (caller.local === true && await ownerMemberId(engine) !== null);
+  if (!bound && caller.local) throw new RoomUnavailable('unbound', 'this brain names no owner, so the CLI cannot say whose view to compare with the room', OWNER_SET_FIX);
   if (!bound) throw new RoomUnavailable('unbound', 'this connection is bound to no member, so it cannot ask what a room may read');
   let identities: string[][];
   try {
     identities = await resolveAudienceIdentities(engine, { auth: caller.auth, transport: caller.transport }, principals,
-      { mayActFor: caller.access.owner ? 'owner_room_assessment' : 'enforce' });
+      { mayActFor: caller.access.owner || caller.local ? 'owner_room_assessment' : 'enforce' });
   } catch (e) {
     const code = String((e as { code?: unknown }).code ?? '');
     const detail = e instanceof Error ? e.message.replace('so nothing was read', 'so the answer carries no room marks') : undefined;
@@ -294,6 +343,7 @@ const UNAVAILABLE_WHY: Record<RoomUnknownReason, string> = {
   not_found: 'Some items could not be found again to judge',
   not_identified: 'Some items carry no page or fact id to judge',
   over_limit: `More than ${ROOM_MAX_REFS} items were returned, so the rest were not judged`,
+  not_supported: 'The brain this command reached does not mark answers for a room (it predates room marks)',
 };
 
 /** The notice an answer carries when its room marks had to be dropped to fit the connection's response cap. */
@@ -307,12 +357,19 @@ function emptyMeta(d: RoomDeclaration): RoomMeta {
     counts: { items: 0, readable: 0, above: 0, unknown: 0 }, by_reason: {}, above: [] };
 }
 
+export interface RoomInput {
+  op: string; result: unknown; hotMemory?: unknown; retrieval?: unknown; declaration: RoomDeclaration; caller: RoomCaller; sourceId: string; deadlineMs?: number;
+  /** The items cannot be judged here (a transport that reached no marking brain): every item is marked unknown for this reason. */
+  unavailable?: { reason: RoomUnknownReason; detail?: string };
+}
+
 /**
- * Marks `result` (and the given hot-memory payload) for the declared room. Never throws and never changes what the
+ * Marks `result` (and the given hot-memory payload) for the declared room. With no engine (a client that reached no
+ * brain that marks), `unavailable` says why and every item is unknown; no audit row is written. Never throws and never changes what the
  * result holds apart from adding room_access to its items: on any failure the items are marked unknown and a
  * room_hints_unavailable notice says why. Writes one count-only audit row.
  */
-export async function assessRoom(engine: BrainEngine, input: { op: string; result: unknown; hotMemory?: unknown; retrieval?: unknown; declaration: RoomDeclaration; caller: RoomCaller; sourceId: string; deadlineMs?: number }): Promise<RoomOutcome & { hotMemory?: unknown; retrieval?: unknown }> {
+export async function assessRoom(engine: BrainEngine | null, input: RoomInput): Promise<RoomOutcome & { hotMemory?: unknown; retrieval?: unknown }> {
   try {
     return await assessRoomUnguarded(engine, input);
   } catch {
@@ -324,19 +381,21 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
   }
 }
 
-async function assessRoomUnguarded(engine: BrainEngine, input: { op: string; result: unknown; hotMemory?: unknown; retrieval?: unknown; declaration: RoomDeclaration; caller: RoomCaller; sourceId: string; deadlineMs?: number }): Promise<RoomOutcome & { hotMemory?: unknown; retrieval?: unknown }> {
+async function assessRoomUnguarded(engine: BrainEngine | null, input: RoomInput): Promise<RoomOutcome & { hotMemory?: unknown; retrieval?: unknown }> {
   const { op, declaration: d, caller } = input;
   const meta = emptyMeta(d);
   const extractor = EXTRACTORS[op];
   const result = structuredClone(input.result);
   const hot = input.hotMemory === undefined ? undefined : structuredClone(input.hotMemory);
-  const slots: Slot[] = extractor ? extractor(result, input.sourceId).filter((s): s is Slot => !!s) : [];
+  const slots: Slot[] = extractor ? extractor(result, input.sourceId, input.result).filter((s): s is Slot => !!s) : [];
   if (isObj(hot) && isObj(hot.brain_hot_memory)) for (const f of arr(hot.brain_hot_memory.facts)) { const s = factSlot(f); if (s) slots.push(s); }
   // search and query: the saved facts that ride _meta.retrieval (and the model-visible saved-facts block) are items too.
   const retrieval = isObj(input.retrieval) && Array.isArray(input.retrieval.saved_facts) ? structuredClone(input.retrieval) as Record<string, unknown> : undefined;
   if (retrieval) for (const f of arr(retrieval.saved_facts)) { const s = factSlot(f); if (s) slots.push(s); }
   let unavailable: RoomUnavailable | null = !extractor ? new RoomUnavailable('op_not_covered')
-    : d.invalid ? new RoomUnavailable('invalid', d.invalid) : null;
+    : d.invalid ? new RoomUnavailable('invalid', d.invalid)
+    : input.unavailable ? new RoomUnavailable(input.unavailable.reason, input.unavailable.detail)
+    : !engine ? new RoomUnavailable('not_supported') : null;
   let decisions = new Map<string, RoomAccess>();
   const refs = new Map<string, Ref>();
   for (const s of slots) for (const r of s.ref ? [s.ref, ...(s.also ?? [])] : []) if (refs.size < ROOM_MAX_REFS) refs.set(refKey(r), r);
@@ -345,8 +404,8 @@ async function assessRoomUnguarded(engine: BrainEngine, input: { op: string; res
       let late = false;
       decisions = await withDeadline((async () => {
         await deadlineForTests?.delay();
-        const access = late ? null : await roomAccessFor(engine, caller, d.principals);
-        return access && !late ? decide(engine, access, d.principals, [...refs.values()]) : new Map<string, RoomAccess>();
+        const access = late ? null : await roomAccessFor(engine!, caller, d.principals);
+        return access && !late ? decide(engine!, access, d.principals, [...refs.values()]) : new Map<string, RoomAccess>();
       })(), deadlineForTests?.ms ?? input.deadlineMs ?? ROOM_DEADLINE_MS, () => { late = true; });
     } catch (e) {
       unavailable = e instanceof RoomUnavailable ? e : new RoomUnavailable('mark_failed');
@@ -360,7 +419,7 @@ async function assessRoomUnguarded(engine: BrainEngine, input: { op: string; res
     const gates = s.ref ? [s.ref, ...(s.also ?? [])].map(judge) : [];
     const access: RoomAccess = unavailable ? { readable: 'unknown', reason: unavailable.reason }
       : !s.ref ? { readable: 'unknown', reason: 'not_identified' }
-      : gates.find(a => a.readable === false) ?? gates.find(a => a.readable === 'unknown') ?? { readable: true };
+      : gates.find(a => a.readable === false) ?? (s.unknown ? { readable: 'unknown', reason: s.unknown } : undefined) ?? gates.find(a => a.readable === 'unknown') ?? { readable: true };
     s.holder[ROOM_ACCESS_KEY] = access;
     meta.counts.items++;
     if (access.readable === true) { meta.counts.readable++; continue; }
@@ -384,10 +443,10 @@ async function assessRoomUnguarded(engine: BrainEngine, input: { op: string; res
     notices.push({ code: 'room_above_level', kind: 'safety',
       why: `This answer goes into a room (${d.principals.join(', ')}). ${meta.counts.above} of ${meta.counts.items} items are above the room's level${reasons ? ` (${reasons})` : ''}${meta.counts.unknown ? ` and ${meta.counts.unknown} could not be judged` : ''}; their room_access says so. Use them to do the work. Keep them out of the reply unless the ask needs them, and offer the rest in a private chat. Never refuse the work because of them.` });
   }
-  logAudienceAssertion({ outcome: 'room_marked', op, audience: [...d.principals], transport: caller.transport ?? 'unknown',
+  if (engine) logAudienceAssertion({ outcome: 'room_marked', op, audience: [...d.principals], transport: caller.transport ?? 'unknown',
     principal: caller.auth?.principal ? `${caller.auth.principal.kind}:${caller.auth.principal.id}` : caller.transport === 'stdio' ? 'local_stdio' : 'unknown',
     room: { readable: meta.counts.readable, above: meta.counts.above, unknown: meta.counts.unknown, by_reason: { ...meta.by_reason }, declared_by: d.declared_by,
       ...(meta.unavailable ? { unavailable: meta.unavailable } : {}) } });
-  const stamped = meta.unavailable === 'op_not_covered' ? notices.filter(n => n.code !== 'room_hints_unavailable') : notices;
+  const stamped = meta.unavailable === 'op_not_covered' || ROOM_WRITE_OPS.has(op) ? notices.filter(n => n.code !== 'room_hints_unavailable') : notices;
   return { result, meta, notices, stamped, ...(hot !== undefined ? { hotMemory: hot } : {}), ...(retrieval ? { retrieval } : {}) };
 }
