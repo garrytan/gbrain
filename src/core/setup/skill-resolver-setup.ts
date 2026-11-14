@@ -4,7 +4,8 @@
  *
  * On: build the harness's user-level catalog (<harness>-user, from
  * ~/.claude/skills; Codex: ~/.agents/skills and CODEX_HOME/skills; Hermes:
- * $HERMES_HOME/skills) and, for
+ * $HERMES_HOME/skills; plus any skills.resolver.per_harness.<harness>.dirs
+ * that exist) and, for
  * Claude Code, claude-code-plugins from its enabled user-scope plugins; only
  * when those builds indexed at least one skill, write the file-plane keys
  * (skill-resolver-config.ts) and the lane's hook (skill-resolver-hook.ts);
@@ -27,11 +28,12 @@ import { existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { claudeUserSkillsDir, codexConfigPath } from '../bootstrap/host-specs.ts';
 import { buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex } from '../skills/resolver/build.ts';
+import { configuredSkillDirs } from '../skills/resolver/config.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
 import { CLAUDE_PLUGINS_CATALOG, logsDir, sessionsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { resolveSkills } from '../skills/resolver/resolve.ts';
 import { claudePluginRoots, readDirSources } from '../skills/resolver/sources.ts';
-import { readResolverConfig, resolverHarnesses, setResolverHarness } from './skill-resolver-config.ts';
+import { readResolverConfig, resolverHarnesses, resolverSection, setResolverHarness } from './skill-resolver-config.ts';
 import { syncHermesPins } from './hermes-skill-pins.ts';
 import { hermesHomeDir, inspectSkillResolverHook, removeSkillResolverHook, syncSkillResolverHook, type ResolverHarness, type ResolverHookPaths } from './skill-resolver-hook.ts';
 
@@ -95,13 +97,15 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
   if (cfg.state === 'unreadable') return { ...out, error: { code: 'skill_resolver_config_unreadable', scanned: [], message: `${cfg.path} cannot be read (${cfg.why}), so setup did not touch it or anything else for the skill resolver.` } };
   if (!opts.gbrainBin.startsWith('/')) return { ...out, error: incomplete(null, 'no absolute gbrain binary was found for the hook (harnesses inherit no PATH); pass --gbrain-bin', 'Nothing was written.') };
   const catalog = userCatalog(harness);
-  const dirs = harnessSkillDirs(harness).filter((d) => existsSync(d));
+  let wanted: string[];
+  try { wanted = [...new Set([...harnessSkillDirs(harness), ...configuredSkillDirs(cfg.state === 'ok' ? resolverSection(cfg.doc) : {}, harness)])]; } catch (e) { return { ...out, error: incomplete(null, (e as Error).message.replace(/\.$/, ''), 'Nothing was written.') }; }
+  const dirs = wanted.filter((d) => existsSync(d));
   const status = existsSync(join(skillIndexRoot(home), catalog, 'receipt.json')) ? await catalogStatus(catalog, { home }) : null;
   const sameDirs = JSON.stringify(status?.receipt?.source.dirs ?? null) === JSON.stringify(dirs);
   const fresh = !!status?.fresh && sameDirs && (status.receipt?.skill_count ?? 0) > 0;
   const where = join(skillIndexRoot(home), catalog);
   const pluginRoots = harness === 'claude-code' ? claudePluginRoots(claudePluginsBase()).roots : [];
-  if (dirs.length === 0 && pluginRoots.length === 0) return { ...out, error: incomplete(harnessSkillDirs(harness), 'no user-level skill directory exists', 'Nothing was written.') };
+  if (dirs.length === 0 && pluginRoots.length === 0) return { ...out, error: incomplete(wanted, 'no user-level skill directory exists', 'Nothing was written.') };
   const scanned = [...dirs, ...(pluginRoots.length ? [claudePluginsBase()] : [])];
 
   let skills = 0;
@@ -119,6 +123,9 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
   } else if (dirs.length) {
     skills = status!.receipt!.skill_count;
     out.steps.push({ step: 'catalog', action: 'keep', detail: `${skills} skills from ${dirs.join(', ')} in ${where}` });
+  } else if (status) {
+    if (!dryRun) await removeSkillIndex(catalog, { home });
+    out.steps.push({ step: 'catalog', action: 'remove', detail: `${where} (no skill directory is left for it)` });
   }
   let pluginSkills = 0;
   if (harness === 'claude-code') {

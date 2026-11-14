@@ -505,8 +505,9 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
  * their positions (stale rows whose claim is still active in the fence stay,
  * others are expired in place, new rows wait). In-place updates still apply.
  */
-function reconcileWrites(plan: FenceReconcilePlan) {
-  const deferInserts = plan.toInsert.some(f => !f.embedding) && plan.stale.some(f => f.has_embedding);
+/** `embeddingDeferred`: the caller skipped embedding on purpose (the stale-fact drain adds vectors), so a vectorless insert still replaces. */
+function reconcileWrites(plan: FenceReconcilePlan, embeddingDeferred = false) {
+  const deferInserts = !embeddingDeferred && plan.toInsert.some(f => !f.embedding) && plan.stale.some(f => f.has_embedding);
   const activeClaims = new Set(plan.extracted.filter(f => f.expired_at == null).map(f => `${f.fact}\u0000${f.source}`));
   return {
     deferInserts,
@@ -583,17 +584,17 @@ function maintenanceRequestIdFor(parts: unknown[]): string {
  * changed or the request is still pending (the next run retries).
  */
 async function publishFenceReconcile(engine: BrainEngine, authority: MaintenanceAuthority, page: { id: number; knowledge_revision?: string | null },
-  slug: string, toInsert: FenceExtractedFact[]): Promise<{ inserted: number; updated: number; deleted: number; deferred: boolean; warnings: string[]; write_gate?: GateTally } | null> {
+  slug: string, toInsert: FenceExtractedFact[], deferEmbedding = false): Promise<{ inserted: number; updated: number; deleted: number; deferred: boolean; warnings: string[]; write_gate?: GateTally } | null> {
   const sourceId = authority.writer.sourceId;
   const revision = page.knowledge_revision ?? REVISION_BACKFILL_PENDING;
   const embeddings = toInsert.filter(f => f.embedding).map(f => ({ row_num: f.row_num, fact: f.fact, model: f.embedding_model ?? null, vector: Array.from(f.embedding!) }));
   for (let attempt = 0; ; attempt++) {
-    const requestId = maintenanceRequestIdFor(['extract-facts-fence-v1', authority.writer.sourceIncarnation, sourceId, slug, revision, digest(embeddings), attempt]);
+    const requestId = maintenanceRequestIdFor(['extract-facts-fence-v1', authority.writer.sourceIncarnation, sourceId, slug, revision, digest(embeddings), attempt, ...(deferEmbedding ? ['defer-embedding'] : [])]);
     const prior = await getWriteRequest(engine, authority.writer.principal, requestId);
     if (prior && isTerminal(prior) && prior.state !== 'committed') continue;
     try {
       const receipt = await submitDatabaseMaintenanceIntent(engine, authority, slug,
-        { kind: FENCE_FACTS_INTENT, expected_revision: revision, page_id: page.id, embeddings }, requestId);
+        { kind: FENCE_FACTS_INTENT, expected_revision: revision, page_id: page.id, embeddings, ...(deferEmbedding ? { defer_embedding: true } : {}) }, requestId);
       return { inserted: Number(receipt.inserted ?? 0), updated: Number(receipt.updated ?? 0), deleted: Number(receipt.deleted ?? 0),
         deferred: receipt.deferred === true, warnings: Array.isArray(receipt.warnings) ? receipt.warnings.map(String) : [],
         ...(receipt.write_gate ? { write_gate: receipt.write_gate as GateTally } : {}) };
@@ -606,7 +607,7 @@ async function publishFenceReconcile(engine: BrainEngine, authority: Maintenance
 
 /** Preparer for `managed_maintenance_fence_facts`: replans the page's reconcile under its key and applies it. */
 export async function prepareFenceFactsReconcile(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
-  const intent = row.intent as { page_id?: unknown; expected_revision?: unknown; embeddings?: Array<{ row_num: number; fact: string; model: string | null; vector: number[] }> } | null;
+  const intent = row.intent as { page_id?: unknown; expected_revision?: unknown; defer_embedding?: unknown; embeddings?: Array<{ row_num: number; fact: string; model: string | null; vector: number[] }> } | null;
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id });
   if (!snapshot || snapshot.page.id !== Number(row.page_id) || Number(intent?.page_id) !== snapshot.page.id) {
     throw opError('page_identity_changed', 'The page was deleted or replaced before its facts fence was reconciled.',
@@ -628,7 +629,7 @@ export async function prepareFenceFactsReconcile(engine: BrainEngine, row: Write
         const vector = vectors.get(`${fact.row_num}\u0000${fact.fact}`);
         if (vector) { fact.embedding = new Float32Array(vector.vector); fact.embedding_model = vector.model; }
       }
-      const writes = reconcileWrites(plan);
+      const writes = reconcileWrites(plan, intent?.defer_embedding === true);
       const written = await writeFenceReconcile(tx, row.source_id, row.slug, plan, writes);
       return { status: 'completed', ...written, deferred: writes.deferInserts, warnings: [...warnings, ...written.warnings] };
     } };
@@ -723,6 +724,8 @@ export interface ExtractFactsOpts {
    * (src/core/facts/reconcile-watermark.ts). The dream cycle sets it.
    */
   drain?: FactsReconcileDrainOpts;
+  /** GBRA-438: write new rows without calling the embedding provider; the stale-fact embed drain adds their vectors later. */
+  deferEmbedding?: boolean;
 }
 
 export interface ExtractFactsResult {
@@ -797,6 +800,9 @@ async function pendingLegacyRows(engine: BrainEngine, sourceId: string): Promise
   );
   return new Map(legacy.map(row => [row.entity_slug, parseInt(row.n ?? '0', 10)]));
 }
+
+/** Pages between macrotask yields in the reconcile walk (about 10 ms of work on PGLite). */
+const FACTS_WALK_YIELD_EVERY = 50;
 
 /**
  * Run the extract_facts phase against the current brain state. Returns
@@ -1039,7 +1045,7 @@ export async function runExtractFacts(
     // consolidate's cosine clustering and find_trajectory's drift_score see
     // them. Rows updated in place keep their vectors: the claim text is
     // unchanged. Falls open without an embedding provider, with a warning.
-    if (toInsert.length > 0) {
+    if (toInsert.length > 0 && !opts.deferEmbedding) {
       if (isAvailable('embedding')) {
         try {
           const texts = toInsert.map(e => e.fact);
@@ -1076,7 +1082,7 @@ export async function runExtractFacts(
       return 'stop';
     }
 
-    const writes = reconcileWrites(plan);
+    const writes = reconcileWrites(plan, opts.deferEmbedding === true);
     const { detach, expireInPlace, deferInserts } = writes;
     if (deferInserts) {
       result.warnings.push(`${slug}: destructive fact reconciliation deferred; existing vectors preserved until embedding succeeds`);
@@ -1085,7 +1091,7 @@ export async function runExtractFacts(
     type Written = { inserted: number; updated: number; warnings: string[]; deleted?: number; deferred?: boolean; write_gate?: GateTally };
     const apply = async (): Promise<Written | null> => {
       const authority = await managedAuthority();
-      if (authority) return publishFenceReconcile(engine, authority, page, slug, toInsert);
+      if (authority) return publishFenceReconcile(engine, authority, page, slug, toInsert, opts.deferEmbedding === true);
       try {
         return await withUnmanagedBeliefs(engine, sourceId, [slug], 'extract_facts', run => maintenanceTransaction(engine, tx => run(tx, async () => {
           opts.signal?.throwIfAborted();
@@ -1120,6 +1126,9 @@ export async function runExtractFacts(
   };
 
   for (const slug of slugs) {
+    // GBRA-438: PGLite resolves queries on a microtask chain, so a macrotask yield every FACTS_WALK_YIELD_EVERY pages lets a
+    // timer, a budget or a request (stdin) trip the abort mid-walk instead of after it.
+    if (result.pagesScanned > 0 && result.pagesScanned % FACTS_WALK_YIELD_EVERY === 0) await new Promise(r => setTimeout(r, 0));
     // #1972: bail at the top of the per-page loop on abort. Each page is an
     // independent delete-then-insert commit, so breaking leaves a consistent
     // partial state; the receipt/rollup below still runs with partial counts.

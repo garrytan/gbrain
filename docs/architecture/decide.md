@@ -143,7 +143,11 @@ with the background-work drain (500 ms bound at CLI exit). Retention:
 `decide.receipts.retention_days` (7), pruned by the cycle `purge` phase. The
 daily cap sums `decide_spend` for the UTC day (third-party only; cached 60 s;
 soft in both directions); remote-triggered spend is capped by
-`decide.budget.remote_share`.
+`decide.budget.remote_share`. A batch the provider refuses with a 4xx other
+than 408 or 429 (402 billing, 401/403 auth, 400/404 model) never ran, so its
+row is `failed` at $0 and the provider error is not hidden behind
+`budget_exhausted` (#7272); a 429, 5xx, timeout or transport failure keeps its
+estimated charge.
 
 ### S9 proposals and sweep state
 

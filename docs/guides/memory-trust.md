@@ -224,8 +224,16 @@ lowers them. It only lowers: it never raises a row, it touches only rows with
 `write_origin.channel = "trust_claim"`, rows on a lowered page follow it, and
 each lowered row records `write_origin.channel = "trust_relower"`.
 
+Legacy Life Chronicle event pages (`captured_via: life-chronicle:auto`) are
+model summaries of another page (#9284). A claim caps them at "written by an
+agent" and never above the tier of the page they summarise. Events an earlier
+claim lifted change only when you run `--relower`.
+
 `gbrain sources set-trust <id> <lower tier>` or `--clear` ends a claim. Rows
-it already lifted keep their tier.
+it already lifted keep their tier. To lower them anyway, name the source:
+`gbrain trust claim-sources --relower --dry-run --source <id>`, then the same
+command without `--dry-run`. Doctor names the `--source` flags when it finds
+such rows.
 
 ## Repair unknown markers
 
