@@ -68,6 +68,7 @@ const EXEMPT: Record<string, string> = {
   'src/core/repair/frontmatter.ts': 'owner repair of existing frontmatter',
   'src/core/persistence/twin-merge.ts': 'owner repair or post-sync heal of verified duplicate-origin twins (#6948): moves rows the twin already stores (links, timeline, raw data, tags, aliases, facts) onto the canonical page with their tiers unchanged, then soft-deletes the twin; no new text, and a tier difference holds the file instead of merging',
   'src/core/repair/ghost-pages.ts': 'retires an owner-approved ghost page (version + soft delete, lifecycle); no new text',
+  'src/core/repair/moved-pages.ts': 'owner repair behind a preview hash: folds a page whose file provably moved into the moved page (twin merge of stored rows, its versions re-pointed, then soft delete); no new text',
   'src/core/repair/ontology-facts.ts': 'owner repair restoring existing ontology rows',
   'src/core/repair/stale-atoms.ts': 'retires stale atoms (lifecycle)',
   'src/core/persistence/derived-retirement-hold.ts': 'versions, soft-deletes and stamps derived pages a writer retires (lifecycle); writes no content',

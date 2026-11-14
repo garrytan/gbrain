@@ -87,6 +87,7 @@
     "check:resolver": "bun src/cli.ts check-resolvable --strict --skills-dir skills/",
     "check:skill-brain-first": "bash scripts/check-skill-brain-first.sh",
     "check:skill-publication": "bun scripts/check-skill-publication.ts",
+    "check:skill-health": "bun scripts/check-skill-health.ts",
     "check:plugin-tree": "bash scripts/check-plugin-tree.sh",
     "check:wasm": "bash scripts/check-wasm-embedded.sh",
     "check:pglite-embedded": "bash scripts/check-pglite-embedded.sh",
@@ -127,6 +128,7 @@
     "check:eval-glossary": "bash scripts/check-eval-glossary-fresh.sh",
     "check:tool-catalog": "bash scripts/check-tool-catalog-fresh.sh",
     "check:skills-manifest": "bash scripts/check-skills-manifest-fresh.sh",
+    "check:skills-lock-history": "bun scripts/check-skills-lock-history.ts",
     "check:test-names": "bash scripts/check-test-real-names.sh",
     "check:progress": "bash scripts/check-progress-to-stdout.sh",
     "check:no-tracked-symlinks": "bash scripts/check-no-tracked-symlinks.sh",
@@ -258,7 +260,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.711.0",
+  "version": "0.60.716.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

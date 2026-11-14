@@ -273,7 +273,7 @@ Want to see a tutorial that isn't here yet? [Open an issue](https://github.com/g
 
 The whole loop is described in [`docs/architecture/topologies.md`](docs/architecture/topologies.md) with diagrams.
 
-**Say to your agent:** *"Set up autopilot"* (installs the cron that runs the loop) — *"Run dream"* — *"Did the dream cycle run?"*
+**Say to your agent:** *"Did upkeep run?"* (your agent's open `gbrain serve` runs the free upkeep while it is idle; `gbrain maintain --schedule` adds a timer for a brain no agent opens) — *"Run dream"* — *"Did the dream cycle run?"*
 
 ## Capabilities
 

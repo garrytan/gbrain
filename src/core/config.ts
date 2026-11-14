@@ -1801,6 +1801,8 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'embed.backfill_cooldown_min',
   'embed.backfill_max_usd_per_source_24h',
   'embed.backfill_max_usd',
+  // GBRA-438: free unattended upkeep on/off and its daily embedding cap (core/maintenance/run.ts).
+  'maintenance.auto', 'maintenance.embed_daily_usd',
   // Brain-level default source. Read by source-resolver.ts tier 5
   // (`engine.getConfig('sources.default')`) and written by
   // `gbrain sources default <id>`. Listed here so `gbrain config set`

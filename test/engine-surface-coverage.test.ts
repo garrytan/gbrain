@@ -141,6 +141,8 @@ const ENGINE_INTERNAL_HELPERS: readonly string[] = [
   // Engine graduation: PGLite close/open that keeps the kernel lock across the custody window.
   'closeRetainingLock',
   'connectWithHeldLock',
+  // #9227: whether this engine holds the datastore lock; the PGLite abandoned-claim release rests on it.
+  'holdsDatastoreLock',
 ];
 
 /**

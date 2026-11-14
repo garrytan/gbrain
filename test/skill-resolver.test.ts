@@ -23,7 +23,7 @@ import {
   buildSkillIndex, catalogStatus, removeSkillIndex, resolveSkills, sessionStatus, ResolverError, BLOCK_TOKEN_CAP, type TurnInput,
 } from '../src/core/skills/resolver/index.ts';
 import { lexTerms } from '../src/core/skills/resolver/tokenize.ts';
-import { isAcknowledgement, mentionsSkill } from '../src/core/skills/resolver/rank.ts';
+import { isAcknowledgement, maxIdf, mentionsSkill } from '../src/core/skills/resolver/rank.ts';
 import { estimateTokens } from '../src/core/skills/resolver/block.ts';
 import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/core/skills/resolver/lock.ts';
 import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
@@ -115,6 +115,69 @@ describe('turn rules', () => {
     expect([strict.output.suggestions, strict.output.block, strict.output.no_skill]).toEqual([[], '', false]);
     const named = await resolveSkills({ message: 'use the desc-3 skill', min_match_strength: 'named' }, { home });
     expect(named.output.suggestions.map(s => s.id)).toEqual(['x:desc-3']);
+  });
+
+  test('top_gate empties the block when the best skill scores below it over its catalog maxIdf; off by default and at 0, a named skill bypasses it, nothing gated is committed', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const open = await resolveSkills({ message: 'team status', session_id: 'g' }, { home });
+    expect(open.output.suggestions[0]!.id).toBe('gbrain:reports');
+    const top = open.output.suggestions[0]!.score / maxIdf(BASIC.length);
+    const below = await resolveSkills({ message: 'team status', top_gate: top + 0.01, session_id: 'g2' }, { home });
+    expect([below.output.block, below.output.suggestions, below.output.block_reason, below.output.no_skill]).toEqual(['', [], 'weak_top_match', false]);
+    expect(below.pending!.delta.suggested).toEqual([]);
+    expect((await resolveSkills({ message: 'team status', top_gate: top - 0.01 }, { home })).output.suggestions[0]!.id).toBe('gbrain:reports');
+    expect((await resolveSkills({ message: 'team status', top_gate: 0 }, { home })).output.suggestions).toEqual((await resolveSkills({ message: 'team status' }, { home })).output.suggestions);
+    const named = await resolveSkills({ message: 'use the deploy skill', top_gate: 100 }, { home });
+    expect(named.output.suggestions[0]).toMatchObject({ id: 'gbrain:deploy', match_strength: 'named' });
+  });
+
+  test('top_gate reads the best skill the block would show: an excluded top skill does not open it, and an empty window stays filtered', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', BASIC);
+    const open = await resolveSkills({ message: 'weekly meeting notes' }, { home });
+    const [top, second] = open.output.suggestions;
+    expect(second!.score).toBeLessThan(top!.score);
+    const gate = (top!.score + second!.score) / 2 / maxIdf(BASIC.length);
+    expect((await resolveSkills({ message: 'weekly meeting notes', top_gate: gate }, { home })).output.suggestions[0]!.id).toBe(top!.id);
+    const excluded = await resolveSkills({ message: 'weekly meeting notes', exclude: [top!.id], top_gate: gate }, { home });
+    expect([excluded.output.suggestions, excluded.output.block_reason]).toEqual([[], 'weak_top_match']);
+    const none = await resolveSkills({ message: 'weekly meeting notes', exclude: open.output.suggestions.map(s => s.id), top_gate: 0.0001 }, { home });
+    expect(none.output.block_reason).toBe('filtered');
+  });
+
+  test('top_gate reads the skills left after session dedupe: a deduped strong skill does not open it for a weak one', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'c', [
+      { id: 'x:release-widget', name: 'release-widget', description: 'Release the widget staging service' },
+      { id: 'x:deploy-notes', name: 'deploy-notes', description: 'Write deploy notes for the team' },
+    ]);
+    const msg = 'deploy release widget staging service';
+    const open = await resolveSkills({ message: msg }, { home });
+    expect(open.output.suggestions.map(s => s.id)).toEqual(['x:release-widget', 'x:deploy-notes']);
+    const [strong, weak] = open.output.suggestions.map(s => s.score / maxIdf(2));
+    const gate = (strong! + weak!) / 2;
+    expect(weak!).toBeLessThan(gate);
+    const first = await resolveSkills({ message: 'release widget staging service', session_id: 'dd', top_gate: gate }, { home });
+    expect(first.output.suggestions.map(s => s.id)).toEqual(['x:release-widget']);
+    expect(await first.commit()).toBe(true);
+    const again = await resolveSkills({ message: msg, session_id: 'dd', top_gate: gate }, { home });
+    expect([again.output.suggestions, again.output.block, again.output.block_reason, again.output.deduped]).toEqual([[], '', 'weak_top_match', ['x:release-widget']]);
+    expect(again.pending!.delta.suggested).toEqual([]);
+    const named = await resolveSkills({ message: 'use the deploy-notes skill', session_id: 'dd', top_gate: 100 }, { home });
+    expect(named.output.suggestions.map(s => s.id)).toEqual(['x:deploy-notes']);
+  });
+
+  test('top_gate reads the same at any catalog size: the score is divided by the maxIdf of its own catalog', async () => {
+    const home = tmp();
+    const pad = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `p:${word(i, 3)}`, name: word(i, 3), description: Array.from({ length: 8 }, (_, s) => word(i, 5 + s)).join(' ') }));
+    await jsonCatalog(home, 'small', BASIC);
+    await jsonCatalog(home, 'large', [...BASIC, ...pad(400)]);
+    const small = await resolveSkills({ message: 'team status' }, { home, catalogs: ['small'] });
+    const large = await resolveSkills({ message: 'team status' }, { home, catalogs: ['large'] });
+    const ratio = (r: typeof small, n: number) => r.output.suggestions[0]!.score / maxIdf(n);
+    expect(large.output.suggestions[0]!.score).toBeGreaterThan(small.output.suggestions[0]!.score * 2);
+    expect(Math.abs(ratio(large, BASIC.length + 400) - ratio(small, BASIC.length))).toBeLessThan(0.15 * ratio(small, BASIC.length));
   });
 
   test('previous_user_message is ranked only when the current message matches nothing', async () => {
@@ -217,6 +280,7 @@ describe('turn rules', () => {
     expect(r.output.suggestions.length).toBe(2);
     expect(r.output.suggestions.map(s => s.id)).not.toContain('gbrain:meeting-notes');
     for (const bad of [{}, { message: 1 }, { message: 'x', top_k: 9 }, { message: 'x', top_k: 0 }, { message: 'x', extra: 1 }, { message: 'x', exclude: new Array(EXCLUDE_MAX + 1).fill('a') }, { message: 'x', min_match_strength: 'weak' },
+      { message: 'x', top_gate: -1 }, { message: 'x', top_gate: 101 }, { message: 'x', top_gate: '1' }, { message: 'x', top_gate: Number.NaN },
       { message: 'x', session_id: 'has space' }, { message: 'x', session_id: 'é' }, { message: 'x', session_id: 'a'.repeat(257) }, { message: 'x', harness: 'vim' }, { message: 'x', expected_catalog_hash: 'abc' }]) {
       expect(await codeOf(resolveSkills(bad as TurnInput, { home }))).toBe('skill_resolve_invalid_input');
     }
@@ -446,6 +510,20 @@ describe('sessions', () => {
     utimesSync(join(dir, file), old, old);
     expect(gcSessions(home)).toBe(1);
     expect(existsSync(join(dir, file))).toBe(false);
+  });
+
+  test('a bounded async GC pass examines at most its file budget and stamps; one past its deadline deletes nothing and leaves no stamp', async () => {
+    const home = tmp();
+    const dir = join(home, 'skill-index', 'sessions');
+    mkdirSync(dir, { recursive: true });
+    const old = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+    for (let i = 0; i < 10; i++) { const p = join(dir, `${String(i).repeat(64)}.json`); writeFileSync(p, '{}'); utimesSync(p, old, old); }
+    const stamp = join(home, 'skill-index', 'logs', 'session-gc.stamp');
+    expect(await gcSessionsAsync(home, Date.now(), { files: 3, until: performance.now() - 1 })).toBe(0);
+    expect(existsSync(stamp)).toBe(false);
+    expect(await gcSessionsAsync(home, Date.now(), { files: 3, until: performance.now() + 60_000 })).toBe(3);
+    expect(readdirSync(dir)).toHaveLength(7);
+    expect(existsSync(stamp)).toBe(true);
   });
 
   test('async GC never deletes an idle session file while a commit holds its lease; the commit keeps the earlier state', async () => {

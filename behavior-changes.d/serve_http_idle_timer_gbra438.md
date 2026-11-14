@@ -1,0 +1,1 @@
+HTTP `gbrain serve --http` now has an idle timer: it counts an MCP POST as foreground work and runs the idle upkeep only when no request is in flight, aborting the upkeep slice when one arrives. Before, only the stdio server had idle work.

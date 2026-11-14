@@ -76,7 +76,8 @@ import { protectedReconcileKey, reconcileCanonical, RECONCILE_SCAN_KEYS, type Re
 import { fileWinsContent } from '../persistence/file-wins-content.ts';
 import { ABSENT_FILE_HASH, canonicalDeletionState, missingFileRoute, readCanonicalFileText, readDeletedDriftTarget, readReconcileState, assertReconcileRevision, validateReconcileArtifact, type DeletedDriftChange, type DeletedDriftTarget, type ReconcileArtifact } from '../persistence/reconcile-state.ts';
 import { sourceDbOnlyVerdict } from '../persistence/source-storage.ts';
-import { clearGitHold, readGitHold, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, requestGitHoldRetry, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { readMovedPage } from '../persistence/moved-pages.ts';
+import { clearGitHold, movedPagesPreviewArgv, readGitHold, fileDriftActionVerb, fileDriftSide, FILE_DRIFT_DELETED_STATES, FILE_DRIFT_SIDES, GIT_HOLD_OP, heldDriftPreviewArgv, requestGitHoldRetry, type FileDriftDeletedState, type FileDriftSide, type GitHoldRecord } from '../persistence/sync-holds.ts';
 import { prepareRepairPublication, repairScreenConfig, submitManagedFileRepair } from '../persistence/file-repair.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
@@ -567,6 +568,10 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
   const root = join(binding!.local_path!, binding!.relative_path);
   const deletion = canonicalDeletionState(root, join(root, ...now.ghost.path.split('/')));
   if (deletion !== 'gone') return { skip: deletion === 'in_head' ? 'deletion_uncommitted' : 'unknown_deletion_state', detail: missingFileRoute(sourceId, slug, now.ghost.path, deletion) };
+  // GST-2584: a file that moved left this page behind; neither side of this repair carries it, the fold does.
+  const deletedBy = target?.provenance ?? (await readDeletionProvenance(root, [now.ghost.path])).get(now.ghost.path) ?? { kind: 'unknown' as const };
+  const moved = await readMovedPage(engine, { sourceId, root, old: { page_id: now.ghost.page_id, slug, revision: now.ghost.revision, path: now.ghost.path }, provenance: deletedBy });
+  if (moved.verdict === 'moved') return { skip: 'moved_to', detail: `${moved.detail}; nothing is written for it here. Fold it into ${moved.survivor.slug} instead (its alias, links, facts, timeline and saved versions carried, the old page soft-deleted and restorable): ${shellQuote(movedPagesPreviewArgv(sourceId, slug))}` };
   if (opts.prefer === 'file' && sourceDbOnlyVerdict(root, slug) === 'unknown') return { skip: 'storage_invalid',
     detail: `gbrain.yml's storage section is invalid or ambiguous about db_only, so whether ${slug} is database-only is unknown and --prefer file would delete it (#8007): run gbrain storage status, fix gbrain.yml, commit it, then sync source ${sourceId} again` };
   if (opts.provenance === 'never_committed' && target?.provenance?.kind === 'never_committed') {
@@ -577,7 +582,6 @@ async function fileGonePage(engine: BrainEngine, sourceId: string, slug: string,
   if (opts.prefer === 'file') return { page: { slug, prefer: 'file', exceptions: [], soft_delete: { ghost: now.ghost, owner: now.owner } },
     detail: `soft-deletes the page: its file ${now.ghost.path} is gone from the last commit (purged after ${GHOST_PURGE_FUSE_HOURS} h; gbrain restore ${slug} --force undoes it until then)` };
   // GST-2579: recreating the file undoes the commit that deleted it; in bulk the deletion is kept, an exact --slug names the commit and needs consent.
-  const deletedBy = target?.provenance ?? (await readDeletionProvenance(root, [now.ghost.path])).get(now.ghost.path) ?? { kind: 'unknown' as const };
   const undone: UnimportedFile | null = deletedBy.kind === 'never_committed' ? null : { path: now.ghost.path, reason: 'unimported_delete',
     commit: deletedBy.kind === 'deleted_by_commit' ? { sha: deletedBy.commit, author: deletedBy.author, date: deletedBy.date } : null };
   if (undone && !opts.slugs?.length) return { skip: 'kept_newer_delete', detail: `kept the deletion, nothing is written for it: recreating the file would undo ${unimportedFileText(undone)}. `

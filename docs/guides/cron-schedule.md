@@ -36,8 +36,16 @@ scheduling surfaces — reach for these first:
   hand-rolling the dream cycle below.
 - **`gbrain jobs` / minions** — queue shell jobs or LLM subagents with retry,
   backoff, and an audit trail. See the `minion-orchestrator` skill.
-- **`gbrain autopilot`** — the long-lived background daemon that runs cycles
-  on its own cadence.
+- **`gbrain serve`** — while the agent connected to it is idle, it runs the
+  free upkeep (`gbrain maintain --unattended`) once a day, with nothing to
+  install. A source too big to finish in its short idle slices is parked after
+  30 tries and finished by the next full run. `gbrain maintain --status` shows
+  the last run and anything parked.
+- **`gbrain maintain --schedule`** — for a brain no agent opens most days:
+  installs a job that runs the same upkeep every 6 hours (launchd, a systemd
+  user timer or cron). Opt-in; preview with `--dry-run`.
+- **`gbrain autopilot`** — the long-lived background daemon that runs full
+  cycles on its own cadence, for a Postgres brain with a repo.
 - **`cron-scheduler` skill** (`skills/cron-scheduler/`) — teaches an agent to
   manage its harness's scheduler.
 - **Bootstrap session-triggered schedules** — `gbrain bootstrap` installs

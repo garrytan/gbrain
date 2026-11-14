@@ -43,7 +43,7 @@ export function staleDrainFailures(drained: { linkFailed?: number; linkFailures?
 
 export async function runPhaseExtractDatabaseOnly(
   engine: BrainEngine,
-  opts: { dryRun: boolean; sourceId?: string; timeBudgetMs: number },
+  opts: { dryRun: boolean; sourceId?: string; timeBudgetMs: number; signal?: AbortSignal },
 ): Promise<PhaseResult> {
   if (opts.dryRun) {
     return {
@@ -61,6 +61,7 @@ export async function runPhaseExtractDatabaseOnly(
     sourceIdFilter: opts.sourceId,
     catchUp: false,
     timeBudgetMs: opts.timeBudgetMs,
+    signal: opts.signal,
   });
   const failures = staleDrainFailures(drained);
   return {
