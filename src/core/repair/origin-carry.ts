@@ -94,8 +94,8 @@ async function stamp(engine: BrainEngine, pages: Dependent[], batch: string): Pr
 export async function carryPrivate(engine: BrainEngine, origins: Origin[], batch: string): Promise<Map<number, CarryBlock>> {
   if (!origins.length) return new Map();
   return withoutCallerAccess(async () => {
-    await readHonorAliases(engine);
     try {
+      await readHonorAliases(engine);
       const pages = [...new Map((await dependentsOf(engine, origins)).map(page => [page.id, page])).values()];
       if (!pages.length) return new Map<number, CarryBlock>();
       const failed = await stamp(engine, pages.filter(page => !page.deleted), batch);
@@ -144,7 +144,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const origin = typeof p.slug === 'string' ? await originOf(ctx.engine, sourceId, p.slug.toLowerCase()) : null;
   if (p.purge !== true) {
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });
-    if (origin && (await originOf(ctx.engine, sourceId, origin.slug))?.deleted) await carryPrivate(ctx.engine, [origin], batch);
+    if (origin && (await originOf(ctx.engine, sourceId, origin.slug))?.deleted) await carryPrivate(ctx.engine, [origin], batch).catch(() => undefined);
     return finishPagePurge(ctx, result);
   }
   const block = origin ? (await carryPrivate(ctx.engine, [origin], batch)).get(origin.id) : undefined;

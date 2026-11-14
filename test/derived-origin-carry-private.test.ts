@@ -37,6 +37,7 @@ import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated, selectPurgeCa
 import { checkDerivedOriginParked } from '../src/commands/doctor/checks/purge-parks.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import * as labelWrite from '../src/core/repair/label-write.ts';
+import * as privateVisibility from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -439,6 +440,26 @@ for (const kind of testBackends()) {
       expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
       expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
       await expectLateHidden(k, late);
+    }, 240_000);
+
+    test('a soft delete whose carry fails after the delete committed returns the normal receipt', async () => {
+      const k = 'carryfail';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const original = privateVisibility.readHonorAliases;
+      const failing = spyOn(privateVisibility, 'readHonorAliases').mockImplementation(async (...args: Parameters<typeof original>) => {
+        if (new Error().stack?.includes('carryPrivate')) throw new Error('forced honor-alias failure');
+        return original(...args);
+      });
+      let out: { isError: boolean; text: string };
+      try { out = await localCall('delete_page', { slug: origin, request_id: randomUUID(), expected_revision: await revision(origin) }); }
+      finally { failing.mockRestore(); }
+      expect(out.isError ? out.text : '').toBe('');
+      expect(JSON.parse(out.text).status).toBe('soft_deleted');
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      await backdate(origin);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      for (const shape of CARRIED) expect({ shape, visibility: (await fm(slugOf(k, shape))).visibility }).toEqual({ shape, visibility: 'private' });
     }, 240_000);
 
     test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and unparks and the one after purges', async () => {
