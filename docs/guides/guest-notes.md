@@ -42,24 +42,53 @@ Brains without a guest source are unchanged.
 
 ## Set one up
 
-Preview first. Nothing is written without `--yes`:
+The broker's OAuth client can only be registered on a source that already exists,
+so create the source first, register the client, then put the client on the
+writer list. Every `init` previews first and writes nothing without `--yes`.
 
-```bash
-gbrain guests init --writer oauth_client:client-a
-```
+1. Create the guest source with no writer yet:
 
-```text
-Preview: gbrain guests init (nothing written; run again with --yes to apply)
-  Source "guests": will be created, database-only (no local path) and federated.
-  Trust ceiling: external_untrusted (no page there is ever stored above it).
-  Writers: oauth_client:client-a
-```
+   ```bash
+   gbrain guests init
+   gbrain guests init --yes
+   ```
 
-Then apply it:
+   ```text
+   Preview: gbrain guests init (nothing written; run again with --yes to apply)
+     Source "guests": will be created, database-only (no local path) and federated.
+     Trust ceiling: external_untrusted (no page there is ever stored above it).
+     Writers: none yet: nobody can save notes there until you add one (gbrain sources writers guests --add <oauth_client|legacy_token|local_cli|local_stdio|application>:<id>)
+   ```
 
-```bash
-gbrain guests init --writer oauth_client:client-a --yes
-```
+2. Register the broker's client on that source. The client secret is printed
+   once, here only. `--may-act-for` lists the members and groups the broker may
+   speak for:
+
+   ```bash
+   gbrain auth register-client guest-broker --grant-types client_credentials --scopes read,write \
+     --source guests --federated-read guests --bound-slug-prefixes guests/ \
+     --may-act-for bob-example,group:team-a
+   ```
+
+3. Limit the client to the operations a broker uses. `register-client` has no
+   `--operations` flag, so this is a `rescope` (preview with `--dry-run`, then
+   run it without):
+
+   ```bash
+   gbrain auth rescope --client <client id> --operations put_page,get_page,delete_page,get_write_request,get_brain_identity --dry-run
+   ```
+
+4. Put the client on the writer list:
+
+   ```bash
+   gbrain guests init --writer oauth_client:<client id>
+   gbrain guests init --writer oauth_client:<client id> --yes
+   ```
+
+Plain `gbrain auth rescope --client <client id>` prints the client's operations
+and slug prefixes but not who it may act for. `gbrain auth rescope --client
+<client id> --json` prints the whole grant, and `gbrain access check --client
+<client id>` prints "May act for" and the member it is bound to.
 
 The source is called `guests` unless you pass `--source <id>`. Running init
 again on a guest source adds the new writers and keeps the old ones. If the
@@ -67,11 +96,14 @@ source exists already, it must have no local path and hold no pages; init then
 marks it as a guest source. A source that already holds pages is refused, because
 every page in a guest source would then read as a guest's words. Deleted pages
 that haven't been purged yet count too, because restoring one would bring it back
-into the guest source.
+into the guest source. The one exception is the repair `gbrain doctor` names: a
+source whose config already says `guest: true` but has no guest source record
+is fixed whatever it holds, because its pages already read as guest notes.
 
-Before a brain that uses a scoped row-level-security write role turns guests on,
-the guest guard and admission must check maintainer policies on guest_sources;
-until then a scoped write role sees no guest rows and the checks fail open.
+A brain whose writer connects as a scoped row-level-security role needs that
+role to read `guest_sources`: without the policy in the
+[maintainer recipe](../ENGINES.md#derived-state-maintainers), every write it makes
+is refused with `writer_coordinator_required` instead of being let through.
 
 ## Change who may write
 
@@ -122,11 +154,20 @@ saved_at: 2026-11-13T10:00:00Z
 The offsite moved to Friday.
 ```
 
+Every call names the audience, reads and deletes included. A `put_page` with
+guest attribution but no audience is refused `readable_by_invalid`, because the
+readers can't be checked against anyone.
+
 A guest note is saved once, as a new page. Saving to a slug that exists is
 refused `revision_required`, and `force`, `expected_revision`, `edit_page`,
 `append_page`, `add_timeline_entry`, `add_link`, `remember`, `put_raw_data`,
 `put_pages` and uploads are refused `guest_page_immutable`; a writer may delete the notes
 it saved, and deleting another writer's note is refused `permission_denied`.
+A delete needs the note's revision: the broker passes `expected_revision` (from
+`get_page`) to `delete_page`, and without it the delete is refused
+`revision_required`. The same holds for your own `gbrain delete --source guests
+-- <slug>`: pass `--expected-revision <revision>` (from `gbrain get --source guests
+--json -- <slug>`) or `--force`.
 gbrain checks the writer list again when the note publishes, so a writer you
 remove in between is refused `source_writer_restricted`. Every refusal is in
 [write refusals](write-refusals.md#guest-source-refusals).

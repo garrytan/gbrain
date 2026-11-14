@@ -10,6 +10,7 @@ import type { Principal } from '../persistence/model.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { addSource } from '../sources-ops.ts';
 import type { TrustTier } from '../trust/tier.ts';
+import { lookupGuestSource } from './admission.ts';
 
 export const GUEST_TRUST_CEILING: TrustTier = 'external_untrusted';
 const PRINCIPAL_KINDS: readonly Principal['kind'][] = ['oauth_client', 'legacy_token', 'local_cli', 'local_stdio', 'application'];
@@ -24,18 +25,30 @@ export function isGuestWriter(value: string): boolean {
 
 export interface GuestSource { source_id: string; writers: string[]; trust_ceiling: string }
 
-export async function readGuestSource(engine: BrainEngine, sourceId: string): Promise<GuestSource | null> {
-  const [row] = await engine.executeRaw<GuestSource>('SELECT source_id, writers, trust_ceiling FROM guest_sources WHERE source_id = $1', [sourceId]);
-  return row ?? null;
-}
+export const readGuestSource = (engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<GuestSource | null> => lookupGuestSource(engine, sourceId);
 
-export interface GuestSourcePlan { sourceId: string; exists: boolean; localPath: string | null; guest: GuestSource | null; writers: string[] }
+export interface GuestSourcePlan { sourceId: string; exists: boolean; localPath: string | null; guest: GuestSource | null; writers: string[];
+  /** Its config already says guest: true, so its pages read as guest notes and init repairs it whatever it holds. */
+  configGuest: boolean;
+  /** Pages in an existing source neither guest record marks yet (deleted ones not yet purged included); 0 otherwise. */
+  pages: number }
 
 /** What `guests init` would do, read without writing. `writers` is the list after the run (existing ones kept). */
 export async function planGuestSource(engine: BrainEngine, sourceId: string, writers: readonly string[]): Promise<GuestSourcePlan> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]);
+  const [source] = await engine.executeRaw<{ local_path: string | null; config_guest: boolean }>(
+    "SELECT local_path, COALESCE(config->>'guest' = 'true', false) AS config_guest FROM sources WHERE id = $1", [sourceId]);
   const guest = source ? await readGuestSource(engine, sourceId) : null;
-  return { sourceId, exists: !!source, localPath: source?.local_path ?? null, guest, writers: [...new Set([...(guest?.writers ?? []), ...writers])].sort() };
+  const unmarked = !!source && !guest && !source.config_guest;
+  const [held] = unmarked ? await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]) : [];
+  return { sourceId, exists: !!source, localPath: source?.local_path ?? null, guest, writers: [...new Set([...(guest?.writers ?? []), ...writers])].sort(),
+    configGuest: source?.config_guest === true, pages: Number(held?.n ?? 0) };
+}
+
+/** initGuestSource refused: the source is not yet a guest source and already holds pages (deleted ones not yet purged included). */
+export class GuestSourceHoldsPages extends Error {
+  constructor(readonly sourceId: string, readonly pages: number) {
+    super(`Source "${sourceId}" already holds ${pages} page(s), counting deleted pages not yet purged (a restore would bring them back). Every page in a guest source reads as an outside guest's words and only listed writers can change it, so gbrain will not make this one a guest source. Pick another name with --source.`);
+  }
 }
 
 /**
@@ -43,14 +56,22 @@ export async function planGuestSource(engine: BrainEngine, sourceId: string, wri
  * missing, sets its guest config and writes its guest_sources row, in one
  * transaction (a managed brain creates the source through its lifecycle first).
  * Reads find guest sources from these two records (guests/marker.ts guestSourceSql).
- * The database refuses a source with a local_path (guest_source_database_only).
+ * The database refuses a source with a local_path (guest_source_database_only). An existing source that neither guest
+ * record marks yet must hold no page: counted under the source row's lock, which a page insert's key check waits on, so
+ * no page lands between the count and the commit (GuestSourceHoldsPages). A source one record already marks (its config
+ * says guest, or guest_sources lists it) is repaired whatever it holds: its pages already read as guest notes.
  */
 export async function initGuestSource(engine: BrainEngine, sourceId: string, writers: readonly string[]): Promise<GuestSource> {
   const managed = await managedPersistenceEnabled(engine);
   if (managed && !(await planGuestSource(engine, sourceId, [])).exists) await addSource(engine, { id: sourceId, federated: true });
   return engine.transaction(async tx => {
-    const [source] = await tx.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 FOR UPDATE', [sourceId]);
+    const [source] = await tx.executeRaw<{ id: string; guest: boolean }>(`SELECT s.id, (COALESCE(s.config->>'guest' = 'true', false)
+      OR EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = s.id)) AS guest FROM sources s WHERE s.id = $1 FOR UPDATE OF s`, [sourceId]);
     if (!source) await addSource(tx, { id: sourceId, federated: true });
+    else if (!source.guest) {
+      const [held] = await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]);
+      if (Number(held?.n ?? 0) > 0) throw new GuestSourceHoldsPages(sourceId, Number(held!.n));
+    }
     await tx.executeRaw(`UPDATE sources SET config = config || jsonb_build_object('federated', true, 'guest', true, 'trust_ceiling', $2::text) WHERE id = $1`,
       [sourceId, GUEST_TRUST_CEILING]);
     const [row] = await tx.executeRaw<GuestSource>(`INSERT INTO guest_sources (source_id, writers, trust_ceiling) VALUES ($1, $2::text[], $3)

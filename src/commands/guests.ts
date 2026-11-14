@@ -6,7 +6,7 @@
  */
 import type { BrainEngine } from '../core/engine.ts';
 import { isValidSourceId } from '../core/source-id.ts';
-import { GUEST_TRUST_CEILING, GUEST_WRITER_FORMAT, initGuestSource, isGuestWriter, planGuestSource } from '../core/guests/sources.ts';
+import { GUEST_TRUST_CEILING, GUEST_WRITER_FORMAT, GuestSourceHoldsPages, initGuestSource, isGuestWriter, planGuestSource } from '../core/guests/sources.ts';
 import { grantOwnerCredentials, ownerCredentials } from '../core/guests/owner-credentials.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { loadConfig } from '../core/config.ts';
@@ -86,24 +86,27 @@ async function runInit(engine: BrainEngine, rest: string[]): Promise<void> {
     console.error(`Source "${sourceId}" has a local path (${plan.localPath}). A guest source is database-only, so gbrain will not make this one a guest source. Pick another name with --source.`);
     process.exit(2);
   }
-  if (plan.exists && !plan.guest) {
-    const [held] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]);
-    if (Number(held?.n ?? 0) > 0) {
-      console.error(`Source "${sourceId}" already holds ${held!.n} page(s), counting deleted pages not yet purged (a restore would bring them back). Every page in a guest source reads as an outside guest's words and only listed writers can change it, so gbrain will not make this one a guest source. Pick another name with --source.`);
-      process.exit(2);
-    }
+  if (plan.pages > 0) {
+    console.error(new GuestSourceHoldsPages(sourceId, plan.pages).message);
+    process.exit(2);
   }
   const writerLine = (list: readonly string[]) => list.length > 0 ? list.join(', ')
     : `none yet: nobody can save notes there until you add one (gbrain sources writers ${sourceId} --add ${GUEST_WRITER_FORMAT})`;
   if (!yes) {
     console.log('Preview: gbrain guests init (nothing written; run again with --yes to apply)');
     console.log(`  Source "${sourceId}": ${!plan.exists ? 'will be created, database-only (no local path) and federated'
-      : plan.guest ? 'is already a guest source' : 'exists with no local path; it becomes a guest source and is federated'}.`);
+      : plan.guest ? 'is already a guest source' : plan.configGuest ? 'says guest: true in its config but has no guest_sources row; init adds it, so its writer list and ceiling are enforced'
+      : 'exists with no local path; it becomes a guest source and is federated'}.`);
     console.log(`  Trust ceiling: ${GUEST_TRUST_CEILING} (no page there is ever stored above it).`);
     console.log(`  Writers: ${writerLine(plan.writers)}`);
     return;
   }
-  const guest = await initGuestSource(engine, sourceId, writers);
+  let guest: Awaited<ReturnType<typeof initGuestSource>>;
+  try { guest = await initGuestSource(engine, sourceId, writers); } catch (e) {
+    if (!(e instanceof GuestSourceHoldsPages)) throw e;
+    console.error(e.message);
+    process.exit(2);
+  }
   console.log(`Source "${sourceId}" is ${plan.exists ? 'now' : 'created as'} a guest source: database-only, federated, trust ceiling ${guest.trust_ceiling}.`);
   console.log(`  Writers: ${writerLine(guest.writers)}`);
 }
