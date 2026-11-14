@@ -54,6 +54,12 @@ const isHarnessCatalog = (harness: ResolverHarness, name: string) => name === us
 /** The Claude Code config directory whose plugins the plugin catalog indexes. */
 export const claudePluginsBase = () => dirname(claudeUserSkillsDir());
 
+/** The routing table the catalog's current receipt was built with, so a rebuild keeps it. */
+const keptRouting = (argv: readonly string[] | null | undefined): { routing?: string } => {
+  const i = argv?.indexOf('--routing') ?? -1;
+  return i >= 0 && argv![i + 1] ? { routing: argv![i + 1] } : {};
+};
+
 /** Build, keep or drop claude-code-plugins; returns its skill count and the step (null when there is nothing either way). */
 async function syncPluginCatalog(home: string, dryRun: boolean): Promise<{ skills: number; step: ResolverStep | null }> {
   const base = claudePluginsBase();
@@ -72,7 +78,7 @@ async function syncPluginCatalog(home: string, dryRun: boolean): Promise<{ skill
     const n = readDirSources(roots).skills.length;
     return n ? { skills: n, step: { step: 'catalog', action: 'write', detail: `${n} plugin skills from ${base} into ${where}` } } : drop();
   }
-  const n = (await buildSkillIndex({ catalog: CLAUDE_PLUGINS_CATALOG, claudePlugins: base, harness: 'claude-code' }, { home })).catalog.skill_count;
+  const n = (await buildSkillIndex({ catalog: CLAUDE_PLUGINS_CATALOG, claudePlugins: base, harness: 'claude-code', ...keptRouting(status?.receipt?.rebuild_argv) }, { home })).catalog.skill_count;
   if (n < 1) { await removeSkillIndex(CLAUDE_PLUGINS_CATALOG, { home }); return { skills: 0, step: built ? { step: 'catalog', action: 'remove', detail: where } : null }; }
   return { skills: n, step: { step: 'catalog', action: 'write', detail: `${n} plugin skills from ${base} into ${where}` } };
 }
@@ -114,7 +120,7 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
     if (skills > 0) out.steps.push({ step: 'catalog', action: fresh ? 'keep' : 'write', detail: `${skills} skills from ${dirs.join(', ')} into ${where}` });
   } else if (dirs.length && !fresh) {
     try {
-      skills = (await buildSkillIndex({ catalog, dirs, harness }, { home })).catalog.skill_count;
+      skills = (await buildSkillIndex({ catalog, dirs, harness, ...keptRouting(status?.receipt?.rebuild_argv) }, { home })).catalog.skill_count;
     } catch (e) {
       return { ...out, error: incomplete(dirs, `the catalog build failed (${e instanceof ResolverError ? e.code : (e as Error).message})`, 'Nothing else was written.') };
     }
