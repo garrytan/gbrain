@@ -149,6 +149,8 @@ Dual-plane read (DB > file), applied on each client's next request,
 ceiling-bounded like everything else; unset means NULL-surface clients
 resolve to the server ceiling. Pre-seed important
 clients with an explicit `rescope-client --surface full` before flipping it.
+The default applies to OAuth clients only; legacy bearer tokens keep the
+server ceiling and stay bounded by their scope, source and operation grants.
 
 ## Move 3 — flip strict params from warn to reject
 

@@ -799,6 +799,7 @@ function makeServeHarness(opts: { sweepEnabled?: boolean; sweep?: (e: BrainEngin
     clearInterval: timers.clearInterval,
     mcpStdio: false,
     bootTimeoutMs: 0,
+    upkeep: async () => {},
     ...(opts.sweep ? { sweep: opts.sweep } : {}),
     ...(opts.sweepEnabled !== undefined ? { sweepEnabled: opts.sweepEnabled } : {}),
   };

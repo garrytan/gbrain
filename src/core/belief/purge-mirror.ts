@@ -153,6 +153,10 @@ async function replayOne(tx: BrainEngine, intent: PurgeMirrorIntent, ledger: boo
           const { scrubPurgedNameStores } = await import('../persistence/purge-name-stores.ts');
           await scrubPurgedNameStores(tx, src, [restored.slug]);
         }
+        const { scrubPurgedSlugHolds, scrubPurgedSlugStores } = await import('../persistence/purge-slug-stores.ts');
+        await scrubPurgedSlugStores(tx, src, [restored.slug], { ifPresent: true });
+        const [holds] = await tx.executeRaw<{ present: boolean }>("SELECT to_regclass('write_gate_holds') IS NOT NULL AND to_regclass('write_gate_receipts') IS NOT NULL AS present");
+        if (holds?.present) await scrubPurgedSlugHolds(tx, src, [{ slug: restored.slug }]);
       };
     }
   } else {

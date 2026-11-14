@@ -38,11 +38,11 @@ export const LINK_FAILURE_REPORT_LIMIT = 50;
  * `STALE_TIME_BUDGET_MS` budget and the next resumes, `catchUp` runs until nothing is stale (#6803 D2).
  */
 export async function runManagedStaleExtraction(engine: BrainEngine,
-  opts: { sourceId?: string; dryRun?: boolean; catchUp?: boolean; timeBudgetMs?: number; counts?: boolean; retryHeld?: boolean }): Promise<ManagedLinkExtraction> {
+  opts: { sourceId?: string; dryRun?: boolean; catchUp?: boolean; timeBudgetMs?: number; counts?: boolean; retryHeld?: boolean; signal?: AbortSignal }): Promise<ManagedLinkExtraction> {
   const counts = async () => opts.counts === false ? {} : { counts: await staleExtractionCounts(engine, opts.sourceId) };
   if (!opts.dryRun) {
     if (opts.retryHeld) await clearLinkExtractionHolds(engine, opts.sourceId);
-    const result = await extractManagedStaleLinks(engine, { sourceId: opts.sourceId, ...(opts.catchUp ? {} : { timeBudgetMs: opts.timeBudgetMs ?? STALE_TIME_BUDGET_MS }) });
+    const result = await extractManagedStaleLinks(engine, { sourceId: opts.sourceId, signal: opts.signal, ...(opts.catchUp ? {} : { timeBudgetMs: opts.timeBudgetMs ?? STALE_TIME_BUDGET_MS }) });
     return { ...result, ...await counts() };
   }
   const remaining = await engine.countStalePagesForExtraction({ sourceId: opts.sourceId, versionTs: await effectiveLinkExtractorWatermark(engine), held: 'exclude' });

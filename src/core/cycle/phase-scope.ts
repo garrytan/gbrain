@@ -38,6 +38,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   embed: 'global',
   orphans: 'global',
   purge: 'global',
+  bookkeeping_gc: 'global',
   'schema-suggest': 'source',
   extract_atoms: 'source',
   synthesize_concepts: 'global',

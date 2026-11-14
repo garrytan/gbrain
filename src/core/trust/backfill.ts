@@ -14,6 +14,10 @@
  * - frontmatter transcript_import, provenance: auto-extracted, dream_generated,
  *   extracted_by: extract_atoms-* (legacy atoms, #6533): agent_written (model-
  *   or session-derived);
+ * - on a claimed source, a Life Chronicle event (`captured_via`
+ *   life-chronicle:auto, #9284) is also capped at the tier of its depth page
+ *   (`event.depth`, same source): that page's stored tier and its own
+ *   frontmatter caps;
  * - facts.source lane tags (the facts backstop, conversation-facts and
  *   extract_facts lanes) and takes.source take_proposals#: agent_written;
  * - post-v193 rows through write_request_id -> persistence_requests (CEO-17):
@@ -47,7 +51,7 @@ import { markBeliefCommits } from '../belief/append.ts';
 import { maintenanceAttribution } from '../persistence/attribution.ts';
 import { readManagedMode } from '../persistence/managed-mode.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
-import { EXTRACT_ATOMS_EXTRACTOR_PREFIX, frontmatterTrustCapsSql } from './channel.ts';
+import { CHRONICLE_CAPTURED_VIA, EXTRACT_ATOMS_EXTRACTOR_PREFIX, frontmatterTrustCapsSql } from './channel.ts';
 import { claimedSourceSql, legacyRowSql, notConnectorSourceSql, readLegacyCeilings, type LegacyCeilings } from './claim-state.ts';
 import { TRUST_BACKFILL_COMPLETED_KEY, type TrustTable } from './schema.ts';
 import { TRUST_TIER_RANK, TRUST_TIERS, isTrustTier, trustRankSql, trustTierFromRankSql, type TrustTier } from './tier.ts';
@@ -177,15 +181,33 @@ function classifier(cols: Columns, assumeClaimed: readonly string[] = [], ceilin
   };
   const least = (terms: string[]) => (terms.length ? `LEAST(${terms.join(', ')})` : 'NULL::int');
   /**
+   * #9284: a legacy Life Chronicle event is model-extracted from its depth page (`event.depth`, a live page in the
+   * same source), so it ranks no higher than that page: its stored tier and frontmatter caps when classified, else
+   * what the same statement classifies it as (its frontmatter caps and page signals: source kind, connector source,
+   * write request), since an UPDATE reads the depth page as it was before. A missing depth page adds no cap (the
+   * event's own agent_written cap still applies).
+   */
+  const chronicleDepthCap = (p: string, s: string) => {
+    const d = 'chronicle_depth', dr = 'chronicle_depth_r';
+    const depthCaps = least(frontmatterTrustCapsSql(`${d}.frontmatter`));
+    const projected = least([...frontmatterTrustCapsSql(`${d}.frontmatter`), ...pageTerms(d, s, dr)]);
+    return `CASE WHEN ${p}.type = 'event' AND jsonb_typeof(${p}.frontmatter->'captured_via') = 'string'
+        AND ${edgeTrimSql(`${p}.frontmatter->>'captured_via'`)} = '${CHRONICLE_CAPTURED_VIA}'
+        AND jsonb_typeof(${p}.frontmatter->'event') = 'object' AND jsonb_typeof(${p}.frontmatter->'event'->'depth') = 'string'
+      THEN (SELECT ${cols.has('pages', 'trust_tier') ? `CASE WHEN ${d}.trust_tier <> 'unknown' THEN LEAST(${trustRankSql(`${d}.trust_tier`)}, ${depthCaps}) ELSE ${projected} END` : projected}
+        FROM pages ${d} ${requestJoin('pages', 'revision_write_request_id', dr, d)} WHERE ${d}.source_id = ${p}.source_id AND ${d}.slug = ${p}.frontmatter->'event'->>'depth'${cols.has('pages', 'deleted_at') ? ` AND ${d}.deleted_at IS NULL` : ''}
+        LIMIT 1) END`;
+  };
+  /**
    * A page's rule: its signals, and on a claimed source operator_curated lowered by every frontmatter signal
    * an owner sync would apply (`frontmatterTrustCaps`), so a claim never lifts a captured, clipped, imported
-   * or marked page above what it says it is.
+   * or marked page above what it says it is, nor a Life Chronicle event above its depth page.
    */
   const pageRule = (p: string, s: string, r: string) => {
     const terms = pageTerms(p, s, r);
     const c = claimed(s);
     if (!c) return least(terms);
-    const caps = cols.has('pages', 'frontmatter') ? frontmatterTrustCapsSql(`${p}.frontmatter`) : [];
+    const caps = cols.has('pages', 'frontmatter') ? [...frontmatterTrustCapsSql(`${p}.frontmatter`), chronicleDepthCap(p, s)] : [];
     return `CASE WHEN ${c} AND ${legacyRowSql('pages', p, ceilings)} THEN ${least([String(rank('operator_curated')), ...caps, ...terms])} ELSE ${least(terms)} END`;
   };
   const hasTrust = cols.has('pages', 'trust_tier');
@@ -379,6 +401,8 @@ export interface TrustRelowerReport {
   rows: number;
   /** Up to 20 affected pages, for the preview. */
   sample: Array<{ source_id: string; slug: string; from: TrustTier; to: TrustTier }>;
+  /** Sources holding at least one of those rows. */
+  sources: string[];
 }
 
 /**
@@ -387,16 +411,23 @@ export interface TrustRelowerReport {
  * `extracted_by` was a signal) are lowered to that rule, pages first so facts, takes and timeline rows on a
  * lowered page follow it. Each lowered row's `write_origin.channel` becomes `trust_relower`, so a rerun finds
  * nothing. Nothing is ever raised, and rows a person or a later write classified are not touched. The dry
- * run is read-only and reports the same rows the apply lowers.
+ * run is read-only and reports the same rows the apply lowers. #9284: named `sources` also cover a
+ * non-connector source whose claim `sources set-trust` ended, classified as if still claimed, so the rows that
+ * claim lifted can still be lowered; without `sources` only claimed sources are considered.
  */
 export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: boolean; sources?: readonly string[] } = {}): Promise<TrustRelowerReport> {
   const cols = await readColumns(engine);
   const mode: TrustRelowerReport['mode'] = opts.dryRun ? 'dry_run' : 'apply';
-  if (!cols.has('pages', 'trust_tier') || !cols.has('pages', 'write_origin') || !cols.has('sources', 'config')) return { mode, tables: [], rows: 0, sample: [] };
-  const { forTable } = classifier(cols, [], await readLegacyCeilings(engine).catch(() => null), true);
-  const claimed = (await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE ${claimedSourceSql('s')} ORDER BY s.id`))
-    .map(r => r.id).filter(id => !opts.sources || opts.sources.includes(id));
-  const report: TrustRelowerReport = { mode, tables: [], rows: 0, sample: [] };
+  if (!cols.has('pages', 'trust_tier') || !cols.has('pages', 'write_origin') || !cols.has('sources', 'config')) return { mode, tables: [], rows: 0, sample: [], sources: [] };
+  const targets = opts.sources
+    ? await engine.executeRaw<{ id: string; claimed: boolean }>(`SELECT s.id, ${claimedSourceSql('s')} AS claimed FROM sources s
+        WHERE s.id = ANY($1::text[]) AND ${notConnectorSourceSql('s')} ORDER BY s.id`, [[...opts.sources]])
+    : await engine.executeRaw<{ id: string; claimed: boolean }>(`SELECT s.id, true AS claimed FROM sources s WHERE ${claimedSourceSql('s')} ORDER BY s.id`);
+  const claimed = targets.map(r => r.id);
+  const ended = targets.filter(r => !r.claimed).map(r => r.id);
+  const { forTable } = classifier(cols, ended, await readLegacyCeilings(engine).catch(() => null), true);
+  const report: TrustRelowerReport = { mode, tables: [], rows: 0, sample: [], sources: [] };
+  const affected = new Set<string>();
   if (claimed.length === 0) return report;
   const managedBrain = opts.dryRun ? false : await readManagedMode(engine);
   const attribution = opts.dryRun ? null : await maintenanceAttribution(engine);
@@ -416,6 +447,7 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
     for (const row of rows) {
       const target = isTrustTier(row.to_tier) ? row.to_tier : 'unknown';
       to[target]++;
+      affected.add(row.source_id);
       if (row.slug !== null && report.sample.length < 20 && isTrustTier(row.from_tier)) {
         report.sample.push({ source_id: row.source_id, slug: row.slug, from: row.from_tier, to: target });
       }
@@ -437,6 +469,7 @@ export async function relowerClaimedRows(engine: BrainEngine, opts: { dryRun?: b
     lowered.push(...await engine.transaction(tx => managedBrain ? withCoordinatedWrite(tx, sources, () => apply(tx), attribution!) : apply(tx)));
     if (publications.length) await markBeliefCommits(engine, publications).catch(() => undefined);
   }
+  report.sources = [...affected].sort();
   // W1 #6783 §12 (b): after every table is relowered (the dry run reports exactly these rows), what was derived from them follows.
   if (lowered.length) await engine.transaction(tx => managedBrain
     ? withCoordinatedWrite(tx, claimed, () => propagateTierLowering(tx, lowered), attribution!) : propagateTierLowering(tx, lowered));
