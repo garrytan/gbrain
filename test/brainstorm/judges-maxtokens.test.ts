@@ -64,6 +64,11 @@ describe('computeJudgeMaxTokens (pure formula)', () => {
     expect(computeJudgeMaxTokens(500, 'claude-fable-5-1')).toBe(64_000);
   });
 
+  test('Fable 5.2 keeps the conservative 64K family cap', () => {
+    expect(ANTHROPIC_OUTPUT_CAPS['claude-fable-5-2']).toBe(64_000);
+    expect(computeJudgeMaxTokens(500, 'claude-fable-5-2')).toBe(64_000);
+  });
+
   test('96 ideas on legacy Haiku 3.5 (8K cap): CAP binds at 8192 (D11 codex fix)', () => {
     // 96 * 150 + 500 = 14_900 > 8192; legacy 3.5 caps at 8K — without
     // ANTHROPIC_OUTPUT_CAPS this would have been the next opaque HTTP 400.

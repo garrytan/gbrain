@@ -92,6 +92,7 @@ describe('claude-cli recipe registration', () => {
     // Wave rider for #3976: pin the Claude 5 family the CLI already serves.
     expect(recipe!.touchpoints.chat!.models).toContain('claude-fable-5');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-fable-5-1');
+    expect(recipe!.touchpoints.chat!.models).toContain('claude-fable-5-2');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-5');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-opus-4-8');
     expect(recipe!.touchpoints.chat!.models).toContain('claude-sonnet-5');
@@ -109,6 +110,7 @@ describe('claude-cli recipe registration', () => {
     expect(recipe!.touchpoints.expansion!.models).toContain('claude-sonnet-5');
     // #4794 added claude-fable-5-1 to chat; expansion must carry it too (wave review drift).
     expect(recipe!.touchpoints.expansion!.models).toContain('claude-fable-5-1');
+    expect(recipe!.touchpoints.expansion!.models).toContain('claude-fable-5-2');
     // Subprocess cold start needs the same headroom the chat touchpoint takes;
     // the probe's flat 5000ms default would false-fail on every run.
     expect(recipe!.touchpoints.expansion!.default_timeout_ms).toBe(30_000);

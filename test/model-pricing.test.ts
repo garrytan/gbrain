@@ -73,6 +73,15 @@ describe('CANONICAL_PRICING — table integrity', () => {
     expect(CANONICAL_PRICING['anthropic:claude-fable-5'].cache_read).toBe(1.0);
   });
 
+  test('Fable 5.2 present at its $8/$40 list rate with $0.20 cache reads and $10 cache writes', () => {
+    expect(CANONICAL_PRICING['anthropic:claude-fable-5-2']).toEqual({
+      input: 8.0,
+      output: 40.0,
+      cache_read: 0.2,
+      cache_write: 10.0,
+    });
+  });
+
   test('Gemini 2.0 Flash reconciled to $0.10/$0.40; legacy alias agrees', () => {
     expect(CANONICAL_PRICING['google:gemini-2.0-flash']).toEqual({ input: 0.1, output: 0.4 });
     expect(CANONICAL_PRICING['google:gemini-2-flash']).toEqual(

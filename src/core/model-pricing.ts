@@ -127,6 +127,8 @@ function anthro(input: number, output: number, cacheReadMult = ANTHROPIC_CACHE_R
 export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
   // Fable 5.1 bills cache hits at 0.025x base input ($0.25/MTok on $10).
   'anthropic:claude-fable-5-1': 0.025,
+  // Fable 5.2 (released 2026-11-09): cache hits at 0.025x base input ($0.20/MTok on $8).
+  'anthropic:claude-fable-5-2': 0.025,
   // Opus 5.5 bills cache hits at 0.05x base input ($0.20/MTok on $4),
   // verified 2026-10-01 against the published Opus 5.5 price list.
   'anthropic:claude-opus-5-5': 0.05,
@@ -148,6 +150,9 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // Fable 5.1: same $10/$50 sticker as Fable 5, but cache hits bill 0.025x
   // ($0.25/MTok) instead of 0.1x — the only rate that changed.
   'anthropic:claude-fable-5-1':           anthro(10.00, 50.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-fable-5-1']),
+  // Fable 5.2 (released 2026-11-09): $8 in / $40 out, cache writes 1.25x ($10),
+  // cache hits 0.025x ($0.20). Fast mode is not modeled.
+  'anthropic:claude-fable-5-2':           anthro( 8.00, 40.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-fable-5-2']),
   // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
   // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
   // Opus 5.5 (released 2026-09-22): $4 in / $20 out, cache writes 1.25x
