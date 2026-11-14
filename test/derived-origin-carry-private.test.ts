@@ -526,6 +526,82 @@ for (const kind of testBackends()) {
       await expectCarriedHidden(k);
     }, 240_000);
 
+    /**
+     * Life Chronicle events: one whose own derived_from names the private origin while its event.depth page is public
+     * (opens once the origin goes, so it is labelled), and one whose event.depth is the origin itself (fails closed once
+     * the origin is missing, so it is left as it is).
+     */
+    async function seedEvents(k: string): Promise<{ origin: string; event: string; closed: string }> {
+      const origin = `${k}/origin`, depth = `${k}/depth`, event = `${k}/event`, closed = `${k}/closed`;
+      const write = async (slug: string, fm: string[]) => expect((await importFromContent(engine, slug, ['---', `title: ${slug}`, ...fm, '---', `# ${slug}`, '',
+        `Harbor ledger planning notes ${canaryOf(k, 'plain')}${slug.split('/')[1]} for the roadmap.`].join('\n'), { sourceId: SRC, noEmbed: true })).status).toBe('imported');
+      await write(origin, ['type: note', 'visibility: private']);
+      await write(depth, ['type: meeting']);
+      await write(event, ['type: event', 'captured_via: life-chronicle:auto', 'visibility: world', `derived_from: [${origin}.md]`, 'event:', `  depth: ${depth}`, '  what: planning']);
+      await write(closed, ['type: event', 'captured_via: life-chronicle:auto', 'visibility: world', 'event:', `  depth: ${origin}`, '  what: review']);
+      return { origin, event, closed };
+    }
+    const eventRead = async (who: Caller, k: string, slug: string) => (await call(who, 'get_page', { slug })).text.includes(`${canaryOf(k, 'plain')}${slug.split('/')[1]}`);
+    async function expectEventsHidden(k: string, slugs: string[]): Promise<void> {
+      __resetPrivateVisibilityCacheForTests();
+      for (const who of ['unbound', 'alice'] as const) for (const slug of slugs) expect({ who, slug, read: await eventRead(who, k, slug) }).toEqual({ who, slug, read: false });
+      for (const slug of slugs) expect({ slug, read: await eventRead('owner', k, slug) }).toEqual({ slug, read: true });
+    }
+
+    test('an explicit purge labels a life-chronicle event whose own derived_from names the origin; an event that fails closed on its depth is left as it is', async () => {
+      const k = 'eventpurge';
+      const { origin, event, closed } = await seedEvents(k);
+      await expectEventsHidden(k, [event, closed]);
+      const closedBefore = await fm(closed);
+      const out = await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) });
+      expect(out.isError ? out.text : '').toBe('');
+      expect(JSON.parse(out.text).status).toBe('purged');
+      await nothingKept(origin);
+      expect((await fm(event)).visibility).toBe('private');
+      expect(await fm(closed)).toEqual(closedBefore);
+      await expectEventsHidden(k, [event, closed]);
+    }, 240_000);
+
+    test('the retention purge labels a life-chronicle event whose own derived_from names the expired origin before the row goes', async () => {
+      const k = 'eventexpiry';
+      const { origin, event, closed } = await seedEvents(k);
+      const closedBefore = await fm(closed);
+      await softDelete(origin);
+      await backdate(origin);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await nothingKept(origin);
+      expect((await fm(event)).visibility).toBe('private');
+      expect(await fm(closed)).toEqual(closedBefore);
+      await expectEventsHidden(k, [event, closed]);
+    }, 240_000);
+
+    test('a life-chronicle event that cannot be labelled parks its origin: never purged, the event stays hidden; fixed, the origin goes', async () => {
+      const k = 'eventpark';
+      const { origin, event, closed } = await seedEvents(k);
+      const original = labelWrite.importAtRevision;
+      const failing = spyOn(labelWrite, 'importAtRevision').mockImplementation(async (...args: Parameters<typeof original>) => {
+        if (args[1].slug === event) throw new Error('forced label failure');
+        return original(...args);
+      });
+      try {
+        const out = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) })).text);
+        expect(out.status).not.toBe('purged');
+        expect(out.purge_held?.code).toBe('derived_origin_parked');
+        await backdate(origin);
+        const held = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+        expect(held.slugs).not.toContain(origin);
+        expect(held.blocked.find(b => b.slug === origin)?.code).toBe('derived_origin_parked');
+      } finally { failing.mockRestore(); }
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      expect((await checkDerivedOriginParked(engine)).details).toEqual(expect.objectContaining({ origins: expect.arrayContaining([expect.objectContaining({ slug: origin, blocking_slug: event })]) }));
+      await expectEventsHidden(k, [event, closed]);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
+      expect((await fm(event)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await nothingKept(origin);
+      await expectEventsHidden(k, [event, closed]);
+    }, 240_000);
+
     test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and unparks and the one after purges', async () => {
       const k = 'park';
       await seed(k);

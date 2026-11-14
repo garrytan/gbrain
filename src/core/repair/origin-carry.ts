@@ -5,7 +5,8 @@
  * gets `visibility: private` through the label door (repair/label-write.ts): tighten-only, the trust tier kept, no lowering
  * proposal filed, a managed file changed in that one line, readable_by kept. The dependents are private-labels.ts
  * dependentsSql('remove'): a page already private, pinned or not lineage-dependent is never returned, a page that names
- * readers is returned when its listed readers would gain it, and a life-chronicle event already fails closed, so it is skipped.
+ * readers is returned when its listed readers would gain it, and so is a life-chronicle event the removal opens (its own
+ * derived_from, or the lineage of its event.depth page); one whose event.depth page is removed fails closed and is not.
  *
  * Two places run it. delete_page (deletePageCarryingPrivate): a soft delete, local or remote, labels the dependents once
  * the delete committed, as a maintenance write whose batch names the delete's request id (on a managed brain); a failure
@@ -42,7 +43,7 @@ const failureOf = (error: unknown): Failure => ({ code: typeof (error as { code?
 
 async function dependentsOf(engine: BrainEngine, origins: Origin[]): Promise<Dependent[]> {
   const rows = await engine.executeRaw<{ id: number; cleared_id: number; source_id: string; slug: string; deleted: boolean }>(
-    `SELECT d.id, d.cleared_id, p.source_id, p.slug, p.deleted_at IS NOT NULL AS deleted FROM (${dependentsSql('remove')}) d JOIN pages p ON p.id = d.id WHERE d.category <> 'life_chronicle' ORDER BY d.id`,
+    `SELECT d.id, d.cleared_id, p.source_id, p.slug, p.deleted_at IS NOT NULL AS deleted FROM (${dependentsSql('remove')}) d JOIN pages p ON p.id = d.id ORDER BY d.id`,
     [origins.map(o => o.id), origins.map(o => o.source_id), origins.map(o => o.slug), origins.map(() => '')], bounded);
   return rows.map(row => ({ id: Number(row.id), origin_id: Number(row.cleared_id), source_id: row.source_id, slug: row.slug, deleted: row.deleted === true }));
 }
