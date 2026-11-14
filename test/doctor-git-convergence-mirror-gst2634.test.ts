@@ -71,6 +71,24 @@ test('the same mirror with a page file in the ahead commit still fails', async (
   expect(check?.status).toBe('fail');
 });
 
+test('a page change that only a merge commit ahead of upstream carries still fails', async () => {
+  const work = mirror('merge-ahead', ['.gbrain/access.yml'], true);
+  const main = git(work, ['branch', '--show-current']);
+  git(work, ['checkout', '-q', '-b', 'side', 'origin/' + main]);
+  mkdirSync(join(work, '.gbrain'), { recursive: true });
+  writeFileSync(join(work, '.gbrain/access.approved'), 'approved\n');
+  git(work, ['add', '-A']); git(work, ['commit', '-q', '-m', 'approved rules']);
+  git(work, ['checkout', '-q', main]);
+  git(work, ['merge', '-q', '--no-ff', '--no-commit', 'side']);
+  writeFileSync(join(work, 'note.md'), 'edited in the merge\n');
+  git(work, ['add', '-A']);
+  const date = new Date(Date.now() - 30 * HOUR).toISOString();
+  git(work, ['commit', '-q', '-m', 'merge side'], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
+  await addSource('mirror-m', work, { syncEnabled: false });
+  const check = await gitConvergenceCheck(engine);
+  expect(check?.status).toBe('fail');
+});
+
 test('a mirror_read_only source: policy-only is info, and a page commit fails without a push or git-durability fix', async () => {
   await addSource('mirror-b', mirror('ro-policy', ['.gbrain/access.yml'], false), { syncEnabled: false, mirror_read_only: true });
   expect((await gitConvergenceCheck(engine))?.severity).toBe('info');

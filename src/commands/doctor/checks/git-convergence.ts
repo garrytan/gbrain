@@ -97,7 +97,8 @@ function publishableRemote(top: string, branch: string | null): boolean {
 /**
  * GST-2634: marks each root whose sources are all read-only mirrors (mirror_read_only), and exempts the unpushed commits of
  * a root that can never publish them: every source has sync off, there is no publishable remote or every source is
- * mirror_read_only, and every commit ahead touches only a source's access policy files.
+ * mirror_read_only, and what HEAD adds over its fork point with upstream (merge commits included) is only a source's
+ * access policy files.
  */
 async function markReadOnlyMirrors(engine: BrainEngine, reports: RootReport[], now: number): Promise<void> {
   const sources = new Map((await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>('SELECT id, local_path, config FROM sources')
@@ -112,7 +113,7 @@ async function markReadOnlyMirrors(engine: BrainEngine, reports: RootReport[], n
       const prefix = relative(canonicalPath(report.root), canonicalPath(row!.local_path ?? report.root)).split(sep).join('/');
       return [POLICY_FILE, APPROVED_FILE].map(file => prefix ? `${prefix}/${file}` : file);
     }));
-    const paths = git(report.root, ['log', '@{u}..HEAD', '--format=', '--name-only', '--no-renames']);
+    const paths = git(report.root, ['diff', '--name-only', '--no-renames', '@{u}...HEAD']);
     if (paths === null || !paths.split('\n').filter(Boolean).every(path => policyPaths.has(path))) continue;
     report.policy_only_mirror = true;
     report.status = report.oldest_dirty_at && now - Date.parse(report.oldest_dirty_at) > GIT_CONVERGENCE_WARN_MS ? 'warn' : 'ok';
