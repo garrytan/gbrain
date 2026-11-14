@@ -4202,7 +4202,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.5.0+4604112a is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.6.0+b2cec967 is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },
