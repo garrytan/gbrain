@@ -30,6 +30,8 @@ const V2_SHA256 = '5458aa92d9495c391b7ec96978a16d4f7ea9841994e8e9163da1205223f1f
 const V3_SHA256 = 'cf4e3f514c57bcd381c1bc0846a0de105dd2a0fbbf361aaa08175cd8bfe0760b';
 /** The v4 bytes as they landed (v0.60.666.0, #9152). */
 const V4_SHA256 = '51f2ee77f0925f6ac19ecc116eeb6d7527d00b8a2962ebbad939f61d0afa3b2f';
+/** The v5 bytes as they landed on master (GST-2407); an operation deferred later (GBRA-504 promote_guest_note) stays out. */
+const V5_SHA256 = '524b3d62fcf2a30c5c2a08d08467461b0995f0503069c84356d15a08724129f2';
 
 describe('QM memory-provider contract v1', () => {
   const fixture = JSON.parse(readFileSync(QM_CONTRACT_PATH, 'utf8'));
@@ -358,8 +360,8 @@ describe('QM memory-provider contract v5 (GST-2407: context_pack reads its named
     expect(readFileSync(QM_CONTRACT_PATHS[5], 'utf8')).toBe(renderQmMemoryContract(5));
   });
 
-  test('v1 to v4 stay byte for byte as published, on disk and as the builder renders them', () => {
-    for (const [version, want] of [[1, V1_SHA256], [2, V2_SHA256], [3, V3_SHA256], [4, V4_SHA256]] as const) {
+  test('v1 to v5 stay byte for byte as published, on disk and as the builder renders them', () => {
+    for (const [version, want] of [[1, V1_SHA256], [2, V2_SHA256], [3, V3_SHA256], [4, V4_SHA256], [5, V5_SHA256]] as const) {
       expect({ version, disk: sha(readFileSync(QM_CONTRACT_PATHS[version])), built: sha(renderQmMemoryContract(version)) }).toEqual({ version, disk: want, built: want });
     }
   });

@@ -121,6 +121,7 @@ export const PAGE_OPS: Record<string, Case> = {
   takes_remove: { who: LOCAL, skipOver: NO_FENCE_ROW, run: async (f, slug, who) => f.call(who, 'takes_remove', { slug, row_num: await f.localTake(slug) }) },
   takes_rebuild: { who: LOCAL, run: op('takes_rebuild', (_f, slug) => ({ slug })) },
   confirm_memory: { who: REMOTE, run: op('confirm_memory', (_f, slug) => ({ ref: 'p:' + SRC + '/' + slug })) },
+  promote_guest_note: { who: REMOTE, run: op('promote_guest_note', (_f, slug) => ({ slug, to: slug })) },
   extraction_review: { who: LOCAL, run: op('extraction_review', (_f, slug) => ({ action: 'distinct', slugs: [slug], of: OTHER })) },
   entity_identity_link: { who: LOCAL, run: op('entity_identity_link', (_f, slug) => ({ entity_id: 'acme-example', slug, source_id: SRC })) },
   delete_page: { who: REMOTE, replaces: true, run: op('delete_page', async (f, slug) => ({ slug, expected_revision: await f.revision(slug) })) },

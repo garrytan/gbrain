@@ -446,6 +446,10 @@
         "name": "attest_read_shared_scope"
       },
       {
+        "category": "brain",
+        "name": "guest_source"
+      },
+      {
         "category": "ops",
         "name": "rls"
       },

@@ -28,6 +28,7 @@ export const CONFIG_SUBCOMMANDS = ['show', 'get', 'set', 'unset'] as const;
 export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan', 'release', 'drop'] as const;
 export const CORE_SUBCOMMANDS = ['list', 'show', 'status', 'add', 'remove', 'diff', 'ack', 'init', 'suggest'] as const;
 export const LOOPS_SUBCOMMANDS = ['list', 'show', 'done', 'drop', 'mute', 'unmute'] as const;
+export const GUESTS_SUBCOMMANDS = ['init', 'promote', 'grant-owner-clients'] as const;
 export const SCHEMA_SUBCOMMANDS = [
   'active', 'list', 'show', 'validate', 'use', 'detect', 'suggest', 'review-candidates', 'init', 'fork', 'edit',
   'diff', 'graph', 'lint', 'explain', 'review-orphans', 'downgrade', 'usage', 'stats', 'cardinality-preview',
@@ -60,6 +61,7 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   // so `core list --help` ran `list` against a null engine and `loops show --help` exited 2 "needs a loop id".
   core: { subcommands: CORE_SUBCOMMANDS, bareHelpFirst: true },
   loops: { subcommands: LOOPS_SUBCOMMANDS, bareHelpFirst: true },
+  guests: { subcommands: GUESTS_SUBCOMMANDS, bareHelpFirst: true },
 };
 
 /** `--help` / `-h` before any `--` terminator. */

@@ -1243,9 +1243,18 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain has no guest source (gbrain guests init).",
+            "name": "guest_source",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 178/178 public tables",
+            "message": "RLS enabled on 181/181 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -1287,7 +1296,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 178 table(s) the applied migrations create exist.",
+            "message": "All 181 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },
@@ -6606,9 +6615,18 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain has no guest source (gbrain guests init).",
+            "name": "guest_source",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
-            "message": "RLS enabled on 178/178 public tables",
+            "message": "RLS enabled on 181/181 public tables",
             "name": "rls",
             "status": "ok"
           },
@@ -6650,7 +6668,7 @@
           {
             "category": "meta",
             "elapsed_ms": "<volatile>",
-            "message": "All 178 table(s) the applied migrations create exist.",
+            "message": "All 181 table(s) the applied migrations create exist.",
             "name": "schema_missing_tables",
             "status": "ok"
           },

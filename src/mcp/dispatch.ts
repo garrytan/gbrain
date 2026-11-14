@@ -18,6 +18,7 @@ import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core
 import { currentCallerAccess, withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, identityLookupUnavailable, remoteCallerAccess } from '../core/access/caller.ts';
 import { credentialScopeFor, requesterScopeGate, requesterScopeRefuses, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
+import type { GuestChannels } from '../core/guests/admission.ts';
 import { assessRoom, readRoomDeclaration, roomResponseCapNotice, type RoomChannels, type RoomDeclaration } from '../core/access/room.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
@@ -194,6 +195,8 @@ export interface DispatchOpts {
    * code. A `room` tool argument is read too, and can only add people (access/room.ts).
    */
   room?: RoomChannels;
+  /** GBRA-504: the guest attribution channels the transport read (the X-Gbrain-Guest header, request-level _meta.guest). */
+  guest?: GuestChannels;
   /** GBRA-498 (internal): the room this call declared, resolved by dispatchToolCall; never set by a transport. */
   roomDeclaration?: RoomDeclaration;
   /** GBRA-498 (internal): the call named an attested actor, so its answer is never marked for a room. */
@@ -980,6 +983,7 @@ export function buildOperationContext(
     ...(opts.surfaceCeiling ? { surfaceCeiling: opts.surfaceCeiling } : {}),
     ...(opts.stdioSurface ? { stdioSurface: opts.stdioSurface } : {}),
     ...(opts.stdioMember !== undefined && opts.transport === 'stdio' && !opts.auth ? { stdioMember: opts.stdioMember } : {}),
+    ...(opts.guest && opts.remote !== false ? { guestChannels: opts.guest } : {}),
     ...(opts.revealTools ? { revealTools: opts.revealTools } : {}),
     ...(opts.writeWaitMs !== undefined ? { writeWaitMs: opts.writeWaitMs } : {}),
     ...(opts.admissionOrigin ? { admissionOrigin: opts.admissionOrigin } : {}),

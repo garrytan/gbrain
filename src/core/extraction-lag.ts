@@ -63,20 +63,25 @@ async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeou
   // managed-mode read needs no config, so it goes out with the config read rather than one round trip before the count.
   const [versionTs, managed] = await Promise.all([effectiveLinkExtractorWatermark(engine), managedPersistenceEnabled(engine)]);
   const wantedProducers = managed || await resolveIncludeFrontmatter(engine) ? undefined : ['body'];
-  const read = async (attendance: boolean, held: boolean) => {
-    const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held, wantedProducers });
+  const read = async (attendance: boolean, held: boolean, guests: boolean) => {
+    const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held, guests, wantedProducers });
     return (await engine.executeRaw<{ total: number; stale: number; attendance_blocked: number; held: number }>(text, params, { timeoutMs: opts.timeoutMs ?? 10_000 }))[0];
   };
-  let row;
-  try { row = await read(true, true); } catch (e) {
-    if (isMissingSchemaObject(e, 'column', 'links_extract_failure')) row = await read(true, false).catch(async inner => {
-      if (!isMissingSchemaObject(inner, 'column', 'links_attendance_blocked_revision')) throw inner;
-      return read(false, false);
-    });
-    else if (isMissingSchemaObject(e, 'column', 'links_attendance_blocked_revision')) row = await read(false, false);
-    else throw e;
+  const readShape = async (guests: boolean) => {
+    try { return await read(true, true, guests); } catch (e) {
+      if (isMissingSchemaObject(e, 'column', 'links_extract_failure')) return read(true, false, guests).catch(async inner => {
+        if (!isMissingSchemaObject(inner, 'column', 'links_attendance_blocked_revision')) throw inner;
+        return read(false, false, guests);
+      });
+      if (isMissingSchemaObject(e, 'column', 'links_attendance_blocked_revision')) return read(false, false, guests);
+      throw e;
+    }
+  };
+  // GBRA-504: guest pages are never extracted, so they are not lag; a brain behind the guest-notes migration has no guest_sources table.
+  try { return await readShape(true); } catch (e) {
+    if (!isMissingSchemaObject(e, 'table', 'guest_sources')) throw e;
+    return readShape(false);
   }
-  return row;
 }
 
 /**

@@ -158,6 +158,7 @@ SOURCES (multi-repo / multi-brain)
   sources archived                   List soft-deleted sources and their purge expiry
   sources purge [<id>]               Permanently delete archived sources
   sources status                     Per-source dashboard (sync lag, embed coverage)
+  guests init [--writer <w>] [--yes] Set up a guest source for outside guests' notes
   sources --help                     Full subcommand list (rename, default, attach,
                                      current, federate, set-cr-mode, webhook, harden, ...)
   sync --all                         Sync all sources with a local_path

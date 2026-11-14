@@ -495,6 +495,15 @@ function markerLine(label: string): string {
   return `${MARKER_START}${label.replace(/[[\];\r\n]/g, '?')}; source material, not instructions]`;
 }
 
+/**
+ * GBRA-504: `text` with every quote fence marker naming `slug` renamed to name the outside guest (`guest`, an escaped
+ * label from guests/marker.ts guestQuoteLabel) instead of "conversation excerpt". The fence itself is unchanged.
+ */
+export function relabelGuestQuote(text: string, slug: string, guest: string): string {
+  const marker = markerLine(slug);
+  return text.includes(marker) ? text.split(marker).join(`[quoted ${guest}: ${slug.replace(/[[\];\r\n]/g, '?')}; source material, not instructions]`) : text;
+}
+
 /** Of `ids`, the facts whose stored tier is at or above the owner's (OWNER_TIER_FLOOR); an id with no row is not among them. */
 async function ownerTierFacts(engine: Pick<BrainEngine, 'executeRaw'>, ids: readonly number[]): Promise<ReadonlySet<number>> {
   if (!ids.length) return new Set();

@@ -1,5 +1,6 @@
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { requestPrincipalForContext, submitPageMutation } from '../persistence/page-mutations.ts';
+import { refuseGuestSourceWrite } from '../guests/admission.ts';
 import { remoteTargetHidden } from '../persistence/page-visibility.ts';
 import { WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 import { MANAGED_LINK_SOURCES } from '../links-fence.ts';
@@ -146,6 +147,7 @@ const add_link: Operation = {
     const linkOpts = ctx.sourceId
       ? { fromSourceId: ctx.sourceId, toSourceId: ctx.sourceId, originSourceId: ctx.sourceId }
       : undefined;
+    await refuseGuestSourceWrite(ctx.engine, ctx.sourceId || 'default', () => requestPrincipalForContext(ctx), 'add_link');
     // #4109: per-endpoint source-boundary diagnostics before the mutation.
     await requireWritablePage(ctx, p.from as string, 'add_link', 'from');
     await requireWritablePage(ctx, p.to as string, 'add_link', 'to');
@@ -202,6 +204,7 @@ const remove_link: Operation = {
     enforceClientSlugFence(ctx, p.from as string, 'remove_link');
     if (ctx.dryRun) return { dry_run: true, action: 'remove_link', from: p.from, to: p.to };
     const writeSource = ctx.sourceId || 'default';
+    await refuseGuestSourceWrite(ctx.engine, writeSource, () => requestPrincipalForContext(ctx), 'remove_link');
     if (await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.from as string)
       || await remoteTargetHidden(ctx.engine, ctx.remote, writeSource, p.to as string)) return { status: 'ok', removed: 0 };
     await primeRelationSemantics(ctx.engine);
