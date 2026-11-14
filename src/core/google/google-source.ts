@@ -162,6 +162,23 @@ function loopRecoveryState(state: GoogleSourceState): Record<string, unknown> {
   return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
 
+/**
+ * #9011: a thread whose import was still pending when processThread ran detection, then refused as purged content,
+ * leaves what detection derived from a page that never landed. Drops its extract candidate and grace hold, and the open
+ * loops of that slug while no live page holds it (open_loops.page_slug has no foreign key); the loops also for a refusal
+ * an earlier run recorded, which may have resolved after that run's cleanup.
+ */
+async function forgetRefusedPurgedThreads(deps: GoogleSyncDeps, managed: ManagedConnectorSync, state: GoogleSourceState): Promise<void> {
+  await managed.drainPending();
+  const slugs = managed.refusedPurgedSlugs(true);
+  if (!slugs.length) return;
+  const refused = new Set(managed.refusedPurgedSlugs());
+  deps.extractCandidates = deps.extractCandidates.filter((c) => !refused.has(c.slug));
+  for (const [tid, hold] of Object.entries(state.loop_grace_holds ?? {})) if (hold.slug && refused.has(hold.slug)) delete state.loop_grace_holds![tid];
+  await deps.engine.executeRaw(`DELETE FROM open_loops WHERE source_id=$1 AND page_slug=ANY($2::text[])
+    AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=$1 AND p.slug=open_loops.page_slug AND p.deleted_at IS NULL)`, [deps.sourceId, slugs]);
+}
+
 // ── Gmail sweep ──────────────────────────────────────────────────────────────
 
 const BACKFILL_BATCH_THREADS = 25;
@@ -922,6 +939,7 @@ async function runGoogleSyncInner(engine: BrainEngine, sourceId: string, cfg: Go
 
     // Per-service cursors were advanced in-place only on success; persist.
     // Throws connector_holds_exhausted before any save, so the cursor stays.
+    if (managed && !opts.signal?.aborted) await forgetRefusedPurgedThreads(deps, managed, state);
     state.item_holds = holds.finish();
     if (managed) {
       if (summary.status !== 'partial' && gmailSweepOk) await managed.saveState(state, true, new Date(state.gmail_newest_ms ?? Date.now()).toISOString());

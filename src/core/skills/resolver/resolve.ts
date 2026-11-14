@@ -20,8 +20,13 @@
  *    the turn names explicitly still gets its line (its tokens still count).
  *
  * min_match_strength drops weaker matches before the cut to k, so a floor
- * never shrinks the block below what the stronger matches fill. A message
- * that matches no catalog word falls back to previous_user_message.
+ * never shrinks the block below what the stronger matches fill: it filters
+ * candidates and does not gate the block. top_gate (off unless set) does:
+ * when the best skill the block would show (after exclude,
+ * min_match_strength, session dedupe and pacing) scores below it over its
+ * catalog's maxIdf, the block is empty (block_reason weak_top_match), unless
+ * the turn names a skill. A message that matches no catalog word falls back to
+ * previous_user_message.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -34,10 +39,10 @@ import { readResolverSettings, type ResolverSettings, validateSessionTokenBudget
 import { ResolverError } from './errors.ts';
 import { appendDailyLogSync, RESOLVER_LOG } from './daily-log.ts';
 import { ensureDir, writeFileAtomic } from './fsutil.ts';
-import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, STRENGTH_FIELDS, TOP_K_DEFAULT, TOP_K_MAX } from './limits.ts';
+import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, STRENGTH_FIELDS, TOP_GATE_MAX, TOP_K_DEFAULT, TOP_K_MAX } from './limits.ts';
 import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
 import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
-import { isAcknowledgement, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
+import { isAcknowledgement, maxIdf, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
 import { commitSession, freshState, loadSession, sessionKey, type SessionState, type TurnDelta } from './session.ts';
 
 export const SCHEMA_VERSION = 1;
@@ -59,12 +64,13 @@ export interface TurnInput {
   expected_catalog_hash?: string;
   reset_session?: boolean;
   min_match_strength?: MatchStrength;
+  top_gate?: number;
 }
 
 export interface Suggestion { id: string; name: string; score: number; summary: string; reason: string; match_strength: MatchStrength; path?: string; catalog: string }
 export interface TurnError { code: string; message: string; fix: { suggestion: string; command?: string } }
 /** Why a block is empty; null when it has a suggestion. */
-export type BlockReason = 'ack' | 'no_match' | 'filtered' | 'deduped' | 'paced' | 'budget_exhausted' | 'shadow' | 'error';
+export type BlockReason = 'ack' | 'no_match' | 'filtered' | 'weak_top_match' | 'deduped' | 'paced' | 'budget_exhausted' | 'shadow' | 'error';
 export interface TurnOutput {
   schema_version: 1;
   gbrain_version: string;
@@ -141,7 +147,7 @@ function capUtf8(s: string, max: number): string {
 export function normalizeTurnInput(raw: unknown): Required<Pick<TurnInput, 'message' | 'top_k' | 'exclude' | 'shadow' | 'reset_session'>> & TurnInput {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw invalid('The turn input must be a JSON object.', 'Send {"message": "..."} (see docs/schemas/skill-resolver.v1.turn-input.json).');
   const o = raw as Record<string, unknown>;
-  const known = new Set(['message', 'previous_user_message', 'session_id', 'harness', 'top_k', 'exclude', 'shadow', 'expected_catalog_hash', 'reset_session', 'min_match_strength']);
+  const known = new Set(['message', 'previous_user_message', 'session_id', 'harness', 'top_k', 'exclude', 'shadow', 'expected_catalog_hash', 'reset_session', 'min_match_strength', 'top_gate']);
   const extra = Object.keys(o).find(k => !known.has(k));
   if (extra) throw invalid(`Unknown turn input field "${extra}".`, 'Use only the fields in docs/schemas/skill-resolver.v1.turn-input.json.');
   if (typeof o.message !== 'string') throw invalid('message is required and must be a string.', 'Send the user message as "message".');
@@ -153,6 +159,7 @@ export function normalizeTurnInput(raw: unknown): Required<Pick<TurnInput, 'mess
   if (o.shadow !== undefined && typeof o.shadow !== 'boolean') throw invalid('shadow must be a boolean.', 'Pass true or false.');
   if (o.reset_session !== undefined && typeof o.reset_session !== 'boolean') throw invalid('reset_session must be a boolean.', 'Pass true on the first turn after a compaction.');
   if (o.min_match_strength !== undefined && !(MATCH_STRENGTHS as readonly unknown[]).includes(o.min_match_strength)) throw invalid(`min_match_strength must be one of ${MATCH_STRENGTHS.join(', ')}.`, 'Omit it to keep every match, or pass description to drop body-only matches.');
+  if (o.top_gate !== undefined && (typeof o.top_gate !== 'number' || !Number.isFinite(o.top_gate) || o.top_gate < 0 || o.top_gate > TOP_GATE_MAX)) throw invalid(`top_gate must be a number from 0 to ${TOP_GATE_MAX}.`, 'Omit it (or pass 0) to keep the gate off.');
   if (o.expected_catalog_hash !== undefined && (typeof o.expected_catalog_hash !== 'string' || !/^[0-9a-f]{64}$/.test(o.expected_catalog_hash))) throw invalid('expected_catalog_hash must be a sha256 hex string.', 'Pass the catalog_hash from the build receipt.');
   return {
     message: capUtf8(o.message, MESSAGE_CAP_BYTES),
@@ -165,6 +172,7 @@ export function normalizeTurnInput(raw: unknown): Required<Pick<TurnInput, 'mess
     reset_session: o.reset_session === true,
     ...(o.expected_catalog_hash !== undefined ? { expected_catalog_hash: o.expected_catalog_hash as string } : {}),
     ...(o.min_match_strength !== undefined ? { min_match_strength: o.min_match_strength as MatchStrength } : {}),
+    ...(o.top_gate ? { top_gate: o.top_gate as number } : {}),
   };
 }
 
@@ -387,6 +395,9 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
         picked.push(x);
       });
     }
+    const gated = input.top_gate !== undefined && picked.length > 0 && !picked.some(x => x.explicit)
+      && Math.max(...picked.map(x => x.score / maxIdf(loaded[x.c]!.ix.n))) < input.top_gate;
+    if (gated) picked.length = 0;
     const remaining = Math.max(0, budget - state.spent);
     const lines: BlockLine[] = picked.map(x => {
       const m = metaOf(x.c, x.doc);
@@ -404,7 +415,7 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const match_strength = strengthOf(x);
       return { id: m.id, name: m.name, score: round4(x.score), summary: namesOnly ? '' : m.summary, reason: x.explicit ? `named in the turn; ${reasonText(fields)}` : reasonText(fields), match_strength, ...(m.path ? { path: m.path } : {}), catalog: loaded[x.c]!.name };
     });
-    const blockReason: BlockReason | null = suggestions.length ? null : exhausted ? 'budget_exhausted' : paced ? 'paced' : window.length ? 'deduped' : 'filtered';
+    const blockReason: BlockReason | null = suggestions.length ? null : exhausted ? 'budget_exhausted' : gated ? 'weak_top_match' : paced ? 'paced' : window.length ? 'deduped' : 'filtered';
     const out: TurnOutput = { ...base, budget_exhausted: exhausted, block_reason: blockReason, suggestions, block: r.block, block_tokens: r.tokens, deduped };
     let explain: Explain | undefined;
     if (opts.explainTarget !== undefined) {

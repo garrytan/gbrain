@@ -19,8 +19,11 @@ import { exitCliError } from '../../cli/cli-error.ts';
 
 const REFERENCE_HELP =
   'gbrain skillpack reference <name> [--workspace PATH] [--apply-clean-hunks [--dry-run]] [--json]\n' +
-  'gbrain skillpack reference --all [--workspace PATH] [--since <version>] [--json]\n\n' +
+  'gbrain skillpack reference --all [--workspace PATH] [--since <version>] [--json]\n' +
+  'gbrain skillpack reference <name>|--all --update-untouched [--dry-run] ...   (see --update-untouched --help)\n\n' +
   '  <name>              Read-only diff of gbrain\'s bundle against your local copy.\n' +
+  '  --update-untouched  Replace whole skills you never edited with gbrain\'s version,\n' +
+  '                      journaled and restorable (gbrain skillpack restore <id>).\n' +
   '  --apply-clean-hunks Two-way merge: align non-conflicting hunks of ONE skill to\n' +
   '                      gbrain. Local edits in those hunks are overwritten; pass the\n' +
   '                      exact --dry-run flag to preview without writing.\n' +
@@ -39,6 +42,12 @@ const ALL_APPLY_REFUSAL =
   '  3. gbrain skillpack reference <name> --apply-clean-hunks   (add --dry-run to preview first)';
 
 export async function cmdReference(args: string[]): Promise<void> {
+  // Safe whole-skill update of untouched installs (its own help, flags and exit codes).
+  if (args.includes('--update-untouched')) {
+    const { cmdUpdateUntouched } = await import('./update.ts');
+    await cmdUpdateUntouched(args);
+    return;
+  }
   // Harness lane (cathedral-7): diff a harness install (stub-aware,
   // three-way local_edit vs upstream_drift) instead of a workspace.
   if (args.some(a => a === '--harness' || a.startsWith('--harness='))) {

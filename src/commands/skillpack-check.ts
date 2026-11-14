@@ -63,6 +63,8 @@ interface SkillpackReport {
   summary: string;
   /** Every recommended action the user/agent should take. */
   actions: string[];
+  /** The skill_health doctor line (size, growth, drift); absent when doctor did not run it. */
+  skill_health?: string;
   /** Full doctor output, machine-readable. */
   doctor: {
     exit_code: number;
@@ -184,12 +186,15 @@ function buildReport(): SkillpackReport {
     ? 'gbrain skillpack healthy'
     : `gbrain skillpack needs attention: ${actions.length} action(s) — ${actions[0]}`;
 
+  const skillHealth = 'checks' in doctor ? doctor.checks.find(c => c.name === 'skill_health')?.message : undefined;
+
   return {
     version: VERSION,
     ts: new Date().toISOString(),
     healthy,
     summary,
     actions,
+    ...(skillHealth ? { skill_health: skillHealth } : {}),
     doctor,
     migrations,
   };
