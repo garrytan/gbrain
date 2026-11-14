@@ -20,13 +20,19 @@ export function atomOriginSlugSql(a: string): string {
       AND live_origin.slug=${slug}) THEN ${renamedSlugSql(`${a}.source_id`, slug)} END, ${slug})`;
 }
 
-/**
- * SQL array of every slug that may name atom `a`'s origin, for rules where any of those pages being private makes the atom
- * private: its `source_slug`, that slug's rename target, and (#8920) every slug slug_rename_history moved it to, since a
- * later rename onto the old slug drops the alias (GBRA-218, as gbrain_access_origin_restricted reads it).
- */
+/** SQL array of every slug that may name atom `a`'s origin (its `source_slug` and that slug's rename target), for rules where either page being private makes the atom private. */
 export function atomOriginSlugsSql(a: string): string {
   const slug = `(${a}.frontmatter->>'source_slug')`;
-  return `(ARRAY[${slug}, ${renamedSlugSql(`${a}.source_id`, slug)}] || ARRAY(SELECT moved.new_slug FROM slug_rename_history moved
-    WHERE moved.source_id=${a}.source_id AND moved.old_slug=${slug}))`;
+  return `ARRAY[${slug}, ${renamedSlugSql(`${a}.source_id`, slug)}]`;
+}
+
+/**
+ * SQL: true when a page slug_rename_history moved atom `a`'s `source_slug` to is private (#8920). A later rename onto the
+ * old slug drops the alias, so atomOriginSlugsSql alone misses that origin (GBRA-218, as gbrain_access_origin_restricted
+ * reads it). A separate probe keeps the read rule's planner cost under jit_above_cost.
+ */
+export function atomMovedOriginPrivateSql(a: string): string {
+  return `EXISTS (SELECT 1 FROM slug_rename_history moved JOIN pages moved_to ON moved_to.source_id=moved.source_id
+    AND moved_to.slug=moved.new_slug WHERE moved.source_id=${a}.source_id AND moved.old_slug=(${a}.frontmatter->>'source_slug')
+    AND moved_to.frontmatter->>'visibility'='private')`;
 }

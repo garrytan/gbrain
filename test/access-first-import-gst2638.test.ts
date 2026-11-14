@@ -44,6 +44,7 @@ for (const kind of testBackends()) {
     afterAll(async () => {
       policySeams.afterInstall = undefined;
       _resetCliExitVerdictForTests();
+      process.exitCode = 0;
       await close();
       for (const d of dirs) rmSync(d, { recursive: true, force: true });
     });
@@ -122,7 +123,7 @@ for (const kind of testBackends()) {
       try {
         const r = await cli(['rule', 'import', '--file', policyFile(), '--source', id, '--yes']);
         expect({ state: r.state, exit: currentExitCode() }).toEqual({ state: 'invalid', exit: 1 });
-      } finally { _resetCliExitVerdictForTests(); }
+      } finally { _resetCliExitVerdictForTests(); process.exitCode = 0; }
     }, 120_000);
 
     test('a commit a pre-commit hook refuses leaves the store unset and the source readable', async () => {
