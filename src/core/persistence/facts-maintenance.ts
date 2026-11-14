@@ -33,6 +33,7 @@ import { isTerminal, type WriteAuthority, type WriteRequest } from './model.ts';
 import type { WriteReceipt } from './types.ts';
 import { FACTS_BATCH_INCOMPLETE_MESSAGE, isEntityMovedRefusal } from './verb-errors.ts';
 import { assertAmbientCaptureAdmissible, captureGateLaneForSource } from '../facts/capture-sources.ts';
+import { legacyModelTarget, legacyUnprefixedModel } from '../embedding-model-identity.ts';
 import { declareDerivation, type DerivationDeclaration } from '../trust/taint.ts';
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 import { withSpeakerNote } from '../facts/speaker-context.ts';
@@ -177,11 +178,11 @@ export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: 
   const model = values.embedding_model;
   if (!model) return null;
   const dimensions = /^[1-9]\d*$/.test(values.embedding_dimensions ?? '') ? Number(values.embedding_dimensions) : null;
-  if (!/[:/]/.test(model) && /^[^\s]+$/.test(model) && dimensions) {
+  if (legacyUnprefixedModel(model) && dimensions) {
     // #6113: a legacy row stores the model without its provider. Name the one supported rewrite (a preview first).
     const signature = currentEmbeddingSignature();
     const gateway = signature ? signature.slice(0, signature.lastIndexOf(':')) : null;
-    const target = gateway?.endsWith(`:${model}`) ? gateway : null;
+    const target = gateway ? legacyModelTarget(model, gateway) : null;
     throw opError('embedding_configuration', 'The selected brain records its embedding model without a provider, so facts cannot be embedded.',
       `The brain's embedding_model row is ${JSON.stringify(model)} with no provider prefix (a row from an older install), so fact extraction stopped before admission; gbrain config set cannot change it. `
       + `Preview the supported rewrite with gbrain migrate embeddings --to ${target ?? `<provider>:${model}`} --dry-run and show the user its cost: it re-embeds active facts, so applying it needs the user's paid authorization.`,
