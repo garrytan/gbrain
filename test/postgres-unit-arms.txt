@@ -111,6 +111,7 @@ test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-facts-fence-failure-health-8758.test.ts
+test/extract-stale-frontmatter-loop-9295.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
@@ -192,6 +193,7 @@ test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts
 test/keyword-timeout-negative-cache-6495.test.ts
 test/label-only-repairs.test.ts
+test/label-repair-derived-stamps-gst2603.test.ts
 test/lane-apply-pipelining.test.ts
 test/large-pages/append-concurrency.test.ts
 test/large-pages/append-cost.test.ts
@@ -312,6 +314,8 @@ test/list-pages-empty-type-notice-gbra449.test.ts
 test/lower-tier-label-hold.test.ts
 test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
+test/maintenance-unattended.test.ts
+test/managed-atom-release-resume-9079-9275.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
 test/managed-facts-withdrawn-skip-6506.test.ts
@@ -351,6 +355,7 @@ test/migration-persistence-foreground-committed-index.test.ts
 test/migration-persistence-request-id-index.test.ts
 test/migration-persistence-request-slug-index.test.ts
 test/mirror-readonly-write-through-7098.test.ts
+test/moved-pages-gst2584.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
@@ -497,12 +502,14 @@ test/persistence-page-authority.test.ts
 test/persistence-physical-root-device.test.ts
 test/persistence-preactivation-claim.test.ts
 test/persistence-publication-deadline.test.ts
+test/persistence-receipt-git-state.test.ts
 test/persistence-receipt-true-up.test.ts
 test/persistence-reconcile-git-dirty-6138.test.ts
 test/persistence-skill-bundles.serial.test.ts
 test/persistence-skill-crash.slow.test.ts
 test/persistence-skip-cost.test.ts
 test/persistence-stale-plan-retry.test.ts
+test/persistence-stuck-head-9227.test.ts
 test/persistence-sync-cursor-options.test.ts
 test/persistence-sync-cursor-strategy-6696.test.ts
 test/persistence-sync-fence-holds.test.ts
@@ -557,6 +564,7 @@ test/remember-segmented-entity-9213.test.ts
 test/remember-share-gst2243.test.ts
 test/remember-strict-held-gst2492.test.ts
 test/rename-atom-lineage-7462.test.ts
+test/repair-agent-session-facts-segmented-9027.test.ts
 test/repair-apply-pending-6543.test.ts
 test/repair-atom-fence-rows.test.ts
 test/repair-database-stop-gbra133.test.ts
@@ -622,6 +630,7 @@ test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
 test/strict-background-writers-gst2492.test.ts
+test/sweep-segmented-entity-9279.test.ts
 test/sync-absent-from-worktree-s27.test.ts
 test/sync-admission-6712.test.ts
 test/sync-apply-held-deletions-gbra133.test.ts

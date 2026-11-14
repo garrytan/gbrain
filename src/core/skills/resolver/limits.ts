@@ -6,6 +6,8 @@
 export const TOP_K_DEFAULT = 5;
 export const TOP_K_MAX = 8;
 export const EXCLUDE_MAX = 1024;
+/** top_gate's upper bound; 0 (or unset) turns the gate off. */
+export const TOP_GATE_MAX = 100;
 
 /** The strongest way a suggestion matched the turn: named in it, then by field. A body-only match is the weakest. */
 export type MatchStrength = 'named' | 'name' | 'triggers' | 'routing' | 'description' | 'body';

@@ -33,7 +33,7 @@
  * for a recommended merge or an undecidable pair, a paragraph for a person.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { Action } from '../agent-output.ts';
+import { shellQuote, type Action } from '../agent-output.ts';
 import type { ContentRefusal } from '../import-screen.ts';
 import { RECOVERY_VERSION, type InvalidFrontmatterReason } from '../markdown.ts';
 import { TAG_MAX_BYTES } from '../tag-limit.ts';
@@ -190,6 +190,8 @@ export interface GitHoldMeta {
   deleted?: true;
   /** GBRA-133 `file_drift` `file_gone`: `sync.apply_held_deletions` refused this deletion (sync-held-deletions.ts) while the page was at `page_revision`. */
   held_deletion?: { refused: string; page_revision: string };
+  /** GST-2584 `file_drift` `file_gone`: the page has no import record of its revision, so sync cannot tell whether it changed in the database. */
+  no_import_record?: true;
   /**
    * #6712 dependency edge: the path of an earlier entry of the same sync, sharing this entry's slug or page id, that was
    * held in that sync; this entry waits on it with the same code, and discovery re-screens it once that hold is gone.
@@ -741,6 +743,11 @@ export function heldDriftPreviewArgv(sourceId: string, side: FileDriftSide, stat
     ...(path ? ['--only', path] : []), '--prefer', prefer];
 }
 
+/** GST-2584: the read-only preview of `gbrain repair moved-pages`, which folds a page whose file moved into the moved page. */
+export function movedPagesPreviewArgv(sourceId: string, slug?: string | null): string[] {
+  return ['gbrain', 'repair', 'moved-pages', '--source', sourceId, ...(slug ? ['--slug', slug] : [])];
+}
+
 /** #6712 PR 4b: the Decision for a `file_drift` hold whose one side is a deletion; each option names its action verb. */
 function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'meta'> & Partial<Pick<GitHoldRecord, 'slug'>>, state: FileDriftDeletedState): Action {
   const source = record.source_id;
@@ -760,8 +767,11 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
     : uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
     : state === 'tombstone_edited' ? `Page ${slug} was deleted${revision} and ${record.path} then changed, so sync held the file instead of restoring the page or dropping the edit. `
     : state === 'purged_differs' ? `The page of ${record.path} was purged and the file differs from what the brain held, so sync held the file instead of importing it as a new page. `
+    : record.meta.no_import_record ? `${record.path} is gone from the last commit, and page ${slug}${revision} has no import record that says whether it changed in the database since the file was imported, so sync held the deletion instead of removing it. `
     : `${record.path} is gone from the last commit but page ${slug} changed${revision}, so sync held the deletion instead of removing a page that changed. `;
-  const options = `This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
+  // GST-2584: a file that moved left its page behind; the --held preview lists it moved_to and names the fold.
+  const moved = state === 'file_gone' ? `If the file moved, the preview lists the page moved_to <slug> and names ${shellQuote(movedPagesPreviewArgv(source, record.slug))}, which folds it into the moved page. ` : '';
+  const options = `${moved}This preview (writes nothing) shows --prefer database: ${fileDriftActionVerb('deleted', state, 'database')}; ${preview('file').join(' ')} previews --prefer file: `
     + `${fileDriftActionVerb('deleted', state, 'file')}. `;
   return { argv: preview('database'), consent: [], actor: 'agent', requires_exclusive: false, docs: 'docs/guides/repair.md#deleted-canonical-files',
     why: `${what}${options}Decide with the user. ${FILE_DRIFT_APPLY_STEP} Then sync again. The rest of the source is not blocked.`,

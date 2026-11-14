@@ -76,12 +76,94 @@ gbrain skillpack reference book-mirror
 
 `reference <name> --apply-clean-hunks` is the auto-apply path. It
 parses the diff between gbrain's bundle and your local copy, applies
-every hunk whose pre-change context matches uniquely. **Two-way merge
-limitation**: without scaffold-time base tracking (intentionally out of
-scope), this cannot distinguish "gbrain changed X"
-from "you changed X." Applied hunks align everything to gbrain. Use
-`--dry-run` first to preview, or run plain `reference` to inspect the
-diff before letting auto-apply touch anything.
+every hunk whose pre-change context matches uniquely. **It is a
+destructive two-way apply**: it compares only your copy and gbrain's
+current bundle, so it cannot tell "gbrain changed X" from "you changed
+X," and applied hunks align everything to gbrain. Preview with
+`--dry-run` first, or run plain `reference` and merge by hand. For
+skills you never edited, `--update-untouched` (below) is the safe path.
+
+### Updating installed skills
+
+`gbrain skillpack reference <name>|--all --update-untouched [--dry-run] [--json] [--no-diff] [--accept-historical] [--fail-on-skipped]`
+replaces whole skills you never edited with gbrain's current version.
+It never prompts; `--dry-run` is the preview.
+
+- **Base.** `scaffold` (including `--harness` installs, `sync` and the
+  openclaw lane) and every update record the sha256 of each skill file
+  gbrain installed in `~/.gbrain/skillpack-state.json`, per skills root and
+  skill. That recorded base always wins.
+- **Per skill, all or nothing.** A skill's closure is its `SKILL.md`,
+  references, scripts and any shared dependency it lacks. It updates only
+  when every closure file is unchanged, absent, or still equal to its base,
+  and the skill is not pinned. A file that differs from its base is
+  `local_edits` even when it equals a past release.
+- **Installs from before bases were recorded.** A file with no base that
+  equals a released version (listed in `skills/skills.lock.history.json`)
+  is shown separately and needs `--accept-historical`.
+- **Skip reasons:** `local_edits`, `pinned` (`gbrain skillpack pin <skill>`,
+  undo with `unpin`), `no_history`, `historical_only`,
+  `history_unverified` (the history file failed its hash in
+  `skills.lock.json`, so no whole-file update runs) and `unsafe_target` (a
+  symlink or a path outside the skills root). A skipped skill prints its
+  diff: your copy against gbrain's, at most 200 lines per file, with
+  secret-looking values redacted.
+- **Commit protocol.** The closure is staged and checked first, a journal
+  of intent and a backup of each replaced file go to
+  `~/.gbrain/skillpack-backups/<id>/`, each file is rehashed right before
+  its rename, and conformance, the trigger check and the resolver check run
+  on the updated skill. A late change, a crash or a failed check rolls back
+  only the files that still hold the update's bytes. A crash shows up as
+  `skillpack_update_incomplete` in `gbrain doctor` and on the next run.
+- **Restore.** `gbrain skillpack restore <id>` puts back what an update
+  replaced and removes what it added. It refuses a file you changed since
+  the update unless you name it with `--skip <file>`, and running it again
+  is a no-op. `restore --list` lists backups; they are kept 30 days or the
+  newest 10.
+- **Exit codes:** 0 when nothing failed (skips are in the summary and
+  JSON), 1 only with `--fail-on-skipped` when something was skipped, 2 when
+  a skill failed (the files touched and the restore command are printed).
+- **Locks.** The command takes the workspace writer lock
+  (`.gbrain-skillpack.lock` beside the skills dir), then the shared lock on
+  the state file, in that order.
+- **No repository needed.** The state file and backups are files under
+  `GBRAIN_HOME`, so this works the same on a repo-less brain.
+- **Upgrades only announce.** `gbrain upgrade` writes no skill files; its
+  behavior notice names the preview command.
+- **Not covered:** paired source files outside the skills root (reported,
+  never written), shared dependencies you already have (only missing ones
+  are added), harness destination installs (`reference --harness <h>`
+  stays the lens there), and skills shared through a brain. Those update by
+  publishing a revision with `put_skill`; skillpack file-copy commands are
+  not a way around publication. See
+  [shared brain skills](shared-brain-skills.md#update-a-shared-skill).
+
+| You want to | Run |
+|---|---|
+| Read what changed upstream | `gbrain skillpack reference <name>` (or `--all`) |
+| Take upstream on skills you never edited | `gbrain skillpack reference --all --update-untouched --dry-run`, then without `--dry-run` |
+| Keep an edited or deliberately old skill as it is | `gbrain skillpack pin <name>` |
+| Update a skill you edited | read `gbrain skillpack reference <name>` and merge by hand; `--apply-clean-hunks` is a destructive two-way apply (preview with `--dry-run`) |
+| Find which skills need work | `gbrain skillpack health` |
+| Improve a skill's quality against a benchmark | `gbrain skillopt <name>` |
+| Undo an update | `gbrain skillpack restore <id>` (`--list` to find it) |
+
+### `gbrain skillpack health [<skill>] [--skills-dir PATH] [--json] [--strict]`
+
+Read-only. For the active skills folder (the harness or workspace skills
+dir, else the bundled skills) it reports each skill's bytes against its
+budget, growth past 10% over its last diet, description size, missing
+frontmatter triggers, and every `gbrain` command, flag or tool the skill
+shows that this gbrain does not have. Each finding carries what was
+observed, what was expected, the edit or command that fixes it (for an
+unedited copy of a bundled skill, `gbrain skillpack reference <skill>`
+first) and a verify command. A folder with no skills manifest or
+`skills.lock.json` is checked only for copies of gbrain's bundled skills,
+so other agents' skills are never reported. It reads files only, so it
+works the same on a brain with no git repository.
+
+`gbrain doctor` runs it as `skill_health` (it warns only on drift),
+`gbrain maintain` and `gbrain skillpack-check` print its one-line summary.
 
 ### `gbrain skillpack migrate-fence [--workspace PATH] [--dry-run]`
 
@@ -257,8 +339,12 @@ gbrain skillpack remove --harness claude-code --skill query
   marketplace)** → `scaffold --harness <h>`
 - **Shipping a pack from inside a brain/source repo** → `init-brain-pack`
 - **gbrain shipped a new version, want to see what's changed**
-  → `reference` (read-only) or `reference --apply-clean-hunks` (auto);
+  → `reference` (read-only), `reference --all --update-untouched` for
+  skills you never edited, or a hand merge for edited ones (see
+  [Updating installed skills](#updating-installed-skills));
   for harness installs → `reference --harness <h>`
+- **Find skills that grew too big or show commands this gbrain doesn't
+  have** → `health` (read-only)
 - **Upgrading from the legacy managed-block model** → `migrate-fence` (one-shot)
 - **Cleanup after `migrate-fence`** → `scrub-legacy-fence-rows`
 - **Lift your fork's skill back into gbrain** → `harvest` + the

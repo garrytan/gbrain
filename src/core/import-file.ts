@@ -488,7 +488,7 @@ export async function importFromContent(
     // put (get_page → edit body → put_page without `type:`) silently regressed
     // a curated type to the path-inferred default ('concept' for bare slugs).
     // Explicit frontmatter type stays an override; new pages still infer. The stored subtype and grandfather stamp are kept too.
-    if (existing) alignWithStored(parsed, existing, false, opts.sourcePath !== undefined);
+    if (existing) alignWithStored(parsed, existing, false, opts.sourcePath !== undefined, true);
     else resolveParsedSubtype(parsed, existing);
     // Alias-footgun visibility: an explicit frontmatter `type:` that is an
     // ALIAS of a canonical pack type (or entirely undeclared) is stored

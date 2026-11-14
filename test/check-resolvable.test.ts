@@ -697,6 +697,23 @@ describe("checkResolvable — low-confidence foreign skills dir", () => {
     }
     expect(report.errors.some(i => i.type === "unreachable")).toBe(true);
   });
+
+  test("OpenClaw workspace discovery + prose AGENTS.md at the root + third-party skills: unreachable is a warning; a manifest.json keeps it an error", () => {
+    // An OpenClaw workspace's skills/ can hold only another tool's skills
+    // (OpenClaw loads them natively) under its default prose AGENTS.md.
+    dir = mkdtempSync(join(tmpdir(), "gbrain-openclaw-workspace-"));
+    writeFileSync(join(dir, "AGENTS.md"), "# AGENTS.md\n\nWorkspace instructions, no routing table.\n");
+    const skills = join(dir, "skills");
+    for (const name of ["third-party-one", "third-party-two", "third-party-three", "third-party-four"]) makeSkillWithoutTriggers(skills, name);
+    for (const source of ["openclaw_workspace_home_root", "openclaw_workspace_env_root", "openclaw_workspace_home", "openclaw_workspace_env"] as const) {
+      const report = checkResolvable(skills, { skillsDirSource: source });
+      expect(report.issues.filter(i => i.type === "unreachable").length).toBe(4);
+      expect(report.errors.some(i => i.type === "unreachable")).toBe(false);
+    }
+    writeFileSync(join(skills, "manifest.json"), JSON.stringify({ skills: ["third-party-one", "third-party-two", "third-party-three", "third-party-four"].map(name => ({ name, path: `${name}/SKILL.md` })) }));
+    const strict = checkResolvable(skills, { skillsDirSource: "openclaw_workspace_home_root" });
+    expect(strict.errors.some(i => i.type === "unreachable")).toBe(true);
+  });
 });
 
 describe("missing_file is reported once per skill path, not once per trigger row (wave review)", () => {

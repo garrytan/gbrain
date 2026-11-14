@@ -15,6 +15,7 @@ import { withEnv } from './helpers/with-env.ts';
 import { brainFirstTurnRule, renderBrainFirstTurnRule, type BrainFirstAccess } from '../src/core/setup/brain-first.ts';
 import { runHook } from '../src/commands/hook.ts';
 import { hermesTurnHookCommand, removeHermesTurnHook, syncHermesTurnHook } from '../src/core/setup/hermes-turn-hook.ts';
+import { inspectTurnHook } from '../src/core/setup/turn-hook-check.ts';
 import { OPENCLAW_TURN_PLUGIN_ID, openclawTurnPluginDir, removeOpenclawTurnPlugin, syncOpenclawTurnPlugin } from '../src/core/setup/openclaw-turn-plugin.ts';
 
 const roots: string[] = [];
@@ -243,6 +244,26 @@ describe('per-turn rule: Hermes pre_llm_call hook in config.yaml', () => {
     expect(cfg(damaged)).toBe('# gbrain:turn-rule:begin\nmodel: x\n');
   });
 
+  test('doctor sees the printed entry once it is pasted into the user\'s hooks: section, and only that exact command', async () => {
+    const theirs = 'hooks:\n  pre_tool_call:\n    - command: /usr/bin/true\n';
+    const d = hermes(theirs);
+    const snippet = syncHermesTurnHook({ hermesHome: d, access, dryRun: false }).snippet!;
+    const pasted = `${theirs}  pre_llm_call:\n${snippet.split('\n').slice(2).join('\n')}`;
+    expect(load(pasted)).toEqual({ hooks: { pre_tool_call: [{ command: '/usr/bin/true' }], pre_llm_call: [{ command: cmd, timeout: 10 }] } });
+    writeFileSync(join(d, 'config.yaml'), pasted);
+    const root = home([{ harness: 'hermes', status: 'installed', access }]);
+    const ledger = join(root, '.gbrain', 'agent-instructions.json');
+    const entries = JSON.parse(readFileSync(ledger, 'utf8')).entries;
+    writeFileSync(ledger, JSON.stringify({ version: 1, entries: entries.map((e: Record<string, unknown>) => ({ ...e, path: join(d, 'SOUL.md') })) }));
+    await withEnv({ GBRAIN_HOME: root, HERMES_HOME: d }, async () => {
+      expect(inspectTurnHook('hermes')).toMatchObject({ state: 'untrusted', via: 'native' });
+      writeFileSync(join(d, 'shell-hooks-allowlist.json'), JSON.stringify({ approvals: [{ event: 'pre_llm_call', command: cmd }] }));
+      expect(inspectTurnHook('hermes')).toMatchObject({ state: 'wired', via: 'native' });
+      writeFileSync(join(d, 'config.yaml'), pasted.replace(JSON.stringify(cmd), JSON.stringify('/bin/echo hi')));
+      expect(inspectTurnHook('hermes').state).toBe('missing');
+    });
+  });
+
   test('dry-run writes nothing', () => {
     const d = hermes('model: x\n');
     expect(syncHermesTurnHook({ hermesHome: d, access, dryRun: true }).action).toBe('write');
@@ -287,6 +308,22 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
     });
   });
 
+  test('internal turns (heartbeat, cron, exec completion) get the rule without the reply sentence; every other turn keeps it', async () => {
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      const mod = await import(join(openclawTurnPluginDir(), 'index.js'));
+      const handlers: Record<string, (event?: unknown, ctx?: unknown) => unknown> = {};
+      mod.default.register({ on: (event: string, fn: (event?: unknown, ctx?: unknown) => unknown) => { handlers[event] = fn; } });
+      const full = renderBrainFirstTurnRule(access, 'openclaw');
+      expect(full).toEndWith(' Then answer and finish the task.');
+      const internal = renderBrainFirstTurnRule(access, 'openclaw', { reply: false });
+      expect(internal).toBe(full.slice(0, -' Then answer and finish the task.'.length));
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'internal_system' } })).toEqual({ prependContext: internal });
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'external_user' } })).toEqual({ prependContext: full });
+      expect(handlers.before_prompt_build({}, {})).toEqual({ prependContext: full });
+    });
+  });
+
   test('no openclaw on PATH or a failed command: the plugin is written and the remaining commands are printed', async () => {
     await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
       const o = syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: null });
@@ -313,6 +350,59 @@ describe('per-turn rule: OpenClaw before_prompt_build plugin', () => {
       expect(removeOpenclawTurnPlugin({ dryRun: false, openclawBin: '/bin/openclaw', run: gone.run }).action).toBe('remove');
       expect(gone.calls).toEqual([['/bin/openclaw', 'plugins', 'uninstall', OPENCLAW_TURN_PLUGIN_ID, '--force']]);
       expect(existsSync(join(st, 'gbrain'))).toBe(false);
+    });
+  });
+
+  test('a --workspace run leaves the gateway-shared plugin when it names another server, and never removes it', async () => {
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      syncOpenclawTurnPlugin({ access, dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      const index = readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8');
+      const rec = recorder();
+      const other = syncOpenclawTurnPlugin({ access: { kind: 'mcp', server: 'gbrain-a' }, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: rec.run });
+      expect(other.action).toBe('print');
+      expect(other.detail).toContain('names the `gbrain` MCP server');
+      expect(other.commands).toEqual(['gbrain setup openclaw --remove --workspace /ws/a']);
+      expect(readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8')).toBe(index);
+      expect(rec.calls).toEqual([]);
+      expect(syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).action).toBe('keep');
+      const kept = removeOpenclawTurnPlugin({ workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: rec.run });
+      expect(kept.action).toBe('skip');
+      expect(rec.calls).toEqual([]);
+      expect(readFileSync(join(openclawTurnPluginDir(), 'index.js'), 'utf8')).toBe(index);
+    });
+  });
+
+  test('a plugin an older gbrain wrote (no recorded access): a same-server --workspace run rewrites it; another server or an unreadable rule is left', async () => {
+    const legacy = (rule: string) => {
+      const dir = openclawTurnPluginDir();
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'package.json'), `${JSON.stringify({ name: OPENCLAW_TURN_PLUGIN_ID, version: '1.0.0', private: true, type: 'module', openclaw: { extensions: ['./index.js'] } }, null, 2)}\n`);
+      writeFileSync(join(dir, 'index.js'), [`const RULE = ${JSON.stringify(rule)};`, 'export default {', `  id: '${OPENCLAW_TURN_PLUGIN_ID}',`, '  register(api) {', "    api.on('before_prompt_build', () => ({ prependContext: RULE }));", '  },', '};', ''].join('\n'));
+      return dir;
+    };
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      const dir = legacy(renderBrainFirstTurnRule(access, 'openclaw'));
+      expect(syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run }).action).toBe('write');
+      expect(JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).gbrain).toEqual({ access });
+      const mod = await import(join(dir, 'index.js'));
+      const handlers: Record<string, (event?: unknown, ctx?: unknown) => unknown> = {};
+      mod.default.register({ on: (event: string, fn: (event?: unknown, ctx?: unknown) => unknown) => { handlers[event] = fn; } });
+      expect(handlers.before_prompt_build({}, { inputProvenance: { kind: 'internal_system' } })).toEqual({ prependContext: renderBrainFirstTurnRule(access, 'openclaw', { reply: false }) });
+    });
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      const dir = legacy(renderBrainFirstTurnRule({ kind: 'mcp', server: 'gbrain-b' }, 'openclaw'));
+      const index = readFileSync(join(dir, 'index.js'), 'utf8');
+      const other = syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      expect(other.action).toBe('print');
+      expect(other.detail).toContain('names the `gbrain-b` MCP server');
+      expect(readFileSync(join(dir, 'index.js'), 'utf8')).toBe(index);
+    });
+    await withEnv({ OPENCLAW_STATE_DIR: state(), OPENCLAW_PROFILE: undefined }, async () => {
+      const dir = legacy('not a gbrain rule');
+      const unreadable = syncOpenclawTurnPlugin({ access, workspace: '/ws/a', dryRun: false, openclawBin: '/bin/openclaw', run: recorder().run });
+      expect(unreadable.action).toBe('print');
+      expect(unreadable.detail).toContain('gbrain cannot read');
+      expect(readFileSync(join(dir, 'index.js'), 'utf8')).toContain('not a gbrain rule');
     });
   });
 

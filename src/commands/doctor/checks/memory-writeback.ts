@@ -40,7 +40,7 @@ import { classifyBrainAudience } from '../../../core/facts/writeback-audience.ts
 import { readVerbUsage } from '../../../core/verbs/usage-log.ts';
 import { readClientOpUsage } from '../../../core/mcp-usage.ts';
 import { OPENCLAW_COMPACT_EVENT, readHeartbeatTail } from '../../../core/context/hook-heartbeat.ts';
-import { CORPUS_UNINGESTED_RETENTION_FACTOR, CORPUS_WINDOW_FAILURE_CAP, corpusBacklog, corpusSpoolDir, listCorpusFailures } from '../../../core/context/corpus-segments.ts';
+import { CORPUS_UNINGESTED_RETENTION_FACTOR, CORPUS_WINDOW_FAILURE_CAP, corpusBacklog, corpusFailureHeld, corpusSpoolDir, listCorpusFailures } from '../../../core/context/corpus-segments.ts';
 import { listCorpusSourceHolds } from '../../../core/context/corpus-source.ts';
 import { readHarnessReceiptState } from '../../../core/bootstrap/format.ts';
 import { mutedFirstRunDecisionsNotice } from '../../../core/onboard/mcp-onboarding.ts';
@@ -168,13 +168,14 @@ async function corpusBacklogProblem(engine: BrainEngine, fileCfg: ReturnType<typ
   const top = corpusBacklog(dir, days * DAY_MS, now);
   const spool = corpusBacklog(corpusSpoolDir(dir), days * DAY_MS, now);
   const oldest = [top.oldestPendingMtimeMs, spool.oldestPendingMtimeMs].filter((m): m is number => m !== null);
-  const backlog = { pending: top.pending + spool.pending, pastRetention: top.pastRetention + spool.pastRetention, oldestPendingMtimeMs: oldest.length ? Math.min(...oldest) : null };
+  const backlog = { pending: top.pending + spool.pending, pastRetention: top.pastRetention + spool.pastRetention, held: top.held + spool.held, oldestPendingMtimeMs: oldest.length ? Math.min(...oldest) : null };
   const oldestDays = backlog.oldestPendingMtimeMs === null ? null : Math.floor((now - backlog.oldestPendingMtimeMs) / DAY_MS);
   const purgeDays = days * CORPUS_UNINGESTED_RETENTION_FACTOR;
-  details.corpus_backlog = { pending: backlog.pending, oldest_pending_days: oldestDays, past_retention: backlog.pastRetention, retention_days: days, deleted_after_days: purgeDays };
+  details.corpus_backlog = { pending: backlog.pending, oldest_pending_days: oldestDays, past_retention: backlog.pastRetention, held: backlog.held, retention_days: days, deleted_after_days: purgeDays };
   if (backlog.pastRetention === 0) return null;
+  const kept = backlog.held ? ` (${backlog.held} held by a refusal that retrying cannot change are kept until extracted)` : '';
   return `${backlog.pastRetention} of ${backlog.pending} captured session file(s) are older than the ${days}-day corpus retention and were never extracted `
-    + `(oldest ${oldestDays}d); they are deleted at ${purgeDays}d. Extract them now: gbrain sweep --once --budget-ms 600000`;
+    + `(oldest ${oldestDays}d); they are deleted at ${purgeDays}d${kept}. Extract them now: gbrain sweep --once --budget-ms 600000`;
 }
 
 /** #6785: the problem text a stopped corpus window carries; the check's fix keys on it. */
@@ -193,10 +194,13 @@ async function corpusFailureProblem(engine: BrainEngine, fileCfg: ReturnType<typ
   if (!failed.length) return null;
   const codes = new Map<string, number>();
   for (const f of stopped) codes.set(f.record.last_code, (codes.get(f.record.last_code) ?? 0) + 1);
-  details.corpus_failed_windows = { retrying: failed.length - stopped.length, stopped: stopped.length, last_codes: Object.fromEntries(codes) };
+  const held = stopped.filter((f) => corpusFailureHeld(f.record)).length;
+  details.corpus_failed_windows = { retrying: failed.length - stopped.length, stopped: stopped.length, held, last_codes: Object.fromEntries(codes) };
   if (!stopped.length) return null;
   const [topCode] = [...codes.entries()].sort((a, b) => b[1] - a[1])[0]!;
-  return `${stopped.length} captured session file(s) stopped extracting after ${CORPUS_WINDOW_FAILURE_CAP} failed attempts at one window (top: ${topCode}); `
+  // #9279: a deterministic refusal stops its window after one paid attempt; retention keeps the file, and the first sweep on a new build retries it once.
+  const heldLine = held ? ` ${held} of them stopped at once on a refusal that retrying cannot change; retention keeps them and the first sweep after a gbrain upgrade retries each once.` : '';
+  return `${stopped.length} captured session file(s) stopped extracting after ${CORPUS_WINDOW_FAILURE_CAP} failed attempts at one window (top: ${topCode});${heldLine} `
     + `fix the cause, then retry them (paid): ${CORPUS_RETRY_COMMAND}`;
 }
 

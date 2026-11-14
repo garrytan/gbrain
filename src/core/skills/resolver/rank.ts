@@ -63,6 +63,9 @@ export function mentionsSkill(message: string, id: string, name: string): boolea
   return false;
 }
 
+/** The idf of a term only one of n skills holds: the most one query word can weigh in a catalog of n, so a score over it reads the same at any catalog size. */
+export const maxIdf = (n: number) => Math.log(1 + (n - 0.5) / 1.5);
+
 const byName = (ix: IndexReader) => (a: Ranked, b: Ranked) => {
   const ma = ix.meta(a.doc);
   const mb = ix.meta(b.doc);
