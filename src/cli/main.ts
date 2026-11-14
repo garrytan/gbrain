@@ -2521,6 +2521,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
     if (command === 'recall') oneShotRead = !args.includes('--watch');
     engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status'), oneShotRead });
   } catch (serveConnectError) {
+    if (command === 'wakeshift' && args[0] === 'emit') return (await import('../commands/wakeshift.ts')).reportEmitConnectFailure(args.slice(1), serveConnectError), null;
     if (command === 'jobs' && args[0] === 'child-readiness') {
       const { writeChildReadinessFailure } = await import('../core/minions/child-readiness.ts');
       process.exit(writeChildReadinessFailure(serveConnectError));

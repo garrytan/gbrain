@@ -275,14 +275,29 @@ async function cron(engine: BrainEngine, args: string[], json: boolean): Promise
  * Wakeshift and exits 0 whatever happens after the arguments parse (off, unregistered, a database error), with one
  * stderr line, so the cron script's own exit status stays its own.
  */
-async function emit(engine: BrainEngine, args: string[]): Promise<void> {
+function emitArgs(args: string[]): { name: string; status: 'ok' | 'failed' } | null {
   const name = cronName(flagValue(args, '--name'));
   const status = flagValue(args, '--status');
-  if (args[0] !== 'cron.finished' || !name || (status !== 'ok' && status !== 'failed')) {
-    console.error('Usage: gbrain wakeshift emit cron.finished --name <name> --status ok|failed');
-    setCliExitVerdict(2);
-    return;
-  }
+  if (args[0] === 'cron.finished' && name && (status === 'ok' || status === 'failed')) return { name, status };
+  console.error('Usage: gbrain wakeshift emit cron.finished --name <name> --status ok|failed');
+  setCliExitVerdict(2);
+  return null;
+}
+
+/**
+ * The brain could not be opened for `emit` (a live serve holding the PGLite lock, a database outage): the run is not
+ * recorded, but the cron script still keeps its own exit status, as the emit contract promises.
+ */
+export function reportEmitConnectFailure(args: string[], error: unknown): void {
+  const parsed = emitArgs(args);
+  if (!parsed) return;
+  console.error(`[wakeshift] could not record the ${parsed.name} run: the brain could not be opened (${error instanceof Error ? error.message.split('\n')[0] : String(error)}).`);
+}
+
+async function emit(engine: BrainEngine, args: string[]): Promise<void> {
+  const parsed = emitArgs(args);
+  if (!parsed) return;
+  const { name, status } = parsed;
   if (!wakeshiftPublished()) {
     console.error(`[wakeshift] reporting back is off, so the ${name} run was not recorded (gbrain wakeshift status).`);
     return;
