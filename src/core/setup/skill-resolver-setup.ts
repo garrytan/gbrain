@@ -30,9 +30,9 @@ import { claudeUserSkillsDir, codexConfigPath } from '../bootstrap/host-specs.ts
 import { buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex } from '../skills/resolver/build.ts';
 import { configuredSkillDirs } from '../skills/resolver/config.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
-import { CLAUDE_PLUGINS_CATALOG, logsDir, sessionsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
+import { CLAUDE_PLUGINS_CATALOG, logsDir, sessionsDir, skillIndexRoot, SHARED_CATALOG } from '../skills/resolver/paths.ts';
 import { resolveSkills } from '../skills/resolver/resolve.ts';
-import { claudePluginRoots, readDirSources } from '../skills/resolver/sources.ts';
+import { claudePluginRoots, findSharedSkillCaches, readDirSources, readSharedCatalogSource } from '../skills/resolver/sources.ts';
 import { readResolverConfig, resolverHarnesses, resolverSection, setResolverHarness } from './skill-resolver-config.ts';
 import { syncHermesPins } from './hermes-skill-pins.ts';
 import { hermesHomeDir, inspectSkillResolverHook, removeSkillResolverHook, syncSkillResolverHook, type ResolverHarness, type ResolverHookPaths } from './skill-resolver-hook.ts';
@@ -49,7 +49,7 @@ export interface ResolverSetupResult {
 }
 
 export const userCatalog = (harness: ResolverHarness) => `${harness}-user`;
-const isHarnessCatalog = (harness: ResolverHarness, name: string) => name === userCatalog(harness) || name === `${harness}-plugins` || name.startsWith(`${harness}-project-`);
+const isHarnessCatalog = (harness: ResolverHarness, name: string) => name === userCatalog(harness) || name === `${harness}-plugins` || name.startsWith(`${harness}-project-`) || (harness === 'claude-code' && name === SHARED_CATALOG);
 
 /** The Claude Code config directory whose plugins the plugin catalog indexes. */
 export const claudePluginsBase = () => dirname(claudeUserSkillsDir());
@@ -75,6 +75,47 @@ async function syncPluginCatalog(home: string, dryRun: boolean): Promise<{ skill
   const n = (await buildSkillIndex({ catalog: CLAUDE_PLUGINS_CATALOG, claudePlugins: base, harness: 'claude-code' }, { home })).catalog.skill_count;
   if (n < 1) { await removeSkillIndex(CLAUDE_PLUGINS_CATALOG, { home }); return { skills: 0, step: built ? { step: 'catalog', action: 'remove', detail: where } : null }; }
   return { skills: n, step: { step: 'catalog', action: 'write', detail: `${n} plugin skills from ${base} into ${where}` } };
+}
+
+/**
+ * Build (or keep) the shared catalog from the followed shared-skills installs, claude-code only. The user catalog is the requirement: a missing or unreadable follow never fails setup, it records a skip step and the user catalog above still applies.
+ */
+async function syncSharedCatalog(home: string, harness: ResolverHarness, dryRun: boolean, out: ResolverSetupResult): Promise<void> {
+  if (harness !== 'claude-code') return;
+  const where = join(skillIndexRoot(home), SHARED_CATALOG);
+  const roots = findSharedSkillCaches(home);
+  if (roots.length === 0) {
+    if (!existsSync(join(where, 'receipt.json'))) return;
+    if (!dryRun) await removeSkillIndex(SHARED_CATALOG, { home });
+    out.steps.push({ step: 'catalog', action: 'remove', detail: `no followed shared-skills install remains; ${where}` });
+    return;
+  }
+  const status = existsSync(join(where, 'receipt.json')) ? await catalogStatus(SHARED_CATALOG, { home }) : null;
+  const sameRoots = JSON.stringify(status?.receipt?.source.shared_roots ?? null) === JSON.stringify(roots);
+  const fresh = !!status?.fresh && sameRoots && (status.receipt?.skill_count ?? 0) > 0;
+  let skills = status?.receipt?.skill_count ?? 0;
+  if (dryRun) {
+    try { if (!fresh) skills = readSharedCatalogSource(roots).skills.length; } catch { /* unreadable follow: the skip below says so */ }
+    if (!fresh && skills < 1) { out.steps.push({ step: 'catalog', action: 'skip', detail: `no usable shared skill in ${roots.join(', ')}; nothing would be written for the shared catalog` }); return; }
+    out.steps.push({ step: 'catalog', action: fresh ? 'keep' : 'write', detail: `${skills} shared skills from ${roots.join(', ')} into ${where}` });
+    return;
+  }
+  if (!fresh) {
+    try {
+      skills = (await buildSkillIndex({ catalog: SHARED_CATALOG, sharedCatalog: roots, harness }, { home })).catalog.skill_count;
+    } catch (e) {
+      out.steps.push({ step: 'catalog', action: 'skip', detail: `shared catalog not built (${e instanceof ResolverError ? e.code : (e as Error).message}); the user catalog above still applies` });
+      return;
+    }
+    if (skills < 1) {
+      await removeSkillIndex(SHARED_CATALOG, { home });
+      out.steps.push({ step: 'catalog', action: 'remove', detail: `no usable shared skill in ${roots.join(', ')}; the empty catalog at ${where} was removed` });
+      return;
+    }
+    out.steps.push({ step: 'catalog', action: 'write', detail: `${skills} shared skills from ${roots.join(', ')} into ${where}` });
+    return;
+  }
+  out.steps.push({ step: 'catalog', action: 'keep', detail: `${skills} shared skills from ${roots.join(', ')} in ${where}` });
 }
 
 /** The user-level skill directories a harness loads natively, whether or not they exist. */
@@ -138,6 +179,8 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
     }
   }
   if (skills + pluginSkills < 1) return { ...out, error: incomplete(scanned, 'the scan found no model-invocable skill', dryRun ? 'Nothing would be written.' : dirs.length ? `The empty catalog at ${where} was removed; nothing else was written.` : 'Nothing was written.') };
+
+  await syncSharedCatalog(home, harness, dryRun, out);
 
   const keys = setResolverHarness(cfg, harness, true, dryRun);
   out.steps.push({ step: 'config', action: keys.changed ? 'write' : 'keep', detail: `skills.resolver.enabled = true, skills.resolver.harnesses includes ${harness} in ${cfg.path}` });

@@ -75,7 +75,13 @@ describe('turn output and build receipt', () => {
     const r4 = await buildSkillIndex({ catalog: 'four', fromJson: f, dirs: [root] }, { home });
     mkdirSync(join(root, '..', 'claude', 'plugins'), { recursive: true });
     const r5 = await buildSkillIndex({ catalog: 'five', claudePlugins: join(root, '..', 'claude') }, { home });
-    for (const r of [r1, r2, r3, r4, r5]) expect(validate(RECEIPT, JSON.parse(JSON.stringify(r)))).toEqual([]);
+    const sharedRoot = join(tmp(), 'shared-skills');
+    mkdirSync(join(sharedRoot, 'revisions', 'aa', 'aa', 'skills', 'deploy'), { recursive: true });
+    writeFileSync(join(sharedRoot, 'receipt.json'), JSON.stringify({ format_version: 1, adapter: 'claude-code', status: 'joined' }));
+    writeFileSync(join(sharedRoot, 'active.json'), JSON.stringify({ view_token: 'vt-1', skills: { 'brain-a/source-b/incarnation-c/pack-d/deploy': { revision: 'r1', files: { 'skills/deploy/SKILL.md': 'revisions/aa/aa/skills/deploy/SKILL.md' } } } }));
+    writeFileSync(join(sharedRoot, 'revisions', 'aa', 'aa', 'skills', 'deploy', 'SKILL.md'), '---\nname: deploy\ndescription: Ship a service to production after the tests pass\n---\nSteps.\n');
+    const r6 = await buildSkillIndex({ catalog: 'six', sharedCatalog: [sharedRoot] }, { home });
+    for (const r of [r1, r2, r3, r4, r5, r6]) expect(validate(RECEIPT, JSON.parse(JSON.stringify(r)))).toEqual([]);
     const results = [
       await resolveSkills({ message: 'deploy the service', session_id: 's', harness: 'codex' }, { home, catalogs: ['one'] }),
       await resolveSkills({ message: 'thanks' }, { home, catalogs: ['one'] }),

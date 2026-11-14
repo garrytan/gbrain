@@ -72,6 +72,27 @@ drops below 20%. The constants were frozen on the Step 1 offline eval
 (gbrain-evals `docs/benchmarks/2026-11-07-skill-ranker-offline`) and are
 recorded in the receipt.
 
+## Followed shared catalog: Claude Code
+
+A skill you follow on another brain is not in `~/.claude/skills`, so the
+user catalog never sees it. Setup fixes that for Claude Code only: when a
+followed install exists under `~/.gbrain/skillpack-shared/<key>/shared-skills`
+(receipt + `active.json`), setup builds a `claude-code-shared` catalog from
+that cache and the lane ranks it after the user catalog and before any
+project catalog. A shared skill's id is its qualified id
+(`skill:<brain>:<source>:<incarnation>:<pack>:<name>`); the block tells the
+model to load it with the `get_skill` tool using that id and exact revision,
+never by reading the cache, which is private to the install.
+
+The catalog is a snapshot: `sync_brain_skills` refreshes the follow, and a
+changed `view_token` marks the snapshot stale, so the next setup run or the
+lane's own rebuild picks up the new revision. A follow that leaves removes
+the catalog; a follow that is unreadable, or has no usable skill, is skipped
+and setup still succeeds on the user catalog.
+
+Build one by hand with
+`gbrain skills index build --catalog claude-code-shared --shared-catalog <path/to/shared-skills>`.
+
 ## Hook lane: Claude Code and Codex
 
 `gbrain setup claude-code --skill-loading resolve` (or `codex`) turns on a

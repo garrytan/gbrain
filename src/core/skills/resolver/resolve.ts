@@ -35,13 +35,14 @@ import { VERSION } from '../../../version.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES, renderBlock, type BlockLine } from './block.ts';
 import type { BuildReceipt } from './build.ts';
 import { dirFingerprintSlice, listCatalogs, readReceipt } from './catalog-files.ts';
+import { sharedCatalogViewTokens } from './sources.ts';
 import { readResolverSettings, type ResolverSettings, validateSessionTokenBudget } from './config.ts';
 import { ResolverError } from './errors.ts';
 import { appendDailyLogSync, RESOLVER_LOG } from './daily-log.ts';
 import { ensureDir, writeFileAtomic } from './fsutil.ts';
 import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, STRENGTH_FIELDS, TOP_GATE_MAX, TOP_K_DEFAULT, TOP_K_MAX } from './limits.ts';
 import { IndexReader, RANKER_ID, RANKER_VERSION } from './index-format.ts';
-import { assertCatalogName, catalogFile, logsDir, resolverHome } from './paths.ts';
+import { assertCatalogName, catalogFile, logsDir, resolverHome, SHARED_LOAD_HINT } from './paths.ts';
 import { isAcknowledgement, maxIdf, mentionsSkill, rankIndex, reasonText, type RankResult } from './rank.ts';
 import { commitSession, freshState, loadSession, sessionKey, type SessionState, type TurnDelta } from './session.ts';
 
@@ -232,6 +233,15 @@ function turnStaleness(home: string, c: OpenedCatalog, now: number, autoRebuild:
   const { name, receipt } = c;
   let stale: string | null = c.publishing ? 'publishing' : null;
   if (!stale && receipt.gbrain_version !== VERSION) stale = 'gbrain_version_changed';
+  if (!stale && receipt.catalog.source.kind === 'shared_catalog') {
+    // The followed catalog moved when sync_brain_skills issued a new view: a
+    // changed token (or a view that can no longer be read) marks the snapshot
+    // stale, and the lane rebuilds it from the live cache (rebuild_argv).
+    const roots = receipt.catalog.source.shared_roots ?? [];
+    const current = sharedCatalogViewTokens(roots);
+    const recorded = receipt.catalog.source.view_tokens ?? [];
+    if (roots.length !== recorded.length || current.some((t, i) => t !== recorded[i])) stale = 'source_changed';
+  }
   if (!stale && STAT_TIER_KINDS.includes(receipt.catalog.source.kind)) {
     const stamp = catalogFile(home, name, 'stat-check');
     let last: { verdict: 'fresh' | 'stale'; cursor: number } | null = null;
@@ -403,10 +413,11 @@ async function resolveInner(input: ReturnType<typeof normalizeTurnInput>, opts: 
       const m = metaOf(x.c, x.doc);
       return { id: m.id, name: m.name, summary: m.summary, ...(m.path ? { path: m.path } : {}), namesOnly: Boolean(opts.namesOnly) || loaded[x.c]!.receipt.catalog.hints === 'names_only' };
     });
-    let r = renderBlock(lines, { harness: input.harness, loadHint: opts.loadHint, cap: Math.min(BLOCK_TOKEN_CAP, remaining) });
+    const loadHint = opts.loadHint ?? (picked.some(x => loaded[x.c]!.receipt.catalog.source.kind === 'shared_catalog') ? SHARED_LOAD_HINT : undefined);
+    let r = renderBlock(lines, { harness: input.harness, loadHint, cap: Math.min(BLOCK_TOKEN_CAP, remaining) });
     const exhausted = budget === 0 || remaining === 0 || (picked.length > 0 && r.kept === 0 && remaining < BLOCK_TOKEN_CAP);
     const named = picked.filter(x => x.explicit).length;
-    if (budget > 0 && r.kept === 0 && named > 0) r = renderBlock(lines.slice(0, named), { harness: input.harness, loadHint: opts.loadHint, cap: BLOCK_TOKEN_CAP });
+    if (budget > 0 && r.kept === 0 && named > 0) r = renderBlock(lines.slice(0, named), { harness: input.harness, loadHint, cap: BLOCK_TOKEN_CAP });
     const kept = picked.slice(0, r.kept);
     const suggestions: Suggestion[] = kept.map(x => {
       const m = metaOf(x.c, x.doc);

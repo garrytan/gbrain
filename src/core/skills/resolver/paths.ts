@@ -62,3 +62,8 @@ export function catalogDir(home: string, name: string): string {
 export const catalogFile = (home: string, name: string, file: 'index.bin' | 'receipt.json' | 'source.json' | 'fingerprint.json' | 'lock' | 'stale.stamp' | 'stat-check' | 'build.log') => join(catalogDir(home, name), file);
 export const sessionsDir = (home: string) => join(skillIndexRoot(home), 'sessions');
 export const logsDir = (home: string) => join(skillIndexRoot(home), 'logs');
+
+/** The catalog setup builds from a followed shared-skills install (sources.ts): the shared catalog's entries rank beside the user's own. */
+export const SHARED_CATALOG = 'claude-code-shared';
+/** The block's load line when a ranked line comes from the shared catalog: user skills load with the Skill tool, shared ones (id starting skill:) with the gbrain get_skill tool using the qualified id and exact revision. */
+export const SHARED_LOAD_HINT = 'To use one, load it with the Skill tool (by its id); a shared skill (id starting skill:) loads with the gbrain get_skill tool using its qualified id and exact revision.';

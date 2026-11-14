@@ -29,6 +29,7 @@ import { acquireLease, holdsLease, releaseLease, tryAcquireLease } from '../src/
 import { commitSession, commitSessionAsync, gcSessions, gcSessionsAsync, loadSession, sessionGcSettled, sessionKey } from '../src/core/skills/resolver/session.ts';
 import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { appendDailyLog, appendDailyLogSync, DAILY_LOG_DAY_CAP_BYTES, dailyLogFile, LANE_LOG, readRecentDailyLog, RESOLVER_LOG } from '../src/core/skills/resolver/daily-log.ts';
+import { findSharedSkillCaches, readSharedCatalogSource, sharedCatalogViewTokens } from '../src/core/skills/resolver/sources.ts';
 import { EXCLUDE_MAX, STAT_CHECK_SLICE } from '../src/core/skills/resolver/resolve.ts';
 import { RACY_MTIME_MS } from '../src/core/skills/resolver/build.ts';
 
@@ -48,6 +49,24 @@ function skillDir(root: string, rel: string, fm: Record<string, string | boolean
   const lines = Object.entries(fm).map(([k, v]) => `${k}: ${typeof v === 'string' ? JSON.stringify(v) : v}`);
   writeFileSync(join(d, 'SKILL.md'), `---\n${lines.join('\n')}\n---\n${body}\n`);
   return join(d, 'SKILL.md');
+}
+interface SharedSkill { name: string; description: string; revision?: string; invoke?: boolean }
+/** A followed shared-skills cache under <home>/skillpack-shared/<key>/shared-skills, as sync_brain_skills leaves it. */
+function sharedCache(home: string, key: string, skills: SharedSkill[], opts: { viewToken?: string; status?: string; adapter?: string; active?: boolean } = {}): string {
+  const root = join(home, 'skillpack-shared', key, 'shared-skills');
+  mkdirSync(root, { recursive: true });
+  writeFileSync(join(root, 'receipt.json'), JSON.stringify({ format_version: 1, adapter: opts.adapter ?? 'claude-code', status: opts.status ?? 'joined' }));
+  const entries: Record<string, { revision: string; files: Record<string, string> }> = {};
+  for (const s of skills) {
+    const rev = s.revision ?? 'aa';
+    const rel = `revisions/${rev}/${rev}/skills/${s.name}/SKILL.md`;
+    const dir = join(root, 'revisions', rev, rev, 'skills', s.name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'SKILL.md'), `---\nname: ${s.name}\ndescription: ${s.description}\n${s.invoke === false ? 'disable-model-invocation: true\n' : ''}---\nSteps for ${s.name}.\n`);
+    entries[`brain-a/source-b/incarnation-c/pack-d/${s.name}`] = { revision: s.revision ?? 'r1', files: { [`skills/${s.name}/SKILL.md`]: rel } };
+  }
+  if (opts.active !== false) writeFileSync(join(root, 'active.json'), JSON.stringify({ view_token: opts.viewToken ?? 'vt-1', skills: entries }));
+  return root;
 }
 async function codeOf(p: Promise<unknown>): Promise<string> {
   try { await p; return 'resolved'; } catch (e) { return e instanceof ResolverError ? e.code : `other:${(e as Error).message}`; }
@@ -740,6 +759,95 @@ describe('catalog sources and bounds', () => {
     expect(a.index.index_hash).toBe(b.index.index_hash);
     expect(a.catalog.catalog_hash).toBe(b.catalog.catalog_hash);
     expect(readFileSync(catalogFile(home, 'a', 'index.bin')).equals(readFileSync(catalogFile(home, 'b', 'index.bin')))).toBe(true);
+  });
+});
+
+describe('shared catalog', () => {
+  test('a followed cache builds a catalog of qualified ids; the receipt records roots and view tokens', async () => {
+    const home = tmp();
+    const root = sharedCache(home, 'follow-1', [
+      { name: 'deploy-widget', description: 'Deploy the widget service.' },
+      { name: 'hidden', description: 'Not for the model', invoke: false },
+    ]);
+    const src = readSharedCatalogSource([root]);
+    expect(src.skills.map(s => s.id)).toEqual(['skill:brain-a:source-b:incarnation-c:pack-d:deploy-widget']);
+    expect(src.viewTokens).toEqual(['vt-1']);
+    expect(sharedCatalogViewTokens([root])).toEqual(['vt-1']);
+    const rec = await buildSkillIndex({ catalog: 'shared', sharedCatalog: [root] }, { home });
+    expect(rec.catalog.skill_count).toBe(1);
+    expect(rec.catalog.source.kind).toBe('shared_catalog');
+    expect(rec.catalog.source.shared_roots).toEqual([root]);
+    expect(rec.catalog.source.view_tokens).toEqual(['vt-1']);
+    expect(rec.catalog.skipped).toEqual([{ reason: 'not_model_invocable', id: 'skill:brain-a:source-b:incarnation-c:pack-d:hidden' }]);
+    const r = await resolveSkills({ message: 'deploy the widget service', harness: 'claude-code' }, { home, catalogs: ['shared'] });
+    expect(r.output.suggestions.map(s => s.id)).toEqual(['skill:brain-a:source-b:incarnation-c:pack-d:deploy-widget']);
+    expect(r.output.suggestions[0]!.path).toBeUndefined();
+    expect(r.output.block).toContain('get_skill');
+  });
+
+  test('user-only turns keep the default load line', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'u', [{ id: 'gbrain:deploy', name: 'deploy', description: 'Deploy the widget service' }]);
+    const r = await resolveSkills({ message: 'deploy the widget service', harness: 'claude-code' }, { home, catalogs: ['u'] });
+    expect(r.output.block).toContain('To use one, load it with the Skill tool (by its id) before acting.');
+    expect(r.output.block).not.toContain('get_skill');
+  });
+
+  test('findSharedSkillCaches finds active follows and skips left, foreign, corrupt and view-less ones', async () => {
+    const home = tmp();
+    const good = sharedCache(home, 'follow-1', [{ name: 'deploy-widget', description: 'Deploy the widget service.' }]);
+    sharedCache(home, 'follow-2', [{ name: 'x', description: 'Left behind' }], { status: 'left' });
+    sharedCache(home, 'follow-3', [{ name: 'y', description: 'Another adapter' }], { adapter: 'openclaw' });
+    sharedCache(home, 'follow-4', [{ name: 'z', description: 'Never synced' }], { active: false });
+    const bad = join(home, 'skillpack-shared', 'bad', 'shared-skills');
+    mkdirSync(bad, { recursive: true });
+    writeFileSync(join(bad, 'receipt.json'), '{broken');
+    expect(findSharedSkillCaches(home)).toEqual([good]);
+  });
+
+  test('duplicate ids across follows keep the first root; an escaping path is unreadable; a bad key is an invalid entry', async () => {
+    const home = tmp();
+    const a = sharedCache(home, 'follow-a', [{ name: 'deploy-widget', description: 'First deploy.' }]);
+    const b = sharedCache(home, 'follow-b', [{ name: 'deploy-widget', description: 'Second deploy.' }]);
+    const rec = await buildSkillIndex({ catalog: 'shared', sharedCatalog: [a, b] }, { home });
+    expect(rec.catalog.skill_count).toBe(1);
+    expect(rec.catalog.skipped).toEqual([{ reason: 'duplicate_id', id: 'skill:brain-a:source-b:incarnation-c:pack-d:deploy-widget', kept: a }]);
+    const r = await resolveSkills({ message: 'deploy the widget' }, { home, catalogs: ['shared'] });
+    expect(r.output.suggestions[0]!.summary).toBe('First deploy.');
+
+    const c = sharedCache(home, 'follow-c', [{ name: 'ok', description: 'Fine skill.' }]);
+    const active = JSON.parse(readFileSync(join(c, 'active.json'), 'utf8'));
+    active.skills['brain-a/source-b/incarnation-c/pack-d/escape'] = { revision: 'r1', files: { 'skills/escape/SKILL.md': '../../etc/passwd' } };
+    active.skills['not-a-key'] = { revision: 'r1', files: {} };
+    writeFileSync(join(c, 'active.json'), JSON.stringify(active));
+    const rec2 = await buildSkillIndex({ catalog: 'shared2', sharedCatalog: [c] }, { home });
+    expect(rec2.catalog.skill_count).toBe(1);
+    expect(rec2.catalog.skipped.map(s => s.reason).sort()).toEqual(['invalid_entry', 'unreadable']);
+  });
+
+  test('catalogStatus is fresh until the follow moves, then stale with source_changed', async () => {
+    const home = tmp();
+    const root = sharedCache(home, 'follow-1', [{ name: 'deploy-widget', description: 'Deploy the widget service.' }]);
+    await buildSkillIndex({ catalog: 'shared', sharedCatalog: [root] }, { home });
+    expect((await catalogStatus('shared', { home })).fresh).toBe(true);
+    writeFileSync(join(root, 'revisions', 'aa', 'aa', 'skills', 'deploy-widget', 'SKILL.md'),
+      '---\nname: deploy-widget\ndescription: Deploy the widget service, now with canary.\n---\nSteps.\n');
+    const active = JSON.parse(readFileSync(join(root, 'active.json'), 'utf8'));
+    active.view_token = 'vt-2';
+    writeFileSync(join(root, 'active.json'), JSON.stringify(active));
+    const st = await catalogStatus('shared', { home });
+    expect(st.fresh).toBe(false);
+    expect(st.stale_reason).toBe('source_changed');
+  });
+
+  test('user and shared catalogs merge: the shared skill ranks and the block names get_skill', async () => {
+    const home = tmp();
+    await jsonCatalog(home, 'user', [{ id: 'gbrain:deploy', name: 'deploy', description: 'Deploy the widget service' }]);
+    const root = sharedCache(home, 'follow-1', [{ name: 'triage-widget', description: 'Triage a widget bug report.' }]);
+    await buildSkillIndex({ catalog: 'claude-code-shared', sharedCatalog: [root] }, { home });
+    const r = await resolveSkills({ message: 'triage a widget bug', harness: 'claude-code' }, { home, catalogs: ['user', 'claude-code-shared'] });
+    expect(r.output.suggestions.map(s => s.id)).toContain('skill:brain-a:source-b:incarnation-c:pack-d:triage-widget');
+    expect(r.output.block).toContain('get_skill');
   });
 });
 

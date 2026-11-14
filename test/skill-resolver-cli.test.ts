@@ -11,7 +11,7 @@
  *    brainless), once with a thin-client config.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { routeCommand } from '../src/cli/command-route.ts';
@@ -70,6 +70,23 @@ describe('gbrain skills (CLI)', () => {
     const rm = cli(home, ['skills', 'index', 'remove', '--catalog', 'c']);
     expect(rm.code).toBe(0);
     expect(existsSync(join(home, '.gbrain', 'skill-index', 'c'))).toBe(false);
+  }, 120_000);
+
+  test('build from a followed shared-skills cache; the receipt validates and the skill resolves', () => {
+    const h = tmp();
+    const root = join(h, 'shared-skills');
+    mkdirSync(join(root, 'revisions', 'aa', 'aa', 'skills', 'deploy'), { recursive: true });
+    writeFileSync(join(root, 'receipt.json'), JSON.stringify({ format_version: 1, adapter: 'claude-code', status: 'joined' }));
+    writeFileSync(join(root, 'active.json'), JSON.stringify({ view_token: 'vt-1', skills: { 'brain-a/source-b/incarnation-c/pack-d/deploy': { revision: 'r1', files: { 'skills/deploy/SKILL.md': 'revisions/aa/aa/skills/deploy/SKILL.md' } } } }));
+    writeFileSync(join(root, 'revisions', 'aa', 'aa', 'skills', 'deploy', 'SKILL.md'), '---\nname: deploy\ndescription: Ship a service to production after the tests pass\n---\nSteps.\n');
+    const b = cli(h, ['skills', 'index', 'build', '--catalog', 'shared', '--shared-catalog', root, '--json']);
+    expect(b.code, b.err).toBe(0);
+    const rec = JSON.parse(b.out);
+    expect(validate(loadSchema('skill-resolver.v1.build-receipt'), rec)).toEqual([]);
+    expect(rec.catalog.source).toMatchObject({ kind: 'shared_catalog', shared_roots: [root], view_tokens: ['vt-1'] });
+    const r = cli(h, ['skills', 'resolve', '--catalog', 'shared', '--text', 'deploy the service', '--json']);
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.out).suggestions[0].id).toBe('skill:brain-a:source-b:incarnation-c:pack-d:deploy');
   }, 120_000);
 
   test('a runtime error exits 1 with the code on stderr and the error document under --json; --fail-open exits 0', () => {
