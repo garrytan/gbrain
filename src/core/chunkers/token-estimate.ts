@@ -35,9 +35,13 @@ let tiktokenInitialized = false;
 function loadEncoder(): void {
   if (tiktokenInitialized) return;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const m = require('@dqbd/tiktoken');
-    tiktokenEncoder = m.get_encoding('cl100k_base');
+    if (typeof Bun !== 'undefined') {
+      // Keep Bun-only file imports out of the Node/Jiti host import graph.
+      tiktokenEncoder = require('./tiktoken-embedded.ts').createEncoder();
+    } else {
+      const m = require('@dqbd/tiktoken');
+      tiktokenEncoder = m.get_encoding('cl100k_base');
+    }
   } catch {
     tiktokenEncoder = null;
   }
