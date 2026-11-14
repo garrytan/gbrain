@@ -188,6 +188,7 @@ test/held-read-signals.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
 test/holding-page-saves-gst2497.test.ts
+test/holding-read-transient-gst2667.test.ts
 test/hosted-repo-g7b2.test.ts
 test/ignored-privacy-labels.test.ts
 test/import-file-result-callback-gbra130.test.ts
@@ -727,6 +728,7 @@ test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
 test/trust-keep-maintenance-reimport-8352.test.ts
 test/trust-owner-actions.test.ts
+test/trust-release-strict-home-gst2676.test.ts
 test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts

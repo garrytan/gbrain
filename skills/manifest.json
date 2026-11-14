@@ -290,6 +290,11 @@
       "description": "Confirmation gate before any bulk delete, cleanup, or destructive operation that could result in data loss \u2014 shell-level (rm -rf, git rm, bulk sed) or brain-level (bulk forget, delete sweeps, purge-deleted, source\u2026"
     },
     {
+      "name": "storage-manifest",
+      "path": "storage-manifest/SKILL.md",
+      "description": "The storage shelf: register a card after a verified archive to B2, Supabase Storage or S3, find a card before any restore, restore through the agent's own restore skill with the card's restore form, then record the restore on the card."
+    },
+    {
       "name": "fact-check",
       "path": "fact-check/SKILL.md",
       "description": "Systematic claim-by-claim verification for any content before it ships. Modeled on professional fact-checking desks (The New Yorker, ProPublica, IFCN standards): extract every verifiable claim, check each against live\u2026"

@@ -56,3 +56,14 @@ e670a32809a7038c9a63d9dfbf4480f8ab545db2:test/connectors-header-redaction-7483.t
 # read as github-pat; the tree now builds them at runtime. These history-only fingerprints are not secrets.
 eb4ffd053fa032905b93b4e8e7a66e8ae89a721c:test/pregate-allowlist-cache-keys.test.ts:github-pat:41
 eb4ffd053fa032905b93b4e8e7a66e8ae89a721c:test/pregate-allowlist-cache-keys.test.ts:github-pat:42
+# Storage manifest: synthetic credential-shaped values in test/storage-manifest.test.ts's storage_register refusal cases
+# (abcdef123-style placeholders the shelf must refuse) read as generic-api-key. History-only fingerprints, not secrets.
+ba2de3bd8def8d8e6f76c328830391a4459eb506:test/storage-manifest.test.ts:generic-api-key:136
+ba2de3bd8def8d8e6f76c328830391a4459eb506:test/storage-manifest.test.ts:generic-api-key:137
+ba2de3bd8def8d8e6f76c328830391a4459eb506:test/storage-manifest.test.ts:generic-api-key:147
+d7a54effbc2e4ab26496bebb0d680ec5b82aaeed:test/storage-manifest.test.ts:generic-api-key:138
+d7a54effbc2e4ab26496bebb0d680ec5b82aaeed:test/storage-manifest.test.ts:generic-api-key:139
+d7a54effbc2e4ab26496bebb0d680ec5b82aaeed:test/storage-manifest.test.ts:generic-api-key:149
+f60d3d827947be5836e7a1ab530596494f3f4e25:test/storage-manifest.test.ts:generic-api-key:141
+f60d3d827947be5836e7a1ab530596494f3f4e25:test/storage-manifest.test.ts:generic-api-key:142
+f60d3d827947be5836e7a1ab530596494f3f4e25:test/storage-manifest.test.ts:generic-api-key:143
