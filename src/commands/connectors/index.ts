@@ -12,6 +12,7 @@
  */
 
 import type { BrainEngine } from '../../core/engine.ts';
+import type { CliDispatchContext } from '../../cli/command-table.ts';
 import { setCliExitVerdict } from '../../core/cli-force-exit.ts';
 import { connectorProviders } from '../../core/connectors/registry.ts';
 
@@ -46,7 +47,7 @@ function printHelp(): void {
   );
 }
 
-export async function runConnectors(engine: BrainEngine, args: string[]): Promise<void> {
+export async function runConnectors(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'> = {}): Promise<void> {
   const sub = args[0];
   if (!sub || sub === '--help' || sub === '-h' || sub === 'help') {
     printHelp();
@@ -72,7 +73,7 @@ export async function runConnectors(engine: BrainEngine, args: string[]): Promis
     }
     case 'sync': {
       const { runConnectorSyncCmd } = await import('./sync.ts');
-      await runConnectorSyncCmd(engine, rest);
+      await runConnectorSyncCmd(engine, rest, dispatch);
       return;
     }
     case 'logout': {
