@@ -212,7 +212,7 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
       const next = edit(current);
       writeFileSync(file, next);
       try {
-        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message, scanSecrets: true });
+        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message });
         return { outcome: r.outcome, commit: r.committed ?? r.sha, path: relPath,
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {

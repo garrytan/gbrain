@@ -72,7 +72,8 @@ export interface GitSession { root: string; hooks: string; signal?: AbortSignal;
 const gitArgs = (session: GitSession, args: string[]) =>
   ['-C', session.root, '-c', `core.hooksPath=${session.hooks}`, '-c', 'commit.gpgsign=false', ...args];
 const gitOptions = (session: GitSession) => ({ timeout: session.timeoutMs, termGraceMs: GIT_TERM_GRACE_MS, maxBuffer: 1024 * 1024, signal: session.signal });
-const sessionEnv = (session: GitSession) => session.indexFile ? { ...GIT_ENV, GIT_INDEX_FILE: session.indexFile } : GIT_ENV;
+/** Replace refs are off, so the commit a Git effect or the door builds is made of the objects the push secret scan reads. */
+const sessionEnv = (session: GitSession) => ({ ...GIT_ENV, GIT_NO_REPLACE_OBJECTS: '1', ...(session.indexFile ? { GIT_INDEX_FILE: session.indexFile } : {}) });
 
 function run(session: GitSession, args: string[]) {
   return execFileBounded('git', gitArgs(session, args), { ...gitOptions(session), env: gitChildEnv(sessionEnv(session)) });
@@ -425,7 +426,7 @@ export async function commitGitTargets(root: string, relativePaths: string[], si
     const own = moved.filter(path => !foreign.includes(path));
     const reset = !own.length || await git(session, ['reset', '-q', '--', ...literalPathspecs(own)]).then(out => out.code === 0, () => false);
     const outcome = sha ? { git: 'committed' } : moved.length ? gitFailure('Cannot commit the canonical Git target.',
-      `Another commit changed ${moved.join(', ')} while this group of ${commitPaths.length} file(s) was being committed, so nothing was committed and the other commit stays; the effect retries against the new HEAD.`)
+      `Another commit or process changed ${moved.join(', ')} while this group of ${commitPaths.length} file(s) was being committed, so nothing was committed and the other commit stays; the effect retries against the new HEAD.`)
       : gitFailure('Cannot commit the canonical Git target.',
         `git commit failed for ${commitPaths.length} file(s); a missing Git identity (user.name, user.email) in that checkout is one cause to check.`);
     for (const c of changed) {
@@ -505,8 +506,9 @@ export function stripspace(paragraph: string): string {
  * is scanned. The record is `verified` only when every path's staged blob is the bytes the effect wrote (`wanted`: the
  * sha256 the effect recorded, null for a removal, '' for none known): the file, read once, hashes to it and has the
  * staged blob's id; an outside edit that reached the index first fails that, and the commit is scanned. An index that
- * no longer holds what was staged (an entry for a file that is gone, none for one on disk), or a tree that equals
- * HEAD's, fails the commit, so the effect retries rather than reporting a commit of the wrong state.
+ * no longer holds what was staged (an entry for a file that is gone, none for one on disk, or an entry another process
+ * reset to `baseline`'s, which would report that path committed with its old blob), or a tree that equals HEAD's, fails
+ * the commit, so the effect retries rather than reporting a commit of the wrong state.
  *
  * GST-2552: the staged blobs are laid only over a HEAD that holds every path as `baseline` (the HEAD the group staged
  * against) did, with the checkout's index still holding what was staged. A commit that landed since and touched a path,
@@ -538,6 +540,10 @@ async function effectCommit(session: GitSession, root: string, prefix: string, s
   const staged = await indexed();
   if (format.code !== 0 || !staged) return failed;
   if ([...staged.values()].some(entry => entry.stage !== '0') || paths.some(path => staged.has(path) !== existsSync(join(root, path)))) return failed;
+  const base = await committed(baseline);
+  if (!base) return failed;
+  const reset = paths.filter(path => { const record = staged.get(path); return (record && `${record.mode} blob ${record.oid}`) === base.get(path); });
+  if (reset.length) return { sha: null, moved: reset, superseded: [], foreign: reset };
   const entry = (record?: { mode: string; oid: string; stage: string }) => record && `${record.mode} ${record.oid} ${record.stage}`;
   // Whether the file still holds what the effect staged: its recorded sha256 when known (clean filters change the blob id).
   const holds = (path: string) => {
@@ -560,8 +566,8 @@ async function effectCommit(session: GitSession, root: string, prefix: string, s
     const before = attempt ? await git(session, ['rev-parse', '--verify', '--quiet', 'HEAD']) : null;
     const head = before ? before.code === 0 ? before.stdout.trim() : null : baseline;
     if (head !== baseline) {
-      const base = await committed(baseline), now = await committed(head), index = await indexed();
-      if (!base || !now || !index) return failed;
+      const now = await committed(head), index = await indexed();
+      if (!now || !index) return failed;
       // A commit that already holds the staged entry (a commit -a that swept it in) changed nothing this effect would lose.
       const committedAway = (path: string) => {
         const record = staged.get(path);
@@ -599,7 +605,7 @@ async function effectCommit(session: GitSession, root: string, prefix: string, s
 }
 
 /** `<sha256> <git blob id>` of the file's bytes, read once; null when it cannot be read or changes size while read. */
-function fileDigests(path: string, objectFormat: string): string | null {
+export function fileDigests(path: string, objectFormat: string): string | null {
   let fd: number;
   try { fd = openSync(path, 'r'); } catch { return null; }
   try {
