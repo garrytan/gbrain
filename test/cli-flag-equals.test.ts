@@ -21,7 +21,7 @@ import { strictSpecFor } from '../src/cli/strict-args.ts';
 import { surfaceFileSource } from './helpers/source-surface.ts';
 import { loadCuratedHelp } from '../src/cli/help/render.ts';
 import { parseAccessFlag, parseSurfaceFlag } from '../src/mcp/surface.ts';
-import { parseMovementArgs } from '../src/commands/sources-writer-movement.ts';
+import { parseMovementArgs } from '../src/commands/sources-writer-movement-cli.ts';
 import { parseAddTypeArgs } from '../src/commands/schema-add-type.ts';
 import { parseRepairArgs } from '../src/commands/repair.ts';
 import { parseTakesMutation } from '../src/commands/takes-mutation.ts';
@@ -356,7 +356,7 @@ describe('#7619 split rules', () => {
       'src/commands/source-reconcile.ts': 'own parser: sources reconcile',
       'src/commands/sources-lifecycle-args.ts': 'managed/delegated sources add|remove|archive|restore|purge|set-path|reclone parser; legacy fallback reads exact tokens only (see below)',
       'src/commands/sources-reset-upstream.ts': 'own parser: sources reset-upstream (:90,:135 are git args)',
-      'src/commands/sources-writer-movement.ts': 'own parser: sources writer',
+      'src/commands/sources-writer-movement-cli.ts': 'own parser: sources writer',
       'src/commands/takes-mutation.ts': 'own parser: takes add|update|supersede|resolve|remove (:116 filters a fix argv); takes rebuild reads --source-id exact (:172)',
       'src/core/embedding-migration-cli.ts': 'own parser: migrate embeddings, retrieval-upgrade',
 
@@ -710,7 +710,7 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
       'src/commands/eval-longmemeval.ts': 'eval longmemeval', 'src/commands/git.ts': 'git', 'src/commands/persistence-admin.ts': 'auth local-writer',
       'src/commands/repair.ts': 'repair', 'src/commands/schema-add-type.ts': 'schema add-type', 'src/commands/skillpack/harness.ts': 'skillpack remove',
       'src/commands/source-reconcile.ts': 'sources reconcile', 'src/commands/sources-reset-upstream.ts': 'sources reset-upstream',
-      'src/commands/sources-writer-movement.ts': 'sources writer', 'src/commands/takes-mutation.ts': 'takes add', 'src/commands/google-attachments.ts': 'google attachments',
+      'src/commands/sources-writer-movement-cli.ts': 'sources writer', 'src/commands/takes-mutation.ts': 'takes add', 'src/commands/google-attachments.ts': 'google attachments',
       // normalizeReindexArgs splits its own value flags; the entry refuses other = forms before it runs.
       'src/commands/reindex.ts': null,
       // Governs managed brains only: an unmanaged brain falls back to runSources, which reads exact tokens, so the entry rule applies.
@@ -722,7 +722,7 @@ describe('#7619 refusals that keep consent, scope and targets right', () => {
       repair: 'src/commands/repair.ts', 'schema add-type': 'src/commands/schema-add-type.ts', 'skillpack remove': 'src/commands/skillpack/harness.ts',
       'sources connect': 'src/commands/company-brain-connect.ts', 'sources inspect': 'src/commands/company-brain-inspect.ts',
       'sources reconcile': 'src/commands/source-reconcile.ts', 'sources reset-upstream': 'src/commands/sources-reset-upstream.ts',
-      'sources writer': 'src/commands/sources-writer-movement.ts', 'takes add': 'src/commands/takes-mutation.ts', 'takes remove': 'src/commands/takes-mutation.ts',
+      'sources writer': 'src/commands/sources-writer-movement-cli.ts', 'takes add': 'src/commands/takes-mutation.ts', 'takes remove': 'src/commands/takes-mutation.ts',
       'takes resolve': 'src/commands/takes-mutation.ts', 'takes supersede': 'src/commands/takes-mutation.ts', 'takes update': 'src/commands/takes-mutation.ts',
     };
     const found = [...new Glob('src/commands/**/*.ts').scanSync('.')].filter(p => /\b(?:eq|equal|equals) = \w+\.indexOf\('='\)|\.split\(\/=\(\.\*\)\/s\)/.test(readFileSync(p, 'utf8'))).sort();
