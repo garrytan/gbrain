@@ -264,6 +264,7 @@
       "  [OK] slug_path_mismatch: Every live page's slug is the one its recorded file path derives (0 candidate(s) inspected).",
       "  [OK] rename_identity_downgrades: No rename that lost its page identity is waiting for a disposition.",
       "  [OK] purge_parked_pages: No soft-deleted page is parked by the managed purge.",
+      "  [OK] derived_origin_parked: No soft-deleted page is kept from the purge to keep a page derived from it private.",
       "  [OK] derivation_purge_sweeps: No fact purge has a sweep of stored derivation results pending or stalled.",
       "  [INFO] missing_recorded_files: Not applicable: no source is a classic checkout on this host (managed sources are checked by ghost_pages).",
       "  [OK] uncommitted_sync_deletions: No soft-deleted page was removed by a sync while Git never held its file (0 tombstone(s) checked).",
