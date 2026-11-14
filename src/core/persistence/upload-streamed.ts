@@ -41,7 +41,7 @@ import { stagedUploadParts, stagedUploadWork, type StagingBodyRef } from './page
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
-import { assertLabelledOnlyCreate, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders } from './page-visibility.ts';
+import { assertLabelledOnlyCreate, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, storedOwnerWrite } from './page-visibility.ts';
 
 const text = (value: unknown) => (typeof value === 'string' ? value : null);
 
@@ -95,6 +95,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
   const storedTier = remote && snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null;
   const defaultSourceWriter = await defaultSourceMemberWriter(engine, row.authority);
   const defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter);
+  const ownerRewrite = await storedOwnerWrite(engine, row.authority);
   let trust: WriteTrust | undefined;
   const dir = await mkdtemp(join(tmpdir(), 'gbrain-upload-'));
   let ready: StreamedPreparedImport | undefined;
@@ -122,7 +123,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
           stamp: (frontmatter: Record<string, unknown>) => {
             keepStoredProvenance(frontmatter, snapshot?.page.frontmatter);
             stampPageTrustMarker(row, frontmatter, trust, storedTier, snapshot?.page.frontmatter);
-            defaultSourceWriterReaders(defaultSourceWriter, frontmatter, snapshot?.page, defaultSourceOwner);
+            defaultSourceWriterReaders(defaultSourceWriter, frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
           },
         } } : {}) },
       coordinated: { snapshot, sha256: ref.sha256, slug: row.slug, prepare: async value => { ready = value; return value.result; },
