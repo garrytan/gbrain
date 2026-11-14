@@ -137,8 +137,8 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   deadline the process prints nothing, exits and commits no session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
-  default every match), `skills.resolver.top_gate` (off unless set; see
-  [the gate](#top_gate-an-experimental-gate-off-by-default)) and
+  default every match), `skills.resolver.top_gate` (0.6 unless set, 0 turns it off; see
+  [the gate](#top_gate-the-no-skill-gate-on-by-default)) and
   `skills.resolver.pinned` (skill ids the harness always loads itself, never
   suggested). `skills.resolver.per_harness.<harness>.top_k`, `.min_match`
   and `.top_gate` override one harness; what it leaves out falls back to the
@@ -204,7 +204,7 @@ gateway's Node process instead:
    `~/.gbrain/lib/<sha256>.mjs`.
 2. It writes the plugin to `<openclaw state dir>/gbrain/gbrain-skill-resolver`
    and its state to `~/.gbrain/openclaw-skill-resolver.json` (mode 0600: per
-   agent the mode, catalog, top_k, floor, pinned block and rollout knobs).
+   agent the mode, catalog, top_k, floor, top_gate when set, pinned block and rollout knobs).
 3. It runs `openclaw plugins install --link`, `plugins enable` and
    `config set ...hooks.allowConversationAccess true`, then
    `plugins inspect` and one self-test turn under Node. Anything short of a
@@ -248,9 +248,9 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
 - `--skill-loading off`: uninstalls the plugin and removes its files and
   state. Pins stay in config.json.
 
-`skills.resolver.per_harness.openclaw.{top_k,min_match}` overrides the
-defaults (3 and `description`); the global `skills.resolver.top_k` and
-`min_match` apply when it is unset, and `skills.resolver.pinned` lists skills
+`skills.resolver.per_harness.openclaw.{top_k,min_match,top_gate}` overrides the
+defaults (3, `description` and the resolver's gate); the global `skills.resolver.top_k`,
+`min_match` and `top_gate` apply when it is unset, and `skills.resolver.pinned` lists skills
 OpenClaw already loads, which are never suggested. The plugin reads these the
 way every lane does, so a bad value makes setup refuse with
 `skill_resolver_config_invalid` and write nothing; a change takes effect at
@@ -388,8 +388,8 @@ Within v1, changes are additive only.
 
 `no_skill` is true only for an acknowledgement from a small multilingual list
 (`no_skill_reason: "ack"`) or when no word of the turn is in the catalog
-(`"no_match"`). There is no score threshold: a weak match is still
-suggested, and each suggestion's `match_strength` says how it matched
+(`"no_match"`). The ranker has no score threshold of its own; `top_gate`
+(below) empties the block when the best match is weak. Each suggestion's `match_strength` says how it matched
 (`named` in the turn, else the first of `name`, `triggers`, `routing`,
 `description`, `body`). `min_match_strength` (`--min-match`) filters
 candidates: weaker matches are dropped before the cut to `top_k` and the
@@ -402,30 +402,41 @@ the turn (`$name`, `@name`, a leading `/name`, "the name skill", or its full
 id) ranks first. When the message matches no catalog word (a follow-up such
 as "do it again"), `previous_user_message` (`--previous`) is ranked instead.
 
-### top_gate: an experimental gate, off by default
+### top_gate: the no-skill gate, on by default
 
 `top_gate` (`--top-gate`, `skills.resolver.top_gate`) empties the block
 when the best skill the block would show (after `exclude`, pinned skills,
 `min_match_strength`, session dedupe and pacing) has a score that, divided by its catalog's maximum
 idf, `ln(1 + (n - 0.5) / 1.5)` for a catalog of `n` skills, is below the
-threshold (0 to 100; unset or 0 is off). With merged catalogs it takes the
+threshold (0 to 100). With merged catalogs it takes the
 highest of those candidates. A skill named in the turn bypasses it. The
 division keeps the number comparable across catalog sizes; it does not undo
 message length, so long messages still score higher.
 
-It stays off by default because no threshold has yet shown that it removes
-suggestions on no-skill turns without hiding many right ones. Two offline
-measurements disagree:
+The default is 0.6; `0` turns the gate off. Without it, a large catalog
+almost always has some skill that shares a word with the message, so every
+turn got a block, including turns that need no skill. On harness-evals'
+public set P (289 labelled requests, the 351-skill public catalog, Codex
+index, top 5), each request ranked once with no session:
 
-| Source | Turns | Gate fitted on | False suggestions on no-skill turns | hit@5 on skill turns, gated (ungated) |
-|---|---|---|---|---|
-| [gbrain-evals `2026-11-07-skill-ranker-offline`](https://github.com/garrytan/gbrain-evals/tree/main/docs/benchmarks/2026-11-07-skill-ranker-offline), gate probe | 320 test and gate-stress turns (terse skill requests, long no-skill messages), 250 / 750 / 1,500 skills | dev and stress-dev, at threshold 1.33 | 0.19 / 0.17 / 0.19 | 0.26 / 0.27 / 0.28 (0.515 / 0.555 / 0.611) |
-| harness-evals set P dev half, HARN-52 (descriptive) | 146 turns, one 349-skill catalog | the same rows it is scored on, as a raw score of 4.16 (top_gate 0.76 on that catalog) | 0.03 | 0.71 (0.78) |
+| Gate | No-skill requests that get a block | Skill requests whose acceptable skill is in the block |
+|---|---|---|
+| off (before) | 61 of 61 (100%) | 176 of 228 (77.2%) |
+| 0.5 | 14 of 61 (23.0%) | 175 of 228 (76.8%) |
+| **0.6 (default)** | **7 of 61 (11.5%)** | **174 of 228 (76.3%)** |
+| 0.7 | 3 of 61 (4.9%) | 166 of 228 (72.8%) |
 
-The first is a held-out score on turns written to break length-based gates;
-the second is fitted and scored on the same rows. Treat `top_gate` as a
-setting to measure, not one to turn on: the threshold that fits one catalog
-and one kind of turn is not known to fit another.
+0.6 is the lowest setting that keeps the no-skill rate at or under 25% on
+the set's dev half (5 of 31, against 8 of 31 at 0.55); on the held-out test
+half it gives 2 of 30 no-skill blocks and loses 1 of 113 skill requests.
+A threshold that fits one catalog and one kind of turn is not known to fit
+another. The [gbrain-evals gate probe](https://github.com/garrytan/gbrain-evals/tree/main/docs/benchmarks/2026-11-07-skill-ranker-offline),
+on turns written to break length-based gates (terse skill requests, long
+no-skill messages), found no threshold that removed false suggestions there
+without hiding many right ones. In ordinary use, one-word requests that match only a skill's body, and catalogs
+where many skills share the request's words, score lower and are the first
+to lose their block. Set `skills.resolver.top_gate` (or
+`per_harness.<harness>.top_gate`) to tune it, or to `0` to turn it off.
 
 An empty block carries `block_reason`: `ack`, `no_match`, `filtered` (every
 match was excluded or below `min_match_strength`), `weak_top_match` (the best

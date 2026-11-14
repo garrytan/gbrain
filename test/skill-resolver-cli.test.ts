@@ -127,11 +127,26 @@ describe('gbrain skills (CLI)', () => {
     expect(cli(h, ['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-'], SKILLS).code).toBe(0);
     writeFileSync(join(gb, 'config.json'), JSON.stringify({ remote_mcp: { issuer_url: 'https://brain.example.invalid', mcp_url: 'https://brain.example.invalid/mcp' } }));
     const log = join(h, 'shadow.jsonl');
-    const r = cli(h, ['skills', 'resolve', '--text', 'deploy', '--shadow', '--shadow-log', log, '--session', 'x']);
+    const r = cli(h, ['skills', 'resolve', '--text', 'deploy', '--top-gate', '0', '--shadow', '--shadow-log', log, '--session', 'x']);
     expect([r.code, r.out]).toEqual([0, '']);
     const rec = JSON.parse(readFileSync(log, 'utf8').trim());
     expect(rec.shadow).toBe(true);
     expect(rec.block).toContain('gbrain:deploy');
+  }, 60_000);
+
+  test('with no --top-gate and no config, a request that only matches skill bodies weakly gets no block (exit 0, weak_top_match) on a brainless, repo-less home', () => {
+    const h = tmp();
+    const skills = JSON.stringify([
+      { id: 'x:dinner-split', name: 'dinner-split', description: 'Split a restaurant bill between friends' },
+      { id: 'x:deploy', name: 'deploy', description: 'Deploy the service to staging and production', body: 'Run each step in order. Ask the person who owns the service before production.' },
+    ]);
+    expect(cli(h, ['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-'], skills).code).toBe(0);
+    const quiet = cli(h, ['skills', 'resolve', '--text', 'how much does each person owe', '--harness', 'codex', '--json']);
+    const doc = JSON.parse(quiet.out);
+    expect(validate(loadSchema('skill-resolver.v1.turn-output'), doc)).toEqual([]);
+    expect([quiet.code, doc.block, doc.block_reason]).toEqual([0, '', 'weak_top_match']);
+    expect(cli(h, ['skills', 'resolve', '--text', 'how much does each person owe']).out).toBe('');
+    expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'split the restaurant bill', '--json']).out).block).toContain('x:dinner-split');
   }, 60_000);
 
   test('--top-gate empties the block with block_reason weak_top_match, and the output validates', () => {

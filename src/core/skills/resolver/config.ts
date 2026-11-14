@@ -18,7 +18,8 @@
  *   skills.resolver.min_match   the weakest match_strength to suggest
  *     (default: every match)
  *   skills.resolver.top_gate    empty the block when the best skill it would
- *     show scores below this over its catalog's maxIdf (0..100; default off)
+ *     show scores below this over its catalog's maxIdf (0..100, 0 is off;
+ *     default TOP_GATE_DEFAULT)
  *   skills.resolver.per_harness.<harness>.{top_k,min_match,top_gate}  overrides
  *     for one harness; a key it leaves out falls back to the global one, and
  *     an entry that is not an object (a hand-edited null) counts as unset
@@ -36,7 +37,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { HARNESSES } from './block.ts';
 import { ResolverError } from './errors.ts';
-import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
+import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_DEFAULT, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
 
 export const DEFAULT_SESSION_TOKEN_BUDGET = 2000;
 export const MIN_SESSION_TOKEN_BUDGET = 100;
@@ -94,7 +95,7 @@ export function validateMinMatch(v: unknown, key: string): MatchStrength {
 
 export function validateTopGate(v: unknown, key: string): number {
   if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= TOP_GATE_MAX) return v;
-  throw configInvalid(key, `must be a number from 0 to ${TOP_GATE_MAX} (0 or unset: off)`);
+  throw configInvalid(key, `must be a number from 0 to ${TOP_GATE_MAX} (0: off; unset: ${TOP_GATE_DEFAULT})`);
 }
 
 export function validateSkillDirs(v: unknown, key: string): string[] {

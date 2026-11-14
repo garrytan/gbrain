@@ -196,6 +196,22 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     expect(out[0].appendContext).not.toContain('email-triage');
   });
 
+  test('skills.resolver.top_gate reaches the plugin: a gate of 100 empties the block, and a gate of 0 (the opt-out) is kept', async () => {
+    const b = box();
+    mkdirSync(gbrainHome(b), { recursive: true });
+    writeFileSync(join(gbrainHome(b), 'config.json'), JSON.stringify({ skills: { resolver: { per_harness: { openclaw: { top_gate: 100 } } } } }));
+    expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(readState(b).agents.main).toMatchObject({ top_gate: 100 });
+    const out = drive(b, [['turn', { text: 'deploy the service to production', id: 'g1' }]]);
+    expect(out[0]?.appendContext ?? '').not.toContain('deploy-service');
+
+    const off = box();
+    mkdirSync(gbrainHome(off), { recursive: true });
+    writeFileSync(join(gbrainHome(off), 'config.json'), JSON.stringify({ skills: { resolver: { top_gate: 0 } } }));
+    expect((await setup(off, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(readState(off).agents.main).toMatchObject({ top_gate: 0 });
+  });
+
   test('--dry-run writes nothing', async () => {
     const b = box();
     const r = await setup(b, ['--skill-loading', 'resolve', '--dry-run']);
