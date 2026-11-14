@@ -86,7 +86,7 @@ for (const kind of testBackends()) {
       });
       const text = out.content.map(c => c.text).join('\n');
       let json: Record<string, any> = {};
-      try { json = JSON.parse(text); } catch { /* prose */ }
+      try { json = JSON.parse(out.content[0]?.text ?? ''); } catch { /* prose */ }
       return { isError: out.isError === true, text, json, meta: out._meta, all: text + JSON.stringify(out._meta ?? {}) + JSON.stringify(out.structuredContent ?? {}) };
     }
     const remember = (as: Who, fact: string, extra: Record<string, unknown> = {}) => call(as, 'remember', { fact, provenance: 'qm test', ...extra });
