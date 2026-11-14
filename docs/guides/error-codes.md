@@ -2588,7 +2588,7 @@ More: [docs/guides/write-refusals.md#guest_page_immutable](../../docs/guides/wri
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Reserved: the guest page was already kept as an owner page. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| The brain owner kept this guest note as an owner page, so it is not deleted remotely; nothing was deleted. | A guest note the owner promoted is kept on the owner's word, so a broker's retention sweep cannot remove it. | Do not retry. Treat the note as kept; only the brain owner removes it, on the brain host. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#guest_page_promoted](../../docs/guides/write-refusals.md#guest_page_promoted)
 
@@ -2598,7 +2598,7 @@ More: [docs/guides/write-refusals.md#guest_page_promoted](../../docs/guides/writ
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Reserved: only the brain owner may keep a guest note as an owner page. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+| Only the brain owner can keep a guest note as an owner page (promote_guest_note); nothing was read or written. | A guest's words become the owner's only on the owner's word: the trusted local CLI, or a credential bound to the owner that speaks for no one else. | Do not retry. Ask the brain owner; if they want to keep the note, they run gbrain guests promote <slug> on the brain host. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/write-refusals.md#guest_promotion_owner_only](../../docs/guides/write-refusals.md#guest_promotion_owner_only)
 

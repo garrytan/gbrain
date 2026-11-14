@@ -107,7 +107,7 @@ import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
 import { fileContentHash, FileBytes, isStreamedContent, LARGE_FILE_MIN_BYTES, StreamedFileContent } from './large-file.ts';
 import { bindOrigin } from './origin-guard.ts';
-import { assertGuestReaders, assertGuestWriterAtPublication, assertNoGuestSourceAtPublication, insertGuestMark } from '../guests/admission.ts';
+import { assertGuestReaders, assertGuestWriterAtPublication, assertNoGuestSourceAtPublication, insertGuestMark, refuseRemoteDeleteOfPromoted } from '../guests/admission.ts';
 import { isGuestSource, storedGuestNote } from '../guests/note.ts';
 import { skipsGuestNote } from '../guests/derived.ts';
 
@@ -814,6 +814,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
         `Page ${row.slug}'s file is committed in source ${row.source_id}'s checkout.`, pageFix(row.source_id, row.slug));
     } } : {}),
     apply: async tx => {
+      if (row.authority.remote) await refuseRemoteDeleteOfPromoted(tx, row.source_id, row.slug);
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...(bodyUnread(snapshot.page) ? withoutBody(snapshot.page) : snapshot.page), source_path: null, source_uri: null } as Page }, preparedPurge);

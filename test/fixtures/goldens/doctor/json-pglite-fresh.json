@@ -1126,6 +1126,15 @@
           "status": "ok"
         },
         {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Not applicable: this brain has no guest source (gbrain guests init).",
+          "name": "guest_source",
+          "readiness_state": "not_applicable",
+          "severity": "info",
+          "status": "ok"
+        },
+        {
           "category": "ops",
           "elapsed_ms": "<volatile>",
           "message": "Skipped (PGLite — no PostgREST exposure, RLS not applicable)",

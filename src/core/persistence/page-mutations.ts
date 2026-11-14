@@ -53,7 +53,7 @@ import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
 import { readGuestSource, type GuestSource } from '../guests/sources.ts';
-import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable } from '../guests/admission.ts';
+import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable, refuseRemoteDeleteOfPromoted } from '../guests/admission.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -434,6 +434,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     return { prior };
   }
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
+  if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteDeleteOfPromoted(ctx.engine, sourceId, p.slug.toLowerCase());
   const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null }>(
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) {

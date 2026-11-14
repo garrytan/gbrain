@@ -119,6 +119,7 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "quarantine_list": [load_admin, "adminOperations"],
   "get_write_attribution": [load_attribution, "attributionOperations"],
   "confirm_memory": [load_trust, "trustOperations"],
+  "promote_guest_note": [load_trust, "trustOperations"],
   "list_skills": [load_skills_catalog, "skillsCatalogOperations"],
   "get_skill": [load_skills_catalog, "skillsCatalogOperations"],
   "list_brain_skillpack": [load_skills_catalog, "skillsCatalogOperations"],

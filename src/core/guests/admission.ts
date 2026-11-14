@@ -77,6 +77,17 @@ export function guestPageImmutable(what: string): OperationError {
     DOCS('guest_page_immutable'));
 }
 
+export function guestPagePromoted(slug: string): OperationError {
+  return new OperationError('guest_page_promoted', `The brain owner kept guest note ${slug} as an owner page, so it is not deleted remotely. Nothing was deleted.`,
+    'Do not retry. Treat the note as kept; only the brain owner removes it, on the brain host.', DOCS('guest_page_promoted'));
+}
+
+/** A remote delete of a guest page the owner promoted (guest_promotions) is refused; checked at submission and in publication. */
+export async function refuseRemoteDeleteOfPromoted(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<void> {
+  const kept = await exec.executeRaw('SELECT 1 FROM guest_promotions g JOIN pages p ON p.id = g.guest_page_id WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1', [sourceId, slug]);
+  if (kept.length) throw guestPagePromoted(slug);
+}
+
 const principalKey = (principal: Principal) => `${principal.kind}:${principal.id}`;
 export const isListedWriter = (guest: Pick<GuestSource, 'writers'>, principal: Principal) => guest.writers.includes(principalKey(principal));
 

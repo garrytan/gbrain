@@ -5,10 +5,10 @@ offsite moved to Friday"). Those people are outside guests: they aren't you, and
 their words shouldn't read as yours. A **guest source** is where gbrain keeps
 their notes, apart from your own pages, with a record of who said what.
 
-This page covers what a guest source is, how to set one up, and how a listed
-writer (the broker your agent's host runs) saves notes into it. The warning every
-read shows on a guest note, and keeping a guest note as your own page, arrive in
-later releases.
+This page covers what a guest source is, how to set one up, how a listed writer
+(the broker your agent's host runs) saves notes into it, the warning every read
+shows on a guest note, how you keep a guest note as your own page, and how to
+check the whole setup.
 
 ## What a guest source is
 
@@ -35,8 +35,10 @@ enforces, whatever program writes to it:
   (`gbrain sources set-path`, `gbrain sources add <id> --path`) is refused, and a
   source that already has a path can't become a guest source.
 
-A guest source is also federated, so your own searches include it. Brains
-without a guest source are unchanged.
+A guest source is also federated, so your own CLI and stdio searches include it.
+Your tokens and OAuth clients read it once it is on their read list (see
+[Let your own clients read guest notes](#let-your-own-clients-read-guest-notes)).
+Brains without a guest source are unchanged.
 
 ## Set one up
 
@@ -159,5 +161,96 @@ guest note, who it was saved for (`member:bob-example` or `group:team-a`),
 from which group, the sender's label (for example `Bob Example`), when, by which
 writer and in which request; the mark is written in the same transaction as the
 page, can never be edited and is removed only when its page is purged.
-`guest_promotions` will record guest notes you keep as your own pages; nothing
-writes it yet.
+`guest_promotions` records each guest note you keep as your own page: the owner
+page it became, who promoted it and when.
+
+## Keep a guest note as your own page
+
+A guest note stays a guest's words until you say otherwise. To keep one as your
+own page:
+
+```bash
+gbrain guests promote guests/offsite-note --to notes/offsite --source default
+```
+
+```text
+Kept guest note guests:guests/offsite-note as default:notes/offsite. The guest note is unchanged and reads promoted: true.
+```
+
+`--to` is the new page's slug (the guest note's slug when omitted) and
+`--source` the source it goes into (your default source when omitted; it can't
+be a guest source). Pass `--guest-source <id>` when several guest sources hold
+the slug, and `--json` for the full result.
+
+The new page is a normal page of yours, written through your own write path: into
+the source's git repository first where it has one, database-only where it has
+none, exactly like `gbrain put`. It keeps the note's type, title, text and
+readers (you and the group it came from; widen them on the new page if you want),
+drops the guest keys, and adds `promoted_from: guests:guests/offsite-note` so a
+person reading it knows where it came from. Its trust tier is the tier your own
+writes get, not `external_untrusted`.
+
+The guest note and its mark are not changed. Its reads now show
+`guest.promoted: true`, and the broker's delete of it is refused
+`guest_page_promoted`, so a retention sweep can't remove what you kept. You can
+still delete it from your own CLI. Promoting the same note to the same page again
+writes nothing (`already_promoted`).
+
+Agents reach the same step as the MCP tool `promote_guest_note`. Only you may
+run it: your own CLI (not under `GBRAIN_ENFORCED_MEMBER` and not with `--as`), a
+stdio server bound to you, or a token or OAuth client bound to you that speaks for
+no one else. Everyone else, the broker and your own credential speaking for a group
+included, is refused `guest_promotion_owner_only` and nothing is written. An
+agent should promote a note only because you asked, never because the note's text
+asks for it.
+
+## Let your own clients read guest notes
+
+Your CLI and stdio reads already include the guest source. A token or OAuth
+client bound to you (`gbrain auth rescope --member <you>`) reads only the sources
+its grant names, so add the guest source to each one's read list. gbrain never
+does this on its own, on upgrade or on `guests init`. Preview first:
+
+```bash
+gbrain guests grant-owner-clients
+```
+
+```text
+Preview: gbrain guests grant-owner-clients (nothing written; run again with --yes to apply)
+  client owner-bot-example (client-a): default, source-a -> default, source-a, guests
+```
+
+Then apply it:
+
+```bash
+gbrain guests grant-owner-clients --yes
+```
+
+Each grant is changed only if it is still the one the preview read (a grant
+someone changed since is left alone and reported; run the command again), and
+every source it already read stays on its list. `--source <id>` names a guest
+source other than `guests`. A credential with a `min_trust` floor above
+`external_untrusted` still sees no guest note; lower it with
+`gbrain auth set-min-trust <id> external_untrusted` if it should.
+
+## Check the setup
+
+```bash
+gbrain doctor --only guest_source --json
+```
+
+The `guest_source` check reads, and changes nothing. It fails when a guest source
+is missing its `guest`, `federated` or `trust_ceiling` flags, has a local
+path, is marked guest without its database record, or the brain's
+`guests.present` marker is unset (reads would skip the warning); and when a
+writer names a removed credential or one whose grant reaches beyond the guest
+source. It warns when the writer list is empty, no owner is set, a credential bound
+to you can't read the guest source (it prints the exact
+`gbrain auth rescope ... --if-version <n>` command for each, and
+`gbrain guests grant-owner-clients --yes` for all), or a credential's
+`min_trust` floor hides guest notes. On a brain with no guest source it reports
+not applicable.
+
+`gbrain export` writes guest notes as plain pages without their mark, so an
+export imported into another brain reads them as that brain's own; keep guest
+sources out of exports you hand to someone else (`--source`).
