@@ -534,6 +534,7 @@ for (const kind of testBackends()) {
         expect(texts.size).toBe(1);
         const [text] = [...texts];
         expect(text).toContain('Recovery: nothing was saved');
+        expect(text).toContain('Why: This brain turned off member writes under this mode');
         expect(text).toContain('brain owner');
         for (const slug of ['notes/writes-off-new-example', PAGES.open.slug, PAGES.other.slug, 'notes', 'harbor']) expect({ slug, named: text!.includes(slug) }).toEqual({ slug, named: false });
         const json = await cli(['put', 'notes/writes-off-new-example', '--json'], { stdin: page('Writes off new') });
@@ -545,8 +546,15 @@ for (const kind of testBackends()) {
         for (const value of ['chekced', 'REFUSE ']) {
           await setKey(value);
           const r = await cli(['tag', PAGES.open.slug, 'writes-off-tag']);
-          expect({ value, exit: r.exitCode, first: r.stderr.split('\n')[0] }).toEqual({ value, exit: 3, first: WRITES_OFF_FIRST });
+          expect({ value, exit: r.exitCode, first: r.stderr.split('\n')[0], why: r.stderr.includes('turned off member writes') }).toEqual({ value, exit: 3, first: WRITES_OFF_FIRST, why: true });
         }
+        await setKey('refuse_pages');
+        for (const [args, stdin] of writes) {
+          const r = await cli(args, { stdin });
+          expect({ args: args.join(' '), exit: r.exitCode, first: r.stderr.split('\n')[0], why: r.stderr.includes('Why: This brain turned off member page writes under this mode') })
+            .toEqual({ args: args.join(' '), exit: 3, first: WRITES_OFF_FIRST, why: true });
+        }
+        expect(await readAll()).toEqual(checkedReads);
         expect(await counts()).toEqual(before);
         await setKey('refuse');
         for (const [args, stdin] of writes.filter(([a]) => a[0] !== 'put' || a[1] === 'notes/writes-off-new-example')) {
@@ -670,18 +678,41 @@ for (const kind of testBackends()) {
       expect({ exit: pull.exitCode, out: pull.stdout, err: pull.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: git commit-push finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
     }, 300_000);
 
-    test('access.enforced_member_writes refuse leaves git commit-push and sync as they are', async () => {
-      const set = await cli(['config', 'set', 'access.enforced_member_writes', 'refuse'], null);
-      expect({ exit: set.exitCode, err: set.exitCode === 0 ? '' : set.stderr }).toEqual({ exit: 0, err: '' });
-      try {
-        writeFileSync(join(checkout, 'notes', 'alice-git-refuse.md'), note('Alice git refuse'));
-        const r = await cli(['git', 'commit-push', '--path', checkout, '-m', 'alice note under refuse', '--', 'notes/alice-git-refuse.md']);
-        expect({ exit: r.exitCode, out: r.stdout, err: r.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: git commit-push finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
-        expect(git('log', '--format=%s', '-1').trim()).toBe('alice note under refuse');
-        const refused = await cli(['git', 'commit-push', '--path', checkout, '-m', 'x', '--', 'notes/bob-git.md']);
-        expect({ exit: refused.exitCode, first: refused.stderr.split('\n')[0] }).toEqual({ exit: 3, first: FIRST(MEMBER, 'git commit-push') });
+    test('access.enforced_member_writes: refuse closes named-path commit-push, refuse_pages keeps it; --pull, --dry-run and sync run under both', async () => {
+      const setKey = async (value: string) => {
+        const r = await cli(['config', 'set', 'access.enforced_member_writes', value], null);
+        expect({ value, exit: r.exitCode, err: r.exitCode === 0 ? '' : r.stderr }).toEqual({ value, exit: 0, err: '' });
+      };
+      const WITHHELD = (command: string) => 'gbrain: ' + command + ' finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n';
+      const stillRuns = async (mode: string) => {
+        const pull = await cli(['git', 'commit-push', '--path', checkout, '--pull']);
+        expect({ mode, exit: pull.exitCode, out: pull.stdout, err: pull.stderr }).toEqual({ mode, exit: 0, out: '', err: WITHHELD('git commit-push') });
+        const dry = await cli(['git', 'commit-push', '--path', checkout, '--dry-run', '-m', 'dry', '--', 'notes/alice-git-mode.md']);
+        expect({ mode, exit: dry.exitCode, out: dry.stdout, err: dry.stderr }).toEqual({ mode, exit: 0, out: '', err: WITHHELD('git commit-push') });
         const sync = await cli(['sync', '--source', 'repo-src', '--no-pull', '--no-embed']);
-        expect({ exit: sync.exitCode, out: sync.stdout, err: sync.stderr }).toEqual({ exit: 0, out: '', err: 'gbrain: sync finished; its output is withheld under GBRAIN_ENFORCED_MEMBER\n' });
+        expect({ mode, exit: sync.exitCode, out: sync.stdout, err: sync.stderr }).toEqual({ mode, exit: 0, out: '', err: WITHHELD('sync') });
+      };
+      try {
+        writeFileSync(join(checkout, 'notes', 'alice-git-mode.md'), note('Alice git mode'));
+        await setKey('refuse');
+        const headBefore = git('rev-parse', 'HEAD').trim();
+        const texts = new Set<string>();
+        for (const path of ['notes/alice-git-mode.md', 'notes/bob-git.md', 'notes/never-written-git.md']) {
+          const r = await cli(['git', 'commit-push', '--path', checkout, '-m', 'x', '--', path]);
+          expect({ path, exit: r.exitCode, first: r.stderr.split('\n')[0], out: r.stdout }).toEqual({ path, exit: 3, first: WRITES_OFF_FIRST, out: '' });
+          texts.add(r.stderr);
+        }
+        expect(texts.size).toBe(1);
+        expect([...texts][0]).toContain('turned off member writes');
+        expect(git('rev-parse', 'HEAD').trim()).toBe(headBefore);
+        await stillRuns('refuse');
+        await setKey('refuse_pages');
+        const r = await cli(['git', 'commit-push', '--path', checkout, '-m', 'alice note under refuse_pages', '--', 'notes/alice-git-mode.md']);
+        expect({ exit: r.exitCode, out: r.stdout, err: r.stderr }).toEqual({ exit: 0, out: '', err: WITHHELD('git commit-push') });
+        expect(git('log', '--format=%s', '-1').trim()).toBe('alice note under refuse_pages');
+        const hidden = await cli(['git', 'commit-push', '--path', checkout, '-m', 'x', '--', 'notes/bob-git.md']);
+        expect({ exit: hidden.exitCode, first: hidden.stderr.split('\n')[0] }).toEqual({ exit: 3, first: FIRST(MEMBER, 'git commit-push') });
+        await stillRuns('refuse_pages');
       } finally {
         const engine = await createEngine(config as never);
         await engine.connect(config as never);

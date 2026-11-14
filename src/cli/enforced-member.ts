@@ -30,7 +30,7 @@ const REASON_TEXT: Record<EnforcedReason, string> = {
   as_flag: '--as is refused under this mode.',
   arguments_not_allowed: 'These arguments are not allowed under this mode.',
   remember_needs_entity: 'remember needs --entity naming the exact slug of a page this member reads.',
-  writes_off: 'This brain turned off page writes under this mode: its config access.enforced_member_writes is not checked, or could not be read.',
+  writes_off: 'This brain turned off member writes under this mode: its config access.enforced_member_writes is refuse (or a value other than checked and refuse_pages), or could not be read.',
 };
 
 /** The mode's member value, or undefined when the mode is off (the variable unset). */
@@ -80,25 +80,25 @@ const OWNER_FIX = 'ask the brain owner to run this in a direct session (one with
 const NOTHING_CHANGED = 'do not retry here; nothing was changed.';
 
 /** The refusal's stderr text: the exact first line, the retry shape, the fix, the recovery and the docs anchor; no secret values. */
-export function refusalText(command: string, reason: EnforcedReason, retry?: string): string {
+export function refusalText(command: string, reason: EnforcedReason, retry?: string, why?: string): string {
   return ['gbrain: refused under ' + ENFORCED_MEMBER_ENV + '=' + enforcedMemberLabel() + ': ' + (REASON_HEADLINE[reason] ?? commandLabel(command)) + ' [' + ENFORCED_REFUSED_TAG + ']',
     ...(retry ? ['Retry: ' + retry] : []),
-    'Why: ' + REASON_TEXT[reason],
+    'Why: ' + (why ?? REASON_TEXT[reason]),
     'Fix: ' + (REASON_NEXT[reason]?.fix ?? OWNER_FIX),
     'Recovery: ' + (REASON_NEXT[reason]?.recovery ?? NOTHING_CHANGED),
     'Docs: ' + ENFORCED_DOCS, ''].join('\n');
 }
 
-export function enforcedRefusalError(command: string, reason: EnforcedReason) {
+export function enforcedRefusalError(command: string, reason: EnforcedReason, why?: string) {
   const next = REASON_NEXT[reason];
-  return opError('enforced_member_refused', 'Refused under ' + ENFORCED_MEMBER_ENV + ': ' + (REASON_HEADLINE[reason] ?? commandLabel(command)) + '. ' + REASON_TEXT[reason],
+  return opError('enforced_member_refused', 'Refused under ' + ENFORCED_MEMBER_ENV + ': ' + (REASON_HEADLINE[reason] ?? commandLabel(command)) + '. ' + (why ?? REASON_TEXT[reason]),
     next ? next.recovery + ' Fix: ' + next.fix : 'Do not retry here; nothing was changed. Ask the brain owner to run it in a direct session.', { reason, docs: ENFORCED_DOCS });
 }
 
 /** Refuses and exits: the exact stderr text, and under --json the envelope on stdout; exit 3. */
-export async function refuseEnforced(command: string, reason: EnforcedReason, opts: { engine?: BrainEngine | null; retry?: string } = {}): Promise<never> {
-  try { process.stderr.write(refusalText(command, reason, opts.retry)); } catch { /* stderr gone */ }
-  const code = writeCliError(enforcedRefusalError(command, reason), command, { stderr: false });
+export async function refuseEnforced(command: string, reason: EnforcedReason, opts: { engine?: BrainEngine | null; retry?: string; why?: string } = {}): Promise<never> {
+  try { process.stderr.write(refusalText(command, reason, opts.retry, opts.why)); } catch { /* stderr gone */ }
+  const code = writeCliError(enforcedRefusalError(command, reason, opts.why), command, { stderr: false });
   const { finishCliTeardown, setCliExitVerdict, flushThenExit } = await import('../core/cli-force-exit.ts');
   if (opts.engine) await finishCliTeardown({ engine: opts.engine }).catch(() => {});
   setCliExitVerdict(code);
@@ -208,15 +208,26 @@ function namedSources(op: { params: Record<string, unknown> }, params: Record<st
 
 export const ENFORCED_MEMBER_WRITES_KEY = 'access.enforced_member_writes';
 
+export type EnforcedWritesMode = 'checked' | 'refuse_pages' | 'refuse';
+
 /**
  * The brain's switch for writes under the mode, read from the database config (never the environment): unset or checked
- * keeps writes checked; refuse, any other value and a failed read refuse them.
+ * keeps writes checked; refuse_pages refuses page-write operations and leaves named-path git commit-push to its checks;
+ * refuse, any other value and a failed read refuse both.
  */
-export async function enforcedWritesRefused(engine: BrainEngine): Promise<boolean> {
+export async function enforcedWritesMode(engine: BrainEngine): Promise<EnforcedWritesMode> {
   try {
-    const value = await engine.getConfig(ENFORCED_MEMBER_WRITES_KEY);
-    return value !== null && value.trim().toLowerCase() !== 'checked';
-  } catch { return true; }
+    const value = (await engine.getConfig(ENFORCED_MEMBER_WRITES_KEY))?.trim().toLowerCase() ?? null;
+    if (value === null || value === 'checked') return 'checked';
+    return value === 'refuse_pages' ? 'refuse_pages' : 'refuse';
+  } catch { return 'refuse'; }
+}
+
+const PAGE_WRITES_OFF_WHY = 'This brain turned off member page writes under this mode: its config access.enforced_member_writes is refuse_pages.';
+
+/** Refuses a write the brain's switch turned off: the same headline for every target, the Why naming what the mode turned off. */
+export async function refuseWritesOff(engine: BrainEngine, command: string, mode: Exclude<EnforcedWritesMode, 'checked'>): Promise<never> {
+  return refuseEnforced(command, 'writes_off', { engine, ...(mode === 'refuse_pages' ? { why: PAGE_WRITES_OFF_WHY } : {}) });
 }
 
 /**
@@ -226,7 +237,10 @@ export async function enforcedWritesRefused(engine: BrainEngine): Promise<boolea
  * already drops hidden sources), and get_stats only with --by.
  */
 export async function checkEnforcedOpArgs(engine: BrainEngine, command: string, op: { name: string; params: Record<string, unknown> }, params: Record<string, unknown>): Promise<void> {
-  if (OPERATION_CLASSES[op.name] === 'write' && op.name !== 'get_write_request' && await enforcedWritesRefused(engine)) await refuseEnforced(command, 'writes_off', { engine });
+  if (OPERATION_CLASSES[op.name] === 'write' && op.name !== 'get_write_request') {
+    const mode = await enforcedWritesMode(engine);
+    if (mode !== 'checked') await refuseWritesOff(engine, command, mode);
+  }
   await enforcedAccess(engine, command);
   for (const s of namedSources(op, params)) if (s !== '__all__') await checkEnforcedSource(engine, command, s);
   if (op.name === 'get_stats' && params.by === undefined) await refuseEnforced(command, 'arguments_not_allowed', { engine });
