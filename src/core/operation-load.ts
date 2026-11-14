@@ -128,7 +128,8 @@ export function finalizeOperation(op: Operation): void {
     op.area = OP_AREAS[op.name];
   }
   // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
-  const handler = withGuestMarks(op, withOutputRedaction(op));
+  // Redaction runs after the guest stamp, so a key-like sender label in a guest mark is redacted like stored text.
+  const handler = withOutputRedaction({ handler: withGuestMarks(op, op.handler), outputRedaction: op.outputRedaction });
   op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
 }
 

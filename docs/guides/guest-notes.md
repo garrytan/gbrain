@@ -69,6 +69,10 @@ every page in a guest source would then read as a guest's words. Deleted pages
 that haven't been purged yet count too, because restoring one would bring it back
 into the guest source.
 
+Before a brain that uses a scoped row-level-security write role turns guests on,
+the guest guard and admission must check maintainer policies on guest_sources;
+until then a scoped write role sees no guest rows and the checks fail open.
+
 ## Change who may write
 
 ```bash
@@ -141,6 +145,12 @@ the local CLI alike. JSON results give the row `origin: "guest"`, trust tier
 { "sender": "Bob Example", "group": "team-a", "audience_member": "member:bob-example",
   "saved_at": "2026-11-13", "promoted": false, "writer": "legacy_token:<id>" }
 ```
+
+A reader sees a mark only on a note they could read with `get_page`: the same
+source grant, `readable_by`, folder and privacy rules decide, for deleted notes
+too. Anywhere else the note is named, such as a slug inside a raw-data payload,
+it gets no mark at all. Marks pass the same secret redaction as page text, so a
+key-shaped sender label reads as `<REDACTED:…>` over MCP.
 
 `writer` is shown to the owner only. Text answers put a warning line before the
 note, then wrap it in `<external-data trust="external_untrusted" origin="guest">`:
