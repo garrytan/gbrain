@@ -15,6 +15,7 @@ test/access-as.test.ts
 test/access-audience-members.test.ts
 test/access-binding.test.ts
 test/access-federated-member-writes.test.ts
+test/access-first-import-gst2638.test.ts
 test/access-folder-lock-order.test.ts
 test/access-folder-multiconn.test.ts
 test/access-folder-rules.test.ts

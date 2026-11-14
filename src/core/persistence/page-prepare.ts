@@ -499,7 +499,7 @@ export async function prepareFileTarget(engine: BrainEngine, row: Pick<WriteRequ
     && await waitingOnWhile(options.clock, 'git', () => ignoredTarget(root, path))) return undefined;
   if (options.newPageIgnoredDatabaseOnly && !snapshot && content !== null && !existsSync(path) && !isSourceDbOnlySlug(root, row.slug, 'not_db_only') && await waitingOnWhile(options.clock, 'git', () => gitIgnoresUntracked(root, relative(root, path).split(sep).join('/')))
     && !(await gitDurabilityPolicy(binding, root)).durable) return undefined;
-  if (options.excludeTombstone && snapshot?.page.deleted_at) {
+  if (options.excludeTombstone && snapshot) {
     const rel = relative(root, path).split(sep).join('/');
     if (unimportedBySync(rel, options.excludeTombstone.patterns)) { options.excludeTombstone.onExcluded(rel); return undefined; }
   }
@@ -674,13 +674,14 @@ export async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteR
  * #6368: a tombstone whose file is under sync.exclude does not own that file (sync never reads it again), so its purge is
  * database-only: the file is neither compared nor removed. `excludedPath` names that file; the apply re-checks it.
  * #7613: the same holds for a file at a root sync metafile path (`unimportedBySync`), so every tombstone purge runs the check.
+ * #8920: a root metafile is never a page's file whatever the delete (a soft delete, remote included, or an owner purge of a
+ * live page), so every delete runs the metafile check and publishes database-only; sync.exclude still applies to tombstone purges only.
  */
 async function prepareDeleteFileTarget(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, purge: boolean,
   options: Parameters<typeof prepareFileTarget>[5]): Promise<{ file: PreparedMutation['file']; excludedPath: string | null; shared: SharedOrigin | null }> {
   let excludedPath: string | null = null, shared: SharedOrigin | null = null;
-  const excludeTombstone = purge && snapshot.page.deleted_at != null
-    ? { patterns: await syncExcludePatterns(engine), onExcluded: (path: string) => { excludedPath = path; } } : undefined;
-  const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { ...options, ...(excludeTombstone ? { excludeTombstone } : {}),
+  const patterns = purge && snapshot.page.deleted_at != null ? await syncExcludePatterns(engine) : [];
+  const file = await prepareFileTarget(engine, row, snapshot, null, undefined, { ...options, excludeTombstone: { patterns, onExcluded: (path: string) => { excludedPath = path; } },
     sharedOrigin: { onShared: value => { shared = value; } } });
   return { file, excludedPath, shared };
 }
