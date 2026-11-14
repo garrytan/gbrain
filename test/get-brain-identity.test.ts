@@ -115,7 +115,7 @@ describe('get_brain_identity op', () => {
       'update_available',
       'version',
     ]);
-    expect(result.capabilities).toEqual(['large_pages_v1']);
+    expect(result.capabilities).toEqual(['large_pages_v1', 'guest_marker_v1']);
   });
 
   test('last_sync_iso is null in v0.31.1 (deferred to v0.31.x — see plan)', async () => {

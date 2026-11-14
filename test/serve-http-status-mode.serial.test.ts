@@ -144,15 +144,21 @@ describe('serve --http: lock held → status-only → recovery on the same port'
 
     http = startHttp(env, port);
     expect(await waitFor(async () => (await fetch(`${base}/health`)).status === 503, 60_000)).toBe(true);
-    const leaks = (text: string) => { expect(text).not.toContain(BRAIN_SEGMENT); expect(text).not.toContain(holderPid); expect(text).not.toContain(home); };
 
     // /health: 503, Retry-After, only allowlisted keys, the reason collapsed (a loopback request, as Funnel delivers it).
     const health = await fetch(`${base}/health`);
     expect(health.status).toBe(503);
     expect(health.headers.get('retry-after')).toBe('5');
     const healthText = await health.text();
-    leaks(healthText);
     const healthBody = JSON.parse(healthText);
+    // The instance is 32 random hex digits (the marker's nonce, checked below), which can hold the PID's digits by chance;
+    // the PID must appear nowhere else.
+    expect(healthBody.instance).toMatch(/^[0-9a-f]{32}$/);
+    const leaks = (text: string) => {
+      const exposed = text.replaceAll(healthBody.instance, '<instance>');
+      expect(exposed).not.toContain(BRAIN_SEGMENT); expect(exposed).not.toContain(holderPid); expect(exposed).not.toContain(home);
+    };
+    leaks(healthText);
     expect(Object.keys(healthBody).every(k => HEALTH_KEYS.includes(k))).toBe(true);
     expect(healthBody).toMatchObject({ status: 'unavailable', reason: 'unavailable', retry_after_s: 5, contract_version: 1 });
     expect(healthBody.fix).toMatchObject({ argv: ['gbrain', 'doctor', '--json'], actor: 'host_admin', next: 'tell_user_to_run' });

@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { setupDB, teardownDB, hasDatabase } from './helpers.ts';
+import { setupDB, teardownDB, hasDatabase, removeMembers } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
@@ -30,6 +30,7 @@ const PORT = 19164;
 const BASE = 'http://localhost:' + PORT;
 const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'oidc:3f2a:bob-example';
+const MEMBERS = ['alice-example', 'bob-example'];
 const KEYLESS: Record<string, string> = Object.fromEntries(Object.entries(process.env).filter(([k, v]) => v !== undefined && !/_API_(KEY|TOKEN)$/.test(k)) as Array<[string, string]>);
 
 describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () => {
@@ -40,7 +41,7 @@ describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () 
 
   beforeAll(async () => {
     engine = await setupDB();
-    for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
+    for (const id of MEMBERS) await addMember(engine, id);
     const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
     const qm = await provider.registerClientManual('qm-mem-e2e-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'default');
     const plain = await provider.registerClientManual('qm-mem-e2e-plain-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], 'default');
@@ -76,6 +77,7 @@ describeE2E('/mcp memory_recall and memory_write over keyless serve --http', () 
       await new Promise(r => setTimeout(r, 1000));
       if (!serverProcess.killed) serverProcess.kill('SIGKILL');
     }
+    await removeMembers(MEMBERS);
     await teardownDB();
   }, 30_000);
 

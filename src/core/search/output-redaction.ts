@@ -15,6 +15,18 @@ const MAX_DEPTH = 24;
 const MAX_TEXT_FIELDS = 8192;
 const DEGRADED_STAGE_CODES = new Set<string>(DEGRADED_STAGES);
 const DEGRADED_REASON_CODES = new Set<string>(DEGRADED_REASONS);
+const GUEST_STAMP = Symbol('gbrain.guest_stamp');
+
+/**
+ * Registers a guest mark built by the guest stamp (guests/stamp.ts), so its `writer`, a principal id read from
+ * guest_marks, passes redaction while the mark's other fields are scanned like stored text. Only a registered object
+ * qualifies, by a symbol key that stored data cannot carry: a stored look-alike `guest.writer`, and a `writer` anywhere
+ * else, is still redacted.
+ */
+export function exemptGuestWriter<T extends object>(guest: T): T {
+  (guest as Record<symbol, unknown>)[GUEST_STAMP] = true;
+  return guest;
+}
 
 export interface RetrievalRedactionOpts {
   /**
@@ -44,6 +56,8 @@ export function redactRetrievalOutput<T, M>(results: T[], meta: M, opts: Retriev
     for (const [key, item] of entries) {
       let next: unknown;
       if (path.length === 2 && path[0] === 'results' && verbatim.has(String(key))) {
+        next = item;
+      } else if (key === 'writer' && typeof item === 'string' && (value as Record<symbol, unknown>)[GUEST_STAMP] === true) {
         next = item;
       } else if (IDENTITY_FIELDS.has(String(key)) && (typeof item !== 'object' || item === null ||
         (Array.isArray(item) && item.every(part => typeof part === 'string')))) {

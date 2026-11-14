@@ -16,6 +16,7 @@ import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts
 import { persistenceHome, revokeLocalWriter } from '../../src/core/persistence/identity.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { resetWriteSwitches } from '../../src/core/persistence/switches.ts';
+import { ADMISSION_SOURCE_SQL } from '../../src/core/persistence/preadmit-cache.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from '../../src/core/persistence/native-lock.ts';
@@ -39,7 +40,7 @@ function countStatements(engine: BrainEngine, fragment: string): { count: () => 
   return { count: () => n, restore: () => { proto.executeRaw = original; } };
 }
 const GROUP_COMPLETION = "UPDATE persistence_requests r SET state='committed'";
-const SOURCE_READ = "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1";
+const SOURCE_READ = ADMISSION_SOURCE_SQL;
 
 afterEach(() => { installFaultHook(undefined); resetWriteSwitches(); });
 

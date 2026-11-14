@@ -89,6 +89,9 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/derived-link-reconciliation.test.ts
+test/derived-origin-carry-managed.test.ts
+test/derived-origin-carry-private.test.ts
+test/derived-origin-recheck-plan.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
@@ -381,6 +384,7 @@ test/owner-label-guard.test.ts
 test/owner-member-boundary.test.ts
 test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts
+test/owner-remote-private-writes-gst2091.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-change-reason-gbra217.test.ts
 test/page-change-reason-git-gbra217.test.ts
@@ -641,6 +645,7 @@ test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
 test/strict-background-writers-gst2492.test.ts
+test/strict-fact-paths-gst2692.test.ts
 test/strict-fallback-refusal-gst2635.test.ts
 test/sweep-segmented-entity-9279.test.ts
 test/sync-absent-from-worktree-s27.test.ts

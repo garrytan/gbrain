@@ -84,7 +84,7 @@ Brain / database level (gbrain-specific):
   the files" or "remove it from Git" is not a go to purge database pages. After
   the go, purge one page at a time (never a parallel `xargs` or a background
   loop), confirm each one is gone (`gbrain get <slug> --include-deleted` reports
-  `page_not_found`) before the next, and stop the batch at the first refusal. A purge batch that was
+  `page_not_found`; a receipt with `purge_held` was kept soft-deleted to keep its derived pages private) before the next, and stop the batch at the first refusal. A purge batch that was
   stopped (SIGTERM, a write freeze, a timeout) stays stopped: report what
   finished and ask again before relaunching it.
 - **`gbrain pages purge-deleted`** — permanently removes soft-deleted pages

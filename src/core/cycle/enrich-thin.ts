@@ -189,7 +189,8 @@ export async function runPhaseEnrichThin(
   }
 
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
-  const sources = await listSources(engine);
+  const { withoutGuestSources } = await import('../guests/derived.ts');
+  const sources = await withoutGuestSources(engine, 'enrich_thin', await listSources(engine), src => src.id);
   if (sources.length === 0) {
     return {
       phase: 'enrich_thin',

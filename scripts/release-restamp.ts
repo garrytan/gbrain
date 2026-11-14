@@ -209,19 +209,23 @@ interface MigrationAnalysis { masterMax: number; branch: BranchMigration[]; plan
 /**
  * Split `head` migrations into published (on the master ref) and branch-only,
  * with the payload identity rules: a published file must keep master's
- * payload, and a branch file must not be a copy of a published one.
+ * payload unless only master changed it since the merge base, and a branch
+ * file must not be a copy of a published one.
  */
 function analyzeMigrations(ctx: Ctx, masterRef: string, head: Map<string, string>): MigrationAnalysis {
   const masterFiles = migrationPaths(ctx.git('ls-tree', '--name-only', `${masterRef}:${MIGRATIONS_DIR}`).split('\n'));
   const masterText = catFiles(ctx, masterRef, masterFiles.map((m) => m.path));
   const masterMax = Math.max(...masterFiles.map((m) => m.version));
   const masterKeys = new Map(masterFiles.map((m) => [migrationPayloadKey(masterText.get(m.path)!, m.path), m.path]));
+  const mergeBase = ctx.git('merge-base', 'HEAD', masterRef).trim();
+  const baseText = catFiles(ctx, mergeBase, migrationPaths(ctx.git('ls-tree', '--name-only', `${mergeBase}:${MIGRATIONS_DIR}`).split('\n')).map((m) => m.path));
+  const changes = (from: string | undefined, to: string, path: string) => from === undefined || (from !== to && migrationPayloadKey(from, path) !== migrationPayloadKey(to, path));
   const branch: BranchMigration[] = [];
   for (const m of migrationPaths([...head.keys()].map((p) => p.slice(MIGRATIONS_DIR.length + 1)))) {
     const text = head.get(m.path)!;
     const published = masterText.get(m.path);
     if (published !== undefined) {
-      if (published !== text && migrationPayloadKey(published, m.path) !== migrationPayloadKey(text, m.path)) {
+      if (changes(published, text, m.path) && changes(baseText.get(m.path), text, m.path)) {
         fail(`${m.path} is published on ${masterRef} but this branch changes its payload`,
           'brains that already applied it never run it again, so an edit to a published migration silently never lands; restamp never renumbers or edits published migrations.',
           [`put the change in a new migration (bun run new:migration <name>) and restore the file: git checkout ${masterRef} -- ${m.path}`, 'commit, then rerun: bun run release:restamp'], COLLISION_DOCS);

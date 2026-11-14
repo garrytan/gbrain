@@ -184,6 +184,11 @@ describe.skipIf(!hasDatabase())('a lock-blocked preparation read ends at the bud
     expect(observed.leftover ?? []).toEqual([]);
     expect(observed.clearedAfterMs).toBeLessThan(SLACK_MS);
     // The root was free: the same member and every page committed once the lock dropped, and the counter reset on commit.
+    if (result.drain?.outcome !== 'synced') {
+      const uncommitted = (await imports(engine, f.id)).filter(row => row.state !== 'committed')
+        .map(({ slug, state, error_code, error_message }) => ({ slug, state, error_code, error_message }));
+      console.error(`[lock-wait] drain ${JSON.stringify(result.drain)}; rows not committed: ${JSON.stringify(uncommitted)}`);
+    }
     expect(result.drain).toMatchObject({ outcome: 'synced' });
     const rows = await imports(engine, f.id);
     expect(rows.find(row => row.slug === stuckSlug)).toMatchObject({ state: 'committed', preparation_attempts: 0 });

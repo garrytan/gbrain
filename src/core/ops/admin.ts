@@ -23,6 +23,7 @@ import { resolveActiveEmbeddingColumnFromEngine } from '../search/embedding-colu
 import { memoizedHealth } from '../health-memo.ts';
 import { remoteReadPolicySql } from '../persistence/page-visibility.ts';
 import { LARGE_PAGES_CAPABILITY } from './get-page-body.ts';
+import { GUEST_MARKER_CAPABILITY } from '../guests/marker.ts';
 import { isSegmentedPage, pageBodyBytes } from '../page-body/page-shape.ts';
 import { openSegmentedBody } from '../page-body/read-range.ts';
 import { segmentedReadDocument } from '../page-window/segmented.ts';
@@ -164,7 +165,7 @@ const get_brain_identity: Operation = {
       last_sync_iso: null as string | null,
       update_available,
       latest_version,
-      capabilities: [LARGE_PAGES_CAPABILITY],
+      capabilities: [LARGE_PAGES_CAPABILITY, GUEST_MARKER_CAPABILITY],
     };
   },
   scope: 'read',
