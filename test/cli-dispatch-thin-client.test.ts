@@ -97,7 +97,7 @@ describe('thin-client dispatch guard refuses DB-bound commands', () => {
     ['repair-jsonb', '--dry-run'],
     ['orphans'],
     ['integrity', 'check'],
-    ['serve'],
+    ['serve', '--http'],
     // v0.32 audit REFUSE additions (no MCP route, or localOnly ops) and the
     // v0.31.1-era refusals not covered above.
     ['pages', 'purge-deleted'],

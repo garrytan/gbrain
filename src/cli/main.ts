@@ -1764,7 +1764,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
   integrity: 'integrity scans local files. Run on the host machine.',
-  serve: 'serve starts a server. Run on the host, not the thin client.',
+  serve: '`serve --http` and serve\'s host flags need the brain host; bare `gbrain serve` on a thin client is a stdio bridge to it.',
   dream: 'dream runs the autopilot cycle on the host. Run `gbrain dream` on the host machine.',
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
