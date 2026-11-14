@@ -118,6 +118,18 @@ describe('eval-whoknows / readFixture', () => {
     }
   });
 
+  it('accepts an explicit abstention row and rejects contradictory labels', () => {
+    const negative = tmpFixture('{"query":"unknown domain","expected_top_3_slugs":[],"expect_no_match":true}\n');
+    const conflicting = tmpFixture('{"query":"unknown domain","expected_top_3_slugs":["x"],"expect_no_match":true}\n');
+    try {
+      expect(readFixture(negative)[0].expect_no_match).toBe(true);
+      expect(() => readFixture(conflicting)).toThrow(/requires an empty/);
+    } finally {
+      unlinkSync(negative);
+      unlinkSync(conflicting);
+    }
+  });
+
   it('throws on missing file', () => {
     expect(() => readFixture('/nonexistent/path/abc.jsonl')).toThrow(/fixture not found/);
   });
