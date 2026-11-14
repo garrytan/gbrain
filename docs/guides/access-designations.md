@@ -205,7 +205,7 @@ page private only by a privacy alias, a pinned question, a derived type or a pri
 `visibility: private` by any of these writes that states no visibility, and a pinned question keeps its
 `pinned_question`. The revision and the journaled request (`ownerWrite`) name the owner's credential. Readers lists and
 folder rules that leave the owner out still refuse it, a soft-deleted private page stays refused, and every other caller
-is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope.
+is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope (`gbrain auth create <name> --member <owner> --scopes read`; without `--scopes` the token gets full access).
 
 **The owner opt-in.** `gbrain access owner reads-restricted on` (config `access.owner_reads_restricted`, off by
 default and unchanged on upgrade) lets the owner's credentials read the pages that `readable_by` lists, folder rules
