@@ -18,7 +18,7 @@ import { bunSpawnSync } from '../spawn.ts';
 import { codexHookCensus, codexHookGroupRuns, codexHookTrustHash } from '../bootstrap/codex-hooks.ts';
 import { readCodexTomlTable } from '../bootstrap/codex-toml.ts';
 import { classifyHarnessHook, hookEntryHash } from '../bootstrap/hooks.ts';
-import { localSetupRecords } from './local-receipts.ts';
+import { localSetupRecords, setupOwnedHookHashes } from './local-receipts.ts';
 import { CLAUDE_SETTINGS_FILE_RELPATH, GBRAIN_HOOK_MARKER_KEY, GBRAIN_SETUP_MARKER_VALUE, claudeManagedSettingsPaths, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 import { hookLauncherInCommand, hookLauncherState, type HookLauncherState } from './hook-launcher.ts';
 import type { LauncherLane } from './launcher-lanes.ts';
@@ -73,9 +73,12 @@ export function inspectTurnHook(harness: string, opts: { projectDir?: string; ma
     const files = [claudeUserSettingsPath(), ...(opts.projectDir ? [join(opts.projectDir, '.claude', 'settings.local.json'), join(opts.projectDir, '.claude', 'settings.json')] : []), ...claudeManagedSettingsPaths(opts.managedDir)];
     for (const path of files) {
       const committed = !!opts.projectDir && path === join(opts.projectDir, '.claude', 'settings.json');
-      const entries = claudeEntries(path).filter((e) => isTurnRuleEntry(e) || isOtherGbrainEntry(e, committed));
+      const setupHashes = committed ? new Set<string>() : setupOwnedHookHashes('claude-code', path, 'UserPromptSubmit');
+      const entries = claudeEntries(path).filter((e) => isTurnRuleEntry(e) || isOtherGbrainEntry(e, committed, setupHashes));
       const effective = entries.find((e) => !isTurnRuleEntry(e)) ?? entries[0];
-      if (effective) return { harness, state: 'wired', via: isTurnRuleEntry(effective) ? 'turn-rule' : effective[GBRAIN_HOOK_MARKER_KEY] === 'setup-v1' ? 'setup' : 'bootstrap', detail: `UserPromptSubmit hook in ${path}`, command: String(effective.command), source: path, native_inspect };
+      const setup = effective && (effective[GBRAIN_HOOK_MARKER_KEY] === GBRAIN_SETUP_MARKER_VALUE
+        || (!Object.prototype.hasOwnProperty.call(effective, GBRAIN_HOOK_MARKER_KEY) && setupHashes.has(hookEntryHash(effective) ?? '')));
+      if (effective) return { harness, state: 'wired', via: isTurnRuleEntry(effective) ? 'turn-rule' : setup ? 'setup' : 'bootstrap', detail: `UserPromptSubmit hook in ${path}`, command: String(effective.command), source: path, native_inspect };
     }
     if (plugin) return { harness, state: 'wired', via: 'plugin', detail: `the '${plugin.plugin}' plugin declares the UserPromptSubmit hook`, native_inspect };
     return { harness, state: 'missing', detail: `no gbrain UserPromptSubmit hook in ${files.join(' or ')}`, native_inspect };

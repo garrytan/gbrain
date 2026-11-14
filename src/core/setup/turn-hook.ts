@@ -40,6 +40,7 @@ import { buildClaudeHookCommand, classifyHarnessHook, hookEntryHash, removeClaud
 import { CLAUDE_HOOK_DEFAULT_TIMEOUT_SECS, GBRAIN_HOOK_MARKER_KEY, claudeManagedSettingsPaths, claudeUserSettingsPath, codexConfigPath, codexHooksPath } from '../bootstrap/host-specs.ts';
 import { ensureHookLauncher, hookLauncherPath, hookLauncherState, hookShellPath } from './hook-launcher.ts';
 import { isSkillResolverEntry } from './skill-resolver-lane.ts';
+import { setupOwnedHookHashes } from './local-receipts.ts';
 
 export const TURN_RULE_LANE = 'turn-rule';
 export const TURN_RULE_MARKER = 'turn-rule-v1';
@@ -106,9 +107,10 @@ function claudePromptEntries(path: string): Array<Record<string, unknown>> {
 }
 
 /** An entry another gbrain lane owns (setup, workspace bootstrap, bootstrap harness). A repo's committed settings.json counts only a command that parses as gbrain's hook, never a bare marker. */
-export function isOtherGbrainEntry(e: Record<string, unknown>, committed = false): boolean {
+export function isOtherGbrainEntry(e: Record<string, unknown>, committed = false, setupHashes: ReadonlySet<string> = new Set()): boolean {
   if (isTurnRuleEntry(e) || isSkillResolverEntry(e)) return false;
-  return (!committed && typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string') || !!classifyHarnessHook(e, EVENT, 'any');
+  return (!committed && typeof e[GBRAIN_HOOK_MARKER_KEY] === 'string') || !!classifyHarnessHook(e, EVENT, 'any')
+    || (!committed && !Object.prototype.hasOwnProperty.call(e, GBRAIN_HOOK_MARKER_KEY) && setupHashes.has(hookEntryHash(e) ?? ''));
 }
 
 /**
@@ -121,10 +123,11 @@ export function turnRuleHookYields(harness: string, cwd: string, managedDir?: st
     // Only a group Codex actually runs (trusted, enabled) carries the rule.
     try { return codexHookCensus(codexHooksPath()).some((g) => g.event === EVENT && (g.lane === 'setup' || g.lane === 'bootstrap') && codexHookGroupRuns(codexHooksPath(), codexConfigPath(), g)); } catch { return false; }
   }
-  return claudePromptEntries(claudeUserSettingsPath()).some((e) => isOtherGbrainEntry(e))
-    || claudePromptEntries(join(cwd, '.claude', 'settings.local.json')).some((e) => isOtherGbrainEntry(e))
-    || claudePromptEntries(join(cwd, '.claude', 'settings.json')).some((e) => isOtherGbrainEntry(e, true))
-    || claudeManagedSettingsPaths(managedDir).some((path) => claudePromptEntries(path).some((e) => isOtherGbrainEntry(e)));
+  const committedPath = join(cwd, '.claude', 'settings.json');
+  return [claudeUserSettingsPath(), join(cwd, '.claude', 'settings.local.json'), committedPath, ...claudeManagedSettingsPaths(managedDir)].some((path) => {
+    const setupHashes = path === committedPath ? new Set<string>() : setupOwnedHookHashes('claude-code', path, EVENT);
+    return claudePromptEntries(path).some((e) => isOtherGbrainEntry(e, path === committedPath, setupHashes));
+  });
 }
 
 /** Install or refresh the turn-rule hook. Never throws; anything it cannot write safely comes back as `print` with the command that wires it. */
