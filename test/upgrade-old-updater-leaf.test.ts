@@ -18,6 +18,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { MOVEMENT_SUPERVISOR_STEP } from '../src/commands/sources-writer-movement.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 
@@ -29,6 +30,7 @@ describe('the path old updaters import after the swap', () => {
     expect(r.exitCode, r.stderr.toString()).toBe(0);
     const out = JSON.parse(r.stdout.toString().trim().split('\n').pop()!) as { step: string; loaded: string[] };
     expect(out.loaded.map(f => f.slice(REPO_ROOT.length + 1)).sort()).toEqual(['src/commands/movement-step.ts', 'src/commands/sources-writer-movement.ts']);
+    expect(out.step).toBe(MOVEMENT_SUPERVISOR_STEP);
     expect(out.step).toBe('after restarting serve and the workers, run: gbrain sources writer movement');
   }, 60_000);
 });
