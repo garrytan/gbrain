@@ -236,7 +236,8 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
  *
  * GST-2689 `remove`: the postimage is the pages table with the cleared pages removed instead (their rows, so the links to
  * them go too), `keys` is unused, an atom also ties to the page a rename moved its `source_slug` to (slug_aliases and
- * slug_rename_history, read before a purge scrubs them), and a page that names readers is never returned.
+ * slug_rename_history, read before a purge scrubs them). A page that names readers is judged by the same privacy rules,
+ * since readable_by never relaxes them: it is returned when the removal would open it to its listed readers.
  */
 export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
   const remove = mode === 'remove';
@@ -271,7 +272,7 @@ export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
     SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
         WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
       FROM candidates cand JOIN pages p ON p.id = cand.id
-      WHERE cand.id IN (SELECT id FROM public_after) AND NOT ${privacyPartSql('p')}${remove ? " AND NOT (p.frontmatter ? 'readable_by')" : ''}
+      WHERE cand.id IN (SELECT id FROM public_after) AND NOT ${privacyPartSql('p')}
       ORDER BY cand.id, cand.cleared_id`;
 }
 

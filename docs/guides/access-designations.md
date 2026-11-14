@@ -125,8 +125,8 @@ These rules follow the origin, so nobody writes them by hand:
 `gbrain repair visibility` stamps the explicit value on derived pages (tighten-only). The owner reads them all.
 
 When you delete a page that keeps others private, gbrain gives each page whose only privacy came from it its own
-`visibility: private` label, so it stays hidden once the deleted page's row is gone (a page that names readers is left as
-it is). The label stays after that: if you restore the deleted page and later make it world, the pages derived from it
+`visibility: private` label, so it stays hidden once the deleted page's row is gone (a page that names readers keeps its
+`readable_by` and gets the label too, so its listed readers don't gain it). The label stays after that: if you restore the deleted page and later make it world, the pages derived from it
 stay private until the owner relabels them.
 
 A file removed with `git rm` outside gbrain is covered only from the next cycle: the next sync soft-deletes its page and

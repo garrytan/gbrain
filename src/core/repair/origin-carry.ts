@@ -3,9 +3,9 @@
  * private (a declared derived_from origin, an atom's source_slug origin, a concept whose provenance atom has one) opens
  * once the origin row is gone. So before an origin row is removed, every live same-source page that would gain a reader
  * gets `visibility: private` through the label door (repair/label-write.ts): tighten-only, the trust tier kept, no lowering
- * proposal filed, a managed file changed in that one line. The dependents are private-labels.ts dependentsSql('remove'):
- * a page already private, naming readers, pinned or not lineage-dependent is never returned, and a life-chronicle event
- * already fails closed, so it is skipped.
+ * proposal filed, a managed file changed in that one line, readable_by kept. The dependents are private-labels.ts
+ * dependentsSql('remove'): a page already private, pinned or not lineage-dependent is never returned, a page that names
+ * readers is returned when its listed readers would gain it, and a life-chronicle event already fails closed, so it is skipped.
  *
  * Two places run it. delete_page (deletePageCarryingPrivate): a soft delete, local or remote, labels the dependents once
  * the delete committed, as a maintenance write whose batch names the delete's request id (on a managed brain); a failure

@@ -9,7 +9,7 @@
  *    list_pages and search. The owner, a granted_sources credential and a listed member read the same before and after.
  *    Pages already private, naming readers, pinned or not lineage-dependent are never changed; trust tiers are kept and
  *    no lowering proposal is filed. A remote delete's response names no stamped page and counts none. A page that names
- *    readers is never changed, so its listed reader gains it once the origin goes (the one read that changes). When the stamp
+ *    readers gets the label too (its readable_by kept), so its listed reader does not gain it either. When the stamp
  *    fails, the origin is parked (never purged), doctor names it with the page that blocks it, and the derived page
  *    stays hidden; once the cause is fixed the next purge stamps and purges. Nothing of a purged origin is kept.
  * 2. Fails when: any of those reads opens to a non-owner after the origin goes, a read changes for a reader who had it,
@@ -46,9 +46,9 @@ const OWNER = 'owner-example';
 const ALICE = 'alice-example';
 /** Pages that gain a reader once the origin goes, then the pages the stamp must never change. */
 const CARRIED = ['digest', 'atom', 'concept'] as const;
-const UNTOUCHED = ['own', 'listed', 'pinned', 'plain'] as const;
-type Shape = 'origin' | typeof CARRIED[number] | typeof UNTOUCHED[number];
-const SHAPES: Shape[] = ['origin', ...CARRIED, ...UNTOUCHED];
+const UNTOUCHED = ['own', 'pinned', 'plain'] as const;
+type Shape = 'origin' | typeof CARRIED[number] | 'listed' | typeof UNTOUCHED[number];
+const SHAPES: Shape[] = ['origin', ...CARRIED, 'listed', ...UNTOUCHED];
 const CALLERS = ['owner', 'granted', 'alice', 'unbound'] as const;
 type Caller = typeof CALLERS[number];
 
@@ -141,15 +141,17 @@ for (const kind of testBackends()) {
     async function expectCarried(k: string, before: Record<string, unknown>, beforeState: Record<string, any>, beforeProposals: number): Promise<void> {
       __resetPrivateVisibilityCacheForTests();
       const others = SHAPES.filter(s => s !== 'origin');
-      // Pages that name readers are never stamped: the listed member reads 'listed' once its private origin is gone.
-      const expected = { ...Object.fromEntries(Object.entries(before).filter(([key]) => !key.endsWith(':origin'))), 'alice:listed': every };
       expect(before['alice:listed']).toEqual(none);
-      expect(await readsOf(k, others)).toEqual(expected);
+      expect(await readsOf(k, others)).toEqual(Object.fromEntries(Object.entries(before).filter(([key]) => !key.endsWith(':origin'))));
       const after = await state(k);
       for (const shape of CARRIED) {
         expect({ shape, visibility: after[shape].fm.visibility }).toEqual({ shape, visibility: 'private' });
         expect({ shape, tier: after[shape].tier }).toEqual({ shape, tier: beforeState[shape].tier });
       }
+      // A page that names readers gets the label and keeps its readers: its listed member reads it neither before nor after.
+      expect({ ...after.listed, fm: { ...after.listed.fm, visibility: undefined } }).toEqual({ ...beforeState.listed, fm: { ...beforeState.listed.fm, visibility: undefined } });
+      expect(after.listed.fm.visibility).toBe('private');
+      expect(after.listed.fm.readable_by).toEqual([ALICE]);
       for (const shape of UNTOUCHED) expect({ shape, ...after[shape] }).toEqual({ shape, ...beforeState[shape] });
       expect(await proposals()).toBe(beforeProposals);
     }
