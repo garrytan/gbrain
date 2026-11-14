@@ -101,6 +101,8 @@ describe('gbrain skills (CLI)', () => {
       [['skills', 'resolve', '--catalog', '../config', '--text', 'x'], undefined, 'skill_catalog_unknown'],
       [['skills', 'resolve', '--text', 'x', '--top-k', '9'], undefined, 'skill_resolve_invalid_input'],
       [['skills', 'resolve', '--text', 'x', '--min-match', 'weak'], undefined, 'skill_resolve_invalid_input'],
+      [['skills', 'resolve', '--text', 'x', '--top-gate', 'high'], undefined, 'skill_resolve_invalid_input'],
+      [['skills', 'resolve', '--text', 'x', '--top-gate', '101'], undefined, 'skill_resolve_invalid_input'],
       [['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-'], '{"skills": 1}', 'skill_source_invalid'],
       [['skills', 'index', 'frobnicate'], undefined, 'Unknown subcommand'],
     ];
@@ -130,5 +132,15 @@ describe('gbrain skills (CLI)', () => {
     const rec = JSON.parse(readFileSync(log, 'utf8').trim());
     expect(rec.shadow).toBe(true);
     expect(rec.block).toContain('gbrain:deploy');
+  }, 60_000);
+
+  test('--top-gate empties the block with block_reason weak_top_match, and the output validates', () => {
+    const h = tmp();
+    expect(cli(h, ['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-'], SKILLS).code).toBe(0);
+    const gated = cli(h, ['skills', 'resolve', '--text', 'deploy', '--top-gate', '100', '--json']);
+    const doc = JSON.parse(gated.out);
+    expect(validate(loadSchema('skill-resolver.v1.turn-output'), doc)).toEqual([]);
+    expect([gated.code, doc.block, doc.block_reason]).toEqual([0, '', 'weak_top_match']);
+    expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'deploy', '--top-gate', '0', '--json']).out).block).toContain('gbrain:deploy');
   }, 60_000);
 });

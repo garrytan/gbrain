@@ -45,6 +45,7 @@ describeE2E('/mcp shared agent on_behalf_of over serve --http', () => {
       const out = await importFromContent(engine, p.slug, `---\ntype: note\nreadable_by: ${p.readers}\n---\n# Harbor plan ${key}\n\nHarbor plan notes ${p.canary}.`, { noEmbed: true });
       expect(out.status).toBe('imported');
     }
+    expect((await importFromContent(engine, 'notes/room-open', '---\ntype: note\n---\n# Harbor room\n\nHarbor room notes.', { noEmbed: true })).status).toBe('imported');
     const minted = await mintLegacyToken(engine, { name: 'obo-e2e-bot', takesHolders: ['world'], scopes: ['read'] });
     bot = minted.token;
     await bindCredential(engine, { kind: 'token', id: minted.id }, { member: 'dan-example', mayActFor: ['member:alice-example', 'member:bob-example', 'guest'] });
@@ -99,6 +100,29 @@ describeE2E('/mcp shared agent on_behalf_of over serve --http', () => {
     const named = await call(PAGES.both.slug, { header: 'alice-example, bob-example' });
     expect((named.meta?.access as Record<string, unknown>).audience).toEqual(['member:alice-example', 'member:bob-example']);
     expect((named.meta?.access as Record<string, unknown>).member).toBeNull();
+  }, 60_000);
+
+  test('GBRA-498: a room from the X-Gbrain-Room header or request _meta.room marks the answer over serve --http', async () => {
+    const roomCall = async (ch: { header?: string; meta?: string[] }) => {
+      const res = await fetch(BASE + '/mcp', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + bot, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
+          ...(ch.header !== undefined ? { 'X-Gbrain-Room': ch.header } : {}) },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
+          params: { name: 'get_page', arguments: { slug: 'notes/room-open' }, ...(ch.meta ? { _meta: { room: ch.meta } } : {}) } }),
+      });
+      const body = (await res.text()).trim();
+      const rpc = JSON.parse(body.startsWith('{') ? body : body.split('\n').filter(l => l.startsWith('data:')).pop()!.slice(5).trim());
+      return { page: JSON.parse(rpc.result.content[0].text), meta: rpc.result._meta as Record<string, unknown> | undefined };
+    };
+    for (const ch of [{ header: 'alice-example' }, { meta: ['alice-example'] }]) {
+      const out = await roomCall(ch);
+      expect(out.page.room_access).toEqual({ readable: true });
+      expect((out.meta?.room as { principals: string[]; declared_by: string })).toMatchObject({ principals: ['member:alice-example'], declared_by: 'harness' });
+    }
+    const none = await roomCall({});
+    expect(none.page.room_access).toBeUndefined();
+    expect(none.meta?.room).toBeUndefined();
   }, 60_000);
 
   test('an audience outside may_act_for reads nothing and names the operator command', async () => {

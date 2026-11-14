@@ -57,7 +57,8 @@ src/core/ai/probes.ts	process_env	3	W3: AI settings arrive on the engine
 src/core/ai/provider-env.ts	process_env	2	W3: AI settings arrive on the engine
 src/core/ai/providers/claude-cli-continuation.ts	module_collection	1	W3: per-engine gateway state
 src/core/ai/providers/claude-cli-language-model.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/ai/providers/claude-cli-language-model.ts	process_env	3	W3: AI settings arrive on the engine
+src/core/ai/providers/claude-cli-language-model.ts	module_collection	1	W3: per-engine gateway state (the per-binary claude --version probe cache, #8350; it caches a property of the installed binary, not of a brain, so it carries no brain's state into another)
+src/core/ai/providers/claude-cli-language-model.ts	process_env	4	W3: AI settings arrive on the engine (adds the GBRAIN_CLAUDE_CLI_USER_SETTINGS opt-in, #8350; a process setting only the shell or ~/.gbrain/.env can set, not a brain setting, so it carries no brain's state into another)
 src/core/ai/providers/claude-cli-language-model.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/ai/providers/claude-cli-scratch.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/ai/query-embed-cache.ts	module_collection	1	W3: per-engine gateway state
@@ -378,6 +379,7 @@ src/core/extract-takes-from-pages.ts	fs_import	1	W7: filesystem boundary moves t
 src/core/extract-takes-from-pages.ts	load_config	1	W6: settings plane out of the core
 src/core/extract/rollup-writer.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/extraction-lag.ts	process_env	2	W6: settings plane out of the core
+src/core/facts-fence.ts	module_collection	1	stays (GST-2497): a bounded memo of fence-table parses keyed by the table text and parse options, returning copies; it holds no setting or brain state
 src/core/facts/backstop.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/facts/backstop.ts	load_config	1	W6: settings plane out of the core
 src/core/facts/backstop.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -413,6 +415,7 @@ src/core/fence-scan.ts	process_env	1	W6: settings plane out of the core
 src/core/file-resolver.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/filing-audit.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/fix-routing.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/foreground-activity.ts	module_collection	1	GBRA-438: the process-wide foreground-request listeners idle upkeep aborts on, alongside the module's process-wide in-flight counter; moves with per-engine serve state in W6
 src/core/forward-progress.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/friction.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/friction.ts	process_env	1	W6: settings plane out of the core
@@ -500,6 +503,7 @@ src/core/interaction.ts	process_env	3	W6: settings plane out of the core
 src/core/last-retrieved.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/link-extraction.ts	process_env	2	W6: settings plane out of the core
 src/core/link-validity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
+src/core/maintenance/run.ts	fs_import	1	GBRA-438: unattended upkeep checks that a source checkout still exists before running filesystem phases there (a vanished checkout runs the database-only phases instead of failing each run); moves with the W7 filesystem boundary
 src/core/markdown-chunks.ts	process_env	1	W6: settings plane out of the core
 src/core/markdown.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/mcp-client.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -1016,6 +1020,7 @@ src/core/shared-skills/setup.ts	spawn_import	1	W7: process-wide effects move to 
 src/core/skill-catalog.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skill-catalog.ts	process_env	1	W6: settings plane out of the core
 src/core/skill-fix-gates.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/skill-health.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skill-manifest.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skill-trigger-index.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skill-trigger-index.ts	module_collection	1	W6: per-engine state, or mark as a constant table
@@ -1050,6 +1055,7 @@ src/core/skillpack/copy.ts	fs_import	1	W7: filesystem boundary moves to the loca
 src/core/skillpack/doctor.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/endorse.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/endorse.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/skillpack/file-lock.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skillpack/harness-bridge.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/harvest-lint.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/harvest.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1068,12 +1074,14 @@ src/core/skillpack/remote-source.ts	fs_import	1	W7: filesystem boundary moves to
 src/core/skillpack/remote-source.ts	process_env	1	W6: settings plane out of the core
 src/core/skillpack/remote-source.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/skillpack/rubric.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/skillpack/safe-update.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skillpack/scrub-legacy.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/shared-brain-bridge.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/state.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/tarball.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skillpack/tarball.ts	process_env	1	W6: settings plane out of the core
 src/core/skillpack/tarball.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/skillpack/update-journal.ts	fs_import	1	W7: filesystem boundary moves to the local app (train K, GBRA-225: skillpack files on disk)
 src/core/skillpack/writer-guard.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skills-integrity.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/skills/resolver/build.ts	fs_import	1	GBRA-377 skill resolver: a filesystem tool by contract (reads SKILL.md dirs, writes its index and session files under GBRAIN_HOME/skill-index); it never opens a brain or an engine, so there are no engine settings to take it from; stays

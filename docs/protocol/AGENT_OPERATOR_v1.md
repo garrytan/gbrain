@@ -271,7 +271,7 @@ stdout (`--json`):
       "code": "first_run_decisions",
       "kind": "ask",
       "why": "The brain is ready. These settings were applied with defaults or need the user's choice; none blocks using the brain.",
-      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.",
+      "user_message": "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip; upkeep: on), or tell me what to change.",
       "decisions": [
         {
           "id": "search_mode",
@@ -370,6 +370,29 @@ stdout (`--json`):
           ],
           "default": "skip",
           "default_reason": "No agent harness was detected."
+        },
+        {
+          "id": "upkeep",
+          "question": "Upkeep: free upkeep runs on its own while your agent's gbrain session is open. Nothing is deleted or paid for without you. Turn off: gbrain config set maintenance.auto false. Optional schedule: gbrain maintain --schedule.",
+          "options": [
+            {
+              "id": "on",
+              "label": "Keep free upkeep on (in effect now)"
+            },
+            {
+              "id": "off",
+              "label": "Turn free upkeep off",
+              "argv": [
+                "gbrain",
+                "config",
+                "set",
+                "maintenance.auto",
+                "false"
+              ]
+            }
+          ],
+          "default": "on",
+          "default_reason": "In effect now: the agent's gbrain serve runs the free upkeep tier while idle; nothing needs an answer."
         }
       ],
       "contract_version": 1
@@ -379,7 +402,7 @@ stdout (`--json`):
 }
 ```
 
-stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `writeback` (default `salient`), `harness_wiring` (default `skip`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
+stdout is one document; the brain is ready and nothing blocks using it. The `first_run_decisions` notice is `kind: ask`, so the agent relays its `user_message` ("gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: conservative; writeback: salient; harness_wiring: skip; upkeep: on), or tell me what to change.") once and stops. The decisions are `search_mode` (default `conservative`), `writeback` (default `salient`), `harness_wiring` (default `skip`), `upkeep` (default `on`); each option carries the exact argv to apply it, so a reply of "defaults" needs no command at all.
 
 ### 5. A caller mistake over stdio MCP, recorded: `run` (journey)
 
@@ -753,7 +776,8 @@ except the notices that describe one call's result. HTTP is stateless, so
 dedupe is per authenticated client and session, and `degraded` and `safety`
 notices ride every affected call. At most 2 `coaching` notices per session.
 Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
-`listing_truncated`, `delta_incomplete`, `facts_unembedded`)
+`listing_truncated`, `delta_incomplete`, `facts_unembedded`, and the room
+notices `room_above_level`, `room_hints_unavailable` and `room_conflict`)
 are never deduped on any transport, with one exception: a `degraded_recall`
 whose only stages come from the brain's configuration (`embed_unavailable` on
 a keyless brain, which degrades every search the same way) shows once per
@@ -865,6 +889,19 @@ nothing; it returns in the next session until the decision is answered
 `first_run_decisions`. `gbrain doctor` (the `memory_writeback` check) and
 `gbrain onboard --check` list decisions that are open but muted, with the
 `gbrain notices unmute first_run_decisions` command.
+
+### Room notices
+
+A harness that declares the shared chat an answer goes into (`X-Gbrain-Room`,
+`_meta.room` or a `room` argument) gets the caller's full answer with each
+item marked `room_access` ([rooms](../guides/rooms.md)). Three notices ride it,
+and none of them ever refuses the work:
+
+| Code | Kind | What you do |
+|---|---|---|
+| `room_above_level` | `safety` | some items are `readable: false` or `unknown` for the room: use them to do the work, keep them out of the reply unless the ask needs them, offer the rest in a direct message |
+| `room_hints_unavailable` | `degraded` | the room could not be judged (`_meta.room.unavailable` names why): the answer is complete, treat every item as above the room, and follow `fix` when one is given |
+| `room_conflict` | `safety` | the `room` argument named a different room than the harness did: the answer was marked for everyone either names; trust the harness's room |
 
 ## Degraded stamp
 
@@ -1281,8 +1318,10 @@ each with a `fix`.
   embeddings needs a provider key and costs money (`credentials`, `paid`):
   ask first, then use the exact command the readiness fix names. It keeps
   pages and facts.
-- **Maintenance.** Without a worker, queued jobs wait. `gbrain autopilot
-  --install` installs a background service (`persistent_install`): ask first.
+- **Maintenance.** An open `gbrain serve` runs free upkeep while idle
+  (`gbrain maintain --status`). Without a worker, queued jobs wait.
+  `gbrain maintain --schedule` and `gbrain autopilot --install` install a
+  background service (`persistent_install`): ask first.
 - **Backup.** Repo backups exclude database-only pages and facts. When the
   `backup_coverage` notice fires, tell the user what is unprotected.
 - **Surface.** `--surface verbs` (memory verbs), `starter` or `full` decides

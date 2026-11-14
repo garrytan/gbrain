@@ -34,7 +34,7 @@ import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, factsFenceSection, fenceCellReadBackProblem, formatFenceDate, parseFactsFenceFor, renderFactsTable, replaceOrInsertFactsFence, strikeFactRowInPage, upsertFactRow } from '../facts-fence.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
-import { pageBodyOverCeilingError } from '../page-body/page-shape.ts';
+import { isSegmentedPage, pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
 import type { CompanionPage, PreparedMutation } from '../persistence/coordinator.ts';
@@ -53,6 +53,7 @@ import { fenceRowOf, withHeldFactsFence, type FenceRowInput } from './unfenced-f
 import { rewriteVersionBodies } from './purge.ts';
 import { carriesClaimSql, claimNeedles } from './purge-verify.ts';
 import { withdrawnFact } from './withdrawal-overlay.ts';
+import { pruneHoldingPageVersions } from '../page-state/versions.ts';
 
 export type FenceFactAppendInput = {
   /** The facts row to publish; `row_num` and `source_markdown_slug` are the helper's. kind and visibility default as insertFacts does. */
@@ -190,6 +191,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   }
   return { prepared, rowNum, fencesNormalized, apply: async tx => {
     const pageReceipt = await withPageTierKept(tx, page, () => prepared.apply(tx));
+    if (snapshot && isHoldingSlug(row.slug) && !isSegmentedPage(snapshot.page)) await pruneHoldingPageVersions(tx, snapshot.page.id);
     return { id: await insert(tx, rowNum, fact), pageReceipt };
   } };
 }

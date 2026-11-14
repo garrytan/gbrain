@@ -1063,7 +1063,7 @@ export interface BrainEngine {
    * cutoff arithmetic, same DB `now()` clock source) instead of the DELETE,
    * so the preview and a subsequent real run agree up to whatever crosses
    * the cutoff (or is soft-deleted/restored) between the two statements.
-   * Dry-run responses additionally carry `pages` (slug + deleted_at) for
+   * Dry-run responses additionally carry `pages` (slug, source_id, deleted_at) for
    * display; the destructive path leaves `pages` undefined.
    * `opts.excludeIds` keeps those page ids out of both (GBRA-130 A-49: the
    * tombstones the unmanaged belief-ledger expiry failed or parked).
@@ -1071,7 +1071,7 @@ export interface BrainEngine {
   purgeDeletedPages(
     olderThanHours: number,
     opts?: { dryRun?: boolean; excludeIds?: number[] },
-  ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date }[] }>;
+  ): Promise<{ slugs: string[]; count: number; pages?: { slug: string; source_id: string; deleted_at: Date }[] }>;
   /**
    * v0.26.5: by default `listPages` excludes soft-deleted rows. Set
    * `filters.includeDeleted: true` to surface them.
@@ -1435,7 +1435,7 @@ export interface BrainEngine {
    * `attendance` (#5761) excludes or selects pages whose attendance marker
    * equals their current knowledge revision.
    */
-  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only' }): Promise<number>;
+  countStalePagesForExtraction(opts?: { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only'; wantedProducers?: readonly string[] }): Promise<number>;
   /**
    * List a keyset page (ordered by `id`, `id > afterPageId`) of stale pages
    * WITH their content so the caller extracts without an N+1 `getPage`. Same
@@ -1449,6 +1449,7 @@ export interface BrainEngine {
     sourceId?: string;
     versionTs?: string;
     held?: 'exclude';
+    wantedProducers?: readonly string[];
   }): Promise<StalePageRow[]>;
   /**
    * Stamp `links_extracted_at` for a batch of pages keyed on the unique

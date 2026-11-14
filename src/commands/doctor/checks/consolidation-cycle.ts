@@ -9,6 +9,7 @@ import { resolveHoursEnv } from '../../../core/env-number.ts';
 import type { Check } from '../../doctor.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
+import { isAvailable } from '../../../core/ai/gateway.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -238,7 +239,7 @@ export async function checkCycleFreshness(
       }
     }
 
-    const fix = firstStale ? cycleFix(firstStale) : undefined;
+    const fix = firstStale ? cycleFix(firstStale, isAvailable('chat') || isAvailable('embedding')) : undefined;
     if (hasFailures) {
       return {
         name: 'cycle_freshness',
@@ -287,8 +288,11 @@ async function youngOrEmptySources(engine: BrainEngine, ids: string[], now: numb
   return out;
 }
 
-function cycleFix(sourceId: string): Action {
-  return agentFix(['gbrain', 'dream', '--source', sourceId], `Runs one full maintenance cycle for source '${sourceId}' (sync, extract, consolidate). Phases that call a chat model spend provider credits when keys are configured; \`gbrain autopilot --install\` keeps every source cycled.`, 'cycle_freshness',
-    { consent: ['paid'], requires_exclusive: true });
+/** GBRA-438: a keyless brain has no paid phase to run, so the fix asks no paid consent there. */
+function cycleFix(sourceId: string, paid: boolean): Action {
+  return agentFix(['gbrain', 'dream', '--source', sourceId], paid
+    ? `Runs one full maintenance cycle for source '${sourceId}' (sync, extract, consolidate). Phases that call a chat model spend provider credits when keys are configured; \`gbrain autopilot --install\` keeps every source cycled.`
+    : `Runs one full maintenance cycle for source '${sourceId}' (sync, extract, consolidate). No model key is configured, so no phase spends anything.`, 'cycle_freshness',
+    { consent: paid ? ['paid'] : [], requires_exclusive: true });
 }
 

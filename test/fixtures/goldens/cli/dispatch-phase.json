@@ -1175,7 +1175,17 @@
       "maintain": {
         "hasSwitchCase": true,
         "phase": "post-connect",
-        "preConnectRules": [],
+        "preConnectRules": [
+          {
+            "condition": "command === 'maintain' && await (await import('../commands/maintain-schedule.ts')).tryRunMaintainEngineFree(args)",
+            "connectsEngine": false,
+            "refusesThinClient": false,
+            "routesThinClient": false,
+            "terminates": true,
+            "thinClientCheck": false,
+            "unconditionalFor": []
+          }
+        ],
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
