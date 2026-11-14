@@ -370,6 +370,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
+test/open-shared-pages.test.ts
 test/origin-guard-6948.test.ts
 test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts

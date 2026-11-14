@@ -967,6 +967,7 @@ export async function runPostUpgrade(args: string[] = []): Promise<void> {
         // #5575 memory trust: [AGENT] ask_user while unclaimed sources hold legacy rows; never claims or scans (best-effort).
         await (await import('../core/trust/claim-notice.ts')).printTrustClaimUpgradeNotice(engine);
         await (await import('../core/access/requester-scope.ts')).printUnscopedReadsUpgradeNotice(engine); // GST-363: credentials bound to nobody on a several-people brain
+        await (await import('../core/access/open-pages.ts')).printOpenPagesUpgradeNotice(engine); // GST-2670: open DM, chat and mail pages on a several-people brain
 
         // Ambient-writeback consent ask (WP8): one-shot for EXISTING installs
         // upgrading into the feature. Personal brains only; double-gated on

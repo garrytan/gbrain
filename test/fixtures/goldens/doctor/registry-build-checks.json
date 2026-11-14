@@ -407,6 +407,10 @@
       },
       {
         "category": "brain",
+        "name": "open_shared_pages"
+      },
+      {
+        "category": "brain",
         "name": "unscoped_shared_reads"
       },
       {

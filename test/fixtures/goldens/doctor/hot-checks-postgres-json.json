@@ -1155,6 +1155,15 @@
           {
             "category": "brain",
             "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person, so its own keys read its own pages.",
+            "name": "open_shared_pages",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
             "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
             "name": "unscoped_shared_reads",
             "readiness_state": "not_applicable",
@@ -6491,6 +6500,15 @@
             "elapsed_ms": "<volatile>",
             "message": "Not applicable: this brain serves one person (fewer than two enabled members and no access.serves = several).",
             "name": "unlabeled_people_folders",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "elapsed_ms": "<volatile>",
+            "message": "Not applicable: this brain serves one person, so its own keys read its own pages.",
+            "name": "open_shared_pages",
             "readiness_state": "not_applicable",
             "severity": "info",
             "status": "ok"
