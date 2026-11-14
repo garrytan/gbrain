@@ -370,7 +370,8 @@ The exact frontmatter value `private` hides that concrete page row;
 `visibility: local`, absent visibility, and other values do not, except on
 derived pages: an extracted atom or synthesized concept with no `visibility`
 is private, an atom whose origin page is private is hidden, and so is a
-synthesized concept built from a private atom. Trusted local CLI callers
+synthesized concept built from a private atom or from an atom whose origin is
+private, even after a rename moved that origin. Trusted local CLI callers
 retain access, and so does a credential bound to the brain owner
 (`gbrain access owner set <member>`). Operator settings can opt out of private-page
 filtering, so source grants remain an independent boundary: keep content in an
