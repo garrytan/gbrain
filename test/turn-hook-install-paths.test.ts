@@ -12,14 +12,15 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { installerTurnHook, verifyTurnHook } from '../src/core/setup/turn-hook-check.ts';
-import { TURN_RULE_LANE_TOKEN, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.ts';
+import { claudeTurnRuleCommand, syncTurnRuleHook, TURN_RULE_LANE_TOKEN, TURN_RULE_MARKER } from '../src/core/setup/turn-hook.ts';
 import { syncHermesTurnHook } from '../src/core/setup/hermes-turn-hook.ts';
 import { BRAIN_FIRST_BEGIN, brainFirstTurnRule } from '../src/core/setup/brain-first.ts';
 import { openclawTurnPluginDir, openclawTurnPluginFiles } from '../src/core/setup/openclaw-turn-plugin.ts';
+import { isHookLauncherPath, shellWords } from '../src/core/setup/hook-launcher.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -106,6 +107,23 @@ describe('setup --instructions-only after a plain mcp add', () => {
     expect(r.doc.turn_hook).toMatchObject({ action: 'print', next: 'gbrain setup claude-code --instructions-only' });
     expect(r.doc.turn_hook_check).toBeUndefined();
     expect(existsSync(join(b.home, '.claude', 'settings.json'))).toBe(false);
+  });
+
+  test('Windows drive paths are accepted and rendered for the POSIX hook shell', () => {
+    const b = box();
+    const home = win32.resolve('C:', 'fixture');
+    const gbrainBin = win32.join(home, '.bun', 'bin', 'gbrain.exe');
+    const hookLauncher = win32.join(home, '.gbrain', 'hook-launcher', 'gbrain-hook');
+    const outcome = syncTurnRuleHook({ harness: 'claude-code', gbrainBin, paths: {
+      claudeSettings: join(b.home, '.claude', 'settings.json'), hookLauncher,
+    }, dryRun: true, rerun: 'gbrain setup claude-code --instructions-only' });
+    expect(outcome.action).toBe('write');
+    expect(isHookLauncherPath(hookLauncher)).toBe(true);
+    const words = shellWords(claudeTurnRuleCommand(gbrainBin, undefined, hookLauncher))!;
+    expect(words[2]).toMatch(/^\/[a-z]\//);
+    expect(words[2]).toEndWith('/.gbrain/hook-launcher/gbrain-hook');
+    expect(words[3]).toMatch(/^\/[a-z]\//);
+    expect(words[3]).toEndWith('/.bun/bin/gbrain.exe');
   });
 
   test('--no-instructions removes the turn-rule hook with the block', async () => {
