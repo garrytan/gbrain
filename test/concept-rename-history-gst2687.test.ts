@@ -5,7 +5,8 @@
  * 1. Protects: the concept stays hidden from a non-owner remote caller on get_page, search, query and list_pages, as the
  *    atom does since #9325 (#8920, atomMovedOriginPrivateSql on the atom branch of derivedOriginPrivateSql); the owner
  *    and a granted_sources credential still read both; doctor's derived_visibility counts the concept in looser_concepts
- *    and the atom in looser_atoms.
+ *    and the atom in looser_atoms. On a brain whose schema predates v311 (gbrain_concept_inputs_private missing) remote
+ *    reads keep working and still hide the concept.
  * 2. Fails when: the concept-input branch of privatePagesFilterFragment (or looser_concepts, or looser_atoms) follows
  *    only the slug_aliases rename alias and not slug_rename_history, so the dropped alias makes the concept readable.
  * 3. Existing coverage: rename-atom-lineage-7462 (#8920 case: the atom alone, raw SQL fragment).
@@ -28,6 +29,8 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { renamePageOntoSlug } from '../src/commands/sync/rename-collision.ts';
 import { derivedVisibilityCheck } from '../src/commands/doctor/checks/derived-visibility.ts';
+import { runMigrations } from '../src/core/migrate.ts';
+import { v311 } from '../src/core/schema-migrations/v311-concept-inputs-private.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -153,6 +156,18 @@ for (const kind of testBackends()) {
 
     test('(f) a granted_sources credential on the source still reads the atom and the concept', async () => {
       expect({ atom: await reads('granted', ATOM, 'atom'), concept: await reads('granted', CONCEPT, 'concept') }).toEqual({ atom: all, concept: all });
+    }, 60_000);
+
+    test('(g) on a brain whose schema predates v311 remote reads keep working and still hide the concept', async () => {
+      await engine.executeRaw('DROP FUNCTION gbrain_concept_inputs_private(integer)');
+      await engine.setConfig('version', String(v311.version - 1));
+      try {
+        expect({ alice: await reads('alice', CONCEPT, 'concept'), owner: await reads('owner', CONCEPT, 'concept'), granted: await reads('granted', CONCEPT, 'concept') })
+          .toEqual({ alice: none, owner: all, granted: all });
+      } finally {
+        await runMigrations(engine);
+      }
+      expect(await engine.executeRaw<{ ok: boolean }>(`SELECT to_regprocedure('gbrain_concept_inputs_private(integer)') IS NOT NULL AS ok`)).toEqual([{ ok: true }]);
     }, 60_000);
   });
 }

@@ -30,6 +30,7 @@ import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, reade
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
+import { v311 } from '../schema-migrations/v311-concept-inputs-private.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -693,18 +694,26 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * `gbrain repair visibility` then stamps the stricter value on the rows.
  * An atom whose origin a sync rename moved (#7462) is private when the page at
  * its `source_slug` or the page the rename moved it to is private, including a
- * move whose alias a later rename onto the old slug dropped (#8920).
+ * move whose alias a later rename onto the old slug dropped (#8920). A concept's
+ * inputs are judged the same way, moved origins included (GST-2687), by the SQL
+ * function gbrain_concept_inputs_private (migration v311), one planned call per
+ * page instead of the subplans. Inside a remote request on a brain whose schema
+ * predates v311 the same test runs inline, as gbrain_access_origin_restricted is
+ * skipped inside a request on a brain that never set access.restrictions_present.
  */
 function derivedOriginPrivateSql(p: string): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
-  return `(CASE WHEN ${p}.type = 'atom' THEN (${privateOrigin(p, 'derived_origin')} OR ${atomMovedOriginPrivateSql(p)})
-    WHEN ${derivedPageSql(p)} THEN EXISTS (SELECT 1 FROM links derived_input_link
+  const schema = currentCallerAccess().remotePolicy?.schemaVersion;
+  const conceptInputsPrivate = schema === undefined || schema >= v311.version ? `gbrain_concept_inputs_private(${p}.id)`
+    : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
       WHERE derived_input_link.from_page_id = ${p}.id AND derived_input_link.link_source = 'concept-provenance'
         AND derived_input_link.link_type = 'synthesized_from'
         AND (COALESCE(derived_input.frontmatter->>'visibility', CASE WHEN derived_input.type = 'atom' THEN 'private' ELSE 'world' END) = 'private'
-          OR ${privateOrigin('derived_input', 'derived_input_origin')}))
+          OR ${privateOrigin('derived_input', 'derived_input_origin')} OR ${atomMovedOriginPrivateSql('derived_input')}))`;
+  return `(CASE WHEN ${p}.type = 'atom' THEN (${privateOrigin(p, 'derived_origin')} OR ${atomMovedOriginPrivateSql(p)})
+    WHEN ${derivedPageSql(p)} THEN ${conceptInputsPrivate}
     WHEN ${p}.type = 'event' AND ${p}.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN ${chronicleOriginNotVisibleSql(p)}
     ELSE false END)`;
 }
@@ -1062,6 +1071,8 @@ export const SERVES_KEY = 'access.serves';
 export const SERVES_DERIVED_KEY = 'access.serves_derived';
 export const SERVES_SINCE_KEY = 'access.serves_since';
 export const REQUESTER_SCOPE_ENFORCE_KEY = 'access.requester_scope_enforce';
+/** The schema version migrate.ts records in config. */
+const SCHEMA_VERSION_KEY = 'version';
 
 /** @internal exported for tests: engines the process-wide policy sets hold. */
 export function __aliasPolicyEngineCountForTests(): number {
@@ -1125,7 +1136,8 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
 export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
 
 /** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
-export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean; serves?: ServesPolicy; servesUnknown?: boolean }
+/** `schemaVersion`: config `version` as the request read it; below v311 the concept-input test runs inline (derivedOriginPrivateSql). */
+export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean; serves?: ServesPolicy; servesUnknown?: boolean; schemaVersion?: number }
 
 /** GST-363: an explicit access.serves wins over the trigger-kept member count; enforcement is on unless set to false. */
 export function servesPolicyFrom(config: Record<string, string | undefined>): ServesPolicy {
@@ -1154,7 +1166,7 @@ export function servesPolicyFrom(config: Record<string, string | undefined>): Se
 export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<RemotePolicy> {
   try {
     const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[REMOTE_PRIVATE_PAGES_KEY, ACCESS_RESTRICTIONS_KEY, OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY, MEMBERS_READ_LINEAGE_KEY,
-      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY]]);
+      SERVES_KEY, SERVES_DERIVED_KEY, SERVES_SINCE_KEY, REQUESTER_SCOPE_ENFORCE_KEY, SCHEMA_VERSION_KEY]]);
     return remotePolicyFrom(Object.fromEntries(rows.map(r => [r.key, r.value])));
   } catch {
     return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, servesUnknown: true };
@@ -1180,9 +1192,11 @@ export async function requestRemotePolicy(engine: BrainEngine): Promise<RemotePo
 function remotePolicyFrom(config: Record<string, string>): RemotePolicy {
   const hatch = process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1';
   const owner = config[OWNER_MEMBER_KEY]?.trim();
+  const schemaVersion = Number.parseInt(config[SCHEMA_VERSION_KEY] ?? '', 10);
   return { privacyRelaxed: hatch || ['visible', 'true', '1'].includes(config[REMOTE_PRIVATE_PAGES_KEY] ?? ''), restricted: config[ACCESS_RESTRICTIONS_KEY] === '1',
     ownerMember: owner && ACCESS_ID_RE.test(owner) ? owner : null, ownerReadsRestricted: config[OWNER_READS_RESTRICTED_KEY]?.trim() === '1',
-    membersReadLineage: config[MEMBERS_READ_LINEAGE_KEY]?.trim() === '1', serves: servesPolicyFrom(config) };
+    membersReadLineage: config[MEMBERS_READ_LINEAGE_KEY]?.trim() === '1', serves: servesPolicyFrom(config),
+    ...(Number.isFinite(schemaVersion) ? { schemaVersion } : {}) };
 }
 
 /** GBRA-218: does this brain hold member-access restrictions? Read live (the request snapshot answers it inside a read); unreadable counts as yes. */

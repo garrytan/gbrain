@@ -26,6 +26,8 @@ import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
 import { privatePagesFilterFragment } from '../../src/core/search/private-visibility.ts';
 
 const PAGES = 3_000;
+/** The slug_rename_history rows the analyzed case writes. */
+const FIXTURE_HISTORY = `new_slug LIKE 'archive/notes/n-%'`;
 
 /** The pre-change declared-lineage spelling, rebuilt from the emitted fragment. */
 function inSubqueryForm(fragment: string): string {
@@ -94,7 +96,10 @@ async function expectSameHiddenPages(): Promise<void> {
     await engine.executeRaw('ANALYZE sources');
   }, 120_000);
 
-  afterAll(async () => { await teardownDB(); });
+  afterAll(async () => {
+    await getEngine().executeRaw(`DELETE FROM slug_rename_history WHERE ${FIXTURE_HISTORY}`);
+    await teardownDB();
+  });
 
   test('the ANY(ARRAY) and IN spellings hide exactly the same pages', async () => {
     await expectSameHiddenPages();
@@ -115,6 +120,8 @@ async function expectSameHiddenPages(): Promise<void> {
         AND a.slug IN ('notes/n-' || (substr(c.slug, 9)::int - 2), 'notes/n-' || (substr(c.slug, 9)::int - 1))
       WHERE c.type = 'concept'`);
     // Each atom's origin was once renamed to a slug no page holds now, so no page changes visibility.
+    // setupDB does not truncate slug_rename_history, so the rows are cleared here and in afterAll.
+    await engine.executeRaw(`DELETE FROM slug_rename_history WHERE ${FIXTURE_HISTORY}`);
     await engine.executeRaw(`INSERT INTO slug_rename_history (source_id, old_slug, new_slug)
       SELECT source_id, frontmatter->>'source_slug', 'archive/' || slug FROM pages WHERE type = 'atom'`);
     await engine.executeRaw('ANALYZE links');
