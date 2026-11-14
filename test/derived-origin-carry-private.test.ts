@@ -445,6 +445,37 @@ for (const kind of testBackends()) {
       await expectCarriedHidden(k);
     }, 240_000);
 
+    test('a held owner purge names gbrain delete <slug> --purge in its receipt and in doctor; finished through it as a new request, it writes the purge tombstones', async () => {
+      const k = 'finish';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const command = `gbrain delete ${origin} --purge --source-id ${SRC}`;
+      const tombstones = async () => (await engine.executeRaw<{ request_id: string }>(`SELECT r.request_id::text AS request_id FROM page_purges t
+        JOIN persistence_requests r ON r.id = t.request_id WHERE t.source_id=$1 AND t.slug=$2`, [SRC, origin])).map(r => r.request_id);
+      const first = randomUUID();
+      const failing = spyOn(labelWrite, 'importAtRevision').mockImplementation(async () => { throw new Error('forced label failure'); });
+      let held: Record<string, any>;
+      try { held = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: first, expected_revision: await revision(origin) })).text); }
+      finally { failing.mockRestore(); }
+      expect(held.purge_held?.code).toBe('derived_origin_parked');
+      expect(held.purge_held.message).toContain(command);
+      expect(held.purge_held.message).toContain(first);
+      const doctor = await checkDerivedOriginParked(engine);
+      expect(doctor.message).toContain(command);
+      expect((doctor.details as { origins: Array<{ slug: string; finish_argv?: string[] }> }).origins.find(o => o.slug === origin)?.finish_argv)
+        .toEqual(['gbrain', 'delete', origin, '--purge', '--source-id', SRC]);
+      expect(await tombstones()).toEqual([]);
+      const second = randomUUID();
+      const done = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: second, expected_revision: await revision(origin) })).text);
+      expect(done.status).toBe('purged');
+      expect(done.retention).toBeUndefined();
+      const written = await tombstones();
+      expect(written.length).toBeGreaterThan(0);
+      expect(new Set(written)).toEqual(new Set([second]));
+      await nothingKept(origin);
+      await expectCarriedHidden(k);
+    }, 240_000);
+
     test('an explicit purge rechecks inside its transaction: a derived page written after the carry keeps the origin soft-deleted and parked', async () => {
       const k = 'midsingle';
       await seed(k);
@@ -457,6 +488,7 @@ for (const kind of testBackends()) {
       const receipt = JSON.parse(out.text);
       expect(receipt.status).not.toBe('purged');
       expect(receipt.purge_held?.code).toBe('derived_origin_parked');
+      expect(receipt.purge_held.message).toContain(`gbrain delete ${origin} --purge --source-id ${SRC}`);
       expect((await row(origin))?.deleted_at).not.toBeNull();
       await expectLateHidden(k, late);
       await backdate(origin);
