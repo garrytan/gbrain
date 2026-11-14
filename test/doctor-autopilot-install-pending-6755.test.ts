@@ -55,11 +55,11 @@ describe('skipped Phase F: doctor line to verified clear', () => {
     const bin = join(home, 'bin');
     mkdirSync(bin);
     writeFileSync(join(bin, 'gbrain'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
-    await withEnv({ HOME: userHome, GBRAIN_HOME: home, RENDER: '1', GBRAIN_NON_INTERACTIVE: '1', PATH: `${bin}:${process.env.PATH}` }, async () => {
+    await withEnv({ HOME: userHome, GBRAIN_HOME: home, GBRAIN_NON_INTERACTIVE: '1', PATH: `${bin}:${process.env.PATH}` }, async () => {
       const log = console.log;
       console.log = () => {};
       try {
-        await runAutopilot({ kind: 'postgres', getConfig: async () => null, executeRaw: async () => [] } as never, [...argv, '--no-inject']);
+        await runAutopilot({ kind: 'postgres', getConfig: async () => null, executeRaw: async () => [] } as never, [...argv, '--target', 'ephemeral-container', '--no-inject']);
       } finally { console.log = log; }
     });
 
