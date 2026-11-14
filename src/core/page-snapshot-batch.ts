@@ -55,6 +55,17 @@ export async function readPageSnapshotsBatch(
   ), chosen AS (
     SELECT w.batch_n, w.batch_slug, w.batch_source_id, p.* FROM wanted w LEFT JOIN pages p ON p.id = w.batch_page_id
     WHERE w.batch_n = 1 OR w.batch_prior_bytes < $3
+  ), star AS (
+    -- Source-wide ('*') withdrawals, read once per source for the whole batch rather than once per page.
+    SELECT g.source_id, jsonb_agg(jsonb_build_object('visibility',g.visibility,'fact_hash',g.fact_hash,'withdrawn_at',g.withdrawn_at)
+      ORDER BY g.visibility,g.fact_hash) AS j
+    FROM (SELECT source_id,visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM fact_withdrawals
+      WHERE subject='*' AND source_id IN (SELECT DISTINCT source_id FROM chosen WHERE id IS NOT NULL) GROUP BY source_id,visibility,fact_hash) g
+    GROUP BY g.source_id
+  ), own AS (
+    -- Page-subject withdrawals of the batch's pages, one join for the batch.
+    SELECT f.source_id, f.subject, f.visibility, f.fact_hash, f.withdrawn_at FROM fact_withdrawals f
+    JOIN chosen c ON c.id IS NOT NULL AND c.source_id = f.source_id AND c.slug = f.subject
   ) SELECT p.*,
     (SELECT s.incarnation FROM sources s WHERE s.id=p.source_id) AS source_incarnation,
     COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag) FROM tags t WHERE t.page_id=p.id), '[]'::jsonb) AS snapshot_tags,
@@ -64,10 +75,14 @@ export async function readPageSnapshotsBatch(
     CASE WHEN wd.snapshot_withdrawals <> '[]'::jsonb OR (wd.snapshot_global_purges->>'count')::int > 0 THEN (SELECT string_agg(regexp_replace(lower(line), '[[:space:]]+', ' ', 'g'), chr(10) ORDER BY ord)
       FROM unnest(string_to_array(p.timeline,chr(10))) WITH ORDINALITY AS lines(line,ord)) END AS fingerprint_timeline
     FROM chosen p
-    CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
-      ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
-        FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
-        GROUP BY visibility,fact_hash) w), '[]'::jsonb)
+    LEFT JOIN star ON star.source_id = p.source_id
+    CROSS JOIN LATERAL (SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM own s WHERE s.source_id=p.source_id AND s.subject=p.slug)
+      THEN COALESCE(star.j, '[]'::jsonb)
+      ELSE COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
+        ORDER BY w.visibility,w.fact_hash) FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at FROM (
+          SELECT s.visibility,s.fact_hash,s.withdrawn_at FROM own s WHERE s.source_id=p.source_id AND s.subject=p.slug
+          UNION ALL SELECT r.visibility,r.fact_hash,r.withdrawn_at FROM jsonb_to_recordset(COALESCE(star.j, '[]'::jsonb)) AS r(visibility text,fact_hash text,withdrawn_at timestamptz)) u
+          GROUP BY visibility,fact_hash) w), '[]'::jsonb) END
       || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
         ORDER BY x.visibility,x.fact_hash) FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
           FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug
