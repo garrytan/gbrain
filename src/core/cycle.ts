@@ -1942,6 +1942,13 @@ async function runCycleUnscoped(
       phase_scope: PHASE_SCOPE[phase],
     },
   }));
+  // GBRA-504: a cycle scoped to a guest source skips every phase that would derive rows from guest pages (guests/derived.ts).
+  if (engine && opts.sourceId && await (await import('./guests/note.ts')).isGuestSource(engine, opts.sourceId)) {
+    const guestSkipped = new Set((await import('./guests/derived.ts')).guestSkippedPhases());
+    for (const phase of phases.filter(p => guestSkipped.has(p))) phaseResults.push({ phase, status: 'skipped', duration_ms: 0,
+      summary: 'skipped on a guest source: guest notes feed no derived rows', details: { reason: 'guest_source', source_id: opts.sourceId } });
+    phases = phases.filter(p => !guestSkipped.has(p));
+  }
 
   // Capture as a const so it narrows to `string` inside the `else` branches of
   // the per-phase `if (brainDir === null)` guards, even within async closures

@@ -52,6 +52,9 @@ import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscri
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
+import { readGuestSource, type GuestSource } from '../guests/sources.ts';
+import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable } from '../guests/admission.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -79,6 +82,7 @@ const BATCH_SHARED_READS = new Set([
   "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1",
   'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
+  'SELECT source_id, writers, trust_ceiling FROM guest_sources WHERE source_id = $1',
   'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
@@ -395,7 +399,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     throw new OperationError('request_too_large', contentSizeHold(bodyBytes, PAGE_MAX_BYTES)!.message,
       `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
   }
-  const { page_batch: _forged, timeline_section: _section, ...params } = input.params;
+  const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = input.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (p.content_origin !== undefined) contentOriginTier(p.content_origin);
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size, ...(input.batch.repeats?.length ? { repeats: input.batch.repeats } : {}) };
@@ -405,10 +409,16 @@ export async function preparePageAdmission(ctx: OperationContext,
   const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;
   const principal = await requestPrincipalForContext(ctx);
   // Independent reads go out together on Postgres; the first refusal in this order is the one reported.
-  const [, prior] = await pipelined(ctx.engine, [
+  const [, prior, guest] = await pipelined(ctx.engine, [
     () => assertPageRequestIdentity(ctx.engine, principal, requestId),
     () => getWriteRequest(ctx.engine, principal, requestId),
-  ]) as [unknown, WriteRequest | null];
+    () => readGuestSource(ctx.engine, sourceId),
+  ]) as [unknown, WriteRequest | null, GuestSource | null];
+  // GBRA-504: a guest source admits only its listed writers' plain put_page, carrying the guest attribution, which joins
+  // the intent (and so the replay identity) here; every other write to it is refused before anything is journaled.
+  const guestNote = guest ? admitGuestOperation(guest, { principal, operation: input.operation, remote: ctx.remote !== false,
+    plainPut: !input.batch && !staged && !imported && input.managedFileImport !== true, params: p, channels: ctx.guestChannels }) : null;
+  if (guestNote) p[GUEST_NOTE_INTENT_KEY] = guestNote;
   // GBRA-217: a reason is refused before anything is journaled; its canonical form joins the replay identity. An
   // operation that records no reason never journals one a caller passed anyway.
   if (CHANGE_REASON_OPERATIONS.includes(input.operation) && Object.hasOwn(p, 'reason')) {
@@ -495,6 +505,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });
+  }
+  if (guestNote) {
+    if (snapshot?.page.deleted_at) throw guestPageImmutable(`put_page over the deleted guest page ${slug}`);
+    await assertGuestReaders(ctx.engine, assertGuestFrontmatter(p.content, guestNote), currentCallerAccess().audience);
   }
   const slugAdvisory = (input.operation === 'put_page' || input.operation === 'capture') && input.managedFileImport !== true
     ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at, input.operation) : null;

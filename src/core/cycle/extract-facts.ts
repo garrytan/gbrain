@@ -842,6 +842,7 @@ export async function runExtractFacts(
     phantomsLockBusy: false,
     phantomsMorePending: false,
   };
+  if (await (await import('../guests/derived.ts')).skipsGuestSource(engine, 'extract_facts', sourceId)) return result;
 
   // ── Fence unfenced rows (#5299) ─────────────────────────────────
   // The inline writer's DB-only fallback keeps producing `row_num IS NULL`

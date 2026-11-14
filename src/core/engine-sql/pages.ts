@@ -44,6 +44,7 @@ import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
+import { guestSourceExclusionSql } from '../guests/derived.ts';
 
 /**
  * PGLite can return zero rows from `INSERT ... ON CONFLICT DO UPDATE ...
@@ -804,7 +805,7 @@ function linkExtractionHeld(versionTs?: string) {
   return sqlFragment`COALESCE(links_extract_failure->>'state' = 'held' AND links_extract_failure->>'revision' = knowledge_revision::text${generation}, false)`;
 }
 
-type StaleOpts = { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only'; wantedProducers?: readonly string[] };
+type StaleOpts = { sourceId?: string; versionTs?: string; attendance?: 'exclude' | 'blocked'; held?: 'exclude' | 'only'; wantedProducers?: readonly string[]; guests?: boolean };
 
 /**
  * Shared stale-for-extraction predicate. `attendance` narrows it by the #5761
@@ -824,8 +825,10 @@ function stalePagesWhere(opts?: StaleOpts) {
     : opts?.attendance === 'blocked' ? sqlFragment` AND links_attendance_blocked_revision = knowledge_revision` : sqlFragment``;
   const held = opts?.held === 'exclude' ? sqlFragment` AND NOT ${linkExtractionHeld(opts.versionTs)}`
     : opts?.held === 'only' ? sqlFragment` AND ${linkExtractionHeld(opts.versionTs)}` : sqlFragment``;
+  // GBRA-504: a guest page is never extracted (guests/derived.ts), so it is never stale; `guests: false` is the pre-v312 shape.
+  const guests = opts?.guests === false ? sqlFragment`` : sqlFragment` AND ${trustedSql(guestSourceExclusionSql('extract', 'pages'))}`;
   // A quarantined page is hidden from search; it is neither re-extracted nor counted as stale.
-  return sqlFragment`deleted_at IS NULL AND ${trustedSql(quarantineFilterFragment('pages'))} AND ${version}${source}${attendance}${held}`;
+  return sqlFragment`deleted_at IS NULL AND ${trustedSql(quarantineFilterFragment('pages'))} AND ${version}${source}${attendance}${held}${guests}`;
 }
 
 /** The pages (unaliased `pages` rows) link extraction still owes work: stale, not attendance-blocked, not held (rank_entities' remote coverage). */
@@ -839,9 +842,9 @@ export function staleForExtractionSql(versionTs: string): SqlFragment {
  * `attendance: false` is the pre-v180 shape (no marker column: nothing is attendance-blocked). `held` (GBRA-130 A-1) also
  * excludes held pages from the stale count and counts them (`held: false` is the pre-v258 shape: nothing is held).
  */
-export function extractionLagStatement(opts: { sourceId?: string; versionTs: string; attendance: boolean; held?: boolean; wantedProducers?: readonly string[] }): { text: string; params: unknown[] } {
+export function extractionLagStatement(opts: { sourceId?: string; versionTs: string; attendance: boolean; held?: boolean; guests?: boolean; wantedProducers?: readonly string[] }): { text: string; params: unknown[] } {
   const source = opts.sourceId ? sqlFragment` AND source_id = ${opts.sourceId}` : sqlFragment``;
-  const base = { versionTs: opts.versionTs, wantedProducers: opts.wantedProducers };
+  const base = { versionTs: opts.versionTs, wantedProducers: opts.wantedProducers, guests: opts.guests };
   const stale = stalePagesWhere({ ...base, ...(opts.attendance ? { attendance: 'exclude' as const } : {}), ...(opts.held ? { held: 'exclude' as const } : {}) });
   const blocked = opts.attendance ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, attendance: 'blocked' })})::int` : sqlFragment`0`;
   const held = opts.held ? sqlFragment`count(*) FILTER (WHERE ${stalePagesWhere({ ...base, held: 'only' })})::int` : sqlFragment`0`;
@@ -852,7 +855,7 @@ export function extractionLagStatement(opts: { sourceId?: string; versionTs: str
 /** GBRA-130 A-1: up to `limit` held pages with their failure code, oldest page first, for doctor's message. */
 export function heldLinkExtractionStatement(opts: { sourceId?: string; versionTs: string; limit: number }): { text: string; params: unknown[] } {
   return renderFragment(sqlFragment`SELECT slug, source_id, links_extract_failure->>'code' AS code FROM pages
-    WHERE ${stalePagesWhere({ sourceId: opts.sourceId, versionTs: opts.versionTs, held: 'only' })} ORDER BY id LIMIT ${opts.limit}`);
+    WHERE ${stalePagesWhere({ sourceId: opts.sourceId, versionTs: opts.versionTs, held: 'only', guests: false })} ORDER BY id LIMIT ${opts.limit}`);
 }
 
 export async function countStalePagesForExtraction(exec: ScopedRead, opts?: StaleOpts): Promise<number> {

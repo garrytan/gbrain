@@ -107,6 +107,9 @@ import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
 import { fileContentHash, FileBytes, isStreamedContent, LARGE_FILE_MIN_BYTES, StreamedFileContent } from './large-file.ts';
 import { bindOrigin } from './origin-guard.ts';
+import { assertGuestReaders, assertGuestWriterAtPublication, insertGuestMark } from '../guests/admission.ts';
+import { isGuestSource, storedGuestNote } from '../guests/note.ts';
+import { skipsGuestNote } from '../guests/derived.ts';
 
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
@@ -876,6 +879,26 @@ async function prepareUnreadRestore(engine: BrainEngine, row: WriteRequest, snap
   return prepared;
 }
 /**
+ * GBRA-504: `restore_page` of a guest page (only the local owner may submit one). Soft delete only set `deleted_at`, so
+ * the restore clears it without re-importing the body: a re-import would rewrite the page's content columns, which the
+ * guest-source guard refuses from anyone but a listed writer, and would project rows a guest page never has. A guest
+ * source is database-only, so there is no file to write.
+ */
+async function prepareGuestRestore(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot): Promise<PreparedMutation> {
+  const source = { sourceId: row.source_id };
+  const noop = snapshot.page.deleted_at == null;
+  return { observedRevision: snapshot.revision, noop, ...await pageDatabaseOnlyPublication(engine, row, undefined),
+    validate: async () => {},
+    apply: async tx => {
+      if (noop) return { ...pageNoopAdvisories(row), status: 'skipped', slug: row.slug, source_id: row.source_id, noop: true, chunks: 0, chunk_skip_reason: 'write_skipped' };
+      await tx.createVersion(row.slug, source);
+      await tx.restorePage(row.slug, source);
+      await sealPageTextProjection(tx, row.slug, row.source_id);
+      return { ...pageNoopAdvisories(row), status: 'restored', slug: row.slug, source_id: row.source_id, chunks: 0, noop: false };
+    } };
+}
+
+/**
  * serializePageToMarkdown's bytes for a page whose body was not read back, streamed from its segments by export's
  * serializer: measured here, produced again into the publication's staging file (large-file.ts), never concatenated.
  * A withdrawal mirror of a segmented page (effects.ts, effect-recovery.ts) renders its file the same way, with
@@ -1059,6 +1082,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       `Page ${row.slug} does not exist in source ${row.source_id} (it was purged or never written), so nothing was ${row.operation === 'restore_page' ? 'restored' : 'reverted'}. Check the slug and the source.`,
       pageFix(row.source_id, row.slug));
     if (row.operation === 'restore_page' && bodyUnread(snapshot.page)) return prepareUnreadRestore(engine, row, snapshot, { activePack, clock, allowMissingFile: options.allowMissingFile });
+    if (row.operation === 'restore_page' && await isGuestSource(engine, row.source_id)) return prepareGuestRestore(engine, row, snapshot);
     let page = snapshot.page;
     let tags = snapshot.tags;
     if (row.operation === 'revert_version') {
@@ -1085,7 +1109,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
   }
   content = remoteCoreMarkingKept(row, snapshot, content, activePack);
-  const projected = !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
+  const guestNote = storedGuestNote(p);
+  const projected = !skipsGuestNote('publication_projections', p) && !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
   const writer = replacesTombstone || ((row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
     && (preparedIntent !== undefined || typeof p.expected_revision === 'string')) ? 'editing' : 'preserving';
   // #5969 (D3): only an ordinary put_page intent carries a timeline section; every other writer keeps the shared policy.
@@ -1121,6 +1146,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // #5575: the page's tier, computed once before import so the write gate sees exactly it (ENG-18).
   const incoming = typeof content === 'string' && !isFenceEditWrite(row) ? parseMarkdown(content, row.slug, { activePack }).frontmatter : null;
   const trust = provenanceWriteTrust(row, incoming, snapshot?.page.frontmatter);
+  const guestAudience = guestNote ? await assertGuestReaders(engine, incoming ?? {}, Array.isArray(row.authority.actingFor) ? row.authority.actingFor : null) : null;
   const gateTrust = pageGateTrust(row, trust, storedTier);
   // GST-2518: a lower-tier local write keeps the page's privacy labels it would widen (GST-2521: and the owner as a reader); its proposal carries the request.
   const labelGuard = await privacyLabelGuard(engine, row, trust, snapshot?.page ?? null, storedTier, incoming);
@@ -1203,7 +1229,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const [project, advisories, links, target, core] = await pipelined(together, [
     async () => projected ? prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy) : undefined,
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
-    async () => !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
+    async () => !skipsGuestNote('auto_links', p) && !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
       ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,
     () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock, labelEdit: row.operation === 'submit_job' && p.kind === 'managed_maintenance_page' ? readLabelEdit(p.label_edit) : undefined }),
     // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
@@ -1303,6 +1329,15 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       // DX-1: a guarded supersession reports contested (the first proposal; every one when the write contested several rows).
       ...(contested.length ? { contested: { proposal_ref: contested[0], ...(contested.length > 1 ? { proposal_refs: contested } : {}) } } : {}) };
   } };
+  if (guestNote && guestAudience) {
+    const { validate, apply } = publication;
+    publication.validate = async tx => { await validate?.(tx); await assertGuestWriterAtPublication(tx, row); };
+    publication.apply = async (tx, preimage) => {
+      const out = await apply(tx, preimage);
+      if (!noop) await insertGuestMark(tx, row, guestNote, guestAudience);
+      return out;
+    };
+  }
   return publication;
 }
 

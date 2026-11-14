@@ -51,6 +51,7 @@ import { getEmbeddingModel } from '../core/ai/gateway.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedMode } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
+import { readGuestSource } from '../core/guests/sources.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -466,6 +467,10 @@ export async function runImport(
         console.error(formatDefaultWriteWarning(assessment, '--source-id'));
       }
     }
+  }
+  if (await readGuestSource(engine, sourceId ?? 'default')) {
+    console.error(`source_writer_restricted: source ${sourceId ?? 'default'} is a guest source; only its listed writers save pages there, through put_page. Import into another source.`);
+    throw new ImportAbortError('source_writer_restricted: guest sources take no import');
   }
   if (!currentCompanyBrainSync(sourceId) && await getCompanyBrainProfile(engine, sourceId ?? 'default')) {
     console.error('This source accepts only its approved committed company-brain manifest. Use sources resume or sync; ordinary import cannot write back to this read-only repository.');

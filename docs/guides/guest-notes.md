@@ -5,10 +5,10 @@ offsite moved to Friday"). Those people are outside guests: they aren't you, and
 their words shouldn't read as yours. A **guest source** is where gbrain keeps
 their notes, apart from your own pages, with a record of who said what.
 
-This page is the operator view: what a guest source is and how to set one up.
-Saving notes into it, the warning every read shows on a guest note, and keeping a
-guest note as your own page arrive in later releases. Until then a guest source
-holds nothing unless a listed writer puts pages there.
+This page covers what a guest source is, how to set one up, and how a listed
+writer (the broker your agent's host runs) saves notes into it. The warning every
+read shows on a guest note, and keeping a guest note as your own page, arrive in
+later releases.
 
 ## What a guest source is
 
@@ -19,9 +19,10 @@ enforces, whatever program writes to it:
   frontmatter, slug or source, needs a writer on the source's writer list. A
   writer is named the way gbrain records who made a write: `oauth_client:<client
   id>` for an OAuth client, `legacy_token:<token id>` for a legacy token. Your own
-  CLI is not on the list, so `gbrain put --source guests` is refused with
-  `source_writer_restricted`. Soft delete, restore, purge and maintenance that
-  touches no page text still work for you.
+  CLI is not on the list, so `gbrain put --source guests`, `gbrain import`,
+  `remember` and `add_link` there are refused with `source_writer_restricted`.
+  Deleting and restoring a guest page from your own CLI still work, and so do
+  purge and maintenance that touches no page text.
 - **Never above external, untrusted.** Every page there is stored at the
   `external_untrusted` trust tier or lower ([memory trust](memory-trust.md)), even
   when a write path would normally raise it (an owner rewrite, a backfill, a
@@ -77,12 +78,60 @@ A source that isn't a guest source has no writer list, so the command refuses
 it. Changing the list is your decision on the brain host; nothing in gbrain
 widens it on its own.
 
+## Save a guest note (for the writer)
+
+A listed writer saves a note with one `put_page` call to the guest source. The
+call says who it speaks for and who the guest is, beside the tool arguments:
+
+- **Audience:** the `X-Gbrain-On-Behalf-Of` header (or request-level
+  `_meta.on_behalf_of`) names exactly one member or group, for example
+  `group:team-a`. The credential's `may_act_for` must allow it.
+- **Guest attribution:** the `X-Gbrain-Guest` header in URL-encoded form,
+  `sender_label=Bob%20Example&group=team-a`, or request-level `_meta.guest`,
+  `{"sender_label": "Bob Example", "group": "team-a"}`. A label is 1 to 64
+  characters with no control or format characters and none of `·`, `[`, `]`,
+  `<`, `>` or `"`; the group is a slug of `a-z`, `0-9` and `-`. Without it
+  the write is refused `guest_attribution_missing`. Attribution sent with a write
+  to any other source is ignored and stored nowhere.
+
+The page content keeps to a short frontmatter: only `type`, `title`,
+`readable_by`, `guest_group`, `guest_sender` and `saved_at`, with
+`guest_sender` and `guest_group` equal to the attribution
+(`guest_frontmatter_refused` otherwise). `readable_by` is exactly you (the
+brain owner) and the audience, for example `[alice-example, group:team-a]`
+(`guest_readers_invalid` otherwise):
+
+```markdown
+---
+type: note
+title: Offsite moved to Friday
+readable_by: [alice-example, group:team-a]
+guest_group: team-a
+guest_sender: Bob Example
+saved_at: 2026-11-13T10:00:00Z
+---
+The offsite moved to Friday.
+```
+
+A guest note is saved once, as a new page. Saving to a slug that exists is
+refused `revision_required`, and `force`, `expected_revision`, `edit_page`,
+`append_page`, `add_timeline_entry`, `add_link`, `remember`, `put_pages` and
+uploads are refused `guest_page_immutable`; a writer may delete its notes.
+gbrain checks the writer list again when the note publishes, so a writer you
+remove in between is refused `source_writer_restricted`. Every refusal is in
+[write refusals](write-refusals.md#guest-source-refusals).
+
+Guest notes feed nothing else in your brain: no facts, takes, timeline entries,
+atoms or link edges are made from them, and the dream cycle and extraction skip
+the guest source. Search, query and get still find them.
+
 ## What is stored
 
 Three database tables back a guest source. `guest_sources` names each guest
-source, its writer list and its trust ceiling. `guest_marks` will hold, for each
-guest note, who it was saved for, from which group (for example `group:team-a`),
-the sender's label (for example `bob-example`), when and by which writer; a mark
-can never be edited and is removed only when its page is purged.
-`guest_promotions` will record guest notes you keep as your own pages. In this
-release nothing writes the last two yet.
+source, its writer list and its trust ceiling. `guest_marks` holds, for each
+guest note, who it was saved for (`member:bob-example` or `group:team-a`),
+from which group, the sender's label (for example `Bob Example`), when, by which
+writer and in which request; the mark is written in the same transaction as the
+page, can never be edited and is removed only when its page is purged.
+`guest_promotions` will record guest notes you keep as your own pages; nothing
+writes it yet.

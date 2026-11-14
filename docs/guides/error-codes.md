@@ -2542,6 +2542,86 @@ More: [docs/guides/write-refusals.md#drain-grant-scope](../../docs/guides/write-
 |---|---|---|---|---|---|---|
 | Source relationship reconciliation is incomplete. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### guest_attribution_missing
+
+<a id="guest_attribution_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a guest source carried no valid guest attribution (the X-Gbrain-Guest header or request-level _meta.guest with sender_label and group); nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Send sender_label and group in _meta.guest or the X-Gbrain-Guest header, then save with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_attribution_missing](../../docs/guides/write-refusals.md#guest_attribution_missing)
+
+### guest_frontmatter_refused
+
+<a id="guest_frontmatter_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest page's frontmatter held a key outside the allowlist, or a guest_sender or guest_group that differs from its attribution; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Send only type, title, readable_by, guest_group, guest_sender and saved_at, matching the attribution. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_frontmatter_refused](../../docs/guides/write-refusals.md#guest_frontmatter_refused)
+
+### guest_mark_immutable
+
+<a id="guest_mark_immutable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest mark is never changed; it leaves only with its page. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_mark_immutable](../../docs/guides/write-refusals.md#guest_mark_immutable)
+
+### guest_page_immutable
+
+<a id="guest_page_immutable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest page is saved once, as a new page, and never changed, and a guest source holds no facts, takes or timeline entries; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Save the note again under a new slug, or ask the brain owner to promote it and edit the owner page. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_page_immutable](../../docs/guides/write-refusals.md#guest_page_immutable)
+
+### guest_page_promoted
+
+<a id="guest_page_promoted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Reserved: the guest page was already kept as an owner page. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_page_promoted](../../docs/guides/write-refusals.md#guest_page_promoted)
+
+### guest_promotion_owner_only
+
+<a id="guest_promotion_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Reserved: only the brain owner may keep a guest note as an owner page. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_promotion_owner_only](../../docs/guides/write-refusals.md#guest_promotion_owner_only)
+
+### guest_readers_invalid
+
+<a id="guest_readers_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest page's readable_by is not exactly the brain owner plus the one member or group the call speaks for; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Speak for one member or group and set readable_by to the owner and that principal. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_readers_invalid](../../docs/guides/write-refusals.md#guest_readers_invalid)
+
+### guest_source_database_only
+
+<a id="guest_source_database_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest source is database-only: it takes no local path or repository, and a source with one cannot become a guest source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_source_database_only](../../docs/guides/write-refusals.md#guest_source_database_only)
+
 ### harness_hook_duplicates
 
 <a id="harness_hook_duplicates"></a>
@@ -5317,6 +5397,16 @@ Reasons: `missing`, `not_directory`, `permission_denied`, `symlink_loop`, `unrea
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Canonical preparation requires a source-content correction; this profile never writes repository files. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### source_writer_restricted
+
+<a id="source_writer_restricted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a guest source came from a credential that is not on its writer list (the local CLI, an enforced member, or a removed writer included); nothing was written. | A guest source holds notes saved for people outside the brain; only the writers the brain owner listed create pages there, so nothing else can make a guest's words look like the owner's or change them. | Do not retry. Write to another source; who may write a guest source is the brain owner's decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#source_writer_restricted](../../docs/guides/write-refusals.md#source_writer_restricted)
 
 ### sources_not_readable
 

@@ -67,7 +67,7 @@ export function pageWriteTrust(row: Pick<WriteRequest, 'id' | 'operation' | 'aut
   // A managed derived page (atoms, synthesis, concepts, chronicle) carries its derivation declaration (trust/taint.ts).
   const channel = derivationWriteTrust(row.intent) ?? requestChannelTrust(row);
   if (!channel || isFenceEditWrite(row)) return channel;
-  const caps = frontmatterTrustCaps(frontmatter);
+  const caps: TrustTier[] = [...frontmatterTrustCaps(frontmatter), ...(row.intent?.guest_note !== undefined ? ['external_untrusted' as const] : [])];
   return caps.length ? effectiveWriteTrust({ channel: channel.tier, lowerTo: caps, origin: channel.origin ?? { channel: row.operation } }) : channel;
 }
 
