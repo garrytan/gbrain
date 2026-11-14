@@ -88,10 +88,13 @@ Owner (one member who owns this brain; credentials bound to it read every page, 
 
 Serves several people (GST-363):
   gbrain access serves                       One or several, and why (config access.serves, else 2+ enabled members)
-  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--yes]
+  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--labelled-only] [--yes]
                                              Preview first; --yes writes access.serves = several, adds each member,
                                              a folder rule people/<member>/ read only by that member, and one key
-                                             bound to each member in a 0600 file under <config>/member-keys/
+                                             bound to each member in a 0600 file under <config>/member-keys/.
+                                             Both list the pages every member's key can still read (no rule or
+                                             readable_by restricts them); --labelled-only keeps each member to the
+                                             pages labelled for it (never the owner)
 
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--id <rule>] [--source <id>] [--yes]
