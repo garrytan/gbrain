@@ -5050,8 +5050,8 @@
         "idempotent": true,
         "name": "guest_notes",
         "sql": {
-          "length": 17488,
-          "sha256": "14c2cc406663fe8ba02179dc31b47c43ea9dbfb9788d4a94ac3c0c7cff4f20e6"
+          "length": 18614,
+          "sha256": "3e4edce6a5b53e1fa0ed80b9af0a62d981fe4e085dc2f9890587c8a4eef478a9"
         },
         "sqlFor": "absent",
         "transaction": "absent",
