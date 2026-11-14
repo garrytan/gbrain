@@ -58,7 +58,9 @@ It also declares `code` (the code importer's page type, non-extractable
 media, no folder prefix) and `extract_receipt` (the extract receipt
 writer's page type under `extracts/`, a non-extractable annotation), so
 imported code and extraction receipts never read as undeclared types and
-the catch-all retype leaves them alone.
+the catch-all retype leaves them alone. Since 1.6.0 it declares
+`stored-object` (a storage shelf card, a non-extractable annotation with no
+folder prefix) for the same reason.
 
 ## Subtypes (declared in frontmatter post-unify)
 

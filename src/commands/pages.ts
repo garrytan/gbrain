@@ -47,6 +47,7 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
   const { olderThanHours, dryRun, json, retryParked } = parsePurgeArgs(args);
   // #6741: one selector for the preview, the consent and the run (selectPurgeCandidates): the same cutoff, rename
   // holds, writer state and parks; --retry-parked puts the parked pages the cutoff selects back among the candidates.
+  if (!dryRun) await (await import('../core/repair/origin-carry.ts')).retryParkedOrigins(engine, olderThanHours);
   const selection = await selectPurgeCandidates(engine, olderThanHours, { retryParked });
   const retried = selection.parked.filter(park => park.retried).length;
   const notes = { ...(selection.parked.length ? { parked: selection.parked, retry_parked: retryParked } : {}), ...(selection.blocked.length ? { blocked: selection.blocked } : {}) };

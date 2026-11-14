@@ -16,7 +16,7 @@ import type { AuthInfo } from '../ops/contract.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { catalogueError, ERROR_CATALOGUE } from '../error-catalogue.ts';
-import type { CallerAccess } from '../search/private-visibility.ts';
+import { schemaVersionNow, type CallerAccess } from '../search/private-visibility.ts';
 import { identityFor } from './principals.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { memberByEmail, memberIdentity } from './members.ts';
@@ -226,7 +226,7 @@ export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw
     labelledOnly: await labelledOnlyFor(engine, [identity]),
     applyRemoteReadPolicy: false,
     restricted: true,
-    remotePolicy: { privacyRelaxed: false, restricted: true },
+    remotePolicy: { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(engine) },
   };
 }
 

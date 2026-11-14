@@ -95,6 +95,11 @@ export function withOutputRedaction(op: Pick<Operation, 'handler' | 'outputRedac
   const localVerbatim = policy === 'retrieval' ? [] : policy.retrieval.localVerbatim;
   return async (ctx, params) => {
     const result = await handler(ctx, params);
-    return redactRetrievalOutput([result], {}, { uncapped: true, verbatim: ctx.remote === false ? localVerbatim : [] }).results[0];
+    const redacted = redactRetrievalOutput([result], {}, { uncapped: true, verbatim: ctx.remote === false ? localVerbatim : [] }).results[0];
+    // In-process side channels (symbol keys, e.g. a think answer's room evidence) survive the redaction copy; no response carries them.
+    if (result && typeof result === 'object' && redacted && typeof redacted === 'object') {
+      for (const key of Object.getOwnPropertySymbols(result)) (redacted as Record<symbol, unknown>)[key] = (result as Record<symbol, unknown>)[key];
+    }
+    return redacted;
   };
 }

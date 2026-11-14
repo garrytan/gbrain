@@ -162,6 +162,8 @@ Flags:
                        people (2+ enabled members) refuses rather than write a connection bound
                        to nobody, unless this harness's entry or config mcp.stdio_member binds it.
   --members IDS        The people of --serves several, comma-separated (e.g. alice-example,bob-example).
+  --labelled-only      With --serves several: each member's key reads only pages labelled for
+                       that member (readable_by or a rule), never the owner's. Opt-in.
   --members-file PATH  The same, one id per line.
   --stdio-member ID    claude-code or codex: write serve --stdio-member ID into this harness's
                        MCP entry, so only its sessions read as ID (an enabled member, or one
@@ -270,6 +272,8 @@ interface SetupFlags {
   serves?: 'one' | 'several';
   members?: string;
   membersFile?: string;
+  /** GST-2670: --labelled-only, passed to access serves several. */
+  labelledOnly?: boolean;
   /** GST-363: written into this harness's MCP entry as serve --stdio-member; never into config. */
   stdioMember?: string;
   noStdioMember: boolean;
@@ -297,6 +301,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   const serves = value('--serves');
   if (serves !== undefined && serves !== 'one' && serves !== 'several') return `unknown --serves '${serves}'; pass one or several`;
   if ((args.includes('--members') || args.includes('--members-file')) && serves !== 'several') return '--members and --members-file name the people of --serves several';
+  if (args.includes('--labelled-only') && serves !== 'several') return '--labelled-only applies to the people of --serves several';
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
   const noStdioMember = args.includes('--no-stdio-member');
@@ -356,6 +361,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     ...(serves ? { serves: serves as 'one' | 'several' } : {}),
     ...(value('--members') !== undefined ? { members: value('--members') } : {}),
     ...(value('--members-file') !== undefined ? { membersFile: value('--members-file') } : {}),
+    ...(args.includes('--labelled-only') ? { labelledOnly: true } : {}),
     ...(stdioMember !== undefined ? { stdioMember } : {}),
     noStdioMember,
   };

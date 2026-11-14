@@ -579,6 +579,7 @@ src/core/repair/lost-fence-rows.ts	plannedPage	call:serializePageToMarkdown	SEGW
 src/core/repair/lost-fence-rows.ts	plannedPage	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
 src/core/repair/lost-fence-rows.ts	scanLostFenceRows	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
 src/core/repair/lost-fence-rows.ts	scanLostFenceRows	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
+src/core/repair/origin-carry.ts	stamp	call:serializePageToMarkdown	SEGW	a segmented page fails before the read (segmented_page) and parks its origin
 src/core/repair/orphan-children.ts	PROBE_SQL	sql	META	
 src/core/repair/overwritten-edits.ts	previewEdit	call:serializePageToMarkdown	SEGW	only high-confidence edits (live page and version both inline at scan time) are previewed; a page whose revision moved since the scan is skipped before it is serialized
 src/core/repair/overwritten-edits.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	inline versions only: a segmented version has no lost_digest and is never previewed; the restore goes through revert_version, which refuses a segmented page or version

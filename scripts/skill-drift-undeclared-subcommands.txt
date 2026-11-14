@@ -41,6 +41,7 @@ skillify
 skillopt
 skillpack
 sources
+storage
 sync
 takes
 transcripts

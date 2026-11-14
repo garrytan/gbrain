@@ -20,7 +20,7 @@
  *
  * Every other hold returns null: a held take, which owner-actions.ts refuses (`unavailable`), and an unmanaged brain,
  * a hold with no entity slug, or one whose page is missing (GBRA-190 G4 owns that class), which take its transactional
- * database-only release. A
+ * database-only release; on a strict source an unmanaged brain refuses `git_home_required` instead (GST-2692). A
  * deleted or private page refuses and the fact stays held; a segmented page over the ceiling, a malformed fence or a
  * row that no longer reads back refuse at preparation the same way.
  */
@@ -38,8 +38,10 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { prepareFenceFactAppend } from '../facts/fence-fact-append.ts';
 import { assertFactNotWithdrawn } from '../facts/single-prepare.ts';
 import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
-import { isHoldingSlug, parseFactsFenceFor, type ParsedFact } from '../facts-fence.ts';
-import { holdingHome } from '../facts/held-fact-move.ts';
+import { isHoldingSlug, parseFactsFenceFor, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { sourceCanonicalGit } from '../persistence/git-door.ts';
+import { gitHomeRequired } from '../persistence/git-declared.ts';
+import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
@@ -111,9 +113,14 @@ export async function releaseCell(engine: BrainEngine, hold: Pick<WriteGateHold,
  */
 export async function submitTrustRelease(engine: BrainEngine, holdId: number, by: string, config?: GBrainConfig,
   approved?: (hold: WriteGateHold, cell: ParsedFact | null) => Promise<boolean>): Promise<boolean | null> {
-  if (!(await managedPersistenceEnabled(engine))) return null;
+  const managed = await managedPersistenceEnabled(engine);
   const hold = await getWriteGateHold(engine, holdId);
   if (!hold || hold.kind !== 'fact') return null;
+  // GST-2692: on a strict source a release with managed persistence off refuses, never a database-only release.
+  if (!managed && await sourceCanonicalGit(engine, hold.source_id)) {
+    throw gitHomeRequired({ source_id: hold.source_id, slug: releaseTarget(hold)?.slug ?? UNATTRIBUTED_MEMORY_SLUG }, 'persistence_disabled', false);
+  }
+  if (!managed) return null;
   let target = releaseTarget(hold);
   let snapshot = target ? await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, includeDeleted: true }) : null;
   // GST-2492 PR 2: on a strict source a fact with no entity, or whose entity has no page, is released onto its holding page
@@ -124,6 +131,8 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
     target = { slug: home.slug, mode: 'append' };
     snapshot = await engine.readPageSnapshot(home.slug, { sourceId: hold.source_id, includeDeleted: true });
   }
+  // GST-2676: a fact no holding page can carry (an exact page rule, an unreadable access state) refuses, never a database-only release.
+  if (home && 'refused' in home) await refuseUnheldFact(engine, hold.source_id, str(hold.payload.entity_slug)!, home.refused, false);
   if (!target || !snapshot && !isHoldingSlug(target.slug)) return null;
   const { initializeLocalPersistence, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
   const { submissionAuthority } = await import('../persistence/authority.ts');

@@ -1,12 +1,12 @@
 /**
- * The secret gate on automatic publishes (`commitAndPush({ pushOnly, keepCheckout, scanSecrets })`, the publish
+ * The secret gate on automatic publishes (`commitAndPush({ pushOnly, keepCheckout })`, the publish
  * `gbrain sources refresh` runs in its child): it scans, under the publish lock, what the commits it is about to push add.
  * Protects: a value that looks like a secret is found in an added line even when a later commit removed it, in a
  * commit message, and in a merge commit's conflict resolution, named by path, line, rule and commit but never by
  * value, and nothing is pushed; an added line whose text starts with `++` (printed `+++`, like a file header) is
  * still scanned; added text over the scan cap, and a commit in the range that changes .gbrain-scan-allow or a
  * .gitattributes, refuse; a fingerprint in the working tree's .gbrain-scan-allow and a binary file are skipped; a clean
- * range publishes; without scanSecrets nothing changes; a remote rewound past a pushed secret (the tracking ref still names
+ * range publishes; a remote rewound past a pushed secret (the tracking ref still names
  * it) is fetched and scanned again instead of fast-forwarded over (#8896).
  * Seams: none; real repositories and a bare remote.
  */
@@ -39,7 +39,7 @@ const commit = (root: string, file: string, content: string | Buffer, message = 
   writeFileSync(join(root, file), content); git(root, 'add', file); git(root, 'commit', '-qm', message);
   return git(root, 'rev-parse', 'HEAD');
 };
-const publish = (root: string, scanSecrets = true) => commitAndPush({ repo: root, cwd: root, paths: [], pushOnly: true, keepCheckout: true, ...(scanSecrets ? { scanSecrets: true } : {}) });
+const publish = (root: string) => commitAndPush({ repo: root, cwd: root, paths: [], pushOnly: true, keepCheckout: true });
 const refused = (fn: () => unknown) => {
   try { fn(); } catch (e) { return e as { code: string; message: string; detail?: string; fix?: { user_message?: string } }; }
   throw new Error('expected publish_secret_found');
@@ -80,7 +80,7 @@ test('a secret typed into a merge commit\'s conflict resolution is refused', () 
   expect(remoteTip(r)).toBe(r.base);
 });
 
-test('an allowlisted fingerprint and a binary file are skipped and the clean range publishes; without scanSecrets nothing is scanned', () => {
+test('an allowlisted fingerprint and a binary file are skipped and the clean range publishes', () => {
   const r = repo('allow');
   commit(r.root, 'data.bin', Buffer.concat([Buffer.from([0, 1, 2]), Buffer.from(token)]));
   commit(r.root, 'notes.md', `Deploy token ${token}\n`);
@@ -90,10 +90,6 @@ test('an allowlisted fingerprint and a binary file are skipped and the clean ran
   writeFileSync(join(r.root, '.gbrain-scan-allow'), `${fingerprint}\n`);
   expect(publish(r.root)).toMatchObject({ outcome: 'pushed', checkout: 'unchanged' });
   expect(remoteTip(r)).toBe(git(r.root, 'rev-parse', 'HEAD'));
-
-  const plain = repo('plain');
-  commit(plain.root, 'notes.md', `Deploy token ${token}\n`);
-  expect(publish(plain.root, false)).toMatchObject({ outcome: 'pushed' });
 });
 
 

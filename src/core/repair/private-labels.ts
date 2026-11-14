@@ -233,8 +233,17 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
  * derived_from slug without `.md`), and every tie is an equality join of those references, or of concept-provenance
  * links through idx_links_to, to the cleared pages. The postimage is the pages table shadowed with the window's keys
  * removed; its privacy rules read only candidate pages and the pages they name.
+ *
+ * GST-2689 `remove`: the postimage is the pages table with the cleared pages removed instead (their rows, so the links to
+ * them go too), `keys` is unused, an atom also ties to the page a rename moved its `source_slug` to (slug_aliases and
+ * slug_rename_history, read before a purge scrubs them). A page that names readers is judged by the same privacy rules,
+ * since readable_by never relaxes them: it is returned when the removal would open it to its listed readers. A soft-deleted
+ * page is a candidate too, since a restore brings it back with the origin row gone, and so is a removed page tied to
+ * another removed page (judged on its own row, against the postimage), since another hold may keep it from the purge.
  */
-export function dependentsSql(): string {
+export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
+  const remove = mode === 'remove';
+  const live = (sql: string) => remove ? '' : sql;
   return `WITH cleared AS MATERIALIZED (
       SELECT * FROM unnest($1::integer[], $2::text[], $3::text[], $4::text[]) AS c(id, source_id, slug, keys)),
     refs AS MATERIALIZED (SELECT p.id, p.source_id, p.slug, p.deleted_at, r.kind, r.ref FROM pages p
@@ -242,23 +251,28 @@ export function dependentsSql(): string {
         UNION ALL SELECT 'depth', p.frontmatter->'event'->>'depth'
         UNION ALL SELECT 'declared', regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
           CASE jsonb_typeof(p.frontmatter->'derived_from') WHEN 'array' THEN p.frontmatter->'derived_from'
-            WHEN 'string' THEN jsonb_build_array(p.frontmatter->'derived_from') ELSE '[]'::jsonb END) AS declared(slug)) r
+            WHEN 'string' THEN jsonb_build_array(p.frontmatter->'derived_from') ELSE '[]'::jsonb END) AS declared(slug)${remove ? `
+        UNION ALL SELECT 'source_slug', renamed.canonical_slug FROM slug_aliases renamed WHERE renamed.source_id = p.source_id
+          AND renamed.alias_slug = p.frontmatter->>'source_slug' AND renamed.notes = 'rename'
+        UNION ALL SELECT 'source_slug', moved.new_slug FROM slug_rename_history moved WHERE moved.source_id = p.source_id
+          AND moved.old_slug = p.frontmatter->>'source_slug'` : ''}) r
       WHERE p.source_id = ANY($2::text[]) AND r.ref IS NOT NULL),
     hits AS MATERIALIZED (SELECT r.id, r.source_id, r.slug, r.deleted_at, r.kind, c.id AS cleared_id
       FROM refs r JOIN cleared c ON c.source_id = r.source_id AND c.slug = r.ref),
     provenance AS MATERIALIZED (SELECT l.from_page_id, x.cleared_id, x.source_id
       FROM (SELECT c.id, c.id AS cleared_id, c.source_id FROM cleared c UNION ALL SELECT h.id, h.cleared_id, h.source_id FROM hits h WHERE h.kind = 'source_slug') x
       JOIN links l ON l.to_page_id = x.id WHERE l.link_source = 'concept-provenance' AND l.link_type = 'synthesized_from'),
-    ties AS (SELECT h.id, h.cleared_id FROM hits h WHERE h.deleted_at IS NULL
+    ties AS (SELECT h.id, h.cleared_id FROM hits h${live(' WHERE h.deleted_at IS NULL')}
       UNION ALL SELECT r.id, h.cleared_id FROM hits h JOIN refs r ON r.source_id = h.source_id AND r.kind = 'depth' AND r.ref = h.slug
-        WHERE h.kind = 'declared' AND r.deleted_at IS NULL
-      UNION ALL SELECT p.id, t.cleared_id FROM provenance t JOIN pages p ON p.id = t.from_page_id AND p.source_id = t.source_id AND p.deleted_at IS NULL),
-    candidates AS MATERIALIZED (SELECT DISTINCT t.id, t.cleared_id FROM ties t WHERE NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = t.id)),
+        WHERE h.kind = 'declared'${live(' AND r.deleted_at IS NULL')}
+      UNION ALL SELECT p.id, t.cleared_id FROM provenance t JOIN pages p ON p.id = t.from_page_id AND p.source_id = t.source_id${live(' AND p.deleted_at IS NULL')}),
+    candidates AS MATERIALIZED (SELECT DISTINCT t.id, t.cleared_id FROM ties t WHERE ${remove ? 't.id <> t.cleared_id' : 'NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = t.id)'}),${remove ? `
+    candidate_rows AS MATERIALIZED (SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM pages a WHERE a.id IN (SELECT id FROM candidates)),` : ''}
     public_after AS MATERIALIZED (WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
           CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
-        FROM pages pg LEFT JOIN cleared c ON c.id = pg.id)
-      SELECT after_clear.id FROM (SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM (SELECT DISTINCT id FROM candidates) k
-        JOIN pages a ON a.id = k.id OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear')})
+        FROM pages pg LEFT JOIN cleared c ON c.id = pg.id${remove ? ' WHERE c.id IS NULL' : ''})
+      SELECT after_clear.id FROM (${remove ? 'SELECT * FROM candidate_rows' : `SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM (SELECT DISTINCT id FROM candidates) k
+        JOIN pages a ON a.id = k.id`} OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear', true)})
     SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
         WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
       FROM candidates cand JOIN pages p ON p.id = cand.id

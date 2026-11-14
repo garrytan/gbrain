@@ -6,6 +6,7 @@ test/unmanaged-push-every-site-gst2456.serial.test.ts	R1	R1: mutates HOME, GBRAI
 test/unmanaged-push-history-scan-8902.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real policy, scaffolding, sources push and bootstrap pushes to local bare remotes
 test/http-db-config.serial.test.ts	global-state	global-state: binds HTTP listeners; drains process-wide pending eval capture registry; withEnv scopes GBRAIN_HOME and GBRAIN_CONTRIBUTOR_MODE
 test/access-as.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --as) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the cases seed and read that one brain in order
+test/access-room-cli.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --room) that each open one on-disk PGLite brain in a temp GBRAIN_HOME, and runs a live PGLite persistence owner on a socket in its own temp home that later cases delegate reads to
 test/enforced-member.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts under GBRAIN_ENFORCED_MEMBER) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME, or one isolated Postgres database; the cases seed and read that one brain in order
 test/access-binding.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (auth create|rescope|register-client, access member) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; later cases read the bindings earlier ones wrote
 test/admin-grant-outcome.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; binds local servers/ports
@@ -469,3 +470,4 @@ test/extraction-review-door.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HO
 test/synopsis-sweep-8744.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL)
 test/release-channel-w1.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_RELEASE_CHANNEL) and stubs globalThis.fetch
 test/hermes-snapshot-7067.serial.test.ts	R2	R2: mock.module(node:fs) wraps copyFileSync to inject a writer and WAL checkpoint mid-snapshot
+test/push-secret-scan-gaps.serial.test.ts	global-state	global-state: sets GBRAIN_HOME, PATH (a git wrapper for the index race) and GBRAIN_GIT_ALLOW_FILE_TRANSPORT through withEnv for real commits and pushes to local bare remotes

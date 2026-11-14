@@ -24,6 +24,7 @@ import {
 import { embedQueryWithPrefix } from '../search/query-prefix.ts';
 import { ALL_SOURCES } from '../source-id.ts';
 import { privatePagesFilterForCaller } from '../search/private-visibility.ts';
+import { keepRoomEvidence } from '../access/room.ts';
 
 /** Result pages whose takes D2 checks: the page a get_page read returned, or the first distinct pages of a search/query. */
 const HIDDEN_TAKES_PAGE_CAP = 3;
@@ -426,9 +427,11 @@ const think: Operation = {
     if (remote && (Boolean(p.save) || Boolean(p.take))) ctx.emitNotice?.(thinkNotSavedNotice());
     const { recordThinkAnswer, feedbackMetaFields } = await import('../feedback/record.ts');
     const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'think', result));
-    delete result.feedback_evidence; delete result.taint_refs;
+    const evidence = result.taint_refs && [...result.taint_refs, ...(result.room_extra ?? [])];
+    delete result.feedback_evidence; delete result.taint_refs; delete result.room_extra;
     const { persist: _persist, persist_base: _persistBase, ...visible } = result;
-    return {
+    // GBRA-498: a think answer going into a room is marked at the strictest class of everything it was built from.
+    return keepRoomEvidence({
       ...visible,
       ...feedbackMeta,
       // #1698 (#10): the persist-skip signal returns slug '' — map it (and any
@@ -437,7 +440,7 @@ const think: Operation = {
       evidence_inserted: evidenceInserted,
       take_row: takeRow,
       remote_persisted_blocked: remote && (Boolean(p.save) || Boolean(p.take)),
-    };
+    }, evidence);
   },
   // hidden: 'think' is in CLI_ONLY (src/cli.ts) — the richer runThinkCli
   // handler owns the CLI surface; a non-hidden hint here is dead (CLI_ONLY

@@ -48,6 +48,8 @@ export type FaultPoint = `publication:${PublicationBoundary}` | `effect:${Effect
   | 'purge:slug_lookup' | 'purge:tail_recheck' | 'purge:pending_recheck' | 'purge:redaction_read'
   // #6511: before each keyset chunk of the preparation-time journal sweep (a stalling hook models a slow chunk), and the fact purge's planning read.
   | 'purge:sweep_chunk' | 'purge:carrying_lookup'
+  // GST-2689: after a purge labelled the pages derived from its origins (repair/origin-carry.ts) and before it deletes any row.
+  | 'purge:after_carry'
   // W1: before each keyset batch of the belief ledger's purge redaction (belief/purge.ts); a 57014 from the hook models its statement timeout.
   | 'purge:ledger_redaction'
   // Before a fact purge records its derivation sweep in its transaction (segment-derive.ts recordDerivationPurge); a 57014 from the hook models its statement timeout.

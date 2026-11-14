@@ -548,7 +548,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "delete_page",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names gbrain repair file-drift --prefer file, which imports the file's current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials.",
+    "description": "Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names gbrain repair file-drift --prefer file, which imports the file's current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials. Before the row is removed, pages that are private only through this page get their own visibility: private; a purge that cannot label them soft-deletes the page instead and returns purge_held (doctor derived_origin_parked).",
     "params": {
       "source_id": {
         "type": "string",
@@ -3867,6 +3867,202 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       ]
     },
     "area": "files"
+  },
+  {
+    "name": "storage_find",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Find archived items on the storage shelf (files moved to B2, Supabase Storage, S3 and similar) by a plain phrase, such as \"the October Gmail dataset\". Ranks exact id, then exact alias, then cards matching most of the phrase's words in title, aliases and description. When nothing matches, not_found is true and closest lists the nearest cards. Then call storage_get with the id for where it is stored and how to restore it.",
+    "params": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "description": "The phrase, id or alias."
+      },
+      "store": {
+        "type": "string",
+        "enum": [
+          "b2",
+          "supabase",
+          "s3",
+          "r2",
+          "gcs",
+          "other"
+        ],
+        "description": "Only cards with a copy in this store."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "archived",
+          "restored",
+          "missing",
+          "retired"
+        ],
+        "description": "Only cards with this status."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max hits (default 10, max 50)."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "name": "storage-find",
+      "positional": [
+        "query"
+      ]
+    },
+    "area": "storage"
+  },
+  {
+    "name": "storage_get",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Read one card from the storage shelf by id: what the item is, every stored copy (store, bucket, path, restic repository and snapshot, size, hash, when verified), the original path, why it was archived, the restore form (restore.skill and restore.args, run by the agent's own restore skill; cards carry no commands or credentials), past restores, who registered it, and its revision.",
+    "params": {
+      "id": {
+        "type": "string",
+        "required": true,
+        "description": "Card id (storage_find returns it)."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "name": "storage-get",
+      "positional": [
+        "id"
+      ]
+    },
+    "area": "storage"
+  },
+  {
+    "name": "storage_list",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "List cards on the storage shelf, sorted by id, optionally filtered by store, status or whether a copy is still on the source machine. Returns id, title, status, kind, stores and original path per card, and total.",
+    "params": {
+      "store": {
+        "type": "string",
+        "enum": [
+          "b2",
+          "supabase",
+          "s3",
+          "r2",
+          "gcs",
+          "other"
+        ],
+        "description": "Only cards with a copy in this store."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "archived",
+          "restored",
+          "missing",
+          "retired"
+        ],
+        "description": "Only cards with this status."
+      },
+      "on_source_machine": {
+        "type": "boolean",
+        "description": "Only cards whose item is (true) or is not (false) still on the machine it came from."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max rows (default 50; max 500, remote 100)."
+      },
+      "offset": {
+        "type": "number",
+        "description": "Rows to skip, for paging."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "name": "storage-list"
+    },
+    "area": "storage"
+  },
+  {
+    "name": "storage_register",
+    "mutating": true,
+    "writeInference": "none",
+    "idempotent": false,
+    "outputRedaction": "no_stored_text",
+    "description": "Register a new card on the storage shelf after an archive is verified. card is a JSON object: id, title, aliases, description, kind, status, locations (store, bucket, path, tool, repository, snapshot, size_bytes, file_count, sha256, hash_kind, verified_at), original_path, on_source_machine, source_machine, archived_at, archived_by, reason, restore {skill, args}, restores, details. Credentials, credential-shaped values and command fields are refused. Trusted local CLI only.",
+    "params": {
+      "card": {
+        "type": "object",
+        "required": true,
+        "description": "The card (JSON)."
+      }
+    },
+    "scope": "write",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "storage-register",
+        "--card",
+        "<card json>"
+      ]
+    },
+    "cliHints": {
+      "name": "storage-register",
+      "stdin": "card"
+    }
+  },
+  {
+    "name": "storage_update",
+    "mutating": true,
+    "writeInference": "none",
+    "idempotent": false,
+    "outputRedaction": "no_stored_text",
+    "description": "Change a card on the storage shelf: patch replaces the named top-level fields (validated like a new card), and restored_to records a restore (newest first; status becomes restored). expected_revision is the revision storage_get returned; a stale one is refused storage_revision_conflict with the current revision. Trusted local CLI only.",
+    "params": {
+      "id": {
+        "type": "string",
+        "required": true,
+        "description": "Card id."
+      },
+      "expected_revision": {
+        "type": "string",
+        "required": true,
+        "description": "The revision storage_get returned."
+      },
+      "patch": {
+        "type": "object",
+        "description": "Top-level fields to replace (JSON)."
+      },
+      "restored_to": {
+        "type": "string",
+        "description": "Path the item was restored to; adds a restores entry."
+      },
+      "restored_verified": {
+        "type": "boolean",
+        "description": "With restored_to: the checksums matched."
+      }
+    },
+    "scope": "write",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "storage-update",
+        "<id>",
+        "--expected-revision",
+        "<revision>"
+      ]
+    },
+    "cliHints": {
+      "name": "storage-update",
+      "positional": [
+        "id"
+      ]
+    }
   },
   {
     "name": "submit_job",

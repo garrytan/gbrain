@@ -228,7 +228,12 @@ for (const kind of testBackends()) {
         const [before] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'ingest_capture'");
         const refused = await ingest('alice-a', note('Alice ingest', 'Ingest ' + marker('ingest') + '.'));
         expect(refused.status).toBe(403);
-        expect(await refused.json()).toMatchObject({ error: 'permission_denied', message: expect.stringContaining('write source is ' + FEDERATED) });
+        const body = await refused.json();
+        expect(body).toMatchObject({ error: 'permission_denied', code: 'permission_denied', message: expect.stringContaining('write source is ' + FEDERATED),
+          docs: 'docs/guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them',
+          fix: { actor: 'host_admin', next: 'tell_user_to_run', argv: ['gbrain', 'auth', 'rescope-token', '--id', tokenIds['alice-a'], '--sources', '<sources>'],
+            inputs: [{ name: 'sources', how: expect.any(String) }] } });
+        expect(typeof body.suggestion).toBe('string');
         const [after] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM minion_jobs WHERE name = 'ingest_capture'");
         expect(after.n).toBe(before.n);
         expect((await ingest('alice-b', note('Alice iso ingest', 'Ingest ' + marker('ingestiso') + '.'))).status).toBe(202);

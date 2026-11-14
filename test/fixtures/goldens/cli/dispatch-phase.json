@@ -2223,6 +2223,16 @@
       },
       {
         "commands": [],
+        "condition": "cliOpts.room !== undefined && !helpRequested && (CLI_ONLY.has(command) || !(cliOps.has(command) || cliAliases.has(command)))",
+        "connectsEngine": false,
+        "refusesThinClient": false,
+        "routesThinClient": false,
+        "terminates": false,
+        "thinClientCheck": false,
+        "unconditionalFor": []
+      },
+      {
+        "commands": [],
         "condition": "!['serve', 'jobs', 'autopilot'].includes(command)",
         "connectsEngine": false,
         "refusesThinClient": false,
@@ -2293,7 +2303,7 @@
       },
       {
         "commands": [],
-        "condition": "cliOpts.as === undefined && !enforcedClass && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
+        "condition": "cliOpts.as === undefined && cliOpts.room === undefined && !enforcedClass && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)",
         "connectsEngine": false,
         "refusesThinClient": false,
         "routesThinClient": false,

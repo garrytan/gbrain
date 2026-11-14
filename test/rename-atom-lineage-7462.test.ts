@@ -161,6 +161,17 @@ for (const backend of testBackends()) {
       expect(await looserAtoms('source-b')).toBe(1);
     });
 
+    test('#8920: a later rename onto the old slug drops its alias, and the atom is still judged by its renamed private origin', async () => {
+      await seedSource('source-i');
+      const page = await note('source-i', 'notes/secret', 'Private body.', 'private');
+      await atomOf('source-i', 'atoms/secret-claim', 'notes/secret', page.content_hash!);
+      await note('source-i', 'notes/other', 'World body.', 'world');
+      expect(await move('source-i', 'notes/secret', 'archive/secret')).toBe('renamed');
+      expect(await move('source-i', 'notes/other', 'notes/secret')).toBe('renamed');
+      expect(await engine.executeRaw(`SELECT 1 FROM slug_aliases WHERE source_id='source-i' AND alias_slug='notes/secret' AND notes='rename'`)).toEqual([]);
+      expect(await readableAtoms('source-i')).toEqual([]);
+    });
+
     test('a deleted page at the old slug keeps its unstamped atom private in the lineage repair', async () => {
       await seedSource('source-h');
       await note('source-h', 'notes/reused', 'World body.', 'world');

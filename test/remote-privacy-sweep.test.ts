@@ -158,6 +158,9 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   fetch: { id: WORLD_FENCE_SLUG },
   list_pages: {},
   find_pages: { pattern: '*' },
+  storage_find: { query: 'WORLDMARK' },
+  storage_get: { id: 'dataset-a' },
+  storage_list: {},
   search: { query: 'WORLDSWEEP' },
   // 'SWEEP_' is inside every PRIVATE sentinel too: the literal scan must still return only world text.
   search_exact: { phrase: 'SWEEP_' },
@@ -264,6 +267,10 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   fetch: 'data',
   list_pages: 'data',
   find_pages: 'data',
+  // GST-1943: this fixture has no storage shelf: find and list answer empty, get answers not_found.
+  storage_find: 'ok',
+  storage_get: 'error',
+  storage_list: 'ok',
   search: 'data',
   search_exact: 'data',
   query: 'data',

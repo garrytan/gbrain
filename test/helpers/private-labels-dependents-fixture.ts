@@ -37,7 +37,7 @@ export function preChangeDependentsSql(): string {
         WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
             CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
           FROM pages pg LEFT JOIN cleared c ON c.id = pg.id)
-        SELECT after_clear.id FROM pages after_clear WHERE after_clear.id IN (SELECT id FROM candidates) AND ${privacyPartSql('after_clear')})
+        SELECT after_clear.id FROM pages after_clear WHERE after_clear.id IN (SELECT id FROM candidates) AND ${privacyPartSql('after_clear', true)})
       ORDER BY cand.id`;
 }
 

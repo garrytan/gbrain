@@ -24,11 +24,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { operations } from '../../src/core/operations.ts';
 import { attestableOp } from '../../src/core/access/actor.ts';
-import { hasDatabase, setupDB, teardownDB } from './helpers.ts';
+import { hasDatabase, removeMembers, setupDB, teardownDB } from './helpers.ts';
 import { sweepArgs, type SweepFixture } from '../helpers/member-sweep.ts';
 
 const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'oidc:3f2a:bob-example';
+const MEMBERS = ['alice-example', 'bob-example'];
 const CANARY = { actor: 'canaryhttpaliceactor', key: 'canaryhttpalicekey', bob: 'canaryhttpbob' } as const;
 const ATTESTABLE = operations.filter(op => attestableOp(op.name, op));
 const KEYLESS_ENV = { OPENAI_API_KEY: '', ANTHROPIC_API_KEY: '', VOYAGE_API_KEY: '', GEMINI_API_KEY: '', GOOGLE_API_KEY: '', GBRAIN_SKIP_STARTUP_HOOKS: '1' };
@@ -52,7 +53,7 @@ for (const [index, backend] of backends.entries()) {
     beforeAll(async () => {
       if (backend === 'postgres') await setupDB();
       else cli('init', '--pglite', '--no-embedding');
-      for (const id of ['alice-example', 'bob-example']) cli('access', 'member', 'add', id);
+      for (const id of MEMBERS) cli('access', 'member', 'add', id);
       bearer.alice = token(cli('auth', 'create', 'c2-alice-key', '--member', 'alice-example', '--scopes', 'read,write'));
       bearer.bob = token(cli('auth', 'create', 'c2-bob-key', '--member', 'bob-example', '--scopes', 'read,write'));
       bearer.plain = token(cli('auth', 'create', 'c2-plain-key', '--scopes', 'read,write', '--reads-unscoped', '--yes'));
@@ -84,7 +85,10 @@ for (const [index, backend] of backends.entries()) {
         await new Promise(r => setTimeout(r, 1000));
         if (!server.killed) server.kill('SIGKILL');
       }
-      if (backend === 'postgres') await teardownDB();
+      if (backend === 'postgres') {
+        await removeMembers(MEMBERS);
+        await teardownDB();
+      }
       rmSync(home, { recursive: true, force: true });
     }, 30_000);
 

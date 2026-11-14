@@ -23,7 +23,7 @@ import { registerEngineView, writeSwitchOn } from './switches.ts';
 
 export const PREADMIT_TTL_MS = 30_000;
 const BRAIN_SQL = 'SELECT brain_id FROM persistence_brain WHERE singleton=1';
-const SOURCE_SQL = "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1";
+const SOURCE_SQL = "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1";
 const BINDING_SQL = 'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1';
 const WRITER_SQL = new Set([
   'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid',

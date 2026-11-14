@@ -39,7 +39,7 @@ function countStatements(engine: BrainEngine, fragment: string): { count: () => 
   return { count: () => n, restore: () => { proto.executeRaw = original; } };
 }
 const GROUP_COMPLETION = "UPDATE persistence_requests r SET state='committed'";
-const SOURCE_READ = "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1";
+const SOURCE_READ = "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1";
 
 afterEach(() => { installFaultHook(undefined); resetWriteSwitches(); });
 

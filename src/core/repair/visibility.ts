@@ -2,7 +2,8 @@
  * `gbrain repair visibility` (#5525): tighten-only backfill that stamps an
  * explicit `visibility` on extracted atoms and synthesized concepts.
  *
- *   atom     origin page -> effectiveVisibility(origin); transcript or missing origin -> private
+ *   atom     origin page -> effectiveVisibility(origin); transcript or missing origin -> private;
+ *            a private page a rename moved its origin to (slug_rename_history, GST-2687) -> private
  *   concept  strictest visibility of its input atoms (provenance edges + atoms' `concepts:`);
  *            a member without a provenance edge counts as private
  *
@@ -52,7 +53,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenancePreflight, publishMaintenancePages, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { CANONICAL_FILE_MISSING } from '../persistence/publication-failure.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
-import { atomOriginSlugSql } from '../persistence/atom-origin.ts';
+import { atomMovedOriginPrivateSql, atomOriginSlugSql } from '../persistence/atom-origin.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairPlanOptions, type RepairScope, type RepairSettlement, type RepairCursor } from './core.ts';
 import { openTwins, openTwinsLines, openTwinsWarning, type OpenTwins } from '../access/open-twins.ts';
 import { ownerMemberId } from '../access/owner.ts';
@@ -65,7 +66,7 @@ import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
 
 interface DerivedRow { id: number; source_id: string; slug: string; type: string; visibility: string | null; chars: number }
-interface AtomRow extends DerivedRow { source_slug: string | null; origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean }
+interface AtomRow extends DerivedRow { source_slug: string | null; origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean; origin_moved_private: boolean }
 interface InputRow { concept_id: number; atom_id: number; linked: boolean }
 
 interface EventRow extends DerivedRow { origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean }
@@ -115,7 +116,7 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
   const atoms = atomIds?.length === 0 ? [] : await engine.executeRaw<AtomRow>(`SELECT a.id,a.source_id,a.slug,a.type,a.frontmatter->>'visibility' AS visibility,
       length(a.compiled_truth) AS chars, a.frontmatter->>'source_slug' AS source_slug,
       o.id AS origin_id,o.type AS origin_type,o.frontmatter AS origin_frontmatter,
-      (o.id IS NOT NULL AND ${folderRestrictedSql('o')}) AS origin_folder_restricted
+      (o.id IS NOT NULL AND ${folderRestrictedSql('o')}) AS origin_folder_restricted, ${atomMovedOriginPrivateSql('a')} AS origin_moved_private
     FROM pages a LEFT JOIN pages o ON o.source_id=a.source_id AND o.slug=${atomOriginSlugSql('a')} AND o.deleted_at IS NULL
     WHERE a.type='atom' AND a.deleted_at IS NULL AND a.source_id=ANY($1::text[])
       AND ($2::integer[] IS NULL OR a.id=ANY($2::integer[])) ORDER BY a.id`, [sourceIds, atomIds], bounded);
@@ -126,7 +127,7 @@ async function planLineage(engine: BrainEngine, sourceIds: string[], only?: { id
   for (const atom of atoms) {
     const origin = atom.source_slug ? { kind: 'page' as const, page: atom.origin_id == null ? null : { type: atom.origin_type, frontmatter: atom.origin_frontmatter, folder_restricted: atom.origin_folder_restricted } }
       : { kind: 'transcript' as const };
-    const target = effectiveVisibility(origin);
+    const target = atom.origin_moved_private ? 'private' : effectiveVisibility(origin);
     const next = tightened(atom.visibility, target);
     if (next && origin.kind === 'page' && !origin.page) originGone++;
     const effective = next ?? (atom.visibility === 'world' ? 'world' : 'private');

@@ -122,6 +122,9 @@ const MATRIX: Row[] = [
   { name: 'questions_list', mode: 'skip', reason: 'owner-private (C4): a caller that cannot read private pages is refused question_owner_only; test/helpers/pinned-questions-scenarios.ts owns source confinement and the leakage matrix' },
   { name: 'questions_status', mode: 'skip', reason: 'owner-private (C4): refused question_owner_only for restricted grants; ids outside the read scope answer question_not_found (test/helpers/pinned-questions-scenarios.ts)' },
   { name: 'open_loops', mode: 'skip', reason: 'loop rows need the Gmail detector pipeline; test/ops-loops.test.ts owns its remote posture (no-scope denial, grant confinement, redacted evidence)' },
+  { name: 'storage_find', mode: 'skip', reason: 'reads only the storage source, which is not federated: a remote caller reads cards only when its grant names storage; test/storage-manifest.test.ts pins the bound, unbound and granted cases' },
+  { name: 'storage_get', mode: 'skip', reason: 'reads only the storage source, which is not federated: a remote caller reads cards only when its grant names storage; test/storage-manifest.test.ts pins the bound, unbound and granted cases' },
+  { name: 'storage_list', mode: 'skip', reason: 'reads only the storage source, which is not federated: a remote caller reads cards only when its grant names storage; test/storage-manifest.test.ts pins the bound, unbound and granted cases' },
   { name: 'list_skills', mode: 'skip', reason: 'bundled skills catalog from the install tree; skills suites own it (throws outside an installed skills dir)' },
 
   // Deliberately brain-wide (config / registry / identity — not source data).

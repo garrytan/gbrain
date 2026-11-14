@@ -1,11 +1,13 @@
 import { expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { parseMarkdown, serializeMarkdown } from '../src/core/markdown.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
-import { managedBrain } from './helpers/managed-brain.ts';
+import { managedBrain, settleManagedGitEffects } from './helpers/managed-brain.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 
 interface LegacyFile { slug: string; path: string; page: string; disk?: string }
@@ -78,5 +80,30 @@ for (const backend of testBackends()) {
       expect(readFileSync(join(root, 'notes/topic/README.md'), 'utf8')).toBe(topicDisk);
       expect(existsSync(join(root, 'scratch.md'))).toBe(false);
     }, { databaseUrl, setup: seedExpiredTombstones(files) });
+  }, 120_000);
+
+  test(`[${backend}] #8920: a soft delete or an owner purge of a live page recorded at a root sync metafile keeps that file`, async () => {
+    const agents = note('Agent instructions', 'Run the checks before every commit.');
+    const readme = note('Topic overview', 'An overview of notes/topic.');
+    const plain = note('Scratch', 'A root page that is not scaffolding.');
+    const files: LegacyFile[] = [
+      { slug: 'agents', path: 'AGENTS.md', page: agents },
+      { slug: 'readme', path: 'README.md', page: readme },
+      { slug: 'scratch', path: 'scratch.md', page: plain },
+    ];
+    const seed = seedExpiredTombstones(files);
+    await managedBrain(async ({ engine, ctx, root }) => {
+      const revision = async (slug: string) => (await engine.readPageSnapshot(slug, { sourceId: 'default', includeDeleted: true }))!.revision;
+      const remote = { ...ctx, remote: true } as typeof ctx;
+      await submitPageMutation(remote, { operation: 'delete_page', params: { slug: 'agents', source_id: 'default', request_id: randomUUID(), expected_revision: await revision('agents') } });
+      await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: 'readme', source_id: 'default', purge: true, request_id: randomUUID(), expected_revision: await revision('readme') } });
+      await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: 'scratch', source_id: 'default', purge: true, request_id: randomUUID(), expected_revision: await revision('scratch') } });
+      await settleManagedGitEffects(engine);
+      expect((await engine.readPageSnapshot('agents', { sourceId: 'default', includeDeleted: true }))?.page.deleted_at).toBeTruthy();
+      expect(await remainingSlugs(engine)).toEqual(['agents']);
+      expect(existsSync(join(root, 'AGENTS.md')) && readFileSync(join(root, 'AGENTS.md'), 'utf8')).toBe(agents);
+      expect(existsSync(join(root, 'README.md')) && readFileSync(join(root, 'README.md'), 'utf8')).toBe(readme);
+      expect(existsSync(join(root, 'scratch.md'))).toBe(false);
+    }, { databaseUrl, setup: async brain => { await seed(brain); await brain.engine.executeRaw("UPDATE pages SET deleted_at = NULL WHERE source_id = 'default'"); } });
   }, 120_000);
 }

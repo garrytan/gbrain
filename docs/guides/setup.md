@@ -172,7 +172,11 @@ receipt prints the path, never the key). It sets `access.serves = several` last,
 then proves the labels by reading every other member's folder as each member
 (`gbrain find people/<other>/ --as <member>`): none may return a page.
 The receipt also lists any other `people/<name>/` folder that no rule covers, since
-every member reads it, and the run is not OK until it has a rule.
+every member reads it, and the run is not OK until it has a rule. It then counts the
+other pages no rule or `readable_by` restricts, which every member's key still reads,
+by folder, with the commands that label them; `--labelled-only` keeps each member to
+the pages labelled for it instead (never the owner). See
+[pages every member's key can read](access-designations.md#pages-every-members-key-can-read).
 Setup leaves the stdio server unbound: stdio sessions read only pages no rule
 restricts, and the harness's instructions keep the one-person scoping lines.
 For a Claude Code or Codex install only one person uses, bind that harness alone:

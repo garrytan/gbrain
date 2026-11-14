@@ -62,6 +62,8 @@ export interface PersistenceIpcRequest {
   routing: { source: string | null; cwd: string };
   /** #5232: the caller's commit wait; sent only to owners advertising `write_wait`. */
   write_wait_ms?: number;
+  /** GBRA-498: the room the CLI's `--room` named; sent only to owners advertising `room`, which answer `{ [PERSISTENCE_ROOM_MARKED_KEY]: … }`. */
+  room?: string;
 }
 
 export interface PersistenceIpcCapabilities {
@@ -75,7 +77,14 @@ export interface PersistenceIpcCapabilities {
   administration_extensions?: readonly PersistenceAdminExtension[];
   /** #5232: the owner honors `write_wait_ms` on operation requests. */
   write_wait?: true;
+  /** GBRA-498: the owner marks its trusted local CLI's answer for a `room` on operation requests. */
+  room?: true;
 }
+
+/** GBRA-498: the one key of an owner's answer to a request that named a room: the marked result, its room meta and notices. */
+export const PERSISTENCE_ROOM_MARKED_KEY = 'room_marked';
+/** The longest `--room` a request carries; a longer one stays with the CLI, which marks every item unknown. */
+export const PERSISTENCE_ROOM_MAX_CHARS = 4_096;
 
 export interface PersistenceIpcAdminRequest {
   version: 1;
@@ -142,7 +151,8 @@ export function isPersistenceIpcRegistration(value: unknown): value is Persisten
 
 const OPERATION_REQUEST_KEYS = ['version', 'kind', 'brain_id', 'operation', 'params', 'registration', 'routing'];
 function operationRequest(value: unknown): value is PersistenceIpcRequest {
-  if (!record(value) || !(exactKeys(value, OPERATION_REQUEST_KEYS) || exactKeys(value, [...OPERATION_REQUEST_KEYS, 'write_wait_ms']))) return false;
+  if (!record(value) || !exactKeys(value, [...OPERATION_REQUEST_KEYS, ...['write_wait_ms', 'room'].filter(k => Object.prototype.hasOwnProperty.call(value, k))])) return false;
+  if (value.room !== undefined && !(typeof value.room === 'string' && value.room.length <= PERSISTENCE_ROOM_MAX_CHARS)) return false;
   if (value.write_wait_ms !== undefined && !(typeof value.write_wait_ms === 'number'
     && Number.isSafeInteger(value.write_wait_ms) && value.write_wait_ms >= 0)) return false;
   if (value.version !== 1 || value.kind !== 'operation' || !isWriteRequestId(value.brain_id)
@@ -255,6 +265,7 @@ export async function startPersistenceIpcServer(
               max_frame_bytes: PERSISTENCE_IPC_MAX_BYTES,
               ...(provider.administer ? { administration: PERSISTENCE_ADMIN_OPERATIONS, administration_extensions: PERSISTENCE_ADMIN_EXTENSIONS } : {}),
               write_wait: true,
+              room: true,
             } satisfies PersistenceIpcCapabilities }));
             return;
           }

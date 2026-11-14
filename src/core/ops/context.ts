@@ -532,6 +532,24 @@ export function noSourceGrantError(operation?: string, auth?: Pick<AuthInfo, 'cl
 }
 
 /**
+ * #8982 item 3: POST /ingest refuses a member-bound credential whose write source every credential without a source grant
+ * reads (GST-2051); the fix asks the operator to give it a write source of its own that is not federated.
+ */
+export function sharedWriteSourceMemberError(operation: string, auth: Pick<AuthInfo, 'clientId' | 'principal'>, sourceId: string): OperationError {
+  const fix = grantFix(auth, { token: ['--sources', '<sources>'], client: ['--source', '<source>'] },
+    'Gives this connection a write source of its own that is not federated; only the brain host operator can change grants.');
+  const input = fix.argv?.includes('<sources>')
+    ? { name: 'sources', how: 'Ask the user for a source that is not federated, written first, then default (e.g. <private-source>,default; `gbrain sources list` on the brain host shows them).' }
+    : fix.argv?.includes('<source>') ? { name: 'source', how: 'Ask the user for a source that is not federated (`gbrain sources list` on the brain host shows them).' } : null;
+  return opError('permission_denied',
+    `${operation} is unavailable to a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads: its pages would land where other members ` +
+      'and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
+      'or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).',
+    "Write through the MCP put_page op, or ask the brain host's operator to give this credential a write source that is not federated (command in fix).",
+    { docs: 'docs/guides/multi-source-brains.md#lay-out-sources-by-who-may-read-them', fix: input ? { ...fix, inputs: [input] } : fix });
+}
+
+/**
  * Fail-closed gate for slug-bound clients, applied at dispatch (the single
  * choke point both MCP transports share) so it cannot be forgotten per op.
  * Read ops are untouched — read scope is enforced by source federation.

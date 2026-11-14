@@ -3,7 +3,8 @@
  * `git commit`) never passed the write path's scan, so the publish scans, under its publish lock and for the exact
  * commit it pushes, what each commit in `base..head` adds: its message, the lines it adds file by file (a value a later
  * commit removed is still in the pushed history), and for a merge commit the lines it adds that no parent has
- * (a conflict resolution). The workspace allowlist (`.gbrain-scan-allow`: path globs and fingerprints) applies.
+ * (a conflict resolution). The workspace allowlist (`.gbrain-scan-allow` at the scanned root, below the repository's top
+ * level for a managed root in a subfolder: path globs relative to that root, and fingerprints) applies.
  * Findings carry the path, line, rule, fingerprint and commit, never the matched value.
  *
  * Only plumbing reads the commits (`rev-list`, `cat-file commit`, one `diff-tree --stdin --root --cc`), so no log, diff or
@@ -12,7 +13,7 @@
  * read in chunks, so memory stays bounded. Binary detection is git's own (a NUL in a blob's first 8000 bytes), with
  * attributes read from the empty tree: a file git still calls binary is checked by its own bytes when its old side was
  * not empty or attributes could still apply, and a text file is then scanned whole. Added text over the scan cap is
- * reported as unscanned, and a commit that changes a file deciding what the scan sees (`.gbrain-scan-allow`, a
+ * reported as unscanned, and a commit that changes a file deciding what the scan sees (the loaded `.gbrain-scan-allow` or the top-level one, a
  * `.gitattributes`) as a gate change, so callers refuse. Output the parser does not recognise, a git failure or a run
  * past the time budget sets `unreadable` instead of returning a partial result. The time budget is checked between git
  * calls and while the diff is parsed, so a caller with a short budget (the owner's event loop) is never held much past it.
@@ -56,13 +57,14 @@ const DIFF = ['diff-tree', '--stdin', '-r', '-p', '--root', '--cc', '--no-rename
   '--full-index', '--src-prefix=a/', '--dst-prefix=b/', '--unified=0'];
 
 /**
- * Ledger writers whose commits hold only page writes: a Git effect's commit and a hosted repository's door commits. A
- * Git effect's record counts only when `verified` (its sha, parent, paths and blobs were checked against what the effect
- * wrote; records from releases before that check carry none). A record that adopted a file edited outside gbrain
+ * Ledger writers whose commits hold only page writes: a Git effect's commit, a strict source's door commit and a hosted
+ * repository's commits. A Git effect's or a door's record counts only when `verified` (VERIFIED_WRITERS: each committed
+ * blob is the bytes the writer wrote, with no clean filter in between; records from releases before that check carry none). A record that adopted a file edited outside gbrain
  * (`adopted`) carries bytes gbrain did not write, so it is scanned, and so is a page-write commit older than the retained
  * ledger or made before it existed.
  */
 const PAGE_WRITERS: ReadonlySet<string> = new Set(['effect', 'door', 'hosted_repo']);
+const VERIFIED_WRITERS: ReadonlySet<string> = new Set(['effect', 'door']);
 
 class Unreadable extends Error { constructor(message: string, readonly timedOut = false) { super(message); } }
 
@@ -78,7 +80,7 @@ function pageWriteCommits(root: string, deadline: number): Set<string> {
   const common = must(run(root, ['rev-parse', '--path-format=absolute', '--git-common-dir'], deadline), 'rev-parse').toString().trim();
   try {
     return new Set(readLedger(common).flatMap(record => record.e === 'commit' && PAGE_WRITERS.has(record.writer) && !record.adopted?.length
-      && (record.writer !== 'effect' || record.verified) ? [record.sha] : []));
+      && (!VERIFIED_WRITERS.has(record.writer) || record.verified) ? [record.sha] : []));
   }
   catch { return new Set(); }
 }
@@ -147,6 +149,8 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   };
   const scan: RangeScan = { findings: [], unscanned: [], gate_changes: [] };
   const allowlist = loadWorkspaceAllowlist(root);
+  let allowFile = SCAN_ALLOW_FILENAME, prefix = '';
+  const allowed = (path: string) => path.startsWith(prefix) && pathAllowlisted(path.slice(prefix.length), allowlist);
   const scanned = (path: string, commit: string, text: string, lineAt: (line: number) => number = line => line) => {
     if (Date.now() > deadline) throw new Unreadable('the scan ran past its time budget', true);
     if (Buffer.byteLength(text) > SCAN_MAX_FILE_BYTES) { scan.unscanned.push({ path, commit }); return; }
@@ -154,6 +158,8 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
   };
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-range-scan-'));
   try {
+    prefix = must(run(root, ['rev-parse', '--show-prefix'], deadline), 'rev-parse').toString().replace(/\n$/, '');
+    allowFile = `${prefix}${SCAN_ALLOW_FILENAME}`;
     const pageWrites = pageWriteCommits(root, deadline);
     const commits = must(run(root, ['rev-list', base ? `${base}..${head}` : head, '--'], deadline), 'rev-list').toString().split('\n')
       .filter(commit => commit && !pageWrites.has(commit));
@@ -223,7 +229,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
         let commit = '', path: string | null = null, header = false, parents = 1, next = 0, bytes = 0, oversized = false;
         let olds: string[] = [], blob = '', added: string[] = [], at: number[] = [];
         const flush = () => {
-          if (path && (oversized || added.length) && !pathAllowlisted(path, allowlist)) {
+          if (path && (oversized || added.length) && !allowed(path)) {
             if (oversized) scan.unscanned.push({ path, commit });
             else scanned(path, commit, added.join('\n'), line => at[line - 1] ?? line);
           }
@@ -247,7 +253,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
               path = left?.startsWith('a/') && right?.startsWith('b/') && left.slice(2) === right.slice(2) ? right.slice(2) : null;
             } else path = unquote(line.replace(/^diff --(?:cc|combined) /, ''));
             if (path === null) throw unexpected(line);
-            if (path === SCAN_ALLOW_FILENAME || path === '.gitattributes' || path.endsWith('/.gitattributes')) scan.gate_changes.push({ path, commit });
+            if (path === allowFile || path === SCAN_ALLOW_FILENAME || path === '.gitattributes' || path.endsWith('/.gitattributes')) scan.gate_changes.push({ path, commit });
             header = true; olds = []; blob = '';
             continue;
           }
@@ -294,7 +300,7 @@ export function scanRange(root: string, base: string, head: string, timeoutMs = 
       for (const row of check.toString().split('\n')) { const [name, size] = row.split(' '); if (name && size) sizes.set(name, Number(size)); }
     }
     for (const b of binaries) {
-      if (pathAllowlisted(b.path, allowlist)) continue;
+      if (allowed(b.path)) continue;
       if (neutral && b.added && (sizes.get(b.blob) ?? Infinity) <= BIG_FILE_THRESHOLD) continue;
       const sniff = run(root, ['cat-file', 'blob', b.blob], deadline, { maxBuffer: SNIFF_BYTES });
       if ((sniff.error as NodeJS.ErrnoException | undefined)?.code !== 'ENOBUFS') must(sniff, 'cat-file blob');

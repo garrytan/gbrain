@@ -40,6 +40,8 @@ export const CHANNEL_PLUGINS: readonly string[] = ['telegram', 'discord', 'slack
 const DM_PAGE_TYPES: readonly string[] = ['slack-dm-day', 'dm', 'sms'];
 export const CHAT_PAGE_TYPES: readonly string[] = [...new Set([...pageTypesForAllowed(['slack', 'imessage', 'imessage-daily']), ...DM_PAGE_TYPES,
   'discord', 'telegram', 'whatsapp', 'signal', 'chat', 'channel'])];
+/** GST-2670: the page types an open page counts as sensitive on a brain that serves several people (src/core/access/open-pages.ts). */
+export const SENSITIVE_PAGE_TYPES: readonly string[] = [...new Set([...CHAT_PAGE_TYPES, ...pageTypesForAllowed(['email', 'conversation'])])];
 export const MULTI_CHANNEL_MIN = 2;
 const DOCS = 'docs/mcp/ADMIN.md#one-token-several-people';
 
