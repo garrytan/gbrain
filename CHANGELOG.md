@@ -10,6 +10,59 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.722.0] - 2026-11-14
+
+**The brain owner's own remote agents can now edit, append to and relabel the private pages they already read, and everyone else is still refused.**
+
+### Changed
+
+- A credential bound to the brain owner, with write scope and speaking for itself, may change a `visibility: private` page it reads with `put_page`, `edit_page` or `append_page`, or with `put_pages` and staged uploads (`begin_page_upload` and `commit_page_upload`), and relabel it (for example to `visibility: world`). A `put_page` that leaves out `visibility` or `readable_by` keeps the stored ones, an empty `visibility` counts as left out, and a page private only through a privacy alias, a pinned question, a derived type or a private origin is saved as `visibility: private` (keeping its `pinned_question`) by any of these writes that states no visibility; the page revision and the journaled request name the owner's credential. Other members, unbound tokens and OAuth clients, attested calls, the owner's credential without write scope and writes to pages whose readers or folder rule leave the owner out get `page_not_found` (or their earlier refusal) as before, on repo-less and repo brains alike, and so does any write to a soft-deleted private page and a credential fenced to slug prefixes. A staged upload over the single-string ceiling is now held to the same `readable_by` check as a smaller one.
+
+### Fixed
+
+- Purging a private page now also labels a life-chronicle event private when the event's own `derived_from` names that page; if the label can't be written, the page stays soft-deleted instead of being purged.
+- The purge's in-transaction check for derived pages reads only the pages that name the purged page instead of scanning the whole source, so single purges on large brains are much faster.
+- `gbrain pages purge-deleted --dry-run` now lists exactly what `--yes` would purge, including parked pages a consented run would release, and nothing is written before consent.
+- A purge held to keep derived pages private now tells the owner to finish it with `gbrain delete <slug> --purge --source-id <id>` as a new request, which writes the purge tombstones.
+
+<!-- behavior-change: owner_remote_private_writes_gst2091 -->
+
+**CI runs the unit suite in 34 shards instead of 30, so every shard fits its 600-second budget again.**
+
+### Changed
+- Shard timing weights are refreshed from the median of five recent nightly Test runs (unit and serial) and the latest full E2E nightly. With those weights the heaviest of 30 shards packed to just over 600 seconds; with 34 shards each packs to about 529 seconds.
+- The `test` job in test.yml and the `coverage-full-unit` job in e2e.yml both run 34 shards, and their coverage manifests expect all 34. A full run starts four more unit jobs than before.
+
+### Fixed
+- `bun run release:unstamp` no longer refuses a branch because master edited a published migration after the branch was cut. An edit the branch itself made to a published migration is still refused.
+
+**Guest notes: a group member's note is saved, marked as a guest's, warned about on every read, and becomes your own page only when you say so.** People in a group chat with your agent sometimes say things worth keeping. A guest source keeps those notes apart from your own pages, with a record of who said them. Nothing changes until you run `gbrain guests init`: a brain without a guest source reads, writes and costs exactly as before, and no grant, privacy label or search scope changes on upgrade.
+
+A guest source has four rules the database enforces, whatever program writes. Only writers on the source's list (an OAuth client or legacy token, for example the broker your agent's host runs) may create a page there or change its text, and only as a new page; your own CLI, `gbrain import`, sync, `remember`, `add_link` and `put_raw_data` are refused `source_writer_restricted`, while delete, restore and purge from your CLI still work. No page there is ever stored above the `external_untrusted` trust tier, even after an owner rewrite or a trust confirmation. Guest notes feed no facts, takes, timeline entries or links (`guest_page_immutable`). And a guest source is database-only, so attaching a local path is refused. `gbrain guests init` also refuses an existing source that already holds pages, deleted pages not yet purged included, so your own pages never turn into guest notes.
+
+When the writer saves a note, gbrain records who it was saved for, which group, when and which client sent it, in its own table that no later write can edit and that never comes from the page text. Every read that returns a guest note (search, query, get, list, find, backlinks, timeline, think and the rest) marks it as an outside guest's words: `origin: "guest"` and a `guest` object in JSON, and a warning line plus the external-data envelope in text. A contract test fails if any operation, present or future, returns a guest row without the mark.
+
+You keep a note as your own page with `gbrain guests promote <slug>` (MCP `promote_guest_note`, owner only; anyone else is refused `guest_promotion_owner_only`), which writes a normal page and records the link; the broker can no longer delete a promoted note (`guest_page_promoted`). Promotion reads the note through the caller's normal read scope, and promoting again finishes a promotion whose link was not recorded (an interrupted run or a write still pending) without writing the page twice. Your own tokens and OAuth clients read the guest source only once it is on their read list: `gbrain guests grant-owner-clients` previews that and `--yes` applies it. `gbrain doctor --only guest_source` checks the whole setup, including that the source's two records agree.
+
+### Added
+- `gbrain guests init --writer <principal>` (preview, then `--yes`) creates or marks the `guests` source; `gbrain sources writers <id> [--add|--remove|--clear]` changes who may write.
+- `gbrain guests promote <slug>` and MCP `promote_guest_note`: the owner keeps a guest note as their own page.
+- `gbrain guests grant-owner-clients`: adds the guest source to the owner's own clients' read lists, preview first.
+- Doctor check `guest_source`.
+- Error codes `source_writer_restricted`, `guest_page_immutable`, `guest_promotion_owner_only`, `guest_page_promoted` and their recovery paths (docs/guides/error-codes.md, docs/guides/write-refusals.md).
+- Guide: docs/guides/guest-notes.md.
+
+### Itemized changes
+- The guest-notes schema migration (`src/core/schema-migrations/v<NNN>-guest-notes.ts`; `GUEST_NOTES_MIGRATION` in `src/core/guests/migration.ts` names its number): the `guest_sources`, `guest_marks` and `guest_promotions` tables under row-level security, the per-source trust ceiling in the trust trigger, and the writer backstop trigger.
+- `src/core/guests/`: admission (writer list, new-page-only, allowed frontmatter and readers), the mark and its warning, derived-row refusals, promotion, owner credentials and source setup.
+- Read paths (`src/cli/page-render.ts`, `src/cli/search-row-format.ts`, `src/cli/guest-lines.ts`, `src/core/access/page-items.ts`, `src/core/think/index.ts`, `src/core/search/transcript-quote.ts`) carry the guest mark and warning.
+- A guest writer can delete only the guest notes it saved itself; deleting a note another writer saved is refused `permission_denied`.
+- Stale extraction, `propose_takes` (scoped or not) and the cycle's fact, atom and enrichment phases leave guest pages out.
+- Reads on a brain whose schema is still behind that migration keep working, because the guest check falls back to the source config when the `guest_sources` table is missing.
+- Goldens regenerated: `test/fixtures/goldens/sql-text/pages.json` (stale-extraction query excludes guest pages), `test/fixtures/goldens/exports/types.json` (guest types and error codes), the doctor goldens (the `guest_source` row and the three new tables under row-level security) and `test/fixtures/goldens/cli/tools-json.json` (the new operation).
+
+<!-- behavior-change: guest_notes_gbra504 -->
+
 ## [0.60.721.0] - 2026-11-14
 
 **Deleting a private page no longer opens the pages derived from it: each page that was private only because of the deleted page now gets its own `visibility: private` label before the deleted page's row goes.**
