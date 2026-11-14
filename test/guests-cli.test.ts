@@ -69,7 +69,7 @@ describe('gbrain guests init', () => {
     for (const args of [['init', '--source', 'source-a'], ['init', '--source', 'source-a', '--yes']]) {
       exitCode = null; err = [];
       await run(() => runGuests(engine, args));
-      expect({ args, exitCode, said: err.join('\n').includes('already holds 1 page') }).toEqual({ args, exitCode: 2, said: true });
+      expect({ args, exitCode: exitCode as number | null, said: err.join('\n').includes('already holds 1 page') }).toEqual({ args, exitCode: 2, said: true });
     }
     expect(await guestRow('source-a')).toBeUndefined();
     expect(configOf((await sourceRow('source-a'))!.config).guest).toBeUndefined();

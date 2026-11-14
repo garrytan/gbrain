@@ -15,11 +15,11 @@ You keep a note as your own page with `gbrain guests promote <slug>` (MCP `promo
 - Guide: docs/guides/guest-notes.md.
 
 ### Itemized changes
-- Migration v312 (`src/core/schema-migrations/v312-guest-notes.ts`): the `guest_sources`, `guest_marks` and `guest_promotions` tables under row-level security, the per-source trust ceiling in the trust trigger, and the writer backstop trigger.
+- The guest-notes schema migration (`src/core/schema-migrations/v<NNN>-guest-notes.ts`; `GUEST_NOTES_MIGRATION` in `src/core/guests/migration.ts` names its number): the `guest_sources`, `guest_marks` and `guest_promotions` tables under row-level security, the per-source trust ceiling in the trust trigger, and the writer backstop trigger.
 - `src/core/guests/`: admission (writer list, new-page-only, allowed frontmatter and readers), the mark and its warning, derived-row refusals, promotion, owner credentials and source setup.
 - Read paths (`src/cli/page-render.ts`, `src/cli/search-row-format.ts`, `src/cli/guest-lines.ts`, `src/core/access/page-items.ts`, `src/core/think/index.ts`, `src/core/search/transcript-quote.ts`) carry the guest mark and warning.
 - Stale extraction, `propose_takes` (scoped or not) and the cycle's fact, atom and enrichment phases leave guest pages out.
-- Reads on a brain whose schema is still behind v312 keep working, because the guest check falls back to the source config when the `guest_sources` table is missing.
+- Reads on a brain whose schema is still behind that migration keep working, because the guest check falls back to the source config when the `guest_sources` table is missing.
 - Goldens regenerated: `test/fixtures/goldens/sql-text/pages.json` (stale-extraction query excludes guest pages), `test/fixtures/goldens/exports/types.json` (guest types and error codes), the doctor goldens (the `guest_source` row and the three new tables under row-level security) and `test/fixtures/goldens/cli/tools-json.json` (the new operation).
 
 <!-- behavior-change: guest_notes_gbra504 -->

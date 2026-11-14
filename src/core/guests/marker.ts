@@ -11,20 +11,15 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Operation } from '../ops/contract.ts';
 import { isMissingSchemaObject } from '../utils.ts';
+import { guestSourceSql } from './note.ts';
 
 export const GUEST_ORIGIN = 'guest';
 /** get_brain_identity lists it: this brain stamps the guest warning on every read, so a guest broker may switch on. */
 export const GUEST_MARKER_CAPABILITY = 'guest_marker_v1';
-/**
- * SQL true when a source is a guest source: its config says `guest: true` or guest_sources lists it. Either record is
- * enough, so a source that lost one of them (a config edit, a restored database) still reads as a guest source.
- * `config` and `id` are the SQL expressions for the source's config and id.
- */
-export const guestSourceSql = (config: string, id: string) =>
-  `(COALESCE(${config}->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = ${id}))`;
+export { guestSourceSql };
 
 /**
- * Runs `read` with guestSourceSql. A brain whose schema is behind v312 has no guest_sources table, so the read is
+ * Runs `read` with guestSourceSql. A brain whose schema is behind the guest-notes migration (guests/migration.ts) has no guest_sources table, so the read is
  * retried with the config record alone instead of failing every read that returns a page.
  */
 export async function withGuestSourceSql<T>(read: (guestSql: typeof guestSourceSql) => Promise<T>): Promise<T> {

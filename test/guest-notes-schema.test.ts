@@ -1,7 +1,7 @@
 /**
  * Guest notes, slice 1 (GBRA-504): the database records and source rules.
  *
- * Protects: migration v312's guest_sources, guest_marks and guest_promotions
+ * Protects: the guest-notes migration's guest_sources, guest_marks and guest_promotions
  * tables (RLS on); guest_marks rows refuse UPDATE and leave with their page;
  * the trust trigger's per-source ceiling on pages (INSERT, owner-tier content
  * rewrite, the backfill INSERT and the promotion UPDATE branches); facts,
@@ -22,6 +22,7 @@ import { withTrustBackfill, withTrustPromotion, withWriteAttribution } from '../
 import type { WriteAttribution } from '../src/core/persistence/attribution.ts';
 import type { Principal } from '../src/core/persistence/model.ts';
 import type { TrustTier } from '../src/core/trust/tier.ts';
+import { GUEST_NOTES_MIGRATION } from '../src/core/guests/migration.ts';
 
 interface Backend { name: string; engine: BrainEngine; close: () => Promise<void> }
 const backends: Backend[] = [];
@@ -64,7 +65,7 @@ for (const backendName of testBackends()) {
   const engineOf = () => backends.find(b => b.name === backendName)!.engine;
 
   describe(`guest notes schema (${backendName})`, () => {
-    test('v312 creates the three tables with row-level security on', async () => {
+    test('migration v' + GUEST_NOTES_MIGRATION + ' creates the three tables with row-level security on', async () => {
       const rows = await engineOf().executeRaw<{ relname: string; relrowsecurity: boolean }>(
         `SELECT relname, relrowsecurity FROM pg_class WHERE relname = ANY($1::text[]) AND relkind = 'r' ORDER BY relname`,
         [['guest_marks', 'guest_promotions', 'guest_sources']]);

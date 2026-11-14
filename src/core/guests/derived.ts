@@ -8,7 +8,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { CyclePhase } from '../cycle.ts';
-import { isGuestSource, storedGuestNote } from './note.ts';
+import { guestSourceSql, isGuestSource, readGuestSourceIds, storedGuestNote } from './note.ts';
 
 export type GuestDerivedProducer = CyclePhase | 'publication_projections' | 'auto_links' | 'remote_links_effect' | 'facts_backstop' | 'think_writeback';
 type GuestDerivedEntry = { guest: 'skip'; sites: readonly string[] } | { guest: 'none'; reason: string };
@@ -68,24 +68,36 @@ export function guestSkippedPhases(): CyclePhase[] {
     .filter((key): key is CyclePhase & GuestSkipProducer => GUEST_DERIVED_PRODUCERS[key].guest === 'skip' && (GUEST_DERIVED_PRODUCERS[key] as { sites: readonly string[] }).sites.includes(CYCLE));
 }
 
-/** True when `producer` skips `sourceId` because it is a guest source. */
+// Every helper below decides "guest source" with note.ts guestSourceSql, the test reads use: the source's config says
+// guest or guest_sources lists it. A lookup that fails counts as guest (the producer skips) or refuses (it throws).
+
+/** True when `producer` skips `sourceId` because it is a guest source, or because the lookup failed. */
 export async function skipsGuestSource(engine: Pick<BrainEngine, 'executeRaw'>, producer: GuestSkipProducer, sourceId: string): Promise<boolean> {
   return skips(producer) && isGuestSource(engine, sourceId);
 }
 
-/** True when `producer` skips a write whose stored intent carries a guest note (publication-time producers; no read). */
-export function skipsGuestNote(producer: GuestSkipProducer, intent: Record<string, unknown> | null | undefined): boolean {
-  return skips(producer) && storedGuestNote(intent) !== null;
+/**
+ * Whether a write is a guest write for the publication-time producers: its stored intent carries a guest note, or it
+ * lands in a guest source. Throws when the lookup fails, so the write refuses instead of publishing derived rows.
+ */
+export async function isGuestWrite(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, intent: Record<string, unknown> | null | undefined): Promise<boolean> {
+  return storedGuestNote(intent) !== null || (await readGuestSourceIds(engine, [sourceId])).has(sourceId);
 }
 
-/** `items` without those in a guest source, for a producer that walks several sources. */
+/** True when `producer` skips a write isGuestWrite classified as a guest write. */
+export function skipsGuestNote(producer: GuestSkipProducer, guestWrite: boolean): boolean {
+  return skips(producer) && guestWrite;
+}
+
+/** `items` without those in a guest source, for a producer that walks several sources; none when the lookup fails. */
 export async function withoutGuestSources<T>(engine: Pick<BrainEngine, 'executeRaw'>, producer: GuestSkipProducer, items: readonly T[], sourceOf: (item: T) => string): Promise<T[]> {
   if (!skips(producer) || items.length === 0) return [...items];
-  const guests = new Set((await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM guest_sources')).map(row => row.source_id));
-  return guests.size ? items.filter(item => !guests.has(sourceOf(item))) : [...items];
+  let guests: Set<string>;
+  try { guests = await readGuestSourceIds(engine, items.map(sourceOf)); } catch { return []; }
+  return items.filter(item => !guests.has(sourceOf(item)));
 }
 
-/** A SQL predicate keeping rows of `alias` (a pages alias or table name) outside guest sources. */
+/** A SQL predicate keeping rows of `alias` (a pages alias or table name) outside guest sources; it errors (the read refuses) without the guest tables. */
 export function guestSourceExclusionSql(producer: GuestSkipProducer, alias: string): string {
-  return skips(producer) ? `NOT EXISTS (SELECT 1 FROM guest_sources guest_src WHERE guest_src.source_id = ${alias}.source_id)` : 'TRUE';
+  return skips(producer) ? `NOT EXISTS (SELECT 1 FROM sources guest_src WHERE guest_src.id = ${alias}.source_id AND ${guestSourceSql('guest_src.config', 'guest_src.id')})` : 'TRUE';
 }

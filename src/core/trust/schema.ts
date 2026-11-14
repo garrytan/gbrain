@@ -32,7 +32,7 @@
  *   user_confirmed. Inside a writer scope it is otherwise clamped back; with
  *   no writer scope it raises `trust_raise_refused`. Lowering is always allowed.
  * - A writer tier above operator_curated needs a covering promotion ceiling.
- * - Guest sources (GBRA-504, v312): a pages row in a source listed in
+ * - Guest sources (GBRA-504, guest-notes migration): a pages row in a source listed in
  *   guest_sources never ends above that source's trust_ceiling, on every exit;
  *   creating it or changing its content needs the principal of
  *   gbrain.write_principal_kind/_id on the source's writer list; facts, takes
@@ -163,8 +163,8 @@ const GUEST_CEILING_RETURN = `IF guest_ceiling IS NOT NULL AND ${rank('NEW.trust
 /**
  * The tier trigger function. `guestSources: false` is the v226 body, kept
  * byte-identical (the migration golden pins it, and migrations between v226 and
- * v312 run before guest_sources exists). `true` adds the guest-source rules
- * (GUEST_GUARD) and the per-source ceiling on every RETURN NEW; v312 installs
+ * the guest-notes migration run before guest_sources exists). `true` adds the guest-source rules
+ * (GUEST_GUARD) and the per-source ceiling on every RETURN NEW; the guest-notes migration installs
  * it, and any later migration that re-creates this function uses it.
  */
 const stampTierFunction = (guestSources: boolean) => {
@@ -208,7 +208,7 @@ BEGIN${SETTINGS}${guestSources ? GUEST_GUARD : ''}
 END $fn$`;
 };
 const STAMP_TIER_FUNCTION = stampTierFunction(false);
-/** The current tier trigger function, guest-source rules included (v312). */
+/** The current tier trigger function, guest-source rules included (the guest-notes migration). */
 export const GUEST_AWARE_STAMP_TIER_FUNCTION = stampTierFunction(true);
 
 /**

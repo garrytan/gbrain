@@ -1,6 +1,6 @@
 /**
  * Guest notes (GBRA-504): the database records behind a guest source. Applied by
- * migration v312 only (like the trust DDL it is not in the schema blob; a fresh
+ * the guest-notes migration only (number: guests/migration.ts; like the trust DDL it is not in the schema blob; a fresh
  * install replays every migration).
  *
  * - guest_sources: which sources are guest sources, who may write them

@@ -45,7 +45,7 @@ import { replaceableFile } from '../facts/file-body-guard.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import type { SqlEngine, WriteRequest } from './model.ts';
+import { requestPrincipal, type SqlEngine, type WriteRequest } from './model.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { slugPathFile } from './unbound-pages.ts';
 import { isOriginTwinPage } from './origin-twins.ts';
@@ -107,9 +107,9 @@ import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
 import { fileContentHash, FileBytes, isStreamedContent, LARGE_FILE_MIN_BYTES, StreamedFileContent } from './large-file.ts';
 import { bindOrigin } from './origin-guard.ts';
-import { assertGuestReaders, assertGuestWriterAtPublication, assertNoGuestSourceAtPublication, insertGuestMark, refuseRemoteDeleteOfPromoted } from '../guests/admission.ts';
-import { isGuestSource, storedGuestNote } from '../guests/note.ts';
-import { skipsGuestNote } from '../guests/derived.ts';
+import { assertGuestReaders, assertGuestWriterAtPublication, assertNoGuestSourceAtPublication, insertGuestMark, refuseRemoteGuestDelete } from '../guests/admission.ts';
+import { readGuestSourceIds, storedGuestNote } from '../guests/note.ts';
+import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
 
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
@@ -815,7 +815,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
         `Page ${row.slug}'s file is committed in source ${row.source_id}'s checkout.`, pageFix(row.source_id, row.slug));
     } } : {}),
     apply: async tx => {
-      if (row.authority.remote) await refuseRemoteDeleteOfPromoted(tx, row.source_id, row.slug);
+      if (row.authority.remote) await refuseRemoteGuestDelete(tx, row.source_id, row.slug, requestPrincipal(row));
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...(bodyUnread(snapshot.page) ? withoutBody(snapshot.page) : snapshot.page), source_path: null, source_uri: null } as Page }, preparedPurge);
@@ -1084,7 +1084,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       `Page ${row.slug} does not exist in source ${row.source_id} (it was purged or never written), so nothing was ${row.operation === 'restore_page' ? 'restored' : 'reverted'}. Check the slug and the source.`,
       pageFix(row.source_id, row.slug));
     if (row.operation === 'restore_page' && bodyUnread(snapshot.page)) return prepareUnreadRestore(engine, row, snapshot, { activePack, clock, allowMissingFile: options.allowMissingFile });
-    if (row.operation === 'restore_page' && await isGuestSource(engine, row.source_id)) return prepareGuestRestore(engine, row, snapshot);
+    if (row.operation === 'restore_page' && (await readGuestSourceIds(engine, [row.source_id])).has(row.source_id)) return prepareGuestRestore(engine, row, snapshot);
     let page = snapshot.page;
     let tags = snapshot.tags;
     if (row.operation === 'revert_version') {
@@ -1112,7 +1112,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   }
   content = remoteCoreMarkingKept(row, snapshot, content, activePack);
   const guestNote = storedGuestNote(p);
-  const projected = !skipsGuestNote('publication_projections', p) && !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
+  const guestWrite = await isGuestWrite(engine, row.source_id, p);
+  const projected = !skipsGuestNote('publication_projections', guestWrite) && !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
   const writer = replacesTombstone || ((row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
     && (preparedIntent !== undefined || typeof p.expected_revision === 'string')) ? 'editing' : 'preserving';
   // #5969 (D3): only an ordinary put_page intent carries a timeline section; every other writer keeps the shared policy.
@@ -1231,7 +1232,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const [project, advisories, links, target, core] = await pipelined(together, [
     async () => projected ? prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy) : undefined,
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
-    async () => !skipsGuestNote('auto_links', p) && !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
+    async () => !skipsGuestNote('auto_links', guestWrite) && !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
       ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,
     () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock, labelEdit: row.operation === 'submit_job' && p.kind === 'managed_maintenance_page' ? readLabelEdit(p.label_edit) : undefined }),
     // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).

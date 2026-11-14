@@ -15,6 +15,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { GUEST_NOTES_MIGRATION } from '../src/core/guests/migration.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 
 const OWNER = 'alice-example';
@@ -78,7 +79,7 @@ describe('a guest source the guests command never set up', () => {
   }, 60_000);
 });
 
-describe('a brain whose schema is behind v312', () => {
+describe('a brain whose schema is behind migration v' + GUEST_NOTES_MIGRATION, () => {
   test('reads still work without the guest tables, and a config-marked guest source is still marked', async () => {
     const old = new PGLiteEngine();
     await old.connect({});

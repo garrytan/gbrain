@@ -15,6 +15,23 @@ export function storedGuestNote(intent: Record<string, unknown> | null | undefin
     ? { sender_label: note.sender_label, group: note.group } : null;
 }
 
+/**
+ * SQL true when a source is a guest source: its config says `guest: true` or guest_sources lists it. Either record is
+ * enough, so a source that lost one of them (a config edit, a restored database) still counts as a guest source. Reads
+ * (guests/marker.ts) and every derived producer (guests/derived.ts) use this one test. `config` and `id` are the SQL
+ * expressions for the source's config and id.
+ */
+export const guestSourceSql = (config: string, id: string) =>
+  `(COALESCE(${config}->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = ${id}))`;
+
+/** The guest sources among `sourceIds`, by guestSourceSql. Throws when the lookup fails (a schema behind the guest-notes migration included). */
+export async function readGuestSourceIds(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds: readonly string[]): Promise<Set<string>> {
+  if (sourceIds.length === 0) return new Set();
+  const rows = await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE s.id = ANY($1::text[]) AND ${guestSourceSql('s.config', 's.id')}`, [[...new Set(sourceIds)]]);
+  return new Set(rows.map(row => row.id));
+}
+
+/** For a derived producer: true when `sourceId` is a guest source, or when that cannot be told (the lookup failed). */
 export async function isGuestSource(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<boolean> {
-  return (await engine.executeRaw('SELECT 1 FROM guest_sources WHERE source_id = $1', [sourceId])).length > 0;
+  try { return (await readGuestSourceIds(engine, [sourceId])).has(sourceId); } catch { return true; }
 }

@@ -825,7 +825,7 @@ function stalePagesWhere(opts?: StaleOpts) {
     : opts?.attendance === 'blocked' ? sqlFragment` AND links_attendance_blocked_revision = knowledge_revision` : sqlFragment``;
   const held = opts?.held === 'exclude' ? sqlFragment` AND NOT ${linkExtractionHeld(opts.versionTs)}`
     : opts?.held === 'only' ? sqlFragment` AND ${linkExtractionHeld(opts.versionTs)}` : sqlFragment``;
-  // GBRA-504: a guest page is never extracted (guests/derived.ts), so it is never stale; `guests: false` is the pre-v312 shape.
+  // GBRA-504: a guest page is never extracted (guests/derived.ts), so it is never stale; `guests: false` is the shape before the guest-notes migration.
   const guests = opts?.guests === false ? sqlFragment`` : sqlFragment` AND ${trustedSql(guestSourceExclusionSql('extract', 'pages'))}`;
   // A quarantined page is hidden from search; it is neither re-extracted nor counted as stale.
   return sqlFragment`deleted_at IS NULL AND ${trustedSql(quarantineFilterFragment('pages'))} AND ${version}${source}${attendance}${held}${guests}`;

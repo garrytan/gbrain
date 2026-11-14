@@ -82,10 +82,22 @@ export function guestPagePromoted(slug: string): OperationError {
     'Do not retry. Treat the note as kept; only the brain owner removes it, on the brain host.', DOCS('guest_page_promoted'));
 }
 
-/** A remote delete of a guest page the owner promoted (guest_promotions) is refused; checked at submission and in publication. */
-export async function refuseRemoteDeleteOfPromoted(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string): Promise<void> {
-  const kept = await exec.executeRaw('SELECT 1 FROM guest_promotions g JOIN pages p ON p.id = g.guest_page_id WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1', [sourceId, slug]);
-  if (kept.length) throw guestPagePromoted(slug);
+export function guestNoteNotYours(slug: string): OperationError {
+  return new OperationError('permission_denied', `Guest note ${slug} was saved by another writer, so this credential cannot delete it. Nothing was deleted.`,
+    'Delete only the guest notes this credential saved; the brain owner deletes any guest note on the brain host (gbrain delete).', 'docs/guides/guest-notes.md#save-a-guest-note-for-the-writer');
+}
+
+/**
+ * A remote delete of a page in a guest source: refused when the owner promoted it (guest_promotions) and when its guest
+ * mark names another writer than `principal` (a writer deletes only what it saved). Checked at submission and in publication.
+ */
+export async function refuseRemoteGuestDelete(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, principal: Principal): Promise<void> {
+  const [page] = await exec.executeRaw<{ guest: boolean; kept: boolean; writer: string | null }>(
+    `SELECT EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest, EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
+       (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1`, [sourceId, slug]);
+  if (!page?.guest && !page?.kept) return;
+  if (page.kept) throw guestPagePromoted(slug);
+  if (page.writer !== principalKey(principal)) throw guestNoteNotYours(slug);
 }
 
 const principalKey = (principal: Principal) => `${principal.kind}:${principal.id}`;

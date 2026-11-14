@@ -8,7 +8,7 @@
  * source has a repository, database-only where it has none), carrying the guest note's type, title, body and readers
  * plus 'promoted_from: <guest source>:<slug>' for people reading it. The link itself lives in guest_promotions, which
  * guest rows read as guest.promoted (guests/marker.ts), and which refuses the broker's delete of the note
- * (guests/admission.ts refuseRemoteDeleteOfPromoted). The guest page and its mark are never changed.
+ * (guests/admission.ts refuseRemoteGuestDelete). The guest page and its mark are never changed.
  */
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { federatedSearchScope } from '../ops/context.ts';

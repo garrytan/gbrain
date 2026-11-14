@@ -76,7 +76,7 @@ async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeou
       throw e;
     }
   };
-  // GBRA-504: guest pages are never extracted, so they are not lag; a brain before v312 has no guest_sources table.
+  // GBRA-504: guest pages are never extracted, so they are not lag; a brain behind the guest-notes migration has no guest_sources table.
   try { return await readShape(true); } catch (e) {
     if (!isMissingSchemaObject(e, 'table', 'guest_sources')) throw e;
     return readShape(false);

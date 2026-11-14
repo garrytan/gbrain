@@ -119,7 +119,8 @@ The offsite moved to Friday.
 A guest note is saved once, as a new page. Saving to a slug that exists is
 refused `revision_required`, and `force`, `expected_revision`, `edit_page`,
 `append_page`, `add_timeline_entry`, `add_link`, `remember`, `put_raw_data`,
-`put_pages` and uploads are refused `guest_page_immutable`; a writer may delete its notes.
+`put_pages` and uploads are refused `guest_page_immutable`; a writer may delete the notes
+it saved, and deleting another writer's note is refused `permission_denied`.
 gbrain checks the writer list again when the note publishes, so a writer you
 remove in between is refused `source_writer_restricted`. Every refusal is in
 [write refusals](write-refusals.md#guest-source-refusals).
