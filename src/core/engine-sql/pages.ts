@@ -318,7 +318,7 @@ export async function purgeDeletedPages(
   exec: SqlExecutor,
   olderThanHours: number,
   opts?: { dryRun?: boolean; excludeIds?: number[] },
-): Promise<{ slugs: string[]; count: number; pages?: { slug: string; deleted_at: Date }[] }> {
+): Promise<{ slugs: string[]; count: number; pages?: { slug: string; source_id: string; deleted_at: Date }[] }> {
     // Clamp to non-negative integer; runaway purge protection. The DELETE
     // cascades through content_chunks, page_links, chunk_relations via FKs.
     const hours = Math.max(0, Math.floor(olderThanHours));
@@ -330,8 +330,8 @@ export async function purgeDeletedPages(
       // SAME WHERE predicate as the DELETE below (same cutoff arithmetic,
       // same DB now() clock source) — only the verb differs, so preview and
       // purge agree modulo rows crossing the cutoff between statements.
-      const { rows } = await exec.run<{ slug: string; deleted_at: Date | string }>(sqlFragment`
-        SELECT slug, deleted_at FROM pages
+      const { rows } = await exec.run<{ slug: string; source_id: string; deleted_at: Date | string }>(sqlFragment`
+        SELECT slug, source_id, deleted_at FROM pages
         WHERE deleted_at IS NOT NULL
           AND deleted_at < now() - (${hours} || ' hours')::interval
           AND NOT EXISTS (SELECT 1 FROM op_checkpoints dg WHERE dg.op = 'sync-identity-downgrade' AND dg.fingerprint = pages.id::text
@@ -342,6 +342,7 @@ export async function purgeDeletedPages(
       `);
       const pages = rows.map((r) => ({
         slug: r.slug,
+        source_id: r.source_id,
         deleted_at: r.deleted_at instanceof Date ? r.deleted_at : new Date(r.deleted_at),
       }));
       return { slugs: pages.map((p) => p.slug), count: pages.length, pages };
