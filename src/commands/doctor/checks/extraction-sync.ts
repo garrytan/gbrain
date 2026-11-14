@@ -37,6 +37,7 @@ import { connectorAuthorities } from '../../../core/persistence/connector-author
 import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
 import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
+import { atomHealthScope } from '../../../core/cycle/atom-source-policy.ts';
 import { haltReasonsWithUnknown, readRecordedHaltReasons7d, topHaltReason } from '../../../core/extract/rollup-writer.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
@@ -965,6 +966,7 @@ export async function computeExtractHealthCheck(
 ): Promise<Check> {
   const name = 'extract_health';
   try {
+    const { excludedAtomSources, policyDetails, policyNote } = await atomHealthScope(engine);
     type RollupRow = {
       kind: string;
       cost_7d_usd: number;
@@ -996,27 +998,25 @@ export async function computeExtractHealthCheck(
          CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
        WHERE day >= CURRENT_DATE - 7
+         AND (kind <> 'atoms' OR source_id <> ALL($1::text[]))
        GROUP BY kind
        ORDER BY kind`;
     let rows: RollupRow[];
     try {
-      rows = await engine.executeRaw<RollupRow>(rollupQuery(true), []);
+      rows = await engine.executeRaw<RollupRow>(rollupQuery(true), [excludedAtomSources]);
     } catch (err) {
       if (!isMissingSchemaObject(err, 'column', 'expected_limit_count')) throw err;
-      rows = await engine.executeRaw<RollupRow>(rollupQuery(false), []);
+      rows = await engine.executeRaw<RollupRow>(rollupQuery(false), [excludedAtomSources]);
     }
     // #5495: recorded halt reasons per kind over the same 7 days (migration v239).
-    const recordedReasons = await readRecordedHaltReasons7d(engine);
+    const recordedReasons = await readRecordedHaltReasons7d(engine, excludedAtomSources);
 
     if (rows.length === 0) {
       return {
         name,
         status: 'ok',
-        message: 'no extractions in last 7 days',
-        details: {
-          schema_version: 1,
-          kinds: [],
-        },
+        message: `no extractions in last 7 days${policyNote}`,
+        details: { schema_version: 1, ...policyDetails, kinds: [] },
       };
     }
 
@@ -1099,7 +1099,7 @@ export async function computeExtractHealthCheck(
         status: 'warn',
         message: `${highHaltKinds.length} kind(s) with halt rate > 10% (top: ${top3})`,
         details: {
-          schema_version: 1,
+          schema_version: 1, ...policyDetails,
           kinds,
           rollup_write_failures_7d: totalRollupFailures,
         },
@@ -1116,7 +1116,7 @@ export async function computeExtractHealthCheck(
         // operator to a usage error.
         message: `${totalRollupFailures} rollup write failure(s) in last 7d. The rollup table is a best-effort cache — the audit JSONL under ~/.gbrain/audit/ is the source of truth, and counts here may undercount until the 7-day window rolls past the failures. No action needed unless failures keep accumulating (then check DB connectivity/permissions).`,
         details: {
-          schema_version: 1,
+          schema_version: 1, ...policyDetails,
           kinds,
           rollup_write_failures_7d: totalRollupFailures,
         },
@@ -1133,9 +1133,9 @@ export async function computeExtractHealthCheck(
     return {
       name,
       status: 'ok',
-      message: `${kinds.length} kind(s) tracked, all halt rates below 10%${capNote}`,
+      message: `${kinds.length} kind(s) tracked, all halt rates below 10%${capNote}${policyNote}`,
       details: {
-        schema_version: 1,
+        schema_version: 1, ...policyDetails,
         kinds,
         rollup_write_failures_7d: totalRollupFailures,
       },

@@ -66,3 +66,13 @@ The full contract, with every table classified and the disaster-recovery
 commands, is the [system of record](../architecture/system-of-record.md).
 [Memory boundaries](memory-boundaries.md) covers what leaves the machine and
 what sharing can and can't promise.
+
+## Search-only sources and paid atom extraction
+
+A source can remain searchable without sending its text to the atom
+extractor. On the brain host, set `cycle.extract_atoms.exclude_sources` to a
+JSON array of source IDs. For example, use
+`gbrain config set cycle.extract_atoms.exclude_sources '["archive"]'` for a
+source named `archive`. This applies to direct extraction, drain discovery
+and Autopilot's backlog-based dispatch. Doctor reports the retained history
+for excluded sources separately from the health of active extraction.

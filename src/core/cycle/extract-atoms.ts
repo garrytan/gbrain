@@ -75,6 +75,7 @@ import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
 import { connectorAtomExclusionSql } from './connector-atoms.ts';
+import { atomExcludedSources } from './atom-source-policy.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -411,6 +412,7 @@ export async function discoverExtractablePages(
   affectedSlugs?: string[],
   limit: number = PAGE_DISCOVERY_BUDGET,
 ): Promise<AtomPageInput[]> {
+  if ((await atomExcludedSources(engine)).includes(sourceId)) return [];
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
   const connectorExclusion = await connectorAtomExclusionSql(engine);
   const sql = `
@@ -505,6 +507,8 @@ export async function countExtractAtomsBacklog(
     // The atom must live in the SAME source as the page either way, so the
     // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
     const scoped = sourceId !== undefined;
+    const excluded = await atomExcludedSources(engine);
+    if (scoped && excluded.includes(sourceId)) return 0;
     const connectorExclusion = await connectorAtomExclusionSql(engine);
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
@@ -528,6 +532,7 @@ export async function countExtractAtomsBacklog(
            )`
       : `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.type = ANY($1::text[])
+           AND p.source_id <> ALL($4::text[])
            AND p.deleted_at IS NULL
            AND p.content_hash IS NOT NULL
            AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
@@ -548,7 +553,7 @@ export async function countExtractAtomsBacklog(
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
       ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
+      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, excluded];
     const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
     return Number(rows[0]?.cnt ?? 0);
   } catch (err) {
@@ -709,6 +714,11 @@ export async function runPhaseExtractAtoms(
   opts: ExtractAtomsOpts = {},
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
+  if ((await atomExcludedSources(engine)).includes(sourceId)) {
+    return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0,
+      summary: 'extract_atoms: source excluded by operator policy',
+      details: { reason: 'source_excluded', source_id: sourceId, atoms_extracted: 0 } };
+  }
   const chat = opts._chat ?? gatewayChat;
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait, opts.signal);
   // v0.41.2.1: loadConfigWithEngine() so the dream.* DB-plane merge from Phase 1 reaches this phase.
