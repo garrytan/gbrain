@@ -41,7 +41,7 @@ import { stagedUploadParts, stagedUploadWork, type StagingBodyRef } from './page
 import type { PreparedMutation } from './coordinator.ts';
 import type { WriteRequest } from './model.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
-import { assertLabelledOnlyCreate, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf } from './page-visibility.ts';
+import { defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf, remoteLabelsChecked } from './page-visibility.ts';
 
 const text = (value: unknown) => (typeof value === 'string' ? value : null);
 
@@ -95,7 +95,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
   const storedTier = remote && snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null;
   const defaultSourceWriter = await defaultSourceMemberWriter(engine, row.authority);
   const defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter);
-  const ownerRewrite = await ownerRewriteOf(engine, row.authority, row.source_id, row.slug);
+  const ownerRewrite = await ownerRewriteOf(engine, row.authority, row.source_id, row.slug, row.operation === 'put_page');
   let trust: WriteTrust | undefined;
   const dir = await mkdtemp(join(tmpdir(), 'gbrain-upload-'));
   let ready: StreamedPreparedImport | undefined;
@@ -138,7 +138,7 @@ export async function prepareStreamedUpload(engine: BrainEngine, row: WriteReque
     throw opError('invalid_params', result.error ?? 'The uploaded page could not be prepared.', `Page ${row.slug} was not written. Fix what the message names, then upload it again with a new request_id.`);
   }
   const prepared: StreamedPreparedImport = ready;
-  await assertLabelledOnlyCreate(engine, row.authority, row.slug, snapshot?.page, prepared.frontmatter);
+  await remoteLabelsChecked(engine, row.authority, row.slug, snapshot?.page, { parsedPage: { frontmatter: prepared.frontmatter } });
   const privateRequest = privateRequestGuarded(row.operation, p.kind) ? readPrivateRequest('', () => prepared.frontmatter) : null;
   if (privateRequest) assertPrivateRequestKept(row, privateRequest.frontmatter);
   if (coreMarking(snapshot?.page.frontmatter).core || coreMarking(prepared.frontmatter).core) {

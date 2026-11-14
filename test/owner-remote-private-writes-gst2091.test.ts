@@ -20,7 +20,7 @@
  *    Postgres) and of a managed repo brain (Git commit).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -31,6 +31,10 @@ import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { storedOwnerWrite } from '../src/core/persistence/page-visibility.ts';
+import type { WriteAuthority } from '../src/core/persistence/model.ts';
+import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
+import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { linkMember } from '../src/core/access/actor.ts';
@@ -45,7 +49,7 @@ const WRITERS = ['put_page', 'edit_page', 'append_page'] as const;
 type Writer = typeof WRITERS[number];
 type Shape = 'private' | 'shared' | 'alice_only' | 'vault';
 type Channel = { actor?: string; audience?: string };
-type Call = { isError: boolean; code: string | null; text: string };
+type Call = { isError: boolean; code: string | null; text: string; json: Record<string, any> };
 type PageRow = { frontmatter: Record<string, unknown>; page_readers: string[] | null; revision: string; principal_kind: string | null; principal_id: string | null; body: string };
 
 const tag = () => randomUUID().slice(0, 8);
@@ -83,17 +87,22 @@ async function seedBrain(engine: BrainEngine, sourceId: string, writePage: (slug
   }
   tokens.unbound_token = (await mintLegacyToken(engine, { name: `gst2091-unbound-${tag()}`, scopes: ['read', 'write'], takesHolders: ['world'], sourceGrant: [sourceId] })).token;
   await linkMember(engine, OWNER, 'qm', 'U0OWNER');
+  const grantedName = `gst2091-granted-${tag()}`;
+  const granted = await mintLegacyToken(engine, { name: grantedName, scopes: ['read'], takesHolders: ['world'], sourceGrant: [sourceId] });
+  await rescopeLegacyToken(engine, parseRescopeTokenArgs([grantedName, '--private-pages', 'granted-sources']));
+  await readsUnscopedOnPurpose(engine, granted.id);
+  tokens.granted = granted.token;
 
   async function call(who: string, op: string, params: Record<string, unknown>, channel: Channel = {}): Promise<Call> {
     const auth = await provider().verifyAccessToken(tokens[who]!) as unknown as AuthInfo;
     const out = await dispatchToolCall(engine, op, { ...params }, {
-      remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: ['world'],
+      remote: true, transport: 'http', auth, sourceId, takesHoldersAllowList: ['world'], inboundFrameBytes: 4 * 1024 ** 2,
       ...(channel.actor ? { actor: { header: channel.actor } } : {}), ...(channel.audience ? { onBehalfOf: { header: channel.audience } } : {}),
     });
     const text = out.content.map(c => c.text).join('\n');
     let json: Record<string, any> = {};
     try { json = JSON.parse(out.content[0]?.text ?? ''); } catch { /* prose */ }
-    return { isError: out.isError === true, code: out.isError === true ? json.error ?? json.code ?? null : null, text };
+    return { isError: out.isError === true, code: out.isError === true ? json.error ?? json.code ?? null : null, text, json };
   }
   async function local(slug: string): Promise<{ revision: string; content: string }> {
     const out = await dispatchToolCall(engine, 'get_page', { slug, include_content: true }, { remote: false, sourceId });
@@ -125,7 +134,7 @@ async function seedBrain(engine: BrainEngine, sourceId: string, writePage: (slug
     }
     return call(who, 'append_page', { slug: page.slug, text: marker, request_id: randomUUID() }, channel);
   }
-  return { call, row, revision, seed, write, clients };
+  return { call, row, revision, seed, write, clients, local };
 }
 
 for (const kind of testBackends()) {
@@ -228,6 +237,169 @@ for (const kind of testBackends()) {
       expect(await h.row(page.slug)).toEqual(before);
     }, 120_000);
 
+    test('an owner put_page that leaves out labels keeps a pinned question hidden from a granted_sources credential', async () => {
+      const plain = await h.seed('private');
+      expect((await h.call('granted', 'get_page', { slug: plain.slug })).text).toContain(plain.canary);
+      const t = tag();
+      const page = { slug: `notes/pinned-${t}`, canary: `gst2091pinned${t}`, title: `Note ${t}` };
+      await importFromContent(engine, page.slug, pageText(page.title, `First line ${page.canary}.`, ['pinned_question: true']), { sourceId: SRC });
+      expect((await h.call('granted', 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+      const out = await h.write('owner', 'put_page', page);
+      expect({ isError: out.isError, text: out.isError ? out.text : '' }).toEqual({ isError: false, text: '' });
+      const after = await h.row(page.slug);
+      expect(after.body).toContain(`Owner change ${page.canary}.`);
+      expect(after.frontmatter.pinned_question).toBe(true);
+      for (const who of ['granted', 'alice', 'bob']) expect((await h.call(who, 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+    }, 120_000);
+
+    const anyRow = async (slug: string) => (await engine.executeRaw<Record<string, unknown>>(`SELECT frontmatter, deleted_at::text AS deleted_at, knowledge_revision::text AS revision,
+      revision_principal_id AS principal_id FROM pages WHERE source_id = $1 AND slug = $2`, [SRC, slug]))[0];
+    const versionsText = async (who: string, slug: string) => (await h.call(who, 'get_versions', { slug, include_body: true })).text;
+
+    for (const lines of [['visibility: private'], ['pinned_question: true']]) {
+      test(`an owner write to a soft-deleted private page (${lines[0]}) is refused as on master, changes nothing and opens no version history`, async () => {
+        const t = tag();
+        const page = { slug: `notes/deleted-${t}`, canary: `gst2091deleted${t}`, title: `Note ${t}` };
+        await importFromContent(engine, page.slug, pageText(page.title, `First line ${page.canary}.`, lines), { sourceId: SRC });
+        await h.write('owner', 'put_page', page);
+        const deleted = await dispatchToolCall(engine, 'delete_page', { slug: page.slug, expected_revision: await h.revision(page.slug) }, { remote: false, sourceId: SRC });
+        expect({ isError: deleted.isError === true, text: deleted.isError ? deleted.content.map(c => c.text).join('\n') : '' }).toEqual({ isError: false, text: '' });
+        const before = await anyRow(page.slug);
+        expect(before?.deleted_at).not.toBeNull();
+        const readers = ['bob', 'alice', 'granted'];
+        const seen = async () => Object.fromEntries(await Promise.all(readers.map(async who => [who, await versionsText(who, page.slug)])));
+        const seenBefore = await seen();
+        for (const who of ['bob', 'alice', ...(lines[0] === 'pinned_question: true' ? ['granted'] : [])]) expect(seenBefore[who]).not.toContain(page.canary);
+        const attempts: Array<[string, Record<string, unknown>]> = [
+          ['put_page', { slug: page.slug, content: pageText(page.title, `First line ${page.canary}.`, []), request_id: randomUUID() }],
+          ['put_page', { slug: page.slug, content: pageText(page.title, `First line ${page.canary}.`, ['visibility: world']), request_id: randomUUID() }],
+          ['edit_page', { slug: page.slug, expected_revision: before!.revision, request_id: randomUUID(), edits: [{ old_text: `First line ${page.canary}.`, new_text: `Edited ${page.canary}.` }] }],
+          ['append_page', { slug: page.slug, text: `Appended ${page.canary}.`, request_id: randomUUID() }],
+        ];
+        const codes: string[] = [];
+        for (const [op, params] of attempts) {
+          const out = await h.call('owner', op, params);
+          codes.push(`${op}:${out.isError ? out.code : 'ok'}`);
+        }
+        expect(codes).toEqual(SOFT_DELETED_CODES);
+        expect(await anyRow(page.slug)).toEqual(before);
+        expect(await seen()).toEqual(seenBefore);
+      }, 120_000);
+    }
+
+    test('a streamed owner upload over the single-string ceiling is held to the same readers check as a small one', async () => {
+      await engine.executeRaw("INSERT INTO config (key, value) VALUES ('write_gate.agent_mode', 'off') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value");
+      const sha = (s: string) => createHash('sha256').update(Buffer.from(s, 'utf8')).digest('hex');
+      const PART_CHARS = 3_900_000;
+      const filler = 'We agreed to ship the review checklist first and revisit pricing next week. '.repeat(64) + '\n\n';
+      async function upload(slug: string, mode: 'create' | 'replace', content: string): Promise<Call> {
+        const begin = await h.call('owner', 'begin_page_upload', { slug, mode, total_bytes: Buffer.byteLength(content), sha256: sha(content), request_id: randomUUID(),
+          ...(mode === 'replace' ? { expected_revision: await h.revision(slug) } : {}) });
+        if (begin.isError) return begin;
+        for (let part = 0, at = 0; at < content.length; part++, at += PART_CHARS) {
+          const piece = content.slice(at, at + PART_CHARS);
+          const sent = await h.call('owner', 'upload_page_part', { upload_id: begin.json.upload_id, part, text: piece, part_sha256: sha(piece) });
+          if (sent.isError) return sent;
+        }
+        let commit = await h.call('owner', 'commit_page_upload', { upload_id: begin.json.upload_id, wait_ms: 30_000 });
+        for (let attempt = 0; commit.json.code === 'write_pending' && attempt < 40; attempt++) commit = await h.call('owner', 'commit_page_upload', { upload_id: begin.json.upload_id, wait_ms: 30_000 });
+        return commit;
+      }
+      try {
+        const shared = await h.seed('shared');
+        const created = `notes/upload-${tag()}`;
+        const cases: Array<[string, 'create' | 'replace', string[]]> = [
+          [shared.slug, 'replace', ['visibility: private', 'readable_by: [alice-example]']],
+          [created, 'create', ['readable_by: []']],
+        ];
+        const outcomes: string[] = [];
+        for (const big of [false, true]) {
+          for (const [slug, mode, lines] of cases) {
+            const before = await anyRow(slug);
+            const body = `First line ${shared.canary}.\n\n` + (big ? filler.repeat(Math.ceil(25 * 1024 ** 2 / filler.length)) : 'Short body.');
+            const out = await upload(slug, mode, pageText(shared.title, body, lines));
+            outcomes.push(`${big ? 'streamed' : 'inline'} ${mode}: ${out.isError ? out.code : out.json.state}`);
+            expect(await anyRow(slug)).toEqual(before);
+          }
+        }
+        expect(outcomes).toEqual(['inline replace: readable_by_invalid', 'inline create: readable_by_invalid', 'streamed replace: readable_by_invalid', 'streamed create: readable_by_invalid']);
+      } finally {
+        await engine.executeRaw("DELETE FROM config WHERE key = 'write_gate.agent_mode'");
+      }
+    }, 900_000);
+
+    test("the owner widening reads the client's slug fence live: a client fenced after submission is no longer the owner's own write", async () => {
+      const page = await h.seed('private');
+      const out = await h.write('owner', 'put_page', page);
+      expect({ isError: out.isError, text: out.isError ? out.text : '' }).toEqual({ isError: false, text: '' });
+      const [req] = await engine.executeRaw<{ authority: WriteAuthority | string }>(
+        "SELECT authority FROM persistence_requests WHERE source_id = $1 AND slug = $2 AND operation = 'put_page' ORDER BY created_at DESC LIMIT 1", [SRC, page.slug]);
+      const authority = (typeof req!.authority === 'string' ? JSON.parse(req!.authority) : req!.authority) as WriteAuthority;
+      expect(await storedOwnerWrite(engine, authority)).toBe(true);
+      await engine.executeRaw('UPDATE oauth_clients SET bound_slug_prefixes = $2::text[] WHERE client_id = $1', [h.clients.owner!, ['notes/']]);
+      try {
+        expect(await storedOwnerWrite(engine, authority)).toBe(false);
+      } finally {
+        await engine.executeRaw('UPDATE oauth_clients SET bound_slug_prefixes = NULL WHERE client_id = $1', [h.clients.owner!]);
+      }
+      expect(await storedOwnerWrite(engine, authority)).toBe(true);
+    }, 120_000);
+
+    for (const line of ['visibility:', 'visibility: ""']) {
+      test(`an owner put_page with an empty visibility (${line}) keeps a private page private`, async () => {
+        const page = await h.seed('private');
+        const out = await h.write('owner', 'put_page', page, {}, pageText(page.title, `First line ${page.canary}.\n\nOwner change ${page.canary}.`, [line]));
+        expect({ isError: out.isError, text: out.isError ? out.text : '' }).toEqual({ isError: false, text: '' });
+        const after = await h.row(page.slug);
+        expect(after.body).toContain(`Owner change ${page.canary}.`);
+        expect(after.frontmatter.visibility).toBe('private');
+        for (const who of ['alice', 'bob']) expect((await h.call(who, 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+      }, 120_000);
+    }
+
+    const editedAway: Array<[string, (origin: string) => string[], string, string, string]> = [
+      ['a privacy alias', () => ['access: confidential'], 'note', 'access: confidential', 'status: draft'],
+      ['derived_from a private page', origin => [`derived_from: [${origin}]`], 'note', 'derived_from:', 'related_to:'],
+      ['a derived atom type', () => [], 'atom', 'type: atom', 'type: note'],
+    ];
+    for (const [label, lines, type, oldText, newText] of editedAway) {
+      test(`an owner edit_page that removes ${label} without stating visibility keeps the page private`, async () => {
+        const origin = (await h.seed('private')).slug;
+        const t = tag();
+        const page = { slug: `notes/edited-${t}`, canary: `gst2091edited${t}`, title: `Note ${t}` };
+        await importFromContent(engine, page.slug, pageText(page.title, `First line ${page.canary}.`, lines(origin)).replace('type: note', `type: ${type}`), { sourceId: SRC });
+        expect((await h.call('bob', 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+        expect((await h.local(page.slug)).content).toContain(oldText);
+        const out = await h.call('owner', 'edit_page', { slug: page.slug, expected_revision: await h.revision(page.slug), request_id: randomUUID(),
+          edits: [{ old_text: oldText, new_text: newText }] });
+        expect({ isError: out.isError, text: out.isError ? out.text : '' }).toEqual({ isError: false, text: '' });
+        const after = await h.row(page.slug);
+        expect(after.body).not.toContain(oldText);
+        expect(after.frontmatter.visibility).toBe('private');
+        for (const who of ['alice', 'bob']) expect((await h.call(who, 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+      }, 120_000);
+    }
+
+    test('an owner put_page reads visibility.honor_aliases live before deciding a page is private by an alias', async () => {
+      const t = tag();
+      const page = { slug: `notes/alias-${t}`, canary: `gst2091alias${t}`, title: `Note ${t}` };
+      await importFromContent(engine, page.slug, pageText(page.title, `First line ${page.canary}.`, ['access: confidential']), { sourceId: SRC });
+      const setHonor = (value: string) => engine.executeRaw("INSERT INTO config (key, value) VALUES ('visibility.honor_aliases', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [value]);
+      try {
+        await setHonor('off');
+        __resetPrivateVisibilityCacheForTests();
+        await h.call('bob', 'get_page', { slug: page.slug });
+        await setHonor('on');
+        const out = await h.write('owner', 'put_page', page);
+        expect({ isError: out.isError, text: out.isError ? out.text : '' }).toEqual({ isError: false, text: '' });
+        expect((await h.row(page.slug)).frontmatter.visibility).toBe('private');
+      } finally {
+        await engine.executeRaw("DELETE FROM config WHERE key = 'visibility.honor_aliases'");
+        __resetPrivateVisibilityCacheForTests();
+      }
+      for (const who of ['alice', 'bob']) expect((await h.call(who, 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+    }, 120_000);
+
     const refused: Array<[string, string, Shape, Channel]> = [
       ['another member', 'bob', 'private', {}],
       ['a member the page lists', 'alice', 'shared', {}],
@@ -279,3 +451,6 @@ for (const kind of testBackends()) {
  * attested call (put_page, edit_page and append_page are not attestable) and a credential without write scope.
  */
 const REFUSED_CODE: Record<string, string> = { attested: 'actor_not_attested', owner_read_only: 'permission_denied' };
+
+/** The owner's writes to a soft-deleted private page, as master 503e7b65 answered them (recorded before the fix). */
+const SOFT_DELETED_CODES = ['put_page:page_not_found', 'put_page:page_not_found', 'edit_page:page_not_found', 'append_page:page_not_found'];
