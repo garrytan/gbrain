@@ -702,14 +702,15 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * inputs are judged the same way, moved origins included (GST-2687), by the SQL
  * function gbrain_concept_inputs_private (migration v311), one planned call per
  * page instead of the subplans. Over a shadowed `pages` (privacyPartSql), and
- * inside a remote request on a brain whose schema predates v311, the same test runs inline, as gbrain_access_origin_restricted is
+ * inside a remote request on a brain whose schema predates v311 or under a remote record that carries no schema
+ * version (an attested or scope read), the same test runs inline, as gbrain_access_origin_restricted is
  * skipped inside a request on a brain that never set access.restrictions_present.
  */
 function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
-  const schema = currentCallerAccess().remotePolicy?.schemaVersion;
-  const conceptInputsPrivate = !shadowedPages && (schema === undefined || schema >= v311.version) ? `gbrain_concept_inputs_private(${p}.id)`
+  const policy = currentCallerAccess().remotePolicy;
+  const conceptInputsPrivate = !shadowedPages && (policy == null || (policy.schemaVersion ?? 0) >= v311.version) ? `gbrain_concept_inputs_private((${p}.id)::integer)`
     : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
       WHERE derived_input_link.from_page_id = ${p}.id AND derived_input_link.link_source = 'concept-provenance'
@@ -1140,7 +1141,7 @@ export async function remotePrivacyRelaxed(engine: BrainEngine): Promise<boolean
 export interface ServesPolicy { several: boolean; from: 'config' | 'members'; since: number | null; enforce: boolean }
 
 /** `servesUnknown`: the config read failed, so whom the brain serves is not known (never read as one person, GST-363). */
-/** `schemaVersion`: config `version` as the request read it; below v311 the concept-input test runs inline (derivedOriginPrivateSql). */
+/** `schemaVersion`: config `version` as the request read it; below v311, or absent, the concept-input test runs inline (derivedOriginPrivateSql). */
 export interface RemotePolicy { privacyRelaxed: boolean; restricted: boolean; ownerMember?: string | null; ownerReadsRestricted?: boolean; membersReadLineage?: boolean; serves?: ServesPolicy; servesUnknown?: boolean; schemaVersion?: number }
 
 /** GST-363: an explicit access.serves wins over the trigger-kept member count; enforcement is on unless set to false. */

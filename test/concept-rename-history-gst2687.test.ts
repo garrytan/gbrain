@@ -24,7 +24,8 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { __resetPrivateVisibilityCacheForTests, privatePagesFilterFragment, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { SCOPE_READ_ACCESS } from '../src/core/access/scope-read.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { renamePageOntoSlug } from '../src/commands/sync/rename-collision.ts';
@@ -168,6 +169,19 @@ for (const kind of testBackends()) {
         await runMigrations(engine);
       }
       expect(await engine.executeRaw<{ ok: boolean }>(`SELECT to_regprocedure('gbrain_concept_inputs_private(integer)') IS NOT NULL AS ok`)).toEqual([{ ok: true }]);
+    }, 60_000);
+
+    test('(h) on a brain whose schema predates v311 a scope read, whose record carries no schema version, keeps working and hides the concept', async () => {
+      await engine.executeRaw('DROP FUNCTION gbrain_concept_inputs_private(integer)');
+      await engine.setConfig('version', String(v311.version - 1));
+      try {
+        __resetPrivateVisibilityCacheForTests();
+        const visible = await withCallerAccess(SCOPE_READ_ACCESS, async () => (await engine.executeRaw<{ slug: string }>(
+          `SELECT p.slug FROM pages p WHERE p.source_id = $1 AND ${privatePagesFilterFragment('p')}`, [SRC])).map(row => row.slug));
+        expect({ concept: visible.includes(CONCEPT), atom: visible.includes(ATOM) }).toEqual({ concept: false, atom: false });
+      } finally {
+        await runMigrations(engine);
+      }
     }, 60_000);
   });
 }
