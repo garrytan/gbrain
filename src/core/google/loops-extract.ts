@@ -39,6 +39,8 @@ import { decideFactWrite } from '../write-gate-store.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
+/** GST-2692: a passing database condition as the managed write door reports it (retries ran out, still pending, outcome unknown). */
+const DOOR_TRANSIENT_CODES = new Set(['write_interrupted', 'write_pending', 'write_outcome_unknown']);
 /**
  * Historical batch size. NO LONGER an enqueue cap — every eligible thread is
  * queued (up to the generous safety ceiling below) and the worker's
@@ -531,7 +533,7 @@ export async function runLoopsExtract(
     } catch (err) {
       const code = (err as { code?: unknown })?.code;
       // GST-2692: a passing database error (a cancel, a stale plan, contention, a lost connection) retries the job, so the fact is not dropped.
-      if (transientDatabaseFailure(err) || transientInterruption(err)) {
+      if (transientDatabaseFailure(err) || transientInterruption(err) || (typeof code === 'string' && DOOR_TRANSIENT_CODES.has(code))) {
         throw new LoopsExtractRetryableError('fact_transient',
           `loops_extract: a passing database error (${typeof code === 'string' ? code : 'transient'}) while saving a commitment fact of ${payload.slug} — retryable`);
       }

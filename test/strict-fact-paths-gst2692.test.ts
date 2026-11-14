@@ -59,8 +59,8 @@ const commits = (root: string, claim: string) => git(root, 'log', '--all', '--fo
 const holdStatus = async (engine: BrainEngine, ref: string) => (await engine.executeRaw<{ status: string }>('SELECT status FROM write_gate_holds WHERE id=$1', [Number(ref.slice(1))]))[0]?.status;
 const releaseRequests = (engine: BrainEngine) => engine.executeRaw("SELECT 1 FROM persistence_requests WHERE operation='trust_release'");
 
-/** Throws `error()` from holdingPageFor's access read outside an extract_facts preparation (at admission), at most `times` times. */
-function failAccessReadAtAdmission(engine: BrainEngine, error: () => Error, times: number) {
+/** Throws `error()` from holdingPageFor's access read outside an extract_facts preparation (at admission), or inside it, at most `times` times. */
+function failAccessReadAtAdmission(engine: BrainEngine, error: () => Error, times: number, inPreparation = false) {
   let preparing = false;
   let thrown = 0;
   installFaultHook(async (point, detail) => {
@@ -70,7 +70,7 @@ function failAccessReadAtAdmission(engine: BrainEngine, error: () => Error, time
   });
   const original = engine.executeRaw as (this: BrainEngine, ...args: unknown[]) => Promise<unknown>;
   const spy = spyOn(engine, 'executeRaw').mockImplementation((async function (this: BrainEngine, sql: string, params?: unknown[], opts?: unknown) {
-    if (!preparing && thrown < times && sql.includes(ACCESS_READ)) { thrown++; throw error(); }
+    if (preparing === inPreparation && thrown < times && sql.includes(ACCESS_READ)) { thrown++; throw error(); }
     return original.call(this, sql, params, opts);
   }) as typeof engine.executeRaw);
   return { thrown: () => thrown, restore() { spy.mockRestore(); installFaultHook(undefined); } };
@@ -140,6 +140,22 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2692: held and 
     expect({ result: retry.result, loops: retry.loops, log: retry.log }).toMatchObject({ result: { status: 'extracted', commitments: 1 },
       loops: [{ fact_id: Number(rows[0]!.id), summary: claim }], log: [] });
     expect(commits(root, claim)).toHaveLength(1);
+  }), 300_000);
+
+  for (const [arm, inPreparation, error] of [
+    ['a statement cancel in preparation with no retries left (write_interrupted)', true, () => Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })],
+  ] as const) test(`${arm} makes the loops job retry instead of saving the loop with no fact`, () => brain(true, async ({ engine, ctx }) => {
+    await engine.setConfig('loops.extraction_enabled', 'true');
+    await engine.setConfig('persistence.max_transient_retries', '0');
+    await operationsByName.put_page!.handler(ctx, { slug: EMAIL, request_id: randomUUID(),
+      content: '---\ntitle: Invoice thread\ntype: email\nthread_id: invoice-thread\nfrom: bob@example.invalid\n---\nI will send Bob the invoice summary by Friday.\n' });
+    await settleManagedGitEffects(engine);
+    const claim = 'Send Bob example the invoice summary by Friday.';
+    const fault = failAccessReadAtAdmission(engine, error, 1, inPreparation);
+    const first = await runLoopsJob(engine, claim).finally(() => fault.restore());
+    expect(fault.thrown()).toBe(1);
+    expect({ error: first.error && { name: first.error.name, reason: first.error.reason }, loops: first.loops, log: first.log, rows: await factRows(engine, claim) })
+      .toEqual({ error: { name: 'LoopsExtractRetryableError', reason: 'fact_transient' }, loops: [], log: [], rows: [] });
   }), 300_000);
 
   test('managed persistence off: an owner\'s release refuses git_home_required with nothing written, for an entity with a page and one without', () => brain(true, async ({ engine, ctx, root }) => {
