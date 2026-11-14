@@ -33,6 +33,7 @@ test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
 test/access-raw-only-rules.test.ts
+test/access-room.test.ts
 test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
@@ -112,6 +113,7 @@ test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-facts-fence-failure-health-8758.test.ts
 test/extract-stale-frontmatter-loop-9295.test.ts
+test/extract-stale-managed-signal-gbra438.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
@@ -133,6 +135,7 @@ test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
+test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
@@ -178,9 +181,11 @@ test/harness-skills-epoch.test.ts
 test/harness-verify-member-credential.test.ts
 test/held-bare-name-move-gst2492.test.ts
 test/held-fence-readers-gst2492.test.ts
+test/held-move-plan-gst2497.test.ts
 test/held-read-signals.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
+test/holding-page-saves-gst2497.test.ts
 test/hosted-repo-g7b2.test.ts
 test/ignored-privacy-labels.test.ts
 test/import-file-result-callback-gbra130.test.ts
@@ -312,8 +317,10 @@ test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
 test/list-pages-empty-type-notice-gbra449.test.ts
 test/lower-tier-label-hold.test.ts
+test/maintenance-idle-gbra438.test.ts
 test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
+test/maintenance-unattended.test.ts
 test/managed-atom-release-resume-9079-9275.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts
@@ -532,6 +539,7 @@ test/purge-name-stores-9068.test.ts
 test/purge-read-surfaces.test.ts
 test/purge-root-metafile-7613.test.ts
 test/purge-scrub-followups-9068.test.ts
+test/purge-slug-stores-9146.test.ts
 test/purge-sync-tombstone-hold-7130.test.ts
 test/qm-attest-write-boundary.test.ts
 test/qm-memory-propose.test.ts
@@ -711,6 +719,7 @@ test/think-remote-model.test.ts
 test/timeline-chunk-reuse.test.ts
 test/transcript-redaction-key-names.test.ts
 test/trust-channel-writes.test.ts
+test/trust-claim-chronicle-9284.test.ts
 test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
 test/trust-keep-maintenance-reimport-8352.test.ts

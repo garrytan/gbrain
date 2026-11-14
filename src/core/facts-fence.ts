@@ -270,6 +270,20 @@ export function parseFactsFence(body: string): FactsFenceParseResult {
   return parseFactsFenceFor(body);
 }
 
+/**
+ * GST-2497: one write reads the same table many times (the withdrawal overlay, the chunker, the remote-read strip, the
+ * refusal scan). A table's parse depends only on its text, whether the `entity` column is read and which folder's
+ * entities a folder holding page may hold, so the newest few parses are kept under that key (at most 8, and 16M
+ * characters of table text) and every caller gets its own copy.
+ */
+const PARSE_CACHE_LIMIT = 8;
+const PARSE_CACHE_MAX_CHARS = 16 * 1024 * 1024;
+const parseCache = new Map<string, FactsFenceParseResult>();
+let cachedChars = 0;
+let tableParses = 0;
+/** Test seam: how many fence tables parseFactsFenceFor has parsed in this process, cached reads excluded. */
+export const factsFenceTableParses = (): number => tableParses;
+
 /** parseFactsFence for a known page: `memory/unattributed` also reads its `entity` column (GST-2492). */
 export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): FactsFenceParseResult {
   const { beginIdx, endIdx } = locateOutsideCode(body, FACTS_FENCE_BEGIN, FACTS_FENCE_END);
@@ -284,8 +298,25 @@ export function parseFactsFenceFor(body: string, opts?: FactsFenceParseOpts): Fa
     warnings.push('FACTS_FENCE_UNBALANCED: end marker before begin');
     return { facts: [], warnings };
   }
-
   const inner = body.slice(beginIdx + FACTS_FENCE_BEGIN.length, endIdx);
+  const folder = isHoldingSlug(opts?.slug) && opts?.slug !== UNATTRIBUTED_MEMORY_SLUG ? opts!.slug : '';
+  const key = `${readsEntity(opts) ? 1 : 0}\0${folder}\0${inner}`;
+  const hit = parseCache.get(key);
+  const parsed = hit ?? parseFactsTable(inner, opts);
+  if (hit) parseCache.delete(key);
+  else cachedChars += key.length;
+  parseCache.set(key, parsed);
+  for (const old of parseCache.keys()) {
+    if (parseCache.size <= PARSE_CACHE_LIMIT && cachedChars <= PARSE_CACHE_MAX_CHARS) break;
+    parseCache.delete(old);
+    cachedChars -= old.length;
+  }
+  return { facts: parsed.facts.map(fact => ({ ...fact })), warnings: [...parsed.warnings] };
+}
+
+function parseFactsTable(inner: string, opts?: FactsFenceParseOpts): FactsFenceParseResult {
+  tableParses++;
+  const warnings: string[] = [];
   const lines = inner.split('\n');
   const facts: ParsedFact[] = [];
   let sawHeader = false;

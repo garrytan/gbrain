@@ -2646,6 +2646,41 @@
           },
           {
             "category": "ops",
+            "details": {
+              "embed_daily_cap_usd": null,
+              "embed_spend_today_usd": null,
+              "last_run": null,
+              "next_due_at": null,
+              "paid_phases_opt_in": [
+                "extract_atoms",
+                "synthesize_concepts",
+                "propose_takes",
+                "grade_takes",
+                "calibration_profile",
+                "edge_contradictions",
+                "drift",
+                "standing_questions",
+                "chronicle",
+                "facts_drain",
+                "conversation_facts_backfill",
+                "enrich_thin",
+                "skillopt",
+                "embed"
+              ],
+              "pending_purge_count": 0,
+              "runner": null,
+              "state": "never",
+              "steps": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
+            "name": "unattended_maintenance",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "No automatic embed-backfill is repeating the same failure.",
             "name": "embed_backfill_stalled",
@@ -4814,12 +4849,13 @@
             "category": "meta",
             "details": {
               "counts": {
-                "global": 17,
+                "global": 18,
                 "mixed": 2,
                 "source": 12
               },
               "phase_scope_map": {
                 "backlinks": "source",
+                "bookkeeping_gc": "global",
                 "calibration_profile": "global",
                 "chronicle": "global",
                 "claim_conflicts": "global",
@@ -4853,7 +4889,7 @@
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "Phase taxonomy: 12 source-scoped, 17 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+            "message": "Phase taxonomy: 12 source-scoped, 18 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
             "name": "cycle_phase_scope",
             "status": "ok"
           },
@@ -7940,6 +7976,41 @@
           },
           {
             "category": "ops",
+            "details": {
+              "embed_daily_cap_usd": null,
+              "embed_spend_today_usd": null,
+              "last_run": null,
+              "next_due_at": null,
+              "paid_phases_opt_in": [
+                "extract_atoms",
+                "synthesize_concepts",
+                "propose_takes",
+                "grade_takes",
+                "calibration_profile",
+                "edge_contradictions",
+                "drift",
+                "standing_questions",
+                "chronicle",
+                "facts_drain",
+                "conversation_facts_backfill",
+                "enrich_thin",
+                "skillopt",
+                "embed"
+              ],
+              "pending_purge_count": 0,
+              "runner": null,
+              "state": "never",
+              "steps": 0
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
+            "name": "unattended_maintenance",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "No automatic embed-backfill is repeating the same failure.",
             "name": "embed_backfill_stalled",
@@ -10120,12 +10191,13 @@
             "category": "meta",
             "details": {
               "counts": {
-                "global": 17,
+                "global": 18,
                 "mixed": 2,
                 "source": 12
               },
               "phase_scope_map": {
                 "backlinks": "source",
+                "bookkeeping_gc": "global",
                 "calibration_profile": "global",
                 "chronicle": "global",
                 "claim_conflicts": "global",
@@ -10159,7 +10231,7 @@
               }
             },
             "elapsed_ms": "<volatile>",
-            "message": "Phase taxonomy: 12 source-scoped, 17 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge]. Mixed: [synthesize, patterns].",
+            "message": "Phase taxonomy: 12 source-scoped, 18 brain-global, 2 mixed. Source-safe: [lint, backlinks, sync, extract, extract_facts, extract_atoms, recompute_emotional_weight, consolidate, propose_takes, conversation_facts_backfill, enrich_thin, schema-suggest]. Brain-global: [fence_repair, content_repair, unindexed_files, resolve_symbol_edges, synthesize_concepts, grade_takes, calibration_profile, edge_contradictions, claim_conflicts, drift, standing_questions, chronicle, facts_drain, skillopt, embed, orphans, purge, bookkeeping_gc]. Mixed: [synthesize, patterns].",
             "name": "cycle_phase_scope",
             "status": "ok"
           },

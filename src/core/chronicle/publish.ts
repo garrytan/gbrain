@@ -44,6 +44,7 @@ import type { ChronicleEventProposal } from './extract-events.ts';
 import { resolveChronicleEventSlugs } from './event-identity.ts';
 import { declareDerivation, deriveTrust } from '../trust/taint.ts';
 import { derivationWriteTrust } from '../trust/page-write.ts';
+import { CHRONICLE_CAPTURED_VIA } from '../trust/channel.ts';
 import { derivedGateConfig, derivedGateInput, timelineRowAllowed } from '../trust/derived-gate.ts';
 import { assessTimelineForGate, type WriteGateAssessment } from '../write-gate.ts';
 import { recordWriteGateReceipt } from '../write-gate-store.ts';
@@ -54,10 +55,9 @@ import { planManagedGeneration, recordActivation, type ActivationIntent } from '
 import { CHRONICLE_EVENT_KIND, CHRONICLE_RETIRED_BY, chronicleEventAdapter, chronicleEventItem, chronicleOwnerKey, depthInputPin, depthPinBroken,
   orphanedDepthKeys, ownedEventHashes, pinDepth, verifiedChronicleRetirement, type ChronicleDepthPin, type ChronicleGenerationContext } from '../generations/adapters/chronicle-events.ts';
 
-export { CHRONICLE_RETIRED_BY, depthPinBroken, ownedEventHashes, pinDepth, type ChronicleDepthPin };
+export { CHRONICLE_CAPTURED_VIA, CHRONICLE_RETIRED_BY, depthPinBroken, ownedEventHashes, pinDepth, type ChronicleDepthPin };
 export const CHRONICLE_EVENT_INTENT = 'managed_maintenance_chronicle_event';
 export const CHRONICLE_RETIRE_INTENT = 'managed_maintenance_chronicle_retire';
-export const CHRONICLE_CAPTURED_VIA = 'life-chronicle:auto';
 
 export interface BuiltChronicleEvent {
   slug: string;

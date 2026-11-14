@@ -37,18 +37,28 @@ function invalid(what: string): never {
 
 const shown = (value: unknown) => JSON.stringify(typeof value === 'string' && value.length > 64 ? `${value.slice(0, 64)}...` : value);
 
-function entries(list: readonly unknown[], channel: string): AudiencePrincipal[] {
-  if (list.length === 0) invalid(`${channel} names nobody`);
-  if (list.length > MAX_AUDIENCE) invalid(`${channel} names ${list.length} entries (at most ${MAX_AUDIENCE}; name a group:<id> for a large channel)`);
+/**
+ * The normalized principals of one channel (sorted, distinct), or the reason it is invalid: empty, over
+ * MAX_AUDIENCE, or an entry that is not a member id, group:<id> or guest. Shared by on_behalf_of and room.
+ */
+export function normalizePrincipals(list: readonly unknown[], channel: string): AudiencePrincipal[] | { invalid: string } {
+  if (list.length === 0) return { invalid: `${channel} names nobody` };
+  if (list.length > MAX_AUDIENCE) return { invalid: `${channel} names ${list.length} entries (at most ${MAX_AUDIENCE}; name a group:<id> for a large channel)` };
   const out = new Set<AudiencePrincipal>();
   for (const raw of list) {
-    if (typeof raw !== 'string') invalid(`${channel} holds ${shown(raw)}, which is not a string`);
+    if (typeof raw !== 'string') return { invalid: `${channel} holds ${shown(raw)}, which is not a string` };
     if (raw.trim().toLowerCase() === GUEST) { out.add(GUEST); continue; }
     const p = normalizePrincipal(raw);
-    if (!p) invalid(`${channel} holds ${shown(raw)}, which is not a member id, group:<id> or guest`);
+    if (!p) return { invalid: `${channel} holds ${shown(raw)}, which is not a member id, group:<id> or guest` };
     out.add(p);
   }
   return [...out].sort();
+}
+
+function entries(list: readonly unknown[], channel: string): AudiencePrincipal[] {
+  const parsed = normalizePrincipals(list, channel);
+  if ('invalid' in parsed) invalid(parsed.invalid);
+  return parsed;
 }
 
 /**
@@ -108,9 +118,13 @@ export interface AudienceAuditEvent {
     /** GST-363: a read from a connection bound to nobody on a brain that serves several people, refused before any work. */
     | 'requester_scope_required'
     /** GST-363: the same read when whom the brain serves could not be read (even after one re-read): refused as retryable. */
-    | 'requester_scope_unknown';
+    | 'requester_scope_unknown'
+    /** GBRA-498: an answer marked for a room (counts only, never refs or content; access/room.ts). */
+    | 'room_marked';
   /** GST-359 C1: an attested actor's system, the id it named (only when well-formed) and a refusal's reason. */
   actor?: { system: string; external_id?: string; reason?: string };
+  /** GBRA-498: a room_marked row's counts: items readable by the room, above it, undecided, and above by reason class. */
+  room?: { readable: number; above: number; unknown: number; by_reason: Record<string, number>; declared_by: string; unavailable?: string };
 }
 
 const audit = createAuditWriter<AudienceAuditEvent>({ featureName: 'access-audience', errorLabel: 'access-audience-audit', errorTrailer: '; continuing' });
