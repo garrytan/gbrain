@@ -6,7 +6,7 @@
  *     the closest cards; storage_list filters by store and status;
  *   - validation refuses a missing field, a command field, a stamped field, a scanner secret (in a value or an object
  *     key) and every credential shape (env assignment, credential variable, URL userinfo, presigned URL, a value under
- *     a credential-named key), without echoing the value; a key whose last word names no credential (token_env, token_count, api_key_last4) passes;
+ *     a credential-named key), without echoing the value; a credential word anywhere in a key refuses (token_value, token_count) unless the key ends in a reference suffix (token_env, token_count_id), and the refusal says to rename it;
  *   - storage_update keeps the page's access frontmatter (visibility, readable_by) when it rewrites the card;
  *   - the write guard: put_page, remember and forget_fact into the shelf are refused storage_source_managed, a forged
  *     parameter does not open it, and the storage verbs still write;
@@ -137,6 +137,11 @@ describe('storage shelf on a repo-less brain', () => {
       [card('a-12', { details: { restic_password: 'abcdef123-correct-horse' } }), 'storage_record_secret', 'credential_key'],
       [card('a-14', { restore: { skill: 'restore-data', args: { id: 'a-14', access_token: 'abcdef123ghijklmno' } } }), 'storage_record_secret', 'credential_key'],
       [card('a-15', { details: { secretAccessKey: 'abcdef123/pqrstuvw' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-16', { details: { token_value: 'abcdef123-token' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-17', { details: { secret_value: 'abcdef123-secret' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-18', { details: { password_value: 'abcdef123-horse' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-19', { details: { restic_password_b64: 'abcdef123-b64' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-20', { details: { token_count: 1200 } }), 'storage_record_secret', 'credential_key'],
     ];
     for (const [input, code, reason] of cases) {
       const r = await refusal(call('storage_register', { card: input }));
@@ -147,7 +152,9 @@ describe('storage shelf on a repo-less brain', () => {
     }
     expect(await engine.executeRaw("SELECT 1 FROM pages WHERE source_id='storage'")).toEqual([]);
     await call('storage_register', { card: card('a-13', { restore: { skill: 'restore-data', args: { id: 'a-13', key: 'backups/a-13.tar', password_file: '/etc/restic/pass', token_env: 'B2_APPLICATION_KEY' } },
-      details: { token_count: 1200, secret_version: 'v2', password_changed_at: '2026-11-01T00:00:00Z', api_key_last4: '7c2f' } }) });
+      details: { token_count_id: 1200, secret_ref: 'vault/b2-archive' } }) });
+    const renamed = await operationsByName.storage_register!.handler(ctx(), { card: card('a-21', { details: { token_count: 1200 } }) }).then(() => null, (e: { suggestion?: string }) => e.suggestion ?? '');
+    expect(renamed).toContain('rename the key so it ends in a suffix this rule passes: _id, _ref');
   }, 30_000);
 
   test('the write guard refuses put_page and remember into the shelf, forged parameters included', async () => {

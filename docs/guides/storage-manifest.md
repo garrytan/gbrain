@@ -57,8 +57,11 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
    after the user agrees to leave those fields out. It registers each card with `origin: adopt` through the same
    path `storage-register` uses, then tags the original `storage-manifest-adopted`. It deletes nothing. A
    credential-shaped value (a secret, an environment assignment, a credential variable, a URL password, a signed URL,
-   a value under a key whose last word names a credential, such as `restore.args.password` or `restic_password`) always
-   refuses, whatever is dropped: fix the source page first. Each card takes its original's access labels (`visibility`,
+   a value under a credential-named key such as `restore.args.password`, `restic_password` or `token_count`, unless the
+   key ends in `_id`, `_ref`, `_name`, `_path`, `_file`, `_env`, `_var` or `_variable`) always refuses, whatever is
+   dropped: fix the source page first, renaming a key that holds no credential to end in one of those suffixes. A
+   record whose page a remote (MCP) client last wrote is blocked (`remote_written`) and never becomes a card: check it
+   and register the item yourself with `storage-register`. Each card takes its original's access labels (`visibility`,
    `access`, `confidentiality`, `readable_by`), with `readable_by` narrowed to the readers that every folder rule over
    the original also lists (readers match literally, so a member is not matched to its groups), so no card is read
    wider than its original. An original whose readers and folder rules share no reader (`access_unpreservable`), or

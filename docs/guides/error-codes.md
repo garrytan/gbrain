@@ -5466,7 +5466,7 @@ More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guide
 |---|---|---|---|---|---|---|
 | A storage card failed validation (a missing or malformed field, a command field, or a field gbrain stamps itself); nothing was written. | Every card must say where the item is, how big it is and how to restore it, and carries no commands, so a card is complete and safe to act on when it is found months later. | Fix the field the message names and send the card again; gbrain storage-register --help lists the card fields. For an adopt blocked on access_pending or access_unpreservable, settle the access rules over the interim page (gbrain access status) or give it readers its folder rules also list, then preview again. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`, `no_record`, `duplicate_id`, `access_unpreservable`, `access_pending`, `labels`.
+Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`, `no_record`, `duplicate_id`, `access_unpreservable`, `access_pending`, `labels`, `remote_written`.
 
 More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
 
@@ -5476,7 +5476,7 @@ More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guide
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A storage card field looks like a secret or has a credential shape; nothing was written and the value is not echoed. | Cards are read by agents and copied into the stores; credentials stay in the environment of the skill that restores an item. | Remove the secret, environment assignment, credential variable, URL password, signed-URL parameter or credential-named field from the card. | agent | `repeat the read that failed` | 1 | no |
+| A storage card field looks like a secret or has a credential shape; nothing was written and the value is not echoed. | Cards are read by agents and copied into the stores; credentials stay in the environment of the skill that restores an item. | Remove the secret, environment assignment, credential variable, URL password, signed-URL parameter or credential-named field from the card; a credential-named field that holds no credential can be renamed to end in _id, _ref or another suffix the rule passes. | agent | `repeat the read that failed` | 1 | no |
 
 Reasons: `secret_scanner`, `env_assignment`, `credential_variable`, `url_userinfo`, `presigned_url`, `credential_key`.
 

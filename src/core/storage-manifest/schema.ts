@@ -89,7 +89,8 @@ export type Card = CardInput & { registered_by: string; origin: (typeof ORIGINS)
 const COMMAND_KEYS = new Set(['command', 'cmd', 'script', 'exec', 'shell', 'instructions']);
 export const STAMPED_KEYS = ['registered_by', 'origin'] as const;
 const CREDENTIAL_NAME = /(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PASS|CRED|AUTH)/i;
-const CREDENTIAL_KEY = /(?:^|_)(?:password|passwd|passphrase|secret|token|credentials?|(?:api|access|secret|application|account|private|auth|master|encryption)_?key)$/;
+const CREDENTIAL_KEY = /(?:^|_)(?:password|passwd|passphrase|secret|token|credentials?|(?:api|access|secret|application|account|private|auth|master|encryption)_?key)(?:_|$)/;
+const REFERENCE_KEY = /_(?:env|var|variable|file|path|name|ref|id)$/;
 const ENV_ASSIGNMENT = /(?:^|[\s;&|(])[A-Za-z_][A-Za-z0-9_]{1,}=\S/;
 const VAR_REFERENCE = /\$\{?([A-Za-z_][A-Za-z0-9_]*)/g;
 const URL_USERINFO = /[a-z][a-z0-9+.-]*:\/\/[^/\s@]*:[^/\s@]*@/i;
@@ -131,19 +132,16 @@ export function isCommandKey(key: string): boolean {
   return COMMAND_KEYS.has(key.toLowerCase());
 }
 
-/**
- * A non-empty string or number under a key whose last word names a credential (password, restic_password, application_key).
- * A key that only starts with one (token_env, password_file, token_count, api_key_last4) names something else.
- */
+/** A non-empty string or number under a key named for a credential (password, application_key), unless the key names where it lives (password_file, token_env). */
 export function holdsCredential(key: string, value: unknown): boolean {
   if (!(typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''))) return false;
   const name = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toLowerCase();
-  return CREDENTIAL_KEY.test(name);
+  return CREDENTIAL_KEY.test(name) && !REFERENCE_KEY.test(name);
 }
 
 function credentialKeyRefusal(path: string): OperationError {
   return opError('storage_record_secret', `Storage card field ${path} is named for a credential and holds a value; nothing was written.`,
-    'Remove that field. Cards name where an item is and how to restore it; the restore skill reads credentials from its own environment (name the variable, e.g. token_env, instead).',
+    'If it holds a credential, remove it: the restore skill reads credentials from its own environment (name the variable, e.g. token_env, instead). If it holds none (a count, a version, a date), rename the key so it ends in a suffix this rule passes: _id, _ref, _name, _path, _file, _env, _var or _variable (token_count becomes token_count_id, say).',
     { reason: 'credential_key' });
 }
 

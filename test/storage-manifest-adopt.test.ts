@@ -14,7 +14,8 @@
  *   - each card takes its original's access labels, readable_by narrowed to the readers of the folder rules over it, so a
  *     storage-only remote caller reads no card its original was kept from; no common reader blocks the page, and a card
  *     that lost the labels is a conflict whose original finalize never deletes;
- *   - a write accepted but still pending is reported with its receipt (side_effects partial, never none).
+ *   - a write accepted but still pending is reported with its receipt (side_effects partial, never none);
+ *   - a stored-object page a remote (MCP) client wrote is blocked at preview and apply, and nothing it holds reaches a card.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -301,6 +302,25 @@ describe('storage adopt on a repo-less brain', () => {
     expect((await previewFinalize(ctx(), opts)).entries.map((e) => [e.slug, e.state])).toEqual([['storage-manifest/dataset-m', 'unverified']]);
     await engine.executeRaw('DELETE FROM tags WHERE tag = $1', [ADOPTED_TAG]);
     expect((await previewAdopt(ctx(), opts)).entries.map((e) => e.state)).toEqual(['conflict']);
+  }, 60_000);
+
+  test('a stored-object page a remote client wrote is blocked at preview and apply, and its restore.args never reach a card', async () => {
+    await interim('storage-manifest/dataset-l', record('dataset-l'));
+    await engine.executeRaw("INSERT INTO oauth_clients(client_id,client_secret_hash,client_name,scope,source_id) VALUES('client-w','fixture-hash','example-client','read write','default')");
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const remote = ctx({ remote: true, transport: 'http', auth: { token: 'fixture', clientId: 'client-w', principal: { kind: 'oauth_client', id: 'client-w' }, scopes: ['read', 'write'], sourceId: 'default', allowedSources: ['default'] } } as Partial<OperationContext>);
+    const rec = JSON.stringify(record('dataset-w', { restore: { skill: 'restore-data', args: { target: '/srv/remote-chosen-target' } } }));
+    await call('put_page', { slug: 'storage-manifest/dataset-w', request_id: randomUUID(), content: `---\ntype: stored-object\ntitle: Remote record\n---\n## Record\n\n${FENCE}json\n${rec}\n${FENCE}\n` }, remote);
+    await disposePersistenceConsumer(engine);
+    await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    const plan = await previewAdopt(ctx(), opts);
+    expect(plan.entries.map((e) => [e.slug, e.state, e.problem?.reason ?? null])).toEqual([['storage-manifest/dataset-l', 'register', null], ['storage-manifest/dataset-w', 'blocked', 'remote_written']]);
+    expect(plan.apply).toBeUndefined();
+    const refused = await refusal(applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] }));
+    expect({ code: refused?.code, reason: refused?.reason }).toEqual({ code: 'storage_record_invalid', reason: 'remote_written' });
+    expect(await engine.executeRaw("SELECT 1 FROM pages WHERE source_id = 'storage'")).toEqual([]);
+    expect(JSON.stringify(await engine.executeRaw("SELECT frontmatter FROM pages WHERE source_id = 'storage'"))).not.toContain('remote-chosen-target');
+    expect(await tagged()).toEqual([]);
   }, 60_000);
 
   test('a write accepted but still pending is reported with its receipt, never as no change, and the rerun finishes it', async () => {

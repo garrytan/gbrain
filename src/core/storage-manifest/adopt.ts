@@ -78,11 +78,11 @@ export interface FinalizeApplyResult {
   deleted: string[]; skipped: string[]; failure?: StepFailure; pending?: PendingWrite[]; rerun?: string[];
 }
 
-interface InterimAccess { folder_rule_ids?: string[] | null; folder_readers?: unknown; access_pending?: boolean }
+interface InterimAccess { folder_rule_ids?: string[] | null; folder_readers?: unknown; access_pending?: boolean; write_channel?: string | null }
 interface InterimRow extends InterimAccess { slug: string; title: string; frontmatter: unknown; body: string | null; content_hash: string | null; long_body: boolean; tagged: boolean; deleted: boolean }
 
 const INTERIM_COLUMNS = `p.slug, p.title, p.frontmatter, ${boundedBodyPrefixSql('p')} AS body, p.content_hash,
-      coalesce(p.body_bytes, 0) > ${BOUNDED_PREFIX_BYTES} AS long_body, p.folder_rule_ids,
+      coalesce(p.body_bytes, 0) > ${BOUNDED_PREFIX_BYTES} AS long_body, p.folder_rule_ids, p.write_origin->>'channel' AS write_channel,
       (SELECT jsonb_agg(r.readable_by) FROM access_rules r WHERE r.source_id || ':' || r.rule_id = ANY(p.folder_rule_ids)) AS folder_readers,
       EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = p.source_id AND ${ruleCoversSql('p.slug', 'pc.prefix')}) AS access_pending`;
 
@@ -191,6 +191,7 @@ function originalLabels(row: InterimAccess, frontmatter: Record<string, unknown>
 
 /** Map one interim page onto a card. Pure: reads nothing beyond the row. */
 export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontmatter' | 'body'> & InterimAccess, prefix: string): Pick<AdoptEntry, 'card' | 'labels' | 'refused' | 'problem'> {
+  if (row.write_channel?.startsWith('mcp:')) return { card: null, labels: null, refused: [], problem: invalidRecord('remote_written', `the page was last written by a remote client (${row.write_channel}); adopt takes only records written on this machine or by sync`) };
   const text = recordJson(row.body ?? '');
   if (text === null) return { card: null, labels: null, refused: [], problem: invalidRecord('no_record', 'the page has no json block under a ## Record heading in its first 64 KiB') };
   let record: unknown;
@@ -279,8 +280,10 @@ function blockedRefusal(opts: AdoptOptions, blocked: AdoptEntry[]): OperationErr
   const list = blocked.slice(0, 5).map((e) => `${e.slug} (${e.problem!.message})`).join('; ');
   return opError(first.problem!.code, `${blocked.length} interim record(s) cannot become cards: ${list}${blocked.length > 5 ? '; and more' : ''}. Nothing was written.`,
     first.problem!.code === 'storage_record_secret'
-      ? 'Remove the credential from the record on each named page (the restore skill reads credentials from its own environment), then preview the adopt again.'
-      : 'Fix the record on each named page so it is a complete card, then preview the adopt again.',
+      ? 'Remove the credential from the record on each named page (the restore skill reads credentials from its own environment); a field refused only for its name (credential_key) that holds no credential can instead be renamed to end in _id, _ref or another suffix the rule passes. Then preview the adopt again.'
+      : first.problem!.reason === 'remote_written'
+        ? 'Adopt never registers a record a remote client wrote. Check each named page yourself and register the item with gbrain storage-register, or leave it as it is.'
+        : 'Fix the record on each named page so it is a complete card, then preview the adopt again.',
     { reason: first.problem!.reason, fix: previewFix(opts) });
 }
 
