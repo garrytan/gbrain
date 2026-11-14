@@ -37,6 +37,7 @@ import { entityPageMissingNotice } from '../interop-notices.ts';
 
 import { ownerSpeaksForItself } from '../access/member-facts.ts';
 import { isDerivationPrivate } from '../search/private-visibility.ts';
+import { refuseGuestSourceWrite } from '../guests/admission.ts';
 
 export { prepareMemoryMutation } from './memory-prepare.ts';
 /** Only semantic appends without an explicit caller revision can be recomputed. */
@@ -236,6 +237,7 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
     "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw sourceInactive(sourceId);
   assertStorageSourceWriter(ctx, sourceId, source.role, {});
+  await refuseGuestSourceWrite(ctx.engine, sourceId, () => Promise.resolve(principal), 'remember');
   const { parseTtlParam } = await import('../ops/facts.ts');
   const validUntil = parseTtlParam(p.ttl);
   const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;

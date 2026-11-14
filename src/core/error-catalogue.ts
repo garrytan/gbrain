@@ -42,6 +42,16 @@ export const ERROR_CATALOGUE = {
   on_behalf_of_unknown_member: { code: 'on_behalf_of_unknown_member', docs: 'docs/guides/write-refusals.md#on_behalf_of_unknown_member' },
   on_behalf_of_not_permitted: { code: 'on_behalf_of_not_permitted', docs: 'docs/guides/write-refusals.md#on_behalf_of_not_permitted' },
   on_behalf_of_in_arguments: { code: 'on_behalf_of_in_arguments', docs: 'docs/guides/write-refusals.md#on_behalf_of_in_arguments' },
+  // GBRA-504 guest sources: writer list, create-only guest pages, attribution, frontmatter and readers.
+  source_writer_restricted: { code: 'source_writer_restricted', docs: 'docs/guides/write-refusals.md#source_writer_restricted' },
+  guest_page_immutable: { code: 'guest_page_immutable', docs: 'docs/guides/write-refusals.md#guest_page_immutable' },
+  guest_page_promoted: { code: 'guest_page_promoted', docs: 'docs/guides/write-refusals.md#guest_page_promoted' },
+  guest_attribution_missing: { code: 'guest_attribution_missing', docs: 'docs/guides/write-refusals.md#guest_attribution_missing' },
+  guest_frontmatter_refused: { code: 'guest_frontmatter_refused', docs: 'docs/guides/write-refusals.md#guest_frontmatter_refused' },
+  guest_readers_invalid: { code: 'guest_readers_invalid', docs: 'docs/guides/write-refusals.md#guest_readers_invalid' },
+  guest_promotion_owner_only: { code: 'guest_promotion_owner_only', docs: 'docs/guides/write-refusals.md#guest_promotion_owner_only' },
+  guest_mark_immutable: { code: 'guest_mark_immutable', docs: 'docs/guides/write-refusals.md#guest_mark_immutable' },
+  guest_source_database_only: { code: 'guest_source_database_only', docs: 'docs/guides/write-refusals.md#guest_source_database_only' },
   // GST-363: a brain that serves several people knows who is asking (remote reads, credential creation).
   requester_scope_required: { code: 'requester_scope_required', docs: 'docs/guides/write-refusals.md#requester_scope_required' },
   credential_scope_required: { code: 'credential_scope_required', docs: 'docs/guides/write-refusals.md#credential_scope_required' },

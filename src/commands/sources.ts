@@ -1975,6 +1975,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'set-calendar': return (await import('./sources-set-calendar.ts')).runSetCalendar(engine, rest);
     case 'set-trust':  { const { runSetTrust } = await import('./sources-trust.ts'); return runSetTrust(engine, rest); }
+    case 'writers':    { const { runSourcesWriters } = await import('./sources-writers.ts'); return runSourcesWriters(engine, rest); }
     // #4739 non-destructive local_path pointer repair
     case 'set-path':   { const { runSetPath } = await import('./sources-set-path.ts'); return runSetPath(engine, rest); }
     case 'shared-skills': { const { runSourcesSharedSkills } = await import('./sources-shared-skills.ts'); return runSourcesSharedSkills(engine, rest); }
@@ -2084,6 +2085,7 @@ Subcommands:
                                     to the global search.mode bundle).
   set-calendar <id> <calendar-id> [--yes]  Point a Google source at another calendar (ids: gbrain google calendars).
   set-trust <id> <tier>|--clear     Trust default for this source's sync and import (operator_curated or lower).
+  writers <id> [--add|--remove <w>] [--clear] [--json]  Who may write a guest source (set one up: gbrain guests init).
   set-path <id> <path> [--force]    Repair a source's local_path pointer
                                     (DB column only, never touches disk).
                                     --force skips the overlapping-path guard.

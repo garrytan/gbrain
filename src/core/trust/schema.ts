@@ -32,6 +32,11 @@
  *   user_confirmed. Inside a writer scope it is otherwise clamped back; with
  *   no writer scope it raises `trust_raise_refused`. Lowering is always allowed.
  * - A writer tier above operator_curated needs a covering promotion ceiling.
+ * - Guest sources (GBRA-504, guest-notes migration): a pages row in a source listed in
+ *   guest_sources never ends above that source's trust_ceiling, on every exit;
+ *   creating it or changing its content needs the principal of
+ *   gbrain.write_principal_kind/_id on the source's writer list; facts, takes
+ *   and timeline rows there are refused. GUEST_AWARE_STAMP_TIER_FUNCTION.
  *
  * `gbrain.write_trust_promotion` protects against bugs, not against a process
  * holding a raw database connection, which can set any setting.
@@ -85,13 +90,14 @@ export const TRUST_TIER_TRIGGER_PREDECESSORS: Readonly<Record<TrustTable, readon
 const tierList = TRUST_TIERS.map(tier => `'${tier}'`).join(',');
 const rank = trustRankSql;
 const lowerOf = (a: string, b: string) => `(CASE WHEN ${rank(a)} <= ${rank(b)} THEN ${a} ELSE ${b} END)`;
-const contentExpr = (row: 'NEW' | 'OLD', table: TrustTable) => TRUST_CONTENT_COLUMNS[table]
+const contentExpr = (row: 'NEW' | 'OLD', table: TrustTable, columns: readonly string[]) => columns
   .map(column => table === 'pages' && column === 'frontmatter'
     // A non-object frontmatter (legacy or raw-SQL rows) has no keys to drop; jsonb `-` would raise on it.
     ? `(CASE WHEN jsonb_typeof(${row}.frontmatter) = 'object' THEN ${row}.frontmatter - ARRAY[${TRUST_EPHEMERAL_FRONTMATTER_KEYS.map(key => `'${key}'`).join(',')}]::text[] ELSE ${row}.frontmatter END)`
     : `${row}.${column}`)
   .join(', ');
-const contentChanged = (table: TrustTable) => `(${contentExpr('NEW', table)}) IS DISTINCT FROM (${contentExpr('OLD', table)})`;
+const contentChanged = (table: TrustTable, columns: readonly string[] = TRUST_CONTENT_COLUMNS[table]) =>
+  `(${contentExpr('NEW', table, columns)}) IS DISTINCT FROM (${contentExpr('OLD', table, columns)})`;
 const refuse = (message: string, detail: string) => `RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='trust_raise_refused: ${message}',
       TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='trust_tier_guard', DETAIL=${detail}`;
 const SETTINGS = `
@@ -104,9 +110,68 @@ const SETTINGS = `
     RAISE EXCEPTION USING ERRCODE='22023', MESSAGE='gbrain trust setting names no tier', CONSTRAINT='trust_tier_guard';
   END IF;`;
 
-const STAMP_TIER_FUNCTION = `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
-DECLARE writer text; origin_text text; promo text; backfill boolean; keep boolean; changed boolean; effective text;
-BEGIN${SETTINGS}
+/** A guest page's content for the writer backstop: every content column but deleted_at, so soft delete and restore pass. */
+const GUEST_PAGE_CONTENT_COLUMNS = TRUST_CONTENT_COLUMNS.pages.filter(column => column !== 'deleted_at');
+const guestRefuse = (code: string, message: string) => `RAISE EXCEPTION USING ERRCODE='P0001', MESSAGE='${code}: ${message}',
+      TABLE=TG_TABLE_NAME, SCHEMA=TG_TABLE_SCHEMA, CONSTRAINT='guest_source_guard', DETAIL=jsonb_build_object('op',TG_OP)::text`;
+const CHANGED_CHAIN = `${TRUST_TABLES.map((table, index) => `${index === 0 ? 'IF' : 'ELSIF'} TG_TABLE_NAME = '${table}' THEN
+    changed := ${contentChanged(table)};`).join('\n  ')}
+  ELSE
+    RAISE EXCEPTION 'gbrain_stamp_trust_tier is not classified for table %', TG_TABLE_NAME;
+  END IF;`;
+/**
+ * GBRA-504: the guest-source rules, run before anything else. A page in a guest
+ * source (guest_sources, one primary-key probe) may be inserted, or have a
+ * content column other than deleted_at changed (moves in or out included), only
+ * by a principal on the source's writer list, read from the attribution
+ * settings. A fact, take or timeline row in a guest source is refused on INSERT
+ * and on a content change; lifecycle updates and deletes pass. Other tables skip
+ * the probe while guest_sources is empty.
+ */
+const GUEST_GUARD = `
+  IF TG_OP = 'UPDATE' THEN
+    ${CHANGED_CHAIN.replace(/\n/g, '\n  ')}
+  END IF;
+  IF TG_TABLE_NAME = 'pages' THEN
+    SELECT g.trust_ceiling, g.writers INTO guest_ceiling, guest_writers FROM guest_sources g WHERE g.source_id = NEW.source_id;
+    guest := FOUND;
+    IF NOT guest AND TG_OP = 'UPDATE' AND OLD.source_id IS DISTINCT FROM NEW.source_id THEN
+      SELECT g.writers INTO guest_writers FROM guest_sources g WHERE g.source_id = OLD.source_id;
+      guest := FOUND;
+    END IF;
+    IF guest AND NOT COALESCE(NULLIF(current_setting('gbrain.write_principal_kind', true), '') || ':'
+        || NULLIF(current_setting('gbrain.write_principal_id', true), '') = ANY(guest_writers), false) THEN
+      IF TG_OP = 'INSERT' THEN
+        ${guestRefuse('source_writer_restricted', 'only the listed writers of a guest source may create its pages')};
+      ELSIF ${contentChanged('pages', GUEST_PAGE_CONTENT_COLUMNS)} THEN
+        ${guestRefuse('source_writer_restricted', 'only the listed writers of a guest source may change its pages')};
+      END IF;
+    END IF;
+  ELSIF (TG_OP = 'INSERT' OR changed) AND EXISTS (SELECT 1 FROM guest_sources) THEN
+    IF TG_TABLE_NAME = 'facts' THEN
+      guest := EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = NEW.source_id);
+    ELSE
+      guest := EXISTS (SELECT 1 FROM pages p JOIN guest_sources g ON g.source_id = p.source_id WHERE p.id = NEW.page_id);
+    END IF;
+    IF guest THEN
+      ${guestRefuse('guest_page_immutable', 'a guest source holds no facts, takes or timeline entries')};
+    END IF;
+  END IF;`;
+/** Every exit of the guest-aware function caps a guest page at its source ceiling. */
+const GUEST_CEILING_RETURN = `IF guest_ceiling IS NOT NULL AND ${rank('NEW.trust_tier')} > ${rank('guest_ceiling')} THEN NEW.trust_tier := guest_ceiling; END IF; RETURN NEW;`;
+
+/**
+ * The tier trigger function. `guestSources: false` is the v226 body, kept
+ * byte-identical (the migration golden pins it, and migrations between v226 and
+ * the guest-notes migration run before guest_sources exists). `true` adds the guest-source rules
+ * (GUEST_GUARD) and the per-source ceiling on every RETURN NEW; the guest-notes migration installs
+ * it, and any later migration that re-creates this function uses it.
+ */
+const stampTierFunction = (guestSources: boolean) => {
+  const ret = guestSources ? GUEST_CEILING_RETURN : 'RETURN NEW;';
+  return `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
+DECLARE writer text; origin_text text; promo text; backfill boolean; keep boolean; changed boolean; effective text;${guestSources ? ' guest boolean := false; guest_ceiling text; guest_writers text[];' : ''}
+BEGIN${SETTINGS}${guestSources ? GUEST_GUARD : ''}
   IF ${rank('writer')} > ${rank(`'${OWNER_TIER_FLOOR}'`)} AND (promo IS NULL OR ${rank('writer')} > ${rank('promo')}) THEN
     ${refuse('a write declared a tier above operator_curated without owner confirmation', `jsonb_build_object('op',TG_OP,'writer',writer)::text`)};
   END IF;
@@ -115,27 +180,23 @@ BEGIN${SETTINGS}
       IF ${rank('NEW.trust_tier')} > ${rank(`'${OWNER_TIER_FLOOR}'`)} AND (promo IS NULL OR ${rank('NEW.trust_tier')} > ${rank('promo')}) THEN
         ${refuse('a copied row named a tier above operator_curated without owner confirmation', `jsonb_build_object('op',TG_OP,'to',NEW.trust_tier)::text`)};
       END IF;
-      RETURN NEW;
+      ${ret}
     END IF;
     NEW.trust_tier := COALESCE(writer, 'unknown');
     NEW.write_origin := origin_text::jsonb;
-    RETURN NEW;
+    ${ret}
   END IF;
   IF ${rank('NEW.trust_tier')} > ${rank('OLD.trust_tier')} THEN
     IF promo IS NOT NULL AND ${rank('NEW.trust_tier')} <= ${rank('promo')} THEN
-      RETURN NEW;
+      ${ret}
     ELSIF backfill AND OLD.trust_tier = 'unknown' AND NEW.trust_tier <> 'user_confirmed' THEN
-      RETURN NEW;
+      ${ret}
     ELSIF writer IS NULL THEN
       ${refuse('raising a tier needs owner confirmation', `jsonb_build_object('op',TG_OP,'from',OLD.trust_tier,'to',NEW.trust_tier,'backfill',backfill)::text`)};
     END IF;
     NEW.trust_tier := OLD.trust_tier;
-  END IF;
-  ${TRUST_TABLES.map((table, index) => `${index === 0 ? 'IF' : 'ELSIF'} TG_TABLE_NAME = '${table}' THEN
-    changed := ${contentChanged(table)};`).join('\n  ')}
-  ELSE
-    RAISE EXCEPTION 'gbrain_stamp_trust_tier is not classified for table %', TG_TABLE_NAME;
-  END IF;
+  END IF;${guestSources ? '' : `
+  ${CHANGED_CHAIN}`}
   IF changed AND NOT keep THEN
     effective := COALESCE(writer, 'unknown');
     IF ${rank('effective')} < ${rank(`'${OWNER_TIER_FLOOR}'`)} THEN effective := ${lowerOf('OLD.trust_tier', 'effective')}; END IF;
@@ -143,8 +204,12 @@ BEGIN${SETTINGS}
     NEW.trust_tier := effective;
     IF NEW.write_origin IS NOT DISTINCT FROM OLD.write_origin THEN NEW.write_origin := origin_text::jsonb; END IF;
   END IF;
-  RETURN NEW;
+  ${ret}
 END $fn$`;
+};
+const STAMP_TIER_FUNCTION = stampTierFunction(false);
+/** The current tier trigger function, guest-source rules included (the guest-notes migration). */
+export const GUEST_AWARE_STAMP_TIER_FUNCTION = stampTierFunction(true);
 
 /**
  * A version row snapshots the page before the archiving write changes it, in

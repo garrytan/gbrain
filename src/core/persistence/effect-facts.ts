@@ -14,6 +14,7 @@ import { authorizeStoredRequest, authorizeWrite } from './authority.ts';
 import { completeEffect } from './effect-journal.ts';
 import { guardEffectSource } from './effect-recovery.ts';
 import { derivedExtractionSkip } from './derived-extraction-gate.ts';
+import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
 import { bodyUnread, isSegmentedPage } from '../page-body/page-shape.ts';
 import type { PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
@@ -94,6 +95,7 @@ async function bodyAlreadyOffered(engine: BrainEngine, slug: string, page: Parse
 export async function prepareFactsBackstop(engine: BrainEngine, row: WriteRequest, page: ParsedPage, before: PageSnapshot | null = null): Promise<FactsBackstopStatus> {
   const confined = derivedExtractionSkip(row.authority);
   if (confined) return { skipped: confined };
+  if (skipsGuestNote('facts_backstop', await isGuestWrite(engine, row.source_id, row.intent))) return { skipped: 'guest_source' };
   if (!(await isFactsExtractionEnabled(engine))) return { skipped: 'extraction_disabled' };
   const eligible = isFactsBackstopEligible(row.slug, page);
   if (!eligible.ok) return { skipped: eligible.reason };

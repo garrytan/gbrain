@@ -153,7 +153,9 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
         WHERE c.state IN ('pending','failed') AND NOT EXISTS (SELECT 1 FROM pages p
           WHERE p.id=c.page_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL)`);
   }
-  const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map((s) => s.id);
+  const { withoutGuestSources } = await import('../guests/derived.ts');
+  const sources = await withoutGuestSources(engine, 'chronicle',
+    (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map((s) => s.id), id => id);
   details.sources = sources.length;
   for (const sourceId of sources) {
     await discover(engine, sourceId, { managed, enabled, activatedAt, settings, now: now(), dryRun });

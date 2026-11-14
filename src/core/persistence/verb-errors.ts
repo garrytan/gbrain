@@ -307,6 +307,13 @@ export async function runMemoryWrite<T>(run: () => Promise<T>): Promise<T> {
       Object.assign(strict, { canonical: error.code, reason: error.reason, why: error.why, docs: error.docs, fix: error.fix });
       throw strict;
     }
+    // GBRA-504: a guest-source refusal keeps its frozen code (scope_denied for a non-writer, invalid_params for a writer's
+    // change); the canonical code and docs ride along.
+    if (error.code === 'source_writer_restricted' || error.code === 'guest_page_immutable') {
+      const guest = verbError(error.code === 'source_writer_restricted' ? 'scope_denied' : 'invalid_params', error.message, error.suggestion ?? 'Do not retry.');
+      Object.assign(guest, { canonical: error.code, docs: error.docs });
+      throw guest;
+    }
     const code = ['permission_denied','scope_denied','source_changed','writer_registration_required'].includes(error.code)
       ? 'scope_denied' : ['revision_required','revision_conflict','idempotency_conflict','invalid_params','page_identity_changed'].includes(error.code)
         ? 'invalid_params' : 'unavailable';

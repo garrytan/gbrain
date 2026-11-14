@@ -119,6 +119,13 @@ const GIT_PROTOCOL_PREFIX = 'git_protocol_required:';
 /** trust/schema.ts: the tier trigger's refusal of a raise without owner confirmation. */
 const TRUST_PREFIX = 'trust_raise_refused:';
 const PURGED_PREFIX = 'purged_content:';
+/** GBRA-504 (trust/schema.ts GUEST_GUARD, guests/schema.ts): the guest-source guards' codes, each the message prefix of its raise. */
+const GUEST_GUARD_TEXT: Record<string, string> = {
+  source_writer_restricted: 'only the listed writers of a guest source may create or change its pages',
+  guest_page_immutable: 'a guest source holds no facts, takes or timeline entries, and its pages are never changed',
+  guest_mark_immutable: 'a guest mark is never changed',
+  guest_source_database_only: 'a guest source is database-only and takes no local path or repository',
+};
 const RELATIONSHIP_TEXT: Record<string, string> = {
   different_source: 'a row in a source this publication does not own',
   missing_source: 'a row whose source could not be resolved',
@@ -249,6 +256,9 @@ export function databaseRefusal(error: unknown): PublicationFailure | null {
       ...guardDetail(e.detail) },
     message: `The trust-tier guard refused a write${table ? ` on ${table}` : ''}: raising a tier needs the owner's confirmation. Nothing was committed.` };
   }
+  const guestCode = constraint === 'guest_source_guard' ? Object.keys(GUEST_GUARD_TEXT).find(code => message.startsWith(`${code}:`)) : undefined;
+  if (guestCode) return { code: guestCode, message: `The guest-source guard refused a write${table ? ` on ${table}` : ''}: ${GUEST_GUARD_TEXT[guestCode]}. Nothing was committed.`,
+    detail: { origin: 'database_trigger', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}) } };
   const reason = publicationReason(sqlstate, raiser, message);
   return { code: 'storage_error', message: `Publication failed (P0001${raiser ? ` in ${raiser}` : ''}: ${reason}). Inspect owner diagnostics.`,
     detail: { origin: raiser ? 'database_trigger' : 'database', sqlstate, ...(raiser ? { raiser } : {}), ...(table ? { table } : {}), reason } };

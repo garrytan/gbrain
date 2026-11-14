@@ -20,6 +20,7 @@ import { extractSegmentedPageLinks } from '../page-body/segment-links.ts';
 import { inlineRegions } from '../page-body/tail-digest.ts';
 import { validateSlug } from '../utils.ts';
 import { isRemoteWantedPagesEnabled, replaceWantedLinks } from '../wanted-links.ts';
+import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
 
 /** `mcp.remote_auto_links`: unset is on; false/0/no/off (any case) turns the remote `links` effect off. */
 export async function isRemoteAutoLinksEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
@@ -108,6 +109,7 @@ export async function runLinksEffect(engine: BrainEngine, effect: PersistenceEff
   const skip = (tx: SqlEngine, reason: string) => completeEffect(tx, effect, { links: 'skipped', reason });
   const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [effect.request_id]);
   if (!row || row.state !== 'committed' || !effect.data.slug) return skip(engine, 'invalid_write_request');
+  if (skipsGuestNote('remote_links_effect', await isGuestWrite(engine, row.source_id, row.intent))) return skip(engine, 'guest_source');
   if (effect.data.range) return runAppendLinksEffect(engine, effect, row, effect.data.range, hostId);
   const sourceId = effect.source_id;
   const snapshot = await engine.readPageSnapshot(effect.data.slug, { sourceId });

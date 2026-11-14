@@ -207,7 +207,8 @@ export async function runPhaseConversationFactsBackfill(
   const maxTotalWalltimeMs = cfg.maxTotalWalltimeMin * 60_000;
   const maxWalltimeMs = cfg.maxWalltimeMin * 60_000;
 
-  const listed = await listSources(engine);
+  const { withoutGuestSources } = await import('../guests/derived.ts');
+  const listed = await withoutGuestSources(engine, 'conversation_facts_backfill', await listSources(engine), src => src.id);
   const excluded = listed.filter(src => cfg.excludeSources.includes(src.id)).map(src => src.id);
   const sources = listed.filter(src => !excluded.includes(src.id));
   if (sources.length === 0) {

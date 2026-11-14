@@ -1032,6 +1032,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "guests": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "hook": {
         "hasSwitchCase": false,
         "phase": "pre-connect",

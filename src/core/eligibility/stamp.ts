@@ -12,12 +12,13 @@ import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } 
 import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
+import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
 interface PageRef {
   page_id?: number | null; source_id?: string | null; slug: string; chunk_text?: string | null;
-  trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested;
+  trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested; guest?: GuestStamp;
   /** A saved-fact row (search/facts-arm.ts): labeled with the fact's own tier, not a page's. */
   fact_row?: { id: number };
 }
@@ -26,27 +27,41 @@ type Exec = Pick<BrainEngine, 'executeRaw'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
-/** Trust fields per page id and per (source_id, slug). */
-export async function loadPageTrust(engine: Exec, refs: readonly PageRef[]): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {
+type TrustRow = { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean };
+const trustColumns = (guestSql: (config: string, id: string) => string) => `pages.id, pages.source_id, pages.slug, pages.trust_tier, pages.write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
+  ${guestSql('s.config', 'pages.source_id')} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
+
+/**
+ * Trust fields per page id and per (source_id, slug). GBRA-504: a row in a guest source is decided here, per row from
+ * its source's config and guest_sources (guests/marker.ts guestSourceSql), and carries origin `guest`, the external tier and its guest mark (one batched guest_marks read, only
+ * when a guest row is among them; a mark that cannot be read leaves the row unattributed, never bare). The writer is
+ * shown only with `guestWriter` (an owner caller); `includeDeleted` also resolves soft-deleted pages by slug.
+ */
+export async function loadPageTrust(engine: Exec, refs: readonly PageRef[], opts: { guestWriter?: boolean; includeDeleted?: boolean } = {}): Promise<{ byId: Map<number, TrustFields>; byKey: Map<string, TrustFields> }> {
   const byId = new Map<number, TrustFields>();
   const byKey = new Map<string, TrustFields>();
   const ids = [...new Set(refs.map(r => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)))];
   const slugRefs = refs.filter(r => typeof r.page_id !== 'number');
-  if (ids.length) {
-    const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean }>(
-      `SELECT id, source_id, slug, trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged FROM pages WHERE id = ANY($1::int[])`, [ids]);
-    for (const row of rows) {
-      const fields = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
-      byId.set(Number(row.id), fields);
-      byKey.set(key(row.source_id, row.slug), fields);
+  const rows = await withGuestSourceSql(async guestSql => {
+    const found: Array<TrustRow & { byId: boolean }> = [];
+    if (ids.length) {
+      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)} WHERE pages.id = ANY($1::int[])`, [ids])) found.push({ ...row, byId: true });
     }
-  }
-  if (slugRefs.length) {
-    const rows = await engine.executeRaw<{ source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean }>(
-      `SELECT source_id, slug, trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged FROM pages
-        WHERE deleted_at IS NULL AND (source_id, slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-      [slugRefs.map(r => r.source_id ?? 'default'), slugRefs.map(r => r.slug)]);
-    for (const row of rows) byKey.set(key(row.source_id, row.slug), withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged));
+    if (slugRefs.length) {
+      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)}
+          WHERE ${opts.includeDeleted ? '' : 'pages.deleted_at IS NULL AND '}(pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
+        [slugRefs.map(r => r.source_id ?? 'default'), slugRefs.map(r => r.slug)])) found.push({ ...row, byId: false });
+    }
+    return found;
+  });
+  const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
+  for (const row of rows) {
+    const base = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+    const fields: TrustFields = row.guest === true
+      ? { ...base, trust_tier: minTrust(base.trust_tier, 'external_untrusted'), origin: GUEST_ORIGIN, guest: guestView(marks?.get(Number(row.id)) ?? unattributedGuest(), opts.guestWriter === true) }
+      : base;
+    if (row.byId) byId.set(Number(row.id), fields);
+    byKey.set(key(row.source_id, row.slug), fields);
   }
   return { byId, byKey };
 }
@@ -76,7 +91,8 @@ export async function stampPageTrust<T extends PageRef>(engine: Exec, rows: T[],
     const marked = lowestFenceTrustMarker(row.chunk_text);
     const lowered = marked !== null && compareTrust(marked, fields.trust_tier) < 0;
     row.trust_tier = lowered ? marked : fields.trust_tier;
-    row.origin = lowered ? FENCE_TRUST_ORIGIN : fields.origin;
+    row.origin = fields.guest ? GUEST_ORIGIN : lowered ? FENCE_TRUST_ORIGIN : fields.origin;
+    if (fields.guest) row.guest = fields.guest;
     if (fields.unconfirmed) row.unconfirmed = true;
   }
   await applyFenceRowTrust(engine, pageRows);
