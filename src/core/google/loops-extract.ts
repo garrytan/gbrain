@@ -39,8 +39,8 @@ import { decideFactWrite } from '../write-gate-store.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
-/** GST-2692: a passing database condition as the managed write door reports it (retries ran out, still pending, outcome unknown). */
-const DOOR_TRANSIENT_CODES = new Set(['write_interrupted', 'write_pending', 'write_outcome_unknown']);
+/** GST-2692: the managed write door ended the fact write on a passing database condition (its retries ran out), so nothing was published. */
+const DOOR_TRANSIENT_CODES = new Set(['write_interrupted']);
 /**
  * Historical batch size. NO LONGER an enqueue cap — every eligible thread is
  * queued (up to the generous safety ceiling below) and the worker's
