@@ -331,6 +331,7 @@ describe('#7619 split rules', () => {
       'src/commands/skillpack.ts': ['skillpack status', 'skillpack sync', 'skillpack migrate-fence', 'skillpack scrub-legacy-fence-rows', 'skillpack harvest', 'skillpack diff'],
       'src/commands/skillpack/harness.ts': ['skillpack scaffold', 'skillpack reference'], // also the OWN parser of skillpack remove
       'src/commands/skillpack/reference.ts': ['skillpack reference'],
+      'src/commands/skillpack/update.ts': ['skillpack reference'],
       'src/commands/skillpack/scaffold.ts': ['skillpack scaffold'],
       'src/commands/sources-harden.ts': ['sources harden', 'sources pull'], // *
       'src/commands/sources.ts': ['sources status'], // * (paged regex :1214)
@@ -451,6 +452,7 @@ describe('#7619 split rules', () => {
       'src/cli/enforced-commit-push.ts': 'git child argv',
       'src/cli/enforced-member.ts': 'the GBRAIN_ENFORCED_MEMBER gate reads both forms of the recall and sync flags it checks, so an = spelling cannot skip a refusal or the source check',
       'src/core/bootstrap/repo.ts': 'git child argv',
+      'src/commands/upgrade.ts': 'bun child argv (--backend=copyfile)',
     };
     const READER = [/['"`]--[a-z0-9-]+=/, /(?:startsWith|indexOf|===)\(?\s*`\$\{\w+\}=`/, /startsWith\(\w+ \+ '='\)/];
     const found = [...new Glob('src/**/*.ts').scanSync('.')].filter(p => !p.endsWith('.generated.ts') && READER.some(r => r.test(readFileSync(p, 'utf8'))));

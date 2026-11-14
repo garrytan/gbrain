@@ -106,7 +106,7 @@ the startup Bun check, unlike `--version`). If the new release does not
 start, the upgrade exits non-zero and prints recovery: `bun upgrade`, then
 `gbrain post-upgrade`; or return to the previous release with
 `git -C <clone> checkout <previous sha> && bun install` (bun-link) or
-`git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<previous> && bun remove -g gbrain && bun add -g github:garrytan/gbrain#v<previous>` (package; an in-place tag swap fails or silently corrupts the global lock on current Bun, #5034). Nothing is
+`git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v<previous> && bun remove -g gbrain && bun add -g --backend=copyfile github:garrytan/gbrain#v<previous>` (package; every global reinstall copies files, because OpenClaw refuses a hardlinked plugin manifest; an in-place tag swap fails or silently corrupts the global lock on current Bun, #5034). Nothing is
 rolled back automatically, and the autopilot channel records that version as
 failed.
 

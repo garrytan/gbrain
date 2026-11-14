@@ -43,6 +43,8 @@ beforeAll(async () => {
     await engine.initSchema();
     // Tier 4 only: no env var, no config.json schema_pack.
     await engine.setConfig('schema_pack', 'gbrain-base-v2');
+    // Tier 3 for one source (#8899): a different pack than the brain-wide one.
+    await engine.setConfig('schema_pack.source.source-a', 'gbrain-base');
   } finally {
     await engine.disconnect();
   }
@@ -70,6 +72,17 @@ describe('#4653 schema inspection verbs honor DB-config schema_pack (tier 4)', (
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout ?? '').pack).toBe('gbrain-base-v2');
   }, 90_000);
+
+  test('schema show --source <id> reads that source\'s pack; a named pack still wins (#8899)', () => {
+    const scoped = runSchema('show', '--source', 'source-a', '--json');
+    expect(scoped.stderr ?? '').not.toContain('Unknown pack');
+    expect(scoped.status).toBe(0);
+    expect(JSON.parse(scoped.stdout ?? '').name).toBe('gbrain-base');
+    const named = runSchema('show', 'gbrain-base-v2', '--source', 'source-a', '--json');
+    expect(named.status).toBe(0);
+    expect(JSON.parse(named.stdout ?? '').name).toBe('gbrain-base-v2');
+    expect(JSON.parse(runSchema('show', '--json').stdout ?? '').name).toBe('gbrain-base-v2');
+  }, 120_000);
 
   test('schema graph --json and schema lint --json report the DB-configured pack', () => {
     const graph = runSchema('graph', '--json');

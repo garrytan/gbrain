@@ -22,13 +22,13 @@
  *   The subprocess is spawned from a dedicated tmpdir so claude-cli's
  *   CLAUDE.md auto-discovery has no local files to find. `--system-prompt`
  *   replaces the default system prompt; `--disable-slash-commands` skips
- *   skill resolution. User-level ~/.claude/CLAUDE.md still loads because
- *   the only way to skip it is `--bare`, which forces ANTHROPIC_API_KEY
- *   auth and defeats the whole point of this provider. The ~42k cached
- *   tokens from user-level instructions are accepted as a cost-trivial
- *   trade-off on the subscription path. #4119: when those user-level
- *   instructions must NOT leak into a measurement (SkillOpt rollouts),
- *   set GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG — see resolveHermeticConfigDir.
+ *   skill resolution. On a CLI at SETTING_SOURCES_MIN_VERSION or newer,
+ *   `--setting-sources ""` keeps user-level ~/.claude/CLAUDE.md, memory and
+ *   settings out of the child (#8342) without `--bare`, which forces
+ *   ANTHROPIC_API_KEY auth; an older CLI still loads them, and
+ *   GBRAIN_CLAUDE_CLI_USER_SETTINGS=1 loads them again. #4119: to isolate
+ *   the whole config dir (SkillOpt rollouts), set
+ *   GBRAIN_CLAUDE_CLI_HERMETIC_CONFIG — see resolveHermeticConfigDir.
  *
  * doStream is not yet implemented; the model declares no streaming. Callers
  * (gateway.toolLoop primarily) use doGenerate.
@@ -365,11 +365,36 @@ export function oldClaudeCliMessage(version: string | null): string {
   return `claude CLI ${MIN_CLAUDE_CLI_VERSION} or newer required (found ${version ?? 'an unknown version'}); upgrade Claude Code`;
 }
 
-/** `claude --version`'s version number, or null. Only called after a failed
- * run, so the extra spawn never sits on the success path. */
-function claudeCliVersion(env: NodeJS.ProcessEnv): string | null {
-  const r = spawnSync(claudeBin(), ['--version'], { encoding: 'utf8', timeout: 5_000, env });
-  return /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
+/** `claude --version`'s version number, or null, run like a real call (clean
+ * cwd, scrubbed env) and killed outright after 5 s. */
+function claudeCliVersion(env: NodeJS.ProcessEnv): { version: string | null; settled: boolean } {
+  const r = spawnSync(claudeBin(), ['--version'], { encoding: 'utf8', timeout: 5_000, killSignal: 'SIGKILL', cwd: ensureCleanCwd(), env });
+  const version = /\d+\.\d+\.\d+/.exec(typeof r.stdout === 'string' ? r.stdout : '')?.[0] ?? null;
+  return { version, settled: version !== null || r.status === 0 || r.signal !== null };
+}
+
+/** Oldest claude CLI that gets `--setting-sources ""` (#8342): 2.1.314 fixed
+ * an excluded settings file still supplying some settings. Older CLIs keep
+ * the argv above. */
+export const SETTING_SOURCES_MIN_VERSION = '2.1.314';
+
+const settingSourcesByBin = new Map<string, boolean>();
+
+/** Whether the configured CLI is SETTING_SOURCES_MIN_VERSION or newer: one
+ * `claude --version` per binary per process, false when it cannot be read.
+ * A probe that failed to start or exited non-zero is not remembered, so the
+ * next call probes again; one that hung to the 5 s kill is, so a stuck CLI
+ * costs that wait once. */
+function takesNoSettingSources(env: NodeJS.ProcessEnv): boolean {
+  const bin = claudeBin();
+  const known = settingSourcesByBin.get(bin);
+  if (known !== undefined) return known;
+  const { version, settled } = claudeCliVersion(env);
+  const found = version?.split('.').map(Number);
+  const min = SETTING_SOURCES_MIN_VERSION.split('.').map(Number);
+  const takes = !!found && (found[0]! - min[0]! || found[1]! - min[1]! || found[2]! - min[2]!) >= 0;
+  if (settled) settingSourcesByBin.set(bin, takes);
+  return takes;
 }
 
 /**
@@ -465,6 +490,11 @@ function runClaude(
     if (hermeticConfigDir) env.CLAUDE_CONFIG_DIR = hermeticConfigDir;
     if (outputCap) env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = outputCap;
     if (thinkingOff) env.MAX_THINKING_TOKENS = '0';
+    // #8342: load no settings source, so the user's own ~/.claude/CLAUDE.md,
+    // memory and settings.json never steer this call. Unlike --bare this
+    // keeps the subscription login. GBRAIN_CLAUDE_CLI_USER_SETTINGS=1 opts
+    // back in (no flag, no version probe).
+    if (process.env.GBRAIN_CLAUDE_CLI_USER_SETTINGS !== '1' && takesNoSettingSources(env)) args.push('--setting-sources', '');
     const child = spawn(claudeBin(), args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       cwd: ensureCleanCwd(),
@@ -518,7 +548,7 @@ function runClaude(
         // regexes only scan text before the marker (an auth-looking essay in
         // stdout must never read as a whole-run auth outage).
         const headline = isUnknownOptionError(stderr)
-          ? oldClaudeCliMessage(claudeCliVersion(env))
+          ? oldClaudeCliMessage(claudeCliVersion(env).version)
           : `claude-cli exited ${code}`;
         reject(new ClaudeCliProcessError(
           `${headline}\n--- raw ---\n${stderr.trim() || stdout.trim()}`,
