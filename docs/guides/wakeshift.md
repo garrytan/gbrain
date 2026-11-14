@@ -48,7 +48,7 @@ status=ok
 gbrain-run wakeshift emit cron.finished --name nightly-digest --status "$status"
 ```
 
-`emit` only records the run (name, status, time) in the brain; the drainer wakes the watchers on its next tick. It never calls Wakeshift itself, never waits, and exits 0 when reporting back is off (with one line on stderr) or when the name isn't registered (it records the run and says so; `gbrain doctor` lists unregistered names it saw). `gbrain wakeshift cron list` shows the names with their last run, and `cron remove <name>` removes one and ends its open watches. Runs older than 30 days are dropped. No report path or slug goes into the wake: the agent reads the output where the cron writes it.
+`emit` only records the run (name, status, time) in the brain; the drainer wakes the watchers on its next tick. It never calls Wakeshift itself, never waits, and exits 0 when reporting back is off (with one line on stderr) or when the name isn't registered (it records the run and says so; `gbrain doctor` lists unregistered names it saw). It also exits 0 when it can't open the brain, and then the run is not recorded: on a PGLite brain that happens whenever `gbrain serve` or a job worker holds the brain, so on PGLite a watch on a cron only wakes for runs that finish while neither is running. A Postgres brain has no such lock. `gbrain wakeshift cron list` shows the names with their last run, and `cron remove <name>` removes one and ends its open watches. Runs older than 30 days are dropped. No report path or slug goes into the wake: the agent reads the output where the cron writes it.
 
 ## The key
 

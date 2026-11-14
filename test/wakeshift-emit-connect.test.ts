@@ -3,7 +3,7 @@
  * serve holding the PGLite lock, a Postgres outage) must not fail that script: one stderr line, exit 0. A bad
  * argument list still exits 2. Spawns the real CLI against an unreachable Postgres, so the connect itself fails.
  *
- * Serial because it spawns a subprocess and writes a tmpdir.
+ * Spawns a subprocess and writes its own tmpdir; it never mutates this process's environment.
  */
 import { describe, test, expect, beforeAll, afterAll } from 'bun:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
