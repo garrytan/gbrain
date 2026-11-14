@@ -14,6 +14,7 @@ op	storage_update	coordinator	submitPageMutation through the storage door bound 
 op	delete_page	coordinator	submitPageMutation soft delete or trusted-local purge.
 op	restore_page	coordinator	submitPageMutation restores a recorded version.
 op	purge_deleted_pages	coordinator	purgeDeletedPagesCoordinated purges each expired tombstone through delete_page purge.
+op	promote_guest_note	coordinator	Writes the owner page through submitPageMutation put_page and records the link in guest_promotions; the guest note is never changed.
 op	capture	coordinator	submitPageMutation admits a journaled page mutation.
 op	cancel_write_request	no_canonical_write	Cancels a queued journal request; no canonical row changes.
 op	add_tag	coordinator	submitPageMutation admits a journaled page mutation.

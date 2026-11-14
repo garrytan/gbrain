@@ -36,6 +36,7 @@ describe('guest derived-producer registry', () => {
   });
 
   test('each skip site calls a guest helper with its own key; the cycle gate covers the cycle.ts sites', () => {
+    // test-reads-source-ok[structural]: the registry names the code sites that skip guest pages, so the test checks each site calls its helper.
     const cycle = readFileSync(join(ROOT, 'src/core/cycle.ts'), 'utf8');
     expect(cycle).toContain('guestSkippedPhases()');
     const viaCycle: string[] = [];

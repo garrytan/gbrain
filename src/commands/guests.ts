@@ -10,6 +10,7 @@ import { GUEST_TRUST_CEILING, GUEST_WRITER_FORMAT, initGuestSource, isGuestWrite
 import { grantOwnerCredentials, ownerCredentials } from '../core/guests/owner-credentials.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { loadConfig } from '../core/config.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 
 export const GUESTS_USAGE = `Usage: gbrain guests init [--source <id>] [--writer ${GUEST_WRITER_FORMAT}]... [--yes]
        gbrain guests promote <guest-slug> [--to <slug>] [--source <id>] [--guest-source <id>] [--json]
@@ -150,5 +151,5 @@ async function runGrantOwnerClients(engine: BrainEngine, rest: string[]): Promis
     console.log(`  ${o.kind} ${o.name} (${o.id}): ${o.outcome === 'granted' ? `now reads "${sourceId}"` : o.outcome === 'conflict'
       ? 'not changed: its grant changed since this preview; run the command again' : `not changed: ${o.detail}`}`);
   }
-  if (outcomes.some(o => o.outcome === 'conflict')) process.exitCode = 1;
+  if (outcomes.some(o => o.outcome === 'conflict')) setCliExitVerdict(1);
 }
