@@ -18,6 +18,8 @@ import { readFix } from './op-fix.ts';
 import { agentOwnerFence, assertJobOwned, jobNotFound } from './jobs.ts';
 import { receiptAccess, receiptCallerSource, receiptNotFound, receiptVisible } from './persistence.ts';
 import { memberIdentityFor } from '../access/caller.ts';
+import { ACTOR_HEADER } from '../access/actor-model.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
 import { parseWriteRequestId } from '../persistence/preconditions.ts';
 import { WakeshiftError, type WakeshiftCall } from '../wakeshift/client.ts';
 import { wakeshiftBrainKey, wakeshiftRuntime, wakeshiftSecret, wakeshiftUserId, type WakeshiftRuntime } from '../wakeshift/config.ts';
@@ -62,6 +64,14 @@ function termsUnset(): OperationError {
 }
 
 export interface WatchPrincipal { kind: 'oauth_client' | 'legacy_token' | 'local_stdio'; id: string; member: string | null }
+
+/** A watch and its terms acceptance are keyed to the credential (principal, bound member), so an attested person (x-qm-actor) never runs one. */
+function refuseAttested(): void {
+  if (currentCallerAccess().actor) {
+    throw opError('actor_not_attested', `Wakeshift watches cannot run as an attested person yet: a watch and its terms acceptance are kept to the credential, not the person ${ACTOR_HEADER} names, so one person would see or end another's. Nothing was read or written.`,
+      `Call it without ${ACTOR_HEADER}; for a write, call get_write_request instead.`, { reason: 'op_not_attested' });
+  }
+}
 
 /**
  * Who is watching: the verified credential (bound member when it has one), else the local stdio pipe. A stdio server
@@ -172,6 +182,7 @@ function unrecognized(tool: string) {
 /** The live runtime and the watching principal, after the checks every watch shares. */
 async function watchContext(ctx: OperationContext, tool: string, cliSuggestion: string, fix?: Fix): Promise<{ runtime: WakeshiftRuntime; principal: WatchPrincipal }> {
   if (ctx.remote === false) throw needsConversation(tool, cliSuggestion, fix);
+  refuseAttested();
   const runtime = wakeshiftRuntime();
   if (!runtime) throw notEnabled();
   const principal = await watchPrincipal(ctx);
@@ -365,6 +376,7 @@ const list_watches: Operation = {
   publishGateKey: 'mcp.publish_wakeshift',
   cliHints: { hidden: true },
   handler: async (ctx) => {
+    refuseAttested();
     if (!wakeshiftRuntime()) throw notEnabled();
     const rows = await ownRows(ctx, "AND (state = 'open' OR updated_at > now() - interval '1 day')", []);
     return { watches: rows.map(publicWatch) };
@@ -412,6 +424,7 @@ const unwatch: Operation = {
   publishGateKey: 'mcp.publish_wakeshift',
   cliHints: { hidden: true },
   handler: async (ctx, p) => {
+    refuseAttested();
     const runtime = wakeshiftRuntime();
     if (!runtime) throw notEnabled();
     const { key, extra, params } = unwatchFilter(p);

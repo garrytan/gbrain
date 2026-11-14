@@ -147,6 +147,7 @@ export const NO_PAGE_TARGET: Record<string, string> = {
   file_register: 'files row keyed by page slug; the page id is read by SQL, no Page object',
   submit_job: 'job queue', cancel_job: 'job queue', retry_job: 'job queue', pause_job: 'job queue', resume_job: 'job queue',
   replay_job: 'job queue', send_job_message: 'job queue', submit_agent: 'job queue', watch_job: 'job queue', unwatch: 'job queue',
+  watch_write_request: 'wake subscription on a write receipt', watch_cron: 'wake subscription on a cron job', accept_wakeshift_terms: 'Wakeshift terms acceptance row',
   think: 'creates its own answer page; it reads pages as search results, not snapshots',
   sources_add: 'source registry', sources_remove: 'source registry',
   request_tools: 'tool surface request', connector_sync: 'connector pages it creates; its segmented holds are pinned by connector-segmented-page-9062',
