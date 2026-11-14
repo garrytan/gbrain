@@ -248,6 +248,17 @@ describe('#2185 red-team regressions', () => {
     expect(validateCommandFlags('jobs', ['work', '--allow-shell-jobs'])).toBeNull();
     expect(validateCommandFlags('jobs', ['run-child', '--job-id', '1', '--allow-shell-jobs'])).toBeNull();
   });
+
+  test('#8867: behavior-change prose does not legalise --squash for doctor/init', () => {
+    // behavior-change-notice.ts quotes `git merge --squash` inside a
+    // BEHAVIOR_CHANGES row; that prose is not a flag either command parses,
+    // so `gbrain doctor --squash` must fail loud instead of running as a
+    // plain doctor.
+    expect(validateCommandFlags('doctor', ['--squash'])).toBe('--squash');
+    expect(validateCommandFlags('init', ['--squash'])).toBe('--squash');
+    expect(CLI_FLAG_REGISTRY['doctor']).not.toContain('--squash');
+    expect(CLI_FLAG_REGISTRY['init']).not.toContain('--squash');
+  });
 });
 
 describe('#2185 drift + freshness guards', () => {

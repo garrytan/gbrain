@@ -99,8 +99,12 @@ const DELEGATED_MODULES: Record<string, string[]> = {
  * `gbrain serve --watch` pass validation. grants/shared-exposure.ts (GST-363)
  * names other commands' flags (auth rescope, mcp grant, doctor) in warning
  * text that setup, mcp, connect, skillpack and auth print.
+ * behavior-change-notice.ts is a disclosure data table (BEHAVIOR_CHANGES):
+ * its rows quote other commands' flags and git arguments (`git merge
+ * --squash`) as changelog prose — no command parses a flag from it, so
+ * scanning it handed doctor and init a --squash neither reads (#8867).
  */
-const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts', 'shared-exposure.ts'];
+const EXCLUDED_MODULES = ['thin-client-routing.ts', 'persistence-delegate.ts', 'job-isolation.ts', 'strict-args.ts', 'direct-pool-profile.ts', 'flag-equals.ts', 'behavior-change-notice.ts', 'shared-exposure.ts'];
 
 function isExcludedModule(p: string): boolean {
   // Basename comparison is path-separator agnostic: on Windows p ends in
