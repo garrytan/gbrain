@@ -62,6 +62,7 @@ page is marked `private_label` for any room. The reasons for `false`, checked in
 | `labelled_only` | someone in the room reads only pages labelled for them, and this one is not |
 | `private_label` | the page is `visibility: private` |
 | `derived` | it was built from a page the room cannot read |
+| `personal_source` | it sits in someone's personal source (`gbrain access member source`) and the room holds anyone else, a group or a guest |
 
 When any item is not `true`, the answer carries the `room_above_level`
 safety notice, so a model that never sees `_meta` still sees the warning.
@@ -142,7 +143,8 @@ the room can read, and store only the reply it sent.
 
 Each marked call appends a count-only `room_marked` row to
 `~/.gbrain/audit/access-audience-YYYY-Www.jsonl`: how many items were
-readable, above or unknown, by reason. It never records the room's names, slugs
-or content. Rooms add no setting and no migration, and they work the same on a
+readable, above or unknown, by reason, and the room's principals as the harness
+declared them, the same way an `on_behalf_of` row records its audience. It
+never records page names, slugs or content. Rooms add no setting and no migration, and they work the same on a
 repo-less brain, where the readers, folder rules and labels live in the
 database.

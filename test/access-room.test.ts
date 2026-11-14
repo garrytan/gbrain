@@ -31,6 +31,7 @@ import { operations } from '../src/core/operations.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { addGroup, addMember, bindCredential } from '../src/core/access/members.ts';
 import { setOwner } from '../src/core/access/owner.ts';
+import { bindMemberSource, unbindMemberSource } from '../src/core/access/member-sources.ts';
 import { setMemberLabelledOnly } from '../src/core/access/labelled-only.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
 import { __setRoomDeadlineForTests, assessRoom, readRoomDeclaration, ROOM_COVERED_OPS } from '../src/core/access/room.ts';
@@ -385,6 +386,20 @@ for (const kind of testBackends()) {
       expect(facts.length).toBeGreaterThan(0);
       for (const f of facts) expect(f.room_access).toBeDefined();
       expect(cardBody.entity.room_access).toEqual({ readable: true });
+    }, 60_000);
+
+    test("a page in the owner's personal source is above any room holding someone else, and readable to the owner alone", async () => {
+      await bindMemberSource(engine, 'owner-example', SRC);
+      try {
+        const group = await call('owner', 'get_page', { slug: PAGES.open.slug }, { room: { header: 'group:team-a' } });
+        const alone = await call('owner', 'get_page', { slug: PAGES.open.slug }, { room: { header: 'owner-example' } });
+        expect(group.isError).toBe(false);
+        expect(unmarked(group.json)).toEqual(unmarked(alone.json));
+        expect((group.json as { room_access?: unknown }).room_access).toEqual({ readable: false, reason: 'personal_source' });
+        expect((alone.json as { room_access?: unknown }).room_access).toEqual({ readable: true });
+      } finally {
+        await unbindMemberSource(engine, 'owner-example', SRC, { apply: true });
+      }
     }, 60_000);
 
     test('if marking itself throws, the read still goes out whole, flagged mark_failed', async () => {

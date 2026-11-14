@@ -17,6 +17,7 @@ import type { Action, Notice } from '../agent-output.ts';
 import { logAudienceAssertion, normalizePrincipals, type AudiencePrincipal } from './audience.ts';
 import { audienceCallerAccess, resolveAudienceIdentities } from './caller.ts';
 import { factVisibilitySql } from './member-facts.ts';
+import { hiddenPersonalSources } from './member-sources.ts';
 import {
   callerIdentities, currentCallerAccess, folderRulesAllowedSql, labelledOnlyForSql, privacyForCaller, privacyPartSql,
   privatePagesFilterForCaller, privateProvenanceFilterUnderPolicy, readersAllowedSql, withCallerAccess, worldOnlyFacts,
@@ -33,7 +34,7 @@ export const ROOM_DEADLINE_MS = 3_000;
 export const ROOM_MAX_REFS = 2_000;
 
 /** Why the room could not read an item. */
-export type RoomReason = 'readers' | 'folder_rule' | 'labelled_only' | 'private_label' | 'derived';
+export type RoomReason = 'readers' | 'folder_rule' | 'labelled_only' | 'private_label' | 'derived' | 'personal_source';
 /** Why an item, or the whole answer, could not be judged. */
 export type RoomUnknownReason = 'invalid' | 'not_permitted' | 'unknown_principal' | 'unbound' | 'mark_failed' | 'deadline' | 'response_cap'
   | 'op_not_covered' | 'not_found' | 'not_identified' | 'over_limit';
@@ -175,7 +176,7 @@ function pageReason(r: PageRow): RoomAccess {
 }
 
 /** The room's decisions for the refs, judged under the room's own access record (the same predicates its reads use). */
-async function decide(engine: BrainEngine, access: Partial<CallerAccess>, refs: Ref[]): Promise<Map<string, RoomAccess>> {
+async function decide(engine: BrainEngine, access: Partial<CallerAccess>, principals: AudiencePrincipal[], refs: Ref[]): Promise<Map<string, RoomAccess>> {
   const pages = refs.filter((r): r is Extract<Ref, { kind: 'page' }> => r.kind === 'page');
   const ids = refs.filter((r): r is Extract<Ref, { kind: 'page_id' }> => r.kind === 'page_id').map(r => r.id);
   const facts = refs.filter((r): r is FactRef => r.kind === 'fact').map(r => r.id);
@@ -194,8 +195,14 @@ async function decide(engine: BrainEngine, access: Partial<CallerAccess>, refs: 
   });
   const out = new Map<string, RoomAccess>();
   if (pages.length || ids.length) {
-    for (const row of await engine.executeRaw<PageRow>(pageSql, [pages.map(p => p.source_id), pages.map(p => p.slug), ids])) {
-      const access = pageReason(row);
+    const rows = await engine.executeRaw<PageRow>(pageSql, [pages.map(p => p.source_id), pages.map(p => p.slug), ids]);
+    const sources = [...new Set(rows.filter(r => r.ok).map(r => r.source_id))];
+    const personal = new Set<string>();
+    for (const p of principals) {
+      for (const s of await hiddenPersonalSources(engine, sources, p.startsWith('member:') ? p.slice('member:'.length) : '', false)) personal.add(s);
+    }
+    for (const row of rows) {
+      const access: RoomAccess = row.ok && personal.has(row.source_id) ? { readable: false, reason: 'personal_source' } : pageReason(row);
       out.set(`p:${row.source_id}:${row.slug}`, access);
       out.set(`i:${row.id}`, access);
     }
@@ -339,7 +346,7 @@ async function assessRoomUnguarded(engine: BrainEngine, input: { op: string; res
       decisions = await withDeadline((async () => {
         await deadlineForTests?.delay();
         const access = late ? null : await roomAccessFor(engine, caller, d.principals);
-        return access && !late ? decide(engine, access, [...refs.values()]) : new Map<string, RoomAccess>();
+        return access && !late ? decide(engine, access, d.principals, [...refs.values()]) : new Map<string, RoomAccess>();
       })(), deadlineForTests?.ms ?? input.deadlineMs ?? ROOM_DEADLINE_MS, () => { late = true; });
     } catch (e) {
       unavailable = e instanceof RoomUnavailable ? e : new RoomUnavailable('mark_failed');
