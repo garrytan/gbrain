@@ -28,6 +28,12 @@ harness --remove` stops the hooks from banking session text at all (see
 [ambient writeback](ambient-writeback.md#capture-lanes-and-the-off-switch)).
 Time-limited facts need an explicit TTL; ordinary
 saved facts do not expire just because they describe a temporary situation.
+
+In a shared chat, the owner's own questions are answered at the owner's full
+scope, with every item marked by whether the people in the room could have
+read it ([rooms](rooms.md)). The marks are for the agent's judgment about what
+to say; they do not keep the raw results out of a group transcript, so the
+harness must.
 `forget` withdraws a fact from active recall, not from all source material,
 history, or private backups. To remove the text itself from live stores, the
 owner runs a [purge](#purge) on the brain host. See [ambient writeback](ambient-writeback.md).

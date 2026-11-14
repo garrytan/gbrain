@@ -7,7 +7,8 @@
  *
  * The commit is made by plumbing, without the checkout's index (GBRA-174: a porcelain `commit --only` rewrites and
  * refreshes the whole index, about 1.7 s at 312k files): `hash-object -w` hashes each published file (its clean
- * filters apply, as `git add` would), the trees along the changed paths are rebuilt from HEAD's (`cat-file tree`, then
+ * filters apply, as `git add` would; the ledger records the commit `verified` only when every blob is the file's own bytes,
+ * so the push secret scan reads a filtered one), the trees along the changed paths are rebuilt from HEAD's (`cat-file tree`, then
  * `hash-object -w -t tree`, which refuses a malformed tree), `commit-tree` writes the commit with the porcelain path's
  * message (`commitMessage`), and `update-ref <branch> <new> <old>` moves the branch only if it still names the HEAD the
  * commit was built on. A branch that moved meanwhile (a commit made in the checkout) is read again and the commit
@@ -46,7 +47,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import type { Notice } from '../agent-output.ts';
 import { literalPathspecs } from '../git-env.ts';
 import { OperationError, opError } from '../ops/contract.ts';
-import { commitMessage, commitMessageArgs, git, gitBytes, gitFailure, gitStepTimeoutMs, ignoredTargetError, reclaimAbandonedIndexLock, stripspace, withSession, type GitSession } from './effect-git.ts';
+import { commitMessage, commitMessageArgs, fileDigests, git, gitBytes, gitFailure, gitStepTimeoutMs, ignoredTargetError, reclaimAbandonedIndexLock, stripspace, withSession, type GitSession } from './effect-git.ts';
 import { adoptedBy, type GitCommitNote } from './effect-model.ts';
 import { persistenceHome } from './identity.ts';
 import { ignoreCandidates } from './ignore-rules.ts';
@@ -230,6 +231,7 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
     if (hashed.code !== 0 || oids.length !== present.length) throw gitFailure('Cannot hash the canonical Git target.', `git hash-object failed for ${present.length} file(s).`);
     present.forEach((target, i) => { target.oid = oids[i]; target.mode = lstatSync(join(root, target.rel)).mode & 0o111 ? '100755' : '100644'; });
   }
+  const verified = present.every(target => fileDigests(join(root, target.rel), format!) === `${target.planned} ${target.oid}`);
   let fileModeTrusted: boolean | undefined;
   refuseChanged(root, targets.values());
 
@@ -348,7 +350,7 @@ async function doorCommit(session: GitSession, root: string, files: DoorFile[], 
       const created = commit.stdout.trim();
       const trailers = [...noted.values()].flatMap(note => note.trailers ?? []);
       const supersedes = supersededBy(trailers), adopted = adoptedBy(trailers);
-      await recordCommitAsync(root, { sha: created, writer: 'door', ref: branch, ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
+      await recordCommitAsync(root, { sha: created, writer: 'door', ref: branch, ...(verified ? { verified: true } : {}), ...(supersedes.length ? { supersedes } : {}), ...(adopted.length ? { adopted } : {}) });
       await doorSeams.beforeUpdateRef?.(root, attempt);
       const moved = await git(session, ['update-ref', '-m', `commit: ${message[0]!.split('\n')[0]}`, branch, created, head]);
       if (moved.code === 0) {

@@ -66,6 +66,12 @@ describe('#8265 URL-encoded separators', () => {
     expect(redactFindings(`client_secret%3D${v}%26x%3D1`, OPTS).text).toBe(`client_secret%3D${MARK}%26x%3D1`);
   });
 
+  test('a secret key later in a URL-encoded URL value the scan rejects is still claimed', () => {
+    const v = secret();
+    const line = `token%3Dhttps%3A%2F%2Fexample.org%2Fcb?password=${v}`;
+    expect(redactFindings(line, OPTS).text).toBe(`token%3Dhttps%3A%2F%2Fexample.org%2Fcb?password=${MARK}`);
+  });
+
   test('a URL-encoded URL that carries userinfo is still claimed', () => {
     const v = secret();
     expect(found(`password=postgres%3A%2F%2Fu%3A${v}%40db.example%2Fapp`)).toContain('high_entropy_assignment');
