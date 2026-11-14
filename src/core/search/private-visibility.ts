@@ -31,7 +31,6 @@ import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, reade
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { v311 } from '../schema-migrations/v311-concept-inputs-private.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -708,13 +707,16 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * whose schema predates v311 or whose version was not read, the same test runs inline, as gbrain_access_origin_restricted is
  * skipped inside a request on a brain that never set access.restrictions_present.
  */
+/** The schema version (migration v311) that creates gbrain_concept_inputs_private; a literal so the CLI dispatcher never loads a migration module. */
+export const CONCEPT_INPUTS_PRIVATE_SINCE = 311;
+
 function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
   const { remotePolicy } = currentCallerAccess();
   const scoped = engineScopeStore.getStore();
   const schema = remotePolicy ? remotePolicy.schemaVersion : scoped ? schemaVersionSeen(scoped) : undefined;
-  const conceptInputsPrivate = !shadowedPages && schema !== undefined && schema >= v311.version ? `gbrain_concept_inputs_private((${p}.id)::integer)`
+  const conceptInputsPrivate = !shadowedPages && schema !== undefined && schema >= CONCEPT_INPUTS_PRIVATE_SINCE ? `gbrain_concept_inputs_private((${p}.id)::integer)`
     : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
       WHERE derived_input_link.from_page_id = ${p}.id AND derived_input_link.link_source = 'concept-provenance'
