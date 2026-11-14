@@ -149,6 +149,8 @@ Dual-plane read (DB > file), applied on each client's next request,
 ceiling-bounded like everything else; unset means NULL-surface clients
 resolve to the server ceiling. Pre-seed important
 clients with an explicit `rescope-client --surface full` before flipping it.
+The default applies to OAuth clients only; legacy bearer tokens keep the
+server ceiling and stay bounded by their scope, source and operation grants.
 
 ## Move 3 — flip strict params from warn to reject
 
@@ -178,7 +180,7 @@ gbrain config set mcp.strict_params reject
 
 **Expected outcome (schema emission change):** besides rejecting unknown
 args, tools/list schemas change shape — each `inputSchema` closes with
-`additionalProperties: false` and declares the `_meta`/`dry_run`
+`additionalProperties: false` and declares the `_meta`/`dry_run`/`room`
 passthrough keys (D14.1), keeping schema-validating clients aligned with
 the server's reject posture. Read per request; flipping back to `warn`
 reopens the schemas on the next list. A transient config-read failure

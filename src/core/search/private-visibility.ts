@@ -29,7 +29,7 @@ import { asciiLower, asciiLowerSql, edgeTrimSql } from '../edge-whitespace.ts';
 import { ACCESS_ID_RE, hasReaders, MEMBER_PAGE_PREFIX, normalizePrincipal, readersAllow, validIdentity } from '../access/principals.ts';
 import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/folder-rules.ts';
 import { holdingSlugSql } from '../facts-fence.ts';
-import { atomOriginSlugsSql } from '../persistence/atom-origin.ts';
+import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
 
@@ -692,12 +692,13 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * origin is private), are private whatever their own field says.
  * `gbrain repair visibility` then stamps the stricter value on the rows.
  * An atom whose origin a sync rename moved (#7462) is private when the page at
- * its `source_slug` or the page the rename moved it to is private.
+ * its `source_slug` or the page the rename moved it to is private, including a
+ * move whose alias a later rename onto the old slug dropped (#8920).
  */
 function derivedOriginPrivateSql(p: string): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
-  return `(CASE WHEN ${p}.type = 'atom' THEN ${privateOrigin(p, 'derived_origin')}
+  return `(CASE WHEN ${p}.type = 'atom' THEN (${privateOrigin(p, 'derived_origin')} OR ${atomMovedOriginPrivateSql(p)})
     WHEN ${derivedPageSql(p)} THEN EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
       WHERE derived_input_link.from_page_id = ${p}.id AND derived_input_link.link_source = 'concept-provenance'

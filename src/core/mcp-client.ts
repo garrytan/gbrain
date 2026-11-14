@@ -348,6 +348,8 @@ export interface CallRemoteToolOptions {
    * pending. `timeoutMs` still bounds each exchange.
    */
   writeWaitMs?: number;
+  /** GBRA-498: request-level `_meta` sent with the tool call (the CLI's `--room` goes as `_meta.room`, never as an argument). */
+  meta?: Record<string, unknown>;
 }
 
 /**
@@ -438,7 +440,7 @@ export async function callRemoteTool(
       try {
         signal.throwIfAborted();
         submitted = true;
-        const res = await client.callTool({ name: toolName, arguments: args }, undefined, buildMcpRequestOptions(opts, signal));
+        const res = await client.callTool({ name: toolName, arguments: args, ...(opts.meta ? { _meta: opts.meta } : {}) }, undefined, buildMcpRequestOptions(opts, signal));
         if (res.isError) {
           // Agent contract v1: the envelope is content[0] alone. A notice
           // block from a newer server never joins the body.

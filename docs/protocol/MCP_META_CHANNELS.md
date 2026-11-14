@@ -34,6 +34,7 @@ shape for it.
 | `degraded` | dispatch (`src/core/degraded-stamp.ts`), on every transport | `{reasons: [...]}`: present only when the result is partial or degraded; sorted, unique stable codes ([AGENT_OPERATOR_v1.md, Degraded stamp](AGENT_OPERATOR_v1.md#degraded-stamp)). Mirrored as the last content block, `[gbrain degraded: <codes>] …` |
 | `retrieval` | `search`/`query` op handlers; `recall` and `find_experts` emit `{degraded[]}` when their page search degraded | `returned_count`, `retrieved_count`, `vector_enabled`, `expansion_applied`, `cache`, `token_budget`, `degraded[]` (closed stage vocabulary), `rerank_degraded` (on a call whose reranker failed: `{reason, fallback: "fused_order", calls_this_session}`; reason is `timeout`, `budget`, `rate_limited`, `unreachable`, `auth` or `provider_error`; no `fields: "full"` needed), `hint` (non-contractual prose), `rows` (`"lean"` or `"full"`: the row shape of content[0]; reported for remote callers and whenever `fields` is passed), `timings` (`{total_ms, stages_ms, other_ms, overlapped_ms?, parts_ms?}`, integer ms, every response; [search-explain.md](../guides/search-explain.md#see-where-the-time-went)) |
 | `access` | dispatch (`appliedAccessSummary`, `src/core/access/caller.ts`), every remote response that reached the operation | The view the call was answered under: `member` and `groups` it read as (null and `[]` for an unbound caller or an audience of several entries), `audience` (the normalized `on_behalf_of` principals, or null), `policy_rev` (each source's applied folder-rule revision; null on a brain with no restriction), `relaxation` (`none`, `granted_sources`, `operator` or `owner`: what relaxed `visibility: private`; `owner` is a credential bound to the brain owner, see [access designations](../guides/access-designations.md)). `whoami` returns the same object as `access.applied`. An attested call adds `actor` (`{system}`); an unlinked `memory_recall` carries `code: "actor_unlinked"`, `member: null` and the id as sent. |
+| `room` | dispatch (`assessRoom`, `src/core/access/room.ts`), only on a call that declared a room | The shared chat the answer goes into, as read: `principals`, `declared_by` (`harness` or `argument`), `conflict` (present when the argument and the harness disagreed), `complete`, `counts` (`{items, readable, above, unknown}`), `by_reason`, `above` (references the room could not read) and `unavailable` (why no marks could be computed: `invalid`, `not_permitted`, `unknown_principal`, `unbound`, `mark_failed`, `deadline`, `op_not_covered`, `response_cap`, `not_supported`). Each page and fact in the body, each hot-memory fact and each entry of `retrieval.saved_facts` carries `room_access` (`{readable: true}`, `{readable: false, reason}` with reason `readers`, `folder_rule`, `labelled_only`, `private_label`, `derived` or `personal_source`, or `{readable: "unknown", reason}`). [Details](#room) |
 | `warnings` | dispatch strict-params warn mode | `[{code: 'unknown_param', param, suggestion?}]`: a parameter a read ignored. This is the only place the warning appears; no content block or notice carries it, so a harness that stores tool output in its turns never stores it (writes refuse unknown parameters instead). |
 | `pagination` | `list_pages` op handler | `truncated` (more rows match), `limit` (effective), `clamped_from?` (the caller's limit when capped), `next?` (params for the following page: `{sort, updated_after, updated_after_slug}` under `updated_asc`, else `{offset}`). The model-visible counterpart is the `listing_truncated` notice block (kind `info`, never deduped), whose `fix.mcp` is the next-page call. |
 
@@ -158,6 +159,29 @@ whose first source is that member's private source.
             "_meta": {"session_id": "channel-a", "hot_memory": "off"}}}
 ```
 
+## `room`
+
+`room` is the one key that also travels on the request. A harness sets the
+request-level `_meta.room` (a sibling of `arguments`) or the `X-Gbrain-Room`
+header, and the response carries `_meta.room` back:
+
+```jsonc
+// request
+{ "name": "search", "arguments": { "query": "launch plan" },
+  "_meta": { "room": ["alice-example", "group:team-a"] } }
+
+// response _meta
+{ "room": { "principals": ["group:team-a", "member:alice-example"], "declared_by": "harness",
+            "complete": true, "counts": { "items": 3, "readable": 2, "above": 1, "unknown": 0 },
+            "by_reason": { "readers": 1 }, "above": [{ "source_id": "default", "slug": "notes/owner-plan", "reason": "readers" }] } }
+```
+
+A room never changes the body's items or their order; it only adds
+`room_access` to each item. A call with no room carries no `room` key. The
+model-visible counterparts are the `room_above_level`,
+`room_hints_unavailable` and `room_conflict` notice blocks. Full guide:
+[rooms](../guides/rooms.md).
+
 ## Degraded stamp codes
 
 The codes in `_meta.degraded.reasons` ([AGENT_OPERATOR_v1.md, Degraded stamp](AGENT_OPERATOR_v1.md#degraded-stamp)). The list grows; a code never changes meaning.
@@ -172,6 +196,7 @@ The codes in `_meta.degraded.reasons` ([AGENT_OPERATOR_v1.md, Degraded stamp](AG
 | `file_held` | get_page | the page's newer file is held by sync; this is its last good revision |
 | `gather_hybrid_failed`, `gather_takes_keyword_failed`, `gather_takes_vector_failed`, `gather_graph_failed`, `gather_anchor_hydrate_failed`, `gather_window_floor_failed` | think, synthesize | an evidence stream failed (the matching `GATHER_*_FAILED` warning) |
 | `held_files`, `references_unavailable`, `mention_index`, `relational_chain`, `graph_walk_truncated`, `pinned_answer_stale` | the ops that emit the notice of that code | a `kind: degraded` notice about this result |
+| `room_hints_unavailable` | every op answered with a room declared | the room's marks could not be computed (`_meta.room.unavailable` says why): the body is complete, but every item is marked unknown |
 | `scan_deadline`, `unreadable_pages` | search_exact | `incomplete_reasons` other than the caller's `limit` |
 | `source_stale`, `held_items` | open_loops | `stale` or `completeness: "partial"` |
 | `link_coverage_behind`, `link_coverage_unread` | rank_entities | `coverage.state` |

@@ -28,6 +28,9 @@ function managedLifecycleRefusal(ctx: OperationContext, args: string[]) {
     'With managed persistence on, adding or removing a source changes the brain\'s writer topology, which only its owner CLI may do.');
 }
 
+/** GBRA-498: what this server supports, so a harness checks once per connection (room: room-aware results, access/room.ts). */
+const WHOAMI_FEATURES = { room: true } as const;
+
 const whoami: Operation = {
   name: 'whoami',
   mutating: false,
@@ -62,7 +65,7 @@ const whoami: Operation = {
       // GBRA-218: a local --as <member> preview reports the member it reads as; the plain local CLI reads every page.
       const access = ctx.applyRemoteReadPolicy && ctx.accessIdentity?.length ? accessView(ctx.accessIdentity, 'as')
         : accessView([], 'none', null, 'The local CLI reads every page; pass --as <member> to preview what a member can read.');
-      return { transport: 'local', scopes: [], access, readiness: readiness('cli') };
+      return { transport: 'local', scopes: [], features: WHOAMI_FEATURES, access, readiness: readiness('cli') };
     }
     // #1061: stdio MCP is remote/untrusted by design but has no per-token
     // auth (local pipe) — a known transport, not a bug. Report it instead of
@@ -76,7 +79,7 @@ const whoami: Operation = {
         if (verified.remote) scopes = verified.grant.scopes;
       } catch { /* no registration: no scopes */ }
       const session = ctx.stdioSurface;
-      return { transport: 'stdio', scopes, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await withApplied(await stdioAccessView(ctx.engine, ctx.stdioMember)), readiness: readiness('stdio') };
+      return { transport: 'stdio', scopes, features: WHOAMI_FEATURES, ...(session ? { surface: session.surface, surface_source: session.source } : {}), access: await withApplied(await stdioAccessView(ctx.engine, ctx.stdioMember)), readiness: readiness('stdio') };
     }
     if (!ctx.auth) {
       throw opError(
@@ -92,6 +95,7 @@ const whoami: Operation = {
     if (authTransport(ctx.auth) === 'oauth') {
       return {
         transport: 'oauth',
+        features: WHOAMI_FEATURES,
         client_id: ctx.auth.clientId,
         client_name: ctx.auth.clientName ?? ctx.auth.clientId,
         ...await resolveAuthCapabilities(ctx.auth, ctx.engine, ctx.config, { surfaceCeiling: ctx.surfaceCeiling }),
@@ -100,6 +104,7 @@ const whoami: Operation = {
     }
     return {
       transport: 'legacy',
+      features: WHOAMI_FEATURES,
       token_name: ctx.auth.clientName ?? ctx.auth.clientId,
       scopes: ctx.auth.scopes,
       expires_at: null,

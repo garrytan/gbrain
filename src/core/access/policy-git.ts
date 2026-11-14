@@ -117,34 +117,40 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
     && !(await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid')) {
     return { source_id: sourceId, state: 'skipped', reason: 'no_policy' };
   }
-  const rebuild = !(await getRevision(engine, sourceId))
-    || (await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid' && (c.detail as { file?: string } | null)?.file === REBUILD_MARK);
-  if (rebuild) await markPolicyInvalid(engine, sourceId, null, { problems: [{ line: null, message: 'The folder rules are being rebuilt from git history; the source reads as nobody until the rebuild finishes.' }], commit: files.commit, file: REBUILD_MARK });
+  const rebuild = await rebuildPending(engine, sourceId);
   if (files.unreadable.length) {
     const problems = [{ line: null, message: `${files.unreadable.join(' and ')} of source ${sourceId} at ${rev} cannot be read: the repository lacks its Git object (a partial clone, git clone --filter, never fetched it) and sync fetches nothing, so the source reads as nobody. `
       + `Fetch it in the checkout (${files.unreadable.map(path => `git -C ${root} cat-file -p ${rev}:./${path}`).join('; ')} fetches it from the partial clone's remote) or use a clone without --filter, then sync again.` }];
     await markPolicyInvalid(engine, sourceId, null, { problems, commit: files.commit, file: rebuild ? REBUILD_MARK : POLICY_FILE });
     return { source_id: sourceId, state: 'invalid', problems, commit: files.commit };
   }
-  let approvedFile: GitPolicySyncResult['approved_file'] = 'absent';
-  if (files.approved !== null) {
-    const approved = parsePolicyYaml(files.approved);
-    if (!approved.ok) approvedFile = 'invalid';
-    else if (rebuild) {
+  const approved = files.approved === null ? null : parsePolicyYaml(files.approved);
+  let approvedFile: GitPolicySyncResult['approved_file'] = approved === null ? 'absent' : approved.ok ? undefined : 'invalid';
+  if (rebuild) {
+    const history = await policyHistory(root, rev, !!approved?.ok);
+    if ('refusal' in history) {
+      const problems = [{ line: null, message: history.refusal === 'shallow'
+        ? `The checkout of source ${sourceId} is shallow, so its folder-rule history cannot be replayed; the source reads as nobody. Fetch the full history (git -C ${root} fetch --unshallow) and sync again.`
+        : `The folder-rule history of source ${sourceId} cannot be read: the repository lacks Git objects it needs (a partial clone, git clone --filter, never fetched them) and sync fetches nothing, so the source reads as nobody. `
+          + `Fetch them in the checkout (git -C ${root} log --first-parent -p ${rev} -- ${POLICY_FILE} reads every version, fetching what is missing from the partial clone's remote) or use a clone without --filter, then sync again.` }];
+      await markPolicyInvalid(engine, sourceId, null, { problems, commit: files.commit, file: REBUILD_MARK });
+      return { source_id: sourceId, state: 'invalid', problems, commit: files.commit, ...(approvedFile ? { approved_file: approvedFile } : {}) };
+    }
+    const replay = history.versions.slice(0, -1);
+    if (approved?.ok || replay.length) {
+      await markPolicyInvalid(engine, sourceId, null, { problems: [{ line: null, message: 'The folder rules are being rebuilt from git history; the source reads as nobody until the rebuild finishes.' }], commit: files.commit, file: REBUILD_MARK });
+    }
+    if (approved?.ok) {
       await proposeRevision(engine, sourceId, approved.rules, { origin: 'git-approved', approved: true, store: 'git', proposedBy: 'git:access.approved', onProgress: opts.onProgress });
       approvedFile = 'loaded';
-    } else {
-      const lastApproved = (await listRevisions(engine, sourceId, 500)).find(r => r.approved_at);
-      approvedFile = lastApproved?.digest === rulebookDigest(approved.rules) ? 'matches' : 'untrusted';
     }
-  }
-  if (rebuild) {
-    const problem = await replayPolicyHistory(engine, sourceId, root, rev, approvedFile === 'loaded', opts.onProgress);
-    if (problem) {
-      const problems = [{ line: null, message: problem }];
-      await markPolicyInvalid(engine, sourceId, null, { problems, commit: files.commit, file: REBUILD_MARK });
-      return { source_id: sourceId, state: 'invalid', problems, commit: files.commit, approved_file: approvedFile };
+    for (const { commit, yml } of replay) {
+      const parsed = yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(yml);
+      if (parsed.ok) await proposeRevision(engine, sourceId, parsed.rules, { origin: 'git', store: 'git', proposedBy: `git:${commit.slice(0, 7)}`, onProgress: opts.onProgress });
     }
+  } else if (approved?.ok) {
+    const lastApproved = (await listRevisions(engine, sourceId, 500)).find(r => r.approved_at);
+    approvedFile = lastApproved?.digest === rulebookDigest(approved.rules) ? 'matches' : 'untrusted';
   }
   const desired = files.yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(files.yml);
   if (!desired.ok) {
@@ -157,34 +163,59 @@ export async function syncGitPolicy(engine: BrainEngine, sourceId: string, root:
   return { source_id: sourceId, state: proposal.state, proposal, commit: files.commit, approved_file: approvedFile };
 }
 
+/** Whether the next sync of the source rebuilds its rules from git: it has no revision yet, or an earlier rebuild was interrupted. */
+async function rebuildPending(engine: BrainEngine, sourceId: string): Promise<boolean> {
+  return !(await getRevision(engine, sourceId))
+    || (await coverageRows(engine, sourceId)).some(c => c.reason === 'invalid' && (c.detail as { file?: string } | null)?.file === REBUILD_MARK);
+}
+
 /**
  * A rebuild replays every committed access.yml from the approved baseline's commit on (first-parent order), so a narrowing
  * that a later plain commit removed or deleted the file over is applied again and its removal held, as on the database that
- * saw each commit. The whole source reads as nobody from the start of a rebuild until it finishes (an interrupted one is
- * resumed by the next sync), and a shallow checkout leaves it so, as does a partial clone that lacks a tree or a version of
- * access.yml the replay reads (GST-2331: sync fetches nothing).
+ * saw each commit. This reads those versions through `rev` (the anchor first when `fromApproved`), fetching nothing, or
+ * refuses: a shallow checkout cannot show the history, and a partial clone may lack a tree or a version of access.yml
+ * (GST-2331: sync fetches nothing). GST-2638: a rebuild with nothing to replay installs one rulebook and needs no
+ * whole-source mark; one with history reads as nobody from its start until it finishes (the next sync resumes it).
  */
-async function replayPolicyHistory(engine: BrainEngine, sourceId: string, root: string, rev: string, fromApproved: boolean, onProgress?: (p: RestampProgress) => void): Promise<string | null> {
-  if (await policyGit(root, ['rev-parse', '--is-shallow-repository']) === 'true') {
-    return `The checkout of source ${sourceId} is shallow, so its folder-rule history cannot be replayed; the source reads as nobody. Fetch the full history (git -C ${root} fetch --unshallow) and sync again.`;
-  }
-  const partial = `The folder-rule history of source ${sourceId} cannot be read: the repository lacks Git objects it needs (a partial clone, git clone --filter, never fetched them) and sync fetches nothing, so the source reads as nobody. `
-    + `Fetch them in the checkout (git -C ${root} log --first-parent -p ${rev} -- ${POLICY_FILE} reads every version, fetching what is missing from the partial clone's remote) or use a clone without --filter, then sync again.`;
+async function policyHistory(root: string, rev: string, fromApproved: boolean): Promise<{ versions: Array<{ commit: string; yml: string | null }> } | { refusal: 'shallow' | 'partial' }> {
+  if (await policyGit(root, ['rev-parse', '--is-shallow-repository']) === 'true') return { refusal: 'shallow' };
   const log = (args: string[]) => policyGit(root, ['log', '--first-parent', '--format=%H', ...args]);
   let commits: string[];
   try {
     const anchor = fromApproved ? await log(['-1', rev, '--', APPROVED_FILE]) : '';
     commits = [...(anchor ? [anchor] : []), ...(await log(['--reverse', anchor ? `${anchor}..${rev}` : rev, '--', POLICY_FILE])).split('\n').filter(Boolean)];
   } catch {
-    return partial;
+    return { refusal: 'partial' };
   }
-  for (const commit of commits.slice(0, -1)) {
+  const versions: Array<{ commit: string; yml: string | null }> = [];
+  for (const commit of commits) {
     const yml = await committedFile(root, commit, POLICY_FILE);
-    if (yml === undefined) return partial;
-    const parsed = yml === null ? { ok: true as const, rules: [] as FolderRule[] } : parsePolicyYaml(yml);
-    if (parsed.ok) await proposeRevision(engine, sourceId, parsed.rules, { origin: 'git', store: 'git', proposedBy: `git:${commit.slice(0, 7)}`, onProgress });
+    if (yml === undefined) return { refusal: 'partial' };
+    versions.push({ commit, yml });
   }
-  return null;
+  return { versions };
+}
+
+/**
+ * GST-2638: the refusal for a rule edit on a git-store source whose next sync would rebuild from history this checkout
+ * cannot give (shallow, or a partial clone that lacks an object), or null. Read before anything is written, so a refused
+ * edit commits nothing and marks nothing, and the source keeps its current reads.
+ */
+export async function rebuildPreflight(engine: BrainEngine, sourceId: string, root: string): Promise<OperationError | null> {
+  if (!await rebuildPending(engine, sourceId)) return null;
+  const approved = (await readCommittedPolicy(root)).approved;
+  const history = await policyHistory(root, 'HEAD', approved !== null && parsePolicyYaml(approved).ok);
+  if (!('refusal' in history)) return null;
+  const shallow = history.refusal === 'shallow';
+  const argv = shallow ? ['git', '-C', root, 'fetch', '--unshallow'] : ['git', '-C', root, 'log', '--first-parent', '-p', 'HEAD', '--', POLICY_FILE];
+  return opError('access_policy_history_unreadable',
+    shallow ? `Source ${sourceId} has no folder-rule revision yet and its checkout is shallow, so the first sync after this edit could not replay its folder-rule history and would read the whole source as nobody; nothing was written.`
+      : `Source ${sourceId} has no folder-rule revision yet and its checkout is a partial clone that lacks Git objects of its folder-rule history, so the first sync after this edit could not replay it and would read the whole source as nobody; nothing was written.`,
+    shallow ? `Fetch the full history (git -C ${root} fetch --unshallow), then run the same command again.`
+      : `Fetch the missing objects (git -C ${root} log --first-parent -p HEAD -- ${POLICY_FILE} reads every version, fetching them from the partial clone's remote) or use a clone without --filter, then run the same command again.`,
+    { fix: { argv, consent: [], actor: 'user', requires_exclusive: false,
+      why: shallow ? 'Fetches the history the first folder-rule sync replays.' : 'Fetches every version of the folder-rule file the first sync replays.',
+      verify: { argv: shallow ? ['git', '-C', root, 'rev-parse', '--is-shallow-repository'] : ['gbrain', 'access', 'rule', 'status', '--source', sourceId, '--json'] } } });
 }
 
 export interface GitPolicyReceipt {
@@ -212,7 +243,7 @@ export async function commitPolicyFile(root: string, relPath: string, edit: (cur
       const next = edit(current);
       writeFileSync(file, next);
       try {
-        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message, scanSecrets: true });
+        const r = commitAndPush({ repo: root, cwd: root, paths: [file], message });
         return { outcome: r.outcome, commit: r.committed ?? r.sha, path: relPath,
           ...(r.outcome === 'committed_local' ? { note: 'Committed locally; this checkout has no remote or is managed, so nothing was pushed.' } : {}) };
       } catch (e) {
@@ -252,9 +283,13 @@ export function workingTreeRules(root: string, sourceId: string): FolderRule[] {
     `Fix the file (gbrain access rule list --source ${sourceId} shows each problem and line) and commit it with gbrain git commit-push, then retry.`);
 }
 
-/** Writes the desired rules to access.yml through the door and applies them at once (as sync would). */
+/**
+ * Writes the desired rules to access.yml through the door and applies them at once (as sync would). The git store is
+ * persisted only once the commit landed (GST-2638): a refused commit leaves an unset store unset.
+ */
 export async function writeGitRules(engine: BrainEngine, sourceId: string, root: string, rules: FolderRule[], message: string, onProgress?: (p: RestampProgress) => void): Promise<{ receipt: GitPolicyReceipt; sync: GitPolicySyncResult }> {
   const receipt = await commitPolicyFile(root, POLICY_FILE, () => serializePolicyYaml(rules, POLICY_HEADER), message);
+  if (!(await readAccessStore(engine, sourceId))) await writeAccessStore(engine, sourceId, 'git');
   const sync = await syncGitPolicy(engine, sourceId, root, { onProgress });
   return { receipt, sync };
 }
