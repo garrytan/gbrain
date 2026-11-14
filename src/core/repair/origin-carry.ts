@@ -149,6 +149,7 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   }
   const block = origin ? (await carryPrivate(ctx.engine, [origin], batch)).get(origin.id) : undefined;
   if (!origin || !block) {
+    if (origin) await clearDerivedOriginParks(ctx.engine, [origin.id]);
     await faultPoint('purge:after_carry', { sourceId, slug: origin?.slug });
     const result = await finishPagePurge(ctx, await submitPageMutation(ctx, { operation: 'delete_page', params: p }));
     if (origin && result.status === 'purged') await clearDerivedOriginParks(ctx.engine, [origin.id]);

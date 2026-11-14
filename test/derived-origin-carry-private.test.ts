@@ -17,7 +17,7 @@
  * 3. Real seams: tokens minted by the token service and verified as serve --http does, dispatched through MCP dispatch
  *    (remote: true), on a repo-less brain without managed persistence; PGLite always, Postgres with DATABASE_URL.
  */
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -36,6 +36,7 @@ import { bindCredential } from '../src/core/access/members.ts';
 import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { checkDerivedOriginParked } from '../src/commands/doctor/checks/purge-parks.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import * as labelWrite from '../src/core/repair/label-write.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -411,6 +412,31 @@ for (const kind of testBackends()) {
       await expectLateHidden(k, late);
       expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
       expect((await fm(late)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await expectLateHidden(k, late);
+    }, 240_000);
+
+    test('an explicit purge of an origin parked by an earlier failed label still rechecks inside its transaction once the label retry succeeds', async () => {
+      const k = 'reparked';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const failing = spyOn(labelWrite, 'importAtRevision').mockImplementation(async () => { throw new Error('forced label failure'); });
+      try {
+        const first = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) })).text);
+        expect(first.purge_held?.code).toBe('derived_origin_parked');
+      } finally { failing.mockRestore(); }
+      expect((await checkDerivedOriginParked(engine)).status).toBe('warn');
+      const late = lateDerivedPage(k);
+      let out: { isError: boolean; text: string };
+      try { out = await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) }); }
+      finally { installFaultHook(undefined); }
+      expect(out.isError ? out.text : '').toBe('');
+      expect(JSON.parse(out.text).purge_held?.code).toBe('derived_origin_parked');
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      await expectLateHidden(k, late);
+      for (const shape of CARRIED) expect({ shape, visibility: (await fm(slugOf(k, shape))).visibility }).toEqual({ shape, visibility: 'private' });
+      await backdate(origin);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
       expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
       await expectLateHidden(k, late);
     }, 240_000);
