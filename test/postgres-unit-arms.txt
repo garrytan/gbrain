@@ -377,6 +377,7 @@ test/owner-label-guard.test.ts
 test/owner-member-boundary.test.ts
 test/owner-reads-restricted.test.ts
 test/owner-refusal.test.ts
+test/owner-remote-private-writes-gst2091.test.ts
 test/pack-relation-direction-engine.test.ts
 test/page-change-reason-gbra217.test.ts
 test/page-change-reason-git-gbra217.test.ts
