@@ -134,7 +134,7 @@ export function shellWords(command: string): string[] | null {
 
 /** An absolute path (POSIX, or on Windows a drive or UNC path) shaped like a hook launcher (<config dir>/hook-launcher/gbrain-hook). */
 export function isHookLauncherPath(path: string, platform: NodeJS.Platform = process.platform): boolean {
-  return (path.startsWith('/') || (platform === 'win32' && win32.isAbsolute(path))) && path.replace(/\\/g, '/').endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
+  return (path.startsWith('/') || (/^[A-Za-z]:[\\/]/.test(path) || (platform === 'win32' && win32.isAbsolute(path)))) && path.replace(/\\/g, '/').endsWith(`/${HOOK_LAUNCHER_DIR}/${HOOK_LAUNCHER_NAME}`);
 }
 
 /** A path as a hook command names it: Claude Code runs hooks through Git Bash on Windows, which (like the launcher's own check) wants /c/... for C:\... */
