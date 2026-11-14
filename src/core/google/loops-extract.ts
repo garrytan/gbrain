@@ -36,6 +36,7 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { deriveTrust } from '../trust/taint.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput } from '../trust/derived-gate.ts';
 import { decideFactWrite } from '../write-gate-store.ts';
+import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 
 export const LOOPS_EXTRACT_JOB = 'loops_extract';
 /**
@@ -304,7 +305,7 @@ export interface LoopsExtractResult {
  */
 export class LoopsExtractRetryableError extends Error {
   constructor(
-    readonly reason: 'llm_unavailable' | 'truncated' | 'parse_barrier' | 'excluded_label_unresolved',
+    readonly reason: 'llm_unavailable' | 'truncated' | 'parse_barrier' | 'excluded_label_unresolved' | 'fact_transient',
     message: string,
   ) {
     super(message);
@@ -528,10 +529,15 @@ export async function runLoopsExtract(
         factId = (await writeSingleFact(engine, payload.sourceId, { ...fact, derivation, gate, remote: false })).id;
       }
     } catch (err) {
+      const code = (err as { code?: unknown })?.code;
+      // GST-2692: a passing database error (a cancel, a stale plan, contention, a lost connection) retries the job, so the fact is not dropped.
+      if (transientDatabaseFailure(err) || transientInterruption(err)) {
+        throw new LoopsExtractRetryableError('fact_transient',
+          `loops_extract: a passing database error (${typeof code === 'string' ? code : 'transient'}) while saving a commitment fact of ${payload.slug} — retryable`);
+      }
       // The loop row still lands; the facts projection is best-effort, but its
       // failure is logged. Slug, source and a bounded error only: the
       // commitment text and quote stay out of logs.
-      const code = (err as { code?: unknown })?.code;
       console.warn(`[loops_extract] fact projection failed slug=${payload.slug} source=${payload.sourceId}` +
         ` (${typeof code === 'string' ? code : err instanceof Error ? err.name : 'error'}): ${(err instanceof Error ? err.message : String(err)).slice(0, 200)}`);
     }

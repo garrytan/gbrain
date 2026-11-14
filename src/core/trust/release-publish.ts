@@ -20,7 +20,8 @@
  *
  * Every other hold returns null: a held take, which owner-actions.ts refuses (`unavailable`), and an unmanaged brain,
  * a hold with no entity slug, or one whose page is missing (GBRA-190 G4 owns that class), which take its transactional
- * database-only release. A
+ * database-only release; on a strict source an unmanaged brain, or one with sync.write_through off, refuses
+ * `git_home_required` instead (GST-2692). A
  * deleted or private page refuses and the fact stays held; a segmented page over the ceiling, a malformed fence or a
  * row that no longer reads back refuse at preparation the same way.
  */
@@ -38,7 +39,9 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { prepareFenceFactAppend } from '../facts/fence-fact-append.ts';
 import { assertFactNotWithdrawn } from '../facts/single-prepare.ts';
 import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
-import { isHoldingSlug, parseFactsFenceFor, type ParsedFact } from '../facts-fence.ts';
+import { isHoldingSlug, parseFactsFenceFor, UNATTRIBUTED_MEMORY_SLUG, type ParsedFact } from '../facts-fence.ts';
+import { sourceCanonicalGit } from '../persistence/git-door.ts';
+import { gitHomeRequired } from '../persistence/git-declared.ts';
 import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
@@ -111,9 +114,14 @@ export async function releaseCell(engine: BrainEngine, hold: Pick<WriteGateHold,
  */
 export async function submitTrustRelease(engine: BrainEngine, holdId: number, by: string, config?: GBrainConfig,
   approved?: (hold: WriteGateHold, cell: ParsedFact | null) => Promise<boolean>): Promise<boolean | null> {
-  if (!(await managedPersistenceEnabled(engine))) return null;
+  const managed = await managedPersistenceEnabled(engine);
   const hold = await getWriteGateHold(engine, holdId);
   if (!hold || hold.kind !== 'fact') return null;
+  // GST-2692: on a strict source a release that cannot go through Git (managed persistence off, sync.write_through off) refuses, never a database-only release.
+  if ((!managed || /^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true')) && await sourceCanonicalGit(engine, hold.source_id)) {
+    throw gitHomeRequired({ source_id: hold.source_id, slug: releaseTarget(hold)?.slug ?? UNATTRIBUTED_MEMORY_SLUG }, 'no_file_form', false);
+  }
+  if (!managed) return null;
   let target = releaseTarget(hold);
   let snapshot = target ? await engine.readPageSnapshot(target.slug, { sourceId: hold.source_id, includeDeleted: true }) : null;
   // GST-2492 PR 2: on a strict source a fact with no entity, or whose entity has no page, is released onto its holding page

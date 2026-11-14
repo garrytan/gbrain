@@ -639,6 +639,7 @@ test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
 test/strict-background-writers-gst2492.test.ts
+test/strict-fact-paths-gst2692.test.ts
 test/strict-fallback-refusal-gst2635.test.ts
 test/sweep-segmented-entity-9279.test.ts
 test/sync-absent-from-worktree-s27.test.ts
