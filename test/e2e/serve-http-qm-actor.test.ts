@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { setupDB, teardownDB, hasDatabase } from './helpers.ts';
+import { setupDB, teardownDB, hasDatabase, removeMembers } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
@@ -36,6 +36,7 @@ const PAGES = {
 } as const;
 const ALICE_ID = 'U0ALICE';
 const BOB_ID = 'oidc:3f2a:bob-example';
+const MEMBERS = ['alice-example', 'bob-example'];
 
 describeE2E('/mcp attested actor (x-qm-actor) over serve --http', () => {
   let serverProcess: ReturnType<typeof import('child_process').spawn> | null = null;
@@ -47,7 +48,7 @@ describeE2E('/mcp attested actor (x-qm-actor) over serve --http', () => {
 
   beforeAll(async () => {
     engine = await setupDB();
-    for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
+    for (const id of MEMBERS) await addMember(engine, id);
     for (const p of Object.values(PAGES)) {
       const out = await importFromContent(engine, p.slug, `---\ntype: note\nreadable_by: ${p.readers}\n---\n# Harbor plan\n\nHarbor plan notes ${p.canary}.`, { noEmbed: true });
       expect(out.status).toBe('imported');
@@ -88,6 +89,7 @@ describeE2E('/mcp attested actor (x-qm-actor) over serve --http', () => {
       await new Promise(r => setTimeout(r, 1000));
       if (!serverProcess.killed) serverProcess.kill('SIGKILL');
     }
+    await removeMembers(MEMBERS);
     await teardownDB();
   }, 30_000);
 

@@ -35,6 +35,26 @@ describe('search connection budget: urgent reads', () => {
     expect(peak).toBe(SEARCH_CONNECTION_LIMIT);
   });
 
+  test('a read aborted while it waits for a slot rejects AbortError at once and never takes the slot', async () => {
+    const gates: Array<() => void> = [];
+    let ran = false;
+    await withSearchConnectionBudget(async () => {
+      const holders = Array.from({ length: SEARCH_CONNECTION_LIMIT }, () => holdSearchConnection(() => new Promise<void>(resolve => gates.push(resolve))));
+      await Bun.sleep(0);
+      const controller = new AbortController();
+      const waiting = holdSearchConnection(async () => { ran = true; }, controller.signal);
+      const next = holdSearchConnection(async () => 'next');
+      controller.abort();
+      await expect(waiting).rejects.toMatchObject({ name: 'AbortError' });
+      await expect(holdSearchConnection(async () => 'late', controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+      gates.shift()!();
+      expect(await next).toBe('next');
+      gates.splice(0).forEach(open => open());
+      await Promise.all(holders);
+    });
+    expect(ran).toBe(false);
+  });
+
   test('without waiters an urgent read takes a free slot like any other, and outside a budget nothing waits', async () => {
     expect(await withSearchConnectionBudget(() => withUrgentSearchConnections(() => holdSearchConnection(async () => 'ran')))).toBe('ran');
     expect(await withUrgentSearchConnections(() => holdSearchConnection(async () => 'unbudgeted'))).toBe('unbudgeted');
