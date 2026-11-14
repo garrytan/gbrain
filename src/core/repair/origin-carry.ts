@@ -33,7 +33,7 @@ const EDIT: LabelEdit = { set: { visibility: 'private' }, remove: [] };
 /** A page whose removal can open another: hidden by the privacy rules itself, or an atom a concept's provenance names. */
 const originSql = (alias: string) => `(${alias}.type = 'atom' OR NOT ${privacyPartSql(alias)})`;
 
-interface Origin { id: number; source_id: string; slug: string }
+export interface Origin { id: number; source_id: string; slug: string }
 interface Dependent { id: number; origin_id: number; source_id: string; slug: string; deleted: boolean }
 interface Failure { code: string | null; reason: string }
 export interface CarryBlock extends Failure { slug: string | null }
@@ -175,6 +175,16 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
 /** Hours before its cutoff a tombstone is carried, so none crosses the cutoff while the carry runs and is purged uncarried. */
 export const CARRY_LEAD_HOURS = 24;
 
+/** The soft-deleted origins expired or expiring within CARRY_LEAD_HOURS of this cutoff, the set every carry judges at once. */
+async function expiringOrigins(engine: BrainEngine, olderThanHours: number): Promise<Origin[]> {
+  return withoutCallerAccess(async () => {
+    await readHonorAliases(engine);
+    return (await engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
+      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${originSql('p')} ORDER BY p.id`,
+      [String(Math.max(0, Math.floor(olderThanHours) - CARRY_LEAD_HOURS))], bounded)).map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+  });
+}
+
 /**
  * Before a purge: the soft-deleted origins expired or expiring within CARRY_LEAD_HOURS get their dependents labelled
  * private, judged against all of them at once (a page private through two of them opens only when both go); each one
@@ -183,15 +193,9 @@ export const CARRY_LEAD_HOURS = 24;
  */
 export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<{ parks: DerivedOriginPark[]; unparked: Origin[] }> {
   await pruneDerivedOriginParks(engine);
-  const origins = await withoutCallerAccess(async () => {
-    await readHonorAliases(engine);
-    return engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${originSql('p')} ORDER BY p.id`,
-      [String(Math.max(0, Math.floor(olderThanHours) - CARRY_LEAD_HOURS))], bounded);
-  });
   const parks: DerivedOriginPark[] = [];
   const batch = `derived-origin-carry:purge-${randomUUID()}`;
-  const expired = origins.map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+  const expired = await expiringOrigins(engine, olderThanHours);
   const blocked = await carryPrivate(engine, expired, batch);
   for (const origin of expired) {
     const block = blocked.get(origin.id);
@@ -202,13 +206,34 @@ export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHour
   return { parks, unparked: expired.filter(origin => !blocked.has(origin.id)) };
 }
 
+/** What the carry of a consented manual purge would do, read ahead: the parked origins it frees and the others it parks. */
+export interface CarryForecast { release: Origin[]; hold: Origin[] }
+
 /**
- * A consented manual purge first retries the label for every parked origin and unparks the ones it frees, so its preview
- * and consent list them (otherwise a brain whose only expired pages are parked origins never gets past "nothing to purge").
+ * Read-only, for a consented manual purge's preview and consent: what carryPrivateBeforePurge would do over the same
+ * expiring origins, judged as carryPrivate judges them. An origin is blocked when a page it alone keeps private is
+ * soft-deleted, stored in segments or unreadable; the label write is assumed to land on every other page. A parked origin
+ * not blocked is released (the run clears its park once its carry lands, purgeDeletedPagesCoordinated `release`), and an
+ * origin not parked but blocked is held. A failed read holds every origin, as a failed carry parks every origin.
  */
-export async function retryParkedOrigins(engine: BrainEngine, olderThanHours: number): Promise<void> {
-  if (!(await readDerivedOriginParks(engine)).length) return;
-  await clearDerivedOriginParks(engine, (await carryPrivateBeforePurge(engine, olderThanHours)).unparked.map(origin => origin.id));
+export async function forecastCarry(engine: BrainEngine, olderThanHours: number): Promise<CarryForecast> {
+  const parks = new Set((await readDerivedOriginParks(engine)).map(park => park.page_id));
+  return withoutCallerAccess(async () => {
+    let origins: Origin[] = [];
+    try {
+      origins = await expiringOrigins(engine, olderThanHours);
+      const blocked = new Set<number>();
+      if (origins.length) for (const page of await dependentsOf(engine, origins)) {
+        if (blocked.has(page.origin_id)) continue;
+        const snapshot = page.deleted ? null : await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
+        if (!snapshot || Number(snapshot.page.id) !== page.id || isSegmentedPage(snapshot.page)) blocked.add(page.origin_id);
+      }
+      return { release: origins.filter(origin => parks.has(origin.id) && !blocked.has(origin.id)),
+        hold: origins.filter(origin => !parks.has(origin.id) && blocked.has(origin.id)) };
+    } catch {
+      return { release: [], hold: origins.filter(origin => !parks.has(origin.id)) };
+    }
+  });
 }
 
 /** The receipt note of an explicit purge held because its origin lookup failed; it names no page and counts none. */

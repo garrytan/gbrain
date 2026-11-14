@@ -35,6 +35,9 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { checkDerivedOriginParked } from '../src/commands/doctor/checks/purge-parks.ts';
+import { runPages } from '../src/commands/pages.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
+import { readDerivedOriginParks } from '../src/core/persistence/derived-origin-hold.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import * as labelWrite from '../src/core/repair/label-write.ts';
@@ -393,6 +396,54 @@ for (const kind of testBackends()) {
         expect({ who, shape, read: (await call(who, 'get_page', { slug: slugOf(k, shape) })).text.includes(canaryOf(k, shape)) }).toEqual({ who, shape, read: false });
       }
     }
+
+    /** `gbrain pages purge-deleted <args>` as the CLI runs it: its JSON output and exit verdict. */
+    async function pagesCli(args: string[]): Promise<{ out: Record<string, any> | null; exit: number }> {
+      _resetCliExitVerdictForTests();
+      const prior = process.exitCode;
+      const lines: string[] = [];
+      const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.join(' ')); });
+      const err = spyOn(console, 'error').mockImplementation(() => {});
+      try { await withEnv({ GBRAIN_CONSENT: undefined, GBRAIN_HOME: home }, () => runPages(engine, ['purge-deleted', ...args])); }
+      finally { log.mockRestore(); err.mockRestore(); }
+      const exit = currentExitCode();
+      _resetCliExitVerdictForTests();
+      process.exitCode = prior;
+      const text = lines.join('\n').trim();
+      return { out: text.startsWith('{') ? JSON.parse(text) : null, exit };
+    }
+
+    test('purge-deleted --dry-run lists the parked origin a consented run releases and writes nothing; refused consent writes nothing; --yes purges exactly that list', async () => {
+      const k = 'preview';
+      await seed(k);
+      const origin = slugOf(k, 'origin'), blocking = slugOf(k, 'digest'), plain = slugOf(k, 'plain');
+      await parkByFailedLabel(origin);
+      await softDelete(plain);
+      await backdate(origin);
+      await backdate(plain);
+      const untouched = async () => {
+        expect((await fm(blocking)).visibility).toBeUndefined();
+        expect((await readDerivedOriginParks(engine)).map(park => park.slug)).toContain(origin);
+        expect((await row(origin))?.deleted_at).not.toBeNull();
+        expect((await row(plain))?.deleted_at).not.toBeNull();
+      };
+      const preview = await pagesCli(['--dry-run', '--json']);
+      expect(preview.exit).toBe(0);
+      expect(preview.out!.slugs).toEqual(expect.arrayContaining([origin, plain]));
+      await untouched();
+      const refused = await pagesCli(['--json']);
+      expect(refused.exit).toBe(3);
+      await untouched();
+      await expect(consentedPurgeDeletedPages(engine, 72, false)).rejects.toThrow();
+      await untouched();
+      const run = await pagesCli(['--json', '--yes']);
+      expect(run.exit).toBe(0);
+      expect([...run.out!.slugs].sort()).toEqual([...preview.out!.slugs].sort());
+      expect((await fm(blocking)).visibility).toBe('private');
+      await nothingKept(origin);
+      expect(await row(plain)).toBeUndefined();
+      await expectCarriedHidden(k);
+    }, 240_000);
 
     test('an explicit purge rechecks inside its transaction: a derived page written after the carry keeps the origin soft-deleted and parked', async () => {
       const k = 'midsingle';

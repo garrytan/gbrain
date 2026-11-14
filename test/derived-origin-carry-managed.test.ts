@@ -27,6 +27,9 @@ import { runPages } from '../src/commands/pages.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
+import * as preparedMaintenance from '../src/core/persistence/prepared-maintenance.ts';
+import { readDerivedOriginParks } from '../src/core/persistence/derived-origin-hold.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -62,7 +65,7 @@ function fileText(k: string, shape: Shape): string {
   };
   return ['---', `title: ${k} ${shape}`, ...fm[shape], '---', '', `Harbor ledger planning notes ${canaryOf(k, shape)} for the roadmap.`, ''].join('\n');
 }
-const KEYS = ['gitrm', 'purge', 'remote', 'midpurge'];
+const KEYS = ['gitrm', 'purge', 'remote', 'midpurge', 'preview'];
 /** A private origin, a public meeting, an event derived from the origin whose depth is the meeting, and an event whose depth is the origin. */
 const EVENT_SLUGS = { origin: 'notes/event-origin', depth: 'notes/event-depth', event: 'notes/event-event', closed: 'notes/event-closed' };
 const EVENT_FILES: Record<keyof typeof EVENT_SLUGS, string[]> = {
@@ -99,6 +102,21 @@ async function cli(engine: BrainEngine, args: string[]): Promise<void> {
   const err = spyOn(console, 'error').mockImplementation(() => {});
   try { await withEnv({ GBRAIN_CONSENT: undefined }, () => runPages(engine, args)); }
   finally { log.mockRestore(); err.mockRestore(); }
+}
+/** `gbrain pages <args>` as the CLI runs it: its JSON output and exit verdict. */
+async function cliJson(engine: BrainEngine, args: string[]): Promise<{ out: Record<string, any> | null; exit: number }> {
+  _resetCliExitVerdictForTests();
+  const prior = process.exitCode;
+  const lines: string[] = [];
+  const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.join(' ')); });
+  const err = spyOn(console, 'error').mockImplementation(() => {});
+  try { await withEnv({ GBRAIN_CONSENT: undefined }, () => runPages(engine, args)); }
+  finally { log.mockRestore(); err.mockRestore(); }
+  const exit = currentExitCode();
+  _resetCliExitVerdictForTests();
+  process.exitCode = prior;
+  const text = lines.join('\n').trim();
+  return { out: text.startsWith('{') ? JSON.parse(text) : null, exit };
 }
 const page = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ deleted_at: string | null; frontmatter: unknown }>(
   "SELECT deleted_at, frontmatter FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0];
@@ -159,6 +177,36 @@ for (const backend of testBackends()) {
       expect((await page(engine, origin))?.deleted_at).not.toBeNull();
       await age(engine, 100);
       await cli(engine, ['purge-deleted', '--json', '--yes']);
+      await expectCarried(engine, root, k, files);
+    }, { setup, databaseUrl }), 300_000);
+
+    test('purge-deleted --dry-run lists the parked origin the consented run releases and labels nothing; a refused consent labels nothing; --yes purges exactly that list', () => managedBrain(async ({ engine, root }) => {
+      await performManagedSync(engine, OPTS);
+      const k = 'preview', origin = slugOf(k, 'origin'), digest = slugOf(k, 'digest');
+      const files = await before(engine, root, k);
+      git(root, 'rm', '-q', `${origin}.md`); commit(root, 'remove the origin');
+      await performManagedSync(engine, OPTS);
+      await age(engine, 100);
+      const failing = spyOn(preparedMaintenance, 'publishMaintenancePages').mockImplementation(async () => { throw new Error('forced label failure'); });
+      try { expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin); }
+      finally { failing.mockRestore(); }
+      const untouched = async () => {
+        await settleManagedGitEffects(engine);
+        expect(readFileSync(join(root, `${digest}.md`), 'utf8')).toBe(files.digest!);
+        expect((await fmOf(engine, digest)).visibility).toBeUndefined();
+        expect((await readDerivedOriginParks(engine)).map(park => park.slug)).toContain(origin);
+        expect((await page(engine, origin))?.deleted_at).not.toBeNull();
+      };
+      await untouched();
+      const preview = await cliJson(engine, ['purge-deleted', '--dry-run', '--json']);
+      expect(preview.exit).toBe(0);
+      expect(preview.out!.slugs).toContain(origin);
+      await untouched();
+      expect((await cliJson(engine, ['purge-deleted', '--json'])).exit).toBe(3);
+      await untouched();
+      const run = await cliJson(engine, ['purge-deleted', '--json', '--yes']);
+      expect(run.exit).toBe(0);
+      expect([...run.out!.slugs].sort()).toEqual([...preview.out!.slugs].sort());
       await expectCarried(engine, root, k, files);
     }, { setup, databaseUrl }), 300_000);
 
