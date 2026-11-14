@@ -573,6 +573,7 @@ src/core/minions/terminal-hook.ts	process_global	1	W7: process-wide effects move
 src/core/minions/terminal-hook.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/minions/worker-registry.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/minions/worker-registry.ts	load_config	1	W6: settings plane out of the core
+src/core/minions/worker-registry.ts	process_env	1	#9229: host-local worker discovery must match the driver's effective PGPORT for omitted URL ports; moves with the local registry/settings boundary in W6/W7
 src/core/minions/worker-registry.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/minions/worker.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/minions/worker.ts	process_env	2	W6: settings plane out of the core

@@ -10,7 +10,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { withEnv } from './helpers/with-env.ts';
@@ -113,6 +113,203 @@ describe('register + read round trip', () => {
     expect(readdirSync(workerRegistryDir()).length).toBe(1);
     cleanup();
     expect(readdirSync(workerRegistryDir()).length).toBe(0);
+  });
+});
+
+/** #9229: real registry/config round trips must not hide a worker because its
+ * connection tuning differs. Existing lifecycle tests never changed the DB
+ * spelling between registration and reading. No new production seam is needed.
+ * Keep routing differences and pre-upgrade raw-hash entries isolated too. */
+describe('database identity across connection spellings (#9229)', () => {
+  function config(value: Record<string, string>) {
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify(value));
+  }
+
+  const primary = 'postgresql://reader:synthetic-old@db.example:5432/brain';
+  const env = { DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined };
+  const worker = () => ({ pid: process.pid, queue: 'default', nice_requested: null,
+    nice_effective: 0, started_at: Date.now() });
+  function legacyId(key: string): string {
+    let hash = 5381;
+    for (let i = 0; i < key.length; i++) hash = ((hash << 5) + hash + key.charCodeAt(i)) | 0;
+    return (hash >>> 0).toString(36);
+  }
+
+  test('file-config worker remains visible to an env-config reader with driver options', async () => {
+    await withEnv(env, async () => {
+      const { registerWorker, currentBrainId, readWorkers, workerRegistryDir } = await reg();
+      const { queueWorkerAlive } = await import('../src/core/minions/no-worker.ts');
+      config({ database_url: primary });
+      const id = currentBrainId();
+      const cleanup = registerWorker(worker());
+      try {
+        await withEnv({ DATABASE_URL: `${primary}?connect_timeout=10&sslmode=require` }, async () => {
+          expect(readWorkers(() => null).map(w => w.pid)).toEqual([process.pid]);
+          expect(queueWorkerAlive('default')).toBe(true);
+          expect(queueWorkerAlive('other')).toBe(false);
+        });
+        const stored = readFileSync(join(workerRegistryDir(), `worker-${process.pid}.json`), 'utf8');
+        expect(JSON.parse(stored).brain_id).toBe(id); // pre-upgrade reader compatibility
+        expect(stored).not.toContain('synthetic-old');
+        expect(stored).not.toContain('db.example');
+      } finally { cleanup(); }
+    });
+  });
+
+  test('scheme, hostname, default port, escaping and password rotation preserve identity', async () => {
+    await withEnv({ ...env, PGPORT: undefined }, async () => {
+      const { currentBrainId, registerWorker, readWorkers } = await reg();
+      config({ database_url: primary });
+      const id = currentBrainId();
+      const cleanup = registerWorker(worker());
+      try {
+        for (const url of [
+          'postgres://reader:synthetic-new@DB.EXAMPLE/brain',
+          'postgresql://%72eader@db.example/%62rain?application_name=probe&prepare=false',
+          `${primary}?password=synthetic-new&sslmode=require`,
+        ]) {
+          config({ database_url: url });
+          expect(readWorkers(() => null)).toHaveLength(1);
+        }
+        config({ database_url: primary });
+        expect(currentBrainId()).toBe(id); // do not rename supervisor pidfiles
+      } finally { cleanup(); }
+    });
+  });
+
+  test('omitted port honors PGPORT without cross-reporting the default port', async () => {
+    await withEnv({ ...env, PGPORT: '5433' }, async () => {
+      const { default: postgres } = await import('#postgres');
+      const { registerWorker, readWorkers } = await reg();
+      const omitted = primary.replace(':5432', '');
+      const alternate = primary.replace(':5432', ':5433');
+      // Constructing clients only parses options; no query or connection is made.
+      const clients = [omitted, alternate, primary].map(url => postgres(url, {
+        connection: { default_transaction_read_only: true },
+      }));
+      try {
+        expect(clients.map(client => client.options.port)).toEqual([[5433], [5433], [5432]]);
+        config({ database_url: omitted });
+        const cleanup = registerWorker(worker());
+        try {
+          config({ database_url: alternate });
+          expect(readWorkers(() => null)).toHaveLength(1);
+          config({ database_url: primary });
+          expect(readWorkers(() => null)).toHaveLength(0);
+        } finally { cleanup(); }
+      } finally {
+        await Promise.all(clients.map(client => client.end()));
+      }
+    });
+  });
+
+  test('different database, role, endpoint, port and behavior options do not cross-report', async () => {
+    await withEnv(env, async () => {
+      const { registerWorker, readWorkers } = await reg();
+      config({ database_url: primary });
+      const cleanup = registerWorker(worker());
+      try {
+        for (const url of [
+          primary.replace('/brain', '/other'), primary.replace('reader:', 'other:'),
+          primary.replace('db.example', 'other.example'), primary.replace(':5432', ':5433'),
+          `${primary}?options=-c%20search_path%3Dother`, `${primary}?host=other.example`,
+        ]) {
+          config({ database_url: url });
+          expect(readWorkers(() => null)).toHaveLength(0);
+        }
+      } finally { cleanup(); }
+    });
+  });
+
+  test('PGLite relative and absolute paths identify the same database, not another path', async () => {
+    await withEnv(env, async () => {
+      const { registerWorker, readWorkers } = await reg();
+      const relative = `./worker-identity-${process.pid}/../worker-identity-${process.pid}`;
+      config({ database_path: relative });
+      const cleanup = registerWorker(worker());
+      try {
+        config({ database_path: join(process.cwd(), `worker-identity-${process.pid}`) });
+        expect(readWorkers(() => null)).toHaveLength(1);
+        config({ database_path: join(home, 'other') });
+        expect(readWorkers(() => null)).toHaveLength(0);
+      } finally { cleanup(); }
+    });
+  });
+
+  test('legacy raw-hash entries remain readable only for the exact configured target', async () => {
+    await withEnv(env, async () => {
+      const { readWorkers, workerRegistryDir } = await reg();
+      config({ database_url: primary });
+      mkdirSync(workerRegistryDir(), { recursive: true });
+      writeFileSync(join(workerRegistryDir(), `worker-${process.pid}.json`), JSON.stringify({
+        ...worker(), brain_id: legacyId(primary),
+      }));
+      expect(readWorkers(() => null)).toHaveLength(1);
+      config({ database_url: `${primary}?connect_timeout=10` });
+      // Old entries contain only an irreversible raw hash; do not guess which
+      // alternate spelling they came from. A worker restart adds the target id.
+      expect(readWorkers(() => null)).toHaveLength(0);
+      config({ database_url: primary.replace('/brain', '/other') });
+      expect(readWorkers(() => null)).toHaveLength(0);
+    });
+  });
+
+  test('malformed targets keep their raw discriminator instead of collapsing to default', async () => {
+    await withEnv(env, async () => {
+      const { currentBrainId, registerWorker, readWorkers } = await reg();
+      for (const database_url of ['not a URL', 'postgresql://reader@db.example/%ZZ', 'postgresql://db.example']) {
+        config({ database_url });
+        expect(currentBrainId()).toBe(legacyId(database_url));
+        const cleanup = registerWorker(worker());
+        try {
+          expect(readWorkers(() => null)).toHaveLength(1);
+          config({ database_url: 'another malformed URL' });
+          expect(readWorkers(() => null)).toHaveLength(0);
+        } finally { cleanup(); }
+      }
+    });
+  });
+
+  test('explicit caller identity is not overridden by the configured target', async () => {
+    await withEnv(env, async () => {
+      const { registerWorker, readWorkers } = await reg();
+      config({ database_url: primary });
+      const cleanup = registerWorker({ ...worker(), brain_id: 'another-brain' });
+      try { expect(readWorkers(() => null)).toHaveLength(0); }
+      finally { cleanup(); }
+    });
+  });
+
+  test('unknown parameters sort by key while repeated routing options retain value order', async () => {
+    await withEnv(env, async () => {
+      const { registerWorker, readWorkers } = await reg();
+      config({ database_url: `${primary}?options=first&options=last&custom=value` });
+      const cleanup = registerWorker(worker());
+      try {
+        config({ database_url: `${primary}?custom=value&connect_timeout=10&options=first&options=last` });
+        expect(readWorkers(() => null)).toHaveLength(1);
+        config({ database_url: `${primary}?custom=value&options=last&options=first` });
+        expect(readWorkers(() => null)).toHaveLength(0);
+        config({ database_url: `${primary}?custom=different&options=first&options=last` });
+        expect(readWorkers(() => null)).toHaveLength(0);
+      } finally { cleanup(); }
+    });
+  });
+
+  test('a mismatched normalized target never falls back to a matching legacy id', async () => {
+    await withEnv(env, async () => {
+      const { registerWorker, readWorkers, workerRegistryDir } = await reg();
+      config({ database_url: primary });
+      const cleanup = registerWorker(worker());
+      try {
+        const file = join(workerRegistryDir(), `worker-${process.pid}.json`);
+        const entry = JSON.parse(readFileSync(file, 'utf8'));
+        entry.brain_target_id = 'another-target';
+        writeFileSync(file, JSON.stringify(entry));
+        expect(readWorkers(() => null)).toHaveLength(0);
+      } finally { cleanup(); }
+    });
   });
 });
 
