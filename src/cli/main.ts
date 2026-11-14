@@ -340,7 +340,7 @@ async function main() {
   // v0.42 self-upgrade: ride this invocation as an update heartbeat. Cache-read-
   // only, fail-open, never blocks. Skips the update path's own commands + sets
   // GBRAIN_SKIP_STARTUP_HOOKS for their children. Runs for every real command.
-  if (!helpRequested) {
+  if (!helpRequested && !isTakesExtractionPreview(command, args.slice(1))) {
     maybeEmitUpdateMarker(command, args);
 
     // Monthly backup-coverage nag (cache-read-only, bounded by the nag gate;
@@ -2487,6 +2487,10 @@ async function prepareConnectedDispatch(command: string, args: string[]): Promis
   return { args, syncWatchdog };
 }
 
+function isTakesExtractionPreview(command: string, args: string[]): boolean {
+  return command === 'takes' && args[0] === 'extract' && args[1] === '--from-pages' && args.includes('--dry-run');
+}
+
 /**
  * Pipeline stage 6: the connectEngine() terminator, with jobs child-bootstrap
  * failure reporting and degraded-serve recovery. Returns null when `serve` ran
@@ -2520,7 +2524,10 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
     // A one-shot `recall` only reads the brain (its --since-last-run cursor is a file); --watch polls for minutes.
     let oneShotRead = false;
     if (command === 'recall') oneShotRead = !args.includes('--watch');
-    engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status'), oneShotRead });
+    const probeOnly = findCliCommand(command)?.startup === 'observational'
+      || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status')
+      || isTakesExtractionPreview(command, args);
+    engine = await connectEngine({ probeOnly, oneShotRead });
   } catch (serveConnectError) {
     if (command === 'jobs' && args[0] === 'child-readiness') {
       const { writeChildReadinessFailure } = await import('../core/minions/child-readiness.ts');
