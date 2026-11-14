@@ -249,7 +249,8 @@ The guest note and its mark are not changed. Its reads now show
 `guest.promoted: true`, and the broker's delete of it is refused
 `guest_page_promoted`, so a retention sweep can't remove what you kept. You can
 still delete it from your own CLI. Promoting the same note to the same page again
-writes nothing (`already_promoted`). If a promotion stopped after the new page was
+writes nothing (`already_promoted`), unless the kept page was purged: then
+promoting again writes the page anew and keeps one link. If a promotion stopped after the new page was
 written but before the link was recorded (an interrupted run, or a write that was
 still pending), promoting again records the link without writing the page twice.
 The note is read through the same read scope as `get_page`, so a connection that

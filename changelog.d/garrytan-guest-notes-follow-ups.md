@@ -4,7 +4,7 @@ A brain whose gbrain process connects to Postgres as a scoped row-level-security
 
 ### Fixed
 - Schema migration v314 re-creates the guest guard in the trust trigger and the guest-record guard so they refuse a role that row-level security keeps from reading `guest_sources`; guest admission, `remember`, links and remote deletes refuse the same way instead of treating the source as ordinary.
-- `gbrain guests promote` no longer answers `already_promoted` when the kept page was purged: promoting again writes the page and keeps one link. v314 adds a unique index on the promotion link (a brain that already holds duplicate links keeps them, gets no index and a warning).
+- `gbrain guests promote` no longer answers `already_promoted` when the kept page was purged, so promoting again writes the page and keeps one link. v314 adds a unique index on the promotion link (a brain that already holds duplicate links keeps them, gets no index and a warning), and two promotions of the same note to the same page that race each other both succeed with one link.
 - A guest note whose mark writes no row now fails the save instead of committing a guest page with no mark.
 - `gbrain guests init` counts the source's pages under the source row's lock, so no page can land between the check and the change.
 - The repair `gbrain doctor` suggests for a source whose config says guest but has no guest record, `gbrain guests init --source <id> --yes`, now works when the source holds pages.
