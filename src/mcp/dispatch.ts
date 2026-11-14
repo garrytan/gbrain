@@ -18,7 +18,7 @@ import { withRequestConfigSnapshot, withoutRequestConfigSnapshot } from '../core
 import { currentCallerAccess, withCallerAccess } from '../core/search/private-visibility.ts';
 import { appliedAccessSummary, folderAccessFor, identityLookupUnavailable, remoteCallerAccess } from '../core/access/caller.ts';
 import { credentialScopeFor, requesterScopeGate, requesterScopeRefuses, requiresRequesterScope, withServesReread, type RequesterScopeNotice } from '../core/access/requester-scope.ts';
-import { assessRoom, readRoomDeclaration, type RoomChannels, type RoomDeclaration } from '../core/access/room.ts';
+import { assessRoom, readRoomDeclaration, roomResponseCapNotice, type RoomChannels, type RoomDeclaration } from '../core/access/room.ts';
 import { audienceInArguments, audienceInArgumentsError, logAudienceAssertion, parseAudience, type AudienceAuditEvent, type AudienceChannels, type AudiencePrincipal } from '../core/access/audience.ts';
 import { ACTOR_ARGUMENT, actorNotAttested, EXTERNAL_ID_RE, resolveAttestedActor, type ActorChannels } from '../core/access/actor.ts';
 import { attestedReadMode, SCOPE_READ_ACCESS, scopeReadLabelledOnlyRefused, withReadMode, type ReadMode } from '../core/access/scope-read.ts';
@@ -198,8 +198,6 @@ export interface DispatchOpts {
   roomDeclaration?: RoomDeclaration;
   /** GBRA-498 (internal): the call named an attested actor, so its answer is never marked for a room. */
   roomAttested?: boolean;
-  /** GBRA-498 (internal): the private-readable sources of the call's grant, for the room's own access record. */
-  roomPrivateSources?: readonly string[];
   /** #6696 (A5): set by the trusted transport for the user's own agent calls; never from wire params. */
   admissionOrigin?: OperationContext['admissionOrigin'];
   /** The caller's self-declared agent label (X-Gbrain-Agent-Label), parsed by the transport; recorded only, never authority. */
@@ -1052,7 +1050,7 @@ export async function dispatchToolCall(
       access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(engine, [])).folderCoverage } : attested?.access ?? await remoteCallerAccess(engine, opts.auth, privateSources, opts.transport, audience, opts.transport === 'stdio' && !opts.auth ? opts.stdioMember : undefined, readOnly);
       // GBRA-284: an attested call reads its grant minus other members' personal sources, a scope read minus every personal source (access/member-sources.ts).
       if (attested?.actor) scoped = await attestedReadScope(engine, resolved, attested.actor.member, readMode === 'scope');
-      if (roomDeclaration) scoped = { ...scoped, roomDeclaration, roomAttested: !!attested?.actor, ...(privateSources ? { roomPrivateSources: privateSources } : {}) };
+      if (roomDeclaration) scoped = { ...scoped, roomDeclaration, roomAttested: !!attested?.actor };
       if (opts.enforcedMember) access = { ...access, hidePrivate: true, owner: false, privateReadableSources: [] };
       // GST-363: on a brain that serves several people, a read from a connection bound to nobody is refused (or, in its grace, noticed) before any work.
       // An op this connection cannot reach (hidden by its surface, localOnly off stdio, or cliOnly over MCP) keeps its own refusal instead.
@@ -1164,14 +1162,19 @@ async function runMetaHook(hook: NonNullable<DispatchOpts['metaHook']>, name: st
 async function markForRoom(engine: BrainEngine, opts: DispatchOpts, name: string, result: unknown, retrieval: unknown, ctx: OperationContext, hook: ReturnType<typeof runMetaHook> | undefined) {
   const hookOut = hook ? await hook : undefined;
   const room = await assessRoom(engine, { op: name, result, hotMemory: hookOut?.meta, retrieval, declaration: opts.roomDeclaration!, sourceId: ctx.sourceId,
-    caller: { access: currentCallerAccess(), auth: ctx.auth, transport: ctx.transport, stdioMember: opts.stdioMember, privateSources: opts.roomPrivateSources, attested: opts.roomAttested } });
+    caller: { access: currentCallerAccess(), auth: ctx.auth, transport: ctx.transport, stdioMember: opts.stdioMember, attested: opts.roomAttested } });
   return { hookOut, room: room as Awaited<ReturnType<typeof assessRoom>> | null };
 }
 
-/** GBRA-498: room marks never cost a read: over the cap, the unmarked answer goes out with a one-key note, then without it. */
-async function roomCapFallback(build: (meta: Record<string, unknown>) => ToolResult, cap: (built: ToolResult) => Promise<unknown>, responseMeta: Record<string, unknown>): Promise<ToolResult | null> {
-  for (const meta of [{ ...responseMeta, room: { complete: false, unavailable: 'response_cap' } }, responseMeta]) {
-    const fallback = build(meta);
+/**
+ * GBRA-498: room marks never cost a read. Over the cap, the unmarked answer goes out with the room_hints_unavailable
+ * notice (reason response_cap) and a one-key _meta.room note, then with the notice alone, then bare.
+ */
+async function roomCapFallback(build: (meta: Record<string, unknown>, extra: Notice[]) => ToolResult, cap: (built: ToolResult) => Promise<unknown>, responseMeta: Record<string, unknown>): Promise<ToolResult | null> {
+  const note = [roomResponseCapNotice()];
+  const tries: Array<[Record<string, unknown>, Notice[]]> = [[{ ...responseMeta, room: { complete: false, unavailable: 'response_cap' } }, note], [responseMeta, note], [responseMeta, []]];
+  for (const [meta, extra] of tries) {
+    const fallback = build(meta, extra);
     if (!await cap(fallback)) return fallback;
   }
   return null;
@@ -1469,11 +1472,11 @@ async function dispatchResolvedCall(
     if (hookOut?.failure !== undefined) ctx.logger.warn(`[mcp] _meta hook failed for ${name}: ${hookOut.failure}; degrading to no hook keys`);
     const cap = (built: ToolResult) => op.mutating ? Promise.resolve(null) : frameOverCap(built, { remote: ctx.remote, transport: ctx.transport, engine, config: ctx.config });
     const out = room
-      ? assemble(room.result, admitted, [...notices, ...room.notices], { ...responseMeta, ...(room.retrieval ? { retrieval: room.retrieval } : {}), room: room.meta }, (room.hotMemory ?? hookOut?.meta) as Record<string, unknown> | undefined)
+      ? assemble(room.result, admitted, [...notices, ...room.stamped], { ...responseMeta, ...(room.retrieval ? { retrieval: room.retrieval } : {}), room: room.meta }, (room.hotMemory ?? hookOut?.meta) as Record<string, unknown> | undefined)
       : assemble(result, admitted, notices, responseMeta, hookOut?.meta);
     // Large pages: the egress backstop measures the final frame; a read over the connection's cap is refused whole, never cut.
     const over = await cap(out);
-    const fallback = over && room ? await roomCapFallback(meta => assemble(result, admitted.filter(n => !n.code.startsWith('room_')), notices, meta, hookOut?.meta), cap, responseMeta) : null;
+    const fallback = over && room ? await roomCapFallback((meta, extra) => assemble(result, [...admitted.filter(n => !n.code.startsWith('room_')), ...extra], [...notices, ...extra], meta, hookOut?.meta), cap, responseMeta) : null;
     if (fallback) return fallback;
     if (over) return errorResult(resultTooLargeError(name, safeParams, over), opts, { op: name, mutating: false, idempotent: op.idempotent === true });
     return out;

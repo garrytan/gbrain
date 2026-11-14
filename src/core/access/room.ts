@@ -35,7 +35,7 @@ export const ROOM_MAX_REFS = 2_000;
 /** Why the room could not read an item. */
 export type RoomReason = 'readers' | 'folder_rule' | 'labelled_only' | 'private_label' | 'derived';
 /** Why an item, or the whole answer, could not be judged. */
-export type RoomUnknownReason = 'invalid' | 'not_permitted' | 'unknown_principal' | 'unbound' | 'mark_failed' | 'deadline'
+export type RoomUnknownReason = 'invalid' | 'not_permitted' | 'unknown_principal' | 'unbound' | 'mark_failed' | 'deadline' | 'response_cap'
   | 'op_not_covered' | 'not_found' | 'not_identified' | 'over_limit';
 export type RoomAccess = { readable: true } | { readable: false; reason: RoomReason } | { readable: 'unknown'; reason: RoomUnknownReason };
 
@@ -123,6 +123,8 @@ function walk(v: unknown, src: string, out: Slot[], depth = 0): void {
   if (depth > 8) return;
   if (Array.isArray(v)) { for (const x of v) walk(x, src, out, depth + 1); return; }
   if (!isObj(v)) return;
+  // A nested row without its own source_id belongs to the nearest enclosing object that names one (entity cards span sources).
+  src = str(v.source_id) ?? src;
   if (typeof v.slug === 'string') out.push(pageSlot(v, src)!);
   for (const [k, x] of Object.entries(v)) {
     if (SKIP_KEYS.has(k)) continue;
@@ -199,7 +201,6 @@ export interface RoomCaller {
   auth?: AuthInfo;
   transport?: string;
   stdioMember?: string;
-  privateSources?: readonly string[];
   /** An attested actor call (x-qm-actor): never marked. */
   attested?: boolean;
 }
@@ -219,6 +220,8 @@ export interface RoomMeta {
 }
 
 export interface RoomOutcome {
+  /** The notices the degraded stamp may read: a tool that marks nothing (op_not_covered) is not a partial answer. */
+  stamped: Notice[];
   /** A detached copy of the result with room_access on every item (the original object is never written). */
   result: unknown;
   meta: RoomMeta;
@@ -244,16 +247,18 @@ async function roomAccessFor(engine: BrainEngine, caller: RoomCaller, principals
     if (code === 'on_behalf_of_unknown_member') throw new RoomUnavailable('unknown_principal', detail);
     throw new RoomUnavailable('mark_failed');
   }
-  return audienceCallerAccess(engine, caller.auth, caller.privateSources, caller.transport, principals, identities, caller.stdioMember, true);
+  // A room is judged without the calling credential's private-pages grant: that grant is the caller's, never the room's.
+  return audienceCallerAccess(engine, caller.auth, [], caller.transport, principals, identities, caller.stdioMember, true);
 }
 
 let deadlineForTests: { ms: number; delay: () => Promise<void> } | null = null;
 /** Test seam: a shorter deadline and a slow judgment, so the deadline path runs through dispatch. */
 export function __setRoomDeadlineForTests(v: { ms: number; delay: () => Promise<void> } | null): void { deadlineForTests = v; }
 
-function withDeadline<T>(p: Promise<T>, ms: number): Promise<T> {
+/** Rejects with deadline after ms; onLate tells the raced work to start no further queries. */
+function withDeadline<T>(p: Promise<T>, ms: number, onLate: () => void): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new RoomUnavailable('deadline')), ms); });
+  const timeout = new Promise<never>((_, reject) => { timer = setTimeout(() => { onLate(); reject(new RoomUnavailable('deadline')); }, ms); });
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
@@ -264,11 +269,18 @@ const UNAVAILABLE_WHY: Record<RoomUnknownReason, string> = {
   unbound: 'This connection is bound to no member, so it cannot ask what a room may read',
   mark_failed: 'Judging what the room may read failed (retrying is safe; nothing was changed)',
   deadline: 'Judging what the room may read took too long (retrying is safe; nothing was changed)',
+  response_cap: 'The marked answer would not fit this connection, so the answer went out without its room marks',
   op_not_covered: 'This tool does not mark its results for a room',
   not_found: 'Some items could not be found again to judge',
   not_identified: 'Some items carry no page or fact id to judge',
   over_limit: `More than ${ROOM_MAX_REFS} items were returned, so the rest were not judged`,
 };
+
+/** The notice an answer carries when its room marks had to be dropped to fit the connection's response cap. */
+export function roomResponseCapNotice(): Notice {
+  return { code: 'room_hints_unavailable', kind: 'degraded',
+    why: `${UNAVAILABLE_WHY.response_cap}. The answer is complete; treat all of it as above this room's level: use it for the work, keep it out of the reply unless the ask needs it, and offer it in a private chat. [reason: response_cap]` };
+}
 
 function emptyMeta(d: RoomDeclaration): RoomMeta {
   return { principals: d.principals, declared_by: d.declared_by, ...(d.conflict ? { conflict: true as const } : {}), complete: true,
@@ -298,7 +310,12 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
   for (const s of slots) if (s.ref && refs.size < ROOM_MAX_REFS) refs.set(refKey(s.ref), s.ref);
   if (!unavailable && slots.length) {
     try {
-      decisions = await withDeadline((async () => { await deadlineForTests?.delay(); return decide(engine, await roomAccessFor(engine, caller, d.principals), [...refs.values()]); })(), deadlineForTests?.ms ?? input.deadlineMs ?? ROOM_DEADLINE_MS);
+      let late = false;
+      decisions = await withDeadline((async () => {
+        await deadlineForTests?.delay();
+        const access = late ? null : await roomAccessFor(engine, caller, d.principals);
+        return access && !late ? decide(engine, access, [...refs.values()]) : new Map<string, RoomAccess>();
+      })(), deadlineForTests?.ms ?? input.deadlineMs ?? ROOM_DEADLINE_MS, () => { late = true; });
     } catch (e) {
       unavailable = e instanceof RoomUnavailable ? e : new RoomUnavailable('mark_failed');
     }
@@ -337,5 +354,6 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
     principal: caller.auth?.principal ? `${caller.auth.principal.kind}:${caller.auth.principal.id}` : caller.transport === 'stdio' ? 'local_stdio' : 'unknown',
     room: { readable: meta.counts.readable, above: meta.counts.above, unknown: meta.counts.unknown, by_reason: { ...meta.by_reason }, declared_by: d.declared_by,
       ...(meta.unavailable ? { unavailable: meta.unavailable } : {}) } });
-  return { result, meta, notices, ...(hot !== undefined ? { hotMemory: hot } : {}), ...(retrieval ? { retrieval } : {}) };
+  const stamped = meta.unavailable === 'op_not_covered' ? notices.filter(n => n.code !== 'room_hints_unavailable') : notices;
+  return { result, meta, notices, stamped, ...(hot !== undefined ? { hotMemory: hot } : {}), ...(retrieval ? { retrieval } : {}) };
 }

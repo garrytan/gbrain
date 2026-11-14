@@ -50,8 +50,10 @@ nothing else.
 | `{readable: false, reason}` | someone in the room could not read it | use it to do the work; keep it out of the reply unless the ask needs it, and offer it in a direct message |
 | `{readable: "unknown", reason}` | gbrain could not tell | treat it like `false` |
 
-`readable: true` means exactly what an `on_behalf_of` read for the same room
-would return. The reasons for `false`, checked in this order:
+Every item marked `readable: true` is one an `on_behalf_of` read for the same
+room would return. Marks never count the calling credential's private-pages
+grant: that grant is the caller's, not the room's, so a `visibility: private`
+page is marked `private_label` for any room. The reasons for `false`, checked in this order:
 
 | Reason | Why the room could not read it |
 |---|---|
@@ -112,13 +114,16 @@ stamp (`_meta.degraded.reasons` and the `[gbrain degraded: …]` block) names
 | `unknown_principal` | the room names a disabled or unknown member or group | fix the name, or add the member |
 | `unbound` | the connection is bound to no member | bind the credential to a member |
 | `mark_failed`, `deadline` | judging failed or took more than 3 seconds | retry; nothing was changed |
-| `op_not_covered` | the tool does not mark its results | none needed |
+| `op_not_covered` | the tool does not mark its results | none needed; this one adds no degraded stamp, so a write is never read as partial |
+| `response_cap` | the marked answer would not fit the connection's size cap | ask for less (a window, a page of rows) to get marks |
 
 Some items can be unknown inside a complete answer too: `not_found` (the item
 could not be looked up again), `not_identified` (it carries no page or fact
 id) and `over_limit` (only the first 2,000 references are judged). When the
 marked answer would exceed the response size cap, the unmarked answer is sent
-with `_meta.room.complete: false`; treat every item as above the room.
+with the `room_hints_unavailable` notice (reason `response_cap`) and
+`_meta.room.complete: false`, each dropped first if even that does not fit;
+treat every item as above the room.
 
 ## Keep raw results out of the room's transcript
 

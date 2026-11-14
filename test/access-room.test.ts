@@ -260,6 +260,8 @@ for (const kind of testBackends()) {
       const out = await call('owner', 'remember', { fact: 'Harbor ledger room argument note', entity: PAGES.open.slug, visibility: 'world', provenance: 'room test', content_origin: 'user_said', room: ['group:team-a'] });
       expect(out.isError).toBe(false);
       expect((out.meta?.room as { unavailable?: string }).unavailable).toBe('op_not_covered');
+      // A write the room marks nothing on is not a partial answer: no degraded stamp, so nobody retries a committed write.
+      expect(out.meta?.degraded).toBeUndefined();
       const [row] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE fact LIKE '%room argument note%' AND context IS NULL");
       expect(row!.n).toBe(1);
     }, 60_000);
@@ -288,12 +290,14 @@ for (const kind of testBackends()) {
       const { access: _applied, ...plainMeta } = plain.raw._meta ?? {};
       const plainBytes = encodedFrameBytes({ ...plain.raw, _meta: plainMeta });
       expect(plainBytes).toBeGreaterThan(EGRESS_CAP_MIN);
-      await engine.setConfig('mcp.max_result_bytes_http', String(plainBytes + 120));
+      await engine.setConfig('mcp.max_result_bytes_http', String(plainBytes + 1500));
       try {
         const marked = await call('owner', 'get_chunks', { slug, limit: 500 }, { room: { header: 'group:team-a' } });
         expect(marked.isError).toBe(false);
         expect(marked.text).toBe(plain.text);
         expect(marked.meta?.room).toEqual({ complete: false, unavailable: 'response_cap' });
+        expect(marked.blocks.some(b => b.startsWith('[gbrain notice room_hints_unavailable kind=degraded]') && b.includes('[reason: response_cap]'))).toBe(true);
+        expect((marked.meta?.degraded as { reasons: string[] }).reasons).toContain('room_hints_unavailable');
         await engine.setConfig('mcp.max_result_bytes_http', String(plainBytes + 1));
         const bare = await call('owner', 'get_chunks', { slug, limit: 500 }, { room: { header: 'group:team-a' } });
         expect({ isError: bare.isError, text: bare.text === plain.text, room: bare.meta?.room }).toEqual({ isError: false, text: true, room: undefined });
@@ -346,6 +350,16 @@ for (const kind of testBackends()) {
       } finally {
         __setRoomDeadlineForTests(null);
       }
+    }, 60_000);
+
+    test("a room never borrows the caller's private-pages grant: a private page stays above a one-member room", async () => {
+      const owner = await verify('owner');
+      const out = await dispatchToolCall(engine, 'get_page', { slug: PAGES.quiet.slug }, {
+        remote: true, transport: 'http', auth: { ...owner, privatePages: { mode: 'granted_sources', sources: [SRC] } }, sourceId: SRC, takesHoldersAllowList: ['world'],
+        room: { header: 'bob-example' },
+      });
+      expect(out.isError).toBeFalsy();
+      expect((JSON.parse(out.content[0]!.text) as { room_access?: unknown }).room_access).toEqual({ readable: false, reason: 'private_label' });
     }, 60_000);
 
     test('whoami advertises room support', async () => {
