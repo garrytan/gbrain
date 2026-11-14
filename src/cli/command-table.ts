@@ -288,7 +288,8 @@ export const CLI_COMMANDS: readonly CliCommandRecord[] = [  // Pre-connect: disp
   { name: 'export', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, routes_source: true, load: () => import('./commands/export.ts') },
   { name: 'files', phase: 'post-connect', thinClient: 'refuse', routes_source: true, load: () => import('./commands/files.ts') },
   { name: 'embed', phase: 'post-connect', thinClient: 'refuse', selfHelp: true, json: 'document', routes_source: true, startup: 'observational', load: () => import('./commands/embed.ts') },
-  { name: 'serve', phase: 'post-connect', thinClient: 'refuse', help: () => import('./help/serve.ts'), load: () => import('./commands/serve.ts') },
+  // Thin-client serve is an engine-free stdio bridge, even with legacy --http argv.
+  { name: 'serve', phase: 'post-connect', thinClient: 'none', help: () => import('./help/serve.ts'), load: () => import('./commands/serve.ts') },
   // thin client: Agent-bootstrap [CX2-5]: the maintenance sweep runs against the LOCAL engine (the
   // serve-resident sweep's trusted CLI entry). On a thin client it would fabricate a scratch PGLite
   // and sweep nothing anyone reads. `bootstrap` and `hook` are deliberately NOT here (ENG-2).
