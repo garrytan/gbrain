@@ -376,6 +376,24 @@ strip_ansi() {
   sed "s/${esc}\[[0-9;]*[a-zA-Z]//g" "$1"
 }
 
+# extract_failure_blocks LABEL: reads ANSI-stripped Bun output on stdin. Bun
+# prints a failing test's source context, `error:` line and Expected/Received
+# diff ABOVE its `(fail)` / `✗ ` line, so a block is every line since the
+# previous test marker (pass/skip/fail), then the marker line itself, prefixed
+# with `--- shard LABEL: `.
+extract_failure_blocks() {
+  awk -v shard="$1" '
+    /^(\(fail\) |✗ )/ {
+      for (j = 1; j <= n; j++) print buf[j]
+      print "--- shard " shard ": " $0
+      print ""
+      n = 0; next
+    }
+    /^(\(pass\)|\(skip\)|✓ |✓$)/ || /__bun_test_summary__/ { n = 0; next }
+    { buf[++n] = $0 }
+  '
+}
+
 # bun_summary_count: parses Bun's summary lines (one per `bun test` invocation
 # inside a shard). Grouped unit shards emit an authoritative aggregate so child
 # Bun invocations inside tests cannot inflate the reported totals.
@@ -784,16 +802,8 @@ for i in $(seq 1 "$N"); do
   if [ "$rc" != "0" ]; then
     TOTAL_RC=1
     if [ "$fail_count" -gt 0 ] && [ -f "$SHARD_LOG" ]; then
-      # Extract each failure block: from the `✗ ` / `(fail) ` line through the
-      # next pass/skip marker, blank line, or `__bun_test_summary__`. Single awk
-      # pass over ANSI-stripped text.
-      strip_ansi "$SHARD_LOG" | awk -v shard="$i" '
-        /^(\(fail\) |✗ )/ { in_block=1; print "--- shard " shard ": " $0; next }
-        in_block {
-          if (/^(\(pass\)|\(skip\)|✓ |✓$)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
-          print $0
-        }
-      ' >> "$FAILURES_LOG"
+      # Extract each failure block (see extract_failure_blocks).
+      strip_ansi "$SHARD_LOG" | extract_failure_blocks "$i" >> "$FAILURES_LOG"
     elif [ -f "$SHARD_LOG" ]; then
       # Non-zero rc but no (fail) line found — extraction couldn't pinpoint.
       # Dump the full shard log so we never silently lose the failure cause.
@@ -848,13 +858,7 @@ if [ "$SERIAL_FILES_COUNT" -gt 0 ]; then
     s_fail=$(bun_summary_count "fail" "$LOG_DIR/serial.log")
     TOTAL_FAILURES=$((TOTAL_FAILURES + s_fail))
     if [ "$s_fail" -gt 0 ]; then
-      strip_ansi "$LOG_DIR/serial.log" | awk '
-        /^(\(fail\) |✗ )/ { in_block=1; print "--- shard serial: " $0; next }
-        in_block {
-          if (/^(\(pass\)|\(skip\)|✓ |✓$)/ || /^[[:space:]]*$/ || /__bun_test_summary__/) { in_block=0; print ""; next }
-          print $0
-        }
-      ' >> "$FAILURES_LOG"
+      strip_ansi "$LOG_DIR/serial.log" | extract_failure_blocks serial >> "$FAILURES_LOG"
     else
       {
         echo "--- shard serial: rc=$SERIAL_RC, no (fail) markers — full log follows ---"
