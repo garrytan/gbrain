@@ -153,6 +153,12 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
   const linkedIds: number[] = [];
   for (const [slug, group] of groups) {
     opts.signal?.throwIfAborted();
+    // A segmented page's body cannot be read as one string, so its fence cannot take rows: its own skip, not a failed write.
+    const [shape] = await engine.executeRaw<{ body_storage: string | null }>('SELECT body_storage FROM pages WHERE source_id = $1 AND slug = $2', [opts.sourceId, slug]);
+    if (shape?.body_storage === 'segmented') {
+      for (const p of group) skip('page_segmented', byId.get(p.id)!);
+      continue;
+    }
     if (opts.dryRun) {
       for (const p of group) {
         report.linked += 1;
