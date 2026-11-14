@@ -114,7 +114,7 @@ A trusted local caller sees every stored reason. A remote caller (an MCP client)
 sees a version's reason only when both that version and the version that
 replaced it are world-visible. The reason for turning a page private, or for
 any change made while it was private, is therefore never shown remotely. When
-the replacing version was later pruned (large pages keep a few versions), its
+the replacing version was later pruned (large pages and holding pages keep a few versions), its
 visibility can no longer be checked and the reason is withheld from remote
 callers. Remote reasons go through the same text sanitizer as version bodies.
 
