@@ -20,6 +20,7 @@ import { managedBrain, readAllSourceHolds } from '../connectors/item-holds-store
 import type { ItemHoldRecord } from '../connectors/item-holds.ts';
 import { fenceAutoRepairFor, gitHoldItem, readGitHoldListing, readSyncConversions, readSyncHoldPolicy, type GitHoldItem, type SyncConversion } from './sync-holds.ts';
 import { holdLine } from '../../commands/sync-diagnostics.ts';
+import { cliRouting, pinRouting } from '../fix-routing.ts';
 import { pageSortedRows, type ListingRequest } from '../bounded-listing.ts';
 
 /** Fix wave 4: `sources status` lists this many held items per source, then "+N more". */
@@ -159,6 +160,18 @@ export interface GitHoldStatus {
 /** How many converted requests `sources status` shows per source. */
 export const CONVERSION_STATUS_LIMIT = 5;
 
+/** Pin the CLI's brain/source routing into a hold's fix argv (the way renderAction does for `sync status`). */
+function pinHoldFix(item: GitHoldItem): GitHoldItem {
+  const routing = cliRouting();
+  if (!routing) return item;
+  const pin = (a: Action): Action => ({ ...a,
+    ...(a.argv ? { argv: pinRouting(a.argv, routing) } : {}),
+    ...(a.preview_argv ? { preview_argv: pinRouting(a.preview_argv, routing) } : {}),
+    ...(a.verify?.argv ? { verify: { ...a.verify, argv: pinRouting(a.verify.argv, routing) } } : {}),
+    ...(a.then ? { then: pin(a.then) } : {}) });
+  return { ...item, fix: pin(item.fix) };
+}
+
 /** Held files and recent conversions of each listed source that has any (sources with neither are absent). */
 export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig'>, sourceIds: string[]): Promise<Map<string, GitHoldStatus>> {
   const out = new Map<string, GitHoldStatus>();
@@ -172,7 +185,7 @@ export async function readGitHoldStatuses(engine: Pick<BrainEngine, 'executeRaw'
   for (const sourceId of sourceIds) {
     const source = counts.get(sourceId), converted = conversions.get(sourceId);
     if (!source && !converted) continue;
-    const items = (source?.holds ?? []).map(hold => gitHoldItem(hold, auto));
+    const items = (source?.holds ?? []).map(hold => pinHoldFix(gitHoldItem(hold, auto)));
     out.set(sourceId, { count: source?.count ?? 0, items, ...((source?.count ?? 0) > items.length ? { truncated: true as const } : {}),
       ...(converted ? { recent_conversions: converted } : {}),
       sync_argv: ['gbrain', 'sync', '--source', sourceId, ...(managed ? ['--no-pull'] : [])] });
