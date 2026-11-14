@@ -63,7 +63,8 @@ async function extractionPendingForPage(engine: BrainEngine, pageId: number): Pr
 async function extractionCompletedForPage(engine: BrainEngine, pageId: number): Promise<boolean> {
   const [row] = await engine.executeRaw<{ done: boolean }>(
     `SELECT EXISTS (SELECT 1 FROM minion_jobs
-                     WHERE name = 'facts-absorb' AND status = 'completed' AND data->>'page_id' = $1) AS done`,
+                     WHERE name = 'facts-absorb' AND status = 'completed' AND data->>'page_id' = $1
+                       AND (result IS NULL OR NOT (result ? 'skipped'))) AS done`,
     [String(pageId)]);
   return row?.done === true;
 }
