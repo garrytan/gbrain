@@ -10,7 +10,7 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { ENFORCED_MEMBER_WRITES_KEY, enforcedWritesMode } from '../src/cli/enforced-member.ts';
+import { ENFORCED_MEMBER_WRITES_KEY, enforcedWritesMode, type EnforcedWritesMode } from '../src/cli/enforced-member.ts';
 
 const engineWith = (getConfig: (key: string) => Promise<string | null>) => ({ getConfig }) as unknown as BrainEngine;
 
@@ -22,7 +22,7 @@ describe('enforcedWritesMode', () => {
   });
 
   test('unset and checked keep writes checked; refuse_pages; refuse, any other value and a failed read are refuse', async () => {
-    const cases: Array<[string, () => Promise<string | null>, string]> = [
+    const cases: Array<[string, () => Promise<string | null>, EnforcedWritesMode]> = [
       ['unset', async () => null, 'checked'],
       ['checked', async () => 'checked', 'checked'],
       ['refuse_pages', async () => 'refuse_pages', 'refuse_pages'],
