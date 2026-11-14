@@ -113,7 +113,8 @@ add `visibility: private` to its frontmatter.
 These rules follow the origin, so nobody writes them by hand:
 - an extracted atom, a pinned-question page and a synthesized concept with no `visibility` read as private (their
   origin may be a private transcript);
-- an atom whose origin page is private, a concept with a private input, a chronicle event from a private meeting,
+- an atom whose origin page is private (also after a rename moved that page), a concept with a private input or an
+  input atom whose origin is private, a chronicle event from a private meeting,
   and any page whose `derived_from` names a private page are private whatever their own field says;
 - anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
   remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
