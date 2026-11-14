@@ -38,12 +38,25 @@ export function withUrgentSearchConnections<T>(fn: () => Promise<T>): Promise<T>
   return urgency.run(true, fn);
 }
 
-/** Hold one slot of the current budget while `fn` runs; without a budget, run it directly. */
-export async function holdSearchConnection<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Hold one slot of the current budget while `fn` runs; without a budget, run it directly. An abort of `signal` while
+ * the read waits for a slot leaves the queue and rejects AbortError, as an abort while waiting for a pooled
+ * connection does.
+ */
+export async function holdSearchConnection<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   const budget = budgets.getStore();
   if (!budget) return fn();
   if (budget.free > 0) budget.free -= 1;
-  else await new Promise<void>(resolve => (urgency.getStore() ? budget.urgent : budget.waiters).push(resolve));
+  else {
+    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
+    const queue = urgency.getStore() ? budget.urgent : budget.waiters;
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => { queue.splice(queue.indexOf(granted), 1); reject(new DOMException('aborted', 'AbortError')); };
+      const granted = () => { signal?.removeEventListener('abort', onAbort); resolve(); };
+      queue.push(granted);
+      signal?.addEventListener('abort', onAbort, { once: true });
+    });
+  }
   try {
     throwIfRequestAborted();
     return await budgets.run(null, fn);
