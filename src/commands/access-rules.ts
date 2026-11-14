@@ -7,7 +7,7 @@
  *   gbrain access rule revert --to <revision> [--source <id>] [--yes]
  *   gbrain access rule export [--source <id>] [--approved]
  *   gbrain access rule import --file <access.yml> [--source <id>] [--yes]
- *   gbrain access rule migrate [--source <id>] [--yes]
+ *   gbrain access rule migrate [--to git|database] [--source <id>] [--yes]
  *   gbrain access apply [--source <id>] [--revision <n>] [--yes --expect <plan_hash>]
  *   gbrain access resume [--source <id>]
  *
@@ -20,6 +20,7 @@
 import { readFileSync } from 'node:fs';
 import type { BrainEngine } from '../core/engine.ts';
 import { usageError } from '../cli/cli-error.ts';
+import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { opError } from '../core/ops/contract.ts';
 import { classifyRulebook, coversDerived, folderRulesAllow, normalizeRule, ruleCovers, ruleCoversSql, parsePolicyYaml, serializePolicyYaml, sortRules, type FolderRule, type RuleChange } from '../core/access/folder-rules.ts';
 import { folderHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../core/facts-fence.ts';
@@ -27,12 +28,13 @@ import { heldRowsInVersions } from '../core/facts/fence-fact-append.ts';
 import { identityFor } from '../core/access/principals.ts';
 import { openTwins, openTwinsLines, OPEN_TWINS_PAGES, type OpenTwins } from '../core/access/open-twins.ts';
 import { boundCredentials, listGroups, listMembers } from '../core/access/members.ts';
+import { ownerReadsRestrictedOn, ownerView } from '../core/access/owner.ts';
 import {
   appliedRules, applyApproved, getRevision, listRevisions, newOperationId, policyStatus, previewApply, proposeRevision, readAccessStore, resumePolicy,
-  writeAccessStore, ensurePolicyState, type AccessStore, type ProposalResult, type RestampProgress,
+  ensurePolicyState, type AccessStore, type ProposalResult, type RestampProgress,
 } from '../core/access/policy.ts';
 import {
-  APPROVED_FILE, isGitWorkTree, POLICY_FILE, sourcePolicyRoot, syncGitPolicy, workingTreeRules, writeApprovedFile, writeGitRules, type GitPolicyReceipt,
+  APPROVED_FILE, isGitWorkTree, POLICY_FILE, rebuildPreflight, sourcePolicyRoot, syncGitPolicy, workingTreeRules, writeApprovedFile, writeGitRules, type GitPolicyReceipt,
 } from '../core/access/policy-git.ts';
 
 const VALUE_FLAGS = new Set(['--source', '--prefix', '--slug', '--readers', '--id', '--expect', '--operation', '--to', '--revision', '--file', '--limit']);
@@ -129,6 +131,12 @@ export interface RulePreview {
   held_struck_rows_leaving: number;
   /** The rows of those facts in the shared page's saved versions, and those versions, the apply removes them from (database only; the version the move itself saves is edited too). */
   held_versions_editing: { rows: number; versions: number; pages?: Array<{ slug: string; rows: number; versions: number; segmented_versions_not_edited?: number }>; segmented_versions_not_edited?: number };
+  /**
+   * GST-2638: with owner reads restricted on (access.owner_reads_restricted) and a live owner, the pages under the prefixes
+   * this change starts covering, which read as nobody (the owner's remote callers included) until the apply finishes
+   * stamping them.
+   */
+  owner_reads_pending?: { owner: string; pages: number; prefixes: string[] };
 }
 
 async function previewRules(engine: BrainEngine, sourceId: string, store: AccessStore, persisted: boolean, desired: FolderRule[]): Promise<RulePreview> {
@@ -189,7 +197,12 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
       source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')} --source ${source}`);
     Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
   }
+  const owner = await ownerReadsRestrictedOn(engine) ? (await ownerView(engine)).owner : null;
+  const covering = [...new Set(cls.target.filter(r => !current.some(c => c.id === r.id && c.prefix === r.prefix)).map(r => r.prefix))].sort();
+  const [ownerPages] = owner && covering.length ? await engine.executeRaw<{ n: number }>(
+    `SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND EXISTS (SELECT 1 FROM unnest($2::text[]) AS pfx WHERE ${ruleCoversSql('slug', 'pfx')})`, [sourceId, covering]) : [];
   return { source_id: sourceId, store, store_persisted: persisted, expect, desired, changes: cls.changes, held: cls.held, matched_pages: matched,
+    ...(owner && covering.length ? { owner_reads_pending: { owner, pages: Number(ownerPages?.n ?? 0), prefixes: covering } } : {}),
     unknown_readers: unknown, members_losing: losing, credentials_losing: credentials, held_facts_moving: moving,
     held_struck_rows_leaving: plan.groups.reduce((n, g) => n + (g.note === 'moved' ? g.struck.length : 0), 0),
     held_versions_editing: { rows: edits.reduce((n, p) => n + p.rows, 0), versions: edits.reduce((n, p) => n + p.versions, 0),
@@ -205,6 +218,7 @@ function previewLines(p: RulePreview, rerun: string): string[] {
     ...(p.members_losing.length ? [`  Members losing access: ${p.members_losing.join(', ')}`] : []),
     ...(p.credentials_losing.length ? [`  Credentials losing access: ${p.credentials_losing.map(c => `${c.kind} ${c.name} (${c.member})`).join(', ')}`] : []),
     ...openTwinsLines(p.open_twins),
+    ...(p.owner_reads_pending ? [`  Owner reads restricted: the owner's (${p.owner_reads_pending.owner}) remote callers read none of the ${p.owner_reads_pending.pages} page(s) under ${p.owner_reads_pending.prefixes.join(', ')} until this apply finishes stamping them`] : []),
     ...(p.held_facts_moving.length ? [`  Held facts leaving their holding page with this change: ${p.held_facts_moving.length} (${p.held_facts_moving.slice(0, 10).map(m => `fact ${m.fact_id} for ${m.entity_slug} from ${m.from} to ${m.to}${m.to === m.entity_slug ? ' (its page)' : ''}${m.because ? `, because ${m.because}` : ''}`).join(', ')}${p.held_facts_moving.length > 10 ? ', ...' : ''})`] : []),
     ...(p.held_struck_rows_leaving ? [`  ${p.held_struck_rows_leaving} struck (withdrawn) held row(s) of those entities leave their holding page with them`] : []),
     ...(p.held_versions_editing.pages ?? []).flatMap(e => [
@@ -280,7 +294,6 @@ async function writeRules(engine: BrainEngine, sourceId: string, desired: Folder
     if (latest !== opts.expect) throw opError('preview_changed', `Source ${sourceId}'s folder rules changed since the preview (previewed revision ${opts.expect}, now ${latest}); nothing was written.`, 'Preview again and rerun with the new --expect value.');
   }
   await ensurePolicyState(engine, sourceId);
-  if (!(await readAccessStore(engine, sourceId))) await writeAccessStore(engine, sourceId, 'git');
   const { receipt, sync } = await writeGitRules(engine, sourceId, root!, desired, opts.message, progressLogger(opts.json));
   const p = sync.proposal;
   return withHeldFactsMoved(engine, { source_id: sourceId, store, operation_id: operationId, applied: sync.state === 'applied' || sync.state === 'unchanged', state: sync.state === 'skipped' ? 'unchanged' : sync.state,
@@ -334,6 +347,8 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
     case 'revert':
     case 'import': {
       const { store, persisted, root } = await resolveStore(engine, sourceId);
+      const refusal = store === 'git' ? await rebuildPreflight(engine, sourceId, root!) : null;
+      if (refusal) throw refusal;
       const base = await baseRules(engine, sourceId, store, root);
       let desired: FolderRule[];
       let message: string;
@@ -376,6 +391,7 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
         return print(json, { ...preview, applied: false }, () => previewLines(preview, `gbrain access rule ${[sub, ...args.filter(a => a !== '--json')].join(' ')} --yes`));
       }
       const r = await writeRules(engine, sourceId, desired, { expect, operation, message, json });
+      if (r.state === 'invalid') setCliExitVerdict(1);
       return print(json, r, () => editLines(r));
     }
     case 'list':
@@ -411,27 +427,31 @@ async function ruleCmd(engine: BrainEngine, sub: string | undefined, args: strin
       console.log(serializePolicyYaml(rules).trimEnd());
       return;
     }
-    case 'migrate':
-      return migrateCmd(engine, sourceId, yes, json);
+    case 'migrate': {
+      const to = flag(args, '--to');
+      if (to !== undefined && to !== 'git' && to !== 'database') throw usageError('rule migrate --to takes git or database.', `gbrain access rule migrate --to database --source ${sourceId}`);
+      return migrateCmd(engine, sourceId, yes, json, to);
+    }
     default:
       throw usageError(`Unknown access rule subcommand: ${sub ?? '(none)'}.`, 'Use add, rm, list, status, history, revert, export, import or migrate (gbrain access --help).');
   }
 }
 
-async function migrateCmd(engine: BrainEngine, sourceId: string, yes: boolean, json: boolean): Promise<void> {
+async function migrateCmd(engine: BrainEngine, sourceId: string, yes: boolean, json: boolean, to?: AccessStore): Promise<void> {
   const { migrateAccessStore, previewMigrate } = await import('../core/access/policy-migrate.ts');
   if (!yes) {
-    const p = await previewMigrate(engine, sourceId);
+    const p = await previewMigrate(engine, sourceId, to);
     return print(json, { ...p, applied: false }, () => [
       `Source ${sourceId}: move folder rules from the ${p.from ?? 'unset'} store to the ${p.to} store`,
       ...(p.to === 'git' ? [`  Writes ${POLICY_FILE} (desired, ${p.desired.length} rule(s)) and ${APPROVED_FILE} (approved, ${p.approved.length} rule(s)) under ${p.root} and commits them through gbrain git commit-push.`]
-        : ['  The applied rulebook, pending coverage and held widenings stay in the database, which becomes the record.']),
+        : [p.from ? '  The applied rulebook, pending coverage and held widenings stay in the database, which becomes the record.'
+          : '  Sets the database store (sources.config.access_store) and records the migration; commits nothing and writes no file, so a checkout that cannot take commits keeps its rules in the database.']),
       '  The applied rules stay in force throughout; no rule is missing at any point.',
       ...(p.resume ? [`  Resumes migration ${p.resume.id} (phase ${p.resume.phase}).`] : []),
       'Nothing written. To apply, add --yes.',
     ]);
   }
-  const r = await migrateAccessStore(engine, sourceId);
+  const r = await migrateAccessStore(engine, sourceId, to);
   return print(json, r, () => [`Source ${sourceId}: folder rules now in the ${r.to} store (migration ${r.id}, phase ${r.phase})`,
     ...Object.entries(r.receipts).map(([k, v]) => `  ${k}: ${typeof v === 'object' && v ? (v as { commit?: string }).commit ?? JSON.stringify(v) : String(v)}`)]);
 }

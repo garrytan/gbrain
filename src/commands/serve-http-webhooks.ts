@@ -28,7 +28,7 @@ import {
 } from '../core/ingestion/types.ts';
 import type { ServeHttpContext } from './serve-http.ts';
 import { NO_SOURCES } from '../core/source-id.ts';
-import { noSourceGrantError } from '../core/ops/context.ts';
+import { noSourceGrantError, sharedWriteSourceMemberError } from '../core/ops/context.ts';
 import { renderAction } from '../core/agent-output.ts';
 import { assertWebhookWriterMayReplace } from '../core/minions/handlers/ingest-capture.ts';
 import { defaultSourceMemberWriter } from '../core/persistence/page-visibility.ts';
@@ -329,12 +329,9 @@ function verifyWebhookSig(secret: unknown, sigHeader: string, payload: Buffer): 
 async function refusedDefaultSourceMember(engine: BrainEngine, authInfo: AuthInfo, res: Response): Promise<boolean> {
   const sourceId = authInfo.sourceId ?? 'default';
   if (!authInfo.principal || !await defaultSourceMemberWriter(engine, { remote: true, principal: authInfo.principal as WriteAuthority['principal'], sourceId })) return false;
-  res.status(403).json({
-    error: 'permission_denied',
-    message: `POST /ingest is unavailable to a credential bound to a member whose write source is ${sourceId}, which every credential without a source grant reads: its pages would land where other members ` +
-      'and unbound credentials read. Write through the MCP put_page op, which keeps a new page to its member, ' +
-      'or ask the brain operator to grant this credential its own write source that is not federated (gbrain auth rescope --sources <private-source>,default).',
-  });
+  const refusal = sharedWriteSourceMemberError('POST /ingest', authInfo, sourceId);
+  res.status(403).json({ error: refusal.code, code: refusal.code, message: refusal.message, suggestion: refusal.suggestion, docs: refusal.docs,
+    fix: renderAction(refusal.fix!, { transport: 'http', isCallable: () => false, preapproved: () => false }) });
   return true;
 }
 
