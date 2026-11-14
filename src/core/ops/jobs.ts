@@ -54,6 +54,7 @@ import { opError, type OperationError } from './contract.ts';
 import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, readFix, scopeDeniedError } from './op-fix.ts';
 import { hasScope } from '../scope.ts';
+import { emitReportBackNotice } from '../report-back-notice.ts';
 import { LIST_JOBS_DEFAULT_LIMIT, LIST_JOBS_REMOTE_MAX_LIMIT, pagingLimit, reportJobPage } from './read-paging.ts';
 import { SOURCE_ID_RE } from '../source-id.ts';
 import {
@@ -270,6 +271,7 @@ const submit_job: Operation = {
     // fail-open). The job is already persisted; a probe failure degrades to
     // {probe_failed: true}, never an error on a successful submission.
     await emitNoWorkerNotice(ctx, job.queue);
+    emitReportBackNotice(ctx, job.id);
     return { ...publicJob(job), queue_state: await probeQueueStateSafe(ctx, job.queue, [name]) };
   },
 };
@@ -494,6 +496,7 @@ const submit_agent: Operation = {
       });
     } catch { /* never block submission */ }
 
+    emitReportBackNotice(ctx, job.id);
     // Amendments 24/25: the returned job id means nothing if the lane is
     // dead — attach a time-bounded, fail-open queue-state probe.
     return {

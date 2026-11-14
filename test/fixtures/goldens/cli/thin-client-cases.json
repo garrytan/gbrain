@@ -764,8 +764,9 @@
       "argv": "wakeshift",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain wakeshift` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Error [requires_local_engine]: `gbrain wakeshift` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
         "Fix: gbrain wakeshift",
+        "Why: `wakeshift watch job|write|cron` and `wakeshift accept-terms` route to the brain host automatically (watch_job / watch_write_request / watch_cron / accept_wakeshift_terms MCP tools). enable, disable, status and test read or change the brain host's Wakeshift key and settings: run those on the brain host.",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []

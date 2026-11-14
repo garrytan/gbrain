@@ -2106,8 +2106,11 @@
         "hasSwitchCase": true,
         "phase": "post-connect",
         "preConnectRules": [],
-        "thinClient": "refuse",
-        "thinClientRoutedSubcommands": []
+        "thinClient": "route-then-refuse",
+        "thinClientRoutedSubcommands": [
+          "watch",
+          "accept-terms"
+        ]
       },
       "watch": {
         "hasSwitchCase": true,
@@ -2350,6 +2353,10 @@
         "update",
         "resolve",
         "supersede"
+      ],
+      "wakeshift": [
+        "watch",
+        "accept-terms"
       ]
     }
   },

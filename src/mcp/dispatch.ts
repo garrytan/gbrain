@@ -872,7 +872,7 @@ type ToolTail = Parameters<NonNullable<OperationContext['emitToolTail']>>[0];
  * under gbrain's own keys, which it never replaces (a conversation credential: never logged).
  */
 function appendToolTail(out: ToolResult, tail: ToolTail): void {
-  if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 2000) });
+  if (tail.text) out.content.push({ type: 'text', text: tail.text.slice(0, 16_000) });
   if (tail.meta && typeof tail.meta === 'object') out._meta = { ...tail.meta, ...(out._meta ?? {}) };
 }
 

@@ -102,7 +102,7 @@
       "  [OK] database_encoding: Skipped (PGLite is always UTF8)",
       "  [OK] schema_version: Version <latest> (latest: <latest>)",
       "  [OK] schema_columns: 1393 column(s) verified against live schema",
-      "  [OK] schema_missing_tables: All 179 table(s) the applied migrations create exist.",
+      "  [OK] schema_missing_tables: All 183 table(s) the applied migrations create exist.",
       "  [OK] schema_function_bodies: Every function this gbrain's schema defines has its body",
       "  [OK] rls_event_trigger: Skipped (PGLite — no event trigger support)",
       "  [INFO] embeddings: Not applicable: embeddings are disabled on this brain (keyword search keeps working).",

@@ -36,6 +36,10 @@ import { writeCliNotices } from '../core/interop-notices.ts';
 import { BOT_HARNESSES, renderedExposure, sharedTokenNotice, writeExposureNotice, type ExposureServes } from '../core/grants/shared-exposure.ts';
 import { claudeCodeChannelPlugins } from './shared-exposure-local.ts';
 import { setupFirstRunNotices } from './init-first-run.ts';
+import { wakeshiftPublished } from '../core/wakeshift/config.ts';
+import { findOpenclawBin, installWakeshiftOpenclaw, networkHooksQuestion, openclawGatewayBind, wakeshiftOpenclawInstallArgv, WAKESHIFT_OPENCLAW_PACKAGE, WAKESHIFT_OPENCLAW_VERSION, type OpenclawRun } from './setup-openclaw-wakeshift.ts';
+import { requireConsent } from '../core/consent.ts';
+import { writeCliError } from '../cli/cli-error.ts';
 import { hostedOptionMuted, hostedOptionNotice, writeHostedOption } from '../core/onboard/hosted-option.ts';
 import { writeJsonDocument } from '../core/cli-force-exit.ts';
 import { configDir, gbrainPath, isThinClient, loadConfig, type GBrainConfig } from '../core/config.ts';
@@ -199,6 +203,9 @@ Flags:
                        commits; Cursor has no per-turn hook gbrain can use.
                        off removes what an earlier run wrote. The
                        choice is remembered; GBRAIN_SKILL_LOADING sets it too.
+  --wakeshift          OpenClaw: install Wakeshift's OpenClaw plugin (@wakeshift/openclaw, pinned)
+                       so gbrain can wake an OpenClaw session when a job finishes. Asks
+                       consent (--yes), runs OpenClaw's own installer, changes nothing else.
   --skills-index-only  Refresh every skills index recorded for this harness (its
                        file, launcher and skill set as recorded) and change
                        nothing else; with --skill-loading off, remove them.
@@ -258,6 +265,7 @@ interface SetupFlags {
   instructions?: boolean;
   instructionsOnly: boolean;
   skillsIndexOnly: boolean;
+  wakeshift: boolean;
   workspace?: string;
   skillLoading?: SkillLoading;
   /** --skill-loading resolve turns the skill-resolver lane on (skill-resolver-setup.ts); off or spring turns it off; unset leaves it as it is. OpenClaw also takes shadow. */
@@ -348,6 +356,7 @@ function parseFlags(args: string[]): SetupFlags | string {
     instructions: args.includes('--instructions') ? true : args.includes('--no-instructions') ? false : undefined,
     instructionsOnly: args.includes('--instructions-only'),
     skillsIndexOnly: args.includes('--skills-index-only'),
+    wakeshift: args.includes('--wakeshift'),
     workspace,
     skillLoading: skillLoading as SkillLoading | undefined,
     ...(skillResolver ? { skillResolver } : {}),
@@ -454,7 +463,7 @@ function describeConsent(c: SetupConsent, events: string[], out: Out, harness: S
   say(out, `  providers  ${c.providers.value}${c.providers.value === 'declined' ? ' (keyless: setup configures no paid provider; accept with --providers)' : ''} ${src(c.providers.source)}`);
 }
 
-export async function runSetup(args: string[]): Promise<number> {
+export async function runSetup(args: string[], deps: { openclaw?: { bin?: string | null; run?: OpenclawRun } } = {}): Promise<number> {
   if (args.includes('--help') || args.includes('-h') || args.length === 0) {
     console.log(SETUP_HELP);
     return 0;
@@ -470,6 +479,7 @@ export async function runSetup(args: string[]): Promise<number> {
   const mcpWired = flags.harness === 'claude-code' || flags.harness === 'codex';
   if (flags.harness === 'pi') return runPiSetup(flags, out);
   if (flags.skillsIndexOnly) return runSkillsIndexOnly(flags, out);
+  if (flags.wakeshift) return runWakeshiftOpenclaw(flags, args, out, deps.openclaw ?? {});
   if ((flags.instructionsOnly && (isBrainFirstHarness(flags.harness) || adapter)) || (isBrainFirstHarness(flags.harness) && !mcpWired)) {
     return runInstructionsOnly(flags, out);
   }
@@ -685,7 +695,7 @@ function runBrainInit(initArgv: string[], out: Out, harness: SetupHarnessId): No
   try {
     const doc = JSON.parse(initOut) as { path?: string; notices?: unknown[] };
     if (doc.path) say(out, `Brain ready at ${doc.path}`);
-    return [...setupFirstRunNotices(doc.notices ?? [], HARNESS_LABEL[harness]), ...(hosted ? [hosted] : [])];
+    return [...setupFirstRunNotices(doc.notices ?? [], HARNESS_LABEL[harness], { reportBack: wakeshiftPublished() }), ...(hosted ? [hosted] : [])];
   } catch { process.stderr.write(initOut); return hosted ? [hosted] : []; }
 }
 
@@ -1084,6 +1094,61 @@ async function runInstructionsOnly(flags: SetupFlags, out: Out): Promise<number>
       fix: { argv: ['gbrain', 'setup', 'cursor', '--skill-loading', 'resolve', '--dry-run'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews every write the Cursor pinned-skills setup would make in this project; changes nothing.' } }), out);
   }
   if (check && !check.ok) return refuse(turnHookNotLoaded(harness, check, rerun), out);
+  return code;
+}
+
+/**
+ * --wakeshift (OpenClaw only): consent, then Wakeshift's pinned OpenClaw plugin through OpenClaw's own installer
+ * (src/commands/setup-openclaw-wakeshift.ts). Prints Wakeshift's allowNetworkHooks question and never answers it.
+ */
+async function runWakeshiftOpenclaw(flags: SetupFlags, args: string[], out: Out, deps: { bin?: string | null; run?: OpenclawRun }): Promise<number> {
+  const remove = 'openclaw wakeshift reset && openclaw plugins uninstall wakeshift --force';
+  if (flags.harness !== 'openclaw') {
+    return refuse(opError('invalid_params', `--wakeshift installs Wakeshift's OpenClaw plugin, so it applies to gbrain setup openclaw only (got ${flags.harness ?? 'no harness'}).`, 'Run gbrain setup openclaw --wakeshift where the OpenClaw gateway runs.'), out);
+  }
+  if (flags.remove) {
+    return refuse(opError('invalid_params', "setup does not remove Wakeshift's plugin; OpenClaw's own commands do, and they also undo the hooks settings it changed.", `Run: ${remove}`), out);
+  }
+  const bin = deps.bin !== undefined ? deps.bin : findOpenclawBin();
+  const commands = wakeshiftOpenclawInstallArgv().map((a) => a.join(' ')).join(' && ');
+  if (!bin) {
+    return refuse(opError('openclaw_not_found', "openclaw is not on PATH, so Wakeshift's OpenClaw plugin was not installed; nothing changed.",
+      `Run gbrain setup openclaw --wakeshift where the OpenClaw gateway runs (in its container, if it is in one), or run there: ${commands}`,
+      { fix: { argv: ['gbrain', 'setup', 'openclaw', '--wakeshift'], consent: ['persistent_install', 'egress'], actor: 'user', requires_exclusive: false,
+        why: 'The plugin installs where the OpenClaw gateway runs, with openclaw on PATH.' } }), out);
+  }
+  const bind = openclawGatewayBind();
+  if (!flags.dryRun) {
+    try {
+      await requireConsent({
+        command: 'setup openclaw --wakeshift', effects: ['persistent_install', 'egress'], actor: 'user',
+        what: `Install Wakeshift's OpenClaw plugin ${WAKESHIFT_OPENCLAW_PACKAGE}@${WAKESHIFT_OPENCLAW_VERSION} from npm and enable it: ${commands}`,
+        why: 'gbrain can then wake this OpenClaw session when a job, write or cron run it watches finishes, instead of the agent polling.',
+        risk: "OpenClaw downloads the package from npm (published by Wakeshift with npm provenance). The plugin talks to Wakeshift's service and turns on OpenClaw's hooks endpoint with its own token, for conversations that connect through Wakeshift."
+          + (networkHooksQuestion(bind) ? ' This gateway listens beyond this computer; the plugin asks before using the endpoint there.' : ''),
+        user_message: "Install Wakeshift's OpenClaw plugin so gbrain can report back to this OpenClaw chat when long jobs or cron runs finish?",
+        argv: ['gbrain', 'setup', 'openclaw', '--wakeshift', '--yes'], args,
+      });
+    } catch (e) {
+      return writeCliError(e, 'setup', { json: out.json });
+    }
+  }
+  const result = installWakeshiftOpenclaw({ bin, run: deps.run, dryRun: flags.dryRun, bind });
+  const code = result.action === 'failed' || (result.verify && !result.verify.loaded) ? 1 : 0;
+  if (out.json) {
+    await writeJsonDocument(`${JSON.stringify({ harness: 'openclaw', dry_run: flags.dryRun, wakeshift: { ...result, remove } }, null, 2)}\n`, (t) => process.stdout.write(t));
+    return code;
+  }
+  say(out, `Wakeshift for OpenClaw (${WAKESHIFT_OPENCLAW_PACKAGE}@${result.version}):`);
+  const verb = result.action === 'dry_run' ? 'would run' : 'ran';
+  for (const c of result.commands) {
+    if (result.action === 'failed' && c === result.failed_command) { say(out, `  failed   ${c}${result.output ? `\n    ${result.output.replace(/\n/g, '\n    ')}` : ''}`); break; }
+    say(out, `  ${verb.padEnd(8)} ${c}`);
+  }
+  if (result.verify) say(out, `Verify: ${result.verify.message}`);
+  if (result.network_hooks_question) say(out, `Question from Wakeshift (answer it yourself): ${result.network_hooks_question}`);
+  if (result.action === 'installed') say(out, 'Next: the brain owner turns reporting back on with gbrain wakeshift enable on the brain host; agents then offer watch_job after a long submit.');
+  say(out, `Remove: ${remove}`);
   return code;
 }
 

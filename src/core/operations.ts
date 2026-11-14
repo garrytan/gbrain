@@ -185,7 +185,7 @@ export const operations: Operation[] = [
   ...filesOperations,
   // Jobs (Minions: submit_job, get_job, list_jobs, cancel_job, retry_job,
   // get_job_progress, pause_job, resume_job, replay_job, send_job_message)
-  // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts; Wakeshift watches (watch_job, list_watches, unwatch) — ops/wakeshift.ts
+  // + v0.38 Slice 3 agent lane (submit_agent, get_agent_job) — ops/jobs.ts; Wakeshift watches (watch_job, watch_write_request, watch_cron, list_watches, unwatch, accept_wakeshift_terms) — ops/wakeshift.ts
   ...jobsOperations, ...wakeshiftOperations,
   // Orphans (find_orphans) — ops/orphans.ts; rank_entities — ops/graph-rank.ts
   ...orphansOperations, ...graphRankOperations,

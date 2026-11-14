@@ -168,6 +168,16 @@ are part of the [hosted setup](hosted-harness-access.md); finish them through th
 actual product's supported flow. A denied request is a reported setup boundary,
 not a reason to try another route around it.
 
+## Have gbrain report back to this chat
+
+Unverified in Muse. When the brain owner has turned on
+[reporting back](wakeshift.md) (`gbrain wakeshift enable` on the brain host),
+the thin CLI can ask to wake the conversation when a long job finishes:
+`<launcher> wakeshift watch job <id> --harness muse`. Wakeshift doesn't list
+Muse as an agent it can wake, and Sentinel controls Muse's egress, so expect
+the wake at best on Muse's next gbrain call. Without Wakeshift, wait with
+`<launcher> jobs wait <id>`.
+
 ## Local installation maintenance, backup, and recovery
 
 These steps apply when GBrain runs inside Muse. A hosted connection instead

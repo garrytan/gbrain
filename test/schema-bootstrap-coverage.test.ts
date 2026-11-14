@@ -1262,6 +1262,9 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // check and bindCredential read it, all after migrations have run.
   'access_tokens.reads_unscoped',
   'oauth_clients.reads_unscoped',
+  // Wakeshift PR 2 (migration v311) - the persistence_requests row a write.settled watch points at. Same posture as
+  // v301: wake_subscriptions exists only through migrations (v290), so no index or function in either blob references it.
+  'wake_subscriptions.target_ref',
   // GBRA-218 A2 (migration v283) - folder rules. Same posture as v282: absent from both schema blobs; the migration
   // creates the folder_rule_ids trigger and functions itself, and no index or function in either blob references it.
   'pages.folder_rule_ids',

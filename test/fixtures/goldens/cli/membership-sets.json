@@ -76,7 +76,6 @@
         "memory-proposals",
         "questions",
         "trust",
-        "wakeshift",
         "watch"
       ],
       "selfHelpNotInCliOnly": [],
@@ -479,7 +478,8 @@
         "sweep",
         "sync",
         "takes",
-        "transcripts"
+        "transcripts",
+        "wakeshift"
       ]
     }
   },

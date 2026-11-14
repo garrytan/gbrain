@@ -1,6 +1,6 @@
 /**
  * A fake Wakeshift (https://wakeshift.ai/docs/http-api) for the report-back tests: Bun.serve on a loopback port
- * with the endpoints gbrain calls. Every request's assertion is verified against the key's public key (EdDSA,
+ * with the endpoints gbrain calls (subscribe, unsubscribe, end, emit for any event, manifest merge, users/forget). Every request's assertion is verified against the key's public key (EdDSA,
  * typ app+jwt, kid, aud, 120 s life, a jti never seen before), and every call is recorded. `respond` overrides an
  * endpoint's answer (status, body, headers) for failure tests.
  */
@@ -75,6 +75,7 @@ export function startFakeWakeshift(rawKey: string): FakeWakeshift {
         case '/event-subscriptions/unsubscribe': return Response.json({ ended: true });
         case '/event-subscriptions/end': return Response.json({ ended: true });
         case '/events/emit': return Response.json({ matched: 1, duplicate: false, unmatched: [], ended: [] });
+        case '/users/forget': return Response.json({ forgotten: true });
         default: return Response.json({ error: { code: 'bad_request', message: `unknown path ${path}` } }, { status: 400 });
       }
     },

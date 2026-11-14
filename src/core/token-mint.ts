@@ -19,6 +19,7 @@
 import type { BrainEngine } from './engine.ts';
 import { ALLOWED_SCOPES_LIST, assertAllowedScopes } from './scope.ts';
 import type { SqlQuery } from './sql-query.ts';
+import { forgetWakePrincipal } from './wakeshift/forget.ts';
 import { opError } from './ops/contract.ts';
 import { generateToken, hashToken, isUndefinedColumnError } from './utils.ts';
 import { permissionsMirror, privatePagesFromColumn, tokenGrantColumnValues, tokenGrantFromPermissions, TOKEN_GRANT_COLUMNS, type GrantSources, type PrincipalGrant, type PrivatePagesGrant } from './grants/model.ts';
@@ -149,6 +150,7 @@ export async function revokeLegacyTokenById(sql: SqlQuery, id: string): Promise<
     WHERE id = ${id}::uuid AND revoked_at IS NULL
     RETURNING 1 AS ok
   `;
+  if (rows.length > 0) await forgetWakePrincipal(sql, { kind: 'legacy_token', id });
   return rows.length > 0;
 }
 
