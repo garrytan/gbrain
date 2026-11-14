@@ -56,6 +56,12 @@ export interface CliOptions {
    * Unset when the flag is absent. `gbrain access` owns its own `--as`.
    */
   as?: string;
+  /**
+   * GBRA-498: `--room <list>` — the shared chat this answer goes to (member ids, group:<id>, guest). It never changes
+   * what is read: the result is marked for the room (src/cli/room.ts). A `--room` with no value is `''`, a declared
+   * room that could not be read, so every item is marked unknown instead of the flag being dropped. Unset when absent.
+   */
+  room?: string;
 }
 
 export const DEFAULT_CLI_OPTIONS: CliOptions = {
@@ -254,6 +260,13 @@ export function parseGlobalFlags(argv: string[]): { cliOpts: CliOptions; rest: s
       const value = a === '--as' ? argv[++i] : a.slice('--as='.length);
       if (value === undefined || value.length === 0 || value.startsWith('-')) throw new Error('--as requires a member id (gbrain access member list).');
       slots.push({ asValue: value });
+      continue;
+    }
+    if (a === '--room' || a.startsWith('--room=')) {
+      const next = argv[i + 1];
+      if (a !== '--room') cliOpts.room = a.slice('--room='.length);
+      else if (next === undefined || next.startsWith('-')) cliOpts.room = '';
+      else { cliOpts.room = next; i++; }
       continue;
     }
     if (a === '--accept-pending' || a === '--no-accept-pending') {
