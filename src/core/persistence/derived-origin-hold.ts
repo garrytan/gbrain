@@ -13,8 +13,19 @@ import type { SqlEngine } from './model.ts';
 export const DERIVED_ORIGIN_PARK_OP = 'derived-origin-park';
 export const DERIVED_ORIGIN_PARKED_CODE = 'derived_origin_parked';
 
-/** `blocking_slug`: the derived page whose label write failed; null when its dependents could not be read. */
-export interface DerivedOriginPark { source_id: string; slug: string; page_id: number; blocking_slug: string | null; code: string | null; reason: string; parked_at: string }
+/**
+ * `blocking_slug`: the derived page whose label write failed; null when its dependents could not be read. `held_request_id`: the owner's
+ * explicit purge this park held (a retention purge leaves it unset); a later park of the same page keeps it.
+ */
+export interface DerivedOriginPark { source_id: string; slug: string; page_id: number; blocking_slug: string | null; code: string | null; reason: string; parked_at: string; held_request_id?: string }
+
+/** The command that finishes an owner purge a park held: `gbrain delete` makes a new request_id, and an explicit purge writes the purge tombstones. */
+export const finishPurgeArgv = (sourceId: string, slug: string): string[] => ['gbrain', 'delete', slug, '--purge', '--source-id', sourceId];
+
+/** The receipt clause of a held owner purge, after its condition ("Once ..., "): the command that finishes it, as a new request. */
+export function finishPurgeNote(sourceId: string, slug: string, requestId: string): string {
+  return `finish this purge with ${finishPurgeArgv(sourceId, slug).join(' ')} as a new request (not a replay of request_id ${requestId}): it writes the purge tombstones, which the automatic purge that otherwise removes the page does not.`;
+}
 
 /** SQL predicate for a purge scan over `pages` aliased `alias`: the page is not a parked origin. */
 export function derivedOriginPurgeHold(alias: string): string {
@@ -24,7 +35,8 @@ export function derivedOriginPurgeHold(alias: string): string {
 export async function parkDerivedOrigin(engine: SqlEngine, park: Omit<DerivedOriginPark, 'parked_at'>): Promise<void> {
   const row: DerivedOriginPark = { ...park, parked_at: new Date().toISOString() };
   await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=EXCLUDED.completed_keys`, [DERIVED_ORIGIN_PARK_OP, String(park.page_id), JSON.stringify([row])]);
+    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=CASE WHEN (op_checkpoints.completed_keys->0) ? 'held_request_id' AND NOT (EXCLUDED.completed_keys->0) ? 'held_request_id'
+      THEN jsonb_set(EXCLUDED.completed_keys, '{0,held_request_id}', op_checkpoints.completed_keys->0->'held_request_id') ELSE EXCLUDED.completed_keys END`, [DERIVED_ORIGIN_PARK_OP, String(park.page_id), JSON.stringify([row])]);
 }
 
 export async function clearDerivedOriginParks(engine: SqlEngine, pageIds: readonly number[]): Promise<void> {

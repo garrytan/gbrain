@@ -16,6 +16,7 @@ import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
 import { derivedRetirementPurgeHold } from './derived-retirement-hold.ts';
 import { faultPoint } from './fault-points.ts';
 import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, readDerivedOriginParks, type DerivedOriginPark } from './derived-origin-hold.ts';
+import type { CarryForecast } from '../repair/origin-carry.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
 import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
@@ -91,23 +92,29 @@ export function purgeConsentRequest(count: number, olderThanHours: number, json:
 
 /** The `purge_deleted_pages` op (`gbrain call`): the D6 consent first (`yes` is `--yes`); an empty purge set needs none. */
 export async function consentedPurgeDeletedPages(engine: BrainEngine, olderThanHours: number, yes: boolean) {
-  await (await import('../repair/origin-carry.ts')).retryParkedOrigins(engine, olderThanHours);
-  const preview = await selectPurgeCandidates(engine, olderThanHours);
+  const forecast = await (await import('../repair/origin-carry.ts')).forecastCarry(engine, olderThanHours);
+  const preview = await selectPurgeCandidates(engine, olderThanHours, { forecast });
   if (preview.count === 0) return { status: 'purged', count: 0, slugs: [] };
   await requireConsent(purgeConsentRequest(preview.count, olderThanHours, false, yes ? ['--yes'] : [], false, 0, preview.sync_unreviewed));
-  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours);
+  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours, { release: forecast.release.map(origin => origin.id), only: notHeld(forecast) });
   return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
+}
+
+/** GST-2689: the run purges no origin its preview left out as held, even when the blocker clears in between. */
+export function notHeld(forecast: CarryForecast): PurgeFilter {
+  const held = new Set(forecast.hold.map(origin => `${origin.source_id}/${origin.slug}`));
+  return page => !held.has(`${page.source_id}/${page.slug}`);
 }
 
 /** An expired tombstone of a source the belief ledger records (unmanaged brain), in scan order, with its live failure record. */
 interface RecordedTombstone { id: number; source_id: string; slug: string; deleted_us: string; key: string; park?: PurgePark }
 
-async function recordedTombstones(engine: BrainEngine, hours: string): Promise<RecordedTombstone[]> {
+async function recordedTombstones(engine: BrainEngine, hours: string, released: readonly number[] = []): Promise<RecordedTombstone[]> {
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; deleted_us: string }>(`SELECT p.id, p.source_id, p.slug,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p
-    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')} AND ${derivedOriginPurgeHold('p')}
+    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')} AND (${derivedOriginPurgeHold('p')} OR p.id = ANY($2::int[]))
       AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
-    ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours]);
+    ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours, [...released]]);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
   return rows.map(row => {
     const key = purgeParkKey(row.source_id, row.slug, row.deleted_us);
@@ -219,23 +226,44 @@ export interface PurgeSelection {
   sync_unreviewed: number;
   /** Per source in the scan: whether its writer passed the owner verification (the park rearm reads it). */
   writers: Record<string, boolean>;
+  /** GST-2689: the candidates that are parked origins the run's carry releases first (`forecast.release`). */
+  released_origins: Array<{ source_id: string; slug: string }>;
 }
 
-/** What keeps an expired tombstone of page `page` (source `source`) out of every managed purge: an archived source, or the rename-recovery, restorable-atom, derived-retirement or derived-origin hold. */
-export function purgeHoldsSql(page: string, source: string): string {
-  return `NOT ${source}.archived AND ${identityDowngradePurgeHold(page)} AND ${atomRetirementPurgeHold(page)} AND ${derivedRetirementPurgeHold(page)} AND ${derivedOriginPurgeHold(page)}`;
+/**
+ * What keeps an expired tombstone of page `page` (source `source`) out of every managed purge: an archived source, or the
+ * rename-recovery, restorable-atom, derived-retirement or derived-origin hold; `released` (an SQL int[]) lifts the
+ * derived-origin hold for the parked origins a manual purge's preview counts as released.
+ */
+export function purgeHoldsSql(page: string, source: string, released?: string): string {
+  const origin = released ? `(${derivedOriginPurgeHold(page)} OR ${page}.id = ANY(${released}))` : derivedOriginPurgeHold(page);
+  return `NOT ${source}.archived AND ${identityDowngradePurgeHold(page)} AND ${atomRetirementPurgeHold(page)} AND ${derivedRetirementPurgeHold(page)} AND ${origin}`;
 }
 
-export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean } = {}): Promise<PurgeSelection> {
+/**
+ * GST-2689 `forecast` (repair/origin-carry.ts forecastCarry; the consented manual purge's preview and consent): the
+ * selection the run makes once its carry has run, so it counts the parked origins the carry releases and leaves out the
+ * origins it parks; the run itself reads the parks as they are.
+ */
+export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; forecast?: CarryForecast } = {}): Promise<PurgeSelection> {
+  const release = (opts.forecast?.release ?? []).map(origin => origin.id), hold = (opts.forecast?.hold ?? []).map(origin => origin.id);
   if (!await managedPersistenceEnabled(engine)) {
-    const parked = (await recordedTombstones(engine, String(Math.max(0, Math.floor(olderThanHours)))))
+    const parked = (await recordedTombstones(engine, String(Math.max(0, Math.floor(olderThanHours))), release))
       .filter((row): row is RecordedTombstone & { park: PurgePark } => isParked(row.park));
     const skipped = new Set(opts.retryParked ? [] : parked.map(row => row.id));
     const unreviewed = (await readUnreviewedSyncTombstones(engine, olderThanHours)).filter(row => !skipped.has(row.id));
     const kept = opts.automatic ? unreviewed : [];
-    const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true, excludeIds: [...skipped, ...kept.map(row => row.id)] });
+    const excludeIds = [...skipped, ...kept.map(row => row.id), ...hold];
+    const preview = await engine.purgeDeletedPages(olderThanHours, { dryRun: true, excludeIds });
+    // The engine's preview keeps every parked origin; the ones the run frees are read here under the purge's other holds.
+    const released = release.length ? (await engine.executeRaw<{ slug: string; source_id: string; deleted_at: Date | string }>(`SELECT p.slug, p.source_id, p.deleted_at FROM pages p
+      WHERE p.id = ANY($1::int[]) AND p.id <> ALL($2::int[]) AND p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($3 || ' hours')::interval
+        AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')}`,
+      [release, excludeIds, String(Math.max(0, Math.floor(olderThanHours)))])).map(row => ({ slug: row.slug, source_id: row.source_id, deleted_at: new Date(row.deleted_at) }))
+      .filter(row => !(preview.pages ?? []).some(page => page.source_id === row.source_id && page.slug === row.slug)) : [];
+    const pages = [...(preview.pages ?? []), ...released].sort((a, b) => a.deleted_at.getTime() - b.deleted_at.getTime() || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
     const held = kept.filter(row => row.expired);
-    return { managed: false, count: preview.count, slugs: preview.slugs, pages: preview.pages, candidates: [],
+    return { managed: false, count: pages.length, slugs: pages.map(page => page.slug), pages, candidates: [], released_origins: released.map(({ source_id, slug }) => ({ source_id, slug })),
       blocked: [...(opts.retryParked ? [] : parked.map(row => ({ source_id: row.source_id, slug: row.slug, code: 'purge_parked', reason: parkedReason(row.park) }))),
         ...held.map(row => syncDeleteHeld(row, olderThanHours))],
       parked: parked.map(row => ({ source_id: row.source_id, slug: row.slug, failures: row.park.failures, code: row.park.code, retried: opts.retryParked === true })),
@@ -245,13 +273,13 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
   const rows = await engine.executeRaw<{ id: number | string; source_id: string; slug: string; cutoff: string; deleted_us: string }>(
     `SELECT p.id, p.source_id, p.slug, (now() - ($1 || ' hours')::interval)::text AS cutoff,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p JOIN sources s ON s.id = p.source_id
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${purgeHoldsSql('p', 's')}
-      ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(hours)]);
+      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${purgeHoldsSql('p', 's', '$2::int[]')} AND p.id <> ALL($3::int[])
+      ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [String(hours), release, hold]);
   const states = new Map<string, { state: string; physical_error?: string }>();
   if (rows.length) for (const source of (await writerOnboardingPreflight(engine)).sources) states.set(source.source_id, source);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
   const unreviewed = new Set(rows.length ? (await readUnreviewedSyncTombstones(engine, hours)).map(row => row.id) : []);
-  const selection: PurgeSelection = { managed: true, count: 0, slugs: [], candidates: [], blocked: [], parked: [], inactive: 0, held: 0, sync_unreviewed: 0, writers: {} };
+  const selection: PurgeSelection = { managed: true, count: 0, slugs: [], candidates: [], blocked: [], parked: [], inactive: 0, held: 0, sync_unreviewed: 0, writers: {}, released_origins: [] };
   for (const { id, ...row } of rows) {
     const writer = states.get(row.source_id);
     const active = writer?.state !== 'recovery_required';
@@ -279,6 +307,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
       }
     }
     if (syncUnreviewed) selection.sync_unreviewed++;
+    if (release.includes(Number(id))) selection.released_origins.push({ source_id: row.source_id, slug: row.slug });
     selection.candidates.push({ ...row, key, ...(park ? { park } : {}), ...(syncUnreviewed ? { sync_unreviewed: true as const } : {}) });
   }
   selection.count = selection.candidates.length;
@@ -334,11 +363,14 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
 /** Limits a purge to pages the caller already showed the person (`gbrain maintain --purge --expect`). */
 export type PurgeFilter = (page: { source_id: string; slug: string }) => boolean;
 
-export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter } = {}): Promise<DeletedPagePurge> {
+export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter; release?: readonly number[] } = {}): Promise<DeletedPagePurge> {
+  const { release = [], ...purge } = opts;
   const carried = await (await import('../repair/origin-carry.ts')).carryPrivateBeforePurge(engine, olderThanHours);
   const origins = originParked(carried.parks);
+  // GST-2689: a consented manual purge releases now the parked origins its preview counted, once their carry landed.
+  await clearDerivedOriginParks(engine, carried.unparked.filter(origin => release.includes(origin.id)).map(origin => origin.id));
   await faultPoint('purge:after_carry');
-  const result = await purgeExpired(engine, olderThanHours, opts);
+  const result = await purgeExpired(engine, olderThanHours, purge);
   const reparked = new Set(result.blocked.filter(b => b.code === DERIVED_ORIGIN_PARKED_CODE).map(b => `${b.source_id}/${b.slug}`));
   await clearDerivedOriginParks(engine, carried.unparked.filter(origin => !reparked.has(`${origin.source_id}/${origin.slug}`)).map(origin => origin.id));
   const parked = origins.length + (result.origin_parked ?? 0);
