@@ -114,6 +114,16 @@ test('managed directory import writes through, routes the source, resumes idempo
     mkdirSync(join(f.root, 'notes'));
     writeFileSync(join(f.root, 'notes', 'local.md'), '# Local note\n\nA local change to the canonical source.\n');
     expect(await importManagedFile(engine, join(f.root, 'notes/local.md'), 'local.md', { sourceId: f.sourceId, noEmbed: true })).toMatchObject({ slug: 'notes/local', status: 'imported' });
+    await withCoordinatedWrite(engine, [f.sourceId], () => engine.executeRaw("UPDATE pages SET source_path='notes/local.md' WHERE source_id=$1 AND slug='notes/local'", [f.sourceId]), TEST_WRITE_ATTRIBUTION);
+    writeFileSync(join(f.root, 'notes/local.md'), '# Local note\n\nUpdated local knowledge.\n');
+    expect(await importManagedFile(engine, join(f.root, 'notes/local.md'), 'local.md', { sourceId: f.sourceId, noEmbed: true })).toMatchObject({ slug: 'notes/local', status: 'imported' });
+    expect((await engine.getPage('notes/local', { sourceId: f.sourceId }))?.source_path).toBe('notes/local.md');
+    if (process.platform === 'win32') {
+      await withCoordinatedWrite(engine, [f.sourceId], () => engine.executeRaw('UPDATE pages SET source_path=$1 WHERE source_id=$2 AND slug=$3', ['notes\\local.md', f.sourceId, 'notes/local']), TEST_WRITE_ATTRIBUTION);
+      writeFileSync(join(f.root, 'notes/local.md'), '# Local note\n\nA second local update.\n');
+      expect(await importManagedFile(engine, join(f.root, 'notes/local.md'), 'local.md', { sourceId: f.sourceId, noEmbed: true })).toMatchObject({ slug: 'notes/local', status: 'imported' });
+      expect((await engine.getPage('notes/local', { sourceId: f.sourceId }))?.source_path).toBe('notes/local.md');
+    }
     writeFileSync(join(f.root, 'scoped.md'), '# Scoped path\n\nPreserve the explicitly selected slug root.\n');
     expect(await importManagedFile(engine, join(f.root, 'scoped.md'), `${f.sourceId}/scoped.md`, { sourceId: f.sourceId, noEmbed: true, slugRoot: home }))
       .toMatchObject({ slug: `${f.sourceId}/scoped`, status: 'imported' });

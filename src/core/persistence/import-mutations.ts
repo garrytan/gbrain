@@ -137,6 +137,8 @@ export async function importManagedFiles(engine: BrainEngine, files: readonly Ma
       const canonicalRelative = relative(root, inputPath);
       const canonicalInput = canonicalRelative && !isAbsolute(canonicalRelative) && canonicalRelative !== '..' && !canonicalRelative.startsWith(`..${sep}`);
       if (canonicalInput && !opts.slugRoot) sourcePath = canonicalRelative;
+      // Page origins use portable slash separators; relative() uses backslashes on Windows.
+      if (process.platform === 'win32') sourcePath = sourcePath.replaceAll('\\', '/');
       const path = canonicalInput ? canonicalRelative : sourcePath;
       const target = resolve(root, path);
       await assertImportPaths(reads, sourceId, root, inputPath, target);
