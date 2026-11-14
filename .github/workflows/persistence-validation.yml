@@ -201,14 +201,14 @@ jobs:
   # file; the PGLite arm also runs in the unit lane). The list is test/postgres-unit-arms.txt;
   # scripts/check-postgres-lane-coverage.ts fails a new DATABASE_URL-gated arm
   # until it is listed there or wrapped in a test/e2e registerPostgresTests
-  # file. The twenty-one shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
+  # file. The twenty-two shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
   # balanced by measured runtime (scripts/postgres-arm-weights.json, mined
   # from this job's ARM_FILE lines). Each job runs two files at a time, each
   # worker against its own PostgreSQL service; a shard's two-worker makespan,
   # doubled for a slow runner, must end a minute inside the step's 20 minutes
-  # (ARM_SHARD_BUDGET_MS, 570 s). On master 505204a9 (2026-11-12) the largest
-  # shard planned at 554.6 s with 19 shards; 21 shards bring it to 502.3 s, room
-  # for about 70 more arm files at the p75 weight. The job runs both arms of
+  # (ARM_SHARD_BUDGET_MS, 570 s). On 2026-11-14 (gbrain#9342) the list filled
+  # 21 shards to the budget, so one more arm file put 19 shards over; 22 shards
+  # bring the largest to 545.6 s. The job runs both arms of
   # every listed file: the unit shards skip *.slow.test.ts, so this lane is the
   # only GitHub lane that runs the PGLite side of the listed slow
   # testBackends() suites.
@@ -216,14 +216,14 @@ jobs:
   # pull request (cheap tier) runs only the crash robot and convergence here. The
   # full-ci dispatch on its head, every push and the nightly run this lane.
   unit-postgres-arms:
-    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/21 / Bun ${{ matrix.bun }}
+    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/22 / Bun ${{ matrix.bun }}
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]
         bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs every supported Bun version (docs/TESTING.md#event-parity).
@@ -278,7 +278,7 @@ jobs:
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
           GBRAIN_TEST_RECEIPT_LANE: pg-arms-bun-${{ matrix.bun }}
-        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 21
+        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 22
       - name: Upload receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
