@@ -15,6 +15,7 @@ import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
 import { readGuestSource } from '../src/core/guests/sources.ts';
 import { refuseGuestSourceWrite, refuseRemoteGuestDelete } from '../src/core/guests/admission.ts';
 import { ADMISSION_SOURCE_SQL } from '../src/core/persistence/preadmit-cache.ts';
+import { linkGuestPromotion } from '../src/core/guests/promote.ts';
 import type { Principal } from '../src/core/persistence/model.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -126,5 +127,19 @@ const GUESTS = 'guests-scoped';
     expect((await asScoped(BROKER, tx => readGuestSource(tx, GUESTS))).value).toMatchObject({ source_id: GUESTS, writers: ['oauth_client:client-a'] });
     const admission = await asScoped(OTHER, tx => tx.executeRaw<Record<string, unknown>>(ADMISSION_SOURCE_SQL, [GUESTS]));
     expect(admission.value?.[0]).toMatchObject({ guest_writers: ['oauth_client:client-a'], guest_sources_hidden: false });
+  });
+
+  test('a promotion link that a concurrent promotion inserts first is not a unique-key error, and one link stays', async () => {
+    const link = { guestPageId: guestPage.id, targetSource: 'default', targetSlug: 'notes/raced', by: { kind: 'local_cli', id: 'owner' }, requestId: null };
+    let inserted!: () => void; let commit!: () => void;
+    const first = new Promise<void>(r => { inserted = r; }); const held = new Promise<void>(r => { commit = r; });
+    const winner = engine.transaction(async tx => { await linkGuestPromotion(tx, link); inserted(); await held; });
+    await first;
+    const loser = linkGuestPromotion(engine, link).then(() => 'linked', (e: Error) => e.message);
+    for (let i = 0; i < 100 && !(await engine.executeRaw(`SELECT 1 FROM pg_locks WHERE NOT granted`)).length; i++) await Bun.sleep(50);
+    commit();
+    await winner;
+    expect(await loser).toBe('linked');
+    expect((await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM guest_promotions WHERE guest_page_id = $1 AND target_slug = 'notes/raced'`, [guestPage.id]))[0]!.n).toBe(1);
   });
 });
