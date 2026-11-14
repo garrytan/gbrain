@@ -1,0 +1,4 @@
+**A brain owner can now make member CLIs read-only: with `access.enforced_member_writes` set to `refuse`, every page write under `GBRAIN_ENFORCED_MEMBER` refuses.**
+
+### Added
+- `gbrain config set access.enforced_member_writes refuse` makes enforced member mode refuse `put`, `link`, `unlink`, `tag`, `untag`, `timeline-add`, `remember`, `edit_page` and `append_page` with exit 3 and reason `writes_off`. The refusal comes before any page or source lookup, so it reads the same for a new, readable or hidden target and names none. The key lives in the brain's database, so it works on a brain with no repository, and a member can't change it because `config` is refused under the mode. Unset or `checked` keeps today's checked writes; any other value, or a config read that fails, refuses. Reads, a CLI without the variable, `git commit-push`, `sync`, `sources refresh` and `write-request` are unchanged. See docs/guides/enforced-member.md#writes-off.
