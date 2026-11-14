@@ -18,7 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Notice } from '../agent-output.ts';
 import { admitsTrust, minTrust, storedTrustTier, type TrustTier } from '../trust/tier.ts';
-import { guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
+import { guestSourceSql, guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
 import { activationSuppressedSql, type EligibilityTable } from './sql.ts';
 import type { ReadEligibility } from './policy.ts';
 
@@ -132,7 +132,7 @@ export async function pageActivationVerdicts(engine: Exec, keys: readonly PageKe
   if (keys.length === 0) return out;
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean }>(
     `SELECT a.id, a.source_id, a.slug, a.trust_tier, a.write_origin, ${activationSuppressedSql('pages', 'a')} AS flagged,
-        COALESCE(s.config->>'guest' = 'true', false) AS guest FROM pages a LEFT JOIN sources s ON s.id = a.source_id
+        ${guestSourceSql('s.config', 'a.source_id')} AS guest FROM pages a LEFT JOIN sources s ON s.id = a.source_id
       WHERE a.deleted_at IS NULL AND (a.source_id, a.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
     [keys.map(k => k.source_id), keys.map(k => k.slug)]);
   // GBRA-504: a page in a guest source carries its guest mark (one batched read), or reads unattributed.

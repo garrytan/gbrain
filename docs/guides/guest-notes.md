@@ -132,7 +132,7 @@ the local CLI alike. JSON results give the row `origin: "guest"`, trust tier
 `external_untrusted` and a `guest` object:
 
 ```json
-{ "sender_label": "Bob Example", "group": "team-a", "audience_member": "member:bob-example",
+{ "sender": "Bob Example", "group": "team-a", "audience_member": "member:bob-example",
   "saved_at": "2026-11-13", "promoted": false, "writer": "legacy_token:<id>" }
 ```
 

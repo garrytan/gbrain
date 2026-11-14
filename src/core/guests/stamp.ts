@@ -12,7 +12,7 @@ import { currentCallerAccess } from '../search/private-visibility.ts';
 import { collectPageItems, type Ref } from '../access/page-items.ts';
 import { loadPageTrust } from '../eligibility/stamp.ts';
 import { relabelGuestQuote } from '../search/transcript-quote.ts';
-import { GUEST_ORIGIN, guestQuoteLabel } from './marker.ts';
+import { brainHasGuestSource, GUEST_ORIGIN, guestQuoteLabel } from './marker.ts';
 
 /** An owner caller sees the guest note's writer: the trusted local CLI, or a credential bound to the owner speaking for no one else. */
 export function guestViewerIsOwner(ctx: Pick<OperationContext, 'remote'>): boolean {
@@ -34,12 +34,14 @@ const refSlug = (r: Ref) => (r.kind === 'page' ? r.slug : undefined);
 
 /**
  * `result` with every guest item stamped, on a detached copy (handlers may return cached objects), or `result` itself
- * when nothing in it is a guest row. A failed trust load fails the read rather than return a guest note unmarked.
+ * when nothing in it is a guest row. The trust load is skipped only when no source is a guest source (marker.ts
+ * brainHasGuestSource, which answers yes when it cannot tell); a failed trust load fails the read rather than return a
+ * guest note unmarked.
  */
 export async function stampGuestNotes(ctx: Pick<OperationContext, 'engine' | 'remote' | 'sourceId'>, result: unknown): Promise<unknown> {
   if (!result || typeof result !== 'object') return result;
   const found = collectPageItems(result, ctx.sourceId ?? 'default').filter(s => s.ref !== null && s.ref.kind !== 'fact');
-  if (!found.length) return result;
+  if (!found.length || !(await brainHasGuestSource(ctx.engine))) return result;
   const refs = found.map(s => s.ref!).map(r => r.kind === 'page' ? { source_id: r.source_id, slug: r.slug } : { page_id: (r as { id: number }).id, slug: '' });
   const trust = await loadPageTrust(ctx.engine, refs, { guestWriter: guestViewerIsOwner(ctx), includeDeleted: true });
   const guestOf = (r: Ref) => (r.kind === 'page' ? trust.byKey.get(`${r.source_id}\u0000${r.slug}`) : r.kind === 'page_id' ? trust.byId.get(r.id) : undefined)?.guest;

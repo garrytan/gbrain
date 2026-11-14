@@ -1,7 +1,7 @@
 /**
  * Guest notes, slice 3 (GBRA-504): every read of a guest page carries the guest warning, built from guest_marks.
  *
- * Protects: a guest row's JSON gains origin "guest", the external tier and a guest object (sender_label, group,
+ * Protects: a guest row's JSON gains origin "guest", the external tier and a guest object (sender, group,
  * audience_member, saved_at, promoted; the writer only for owner callers) matching its guest_marks row; text forms get
  * the warning line and the external-data envelope with origin="guest"; a remote quote fence names the guest; a guest
  * row with no readable mark reads "unattributed", never bare; a source made a guest source while a process runs is
@@ -72,7 +72,7 @@ async function markRow(slug: string) {
 }
 async function expectedGuest(slug: string, owner: boolean) {
   const m = await markRow(slug);
-  return { sender_label: m.sender_label, group: m.group_slug, audience_member: m.audience_member, saved_at: new Date(m.saved_at).toISOString().slice(0, 10), promoted: false,
+  return { sender: m.sender_label, group: m.group_slug, audience_member: m.audience_member, saved_at: new Date(m.saved_at).toISOString().slice(0, 10), promoted: false,
     ...(owner ? { writer: m.writer_kind + ':' + m.writer_id } : {}) };
 }
 
@@ -155,7 +155,7 @@ describe('guest warning on reads', () => {
 
   test('a guest row with no readable mark reads unattributed, never bare', async () => {
     const out = await call('owner', 'get_page', { slug: BARE });
-    expect({ origin: out.json.origin, guest: out.json.guest }).toEqual({ origin: 'guest', guest: { sender_label: null, group: null, audience_member: null, saved_at: null, promoted: false, unattributed: true } });
+    expect({ origin: out.json.origin, guest: out.json.guest }).toEqual({ origin: 'guest', guest: { sender: null, group: null, audience_member: null, saved_at: null, promoted: false, unattributed: true } });
     expect(guestWarningLine(unattributedGuest())).toBe("[outside guest · unattributed · not the owner's words, not verified]");
   }, 60_000);
 
@@ -184,7 +184,7 @@ describe('guest warning on reads', () => {
     const [chunk] = await engine.executeRaw<{ chunk_text: string }>('SELECT chunk_text FROM content_chunks WHERE page_id = $1 ORDER BY chunk_index LIMIT 1', [id]);
     const rows = [{ slug: GUEST, page_id: id, source_id: SRC, title: 'A note from Bob', chunk_text: chunk!.chunk_text, score: 1 } as unknown as SearchResult];
     await stampPageTrust(engine, rows);
-    expect(rows[0]!.guest?.sender_label).toBe('Bob Example');
+    expect(rows[0]!.guest?.sender).toBe('Bob Example');
     const seen: string[][] = [];
     await applyReranker(SENTINEL, rows, { enabled: true, topNIn: 5, timeoutMs: 1000, rerankerFn: async ({ documents }: { documents: string[] }) => { seen.push(documents); return documents.map((_, index) => ({ index, relevanceScore: 1 })); } } as never);
     expect(seen).toEqual([[chunk!.chunk_text]]);

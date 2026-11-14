@@ -119,7 +119,7 @@ const CLASSIFIED: Record<string, Args | { skip: string }> = {
   questions_status: { id: 'q-1' },
 };
 /** Reads whose owner answer must contain the guest page's text, so the contract is exercised, not vacuous. */
-const MUST_REACH = ['get_page', 'list_pages', 'find_pages', 'search', 'query', 'search_exact', 'get_chunks', 'fetch'];
+const MUST_REACH = ['get_page', 'list_pages', 'find_pages', 'search', 'query', 'search_exact', 'get_chunks', 'fetch', 'get_versions', 'chronicle_day'];
 
 let engine: PGLiteEngine;
 const tokens: Record<string, { id: string; token: string }> = {};
@@ -195,8 +195,16 @@ beforeAll(async () => {
   expect(put.isError).not.toBe(true);
   const [m] = await engine.executeRaw<{ sender_label: string; group_slug: string; audience_member: string; saved_at: Date | string; writer_kind: string; writer_id: string }>(
     'SELECT m.* FROM guest_marks m JOIN pages p ON p.id = m.page_id WHERE p.source_id = $1 AND p.slug = $2', [SRC, GUEST]);
-  expected = { sender_label: m!.sender_label, group: m!.group_slug, audience_member: m!.audience_member, saved_at: new Date(m!.saved_at).toISOString().slice(0, 10),
+  expected = { sender: m!.sender_label, group: m!.group_slug, audience_member: m!.audience_member, saved_at: new Date(m!.saved_at).toISOString().slice(0, 10),
     promoted: false, writer: m!.writer_kind + ':' + m!.writer_id };
+  // A version and a timeline entry on the guest page, as a page has when its source became a guest source after it was
+  // written and edited, so get_versions and chronicle_day return guest text.
+  // The trust trigger refuses a timeline row on a guest source today, so the fixture sets the row in with triggers off.
+  await engine.transaction(async tx => {
+    await tx.executeRaw('SET LOCAL session_replication_role = replica');
+    await tx.executeRaw('INSERT INTO page_versions (page_id, compiled_truth, frontmatter) SELECT id, compiled_truth, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [SRC, GUEST]);
+    await tx.executeRaw("INSERT INTO timeline_entries (page_id, date, summary) SELECT id, $3::date, 'Bob says the offsite moved to Friday.' FROM pages WHERE source_id = $1 AND slug = $2", [SRC, GUEST, TODAY]);
+  });
 }, 240_000);
 afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); }, 60_000);
 
@@ -229,7 +237,7 @@ describe('G3: every op that returns stored text carries the guest warning', () =
     const line = guestWarningLine(expected);
     const bad: string[] = [];
     for (const [op, args] of [['get_page', { slug: GUEST }], ['list_pages', { source_id: SRC }], ['find_pages', { pattern: 'notes/*' }], ['search', { query: SENTINEL }],
-      ['search_exact', { phrase: SENTINEL }], ['get_chunks', { slug: GUEST }], ['get_versions', { slug: GUEST, include_body: true }]] as Array<[string, Args]>) {
+      ['search_exact', { phrase: SENTINEL }], ['get_chunks', { slug: GUEST }], ['get_versions', { slug: GUEST, include_body: true }], ['chronicle_day', { date: TODAY }]] as Array<[string, Args]>) {
       const out = await dispatchToolCall(engine, op, { ...args }, { remote: false, sourceId: SRC });
       const result = JSON.parse(out.content[0]!.text);
       const text = withGuestLines(op, result, {}, formatResult(op, result, {}));

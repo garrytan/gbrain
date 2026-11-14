@@ -10,7 +10,6 @@ import type { Principal } from '../persistence/model.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { addSource } from '../sources-ops.ts';
 import type { TrustTier } from '../trust/tier.ts';
-import { GUEST_SOURCES_PRESENT_KEY } from './marker.ts';
 
 export const GUEST_TRUST_CEILING: TrustTier = 'external_untrusted';
 const PRINCIPAL_KINDS: readonly Principal['kind'][] = ['oauth_client', 'legacy_token', 'local_cli', 'local_stdio', 'application'];
@@ -41,9 +40,9 @@ export async function planGuestSource(engine: BrainEngine, sourceId: string, wri
 
 /**
  * Makes `sourceId` a guest source: creates it database-only and federated when
- * missing, sets its guest config, writes its guest_sources row and sets the
- * brain's guest-sources marker (guests/marker.ts GUEST_SOURCES_PRESENT_KEY), in one
+ * missing, sets its guest config and writes its guest_sources row, in one
  * transaction (a managed brain creates the source through its lifecycle first).
+ * Reads find guest sources from these two records (guests/marker.ts guestSourceSql).
  * The database refuses a source with a local_path (guest_source_database_only).
  */
 export async function initGuestSource(engine: BrainEngine, sourceId: string, writers: readonly string[]): Promise<GuestSource> {
@@ -57,7 +56,6 @@ export async function initGuestSource(engine: BrainEngine, sourceId: string, wri
     const [row] = await tx.executeRaw<GuestSource>(`INSERT INTO guest_sources (source_id, writers, trust_ceiling) VALUES ($1, $2::text[], $3)
       ON CONFLICT (source_id) DO UPDATE SET writers = ARRAY(SELECT DISTINCT w FROM unnest(guest_sources.writers || EXCLUDED.writers) AS w ORDER BY w)
       RETURNING source_id, writers, trust_ceiling`, [sourceId, [...new Set(writers)].sort(), GUEST_TRUST_CEILING]);
-    await tx.executeRaw(`INSERT INTO config (key, value) VALUES ($1, 'true') ON CONFLICT (key) DO UPDATE SET value = 'true'`, [GUEST_SOURCES_PRESENT_KEY]);
     return row!;
   });
 }

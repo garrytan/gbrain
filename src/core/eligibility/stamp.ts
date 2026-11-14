@@ -12,7 +12,7 @@ import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } 
 import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
-import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
+import { GUEST_ORIGIN, guestSourceSql, guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
@@ -29,11 +29,11 @@ const key = (source: string | null | undefined, slug: string) => `${source ?? 'd
 
 type TrustRow = { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean };
 const TRUST_COLUMNS = `pages.id, pages.source_id, pages.slug, pages.trust_tier, pages.write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
-  COALESCE(s.config->>'guest' = 'true', false) AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
+  ${guestSourceSql('s.config', 'pages.source_id')} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
 
 /**
  * Trust fields per page id and per (source_id, slug). GBRA-504: a row in a guest source is decided here, per row from
- * its source, and carries origin `guest`, the external tier and its guest mark (one batched guest_marks read, only
+ * its source's config and guest_sources (guests/marker.ts guestSourceSql), and carries origin `guest`, the external tier and its guest mark (one batched guest_marks read, only
  * when a guest row is among them; a mark that cannot be read leaves the row unattributed, never bare). The writer is
  * shown only with `guestWriter` (an owner caller); `includeDeleted` also resolves soft-deleted pages by slug.
  */

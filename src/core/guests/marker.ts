@@ -3,7 +3,7 @@
  *
  * A row is a guest row when its page's source is a guest source (`sources.config.guest`), decided per row inside the
  * batched trust load (eligibility/stamp.ts loadPageTrust), never from a process cache. Its JSON form is
- * `origin: "guest"` plus a `guest` object (sender_label, group, audience_member, saved_at, promoted, and the writer
+ * `origin: "guest"` plus a `guest` object (sender, group, audience_member, saved_at, promoted, and the writer
  * for owner callers only); its text form is one warning line followed by the external-data envelope. A guest row
  * whose mark cannot be read reads as `unattributed`, never bare. The page text never feeds any of it, and labels are
  * escaped on render even though admission already refused those characters (guests/admission.ts).
@@ -15,14 +15,24 @@ export const GUEST_ORIGIN = 'guest';
 /** get_brain_identity lists it: this brain stamps the guest warning on every read, so a guest broker may switch on. */
 export const GUEST_MARKER_CAPABILITY = 'guest_marker_v1';
 /**
- * Set by `gbrain guests init` (guests/sources.ts) in the transaction that makes a source a guest source and never
- * cleared; read per request from the request's config snapshot. Unset, the brain has no guest source, so no read
- * pays for guest stamping. Whether a row is a guest row is still decided from the sources table.
+ * SQL true when a source is a guest source: its config says `guest: true` or guest_sources lists it. Either record is
+ * enough, so a source that lost one of them (a config edit, a restored database) still reads as a guest source.
+ * `config` and `id` are the SQL expressions for the source's config and id.
  */
-export const GUEST_SOURCES_PRESENT_KEY = 'guests.present';
+export const guestSourceSql = (config: string, id: string) =>
+  `(COALESCE(${config}->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = ${id}))`;
+
+/** Whether any source is a guest source, read from the sources themselves on every call; a failed read answers yes. */
+export async function brainHasGuestSource(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
+  try {
+    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM sources s WHERE ${guestSourceSql('s.config', 's.id')}) AS present`);
+    return row?.present !== false;
+  } catch { return true; }
+}
 
 export interface GuestStamp {
-  sender_label: string | null;
+  /** The sender label the broker sent with the note (stored as guest_marks.sender_label). */
+  sender: string | null;
   group: string | null;
   audience_member: string | null;
   /** YYYY-MM-DD (UTC), the day the note was saved. */
@@ -37,7 +47,7 @@ export interface GuestStamp {
 
 /** A guest row whose mark is missing or unreadable: still marked, never shown as the owner's. */
 export function unattributedGuest(): GuestStamp {
-  return { sender_label: null, group: null, audience_member: null, saved_at: null, promoted: false, unattributed: true };
+  return { sender: null, group: null, audience_member: null, saved_at: null, promoted: false, unattributed: true };
 }
 
 const LABEL_SWAP: Record<string, string> = { '[': '(', ']': ')', '·': '-', '<': '‹', '>': '›', '"': "'", ';': ',' };
@@ -47,18 +57,18 @@ export function escapeGuestLabel(value: string): string {
 }
 
 const NOT_OWNER = "not the owner's words, not verified";
-const attributed = (g: GuestStamp): g is GuestStamp & { sender_label: string; group: string } => !g.unattributed && !!g.sender_label && !!g.group;
+const attributed = (g: GuestStamp): g is GuestStamp & { sender: string; group: string } => !g.unattributed && !!g.sender && !!g.group;
 
 /** `[outside guest · <sender> · <group> · <YYYY-MM-DD> · not the owner's words, not verified]`, or the unattributed form. */
 export function guestWarningLine(guest: GuestStamp): string {
   if (!attributed(guest)) return `[outside guest · unattributed · ${NOT_OWNER}]`;
-  return `[outside guest · ${escapeGuestLabel(guest.sender_label)} · ${escapeGuestLabel(guest.group)} · ${guest.saved_at ?? 'undated'} · ${NOT_OWNER}]`;
+  return `[outside guest · ${escapeGuestLabel(guest.sender)} · ${escapeGuestLabel(guest.group)} · ${guest.saved_at ?? 'undated'} · ${NOT_OWNER}]`;
 }
 
 /** What the remote quote fence names instead of "conversation excerpt" for a guest page (search/transcript-quote.ts). */
 export function guestQuoteLabel(guest: GuestStamp): string {
   if (!attributed(guest)) return `outside guest note, unattributed, ${NOT_OWNER}`;
-  return `outside guest note from ${escapeGuestLabel(guest.sender_label)} in ${escapeGuestLabel(guest.group)}, saved ${guest.saved_at ?? 'undated'}, ${NOT_OWNER}`;
+  return `outside guest note from ${escapeGuestLabel(guest.sender)} in ${escapeGuestLabel(guest.group)}, saved ${guest.saved_at ?? 'undated'}, ${NOT_OWNER}`;
 }
 
 /** The fixed line gbrain appends to a think answer built from guest notes; the model never writes it. */
@@ -92,7 +102,7 @@ export async function loadGuestMarks(engine: Pick<BrainEngine, 'executeRaw'>, pa
         EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = m.page_id) AS promoted
       FROM guest_marks m WHERE m.page_id = ANY($1::int[])`, [ids]);
     for (const r of rows) {
-      out.set(Number(r.page_id), { sender_label: r.sender_label, group: r.group_slug, audience_member: r.audience_member, saved_at: day(r.saved_at),
+      out.set(Number(r.page_id), { sender: r.sender_label, group: r.group_slug, audience_member: r.audience_member, saved_at: day(r.saved_at),
         promoted: r.promoted === true, writer: `${r.writer_kind}:${r.writer_id}` });
     }
   } catch { /* every guest row reads unattributed */ }
@@ -101,16 +111,13 @@ export async function loadGuestMarks(engine: Pick<BrainEngine, 'executeRaw'>, pa
 
 /**
  * The registration-time wrapper (operation-load.ts finalizeOperation): every op that may return stored text has its
- * result stamped by guests/stamp.ts. A brain that never ran `gbrain guests init` pays one config read, answered by the
- * request's config snapshot; an unreadable config is treated as a brain with guest sources, so the stamp still runs.
+ * result stamped by guests/stamp.ts, which skips the trust load only when the sources say no source is a guest source.
  */
 export function withGuestMarks(op: Pick<Operation, 'outputRedaction'>, handler: Operation['handler']): Operation['handler'] {
   if (op.outputRedaction === 'no_stored_text') return handler;
   return async (ctx, params) => {
     const result = await handler(ctx, params);
-    if (!result || typeof result !== 'object' || typeof ctx.engine?.getConfig !== 'function') return result;
-    const present = await ctx.engine.getConfig(GUEST_SOURCES_PRESENT_KEY).catch(() => 'true');
-    if (present !== 'true') return result;
+    if (!result || typeof result !== 'object' || typeof ctx.engine?.executeRaw !== 'function') return result;
     const { stampGuestNotes } = await import('./stamp.ts');
     return stampGuestNotes(ctx, result);
   };
