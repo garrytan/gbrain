@@ -42,6 +42,7 @@ import { quoteIdentifier, resolveWriteColumnFromConfigRows } from '../search/emb
 import { pickCanonicalOrigin } from '../persistence/origin-guard.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
+import { scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 
 /**
@@ -211,7 +212,8 @@ export async function deletePage(exec: SqlExecutor, slug: string, opts?: { sourc
  * RETURNING slug projects the actually-deleted set so the caller can filter
  * pagesAffected. #9068: the rows that name a deleted page outside any foreign
  * key (retrieval logs and ratings, the volunteer log, the gazetteer, captured
- * eval slugs) go in the same transaction, after the page row: a feedback write
+ * eval slugs; #9146: the slug-keyed stores and the slug's write-gate holds) go
+ * in the same transaction, after the page row: a feedback write
  * holding the row commits first and is scrubbed, and a later one finds no page.
  */
 export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { sourceId: string }): Promise<string[]> {
@@ -230,6 +232,8 @@ export async function deletePages(exec: SqlExecutor, slugs: string[], opts: { so
       const deleted = rows.map(r => r.slug);
       await scrubPurgedSlugs(tx, opts.sourceId, deleted);
       await scrubPurgedNameStores(tx, opts.sourceId, deleted);
+      await scrubPurgedSlugStores(tx, opts.sourceId, deleted);
+      await scrubPurgedSlugHolds(tx, opts.sourceId, deleted.map(slug => ({ slug })));
       return deleted;
     });
   }
@@ -352,7 +356,7 @@ export async function purgeDeletedPages(
       const { rows: texts } = await tx.run<{ source_id: string; sha: string }>(sqlFragment`
         SELECT DISTINCT m.source_id, encode(m.sha256, 'hex') AS sha FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
         WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - (${hours} || ' hours')::interval${excludedManifest}`);
-      const { rows } = await tx.run<{ slug: string; source_id: string }>(sqlFragment`
+      const { rows } = await tx.run<{ slug: string; source_id: string; deleted_at: string }>(sqlFragment`
         DELETE FROM pages
         WHERE deleted_at IS NOT NULL
           AND deleted_at < now() - (${hours} || ' hours')::interval
@@ -363,7 +367,7 @@ export async function purgeDeletedPages(
           AND ${trustedSql(atomRetirementPurgeHold('pages'))}
           -- GBRA-161: every derived retirement waits out its hold (derivedRetirementPurgeHold).
           AND ${trustedSql(derivedRetirementPurgeHold('pages'))}${excluded}
-        RETURNING slug, source_id
+        RETURNING slug, source_id, deleted_at::text AS deleted_at
       `);
       await expireGonePageFacts(tx, rows);
       if (rows.length) await tx.run(sqlFragment`DELETE FROM page_body_stagings s USING unnest(${rows.map(r => r.source_id)}::text[], ${rows.map(r => r.slug)}::text[]) AS d(source_id, slug)
@@ -373,11 +377,14 @@ export async function purgeDeletedPages(
         WHERE t.source_id = d.source_id AND t.sha256 = decode(d.sha, 'hex')
           AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id = t.source_id AND m.sha256 = t.sha256)
           AND NOT ${trustedSql(stagingNeedsTextSql('t'))}`);
-      const bySource = new Map<string, string[]>();
-      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], r.slug]);
+      const bySource = new Map<string, Array<{ slug: string; deletedAt: string }>>();
+      for (const r of rows) bySource.set(r.source_id, [...bySource.get(r.source_id) ?? [], { slug: r.slug, deletedAt: r.deleted_at }]);
       for (const [sourceId, purged] of bySource) {
-        await scrubPurgedSlugs(tx, sourceId, purged);
-        await scrubPurgedNameStores(tx, sourceId, purged);
+        const slugs = purged.map(p => p.slug);
+        await scrubPurgedSlugs(tx, sourceId, slugs);
+        await scrubPurgedNameStores(tx, sourceId, slugs);
+        await scrubPurgedSlugStores(tx, sourceId, slugs);
+        await scrubPurgedSlugHolds(tx, sourceId, purged);
       }
       const slugs = rows.map((r) => r.slug);
       return { slugs, count: slugs.length };

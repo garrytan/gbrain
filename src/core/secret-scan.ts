@@ -915,14 +915,20 @@ function scanInternal(text: string, opts: ScanOpts): RawHit[] {
         if (m[0].length === 0) p.re.lastIndex++;
         // The entropy gate judges the WHOLE matched value (the rule fired on
         // the assignment's value), before any overlap split.
-        if (p.entropyGated && (!HIGH_ENTROPY_REQUIRES_DIGIT_RE.test(value) || !HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE.test(value))) continue;
+        // A rejected assignment value resumes the scan at the value's start: an
+        // encoded URL value (`token%3Dhttps%3A%2F%2F…`) can span a later
+        // `password=` on the same line, which must still be found (#8265).
+        if (p.entropyGated && (!HIGH_ENTROPY_REQUIRES_DIGIT_RE.test(value) || !HIGH_ENTROPY_REQUIRES_NON_DIGIT_RE.test(value))) { p.re.lastIndex = start; continue; }
         if (p.entropyGated) {
-          if (correctedEntropy(value, work) < HIGH_ENTROPY_MIN_BITS_PER_CHAR) continue;
+          if (correctedEntropy(value, work) < HIGH_ENTROPY_MIN_BITS_PER_CHAR) { p.re.lastIndex = start; continue; }
           if (work) work.gatePassed++;
         }
         if (p.validate) {
           if (work) work.validateCalls++;
-          if (!p.validate(value, subject === line ? m[1] : line.slice(m.index, start))) continue;
+          if (!p.validate(value, subject === line ? m[1] : line.slice(m.index, start))) {
+            if (p.entropyGated) p.re.lastIndex = start;
+            continue;
+          }
         }
         if (!taken) {
           taken = new Uint8Array(line.length);
