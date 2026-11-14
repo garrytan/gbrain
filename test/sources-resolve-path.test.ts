@@ -22,6 +22,10 @@ import { operationsByName } from '../src/core/operations.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { addMember } from '../src/core/access/members.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
 
 const backends = testBackends();
 const home = mkdtempSync(join(tmpdir(), 'gbrain-resolve-path-'));
@@ -78,6 +82,59 @@ const HYPHEN = 'articles/outlet-example/a-headline-.md';
 const TWIN_LOWER = 'sources/meetings/2026-10-19-call-abcdefghxyz.md';
 const TWIN_MIXED = 'sources/meetings/2026-10-19-call-AbCdEfGhXyZ.md';
 const NESTED_INDEX = 'projects/acme-example/index.md';
+
+test('path resolution hides restricted and private page metadata through real member MCP dispatch (#8761)', () => each(async engine => {
+  await addMember(engine, 'alice-resolve');
+  await addMember(engine, 'bob-resolve');
+  const s = await source(engine, {
+    'notes/alice.md': note('Alice').replace('---\n', '---\nreadable_by: [alice-resolve]\n'),
+    'notes/private.md': note('Private').replace('---\n', '---\nvisibility: private\n'),
+    'notes/open.md': note('Open'),
+    'notes/twin.md': note('Twin').replace('---\n', '---\nreadable_by: [alice-resolve]\n'),
+    'restricted/plan.md': note('Folder plan'),
+  });
+  await s.sync();
+  await unmanaged(engine, () => proposeRevision(engine, s.id,
+    [{ id: 'alice-folder', prefix: 'restricted/', readable_by: ['member:alice-resolve'] }], { origin: 'cli', store: 'database' }));
+  await s.legacy({ 'notes/missing.md': note('Missing') });
+  const paths = ['notes/alice.md', 'notes/private.md', 'notes/open.md', 'notes/missing.md', 'notes/TWIN.md', 'restricted/plan.md'];
+  const call = async (member: string) => {
+    const result = await dispatchToolCall(engine, 'sources_resolve_path', { id: s.id, paths },
+      { remote: true, transport: 'stdio', stdioMember: member, sourceId: s.id });
+    expect(result.isError).toBeFalsy();
+    return JSON.parse(result.content[0]!.text) as Awaited<ReturnType<typeof resolveSourcePaths>>;
+  };
+  const bob = await call('bob-resolve');
+  const publicPage = bob.paths[2]!;
+  expect(publicPage.page?.slug).toBe('notes/open');
+  const missing = bob.paths[3]!;
+  const metadata = ({ state, searchable, page, slug_owner, embedding_hold, hold }: typeof missing) =>
+    ({ state, searchable, page, slug_owner, embedding_hold, hold });
+  expect(missing.state).toBe('missing');
+  for (const index of [0, 1, 5]) expect(metadata(bob.paths[index]!)).toEqual(metadata(missing));
+  expect(bob.paths[4]).toMatchObject({ state: 'deleted', page: null, slug_owner: null });
+  const alice = await call('alice-resolve');
+  expect(alice.paths[0]!.page?.slug).toBe('notes/alice');
+  expect(alice.paths[5]!.page?.slug).toBe('restricted/plan');
+  expect(metadata(alice.paths[1]!)).toEqual(metadata(missing));
+  expect(alice.paths[4]!.slug_owner).toEqual({ slug: 'notes/twin', source_path: 'notes/twin.md' });
+  const local = await s.resolve(...paths);
+  expect(local.paths[1]!.page?.slug).toBe('notes/private');
+  const preview = await withCallerAccess({ identity: ['member:bob-resolve'], applyRemoteReadPolicy: true, hidePrivate: true },
+    () => operationsByName.sources_resolve_path!.handler({ engine, remote: false } as never, { id: s.id, paths })) as typeof local;
+  expect(preview.paths.map(metadata)).toEqual(bob.paths.map(metadata));
+  // Deleted rows and stale pages retain their read fences too; neither may
+  // reveal a historical id, deleted state, nor a former origin to another member.
+  await unmanaged(engine, () => engine.softDeletePage('notes/private', { sourceId: s.id }));
+  s.remove('notes/alice.md');
+  await s.legacy({});
+  const after = await call('bob-resolve');
+  expect(after.paths[0]).toMatchObject({ state: 'deleted', page: null, slug_owner: null });
+  expect(metadata(after.paths[1]!)).toEqual(metadata(missing));
+  const operator = await s.resolve(...paths);
+  expect(operator.paths[0]).toMatchObject({ state: 'stale_page', page: { slug: 'notes/alice' } });
+  expect(operator.paths[1]).toMatchObject({ state: 'page_deleted', page: { deleted: true } });
+}), 240_000);
 
 test('the slug gbrain folds a trailing hyphen into resolves to the indexed page, not a missing one', () => each(async engine => {
   const s = await source(engine, { [HYPHEN]: note('Headline') });

@@ -10,7 +10,7 @@ import type { Operation, OperationContext } from './contract.ts';
 import { authTransport, opError } from './contract.ts';
 import { hostFix, hostOnlyError, paramUse } from './op-fix.ts';
 import { isValidSourceId } from '../source-id.ts';
-import { assertSourceInCallerScope, assertSourceInCallerWriteScope, sourceScopeOpts } from './context.ts';
+import { assertSourceInCallerScope, assertSourceInCallerWriteScope, sourceScopeOpts, readPolicyOpts } from './context.ts';
 import { resolveAuthCapabilities, resolveGrantDiagnosis } from '../harness/capabilities.ts';
 
 // --- v0.28: whoami + sources management ---
@@ -379,7 +379,8 @@ const sources_resolve_path: Operation = {
   handler: async (ctx, p) => {
     assertSourceInCallerScope(ctx, p.id as string);
     const { resolveSourcePaths } = await import('../persistence/resolve-paths.ts');
-    return resolveSourcePaths(ctx.engine, p.id as string, (p.paths as unknown[] ?? []).map(String));
+    return resolveSourcePaths(ctx.engine, p.id as string, (p.paths as unknown[] ?? []).map(String),
+      await readPolicyOpts(ctx, { sourceId: p.id as string }));
   },
   cliHints: { name: 'sources_resolve_path', hidden: true },
 };
