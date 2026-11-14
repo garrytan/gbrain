@@ -466,6 +466,35 @@ for (const kind of testBackends()) {
       await expectCarriedHidden(k);
     }, 240_000);
 
+    test('a consented purge keeps an origin its preview held, even when the blocker clears between the preview and the run', async () => {
+      const k = 'heldrun';
+      await seed(k);
+      const origin = slugOf(k, 'origin'), digest = slugOf(k, 'digest'), plain = slugOf(k, 'plain');
+      await softDelete(origin);
+      await backdate(origin);
+      await softDelete(digest);
+      await softDelete(plain);
+      await backdate(plain);
+      const originCarry = await import('../src/core/repair/origin-carry.ts');
+      const real = originCarry.forecastCarry;
+      const forecast = spyOn(originCarry, 'forecastCarry').mockImplementation(async (...args: Parameters<typeof real>) => {
+        const read = await real(...args);
+        expect(read.hold.map(o => o.slug)).toContain(origin);
+        const restored = await localCall('restore_page', { slug: digest, request_id: randomUUID(), expected_revision: await revision(digest) });
+        expect(restored.isError ? restored.text : '').toBe('');
+        return read;
+      });
+      let result: Awaited<ReturnType<typeof consentedPurgeDeletedPages>>;
+      try { result = await consentedPurgeDeletedPages(engine, 72, true); } finally { forecast.mockRestore(); }
+      expect(result.slugs).toContain(plain);
+      expect(result.slugs).not.toContain(origin);
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      expect((await fm(digest)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await nothingKept(origin);
+      await expectCarriedHidden(k);
+    }, 240_000);
+
     test('a held owner purge names gbrain delete <slug> --purge in its receipt and in doctor; finished through it as a new request, it writes the purge tombstones', async () => {
       const k = 'finish';
       await seed(k);

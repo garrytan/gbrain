@@ -10,7 +10,7 @@
  * page_links, chunk_relations via existing FKs.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import { purgeConsentRequest, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../core/persistence/purge-deleted.ts';
+import { notHeld, purgeConsentRequest, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../core/persistence/purge-deleted.ts';
 import { PURGE_PARK_LIMIT } from '../core/persistence/purge-parks.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { consentGate } from '../core/consent-cli.ts';
@@ -86,7 +86,7 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
   const authorized = await consentGate(purgeConsentRequest(selection.count, olderThanHours, json, args, retryParked, retried, selection.sync_unreviewed), { json });
   if (!authorized) return;
 
-  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours, { retryParked, release: forecast.release.map(origin => origin.id) });
+  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours, { retryParked, release: forecast.release.map(origin => origin.id), only: notHeld(forecast) });
   if (json) {
     console.log(JSON.stringify({ older_than_hours: olderThanHours, count: result.count, slugs: result.slugs,
       ...(result.capacity_deferred ? { capacity_deferred: result.capacity_deferred } : {}), ...(result.blocked.length ? { blocked: result.blocked } : {}) }, null, 2));

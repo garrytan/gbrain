@@ -96,8 +96,14 @@ export async function consentedPurgeDeletedPages(engine: BrainEngine, olderThanH
   const preview = await selectPurgeCandidates(engine, olderThanHours, { forecast });
   if (preview.count === 0) return { status: 'purged', count: 0, slugs: [] };
   await requireConsent(purgeConsentRequest(preview.count, olderThanHours, false, yes ? ['--yes'] : [], false, 0, preview.sync_unreviewed));
-  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours, { release: forecast.release.map(origin => origin.id) });
+  const result = await purgeDeletedPagesCoordinated(engine, olderThanHours, { release: forecast.release.map(origin => origin.id), only: notHeld(forecast) });
   return { status: result.failed ? 'partial' : 'purged', count: result.count, slugs: result.slugs, ...(result.blocked.length ? { blocked: result.blocked } : {}) };
+}
+
+/** GST-2689: the run purges no origin its preview left out as held, even when the blocker clears in between. */
+export function notHeld(forecast: CarryForecast): PurgeFilter {
+  const held = new Set(forecast.hold.map(origin => `${origin.source_id}/${origin.slug}`));
+  return page => !held.has(`${page.source_id}/${page.slug}`);
 }
 
 /** An expired tombstone of a source the belief ledger records (unmanaged brain), in scan order, with its live failure record. */
