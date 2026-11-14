@@ -72,8 +72,10 @@ export function roomSummaryLine(meta: RoomMeta): string {
 
 /** The direct path: marks the result, then the notices and stamp as applyCliOpNotices renders them, then the summary. */
 export async function directWithRoom(engine: BrainEngine, op: string, result: unknown, room: string, json: boolean,
-  opts: { sourceId: string; run: <T>(fn: () => Promise<T>) => Promise<T>; retrieval: Record<string, unknown> | null }): Promise<{ result: unknown; stderr?: string }> {
-  const marked = await markCliResult(engine, op, result, room, { sourceId: opts.sourceId, run: opts.run });
+  opts: { sourceId: string; run: <T>(fn: () => Promise<T>) => Promise<T>; retrieval: Record<string, unknown> | null; enforced?: boolean }): Promise<{ result: unknown; stderr?: string }> {
+  // An enforced member (GBRAIN_ENFORCED_MEMBER) is not the trusted owner: it may not ask what another room reads here.
+  const marked = await markCliResult(engine, op, result, room, { sourceId: opts.sourceId, run: opts.run,
+    ...(opts.enforced ? { unavailable: { reason: 'not_permitted' as const, detail: 'a CLI under GBRAIN_ENFORCED_MEMBER marks no room; ask through the connection bound to that member' } } : {}) });
   const out = applyCliOpNotices(cliRoomResult(marked, json), json, { op, retrieval: opts.retrieval });
   return { result: out.result, stderr: (out.stderr ?? '') + (json ? '' : roomSummaryLine(marked.meta)) };
 }

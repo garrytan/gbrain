@@ -906,6 +906,9 @@ export async function runThink(
         synthesisOk: false,  // #1698: no LLM ran — never persist this
         synthesis_status: modelProblem ? 'model_unusable' : 'no_llm',
         ...(stubExtractive ? { extractive: stubExtractive } : {}),
+        // GBRA-498: the extractive digest quotes the gathered pages, so a room marks this answer from them too.
+        taint_refs: [...gather.pages.map(pg => ({ table: 'pages' as const, sourceId: pg.source_id ?? 'default', slug: pg.slug })),
+          ...gather.takes.map(t => ({ table: 'takes' as const, id: t.take_id }))],
         usage: null,         // [E2] no LLM ran — no accounting
         ...windowMeta,
         diagnostics: {

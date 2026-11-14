@@ -743,7 +743,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const { result, stderr: noticeText } = cliOpts.room === undefined ? applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta }) : await (await import('./room.ts')).directWithRoom(engine, op.name, normalizeLocalResult(rawResult), cliOpts.room, params.json === true, { sourceId: ctx.sourceId, run: asPreview.run, retrieval: lastRetrievalMeta }); // GBRA-498: --room marks it
+    const { result, stderr: noticeText } = cliOpts.room === undefined ? applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta }) : await (await import('./room.ts')).directWithRoom(engine, op.name, normalizeLocalResult(rawResult), cliOpts.room, params.json === true, { sourceId: ctx.sourceId, run: asPreview.run, retrieval: lastRetrievalMeta, enforced: !!enforcedClass }); // GBRA-498: --room marks it
     if (enforced && await enforced.namesHiddenPage(engine, command, result)) {
       process.stderr.write(enforced.WITHHELD_LINE(command));
       return;
@@ -843,7 +843,7 @@ async function runThinClientRouted(
       await printPagedPage(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })), params, writeStdoutFinal);
       return null;
     }));
-    if (raw === null) return;
+    if (raw === null) { if (cliOpts.room !== undefined) process.stderr.write((await import('./room.ts')).roomNotMarkedLine(op.cliHints?.name ?? op.name)); return; } // GBRA-498: a paged page carries no marks
     // T15/FOV-1: lift the server's retrieval meta off the envelope before
     // unpacking (old servers lack _meta — capture is simply skipped).
     const envelopeMeta = extractResponseMeta(raw);

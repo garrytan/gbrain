@@ -22,11 +22,11 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { createPersistenceIpcProvider } from '../src/core/persistence/provider.ts';
-import { persistenceSocketPathForConfig, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
+import { persistenceSocketPathForConfig, requestPersistenceOperation, startPersistenceIpcServer } from '../src/core/persistence/ipc.ts';
 import { runPersistenceAdministration } from '../src/core/persistence/administration.ts';
 import { addMember } from '../src/core/access/members.ts';
 import { clearOwner, setOwner } from '../src/core/access/owner.ts';
-import { delegatedRoom, routedRoom } from '../src/cli/room.ts';
+import { delegatedRoom, roomSummaryLine, routedRoom } from '../src/cli/room.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -41,8 +41,8 @@ function env(home: string): Record<string, string> {
   return { ...out, HOME: home, GBRAIN_HOME: home, GBRAIN_SELF_UPGRADE_MODE: 'off', GBRAIN_SKIP_STARTUP_HOOKS: '1', GBRAIN_SWEEP: '0', GBRAIN_NO_BANNER: '1' };
 }
 
-async function cli(root: string, home: string, args: string[], stdin?: string) {
-  const proc = Bun.spawn(['bun', 'run', CLI, ...args], { cwd: root, env: env(home), stdin: stdin === undefined ? 'ignore' : new Blob([stdin]), stdout: 'pipe', stderr: 'pipe' });
+async function cli(root: string, home: string, args: string[], stdin?: string, extra: Record<string, string> = {}) {
+  const proc = Bun.spawn(['bun', 'run', CLI, ...args], { cwd: root, env: { ...env(home), ...extra }, stdin: stdin === undefined ? 'ignore' : new Blob([stdin]), stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
@@ -58,7 +58,7 @@ const marks = (items: Array<{ slug?: string; room_access?: unknown }>) => Object
 
 describe('--room on the direct path (repo-less PGLite)', () => {
   let root: string, home: string, db: string;
-  const run = (args: string[], stdin?: string) => cli(root, home, args, stdin);
+  const run = (args: string[], stdin?: string, extra?: Record<string, string>) => cli(root, home, args, stdin, extra);
   async function withBrain<T>(fn: (engine: BrainEngine) => Promise<T>): Promise<T> {
     const config = { engine: 'pglite' as const, database_path: db };
     const engine = await createEngine(config);
@@ -135,6 +135,27 @@ describe('--room on the direct path (repo-less PGLite)', () => {
   }, 180_000);
 });
 
+describe('--room under an enforced member', () => {
+  test('a CLI held to one member may not ask what another room reads: every item unknown (not_permitted), the read unchanged', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gb-room-enforced-'));
+    const home = join(root, 'home'), db = join(root, 'db');
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: db }));
+    const config = { engine: 'pglite' as const, database_path: db };
+    const engine = await createEngine(config);
+    await engine.connect(config);
+    try { await engine.initSchema(); await seed(engine); } finally { await disposePersistenceConsumer(engine); await engine.disconnect(); }
+    try {
+      const out = await cli(root, home, ['list', '--json', '--room', 'owner-example'], undefined, { GBRAIN_ENFORCED_MEMBER: 'alice-example' });
+      expect(out.exitCode).toBe(0);
+      const doc = JSON.parse(out.stdout) as { results: Array<Record<string, unknown>>; _meta: { room: Record<string, unknown> } };
+      expect(Object.keys(marks(doc.results))).toEqual([OPEN]);
+      expect(Object.values(marks(doc.results))).toEqual([{ readable: 'unknown', reason: 'not_permitted' }]);
+      expect(doc._meta.room).toMatchObject({ complete: false, unavailable: 'not_permitted' });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  }, 180_000);
+});
+
 describe('--room through a live PGLite owner', () => {
   let dir: string;
   let engine: PGLiteEngine;
@@ -183,5 +204,30 @@ describe('--room fallbacks for a brain that cannot mark', () => {
     const marked = { principals: ['member:alice-example'], complete: true };
     const fromHost = await routedRoom('list_pages', [{ slug: OPEN, room_access: { readable: true } }], marked, 'alice-example');
     expect({ local: fromHost.local, meta: fromHost.marked.meta }).toEqual({ local: false, meta: marked as never });
+  });
+
+  test('the summary lists at most 20 items, then how many more', () => {
+    const above = Array.from({ length: 23 }, (_, i) => ({ source_id: 'default', slug: 'notes/p' + i, reason: 'readers' }));
+    const text = roomSummaryLine({ principals: ['member:alice-example'], declared_by: 'harness', complete: true, counts: { items: 23, readable: 0, above: 23, unknown: 0 }, by_reason: { readers: 23 }, above });
+    expect(text.trimEnd().split('\n').length).toBe(22);
+    expect(text).toContain('and 3 more');
+  });
+});
+
+describe('the owner socket accepts a room only as a bounded string', () => {
+  const request = (extra: Record<string, unknown>) => ({ version: 1, kind: 'operation', brain_id: '00000000-0000-4000-8000-000000000001', operation: 'get_page', params: { slug: OPEN },
+    registration: { id: '00000000-0000-4000-8000-000000000002', credential: 'a'.repeat(64), lane: 'cli' }, routing: { source: null, cwd: '/tmp' }, ...extra });
+  // A valid envelope reaches the (absent) socket and fails there; an invalid one is refused before anything is sent.
+  const accepted = async (extra: Record<string, unknown>) => {
+    try { await requestPersistenceOperation(join(tmpdir(), 'gb-room-no-socket-' + process.pid), request(extra) as never, 500); return 'sent'; }
+    catch (e) { return String((e as { code?: unknown }).code) === 'invalid_params' ? 'refused' : 'sent'; }
+  };
+  test('room alone or beside write_wait_ms passes; a non-string, an over-long room or an unknown key does not', async () => {
+    expect(await accepted({})).toBe('sent');
+    expect(await accepted({ room: 'alice-example' })).toBe('sent');
+    expect(await accepted({ room: 'alice-example', write_wait_ms: 10 })).toBe('sent');
+    expect(await accepted({ room: ['alice-example'] })).toBe('refused');
+    expect(await accepted({ room: 'a'.repeat(4097) })).toBe('refused');
+    expect(await accepted({ other: 1 })).toBe('refused');
   });
 });

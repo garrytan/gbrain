@@ -316,7 +316,8 @@ for (const kind of testBackends()) {
       const out = await call('owner', 'think', { question: 'harbor ledger planning' }, { room: { header: 'alice-example' } });
       expect(out.isError).toBe(false);
       const access = (out.json as { room_access?: { readable: unknown; reason?: string } }).room_access;
-      expect(access).toBeDefined();
+      // Marked from the evidence the synthesis retrieved: with none kept, the mark would be not_identified.
+      expect(access?.reason).not.toBe('not_identified');
       expect(out.meta?.room).toMatchObject({ counts: { items: 1 } });
       expect(out.text).not.toContain('taint_refs');
     }, 120_000);

@@ -419,7 +419,7 @@ async function assessRoomUnguarded(engine: BrainEngine | null, input: RoomInput)
     const gates = s.ref ? [s.ref, ...(s.also ?? [])].map(judge) : [];
     const access: RoomAccess = unavailable ? { readable: 'unknown', reason: unavailable.reason }
       : !s.ref ? { readable: 'unknown', reason: 'not_identified' }
-      : gates.find(a => a.readable === false) ?? (s.unknown ? { readable: 'unknown', reason: s.unknown } : undefined) ?? gates.find(a => a.readable === false) ?? gates.find(a => a.readable === 'unknown') ?? { readable: true };
+      : gates.find(a => a.readable === false) ?? (s.unknown ? { readable: 'unknown', reason: s.unknown } : undefined) ?? gates.find(a => a.readable === 'unknown') ?? { readable: true };
     s.holder[ROOM_ACCESS_KEY] = access;
     meta.counts.items++;
     if (access.readable === true) { meta.counts.readable++; continue; }
