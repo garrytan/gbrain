@@ -232,6 +232,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'source_config_shape',
   'source_routing_health',
   'stale_mentions',
+  // GST-1943: storage shelf cards that fail the card schema, interim records not adopted, a hosted shelf directory gone.
+  'storage_manifest',
   'stub_guard_24h',
   // Fact supersession threshold calibrated for the active embedding model (facts/supersession-threshold.ts).
   'supersession_calibration',

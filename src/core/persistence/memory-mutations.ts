@@ -1,4 +1,5 @@
 import { throwIfHeld } from '../trust/gate-outcomes.ts';
+import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 import { forgetRequiresOwner, guardRemoteForget, remoteForgetRaced, supersessionGuarded } from '../trust/supersede-handlers.ts';
 import { storedTrustTier } from '../trust/tier.ts';
 import { randomUUID } from 'node:crypto';
@@ -231,9 +232,10 @@ export async function submitRememberMutation(ctx: OperationContext, params: Reco
   const sub = await submission(ctx, 'remember', params, opts.visibilityDefaulted ? withoutDefault : params);
   if (sub.prior) { const prior = sub.prior; const settled = await waitForWrite(ctx.engine, prior, ctx.config, waitMs ?? ctx.writeWaitMs); return rememberLanded(ctx, settled, throwIfHeld(withRememberTarget(prior, () => writeResponse(settled)))); }
   const { p, sourceId, principal, callerIntent, requestId, clientRequestId } = sub;
-  const [source] = await ctx.engine.executeRaw<RememberSource>(
-    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  const [source] = await ctx.engine.executeRaw<RememberSource & { role: string | null }>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw sourceInactive(sourceId);
+  assertStorageSourceWriter(ctx, sourceId, source.role, {});
   const { parseTtlParam } = await import('../ops/facts.ts');
   const validUntil = parseTtlParam(p.ttl);
   const entity = typeof p.entity === 'string' && !isNullLikeEntity(p.entity) ? p.entity.trim() : null;
@@ -427,9 +429,10 @@ export async function submitForgetMutation(ctx: OperationContext, operation: 'fo
   const hidePrivate = ownerReach || excludePrivate;
   // #5575 I3: a remote caller cannot forget a fact more trusted than its own writes; the owner is asked instead.
   if (remote) await guardRemoteForget(ctx.engine, { sourceId, factId: id, principal, reason, excludePrivate });
-  const [source] = await ctx.engine.executeRaw<RememberSource>(
-    "SELECT incarnation,archived,local_path,config->>'kind' AS kind FROM sources WHERE id=$1", [sourceId]);
+  const [source] = await ctx.engine.executeRaw<RememberSource & { role: string | null }>(
+    "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1", [sourceId]);
   if (!source || source.archived) throw sourceInactive(sourceId);
+  assertStorageSourceWriter(ctx, sourceId, source.role, {});
   const fact = await readForgetTarget(ctx.engine, id, sourceId, worldOnly, targetHidden, false, ownPage);
   if (!fact) throw missing();
   if (remote && supersessionGuarded('agent_written', fact.trust_tier)) {

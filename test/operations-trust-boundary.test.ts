@@ -247,6 +247,9 @@ describe('mcpOperations filter — localOnly ops are excluded from the HTTP-expo
       'purge_deleted_pages',
       'retain_skill_revision',
       'sources_inspect',
+      // GST-1943: the storage manifest's writers run from the trusted local CLI only.
+      'storage_register',
+      'storage_update',
       'sync_brain',
       // W9F item 8: the CLI delegates rebuild to a resident owner over IPC.
       'takes_rebuild',
