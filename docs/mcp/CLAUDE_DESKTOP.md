@@ -53,6 +53,19 @@ installed and signed in). Full walkthrough and troubleshooting:
 
 ## 2. Add the integration
 
+**One-click shortcut.** For a public HTTPS URL, this link opens Claude's
+add-connector form with the name and URL already filled in. For hosted
+[gbrain.io](https://gbrain.io/?ref=claude-desktop):
+
+```
+https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=https%3A%2F%2Fgbrain.io%2Fmcp
+```
+
+`gbrain mcp expose --funnel` prints the same link for your own brain's URL.
+For any other HTTPS endpoint, URL-encode it into `connectorUrl`. Then continue
+at step 5 below. The link uses claude.ai's own page parameters, which Anthropic
+does not document; if the form opens empty, use the manual steps.
+
 1. Open Claude Desktop
 2. Go to **Settings > Integrations**
 3. Click **Add Integration** (or **Add Connector**)

@@ -665,6 +665,16 @@ describe('happy path: linux-systemd', () => {
     expect(f.stdout.join('\n')).toContain('public (Funnel)');
     expect(f.stdout.join('\n')).toContain('bootstrap harness --yes --port 4000');
   });
+  test('--funnel prints the prefilled Claude add-connector link; tailnet-only does not', async () => {
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--funnel'], f.deps)).toBe(0);
+    const out = f.stdout.join('\n');
+    expect(out).toContain(`Claude.ai        https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=${encodeURIComponent(`https://${DNS}/mcp`)}`);
+    expect(out).not.toContain(TOKEN);
+    const g = fakeTailnet();
+    expect(await runMcpExpose(['--yes'], g.deps)).toBe(0);
+    expect(g.stdout.join('\n')).not.toContain('claude.ai/customize/connectors');
+  });
   test('tailnet health pending → exit 2, status pending, receipt still written', async () => {
     const f = fakeTailnet({ tailnetHealthy: false });
     expect(await runMcpExpose(['--yes', '--json'], f.deps)).toBe(2);

@@ -48,6 +48,7 @@ import {
   type ExposeReceipt, type ServiceState, type ServiceTarget, type UninstallServiceResult,
 } from '../core/serve-service.ts';
 import { registrationAdvertise, shellQuote } from '../core/mcp-registration.ts';
+import { claudeConnectorLink } from '../core/claude-connector-link.ts';
 import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
 import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
 
@@ -1037,7 +1038,14 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   s.say(`  Owner login      ${ownerLogin}`);
   s.say('  Native OAuth     gbrain mcp admin register --help (public/confidential PKCE; exact client redirect URIs)');
   s.say('                   The native client starts authorization; the owner separately reviews consent.');
-  s.say(`  Machine client   gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
+  // claude.ai reaches custom connectors from Anthropic's cloud, so the
+  // prefilled add-connector link is only useful once Funnel makes the URL public.
+  const claudeLink = mode === 'funnel' ? claudeConnectorLink(receipt.mcp_url) : null;
+  if (claudeLink) {
+    s.say(`  Claude.ai        ${claudeLink}`);
+    s.say('                   Opens Claude\'s add-connector form with this MCP URL filled in; finish authentication there.');
+  }
+  s.say(`  Machine client  gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
   s.say(`                     --url ${receipt.mcp_url} \\`);
   s.say(`                     --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`);
   s.say(`  Machine install  gbrain connect ${receipt.mcp_url} --harness <id> --credentials-file /private/<name>.json --install`);
