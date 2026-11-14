@@ -3,14 +3,15 @@
  * (#8903). Protects: a commit changing the allowlist a managed root in a subfolder loads is a gate change, and that
  * allowlist's path globs match paths relative to the root; an uncommitted allowlist is honoured (documented: it is the
  * user's local answer to the scan); a strict door commit whose blob a clean filter changed is scanned, and one with a
- * harmless filter still publishes; every commitAndPush scans what it publishes (the derived write-through passes no flag),
- * only what the remote lacks, a missing tracking ref included; a replace ref on HEAD changes nothing a Git effect or a
+ * harmless filter still publishes; every commitAndPush scans what it publishes, with or without a scan option, only what
+ * the remote lacks, a missing tracking ref included; on a managed worktree the derived write-through only commits, and a
+ * commit holding a token behind it shows in doctor git_convergence, whose push fix refuses until it is allowlisted; a replace ref on HEAD changes nothing a Git effect or a
  * door commit holds; a Git effect target whose staged entry another process reset is never reported committed with its
  * old blob, and the retry commits it.
  * Seams: a PATH git wrapper for the index race; real repositories, bare remotes and synthetic credentials otherwise.
  * GBRAIN_HOME, PATH and the file transport switch are process-wide.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -23,9 +24,16 @@ import { rangeSecretRefusal, scanRange } from '../src/core/git/range-secret-scan
 import { resetLedgerCacheForTests } from '../src/core/git/commit-ledger.ts';
 import { git } from './helpers/git-publication.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { activateSharedSkillPersistence } from '../src/core/persistence/skill-activation.ts';
+import { gitConvergenceCheck } from '../src/commands/doctor/checks/git-convergence.ts';
+import { scanText } from '../src/core/secret-scan.ts';
+import { bindSource, createGitCoalescingFixture, harden } from './helpers/git-coalescing-fixture.ts';
+
+const { makeRepo, withBrain, dispose } = createGitCoalescingFixture('scan-gaps');
 
 const token = 'ghp_' + 'Wq3e'.repeat(9);
 const dirs: string[] = [];
+afterAll(dispose);
 afterEach(() => { resetLedgerCacheForTests(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 interface Checkout { home: string; top: string; remote: string }
@@ -57,11 +65,38 @@ const outcome = (run: () => unknown) => Promise.resolve().then(run).then(value =
 const sha256 = (text: string) => createHash('sha256').update(text).digest('hex');
 const refusalOf = (c: Checkout, root: string, base: string, target: string) => withEnv(env(c), async () => rangeSecretRefusal(root, base, target, scanRange(root, base, target))?.code ?? null);
 const tracked = (root: string, commit: string) => git(root, '--no-replace-objects', 'ls-tree', '-r', '--name-only', commit).split('\n').filter(Boolean);
-/** A derived write-through's publish: commitAndPush with no scan option, as src/core/cycle/derived-write-through.ts calls it. */
-const derivedPublish = (c: Checkout, body: string) => {
+/** A publish that passes no scan option (the options src/core/cycle/derived-write-through.ts passes), on a checkout that is not a managed worktree, so commitAndPush publishes. */
+const unscannedPublish = (c: Checkout, body: string) => {
   writeFileSync(join(c.top, 'brain', 'notes', 'b.md'), body);
   return withEnv(env(c), () => outcome(() => commitAndPush({ repo: c.top, cwd: c.top, paths: ['brain/notes/b.md'], message: 'gbrain: derived write-through' })));
 };
+
+describe('a managed worktree\'s derived write-through behind a commit holding a token', () => {
+  test('commits only; doctor git_convergence warns at once, its push fix refuses publish_secret_found, and an allowlisted fingerprint releases it', () => withBrain('pglite', async ({ engine, home }) => {
+    const repo = makeRepo(home, 'content');
+    await bindSource(engine, 'default', repo);
+    await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
+    harden(repo);
+    const before = git(repo.root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]!.trim();
+    scriptCommit(repo.root, { 'notes/deploy.md': `Deploy token ${token}\n` });
+    writeFileSync(join(repo.root, 'notes', 'generated.md'), 'Generated page\n');
+    const derived = await outcome(() => commitAndPush({ repo: repo.root, cwd: repo.root, paths: ['notes/generated.md'], message: 'gbrain: derived write-through' }));
+    expect(derived).toMatchObject({ code: null, value: { outcome: 'committed_local', managed: true, unpublished: 2 } });
+    expect(git(repo.root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]!.trim()).toBe(before);
+
+    const check = await gitConvergenceCheck(engine);
+    expect(check).toMatchObject({ status: 'warn', fix: { argv: ['gbrain', 'git', 'commit-push', '--push-only', '--keep-checkout', '--scan-secrets', '--path', repo.root], actor: 'agent' } });
+    expect((check!.details as { roots: unknown[] }).roots).toEqual([expect.objectContaining({ root: repo.root, ahead: 2, stranded: true })]);
+    const fix = await outcome(() => commitAndPush({ repo: repo.root, cwd: repo.root, paths: [], pushOnly: true, keepCheckout: true }));
+    expect(fix.code).toBe('publish_secret_found');
+    expect(git(repo.root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]!.trim()).toBe(before);
+
+    writeFileSync(join(repo.root, '.gbrain-scan-allow'), `${scanText(`Deploy token ${token}\n`)[0]!.fingerprint}\n`);
+    expect((await outcome(() => commitAndPush({ repo: repo.root, cwd: repo.root, paths: [], pushOnly: true, keepCheckout: true }))).code).toBeNull();
+    expect(git(repo.root, 'ls-remote', 'origin', 'refs/heads/main').split('\t')[0]!.trim()).toBe(head(repo.root));
+    expect((await gitConvergenceCheck(engine))?.status).toBe('ok');
+  }), 300_000);
+});
 
 describe('a managed root below the repository top level', () => {
   test('a commit changing the root\'s own .gbrain-scan-allow is a gate change, so the secret it hides is not pushed', async () => {
@@ -142,11 +177,11 @@ describe('a strict (canonical: git) door commit through a clean filter', () => {
 });
 
 describe('every commitAndPush scans what it publishes', () => {
-  test('a publish that passes no scan option (the managed derived write-through) does not publish a script commit holding a token', async () => {
+  test('a publish that passes no scan option does not publish a script commit holding a token', async () => {
     const c = checkout();
     const before = remoteTip(c);
     scriptCommit(c.top, { 'brain/notes/deploy.md': `Deploy token ${token}\n` });
-    const result = await derivedPublish(c, 'Generated page\n');
+    const result = await unscannedPublish(c, 'Generated page\n');
     expect(result.code).toBe('publish_secret_found');
     expect(remoteTip(c)).toBe(before);
     expect(git(c.top, 'show', 'HEAD:brain/notes/b.md')).toBe('Generated page\n');
@@ -156,7 +191,7 @@ describe('every commitAndPush scans what it publishes', () => {
     const c = checkout();
     scriptCommit(c.top, { 'brain/notes/deploy.md': `Deploy token ${token}\n` });
     git(c.top, 'push', '-q');
-    const result = await derivedPublish(c, 'Generated page\n');
+    const result = await unscannedPublish(c, 'Generated page\n');
     expect(result.code).toBeNull();
     expect(remoteTip(c)).toBe(head(c.top));
   }, 60_000);
