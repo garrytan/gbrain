@@ -233,8 +233,13 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
  * derived_from slug without `.md`), and every tie is an equality join of those references, or of concept-provenance
  * links through idx_links_to, to the cleared pages. The postimage is the pages table shadowed with the window's keys
  * removed; its privacy rules read only candidate pages and the pages they name.
+ *
+ * GST-2689 `remove`: the postimage is the pages table with the cleared pages removed instead (their rows, so the links to
+ * them go too), `keys` is unused, an atom also ties to the page a rename moved its `source_slug` to (slug_aliases and
+ * slug_rename_history, read before a purge scrubs them), and a page that names readers is never returned.
  */
-export function dependentsSql(): string {
+export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
+  const remove = mode === 'remove';
   return `WITH cleared AS MATERIALIZED (
       SELECT * FROM unnest($1::integer[], $2::text[], $3::text[], $4::text[]) AS c(id, source_id, slug, keys)),
     refs AS MATERIALIZED (SELECT p.id, p.source_id, p.slug, p.deleted_at, r.kind, r.ref FROM pages p
@@ -242,7 +247,11 @@ export function dependentsSql(): string {
         UNION ALL SELECT 'depth', p.frontmatter->'event'->>'depth'
         UNION ALL SELECT 'declared', regexp_replace(declared.slug, '\\.md$', '') FROM jsonb_array_elements_text(
           CASE jsonb_typeof(p.frontmatter->'derived_from') WHEN 'array' THEN p.frontmatter->'derived_from'
-            WHEN 'string' THEN jsonb_build_array(p.frontmatter->'derived_from') ELSE '[]'::jsonb END) AS declared(slug)) r
+            WHEN 'string' THEN jsonb_build_array(p.frontmatter->'derived_from') ELSE '[]'::jsonb END) AS declared(slug)${remove ? `
+        UNION ALL SELECT 'source_slug', renamed.canonical_slug FROM slug_aliases renamed WHERE renamed.source_id = p.source_id
+          AND renamed.alias_slug = p.frontmatter->>'source_slug' AND renamed.notes = 'rename'
+        UNION ALL SELECT 'source_slug', moved.new_slug FROM slug_rename_history moved WHERE moved.source_id = p.source_id
+          AND moved.old_slug = p.frontmatter->>'source_slug'` : ''}) r
       WHERE p.source_id = ANY($2::text[]) AND r.ref IS NOT NULL),
     hits AS MATERIALIZED (SELECT r.id, r.source_id, r.slug, r.deleted_at, r.kind, c.id AS cleared_id
       FROM refs r JOIN cleared c ON c.source_id = r.source_id AND c.slug = r.ref),
@@ -256,13 +265,13 @@ export function dependentsSql(): string {
     candidates AS MATERIALIZED (SELECT DISTINCT t.id, t.cleared_id FROM ties t WHERE NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = t.id)),
     public_after AS MATERIALIZED (WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
           CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
-        FROM pages pg LEFT JOIN cleared c ON c.id = pg.id)
+        FROM pages pg LEFT JOIN cleared c ON c.id = pg.id${remove ? ' WHERE c.id IS NULL' : ''})
       SELECT after_clear.id FROM (SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM (SELECT DISTINCT id FROM candidates) k
         JOIN pages a ON a.id = k.id OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear')})
     SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
         WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
       FROM candidates cand JOIN pages p ON p.id = cand.id
-      WHERE cand.id IN (SELECT id FROM public_after) AND NOT ${privacyPartSql('p')}
+      WHERE cand.id IN (SELECT id FROM public_after) AND NOT ${privacyPartSql('p')}${remove ? " AND NOT (p.frontmatter ? 'readable_by')" : ''}
       ORDER BY cand.id, cand.cleared_id`;
 }
 

@@ -1135,6 +1135,10 @@
       },
       {
         "category": "brain",
+        "name": "derived_origin_parked"
+      },
+      {
+        "category": "brain",
         "name": "derivation_purge_sweeps"
       },
       {

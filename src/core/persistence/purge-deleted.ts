@@ -14,6 +14,7 @@ import { linkStreamSlugs } from './page-purge.ts';
 import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
 import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
 import { derivedRetirementPurgeHold } from './derived-retirement-hold.ts';
+import { DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, type DerivedOriginPark } from './derived-origin-hold.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
 import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
@@ -55,6 +56,11 @@ export interface DeletedPagePurge {
    */
   write_deferred?: number;
   deferral?: DreamWriteDeferralPass;
+  /**
+   * GST-2689: expired origins kept because a page derived from them could not be labelled private before the row went
+   * (in `blocked`, code `derived_origin_parked`); doctor derived_origin_parked names each with the page that blocks it.
+   */
+  origin_parked?: number;
   /** Present when `failed > 0`, so the caller cannot report success. */
   error?: { class: string; code: string; message: string };
 }
@@ -97,7 +103,7 @@ interface RecordedTombstone { id: number; source_id: string; slug: string; delet
 async function recordedTombstones(engine: BrainEngine, hours: string): Promise<RecordedTombstone[]> {
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; deleted_us: string }>(`SELECT p.id, p.source_id, p.slug,
       floor(extract(epoch FROM p.deleted_at)*1000000)::bigint::text AS deleted_us FROM pages p
-    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')}
+    WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')} AND ${derivedRetirementPurgeHold('p')} AND ${derivedOriginPurgeHold('p')}
       AND EXISTS (SELECT 1 FROM belief_events e WHERE e.source_id = p.source_id AND e.subject_kind = 'coverage')
     ORDER BY p.deleted_at ASC, p.source_id ASC, p.slug ASC`, [hours]);
   const parks = rows.length ? await readPurgeParks(engine) : new Map<string, PurgePark>();
@@ -145,7 +151,7 @@ async function expireRecordedTombstones(engine: BrainEngine, olderThanHours: num
         await tx.lockPageKeys(slugs.map(slug => ({ sourceId: row.source_id, slug })));
         return withBeliefBatch(tx, { sourceId: row.source_id, slugs, publicationId, op: 'purge_deleted_pages', hardDeleteEvent: 'page.expired', report },
           async () => {
-            const gone = await tx.executeRaw<{ source_id: string; slug: string; deleted_at: string }>(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} AND ${derivedRetirementPurgeHold('pages')} RETURNING source_id, slug, deleted_at::text AS deleted_at`,
+            const gone = await tx.executeRaw<{ source_id: string; slug: string; deleted_at: string }>(`DELETE FROM pages WHERE id = $1 AND deleted_at IS NOT NULL AND deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('pages')} AND ${atomRetirementPurgeHold('pages')} AND ${derivedRetirementPurgeHold('pages')} AND ${derivedOriginPurgeHold('pages')} RETURNING source_id, slug, deleted_at::text AS deleted_at`,
               [row.id, hours]);
             await expireGonePageFacts(tx, gone);
             if (gone.length > 0) {
@@ -211,9 +217,9 @@ export interface PurgeSelection {
   writers: Record<string, boolean>;
 }
 
-/** What keeps an expired tombstone of page `page` (source `source`) out of every managed purge: an archived source, or the rename-recovery, restorable-atom or derived-retirement hold. */
+/** What keeps an expired tombstone of page `page` (source `source`) out of every managed purge: an archived source, or the rename-recovery, restorable-atom, derived-retirement or derived-origin hold. */
 export function purgeHoldsSql(page: string, source: string): string {
-  return `NOT ${source}.archived AND ${identityDowngradePurgeHold(page)} AND ${atomRetirementPurgeHold(page)} AND ${derivedRetirementPurgeHold(page)}`;
+  return `NOT ${source}.archived AND ${identityDowngradePurgeHold(page)} AND ${atomRetirementPurgeHold(page)} AND ${derivedRetirementPurgeHold(page)} AND ${derivedOriginPurgeHold(page)}`;
 }
 
 export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean } = {}): Promise<PurgeSelection> {
@@ -281,7 +287,7 @@ export async function selectPurgeCandidates(engine: BrainEngine, olderThanHours:
  * and so does an unmanaged recorded tombstone whose delete failed (GBRA-130 A-49: `failed` without `error`).
  */
 export function purgePhaseStatus(result: DeletedPagePurge): 'ok' | 'warn' | 'fail' {
-  return result.error ? 'fail' : result.inactive || result.parked || result.capacity_deferred || result.failed || result.held || result.write_deferred ? 'warn' : 'ok';
+  return result.error ? 'fail' : result.inactive || result.parked || result.capacity_deferred || result.failed || result.held || result.write_deferred || result.origin_parked ? 'warn' : 'ok';
 }
 
 /** The purge phase summary's note on the pages it did not submit (empty when there are none). */
@@ -290,7 +296,8 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
     result.parked ? `${result.parked} parked (gbrain doctor: purge_parked_pages)` : '',
     result.capacity_deferred ? `${result.capacity_deferred} deferred to the next run (write capacity in use)` : '',
     result.held ? `${result.held} deleted by a managed sync held for review (gbrain pages purge-deleted --dry-run; purge with --yes or restore each)` : '',
-    result.write_deferred ? `${result.write_deferred} deferred: an accepted purge is still publishing (gbrain doctor: dream_write_deferred)` : ''].filter(Boolean);
+    result.write_deferred ? `${result.write_deferred} deferred: an accepted purge is still publishing (gbrain doctor: dream_write_deferred)` : '',
+    result.origin_parked ? `${result.origin_parked} kept: a page derived from each could not be labelled private (gbrain doctor: derived_origin_parked)` : ''].filter(Boolean);
   return parts.length ? ` (${parts.join(', ')})` : '';
 }
 
@@ -316,11 +323,26 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
  * #7130: `automatic` (the cycle purge phase and the `purge` job, which run without consent) keeps every tombstone a
  * managed sync made unless a live page of its source has the same content (sync-delete-tombstones.ts); it is
  * reported `held` (code `sync_delete_unreviewed`). The consented manual purge leaves `automatic` unset.
+ *
+ * GST-2689: every run first labels private the pages an expired origin is the only privacy of (repair/origin-carry.ts);
+ * an origin it could not carry is parked and kept by every path below (code `derived_origin_parked`).
  */
 /** Limits a purge to pages the caller already showed the person (`gbrain maintain --purge --expect`). */
 export type PurgeFilter = (page: { source_id: string; slug: string }) => boolean;
 
 export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter } = {}): Promise<DeletedPagePurge> {
+  const origins = originParked(await (await import('../repair/origin-carry.ts')).carryPrivateBeforePurge(engine, olderThanHours));
+  const result = await purgeExpired(engine, olderThanHours, opts);
+  return origins.length ? { ...result, blocked: [...origins, ...result.blocked], origin_parked: origins.length } : result;
+}
+
+function originParked(parks: DerivedOriginPark[]): DeletedPagePurge['blocked'] {
+  return parks.map(park => ({ source_id: park.source_id, slug: park.slug, code: DERIVED_ORIGIN_PARKED_CODE,
+    reason: `Kept: ${park.blocking_slug ?? 'a page derived from it'} is private only through this page and could not be labelled private (${park.code ?? 'error'}: ${park.reason}); `
+      + 'the next purge tries again once the cause is fixed (gbrain doctor: derived_origin_parked).' }));
+}
+
+async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter }): Promise<DeletedPagePurge> {
   if (!await managedPersistenceEnabled(engine)) {
     // #7130: a brain deactivated after managed syncs keeps their tombstones' records and receipts, so the hold applies here too.
     const kept = opts.automatic ? await readUnreviewedSyncTombstones(engine, olderThanHours) : [];

@@ -3455,6 +3455,17 @@
         {
           "category": "brain",
           "details": {
+            "origins": [],
+            "parked": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No soft-deleted page is kept from the purge to keep a page derived from it private.",
+          "name": "derived_origin_parked",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "sweeps": 0
           },
           "elapsed_ms": "<volatile>",
