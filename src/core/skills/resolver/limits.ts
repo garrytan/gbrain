@@ -10,7 +10,7 @@ export const EXCLUDE_MAX = 1024;
 export const TOP_GATE_MAX = 100;
 /**
  * The gate a turn gets when it sets no top_gate: chosen on harness-evals
- * set P's dev half and checked on its held-out half (docs/guides/skill-resolver.md#top_gate).
+ * set P's dev half and checked on its held-out half (docs/guides/skill-resolver.md#top_gate-the-no-skill-gate-on-by-default).
  */
 export const TOP_GATE_DEFAULT = 0.6;
 

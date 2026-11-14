@@ -116,6 +116,15 @@ export function validatePinned(v: unknown, key: string): string[] {
   throw configInvalid(key, `must be a list of at most ${EXCLUDE_MAX} skill ids`);
 }
 
+/** The top_gate configured for `harness` (its per_harness key, else the global one), or undefined when neither is set. Reads and validates only those two keys, so a bad value elsewhere in the section never affects it. Throws skill_resolver_config_invalid on a bad top_gate. */
+export function configuredTopGate(section: Record<string, unknown>, harness: string): number | undefined {
+  const per = section.per_harness;
+  const mine = harness && per && typeof per === 'object' && !Array.isArray(per) ? (per as Record<string, unknown>)[harness] : undefined;
+  const own = mine && typeof mine === 'object' && !Array.isArray(mine) ? (mine as Record<string, unknown>).top_gate : undefined;
+  if (own !== undefined) return validateTopGate(own, `skills.resolver.per_harness.${harness}.top_gate`);
+  return section.top_gate === undefined ? undefined : validateTopGate(section.top_gate, 'skills.resolver.top_gate');
+}
+
 /** The turn settings the lane uses for `harness`: its per_harness keys, else the global ones. Throws skill_resolver_config_invalid on a bad value anywhere in the section. */
 export function laneTurnSettings(section: Record<string, unknown>, harness: string): LaneTurnSettings {
   const p = 'skills.resolver.';

@@ -24,8 +24,8 @@ import {
   ResolverError, HARNESSES, errorTurnOutput, GBRAIN_VERSION, type BuildInput, type TurnInput,
 } from '../core/skills/resolver/index.ts';
 import { validCatalogName } from '../core/skills/resolver/paths.ts';
-import { readResolverConfig, resolverHarnesses } from '../core/setup/skill-resolver-config.ts';
-import { laneTurnSettings } from '../core/skills/resolver/config.ts';
+import { readResolverConfig, resolverHarnesses, resolverSection } from '../core/setup/skill-resolver-config.ts';
+import { configuredTopGate } from '../core/skills/resolver/config.ts';
 import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
 import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
 import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extension.ts';
@@ -264,11 +264,14 @@ async function runResolve(args: string[]): Promise<void> {
     if (topGate !== undefined) { if (!/^\d+(\.\d+)?$/.test(topGate)) throw new ResolverError('skill_resolve_invalid_input', '--top-gate takes a number from 0 to 100.', { suggestion: 'Example: --top-gate 1.5' }); input.top_gate = Number(topGate); }
     if (input.top_gate === undefined) {
       const read = readResolverConfig(resolverHome());
-      const section = read.state === 'ok' ? (read.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {} : {};
+      const section = read.state === 'ok' ? resolverSection(read.doc) : {};
       try {
-        const configured = laneTurnSettings(section, typeof input.harness === 'string' ? input.harness : '').top_gate;
+        const configured = configuredTopGate(section, typeof input.harness === 'string' ? input.harness : '');
         if (configured !== undefined) input.top_gate = configured;
-      } catch (err) { if (!failOpen) throw err; }
+      } catch (err) {
+        if (!failOpen) throw err;
+        console.error(`gbrain skills resolve: ${(err as Error).message}; using the default top_gate.`);
+      }
     }
     if (p.bools.has('--shadow')) input.shadow = true;
     if (p.bools.has('--reset-session')) input.reset_session = true;

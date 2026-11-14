@@ -155,6 +155,25 @@ describe('gbrain skills (CLI)', () => {
     expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'how much does each person owe', '--top-gate', '100', '--json']).out).block_reason).toBe('weak_top_match');
   }, 60_000);
 
+  test('skills resolve reads only the top_gate keys from config: an invalid unrelated skills.resolver key changes nothing, and an invalid top_gate exits 1, or under --fail-open keeps the default and says so on stderr', () => {
+    const h = tmp();
+    expect(cli(h, ['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-'], SKILLS).code).toBe(0);
+    const cfg = join(h, '.gbrain', 'config.json');
+    writeFileSync(cfg, JSON.stringify({ skills: { resolver: { top_k: 99, pinned: 'oops', min_match: 'loud', per_harness: { nosuch: {}, codex: { top_k: 'x' } } } } }));
+    for (const extra of [[], ['--top-k', '3'], ['--harness', 'codex'], ['--fail-open']]) {
+      const r = cli(h, ['skills', 'resolve', '--text', 'deploy the service to production', '--json', ...extra]);
+      const doc = JSON.parse(r.out);
+      expect({ extra, code: r.code, error: doc.error ?? null, deploy: doc.block.includes('gbrain:deploy'), warned: r.err.includes('top_gate') }).toEqual({ extra, code: 0, error: null, deploy: true, warned: false });
+    }
+    writeFileSync(cfg, JSON.stringify({ skills: { resolver: { top_k: 99, top_gate: 100 } } }));
+    expect(JSON.parse(cli(h, ['skills', 'resolve', '--text', 'deploy the service to production', '--json']).out).block_reason).toBe('weak_top_match');
+    writeFileSync(cfg, JSON.stringify({ skills: { resolver: { top_gate: 'high' } } }));
+    const strict = cli(h, ['skills', 'resolve', '--text', 'deploy the service to production', '--json']);
+    expect([strict.code, JSON.parse(strict.out).error?.code ?? JSON.parse(strict.out).error]).toEqual([1, 'skill_resolver_config_invalid']);
+    const open = cli(h, ['skills', 'resolve', '--text', 'deploy the service to production', '--json', '--fail-open']);
+    expect([open.code, JSON.parse(open.out).block.includes('gbrain:deploy'), open.err.includes('skills.resolver.top_gate')]).toEqual([0, true, true]);
+  }, 60_000);
+
   test('--top-gate empties the block with block_reason weak_top_match, and the output validates', () => {
     const h = tmp();
     expect(cli(h, ['skills', 'index', 'build', '--catalog', 'c', '--from-json', '-'], SKILLS).code).toBe(0);

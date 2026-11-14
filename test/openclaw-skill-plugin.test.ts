@@ -196,7 +196,7 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     expect(out[0].appendContext).not.toContain('email-triage');
   });
 
-  test('skills.resolver.top_gate reaches the plugin: a gate of 100 empties the block, and a gate of 0 (the opt-out) is kept', async () => {
+  test('skills.resolver.top_gate reaches the plugin: a gate of 100 empties the block, and a gate of 0 (the opt-out) is kept and shows a weak match the default gate hides', async () => {
     const b = box();
     mkdirSync(gbrainHome(b), { recursive: true });
     writeFileSync(join(gbrainHome(b), 'config.json'), JSON.stringify({ skills: { resolver: { per_harness: { openclaw: { top_gate: 100 } } } } }));
@@ -210,8 +210,15 @@ describe.skipIf(!NODE)('gbrain setup openclaw --skill-loading', () => {
     writeFileSync(join(gbrainHome(off), 'config.json'), JSON.stringify({ skills: { resolver: { top_gate: 0 } } }));
     expect((await setup(off, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
     expect(readState(off).agents.main).toMatchObject({ top_gate: 0 });
-    const shown = drive(off, [['turn', { text: 'deploy the service to production', id: 'g2' }]]);
+    const weak = 'what runs in production today';
+    const shown = drive(off, [['turn', { text: weak, id: 'g2' }]]);
     expect(shown[0]?.appendContext ?? '').toContain('deploy-service');
+
+    const dflt = box();
+    expect((await setup(dflt, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(readState(dflt).agents.main.top_gate).toBeUndefined();
+    const gated = drive(dflt, [['turn', { text: weak, id: 'g3' }]]);
+    expect(gated[0]?.appendContext ?? '').not.toContain('deploy-service');
   });
 
   test('--dry-run writes nothing', async () => {

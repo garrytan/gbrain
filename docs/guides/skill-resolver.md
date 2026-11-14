@@ -437,6 +437,10 @@ without hiding many right ones. In ordinary use, one-word requests that match on
 where many skills share the request's words, score lower and are the first
 to lose their block. Set `skills.resolver.top_gate` (or
 `per_harness.<harness>.top_gate`) to tune it, or to `0` to turn it off.
+`gbrain skills resolve` reads only those two keys, and only when neither
+`--top-gate` nor the input's `top_gate` is given. A bad value there exits 1
+with `skill_resolver_config_invalid`; under `--fail-open` it prints a warning
+on stderr and keeps the default.
 
 An empty block carries `block_reason`: `ack`, `no_match`, `filtered` (every
 match was excluded or below `min_match_strength`), `weak_top_match` (the best
