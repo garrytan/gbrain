@@ -470,3 +470,4 @@ test/extraction-review-door.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HO
 test/synopsis-sweep-8744.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL)
 test/release-channel-w1.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_RELEASE_CHANNEL) and stubs globalThis.fetch
 test/hermes-snapshot-7067.serial.test.ts	R2	R2: mock.module(node:fs) wraps copyFileSync to inject a writer and WAL checkpoint mid-snapshot
+test/push-secret-scan-gaps.serial.test.ts	global-state	global-state: sets GBRAIN_HOME, PATH (a git wrapper for the index race) and GBRAIN_GIT_ALLOW_FILE_TRANSPORT through withEnv for real commits and pushes to local bare remotes
