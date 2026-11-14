@@ -14,7 +14,7 @@ import { linkStreamSlugs } from './page-purge.ts';
 import { identityDowngradePurgeHold } from '../sync-identity-downgrades.ts';
 import { atomRetirementPurgeHold } from './atom-retirement-hold.ts';
 import { derivedRetirementPurgeHold } from './derived-retirement-hold.ts';
-import { DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, type DerivedOriginPark } from './derived-origin-hold.ts';
+import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, type DerivedOriginPark } from './derived-origin-hold.ts';
 import { writerOnboardingPreflight } from './onboarding.ts';
 import { clearPurgePark, isParked, notePurgeSourceWriter, PURGE_PARK_LIMIT, purgeParkKey, prunePurgeParks, readPurgeParks, recordPurgeFailure, type PurgePark } from './purge-parks.ts';
 import { ItemRun, type ItemFailure } from '../item-failure.ts';
@@ -90,6 +90,7 @@ export function purgeConsentRequest(count: number, olderThanHours: number, json:
 
 /** The `purge_deleted_pages` op (`gbrain call`): the D6 consent first (`yes` is `--yes`); an empty purge set needs none. */
 export async function consentedPurgeDeletedPages(engine: BrainEngine, olderThanHours: number, yes: boolean) {
+  await (await import('../repair/origin-carry.ts')).retryParkedOrigins(engine, olderThanHours);
   const preview = await selectPurgeCandidates(engine, olderThanHours);
   if (preview.count === 0) return { status: 'purged', count: 0, slugs: [] };
   await requireConsent(purgeConsentRequest(preview.count, olderThanHours, false, yes ? ['--yes'] : [], false, 0, preview.sync_unreviewed));
@@ -331,8 +332,10 @@ export function purgePhaseNote(result: DeletedPagePurge): string {
 export type PurgeFilter = (page: { source_id: string; slug: string }) => boolean;
 
 export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter } = {}): Promise<DeletedPagePurge> {
-  const origins = originParked(await (await import('../repair/origin-carry.ts')).carryPrivateBeforePurge(engine, olderThanHours));
+  const carried = await (await import('../repair/origin-carry.ts')).carryPrivateBeforePurge(engine, olderThanHours);
+  const origins = originParked(carried.parks);
   const result = await purgeExpired(engine, olderThanHours, opts);
+  await clearDerivedOriginParks(engine, carried.unparked);
   return origins.length ? { ...result, blocked: [...origins, ...result.blocked], origin_parked: origins.length } : result;
 }
 

@@ -65,7 +65,7 @@ export async function checkDerivedOriginParked(engine: BrainEngine): Promise<Che
   return {
     name: ORIGIN_NAME, status: 'warn', details: { parked: parks.length, truncated: parks.length > origins.length, origins },
     message: `${parks.length} soft-deleted page(s) are kept from the purge, because a page derived from each reads as private only through it and could not be labelled private: ${listed}`
-      + `${parks.length > origins.length ? ` (first ${origins.length} of ${parks.length} shown)` : ''}. Fix the cause each reason names, or give the blocking page its own visibility label; the next purge labels the rest and purges the origin.`,
+      + `${parks.length > origins.length ? ` (first ${origins.length} of ${parks.length} shown)` : ''}. Fix the cause each reason names, or give the blocking page its own visibility label; the next purge labels the rest and frees the origin, and the purge after removes it (a consented gbrain pages purge-deleted does both).`,
     ...(first ? { fix: agentFix(['gbrain', 'repair', 'visibility', '--source', first.source_id, '--slug', first.blocking_slug!],
       'Previews giving the blocking page its own visibility label; nothing is written.', ORIGIN_NAME) } : {}),
   };

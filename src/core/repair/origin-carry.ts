@@ -20,7 +20,7 @@ import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { maintenancePreflight, publishMaintenancePages } from '../persistence/prepared-maintenance.ts';
-import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, parkDerivedOrigin, pruneDerivedOriginParks, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
+import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
 import { privacyPartSql, readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
 import { filesInCheckout, importAtRevision, writeLabelFile } from './label-write.ts';
 import { dependentsSql } from './private-labels.ts';
@@ -152,26 +152,30 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
     if (origin && result.status === 'purged') await clearDerivedOriginParks(ctx.engine, [origin.id]);
     return result;
   }
+  await parkDerivedOrigin(ctx.engine, parked(origin, block));
   const result = origin.deleted ? { status: 'held', slug: origin.slug, source_id: sourceId, request_id: p.request_id }
     : await submitPageMutation(ctx, { operation: 'delete_page', params: { ...p, purge: false, request_id: derivedRequestId(String(p.request_id)) } });
-  await parkDerivedOrigin(ctx.engine, parked(origin, block));
   return { ...result, purge_held: { code: DERIVED_ORIGIN_PARKED_CODE,
     message: `Not purged: ${block.slug ?? 'a page derived from it'} is private only through ${origin.slug} and could not be labelled private (${block.code ?? 'error'}: ${block.reason}). `
       + `${origin.slug} is soft-deleted and parked: no purge removes it until that page carries its own label; gbrain doctor names it as derived_origin_parked.` } };
 }
 
+/** Hours before its cutoff a tombstone is carried, so none crosses the cutoff while the carry runs and is purged uncarried. */
+export const CARRY_LEAD_HOURS = 24;
+
 /**
- * Before a purge: the expired soft-deleted origins get their dependents labelled private, judged against every expired
- * origin at once (a page private through two of them opens only when both go); each one still blocked is parked (the
- * purge skips it) and the rest lose any earlier park. The parks written this run.
+ * Before a purge: the soft-deleted origins expired or expiring within CARRY_LEAD_HOURS get their dependents labelled
+ * private, judged against all of them at once (a page private through two of them opens only when both go); each one
+ * still blocked is parked (the purge skips it). The parks written this run, and the origins whose earlier park no longer
+ * applies: the caller clears those after its purge, so an origin parked when the purge was previewed stays this run.
  */
-export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<DerivedOriginPark[]> {
+export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<{ parks: DerivedOriginPark[]; unparked: number[] }> {
   await pruneDerivedOriginParks(engine);
   const origins = await withoutCallerAccess(async () => {
     await readHonorAliases(engine);
     return engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
       WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${originSql('p')} ORDER BY p.id`,
-      [String(Math.max(0, Math.floor(olderThanHours)))], bounded);
+      [String(Math.max(0, Math.floor(olderThanHours) - CARRY_LEAD_HOURS))], bounded);
   });
   const parks: DerivedOriginPark[] = [];
   const batch = `derived-origin-carry:purge-${randomUUID()}`;
@@ -183,6 +187,14 @@ export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHour
     await parkDerivedOrigin(engine, parked(origin, block));
     parks.push({ ...parked(origin, block), parked_at: new Date().toISOString() });
   }
-  await clearDerivedOriginParks(engine, expired.filter(origin => !blocked.has(origin.id)).map(origin => origin.id));
-  return parks;
+  return { parks, unparked: expired.filter(origin => !blocked.has(origin.id)).map(origin => origin.id) };
+}
+
+/**
+ * A consented manual purge first retries the label for every parked origin and unparks the ones it frees, so its preview
+ * and consent list them (otherwise a brain whose only expired pages are parked origins never gets past "nothing to purge").
+ */
+export async function retryParkedOrigins(engine: BrainEngine, olderThanHours: number): Promise<void> {
+  if (!(await readDerivedOriginParks(engine)).length) return;
+  await clearDerivedOriginParks(engine, (await carryPrivateBeforePurge(engine, olderThanHours)).unparked);
 }

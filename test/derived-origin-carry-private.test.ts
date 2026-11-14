@@ -33,7 +33,7 @@ import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
-import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
+import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { checkDerivedOriginParked } from '../src/commands/doctor/checks/purge-parks.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -270,10 +270,11 @@ for (const kind of testBackends()) {
         .toContainEqual(expect.objectContaining({ slug: origin, blocking_slug: digest }));
       const restored = await localCall('restore_page', { slug: digest, request_id: randomUUID(), expected_revision: await revision(digest) });
       expect(restored.isError ? restored.text : '').toBe('');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
+      expect((await fm(digest)).visibility).toBe('private');
       const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
       expect(result.slugs).toContain(origin);
       await nothingKept(origin);
-      expect((await fm(digest)).visibility).toBe('private');
       __resetPrivateVisibilityCacheForTests();
       for (const who of ['unbound', 'alice'] as const) expect({ who, seen: await seen(who, k, 'digest') }).toEqual({ who, seen: none });
       expect({ owner: await seen('owner', k, 'digest') }).toEqual({ owner: every });
@@ -295,7 +296,67 @@ for (const kind of testBackends()) {
       for (const who of ['unbound', 'alice'] as const) expect({ who, get_page: (await call(who, 'get_page', { slug: page })).text.includes(canaryOf(k, 'digest')) }).toEqual({ who, get_page: false });
     }, 240_000);
 
-    test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and purges', async () => {
+    test('a derived page that expires with its origin but is kept by another hold keeps the origin; restored, it is stamped before the origin goes', async () => {
+      const k = 'cohold';
+      await seed(k);
+      const origin = slugOf(k, 'origin'), digest = slugOf(k, 'digest');
+      await softDelete(origin);
+      await softDelete(digest);
+      await backdate(origin);
+      await backdate(digest);
+      const held = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true, only: page => page.slug !== digest });
+      expect(held.slugs).not.toContain(origin);
+      expect(held.slugs).not.toContain(digest);
+      expect(held.blocked.find(b => b.slug === origin)?.code).toBe('derived_origin_parked');
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      const restored = await localCall('restore_page', { slug: digest, request_id: randomUUID(), expected_revision: await revision(digest) });
+      expect(restored.isError ? restored.text : '').toBe('');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
+      expect((await fm(digest)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      __resetPrivateVisibilityCacheForTests();
+      for (const who of ['unbound', 'alice'] as const) expect({ who, seen: await seen(who, k, 'digest') }).toEqual({ who, seen: none });
+    }, 240_000);
+
+    test('an origin that expires within the next day is carried by this purge, so it cannot cross the cutoff uncarried mid-run', async () => {
+      const k = 'lead';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      await softDelete(origin);
+      await engine.executeRaw("UPDATE pages SET deleted_at = now() - interval '71 hours' WHERE source_id=$1 AND slug=$2", [SRC, origin]);
+      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+      expect(result.slugs).not.toContain(origin);
+      for (const shape of CARRIED) expect({ shape, visibility: (await fm(slugOf(k, shape))).visibility }).toEqual({ shape, visibility: 'private' });
+      await backdate(origin);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+    }, 240_000);
+
+    test('a consented manual purge whose only expired page is a fixed parked origin retries the label and purges it', async () => {
+      const k = 'manual';
+      await seed(k);
+      const origin = slugOf(k, 'origin'), blocking = slugOf(k, 'digest');
+      const checkout = mkdtempSync(join(tmpdir(), 'gbrain-origin-carry-checkout-'));
+      await engine.executeRaw('UPDATE sources SET local_path=$2 WHERE id=$1', [SRC, checkout]);
+      await engine.executeRaw('UPDATE pages SET source_path=$3 WHERE source_id=$1 AND slug=$2', [SRC, blocking, blocking + '.md']);
+      await engine.setConfig('sync.write_through', 'false');
+      try {
+        await softDelete(origin);
+        await backdate(origin);
+        expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
+      } finally {
+        await engine.setConfig('sync.write_through', 'true');
+        await engine.executeRaw('UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug=$2', [SRC, blocking]);
+        await engine.executeRaw('UPDATE sources SET local_path=NULL WHERE id=$1', [SRC]);
+        rmSync(checkout, { recursive: true, force: true });
+      }
+      expect((await selectPurgeCandidates(engine, 72)).count).toBe(0);
+      const result = await consentedPurgeDeletedPages(engine, 72, true);
+      expect(result.slugs).toContain(origin);
+      expect((await fm(blocking)).visibility).toBe('private');
+      await nothingKept(origin);
+    }, 240_000);
+
+    test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and unparks and the one after purges', async () => {
       const k = 'park';
       await seed(k);
       const base = await baseline(k);
@@ -331,10 +392,12 @@ for (const kind of testBackends()) {
         await engine.executeRaw('UPDATE sources SET local_path=NULL WHERE id=$1', [SRC]);
         rmSync(checkout, { recursive: true, force: true });
       }
-      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
-      expect(result.slugs).toContain(origin);
-      await nothingKept(origin);
+      // Fixed: the next purge labels the page and unparks the origin but keeps it, since it was parked when that purge
+      // began (so it was in no preview); the one after purges it.
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
       expect((await checkDerivedOriginParked(engine)).status).toBe('ok');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await nothingKept(origin);
       await expectCarried(k, base.before, base.state, base.proposals);
     }, 240_000);
   });

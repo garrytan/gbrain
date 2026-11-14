@@ -238,7 +238,8 @@ async function planRestore(engine: BrainEngine, scope: RepairScope, selection: S
  * them go too), `keys` is unused, an atom also ties to the page a rename moved its `source_slug` to (slug_aliases and
  * slug_rename_history, read before a purge scrubs them). A page that names readers is judged by the same privacy rules,
  * since readable_by never relaxes them: it is returned when the removal would open it to its listed readers. A soft-deleted
- * page is a candidate too, since a restore brings it back with the origin row gone.
+ * page is a candidate too, since a restore brings it back with the origin row gone, and so is a removed page tied to
+ * another removed page (judged on its own row, against the postimage), since another hold may keep it from the purge.
  */
 export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
   const remove = mode === 'remove';
@@ -265,12 +266,13 @@ export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
       UNION ALL SELECT r.id, h.cleared_id FROM hits h JOIN refs r ON r.source_id = h.source_id AND r.kind = 'depth' AND r.ref = h.slug
         WHERE h.kind = 'declared'${live(' AND r.deleted_at IS NULL')}
       UNION ALL SELECT p.id, t.cleared_id FROM provenance t JOIN pages p ON p.id = t.from_page_id AND p.source_id = t.source_id${live(' AND p.deleted_at IS NULL')}),
-    candidates AS MATERIALIZED (SELECT DISTINCT t.id, t.cleared_id FROM ties t WHERE NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = t.id)),
+    candidates AS MATERIALIZED (SELECT DISTINCT t.id, t.cleared_id FROM ties t WHERE ${remove ? 't.id <> t.cleared_id' : 'NOT EXISTS (SELECT 1 FROM cleared x WHERE x.id = t.id)'}),${remove ? `
+    candidate_rows AS MATERIALIZED (SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM pages a WHERE a.id IN (SELECT id FROM candidates)),` : ''}
     public_after AS MATERIALIZED (WITH pages AS NOT MATERIALIZED (SELECT pg.id, pg.source_id, pg.slug, pg.type, pg.deleted_at,
           CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
         FROM pages pg LEFT JOIN cleared c ON c.id = pg.id${remove ? ' WHERE c.id IS NULL' : ''})
-      SELECT after_clear.id FROM (SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM (SELECT DISTINCT id FROM candidates) k
-        JOIN pages a ON a.id = k.id OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear')})
+      SELECT after_clear.id FROM (${remove ? 'SELECT * FROM candidate_rows' : `SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM (SELECT DISTINCT id FROM candidates) k
+        JOIN pages a ON a.id = k.id`} OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear')})
     SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
         WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
       FROM candidates cand JOIN pages p ON p.id = cand.id
