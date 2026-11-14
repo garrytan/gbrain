@@ -167,6 +167,13 @@
       "git_canonical_brain.git_canonical_brain_pkey": "p PRIMARY KEY (singleton)",
       "git_canonical_brain.git_canonical_brain_singleton_check": "c CHECK ((singleton = 1))",
       "git_canonical_brain.git_canonical_brain_strict_sources_check": "c CHECK ((strict_sources >= 0))",
+      "guest_marks.guest_marks_page_id_fkey": "f FOREIGN KEY (page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "guest_marks.guest_marks_pkey": "p PRIMARY KEY (page_id)",
+      "guest_promotions.guest_promotions_guest_page_id_fkey": "f FOREIGN KEY (guest_page_id) REFERENCES pages(id) ON DELETE CASCADE",
+      "guest_promotions.guest_promotions_pkey": "p PRIMARY KEY (id)",
+      "guest_sources.guest_sources_pkey": "p PRIMARY KEY (source_id)",
+      "guest_sources.guest_sources_source_id_fkey": "f FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE CASCADE",
+      "guest_sources.guest_sources_trust_ceiling_check": "c CHECK ((trust_ceiling = ANY (ARRAY['user_confirmed'::text, 'operator_curated'::text, 'tool_observed'::text, 'agent_written'::text, 'unknown'::text, 'external_untrusted'::text])))",
       "ingest_applied_captures.ingest_applied_captures_pkey": "p PRIMARY KEY (idempotency_key)",
       "ingest_log.ingest_log_pkey": "p PRIMARY KEY (id)",
       "link_edge_proposals.link_edge_proposals_a_to_page_id_fkey": "f FOREIGN KEY (a_to_page_id) REFERENCES pages(id) ON DELETE CASCADE",
@@ -632,6 +639,7 @@
       "gbrain_graduation_fence()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=cd4642fe8deee2a3c14ef41f53862f0a449b2d8a10e47177bd4f5d2e05ce8803",
       "gbrain_guard_deferred_request()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=edf066d51ee76d4037663393271883a12d7fdf4f0f01b7d1faa9e979d552c6c6",
       "gbrain_guard_effect_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=aa01528006dd7029eac6808e0233991524c9de9dc14aaf41f44160d67a747042",
+      "gbrain_guard_guest_records()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=0618c22ca97887e3333e0543478e7e97ecba3ba3c678f6d803a1e6df0900b163",
       "gbrain_guard_inserted_facts()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=78fe53917ec54c7627df4961a7669e0d65f8adfa7e249da1beeb58dc37978a66",
       "gbrain_guard_protocol_activation()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=bb477ec66ecac06e6edba773a94a2834ef4286a0b9e5cfa8b9b8646e003b0b9e",
       "gbrain_guard_request_protocol()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=2709686143e064b577e2b3c8e3e2b1009d52a836a2bc709f5f003a251eb004d2",
@@ -649,7 +657,7 @@
       "gbrain_require_persistence_protocol(required integer)": "RETURNS void kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=af07b7fac60dec0a4fe568217931ac449d32f73b3a53a047b3b02a5f59cb5058",
       "gbrain_snapshot_version_trust()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=a0aa697992ad1777eaba4a1f4d2325dc4f2a98f3ebf9e81325d1b068406ce1cb",
       "gbrain_stamp_revision_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=d446ed1145d8bb9c93cb0ca4aa076a5dc7a5fe07b3e79518adaf1b17b0a51216",
-      "gbrain_stamp_trust_tier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=4610c2e064a0d34dbb66981dd49f15fb6b0b85407327983cde76b905cd626598",
+      "gbrain_stamp_trust_tier()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=8dd3e1a4575fe8d2844a4430d0e66ceb122265ef161f9cecefa3a3edf06a6e5b",
       "gbrain_stamp_version_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=1f8fcf3492a9276c52541f6d353d6c709a123b6db4c84bb9a60d77a82fa1672f",
       "gbrain_stamp_write_attribution()": "RETURNS trigger kind=f lang=plpgsql volatility=v secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=e2dbafe65571fedcadc0441415f58fb5b5209b4c9cefa50e4855f58f0452327c",
       "gbrain_try_jsonb(input text)": "RETURNS jsonb kind=f lang=plpgsql volatility=i secdef=false config=[search_path=pg_catalog, public, pg_temp] body_sha256=11b96a0400158fcb3dbd84255985cd11e473688c53fff64ebf92602fceccbedf",
@@ -848,6 +856,15 @@
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "git_canonical_brain": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "guest_marks": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "guest_promotions": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
+      "guest_sources": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
       "ingest_applied_captures": [
@@ -1331,6 +1348,11 @@
       "files_storage_path_key": "CREATE UNIQUE INDEX files_storage_path_key ON public.files USING btree (storage_path)",
       "gbrain_cycle_locks_pkey": "CREATE UNIQUE INDEX gbrain_cycle_locks_pkey ON public.gbrain_cycle_locks USING btree (id)",
       "git_canonical_brain_pkey": "CREATE UNIQUE INDEX git_canonical_brain_pkey ON public.git_canonical_brain USING btree (singleton)",
+      "guest_marks_audience_saved_idx": "CREATE INDEX guest_marks_audience_saved_idx ON public.guest_marks USING btree (audience_member, saved_at)",
+      "guest_marks_pkey": "CREATE UNIQUE INDEX guest_marks_pkey ON public.guest_marks USING btree (page_id)",
+      "guest_promotions_guest_page_idx": "CREATE INDEX guest_promotions_guest_page_idx ON public.guest_promotions USING btree (guest_page_id)",
+      "guest_promotions_pkey": "CREATE UNIQUE INDEX guest_promotions_pkey ON public.guest_promotions USING btree (id)",
+      "guest_sources_pkey": "CREATE UNIQUE INDEX guest_sources_pkey ON public.guest_sources USING btree (source_id)",
       "idx_access_tokens_hash": "CREATE INDEX idx_access_tokens_hash ON public.access_tokens USING btree (token_hash) WHERE (revoked_at IS NULL)",
       "idx_budget_reservations_expires": "CREATE INDEX idx_budget_reservations_expires ON public.budget_reservations USING btree (expires_at) WHERE (status = 'held'::text)",
       "idx_chat_usage_log_created": "CREATE INDEX idx_chat_usage_log_created ON public.chat_usage_log USING btree (created_at)",
@@ -1742,6 +1764,7 @@
       "facts_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=facts.id",
       "files_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=files.id",
       "graph_generation_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=-",
+      "guest_promotions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=guest_promotions.id",
       "ingest_log_id_seq": "integer start=1 min=1 max=2147483647 increment=1 cycle=false cache=1 owned_by=ingest_log.id",
       "link_edge_proposals_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=link_edge_proposals.id",
       "link_transitions_id_seq": "bigint start=1 min=1 max=9223372036854775807 increment=1 cycle=false cache=1 owned_by=link_transitions.id",
@@ -2793,6 +2816,44 @@
         "columns": [
           "1 singleton integer/int4 NOT NULL DEFAULT 1",
           "2 strict_sources integer/int4 NOT NULL DEFAULT 0"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "guest_marks": {
+        "columns": [
+          "1 page_id integer/int4 NOT NULL",
+          "2 source_id text/text NOT NULL",
+          "3 slug_at_write text/text NOT NULL",
+          "4 audience_member text/text NOT NULL",
+          "5 group_slug text/text NOT NULL",
+          "6 sender_label text/text NOT NULL",
+          "7 saved_at timestamp with time zone/timestamptz NOT NULL",
+          "8 writer_kind text/text NOT NULL",
+          "9 writer_id text/text NOT NULL",
+          "10 request_id text/text NULL",
+          "11 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "guest_promotions": {
+        "columns": [
+          "1 id bigint/int8 NOT NULL DEFAULT nextval('guest_promotions_id_seq'::regclass)",
+          "2 guest_page_id integer/int4 NOT NULL",
+          "3 target_source_id text/text NOT NULL",
+          "4 target_slug text/text NOT NULL",
+          "5 promoted_by_kind text/text NOT NULL",
+          "6 promoted_by_id text/text NOT NULL",
+          "7 promoted_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "8 request_id text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
+      "guest_sources": {
+        "columns": [
+          "1 source_id text/text NOT NULL",
+          "2 writers ARRAY/_text NOT NULL DEFAULT '{}'::text[]",
+          "3 trust_ceiling text/text NOT NULL DEFAULT 'external_untrusted'::text",
+          "4 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },
@@ -4714,6 +4775,8 @@
       "facts.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.facts FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
       "facts.trust_generation_update": "CREATE CONSTRAINT TRIGGER trust_generation_update AFTER UPDATE ON public.facts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN ((old.trust_tier IS DISTINCT FROM new.trust_tier)) EXECUTE FUNCTION gbrain_bump_trust_generation()",
       "facts.trust_tier_stamp": "CREATE TRIGGER trust_tier_stamp BEFORE INSERT OR UPDATE ON public.facts FOR EACH ROW EXECUTE FUNCTION gbrain_stamp_trust_tier()",
+      "guest_marks.guest_marks_immutable": "CREATE TRIGGER guest_marks_immutable BEFORE UPDATE ON public.guest_marks FOR EACH ROW EXECUTE FUNCTION gbrain_guard_guest_records()",
+      "guest_sources.guest_source_database_only": "CREATE TRIGGER guest_source_database_only BEFORE INSERT OR UPDATE OF source_id ON public.guest_sources FOR EACH ROW EXECUTE FUNCTION gbrain_guard_guest_records()",
       "minion_jobs.minion_job_notify": "CREATE TRIGGER minion_job_notify AFTER INSERT OR UPDATE OF status ON public.minion_jobs FOR EACH ROW EXECUTE FUNCTION notify_minion_job_change()",
       "minion_jobs.minion_queue_protocol": "CREATE TRIGGER minion_queue_protocol BEFORE INSERT OR UPDATE ON public.minion_jobs FOR EACH ROW EXECUTE FUNCTION enforce_minion_queue_protocol()",
       "needs_rederive.trust_generation_insert": "CREATE CONSTRAINT TRIGGER trust_generation_insert AFTER INSERT ON public.needs_rederive DEFERRABLE INITIALLY DEFERRED FOR EACH ROW WHEN (true) EXECUTE FUNCTION gbrain_bump_trust_generation()",
@@ -4758,6 +4821,7 @@
       "sources.git_canonical_sources_count_delete": "CREATE TRIGGER git_canonical_sources_count_delete AFTER DELETE ON public.sources FOR EACH ROW WHEN (((old.config ->> 'canonical'::text) = 'git'::text)) EXECUTE FUNCTION gbrain_count_git_canonical_sources()",
       "sources.git_canonical_sources_count_insert": "CREATE TRIGGER git_canonical_sources_count_insert AFTER INSERT ON public.sources FOR EACH ROW WHEN (((new.config ->> 'canonical'::text) = 'git'::text)) EXECUTE FUNCTION gbrain_count_git_canonical_sources()",
       "sources.git_canonical_sources_count_update": "CREATE TRIGGER git_canonical_sources_count_update AFTER UPDATE ON public.sources FOR EACH ROW WHEN (((old.config ->> 'canonical'::text) IS DISTINCT FROM (new.config ->> 'canonical'::text))) EXECUTE FUNCTION gbrain_count_git_canonical_sources()",
+      "sources.guest_source_database_only": "CREATE TRIGGER guest_source_database_only BEFORE UPDATE OF local_path ON public.sources FOR EACH ROW EXECUTE FUNCTION gbrain_guard_guest_records()",
       "sources.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.sources FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
       "tags.managed_writer_guard": "CREATE TRIGGER managed_writer_guard BEFORE INSERT OR DELETE OR UPDATE ON public.tags FOR EACH ROW EXECUTE FUNCTION gbrain_require_managed_writer()",
       "tags.tags_knowledge_revision": "CREATE TRIGGER tags_knowledge_revision AFTER INSERT OR DELETE OR UPDATE ON public.tags FOR EACH ROW EXECUTE FUNCTION gbrain_advance_tag_revision()",

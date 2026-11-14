@@ -1,11 +1,12 @@
 {
   "golden": {
-    "count": 305,
+    "count": 306,
     "gaps": [
       17,
       18,
       19,
-      100
+      100,
+      311
     ],
     "helpers": {
       "ALIAS_TABLES": "cddd37c636af42d862c08ca7754a57dfe9d12576b769fa8f74a5f02c803f67a0",
@@ -100,7 +101,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 310,
+    "latest": 312,
     "records": [
       {
         "handler": {
@@ -5031,6 +5032,19 @@
         "transaction": "absent",
         "verify": "absent",
         "version": 310
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "guest_notes",
+        "sql": {
+          "length": 17488,
+          "sha256": "14c2cc406663fe8ba02179dc31b47c43ea9dbfb9788d4a94ac3c0c7cff4f20e6"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 312
       }
     ],
     "versions": [
@@ -5338,7 +5352,8 @@
       307,
       308,
       309,
-      310
+      310,
+      312
     ]
   },
   "normalizer": "migrations-record-v1"
