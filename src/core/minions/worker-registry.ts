@@ -26,7 +26,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'fs';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { execFileSync } from '../spawn.ts';
 import { gbrainPath, loadConfig } from '../config.ts';
 import { getEffectiveNiceness } from './niceness.ts';
@@ -39,6 +39,8 @@ export interface WorkerRegistryEntry {
   queue: string;
   /** Short identifier of the brain (DB) this worker serves. */
   brain_id: string;
+  /** #9229: normalized target discriminator; absent on pre-upgrade entries. */
+  brain_target_id?: string;
   /** Epoch ms when the worker registered (≈ its own process start). */
   started_at: number;
   /** Niceness the worker asked for (the `--nice` value), or null if none. */
@@ -84,23 +86,62 @@ export function workerRegistryDir(): string {
   return gbrainPath('workers');
 }
 
-/**
- * Short, stable id for the active brain (database). Best-effort: derived from
- * the configured DB url/path. Returns 'default' when nothing is configured.
- * Used to tag + filter registry entries so multiple DBs under one GBRAIN_HOME
- * don't cross-report.
- */
-export function currentBrainId(): string {
+// Only transport/driver tuning is irrelevant to worker visibility. Keep unknown
+// parameters (including options, host, user and dbname) so routing differences
+// cannot silently cross-report. This is observability, not an authorization key.
+const WORKER_DRIVER_PARAMS = new Set([
+  'connect_timeout', 'idle_timeout', 'max_lifetime', 'application_name', 'prepare',
+  'sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'sslcrl', 'sslpassword',
+  'password',
+]);
+
+function brainHash(key: string): string {
+  // Preserve the old hash for exact-spelling compatibility with live workers
+  // registered before #9229. A hash alone cannot recover their original URL.
+  let h = 5381;
+  for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+function brainIds(): { current: string; legacy: string } {
   try {
     const cfg = loadConfig();
     const key = cfg?.database_url ?? cfg?.database_path ?? 'default';
-    // Tiny non-crypto hash (djb2) — we only need a stable short discriminator.
-    let h = 5381;
-    for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) | 0;
-    return (h >>> 0).toString(36);
+    const legacy = brainHash(key);
+    let target: string;
+    if (cfg?.database_url) {
+      try {
+        const url = new URL(cfg.database_url);
+        // Incomplete and non-Postgres URLs keep the historical discriminator:
+        // implicit user/database defaults can depend on another process's env.
+        if (!['postgres:', 'postgresql:'].includes(url.protocol) || !url.hostname || !url.username || url.pathname.length <= 1) {
+          return { current: legacy, legacy };
+        }
+        const params = [...url.searchParams.entries()].filter(([name]) => !WORKER_DRIVER_PARAMS.has(name));
+        // Preserve duplicate-value order (a driver may use the last value), but
+        // normalize ordering of distinct keys. No host/port alias guessing.
+        params.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+        // Match the driver's fallback order without coercing invalid PGPORT values.
+        target = JSON.stringify(['postgres', url.hostname.toLowerCase(), url.port || process.env.PGPORT || '5432',
+          decodeURIComponent(url.username), decodeURIComponent(url.pathname), params]);
+      } catch { return { current: legacy, legacy }; }
+    } else if (cfg?.database_path) {
+      target = JSON.stringify(['pglite', resolve(cfg.database_path)]);
+    } else {
+      return { current: legacy, legacy };
+    }
+    return { current: `target-v1-${brainHash(target)}`, legacy };
   } catch {
-    return 'default';
+    return { current: 'default', legacy: 'default' };
   }
+}
+
+/** Historical configured-spelling id, also used in supervisor pidfile names.
+ * Keep those persisted paths and old readers stable across upgrades. Registry
+ * entries additionally carry brain_target_id for equivalent-spelling discovery.
+ * Restart old workers to gain that visibility: a raw hash cannot recover a URL. */
+export function currentBrainId(): string {
+  return brainIds().legacy;
 }
 
 function entryPath(pid: number): string {
@@ -122,10 +163,13 @@ export function registerWorker(info: {
   started_at: number;
   brain_id?: string;
 }): () => void {
+  const ids = brainIds();
   const entry: WorkerRegistryEntry = {
     pid: info.pid,
     queue: info.queue,
-    brain_id: info.brain_id ?? currentBrainId(),
+    brain_id: info.brain_id ?? ids.legacy,
+    // An explicit caller-supplied identity must not acquire the config's target.
+    ...(info.brain_id === undefined ? { brain_target_id: ids.current } : {}),
     started_at: info.started_at,
     nice_requested: info.nice_requested,
     nice_effective: info.nice_effective,
@@ -254,7 +298,7 @@ export function readWorkers(
     throw new WorkerRegistryUnreadableError(dir, errno ?? 'unknown', e);
   }
 
-  const brainId = currentBrainId();
+  const { current: brainId, legacy: legacyBrainId } = brainIds();
   const live: LiveWorker[] = [];
 
   for (const f of files) {
@@ -274,7 +318,9 @@ export function readWorkers(
     }
 
     // Only this brain's workers (multi-DB under one GBRAIN_HOME).
-    if (entry.brain_id && entry.brain_id !== brainId) continue;
+    if (entry.brain_target_id !== undefined) {
+      if (entry.brain_target_id !== brainId) continue;
+    } else if (entry.brain_id && entry.brain_id !== legacyBrainId) continue;
 
     // PID-reuse guard: if the live pid demonstrably started well after this
     // entry was written, the pid was recycled — don't report a stranger.
