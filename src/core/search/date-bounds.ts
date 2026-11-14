@@ -30,7 +30,14 @@ export function resolveDateBoundary(raw: string | undefined, boundary: 'since' |
 }
 
 export function resolveSearchDateBounds(opts?: SearchOpts): Pick<SearchOpts, 'afterDate' | 'beforeDate' | 'afterDateInclusive' | 'beforeDateInclusive'> {
-  const afterDate = resolveDateBoundary(opts?.since ?? opts?.afterDate, 'since');
+  let afterDate = resolveDateBoundary(opts?.since ?? opts?.afterDate, 'since');
+  const sinceDay = opts?.since?.trim();
+  if (sinceDay && /^\d{4}-\d{2}-\d{2}$/.test(sinceDay)) {
+    // Match the UTC calendar-day upper bound. A bare date is cast in the
+    // database session's timezone, excluding early events or adding prior-day
+    // events on non-UTC hosts. Direct legacy afterDate keeps its old behavior.
+    afterDate = `${sinceDay}T00:00:00.000Z`;
+  }
   let beforeDate = resolveDateBoundary(opts?.until ?? opts?.beforeDate, 'until');
   let beforeDateInclusive = opts?.until !== undefined ? true : opts?.beforeDateInclusive;
   const untilDay = opts?.until?.trim();
