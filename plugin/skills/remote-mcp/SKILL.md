@@ -307,7 +307,7 @@ retain its returned ID, verify recall in a new conversation, correct it, and
 withdraw it. Private facts cannot be recalled or withdrawn through these remote
 operations; never change real private content to pass a test. With read-only
 access, observe an authenticated read without adding write authority. Report
-registration, setup delivery, server checks, native calls, and cleanup separately.
+registration, setup delivery, server checks, native calls, and cleanup separately. For two-way use (gbrain reporting back when a long job or cron run finishes), offer `watch_job` after a long submit when it's listed, and `gbrain setup openclaw --wakeshift` on OpenClaw; never run setup unasked.
 
 Host-side check at any time: `gbrain mcp expose --status` (without a receipt
 it reports leftovers as `leftovers_without_receipt`, exit 1, with the exact

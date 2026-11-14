@@ -83,6 +83,7 @@ const CLASSIFIED: Record<string, Args | { skip: string }> = {
   submit_job: skip(JOBS), get_job: skip(JOBS), wait_job: skip(JOBS), list_jobs: skip(JOBS), cancel_job: skip(JOBS), retry_job: skip(JOBS),
   get_job_progress: skip(JOBS), pause_job: skip(JOBS), resume_job: skip(JOBS), replay_job: skip(JOBS), send_job_message: skip(JOBS),
   submit_agent: skip(JOBS), get_agent_job: skip(JOBS), watch_job: skip(JOBS), list_watches: skip(JOBS), unwatch: skip(JOBS),
+  watch_write_request: skip(JOBS), watch_cron: skip(JOBS), accept_wakeshift_terms: skip(JOBS),
   find_orphans: {},
   rank_entities: {},
   get_calibration_profile: {},

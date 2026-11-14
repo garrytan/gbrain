@@ -531,7 +531,7 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 - Don't spawn > 5 concurrent agents without checking `gbrain jobs stats` first
 - Don't resubmit when a submit reports `coalesced` — the work is already queued; monitor the matched job id instead
 - For subagent work, don't use `sessions_spawn` with `runtime: "subagent"` when Minions is available (use `gbrain agent run` instead)
-- Don't poll `get_job` in a tight loop (use `get_job_progress` for lightweight checks)
+- Don't poll `get_job` in a tight loop: after a long submit, offer `watch_job` when it's listed so gbrain reports back when the job finishes (else `get_job_progress`); on OpenClaw offer `gbrain setup openclaw --wakeshift`, never run it unasked
 - Don't run an operation expected to exceed ~2 minutes as a bare background shell — it dies with the session; route through the Durable execution ladder
 - Don't say "I'll report back when it finishes" without an armed deadman or a scheduled check that will actually fire
 - Don't let a deadman post noise when the completion arrived normally — check reported-state first, stay silent, self-delete

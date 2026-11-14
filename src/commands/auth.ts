@@ -201,8 +201,9 @@ async function revoke(name: string) {
     const rows = await sql`
       UPDATE access_tokens SET revoked_at = now()
       WHERE name = ${name} AND revoked_at IS NULL
-      RETURNING 1
+      RETURNING id
     `;
+    for (const row of rows) await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id: String(row.id) });
     if (rows.length === 0) {
       console.error(`No active token found with name "${name}".`);
       process.exit(1);
@@ -233,6 +234,7 @@ async function revokeById(id: string) {
       console.error(`No active token found with id "${id}".`);
       process.exit(1);
     }
+    await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id });
     console.log(`Token "${rows[0].name}" (${id}) revoked.`);
   });
 }
@@ -375,6 +377,7 @@ async function revokeClient(clientId: string) {
         console.error(`No client found with id "${clientId}"`);
         process.exit(1);
       }
+      await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'oauth_client', id: clientId });
       console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
       console.log('Tokens and authorization codes purged via cascade.');
     });
