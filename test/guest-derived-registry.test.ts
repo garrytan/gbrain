@@ -7,6 +7,7 @@
  * that links and dates things, stale link extraction, the timeline walk and fact extraction derive nothing from it and
  * report nothing for it, while an owner page beside it still gets its link.
  */
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -61,8 +62,12 @@ describe('guest pages feed no derived rows (pglite, repo-less)', () => {
     await engine.connect({});
     await engine.initSchema();
     await initGuestSource(engine, 'guests', [`${writer.kind}:${writer.id}`]);
-    const asWriter = <T>(fn: (tx: PGLiteEngine) => Promise<T>) => engine.transaction(tx => withWriteAttribution(tx, { requestId: null, principal: writer,
-      trust: { tier: 'external_untrusted', origin: { channel: 'test' } } }, () => fn(tx as PGLiteEngine)));
+    const request = randomUUID();
+    const asWriter = <T>(fn: (tx: PGLiteEngine) => Promise<T>) => engine.transaction(tx => withWriteAttribution(tx, { requestId: request, principal: writer,
+      trust: { tier: 'external_untrusted', origin: { channel: 'test' } } }, async () => {
+      await tx.executeRaw("SELECT set_config('gbrain.guest_note', $1, true)", [request]);
+      return fn(tx as PGLiteEngine);
+    }));
     await asWriter(tx => importFromContent(tx, 'people/carol-example', '---\ntype: note\ntitle: Carol\n---\n# Carol\n\nA guest page.', { sourceId: 'guests', noEmbed: true } as never));
     await asWriter(tx => importFromContent(tx, 'notes/guest-a', '---\ntype: note\ntitle: Guest\n---\n# Guest\n\nMet [[people/carol-example]] about the ledger.\n\n## Facts\n\n| fact | entity |\n|---|---|\n| Carol likes tea | people/carol-example |\n',
       { sourceId: 'guests', noEmbed: true } as never));

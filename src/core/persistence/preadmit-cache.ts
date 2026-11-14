@@ -23,7 +23,11 @@ import { registerEngineView, writeSwitchOn } from './switches.ts';
 
 export const PREADMIT_TTL_MS = 30_000;
 const BRAIN_SQL = 'SELECT brain_id FROM persistence_brain WHERE singleton=1';
-const SOURCE_SQL = "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1";
+/**
+ * Page admission's source row and, in the same statement, its guest_sources row (GBRA-504). A row worth caching has a
+ * local path, and a source with one is never a guest source (the database refuses it: guest_source_database_only).
+ */
+export const ADMISSION_SOURCE_SQL = "SELECT s.incarnation,s.archived,s.local_path,s.config->>'kind' AS kind,s.config->>'role' AS role,g.writers AS guest_writers,g.trust_ceiling AS guest_trust_ceiling FROM sources s LEFT JOIN guest_sources g ON g.source_id=s.id WHERE s.id=$1";
 const BINDING_SQL = 'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1';
 const WRITER_SQL = new Set([
   'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid',
@@ -35,7 +39,7 @@ function present(sql: string, rows: Array<Record<string, unknown>>): boolean {
   const row = rows[0];
   if (rows.length !== 1 || !row) return false;
   if (sql === BRAIN_SQL) return typeof row.brain_id === 'string';
-  if (sql === SOURCE_SQL) return row.archived === false && typeof row.local_path === 'string' && row.local_path !== '';
+  if (sql === ADMISSION_SOURCE_SQL) return row.archived === false && typeof row.local_path === 'string' && row.local_path !== '';
   if (sql === BINDING_SQL) return typeof row.local_path === 'string' && row.local_path !== '' && row.state === 'active';
   return WRITER_SQL.has(sql) && row.revoked_at == null;
 }
@@ -82,7 +86,7 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
   return registerEngineView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       const text = flat(sql);
-      return text === BRAIN_SQL || text === SOURCE_SQL || text === BINDING_SQL || WRITER_SQL.has(text) ? read(text, params, opts) : target.executeRaw(sql, params, opts);
+      return text === BRAIN_SQL || text === ADMISSION_SOURCE_SQL || text === BINDING_SQL || WRITER_SQL.has(text) ? read(text, params, opts) : target.executeRaw(sql, params, opts);
     };
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;

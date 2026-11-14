@@ -19,6 +19,8 @@ import { authSourcesFromGrant, grantFromClient, grantFromRow, grantFromTokenRow 
 import { guestSourceSql } from '../../../core/guests/marker.ts';
 import { GUEST_TRUST_CEILING } from '../../../core/guests/sources.ts';
 import { ownerCredentials } from '../../../core/guests/owner-credentials.ts';
+import { GUEST_NOTES_MIGRATION } from '../../../core/guests/migration.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
 
 const name = 'guest_source';
 type Finding = { level: 'fail' | 'warn'; text: string; fix?: string[] };
@@ -70,6 +72,14 @@ async function sourceFindings(engine: BrainEngine, s: GuestSourceRow): Promise<F
   return out;
 }
 
+/** A schema behind the guest-notes migration has no guest_sources table: only a config can mark a guest source, and nothing enforces it. */
+async function behindGuestMigration(engine: BrainEngine): Promise<Check> {
+  const marked = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE COALESCE(config->>'guest' = 'true', false) ORDER BY id");
+  const behind = `this brain's schema is behind the guest-notes migration (v${GUEST_NOTES_MIGRATION}); gbrain apply-migrations --yes brings it up to date`;
+  if (!marked.length) return infoCheck(name, `Not applicable: ${behind}.`, 'not_applicable');
+  return { name, status: 'warn', message: `Source(s) ${marked.map(s => s.id).join(', ')} say guest: true in their config, but ${behind}; until then nothing enforces their writer list or trust ceiling.` };
+}
+
 export async function guestSourceCheck(engine: BrainEngine): Promise<Check> {
   try {
     const sources = await engine.executeRaw<GuestSourceRow>(
@@ -89,6 +99,7 @@ export async function guestSourceCheck(engine: BrainEngine): Promise<Check> {
         ? "Read-only preview of the owner credentials that cannot read the guest source; adding it with --yes is the owner's decision."
         : 'Changes how the guest source is set up or who may write it; ask the brain owner first.', name, preview ? {} : { ask_user: true }) } : {}) };
   } catch (error) {
+    if (isMissingSchemaObject(error, 'table', 'guest_sources')) return behindGuestMigration(engine).catch(e => checkError(name, 'check the guest sources', e));
     return checkError(name, 'check the guest sources', error);
   }
 }

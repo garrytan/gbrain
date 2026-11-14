@@ -6,7 +6,8 @@
  * 'promoted_from: <guest source>:<slug>' and the guest note's readers, records the link in guest_promotions, and leaves
  * the guest page and its mark unchanged; the guest row then reads 'guest.promoted: true'. Promoting again to the same
  * page writes nothing. Everyone else (the broker, a member, the owner's credential speaking for a group, an enforced
- * member) is refused guest_promotion_owner_only before anything is written. The broker's remote delete of a promoted
+ * member's stdio server) is refused guest_promotion_owner_only before anything is written, and an enforced member CLI's
+ * gate refuses gbrain guests promote and the operation. The broker's remote delete of a promoted
  * guest page is refused guest_page_promoted; of an unpromoted one it still works. 'gbrain guests promote' runs the same
  * op. All on a repo-less PGLite brain; one case promotes into a source with a git repository.
  */
@@ -32,6 +33,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
 import { explicitReadBinding } from '../src/core/source-resolver.ts';
+import { enforcedClassOf } from '../src/cli/enforced-member-classes.ts';
 
 const SRC = 'guests';
 const PLAIN = 'source-a';
@@ -199,10 +201,8 @@ describe('promote_guest_note (pglite, repo-less)', () => {
     };
     expect(refusals).toEqual({ broker: 'guest_promotion_owner_only', member: 'guest_promotion_owner_only',
       owner_for_group: 'guest_promotion_owner_only', enforced_member: 'guest_promotion_owner_only' });
-    const prior = process.env.GBRAIN_ENFORCED_MEMBER;
-    process.env.GBRAIN_ENFORCED_MEMBER = OWNER;
-    try { expect((await local('promote_guest_note', { slug })).code).toBe('guest_promotion_owner_only'); }
-    finally { if (prior === undefined) delete process.env.GBRAIN_ENFORCED_MEMBER; else process.env.GBRAIN_ENFORCED_MEMBER = prior; }
+    expect({ command: enforcedClassOf('guests', ['promote', slug], undefined), op: enforcedClassOf('promote_guest_note', [], 'promote_guest_note') })
+      .toEqual({ command: 'refused', op: 'refused' });
     expect(await promotions(slug)).toEqual([]);
     expect(await engine.getPage(slug, { sourceId: PLAIN })).toBeNull();
   }, 120_000);

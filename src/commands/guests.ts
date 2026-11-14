@@ -30,6 +30,9 @@ export const GUESTS_USAGE = `Usage: gbrain guests init [--source <id>] [--writer
   the guest source (--source, default "guests"), and with --yes adds it to their read
   lists, keeping every source they already read.`;
 
+export { GUESTS_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
+export function printUsage(): void { console.log(GUESTS_USAGE); }
+
 function usageError(message: string): never {
   console.error(message);
   console.error(GUESTS_USAGE);
@@ -151,5 +154,5 @@ async function runGrantOwnerClients(engine: BrainEngine, rest: string[]): Promis
     console.log(`  ${o.kind} ${o.name} (${o.id}): ${o.outcome === 'granted' ? `now reads "${sourceId}"` : o.outcome === 'conflict'
       ? 'not changed: its grant changed since this preview; run the command again' : `not changed: ${o.detail}`}`);
   }
-  if (outcomes.some(o => o.outcome === 'conflict')) setCliExitVerdict(1);
+  if (outcomes.some(o => o.outcome === 'conflict' || o.outcome === 'failed')) setCliExitVerdict(1);
 }

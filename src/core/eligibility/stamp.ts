@@ -28,7 +28,7 @@ type Exec = Pick<BrainEngine, 'executeRaw'>;
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
 type TrustRow = { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean };
-const trustColumns = (guestSql: (config: string, id: string) => string) => `pages.id, pages.source_id, pages.slug, pages.trust_tier, pages.write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
+const trustColumns = (guestSql: (config: string, id: string) => string) => `pages.id, pages.source_id, pages.slug, trust_tier, write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
   ${guestSql('s.config', 'pages.source_id')} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
 
 /**

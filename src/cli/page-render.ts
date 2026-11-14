@@ -132,15 +132,12 @@ export function asOfExitCode(r: GetPageResult | null | undefined): number {
   return r.compiled_truth === undefined && !r.window ? 1 : 0;
 }
 
-/** stdout text for one get_page result; partial responses add a stderr note. */
-/** GBRA-504: a guest page's human output starts with its warning line, rendered from the stamped guest fields. */
+/** stdout text for one get_page result; partial responses add a stderr note. A guest page's text starts with its warning line (GBRA-504). */
 export function formatGetPage(r: GetPageResult): string {
-  const text = formatPage(r);
-  return r.guest && text ? `${guestWarningLine(r.guest)}
-${text}` : text;
-}
-
-function formatPage(r: GetPageResult): string {
+  if (r.guest) {
+    const text = formatGetPage({ ...r, guest: undefined });
+    return text && `${guestWarningLine(r.guest)}\n${text}`;
+  }
   if (r.valid_time) process.stderr.write(validTimeLine(r.valid_time) + '\n');
   if (asOfNotInForce(r)) return `status: ${r.valid_time.status}\nwhy: ${r.valid_time.why ?? 'none'}\n`;
   if (r.valid_time?.history !== undefined && r.compiled_truth === undefined && !r.window) return '';

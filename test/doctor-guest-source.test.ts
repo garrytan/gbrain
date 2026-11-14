@@ -7,7 +7,8 @@
  * guest with no guest_sources row), when a writer names a removed client, or when a writer's grant reaches another
  * source; warn, with
  * the exact grant command, when an owner credential cannot read the guest source, and when its min_trust floor hides
- * guest notes (F9). The check reads only: no grant changes. PGLite in-memory, no repository.
+ * guest notes (F9). On a schema behind the guest-notes migration it names that migration: not applicable, or warn
+ * when a config still marks a guest source. The check reads only: no grant changes. PGLite in-memory, no repository.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -20,6 +21,7 @@ import { initGuestSource } from '../src/core/guests/sources.ts';
 import { guestSourceCheck } from '../src/commands/doctor/checks/guest-source.ts';
 import { categorizeCheck } from '../src/core/doctor-categories.ts';
 import { setMinTrust } from '../src/core/trust/min-trust.ts';
+import { GUEST_NOTES_MIGRATION } from '../src/core/guests/migration.ts';
 
 const SRC = 'guests';
 const PLAIN = 'source-a';
@@ -114,5 +116,25 @@ describe('guest_source doctor check', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('min_trust');
     expect(check.message).toContain('gbrain auth set-min-trust ' + ownerClient + ' external_untrusted');
+  }, 60_000);
+});
+
+describe('guest_source doctor check on a schema behind the guest-notes migration', () => {
+  let old: PGLiteEngine;
+  beforeAll(async () => {
+    old = new PGLiteEngine();
+    await old.connect({});
+    await old.initSchema();
+    await old.executeRaw('DROP TABLE guest_promotions, guest_marks, guest_sources CASCADE');
+  }, 60_000);
+  afterAll(async () => { await old.disconnect(); }, 60_000);
+
+  test('names the migration: not applicable without a config-marked source, warn with one', async () => {
+    const bare = await guestSourceCheck(old);
+    expect({ status: bare.status, state: bare.readiness_state, names: bare.message.includes('v' + GUEST_NOTES_MIGRATION) }).toEqual({ status: 'ok', state: 'not_applicable', names: true });
+    await old.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [SRC]);
+    await old.executeRaw(`UPDATE sources SET config = config || '{"guest": true}'::jsonb WHERE id = $1`, [SRC]);
+    const marked = await guestSourceCheck(old);
+    expect({ status: marked.status, names: marked.message.includes('v' + GUEST_NOTES_MIGRATION), source: marked.message.includes(SRC) }).toEqual({ status: 'warn', names: true, source: true });
   }, 60_000);
 });

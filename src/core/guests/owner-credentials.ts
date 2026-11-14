@@ -77,12 +77,13 @@ export async function ownerCredentials(engine: BrainEngine, guestSourceId: strin
   }) };
 }
 
-export interface GrantOutcome { kind: 'client' | 'token'; id: string; name: string; outcome: 'granted' | 'conflict' | 'skipped'; detail?: string }
+export interface GrantOutcome { kind: 'client' | 'token'; id: string; name: string; outcome: 'granted' | 'conflict' | 'skipped' | 'failed'; detail?: string }
 
 /**
  * Adds guestSourceId to the read list of each previewed credential that lacks it, at the revision the preview read.
  * A grant changed since (another edit, a rescope) is a conflict and stays as it is; each result is read back and must
- * equal the previewed list plus the guest source.
+ * equal the previewed list plus the guest source. Any other failure is that credential's outcome (failed, with the
+ * error), so one credential never stops the others.
  */
 export async function grantOwnerCredentials(engine: BrainEngine, guestSourceId: string, plan: readonly OwnerCredential[]): Promise<GrantOutcome[]> {
   const out: GrantOutcome[] = [];
@@ -103,8 +104,8 @@ export async function grantOwnerCredentials(engine: BrainEngine, guestSourceId: 
       }
       out.push({ ...base, outcome: 'granted' });
     } catch (e) {
-      if (e instanceof GrantError && e.code === 'grant_conflict') { out.push({ ...base, outcome: 'conflict', detail: e.message }); continue; }
-      throw e;
+      const conflict = e instanceof GrantError && e.code === 'grant_conflict';
+      out.push({ ...base, outcome: conflict ? 'conflict' : 'failed', detail: e instanceof Error ? e.message : String(e) });
     }
   }
   return out;

@@ -809,19 +809,9 @@ const FACTS_WALK_YIELD_EVERY = 50;
  * an ExtractFactsResult envelope; status mapping (ok / warn / fail)
  * happens in the cycle.ts caller.
  */
-export async function runExtractFacts(
-  engine: BrainEngine,
-  opts: ExtractFactsOpts = {},
-): Promise<ExtractFactsResult> {
-  const sourceId = opts.sourceId ?? 'default';
-  // Managed brains reconcile the same way, but each page's writes publish as
-  // a receipted database-only maintenance request. The authority is
-  // preflighted on the first page that needs a write, so a run with nothing
-  // to change never needs one; an unacceptable caller still refuses first.
-  const managed = await maintenanceCallerPreflight(engine, sourceId);
-  let authority: Promise<MaintenanceAuthority | null> | undefined;
-  const managedAuthority = () => managed ? authority ??= maintenancePreflight(engine, sourceId) : Promise.resolve(null);
-  const result: ExtractFactsResult = {
+/** A run's counters before it scans anything; a guest source's run returns them unchanged. */
+function emptyExtractFactsResult(): ExtractFactsResult {
+  return {
     pagesScanned: 0,
     pagesWithFacts: 0,
     factsInserted: 0,
@@ -842,6 +832,21 @@ export async function runExtractFacts(
     phantomsLockBusy: false,
     phantomsMorePending: false,
   };
+}
+
+export async function runExtractFacts(
+  engine: BrainEngine,
+  opts: ExtractFactsOpts = {},
+): Promise<ExtractFactsResult> {
+  const sourceId = opts.sourceId ?? 'default';
+  // Managed brains reconcile the same way, but each page's writes publish as
+  // a receipted database-only maintenance request. The authority is
+  // preflighted on the first page that needs a write, so a run with nothing
+  // to change never needs one; an unacceptable caller still refuses first.
+  const managed = await maintenanceCallerPreflight(engine, sourceId);
+  let authority: Promise<MaintenanceAuthority | null> | undefined;
+  const managedAuthority = () => managed ? authority ??= maintenancePreflight(engine, sourceId) : Promise.resolve(null);
+  const result = emptyExtractFactsResult();
   if (await (await import('../guests/derived.ts')).skipsGuestSource(engine, 'extract_facts', sourceId)) return result;
 
   // ── Fence unfenced rows (#5299) ─────────────────────────────────

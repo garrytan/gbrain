@@ -29,10 +29,13 @@ export async function withGuestSourceSql<T>(read: (guestSql: typeof guestSourceS
   }
 }
 
-/** Whether any source is a guest source, read from the sources themselves on every call; a failed read answers yes. */
+/**
+ * Whether any source is a guest source, read from the sources themselves on every call; a failed read answers yes. Like
+ * search's read policy (search/read-policy-sql.ts), it reads sources as `read_source`: a live read check, not a listing.
+ */
 export async function brainHasGuestSource(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
   try {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM sources s WHERE ${guestSourceSql('s.config', 's.id')}) AS present`);
+    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE ${guestSourceSql('read_source.config', 'read_source.id')}) AS present`);
     return row?.present !== false;
   } catch { return true; }
 }
@@ -81,6 +84,17 @@ export function guestQuoteLabel(guest: GuestStamp): string {
 /** The fixed line gbrain appends to a think answer built from guest notes; the model never writes it. */
 export function guestAnswerLine(slugs: readonly string[]): string {
   return `Uses outside-guest notes: ${[...new Set(slugs)].join(', ')} (${NOT_OWNER}).`;
+}
+
+/**
+ * think's result fields for the pages it gathered: `result` as given, or, when a guest note reached the prompt, its answer
+ * ending with guestAnswerLine and `guest_evidence` naming each such note.
+ */
+export function withGuestAnswer<T extends { answer?: string }>(pages: ReadonlyArray<{ source_id?: string | null; slug: string; guest?: GuestStamp }>, result: T):
+  T & { guest_evidence?: Array<{ source_id: string; slug: string; guest: GuestStamp }> } {
+  const evidence = pages.flatMap(pg => pg.guest ? [{ source_id: pg.source_id ?? 'default', slug: pg.slug, guest: pg.guest }] : []);
+  if (!evidence.length) return result;
+  return { ...result, answer: `${(result.answer ?? '').trimEnd()}\n\n${guestAnswerLine(evidence.map(g => g.slug))}`, guest_evidence: evidence };
 }
 
 /** The guest object a caller sees: the writer only for an owner caller. */

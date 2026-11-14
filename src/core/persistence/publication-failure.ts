@@ -123,6 +123,7 @@ const PURGED_PREFIX = 'purged_content:';
 const GUEST_GUARD_TEXT: Record<string, string> = {
   source_writer_restricted: 'only the listed writers of a guest source may create or change its pages',
   guest_page_immutable: 'a guest source holds no facts, takes or timeline entries, and its pages are never changed',
+  guest_attribution_missing: 'a listed writer creates or changes a guest page only as a guest note carrying its attribution',
   guest_mark_immutable: 'a guest mark is never changed',
   guest_source_database_only: 'a guest source is database-only and takes no local path or repository',
 };

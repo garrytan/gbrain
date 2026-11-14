@@ -14,7 +14,7 @@ import { OperationError } from '../core/ops/contract.ts';
 import { importFile, importImageFile, isImageFilePath, type ImportResult } from '../core/import-file.ts';
 import { gitFirstCommitDates } from '../core/git-first-commit.ts';
 import { gitLsFiles } from '../core/git-visible-files.ts';
-import { currentCompanyBrainSync, getCompanyBrainProfile, importCompanyBrainFile } from '../core/company-brain/profile.ts';
+import { currentCompanyBrainSync, importCompanyBrainFile } from '../core/company-brain/profile.ts';
 import { loadConfig, gbrainPath } from '../core/config.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -51,7 +51,7 @@ import { getEmbeddingModel } from '../core/ai/gateway.ts';
 import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedMode } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
-import { readGuestSource } from '../core/guests/sources.ts';
+import { importSourceRefusal } from './import-source-refusal.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -468,14 +468,8 @@ export async function runImport(
       }
     }
   }
-  if (await readGuestSource(engine, sourceId ?? 'default')) {
-    console.error(`source_writer_restricted: source ${sourceId ?? 'default'} is a guest source; only its listed writers save pages there, through put_page. Import into another source.`);
-    throw new ImportAbortError('source_writer_restricted: guest sources take no import');
-  }
-  if (!currentCompanyBrainSync(sourceId) && await getCompanyBrainProfile(engine, sourceId ?? 'default')) {
-    console.error('This source accepts only its approved committed company-brain manifest. Use sources resume or sync; ordinary import cannot write back to this read-only repository.');
-    throw new ImportAbortError('company-brain sources require approved committed ingestion');
-  }
+  const refusedSource = await importSourceRefusal(engine, sourceId);
+  if (refusedSource) throw new ImportAbortError(refusedSource);
   let importActivePack: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string>; aliases?: ReadonlyArray<string> }> } | undefined;
   try {
     const { loadActivePackForEngine } = await import('../core/schema-pack/engine-resolution.ts');

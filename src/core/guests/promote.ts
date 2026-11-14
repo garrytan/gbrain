@@ -13,20 +13,25 @@
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { federatedSearchScope } from '../ops/context.ts';
 import { serializeMarkdown } from '../markdown.ts';
+import { assertInlineBody } from '../page-body/page-shape.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import type { PageType } from '../types.ts';
 
 const DOCS = 'docs/guides/write-refusals.md#guest_promotion_owner_only';
 
-export function guestPromotionOwnerOnly(): OperationError {
+export function guestPromotionOwnerOnly(slug: unknown): OperationError {
+  const command = typeof slug === 'string' && slug.trim() ? 'gbrain guests promote ' + slug.trim().toLowerCase() : 'gbrain guests promote with the note\'s slug';
   return new OperationError('guest_promotion_owner_only', 'Only the brain owner can keep a guest note as an owner page, so nothing was read or written.',
-    'Do not retry. Ask the brain owner; if they want to keep the note, they run gbrain guests promote <slug> on the brain host.', DOCS);
+    'Do not retry. Ask the brain owner; if they want to keep the note, they run ' + command + ' on the brain host.', DOCS);
 }
 
-/** The owner, and only the owner, may promote (see the module comment). */
+/**
+ * The owner, and only the owner, may promote (see the module comment). Enforced-member mode never reaches here as a
+ * trusted local caller: its gate (cli/enforced-member-classes.ts) refuses gbrain guests and promote_guest_note.
+ */
 export function isGuestPromotionOwner(ctx: Pick<OperationContext, 'remote' | 'viaSubagent' | 'accessIdentity' | 'applyRemoteReadPolicy'>): boolean {
   if (ctx.viaSubagent) return false;
-  if (ctx.remote === false) return process.env.GBRAIN_ENFORCED_MEMBER === undefined && !ctx.applyRemoteReadPolicy && !ctx.accessIdentity?.length;
+  if (ctx.remote === false) return !ctx.applyRemoteReadPolicy && !ctx.accessIdentity?.length;
   const access = currentCallerAccess();
   return access.owner === true && !access.actor;
 }
@@ -56,7 +61,7 @@ async function guestNote(ctx: OperationContext, slug: string, guestSource: strin
 }
 
 export async function promoteGuestNote(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (!isGuestPromotionOwner(ctx)) throw guestPromotionOwnerOnly();
+  if (!isGuestPromotionOwner(ctx)) throw guestPromotionOwnerOnly(p.slug);
   const slug = text(p.slug, 'slug', true)!.toLowerCase();
   const note = await guestNote(ctx, slug, text(p.guest_source, 'guest_source'));
   const { pageMutationSource, submitPageMutation, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
@@ -72,6 +77,7 @@ export async function promoteGuestNote(ctx: OperationContext, p: Record<string, 
   if (kept) return { status: 'already_promoted', ...result };
   const page = await ctx.engine.getPage(slug, { sourceId: note.source_id });
   if (!page) throw new OperationError('page_not_found', 'Guest note ' + slug + ' was deleted while it was promoted; nothing was written.', 'Ask the brain owner to restore it, then promote it again.');
+  assertInlineBody(page, 'promote_guest_note');
   const readers = page.frontmatter?.readable_by;
   const content = serializeMarkdown({ ...(readers !== undefined ? { readable_by: readers } : {}), promoted_from: note.source_id + ':' + slug },
     page.compiled_truth ?? '', page.timeline ?? '', { type: page.type as PageType, title: page.title, tags: [] });

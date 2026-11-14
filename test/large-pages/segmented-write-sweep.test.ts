@@ -24,6 +24,7 @@ const SWEEP_MS = 900_000;
 /** Ops whose every binding is refused for a reason of their own. */
 const NOT_REACHED: Record<string, string> = {
   revert_version: 'refuses every segmented page by design (page_body_segmented, reason segmented_revert)',
+  promote_guest_note: 'loads only a guest note and the sweep brain has no guest source, so the owner is refused page_not_found and anyone else guest_promotion_owner_only before a page loads; a guest note stored in segments is refused page_body_segmented (promote.ts assertInlineBody)',
 };
 
 describe('the sweep classifies every mutating op in the registry', () => {

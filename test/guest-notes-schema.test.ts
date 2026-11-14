@@ -7,8 +7,9 @@
  * rewrite, the backfill INSERT and the promotion UPDATE branches); facts,
  * takes and timeline rows refused in a guest source; the writer backstop (a
  * page INSERT or content UPDATE in a guest source needs a principal on the
- * source's writer list, while soft delete, restore, purge and non-content
- * updates pass); a guest source refusing a local_path; and pages outside a
+ * source's writer list, and from a listed writer a guest note (gbrain.guest_note
+ * set to its request, else guest_attribution_missing), while soft delete,
+ * restore, purge and non-content updates pass); a guest source refusing a local_path; and pages outside a
  * guest source keeping their behavior. Runs on PGLite, and on Postgres (direct
  * and transaction-mode PgBouncer) through test/e2e/guest-notes-postgres.test.ts.
  */
@@ -42,10 +43,16 @@ afterAll(async () => { for (const b of backends) await b.close(); });
 const BROKER: Principal = { kind: 'oauth_client', id: 'client-a' };
 const OTHER: Principal = { kind: 'oauth_client', id: 'client-b' };
 const OWNER_CLI: Principal = { kind: 'local_cli', id: 'cli-a' };
+const REQUEST = randomUUID();
 const as = (principal: Principal, tier?: TrustTier): WriteAttribution =>
-  ({ requestId: null, principal, ...(tier ? { trust: { tier, origin: { channel: 'test' } } } : {}) });
+  ({ requestId: REQUEST, principal, ...(tier ? { trust: { tier, origin: { channel: 'test' } } } : {}) });
+/** What a guest note's publication sets (guests/admission.ts assertGuestWriterAtPublication): gbrain.guest_note = its request. */
+const asGuestNote = <T>(tx: BrainEngine, fn: () => Promise<T>) =>
+  tx.executeRaw("SELECT set_config('gbrain.guest_note', $1, true)", [REQUEST]).then(fn);
 const writeAs = <T>(engine: BrainEngine, principal: Principal, tier: TrustTier | undefined, fn: (tx: BrainEngine) => Promise<T>) =>
-  engine.transaction(tx => withWriteAttribution(tx, as(principal, tier), () => fn(tx)));
+  engine.transaction(tx => withWriteAttribution(tx, as(principal, tier), () => asGuestNote(tx, () => fn(tx))));
+const writeAsPlain = <T>(engine: BrainEngine, principal: Principal, fn: (tx: BrainEngine) => Promise<T>) =>
+  engine.transaction(tx => withWriteAttribution(tx, as(principal, 'agent_written'), () => fn(tx)));
 
 async function guestSource(engine: BrainEngine, writers: Principal[] = [BROKER]): Promise<string> {
   const id = `guests-${randomUUID().slice(0, 8)}`;
@@ -114,8 +121,8 @@ for (const backendName of testBackends()) {
     test('the ceiling holds on the backfill INSERT and promotion UPDATE branches', async () => {
       const engine = engineOf();
       const source = await guestSource(engine);
-      const copied = await engine.transaction(tx => withWriteAttribution(tx, as(BROKER), () =>
-        withTrustBackfill(tx, () => insertPage(tx, source, undefined, 'operator_curated'))));
+      const copied = await engine.transaction(tx => withWriteAttribution(tx, as(BROKER), () => asGuestNote(tx, () =>
+        withTrustBackfill(tx, () => insertPage(tx, source, undefined, 'operator_curated')))));
       expect(copied.trust_tier).toBe('external_untrusted');
       await engine.transaction(tx => withTrustPromotion(tx, 'operator_curated', () =>
         tx.executeRaw(`UPDATE pages SET trust_tier='operator_curated' WHERE id=$1`, [copied.id])));
@@ -147,7 +154,10 @@ for (const backendName of testBackends()) {
       expect(await failure(insertPage(engine, source))).toMatch(/source_writer_restricted/);
       expect(await failure(writeAs(engine, OTHER, 'agent_written', tx => insertPage(tx, source)))).toMatch(/source_writer_restricted/);
       expect(await failure(writeAs(engine, OWNER_CLI, 'operator_curated', tx => insertPage(tx, source)))).toMatch(/source_writer_restricted/);
+      expect(await failure(writeAsPlain(engine, BROKER, tx => insertPage(tx, source)))).toMatch(/guest_attribution_missing/);
       const page = await writeAs(engine, BROKER, 'agent_written', tx => insertPage(tx, source));
+      expect(await failure(writeAsPlain(engine, BROKER, tx =>
+        tx.executeRaw(`UPDATE pages SET compiled_truth='plain rewrite' WHERE id=$1`, [page.id])))).toMatch(/guest_attribution_missing/);
       expect(await failure(writeAs(engine, OWNER_CLI, 'operator_curated', tx =>
         tx.executeRaw(`UPDATE pages SET compiled_truth='owner rewrite' WHERE id=$1`, [page.id])))).toMatch(/source_writer_restricted/);
       expect(await failure(engine.executeRaw(`UPDATE pages SET frontmatter='{"trust_tier":"user_confirmed"}'::jsonb WHERE id=$1`, [page.id]))).toMatch(/source_writer_restricted/);

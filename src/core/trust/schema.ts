@@ -124,9 +124,13 @@ const CHANGED_CHAIN = `${TRUST_TABLES.map((table, index) => `${index === 0 ? 'IF
  * source (guest_sources, one primary-key probe) may be inserted, or have a
  * content column other than deleted_at changed (moves in or out included), only
  * by a principal on the source's writer list, read from the attribution
- * settings. A fact, take or timeline row in a guest source is refused on INSERT
- * and on a content change; lifecycle updates and deletes pass. Other tables skip
- * the probe while guest_sources is empty.
+ * settings, and only by a guest note: its publication sets gbrain.guest_note to
+ * its gbrain.write_request (guests/admission.ts assertGuestWriterAtPublication), so a
+ * listed writer's plain write admitted before the source became a guest source
+ * is refused here (guest_attribution_missing) without a read of its own. A
+ * fact, take or timeline row in a guest source is refused on INSERT and on a
+ * content change; lifecycle updates and deletes pass. Other tables skip the
+ * probe while guest_sources is empty.
  */
 const GUEST_GUARD = `
   IF TG_OP = 'UPDATE' THEN
@@ -146,6 +150,9 @@ const GUEST_GUARD = `
       ELSIF ${contentChanged('pages', GUEST_PAGE_CONTENT_COLUMNS)} THEN
         ${guestRefuse('source_writer_restricted', 'only the listed writers of a guest source may change its pages')};
       END IF;
+    ELSIF guest AND (TG_OP = 'INSERT' OR ${contentChanged('pages', GUEST_PAGE_CONTENT_COLUMNS)}) AND NOT COALESCE(
+        NULLIF(current_setting('gbrain.guest_note', true), '') = current_setting('gbrain.write_request', true), false) THEN
+      ${guestRefuse('guest_attribution_missing', 'a listed writer creates or changes a guest page only as a guest note')};
     END IF;
   ELSIF (TG_OP = 'INSERT' OR changed) AND EXISTS (SELECT 1 FROM guest_sources) THEN
     IF TG_TABLE_NAME = 'facts' THEN
