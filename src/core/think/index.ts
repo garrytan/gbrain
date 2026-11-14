@@ -1053,8 +1053,8 @@ export async function runThink(
     feedback_evidence: gather.pages.map(pg => ({ source_id: pg.source_id ?? 'default', slug: pg.slug, content_hash: pg.content_hash ?? null })),
     taint_refs: [...gather.pages.map(pg => ({ table: 'pages' as const, sourceId: pg.source_id ?? 'default', slug: pg.slug })),
       ...gather.takes.map(t => ({ table: 'takes' as const, id: t.take_id })), ...trajectoryFactIds.map(id => ({ table: 'facts' as const, id }))],
-    room_extra: [...(graphBlock ? [opts.anchor, ...gather.graphSlugs.slice(0, 30)].filter((s): s is string => !!s)
-      .map(slug => ({ table: 'pages' as const, sourceId: opts.sourceId ?? 'default', slug })) : []),
+    room_extra: [...(graphBlock ? (gather.graphRefs ?? gather.graphSlugs.map(slug => ({ slug, sourceId: opts.sourceId ?? 'default' })))
+      .filter(r => gather.graphSlugs.slice(0, 30).includes(r.slug)).map(r => ({ table: 'pages' as const, sourceId: r.sourceId, slug: r.slug })) : []),
       ...(calibrationBlockOpts ? [{ table: 'calibration' as const, id: 0 }] : [])],
     ...(extractive ? { extractive } : {}),
     usage, ...(evidenceDelivery ? { evidence_delivery: evidenceDelivery } : {}),

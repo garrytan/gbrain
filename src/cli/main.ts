@@ -1580,7 +1580,8 @@ export function formatResult(
     }
     case 'search':
     case 'query': {
-      const { results, meta } = redactRetrievalOutput(result as any[], lastRetrievalMeta);
+      const room = (result as { _meta?: { room?: unknown } } | null)?._meta?.room !== undefined && !Array.isArray(result) ? require('./room.ts').splitRoomDocument(result) : { rows: result, wrap: (doc: unknown) => doc }; // GBRA-498
+      const { results, meta } = redactRetrievalOutput(room.rows as any[], lastRetrievalMeta);
       const answerId = typeof meta?.answer_id === 'string' ? meta.answer_id : undefined;
       if (answerId && results.length > 0) process.stderr.write(`answer: ${answerId} (rate with: gbrain rate ${answerId} 1-5)\n`);
       const capLine = pageCapLine(meta, '--limit');
@@ -1590,7 +1591,7 @@ export function formatResult(
         if (incompleteNotice) process.stderr.write(incompleteNotice);
         // --explain --json: the same per-row score_details object MCP `explain: true` returns.
         if (getCliOptions().explain) for (const r of results) r.score_details ??= require('../core/search/explain-formatter.ts').buildScoreDetails(r);
-        return JSON.stringify(withExplainTargetJson(params, meta, searchTimingsDocument(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, meta)), null, 2) + '\n';
+        return JSON.stringify(room.wrap(withExplainTargetJson(params, meta, searchTimingsDocument(answerId ? results.map(r => ({ ...r, answer_id: answerId })) : results, meta))), null, 2) + '\n';
       }
       // T15/FOV-1: an empty result names its cause when the pipeline told us
       // (degradation stages from _meta.retrieval / the local meta capture) —

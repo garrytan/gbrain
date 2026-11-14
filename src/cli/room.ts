@@ -11,6 +11,7 @@ import type { Notice } from '../core/agent-output.ts';
 import { assessRoom, readRoomDeclaration, type RoomMeta, type RoomUnknownReason } from '../core/access/room.ts';
 import { currentCallerAccess } from '../core/search/private-visibility.ts';
 import { applyCliOpNotices, captureOpNotice, withRoutedDegradedStamp } from './op-notices.ts';
+import { PERSISTENCE_ROOM_MAX_CHARS } from '../core/persistence/ipc.ts';
 
 export interface CliRoomMarked { result: unknown; meta: RoomMeta }
 
@@ -35,7 +36,8 @@ export async function delegatedRoom(op: string, delegated: { result: unknown; ro
     for (const n of delegated.room.notices) if (isObj(n) && typeof n.code === 'string') captureOpNotice(n as unknown as Notice);
     return { result: delegated.result, meta: delegated.room.meta as unknown as RoomMeta };
   }
-  return markCliResult(null, op, delegated.result, room, { sourceId: 'default', unavailable: { reason: 'not_supported', detail: 'the running brain owner predates room marks; restart it on this release' } });
+  return markCliResult(null, op, delegated.result, room, { sourceId: 'default', unavailable: { reason: 'not_supported', detail: room.length > PERSISTENCE_ROOM_MAX_CHARS
+    ? 'the room is too long to pass to the running brain owner' : 'the running brain owner predates room marks; restart it on this release' } });
 }
 
 /** The host's marks (`_meta.room`), or every item unknown: for a host that predates room marks, or one whose marks did not fit. */
@@ -52,6 +54,13 @@ export function cliRoomResult(marked: CliRoomMarked, json: boolean): unknown {
   if (Array.isArray(marked.result)) return { results: marked.result, _meta: { room: marked.meta } };
   if (isObj(marked.result)) return { ...marked.result, _meta: { ...(isObj(marked.result._meta) ? marked.result._meta : {}), room: marked.meta } };
   return { result: marked.result, _meta: { room: marked.meta } };
+}
+
+/** search and query render their own rows: the rows inside a `--json` room document, and that document's `_meta` put back on what they render. */
+export function splitRoomDocument(result: unknown): { rows: unknown; wrap: (doc: unknown) => unknown } {
+  if (!isObj(result) || !Array.isArray(result.results) || !isObj(result._meta) || !('room' in result._meta)) return { rows: result, wrap: doc => doc };
+  const meta = result._meta;
+  return { rows: result.results, wrap: doc => Array.isArray(doc) ? { results: doc, _meta: meta } : isObj(doc) ? { ...doc, _meta: { ...(isObj(doc._meta) ? doc._meta : {}), ...meta } } : doc };
 }
 
 const SHOWN = 20;

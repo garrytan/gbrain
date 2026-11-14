@@ -17,7 +17,7 @@ import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
   PersistenceIpcTransportError, type PersistenceIpcCapabilities, type PersistenceIpcRegistration,
-  requestPersistenceAdministration, ownerAdministers, PERSISTENCE_ROOM_MARKED_KEY,
+  requestPersistenceAdministration, ownerAdministers, PERSISTENCE_ROOM_MARKED_KEY, PERSISTENCE_ROOM_MAX_CHARS,
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
@@ -185,7 +185,7 @@ export async function maybeDelegateLocalOperation(
       'Upgrade and restart the owner, then retry with the same request ID.');
   }
   const registration = readPersistenceCliRegistration(capability.brain_id);
-  const roomSent = options.room !== undefined && capability.room === true;
+  const roomSent = options.room !== undefined && options.room.length <= PERSISTENCE_ROOM_MAX_CHARS && capability.room === true;
   const request = { version: 1 as const, kind: 'operation' as const, brain_id: capability.brain_id,
     operation, params: wireParams, registration, routing: { source, cwd }, ...(roomSent ? { room: options.room } : {}) };
   if (!isPersistenceIpcMutation(operation)) return delegatedResult(await requestPersistenceOperation(socketPath, request, options.timeoutMs), roomSent);

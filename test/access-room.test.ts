@@ -323,6 +323,27 @@ for (const kind of testBackends()) {
       expect(out.text).not.toContain('taint_refs');
     }, 120_000);
 
+    test("think's graph pages keep their own source, so a same-slug page elsewhere never stands in for one the room cannot read", async () => {
+      const OTHER = 'room-other';
+      const ANCHOR = 'notes/anchor-plan';
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [OTHER]);
+      await importFromContent(engine, ANCHOR, page('open'), { sourceId: SRC });
+      await importFromContent(engine, PAGES.open.slug, page('mine'), { sourceId: OTHER });
+      try {
+        await engine.addLink(ANCHOR, PAGES.open.slug, 'harbor ledger link', 'mentions', 'manual', undefined, undefined, { fromSourceId: SRC, toSourceId: OTHER });
+        const { runGather } = await import('../src/core/think/gather.ts');
+        const gather = await runGather(engine, { question: 'harbor ledger planning', anchor: ANCHOR, sourceIds: [SRC, OTHER], remote: false });
+        expect(gather.graphRefs).toContainEqual({ slug: PAGES.open.slug, sourceId: OTHER });
+        const { declaration } = readRoomDeclaration({ header: 'alice-example' }, {});
+        const caller = { access: { owner: true, identity: ['member:owner-example'] } as never, transport: 'stdio' };
+        const evidence = gather.graphRefs!.map(r => ({ table: 'pages' as const, sourceId: r.sourceId, slug: r.slug }));
+        const out = await assessRoom(engine, { op: 'think', result: keepRoomEvidence({ answer: 'a' }, evidence), declaration: declaration!, sourceId: SRC, caller });
+        expect((out.result as { room_access: unknown }).room_access).toEqual({ readable: false, reason: 'readers' });
+      } finally {
+        await engine.executeRaw('DELETE FROM pages WHERE (source_id = $1 AND slug = $2) OR source_id = $3', [SRC, ANCHOR, OTHER]);
+      }
+    }, 60_000);
+
     test('the trusted local CLI marks the owner view; with no owner it is unbound and the fix names gbrain access owner set', async () => {
       const { declaration } = readRoomDeclaration({ requestMeta: { room: 'alice-example' } }, undefined);
       const local = { access: { owner: false, identity: [] } as never, transport: 'cli', local: true as const };

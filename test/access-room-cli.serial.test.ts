@@ -29,6 +29,7 @@ import { clearOwner, setOwner } from '../src/core/access/owner.ts';
 import { delegatedRoom, roomSummaryLine, routedRoom } from '../src/cli/room.ts';
 import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { withEnv } from './helpers/with-env.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 
 const CLI = join(resolve(import.meta.dir, '..'), 'src', 'cli.ts');
 const OPEN = 'notes/open-plan';
@@ -48,8 +49,8 @@ async function cli(root: string, home: string, args: string[], stdin?: string, e
 }
 
 async function seed(engine: BrainEngine): Promise<void> {
-  await engine.putPage(OPEN, { type: 'note', title: 'Open plan', compiled_truth: 'Harbor ledger open notes.', timeline: '', frontmatter: {} }, { sourceId: 'default' });
-  await engine.putPage(MINE, { type: 'note', title: 'Owner plan', compiled_truth: 'Harbor ledger owner notes.', timeline: '', frontmatter: { readable_by: ['owner-example'] } }, { sourceId: 'default' });
+  await importFromContent(engine, OPEN, '---\ntype: note\ntitle: Open plan\n---\nHarbor ledger open notes.\n', { sourceId: 'default', noEmbed: true });
+  await importFromContent(engine, MINE, '---\ntype: note\ntitle: Owner plan\nreadable_by: [owner-example]\n---\nHarbor ledger owner notes.\n', { sourceId: 'default', noEmbed: true });
   for (const id of ['owner-example', 'alice-example']) await addMember(engine, id);
   await setOwner(engine, 'owner-example');
 }
@@ -99,6 +100,16 @@ describe('--room on the direct path (repo-less PGLite)', () => {
     expect(human.exitCode).toBe(0);
     expect(human.stderr).toContain('[gbrain degraded:');
     expect(human.stderr).toContain('[gbrain room: no one readable] no item could be judged (invalid)');
+  }, 180_000);
+
+  test('search and query --json keep their own rendering (answer ids, --explain) inside the room document', async () => {
+    const out = await run(['search', 'harbor', '--json', '--explain', '--room', 'alice-example']);
+    expect(out.exitCode).toBe(0);
+    const doc = JSON.parse(out.stdout) as { results: Array<Record<string, unknown>>; _meta: { room: Record<string, unknown> } };
+    expect(Array.isArray(doc.results)).toBe(true);
+    expect(doc.results.length).toBeGreaterThan(0);
+    for (const r of doc.results) { expect(r.room_access).toBeDefined(); expect(r.score_details).toBeDefined(); }
+    expect(doc._meta.room).toMatchObject({ principals: ['member:alice-example'] });
   }, 180_000);
 
   test('human output is unchanged on stdout; stderr names what the room cannot read', async () => {
@@ -189,6 +200,15 @@ describe('--room through a live PGLite owner', () => {
     expect(doc.slug).toBe(MINE);
     expect(doc.room_access).toEqual({ readable: false, reason: 'readers' });
     expect(doc._meta?.room).toMatchObject({ principals: ['member:alice-example'], counts: { items: 1, above: 1 } });
+  }, 120_000);
+
+  test('a room too long for the owner socket still runs the read, every item unknown', async () => {
+    const room = Array.from({ length: 400 }, (_, i) => 'member-' + i + '-example').join(',');
+    const out = await cli(dir, dir, ['get', MINE, '--json', '--room', room]);
+    expect(out.exitCode).toBe(0);
+    const doc = JSON.parse(out.stdout) as { slug: string; room_access?: unknown };
+    expect(doc.slug).toBe(MINE);
+    expect(doc.room_access).toEqual({ readable: 'unknown', reason: 'invalid' });
   }, 120_000);
 });
 

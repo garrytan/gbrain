@@ -83,6 +83,8 @@ export interface PersistenceIpcCapabilities {
 
 /** GBRA-498: the one key of an owner's answer to a request that named a room: the marked result, its room meta and notices. */
 export const PERSISTENCE_ROOM_MARKED_KEY = 'room_marked';
+/** The longest `--room` a request carries; a longer one stays with the CLI, which marks every item unknown. */
+export const PERSISTENCE_ROOM_MAX_CHARS = 4_096;
 
 export interface PersistenceIpcAdminRequest {
   version: 1;
@@ -150,7 +152,7 @@ export function isPersistenceIpcRegistration(value: unknown): value is Persisten
 const OPERATION_REQUEST_KEYS = ['version', 'kind', 'brain_id', 'operation', 'params', 'registration', 'routing'];
 function operationRequest(value: unknown): value is PersistenceIpcRequest {
   if (!record(value) || !exactKeys(value, [...OPERATION_REQUEST_KEYS, ...['write_wait_ms', 'room'].filter(k => Object.prototype.hasOwnProperty.call(value, k))])) return false;
-  if (value.room !== undefined && !(typeof value.room === 'string' && value.room.length <= 4_096)) return false;
+  if (value.room !== undefined && !(typeof value.room === 'string' && value.room.length <= PERSISTENCE_ROOM_MAX_CHARS)) return false;
   if (value.write_wait_ms !== undefined && !(typeof value.write_wait_ms === 'number'
     && Number.isSafeInteger(value.write_wait_ms) && value.write_wait_ms >= 0)) return false;
   if (value.version !== 1 || value.kind !== 'operation' || !isWriteRequestId(value.brain_id)
