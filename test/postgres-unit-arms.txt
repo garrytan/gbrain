@@ -726,6 +726,7 @@ test/trust-guarded-supersession.test.ts
 test/trust-held-removals.test.ts
 test/trust-keep-maintenance-reimport-8352.test.ts
 test/trust-owner-actions.test.ts
+test/trust-release-strict-home-gst2676.test.ts
 test/unbound-source-6536.test.ts
 test/unindexed-files-convergence-7149.test.ts
 test/unindexed-files.test.ts
