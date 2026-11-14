@@ -12,6 +12,7 @@ import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts'
 import type { BrainEngine } from '../engine.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
 import { hasScope } from '../scope.ts';
+import { viewedEngine } from './switches.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -324,7 +325,7 @@ export async function storedOwnerWrite(engine: SqlEngine, authority: WriteAuthor
  */
 export async function ownerRewriteOf(engine: BrainEngine, authority: WriteAuthority, sourceId: string, slug: string, wholePage: boolean): Promise<OwnerRewrite | null> {
   if (!await storedOwnerWrite(engine, authority)) return null;
-  await readHonorAliases(engine);
+  await readHonorAliases(viewedEngine(engine));
   const [row] = await engine.executeRaw<{ hidden: boolean }>(`SELECT NOT (${privacyPartSql('p')}) AS hidden FROM pages p
     WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [sourceId, slug]);
   return { privacyPrivate: row?.hidden === true, wholePage };
