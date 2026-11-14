@@ -177,7 +177,7 @@ describe('the spool', () => {
     writeConfig({ engine: 'pglite', database_path: datastore, wakeshift: { enabled: false } });
     const off = await captured(() => reportEmitConnectFailure(['cron.finished', '--name', 'nightly-example', '--status', 'ok'], new Error('busy')));
     expect(off.err).toBe('[wakeshift] could not record the nightly-example run: the brain could not be opened (busy).\n');
-    writeConfig({ engine: 'postgres', database_url: 'postgresql://gbrain:gbrain@127.0.0.1:1/gbrain', wakeshift: { enabled: true, url: fake.url, manifest_hash: wakeshiftManifestHash() } });
+    writeConfig({ engine: 'postgres', database_url: 'postgresql://nobody@127.0.0.1:1/none', wakeshift: { enabled: true, url: fake.url, manifest_hash: wakeshiftManifestHash() } });
     const pg = await captured(() => reportEmitConnectFailure(['cron.finished', '--name', 'nightly-example', '--status', 'ok'], new Error('refused')));
     expect(pg.err).toBe('[wakeshift] could not record the nightly-example run: the brain could not be opened (refused).\n');
     expect(existsSync(join(home, '.gbrain', 'wakeshift-spool'))).toBe(false);
