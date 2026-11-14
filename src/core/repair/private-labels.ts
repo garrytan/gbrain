@@ -272,7 +272,7 @@ export function dependentsSql(mode: 'clear' | 'remove' = 'clear'): string {
           CASE WHEN c.id IS NULL THEN pg.frontmatter ELSE pg.frontmatter - string_to_array(c.keys, ',') END AS frontmatter
         FROM pages pg LEFT JOIN cleared c ON c.id = pg.id${remove ? ' WHERE c.id IS NULL' : ''})
       SELECT after_clear.id FROM (${remove ? 'SELECT * FROM candidate_rows' : `SELECT a.id, a.source_id, a.slug, a.type, a.frontmatter FROM (SELECT DISTINCT id FROM candidates) k
-        JOIN pages a ON a.id = k.id`} OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear')})
+        JOIN pages a ON a.id = k.id`} OFFSET 0) after_clear WHERE ${privacyPartSql('after_clear', true)})
     SELECT cand.id, cand.cleared_id, CASE WHEN p.type = 'event' AND p.frontmatter->>'captured_via' LIKE 'life-chronicle:%' THEN 'life_chronicle'
         WHEN p.type = 'atom' THEN 'atom' WHEN p.type = 'concept' AND p.frontmatter->>'synthesized_by' IS NOT NULL THEN 'concept' ELSE 'derived_from' END AS category
       FROM candidates cand JOIN pages p ON p.id = cand.id

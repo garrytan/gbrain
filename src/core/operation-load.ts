@@ -79,6 +79,7 @@ const OP_AREAS: Record<string, string> = {
   log_ingest: 'ingest', get_ingest_log: 'ingest',
   get_usage: 'admin',
   // files (localOnly)
+  storage_find: 'storage', storage_get: 'storage', storage_list: 'storage',
   file_list: 'files', file_upload: 'files', file_url: 'files', file_register: 'files', file_verify: 'files',
   // jobs (Minions + agent lane)
   submit_job: 'jobs', get_job: 'jobs', wait_job: 'jobs', list_jobs: 'jobs', cancel_job: 'jobs',

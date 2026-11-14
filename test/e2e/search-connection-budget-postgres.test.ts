@@ -19,6 +19,7 @@ import { createServer, connect as netConnect, type Server, type Socket } from 'n
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { SEARCH_CONNECTION_LIMIT, withSearchConnectionBudget } from '../../src/core/search/connection-budget.ts';
+import { drainBackgroundWorkBeforeDisconnect } from '../../src/core/background-work.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { seedPage } from '../helpers/keyword-paging-fixture.ts';
 
@@ -99,9 +100,20 @@ run('per-search connection budget on Postgres', () => {
     expect(proxy.peak).toBe(SEARCH_CONNECTION_LIMIT);
   });
 
+  test('reads that reserve their own connection (JIT off, a statement timeout) wait for a slot too', async () => {
+    proxy.reset();
+    await withSearchConnectionBudget(() => Promise.all([
+      ...reads(),
+      engine.executeRaw('SELECT pg_sleep(0.05)', [], { jitOff: true }),
+      engine.executeRaw('SELECT pg_sleep(0.05)', [], { timeoutMs: 10_000 }),
+    ]));
+    expect(proxy.peak).toBe(SEARCH_CONNECTION_LIMIT);
+  });
+
   for (const op of ['search', 'query'] as const) {
     test(`a ${op} op holds at most 4 connections at once`, async () => {
       await dispatchToolCall(engine, op, { query: 'quasar survey' }, { remote: false });
+      await drainBackgroundWorkBeforeDisconnect();
       proxy.reset();
       const result = await dispatchToolCall(engine, op, { query: 'quasar survey' }, { remote: false });
       expect(result.isError, JSON.stringify(result).slice(0, 2000)).toBeFalsy();
