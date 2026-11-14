@@ -157,13 +157,15 @@ export async function assertLfsTarget(engine: Pick<BrainEngine, 'getConfig'>, ro
  * The refusal for content a strict source would hold in the database alone (`no_file_form`, `facts_lane`), or for a
  * file a strict publication would commit for a declared page (`declared_target`). Remote callers get no class.
  */
-export function gitHomeRequired(row: Pick<WriteRequest, 'source_id' | 'slug'>, reason: 'no_file_form' | 'declared_target' | 'facts_lane', remote: boolean, declared?: StrictClass): OperationError {
+export function gitHomeRequired(row: Pick<WriteRequest, 'source_id' | 'slug'>, reason: 'no_file_form' | 'declared_target' | 'facts_lane' | 'persistence_disabled', remote: boolean, declared?: StrictClass): OperationError {
   const why = 'Git is the source of truth for a git-canonical source: page content reaches the database only after Git commits its file, except for the declared database-only classes (private pages, storage.db_only directories, never-filed derive-phase pages, paths Git ignores).';
   const message = reason === 'declared_target'
     ? `Source ${row.source_id} is git-canonical and page ${row.slug} is declared database-only${remote || !declared ? '' : ` (${declared})`}, so its file is never committed; nothing was written.`
     : reason === 'facts_lane'
       ? `Source ${row.source_id} is git-canonical and ${row.slug} has no page${remote ? '' : ' while a page rule keeps it to its own readers'}, so no file in Git can hold its fact yet; nothing was written.`
-      : `Source ${row.source_id} is git-canonical and this write would store page ${row.slug} in the database without a file in Git, so nothing was written.`;
+      : reason === 'persistence_disabled'
+        ? `Source ${row.source_id} is git-canonical and managed persistence is disabled on this brain, so this release cannot commit ${row.slug}'s fact to Git; nothing was written and the fact stays held.`
+        : `Source ${row.source_id} is git-canonical and this write would store page ${row.slug} in the database without a file in Git, so nothing was written.`;
   // GST-2492: a fact for an entity no holding page can carry (an exact page rule on it) waits for the entity's own page.
   if (reason === 'facts_lane') {
     return opError('git_home_required', message, `Create the page ${row.slug} with put_page, then remember the fact again with a new request_id.`, { reason, why, docs: DOCS,
@@ -172,6 +174,14 @@ export function gitHomeRequired(row: Pick<WriteRequest, 'source_id' | 'slug'>, r
         consent: [], actor: 'agent', requires_exclusive: false, why: `Creates the page ${row.slug}, so the fact has a file; then remember it again. Run it only after the user agrees.`,
         user_message: `${row.slug} has no page yet, so the fact can't be saved in Git. Should I create a page for ${row.slug} and then save the fact on it?`,
         verify: { argv: ['gbrain', 'get', row.slug], mcp: { tool: 'get_page', arguments: { slug: row.slug } } } } });
+  }
+  // GST-2692: an owner release on a brain whose managed persistence is off is committed to Git only once it is on again.
+  if (reason === 'persistence_disabled') {
+    return opError('git_home_required', message, 'Ask the user to turn managed persistence back on, then run the release again.', { reason, why, docs: DOCS,
+      fix: { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, argv: ['gbrain', 'sources', 'writer', 'activate', '--confirm-quiesced', '--dry-run', '--json'],
+        why: 'Previews turning managed persistence back on; changes nothing. Once it is on, the release commits the fact to Git before its database row.',
+        user_message: `Managed persistence is off on this brain, so releasing this held fact can't save it in Git (source ${row.source_id} is git-canonical). Should managed persistence be turned back on (gbrain sources writer activate) so the release can run again?`,
+        verify: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] } } });
   }
   const fix: Action = { ask_user: true, actor: 'user', consent: [], requires_exclusive: false, why, docs: DOCS,
     user_message: reason === 'declared_target'
