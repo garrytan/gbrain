@@ -10,6 +10,7 @@ different credentials.
 | Connect an existing agent | [Hosted harness setup](../guides/hosted-harness-access.md) | Native OAuth/PKCE, or a private machine-client handoff |
 | Wire Claude Code to a local brain in one command | [`gbrain setup claude-code`](../guides/setup.md) | A local GBrain installation; setup resolves the brain, writes MCP and read-context hooks, and verifies them |
 | Run a local MCP pipe | [Local stdio](DEPLOY.md#local-stdio-zero-setup) | A local GBrain installation; no HTTP admin panel is created |
+| Add the brain to Claude or Cursor in one click | [One-click client links](#one-click-client-links) | A public HTTPS URL for Claude; any HTTPS URL the Cursor machine reaches for Cursor |
 | Diagnose a failed connection | [Recovery table](ADMIN.md#recover-a-failed-step) | Start with the failed stage and the authority you actually hold |
 | A tool call returned an error | [A tool call returned an error](#a-tool-call-returned-an-error) | None: the error says who acts |
 
@@ -41,6 +42,25 @@ Client-specific details: [ChatGPT](CHATGPT.md), [Claude Code](CLAUDE_CODE.md),
 [Claude Desktop](CLAUDE_DESKTOP.md), [Codex](CODEX.md),
 [opencode](OPENCODE.md), [Perplexity](PERPLEXITY.md),
 [OpenClaw](OPENCLAW.md), and the [adapter reference](../guides/harness-adapters.md).
+
+## One-click client links
+
+Two clients take a link that opens their own add-server step with GBrain's
+name and MCP URL already filled in. Authentication still happens in the
+client afterwards; the links carry no credential.
+
+| Client | Hosted gbrain.io link | Your own brain |
+| --- | --- | --- |
+| Claude (claude.ai, Claude Desktop) | `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=https%3A%2F%2Fgbrain.io%2Fmcp` | Printed by `gbrain mcp expose --funnel` (needs a public URL: claude.ai connects from Anthropic's cloud) |
+| Cursor | `cursor://anysphere.cursor-deeplink/mcp/install?name=gbrain&config=eyJ1cmwiOiJodHRwczovL2dicmFpbi5pby9tY3AifQ%3D%3D` | Printed by `gbrain mcp expose`, tailnet-only or `--funnel` (Cursor connects from your machine) |
+
+`gbrain mcp expose --status` repeats the links, and `--json` carries them as
+`install_links`. Cursor's link is its [documented install
+deeplink](https://cursor.com/docs/mcp/install-links). Claude's uses claude.ai
+page parameters that Anthropic does not document, so the manual steps in the
+[Claude Desktop guide](CLAUDE_DESKTOP.md) stay as the fallback. ChatGPT,
+Perplexity and Claude Cowork have no such link; the CLI clients (Claude Code,
+Codex, opencode, Hermes, OpenClaw, Grok) already install with one command.
 
 ## A tool call returned an error
 

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mcpNeedsEngine, runMcp } from '../src/commands/mcp.ts';
 import { defaultTcpProbe, runMcpExpose, parseExposeArgs, MCP_EXPOSE_HELP, type McpExposeDeps } from '../src/commands/mcp-expose.ts';
+import { claudeConnectorLink, cursorInstallLink } from '../src/core/connector-install-links.ts';
 import { defaultLookup, isUnresolvedLookupError, tryFetch } from '../src/commands/mcp-expose-probe.ts';
 import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { TAILSCALE_ADMIN_ACL_URL, TAILSCALE_ADMIN_DNS_URL, TAILSCALE_BINARY_CANDIDATES, TAILSCALE_FUNNEL_KB_URL, type CommandRunner, type CommandRunOptions } from '../src/core/tailscale.ts';
@@ -665,27 +666,32 @@ describe('happy path: linux-systemd', () => {
     expect(f.stdout.join('\n')).toContain('public (Funnel)');
     expect(f.stdout.join('\n')).toContain('bootstrap harness --yes --port 4000');
   });
-  test('--funnel prints the prefilled Claude add-connector link; tailnet-only does not', async () => {
+  test('--funnel prints the Claude and Cursor install links; tailnet-only prints Cursor only', async () => {
+    const url = `https://${DNS}/mcp`;
     const f = fakeTailnet();
     expect(await runMcpExpose(['--yes', '--funnel'], f.deps)).toBe(0);
     const out = f.stdout.join('\n');
-    expect(out).toContain(`Claude.ai        https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=${encodeURIComponent(`https://${DNS}/mcp`)}`);
+    expect(out).toContain(`Claude.ai        ${claudeConnectorLink(url)}`);
+    expect(out).toContain(`Cursor           ${cursorInstallLink(url)}`);
     expect(out).not.toContain(TOKEN);
     const g = fakeTailnet();
     expect(await runMcpExpose(['--yes'], g.deps)).toBe(0);
-    expect(g.stdout.join('\n')).not.toContain('claude.ai/customize/connectors');
+    const tailnetOut = g.stdout.join('\n');
+    expect(tailnetOut).not.toContain('claude.ai/customize/connectors');
+    expect(tailnetOut).toContain(`Cursor           ${cursorInstallLink(url)}`);
+    expect(tailnetOut).toContain('the Cursor machine must be on your tailnet');
   });
-  test('--json carries claude_connector_link for Funnel only, and --status repeats it', async () => {
-    const link = `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=${encodeURIComponent(`https://${DNS}/mcp`)}`;
+  test('--json carries install_links (Claude for Funnel only), and --status repeats them', async () => {
+    const url = `https://${DNS}/mcp`;
     const f = fakeTailnet();
     expect(await runMcpExpose(['--yes', '--funnel', '--json'], f.deps)).toBe(0);
-    expect(jsonDoc(f).claude_connector_link).toBe(link);
+    expect(jsonDoc(f).install_links).toEqual({ claude: claudeConnectorLink(url), cursor: cursorInstallLink(url) });
     f.stdout.length = 0;
     expect(await runMcpExpose(['--status', '--json'], f.deps)).toBe(0);
-    expect(jsonDoc(f).claude_connector_link).toBe(link);
+    expect(jsonDoc(f).install_links).toEqual({ claude: claudeConnectorLink(url), cursor: cursorInstallLink(url) });
     const g = fakeTailnet();
     expect(await runMcpExpose(['--yes', '--json'], g.deps)).toBe(0);
-    expect('claude_connector_link' in jsonDoc(g)).toBe(false);
+    expect(jsonDoc(g).install_links).toEqual({ cursor: cursorInstallLink(url) });
   });
   test('tailnet health pending → exit 2, status pending, receipt still written', async () => {
     const f = fakeTailnet({ tailnetHealthy: false });

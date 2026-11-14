@@ -123,12 +123,14 @@ Next — choose the connection method supported by the intended client
   Check            gbrain mcp expose --status
 ```
 
-With `--funnel`, the `Next` block also prints a `Claude.ai` line under
-`Native OAuth`: a claude.ai link that opens Claude's add-connector form with
-the name `GBrain` and this MCP URL already filled in. Authentication is still
-chosen in that form. `--json` carries the same link as `claude_connector_link`,
-and `--status` repeats it. The tailnet-only default omits it, because claude.ai
-connects from Anthropic's cloud and cannot reach a tailnet-only URL.
+The `Next` block also prints [one-click client links](../mcp/README.md#one-click-client-links)
+under `Native OAuth`. A `Cursor` line opens Cursor's MCP install prompt with
+this URL; the Cursor machine must be on your tailnet unless you used
+`--funnel`. With `--funnel`, a `Claude.ai` line opens Claude's add-connector
+form with the name `GBrain` and this URL filled in; the tailnet-only default
+omits it, because claude.ai connects from Anthropic's cloud. Authentication is
+still chosen in the client. `--json` carries the links as `install_links`, and
+`--status` repeats them.
 
 The `Engine` and `Local agents` lines depend on the engine the receipt
 recorded: a Postgres brain prints `Local agents     gbrain bootstrap harness
