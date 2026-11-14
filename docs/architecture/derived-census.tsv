@@ -16,6 +16,7 @@ src/core/page-body/segment-rewrite.ts	1	pending:inventory	derived or mixed write
 src/core/persistence/connector-sync.ts	1	canonical	connector sync applies an upstream deletion of a connected item
 src/core/persistence/derived-retirement-hold.ts	4	primitive	retireDerivedPagesInTransaction: versions, soft-deletes and stamps retired_by; the helper every generation adapter retires through
 src/core/persistence/page-prepare.ts	2	canonical	coordinated delete_page preparation (an operator or agent deletion)
+src/core/persistence/page-purge.ts	1	canonical	GST-2689: an explicit delete_page purge held by the in-transaction derived-page recheck soft-deletes the live page instead
 src/core/persistence/sync-image.ts	1	canonical	sync image publication applies a committed file deletion
 src/core/persistence/sync-prepare.ts	1	canonical	managed sync prepares the soft delete of a page whose file was removed
 src/core/persistence/twin-merge.ts	1	canonical	origin-twin merge retires the losing duplicate of one canonical file

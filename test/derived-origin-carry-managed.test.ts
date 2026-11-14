@@ -24,6 +24,9 @@ import { operationsByName } from '../src/core/operations.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { SYNC_DELETE_TOMBSTONE_OP } from '../src/core/persistence/sync-delete-tombstones.ts';
 import { runPages } from '../src/commands/pages.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
+import { importFromContent } from '../src/core/import-file.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { mintLegacyToken } from '../src/core/token-mint.ts';
@@ -58,7 +61,7 @@ function fileText(k: string, shape: Shape): string {
   };
   return ['---', `title: ${k} ${shape}`, ...fm[shape], '---', '', `Harbor ledger planning notes ${canaryOf(k, shape)} for the roadmap.`, ''].join('\n');
 }
-const KEYS = ['gitrm', 'purge', 'remote'];
+const KEYS = ['gitrm', 'purge', 'remote', 'midpurge'];
 const setup = ({ root }: { root: string }) => {
   mkdirSync(join(root, 'notes'), { recursive: true }); git(root, 'init', '-q', '-b', 'main');
   for (const k of KEYS) for (const shape of SHAPES) writeFileSync(join(root, `${slugOf(k, shape)}.md`), fileText(k, shape));
@@ -146,6 +149,35 @@ for (const backend of testBackends()) {
       await age(engine, 100);
       await cli(engine, ['purge-deleted', '--json', '--yes']);
       await expectCarried(engine, root, k, files);
+    }, { setup, databaseUrl }), 300_000);
+
+    test('the managed retention purge rechecks inside its transaction: a derived page written after the carry parks the origin and skips its row', () => managedBrain(async ({ engine, root }) => {
+      await performManagedSync(engine, OPTS);
+      const k = 'midpurge', origin = slugOf(k, 'origin'), late = `notes/${k}-late`;
+      await before(engine, root, k);
+      git(root, 'rm', '-q', `${origin}.md`); commit(root, 'remove the origin');
+      await performManagedSync(engine, OPTS);
+      await age(engine, 100);
+      let fired = false;
+      installFaultHook(async point => {
+        if (point !== 'purge:after_carry' || fired) return;
+        fired = true;
+        await fixtureWrite(engine, async () => {
+          expect((await importFromContent(engine, late, ['---', 'title: late', 'type: note', `derived_from: ${origin}.md`, '---', '', `Harbor ledger planning notes ${canaryOf(k, 'plain')}late for the roadmap.`, ''].join('\n'),
+            { sourceId: 'default', noEmbed: true })).status).toBe('imported');
+        });
+      });
+      let held: Awaited<ReturnType<typeof purgeDeletedPagesCoordinated>>;
+      try { held = await purgeDeletedPagesCoordinated(engine, 72); }
+      finally { installFaultHook(undefined); }
+      expect(fired).toBe(true);
+      expect(held.slugs).not.toContain(origin);
+      expect(held.blocked.find(b => b.slug === origin)?.code).toBe('derived_origin_parked');
+      expect((await page(engine, origin))?.deleted_at).not.toBeNull();
+      __resetPrivateVisibilityCacheForTests();
+      const ctx = { engine, config: { engine: engine.kind }, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, sourceId: 'default' } as unknown as OperationContext;
+      const read = async () => { try { return JSON.stringify(await operationsByName.get_page!.handler(ctx, { slug: late })); } catch { return ''; } };
+      expect((await read()).includes(`${canaryOf(k, 'plain')}late`)).toBe(false);
     }, { setup, databaseUrl }), 300_000);
 
     test('an explicit local purge: the derived files gain the label line through the Git door before the row goes', () => managedBrain(async ({ engine, root, ctx }) => {

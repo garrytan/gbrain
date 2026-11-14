@@ -35,6 +35,7 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { checkDerivedOriginParked } from '../src/commands/doctor/checks/purge-parks.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -354,6 +355,64 @@ for (const kind of testBackends()) {
       expect(result.slugs).toContain(origin);
       expect((await fm(blocking)).visibility).toBe('private');
       await nothingKept(origin);
+    }, 240_000);
+
+    /** Writes a world-labelled page derived from the origin once, between the purge's carry and its row delete. */
+    function lateDerivedPage(k: string): string {
+      const late = `${k}/late`;
+      let fired = false;
+      installFaultHook(async point => {
+        if (point !== 'purge:after_carry' || fired) return;
+        fired = true;
+        expect((await importFromContent(engine, late, ['---', 'title: late', 'type: note', `derived_from: ${slugOf(k, 'origin')}.md`, '---', '# late', '',
+          `Harbor ledger planning notes ${canaryOf(k, 'plain')}late for the roadmap.`].join('\n'), { sourceId: SRC, noEmbed: true })).status).toBe('imported');
+      });
+      return late;
+    }
+    async function expectLateHidden(k: string, late: string): Promise<void> {
+      __resetPrivateVisibilityCacheForTests();
+      for (const who of ['unbound', 'alice'] as const) expect({ who, read: (await call(who, 'get_page', { slug: late })).text.includes(`${canaryOf(k, 'plain')}late`) }).toEqual({ who, read: false });
+    }
+
+    test('an explicit purge rechecks inside its transaction: a derived page written after the carry keeps the origin soft-deleted and parked', async () => {
+      const k = 'midsingle';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const late = lateDerivedPage(k);
+      let out: { isError: boolean; text: string };
+      try { out = await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) }); }
+      finally { installFaultHook(undefined); }
+      expect(out.isError ? out.text : '').toBe('');
+      const receipt = JSON.parse(out.text);
+      expect(receipt.status).not.toBe('purged');
+      expect(receipt.purge_held?.code).toBe('derived_origin_parked');
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      await expectLateHidden(k, late);
+      await backdate(origin);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
+      expect((await fm(late)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await expectLateHidden(k, late);
+    }, 240_000);
+
+    test('the bulk retention purge rechecks inside its transaction: a derived page written after the carry parks the origin and skips its row', async () => {
+      const k = 'midbulk';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      await softDelete(origin);
+      await backdate(origin);
+      const late = lateDerivedPage(k);
+      let held: Awaited<ReturnType<typeof purgeDeletedPagesCoordinated>>;
+      try { held = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true }); }
+      finally { installFaultHook(undefined); }
+      expect(held.slugs).not.toContain(origin);
+      expect(held.blocked.find(b => b.slug === origin)?.code).toBe('derived_origin_parked');
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      await expectLateHidden(k, late);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
+      expect((await fm(late)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await expectLateHidden(k, late);
     }, 240_000);
 
     test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and unparks and the one after purges', async () => {
