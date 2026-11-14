@@ -98,10 +98,12 @@ Serves several people (GST-363):
                                              pages labelled for it (never the owner)
 
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
-  gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--id <rule>] [--source <id>] [--yes]
+  gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--allow-without-owner] [--id <rule>] [--source <id>] [--yes]
                                              Preview first; narrowing applies at once. --raw-only: the rule keeps
                                              its pages, not their derived pages and facts (transcripts; a widening
-                                             held for gbrain access apply when it changes an existing rule)
+                                             held for gbrain access apply when it changes an existing rule).
+                                             Readers that leave out the brain owner refuse readers_omit_owner;
+                                             --allow-without-owner accepts them
   gbrain access rule rm <rule> [--source <id>] [--yes]
                                              A widening: recorded and held until gbrain access apply
   gbrain access rule list|status|history [--source <id>] [--operation <id>]

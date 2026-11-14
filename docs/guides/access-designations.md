@@ -147,7 +147,9 @@ add --prefix <folder>/ --readers <list>` does the same for a folder, and `--slug
 at the source root, or one whose file left git, which a `visibility` edit cannot reach; upgrade every host that shares
 the brain first, because an older one stops syncing a git-backed source that holds a page rule). This is the boundary between people in a
 shared brain, and it binds the owner too: the owner reads such a page only when listed, unless the brain operator
-turns on the owner opt-in (below). No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
+turns on the owner opt-in (below). So when an owner is set, `gbrain access rule add` and `repair visibility --readers`
+refuse a reader list that leaves the owner out (`readers_omit_owner`; a group that holds the owner does not count), and
+`--allow-without-owner` accepts it when that is what you want. No grant or hatch relaxes it. Use it for a page that belongs to specific people in a shared brain; a single-user brain needs
 none. The page's writers set it; on an existing page the brain host sets or removes it with
 `gbrain repair visibility --slug <page> --readers <list>` (or `--slugs-file`), which keeps the page's trust tier and
 changes only that line ([how](repair.md)). Widening a folder rule waits for `gbrain access apply`. On a git-canonical
