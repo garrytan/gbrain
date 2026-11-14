@@ -98,7 +98,7 @@ export interface CredentialVault {
   put(entry: CredentialEntry): Promise<void>;
   list(filter?: { provider?: string }): Promise<CredentialMeta[]>;
   delete(id: string): Promise<boolean>;
-  getClient(provider: string): Promise<ProviderClientRecord | null>;
+  getClient(provider: string, clientId?: string): Promise<ProviderClientRecord | null>;
   putClient(rec: ProviderClientRecord): Promise<void>;
   deleteClient(provider: string): Promise<boolean>;
 }
@@ -273,14 +273,29 @@ export class FileVaultBackend implements CredentialVault {
     });
   }
 
-  async getClient(provider: string): Promise<ProviderClientRecord | null> {
-    return this.read().clients.find((c) => c.provider === provider) ?? null;
+  async getClient(provider: string, clientId?: string): Promise<ProviderClientRecord | null> {
+    const mine = this.read().clients.filter((c) => c.provider === provider);
+    if (clientId) {
+      const exact = mine.find((c) => c.client_id === clientId);
+      if (exact) return exact;
+    }
+    // Newest record wins when no (or an unknown) client_id is requested.
+    return mine.length ? mine[mine.length - 1]! : null;
   }
 
   async putClient(rec: ProviderClientRecord): Promise<void> {
     withVaultLock(this.path, () => {
       const shape = this.read();
-      shape.clients = shape.clients.filter((c) => c.provider !== rec.provider);
+      // Refresh tokens are bound to the client that minted them: keep an older
+      // client of this provider while a stored credential still references it.
+      const inUse = new Set(
+        Object.values(shape.credentials)
+          .filter((e) => e.provider === rec.provider && e.meta.client_id)
+          .map((e) => e.meta.client_id),
+      );
+      shape.clients = shape.clients.filter(
+        (c) => c.provider !== rec.provider || (c.client_id !== rec.client_id && inUse.has(c.client_id)),
+      );
       shape.clients.push(rec);
       this.write(shape);
     });
