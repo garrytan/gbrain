@@ -139,6 +139,7 @@ import { providerConsentEntry } from './checks/provider-consent.ts';
 import { behaviorChangesEntry } from './checks/behavior-changes.ts';
 import { fenceIntegrityEntry } from './checks/fence-integrity.ts';
 import { mcpRequestLogRetentionEntry } from './checks/mcp-request-log.ts';
+import { storageManifestEntry } from './checks/storage-manifest.ts';
 import { outsideContentFencesEntry } from './checks/outside-content-fences.ts';
 import { dbAheadOfGitEntry } from './checks/db-ahead-of-git.ts';
 import { gitIndexLagEntry } from './checks/git-index-lag.ts';
@@ -150,6 +151,7 @@ import { ghostPagesEntry } from './checks/ghost-pages.ts';
 import { memberAccessEntry } from './checks/member-access.ts';
 import { folderAccessEntry } from './checks/folder-access.ts';
 import { unlabeledPeopleFoldersEntry } from './checks/unlabeled-people-folders.ts';
+import { openSharedPagesEntry } from './checks/open-shared-pages.ts';
 import { unscopedSharedReadsEntry } from './checks/unscoped-shared-reads.ts';
 import { sharedStdioBindingEntry } from './checks/shared-stdio-binding.ts';
 import { sharedAgentAccessEntry } from './checks/shared-agent-access.ts';
@@ -243,6 +245,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   memberAccessEntry,
   folderAccessEntry,
   unlabeledPeopleFoldersEntry,
+  openSharedPagesEntry,
   unscopedSharedReadsEntry,
   sharedStdioBindingEntry,
   sharedAgentAccessEntry,
@@ -364,6 +367,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   embeddingPlaneDisagreementEntry,
   // #6770: MCP request-log size and the opt-in retention prune (read-only; the enable fix asks the user).
   mcpRequestLogRetentionEntry,
+  // GST-1943: the storage shelf: cards failing the card schema, interim records not adopted, a hosted shelf directory gone.
+  storageManifestEntry,
   fenceIntegrityEntry,
   searchModeEntry,
 ];
