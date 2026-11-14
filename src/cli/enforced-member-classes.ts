@@ -44,7 +44,7 @@ const REFUSED_OPS = [
   'questions_status', 'rank_entities', 'recall', 'request_tools', 'resolve_slugs', 'schema_explain_type', 'schema_graph',
   'schema_lint', 'schema_review_orphans', 'schema_stats', 'search_by_image', 'search_modes', 'sync_brain_skills',
   'synthesize', 'takes_calibration', 'takes_list', 'takes_scorecard', 'takes_search', 'volunteer_chronicle',
-  'volunteer_context', 'wanted_pages',
+  'volunteer_context', 'wanted_pages', 'storage_find', 'storage_get', 'storage_list',
   // hidden operations: no CLI path reaches them (their CLI names are CLI-only commands or gbrain call)
   'advisor', 'code_blast', 'code_callees', 'code_callers', 'code_def', 'code_flow', 'code_refs', 'find_anomalies',
   'find_experts', 'find_orphans', 'get_recent_salience', 'sources_list', 'sources_resolve_path', 'sources_status', 'think',
@@ -66,7 +66,7 @@ const REFUSED_OPS = [
   'schema_apply_mutations', 'search_stats', 'search_tune', 'send_job_message', 'set_memory_writeback', 'set_skill_policy',
   'submit_job', 'wait_job', 'chronicle_backfill', 'file_list', 'file_register', 'file_upload', 'file_url', 'file_verify',
   'get_skill_retention', 'import_skill_proposal', 'prune_skill_revisions', 'retain_skill_revision', 'get_agent_job',
-  'submit_agent',
+  'submit_agent', 'storage_register', 'storage_update',
 ] as const;
 
 export const OPERATION_CLASSES: Readonly<Record<string, EnforcedClass>> = Object.freeze(Object.fromEntries([

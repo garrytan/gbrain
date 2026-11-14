@@ -103,8 +103,9 @@ Folder rules (one rulebook per source; the database store on a repo-less source,
   gbrain access rule list|status|history [--source <id>] [--operation <id>]
   gbrain access rule revert --to <revision> [--source <id>] [--yes]
   gbrain access rule export|import [--file <access.yml>] [--source <id>] [--yes]
-  gbrain access rule migrate [--source <id>] [--yes]
+  gbrain access rule migrate [--to git|database] [--source <id>] [--yes]
                                              Move the rules between the database and git stores
+                                             (--to database from no store commits nothing)
   gbrain access apply [--source <id>] [--revision <n>] [--yes --expect <plan_hash>]
                                              Preview held widenings; --yes approves the previewed plan
   gbrain access resume [--source <id>]       Finish a narrowing that was interrupted while stamping pages

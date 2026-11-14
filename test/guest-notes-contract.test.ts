@@ -117,6 +117,7 @@ const CLASSIFIED: Record<string, Args | { skip: string }> = {
   questions_pin: skip(WRITE), questions_refresh: skip(WRITE), questions_unpin: skip(WRITE),
   questions_list: {},
   questions_status: { id: 'q-1' },
+  storage_find: { query: SENTINEL }, storage_list: {}, storage_get: { id: SENTINEL },
 };
 /** Reads whose owner answer must contain the guest page's text, so the contract is exercised, not vacuous. */
 const MUST_REACH = ['get_page', 'list_pages', 'find_pages', 'search', 'query', 'search_exact', 'get_chunks', 'fetch', 'get_versions', 'chronicle_day'];
