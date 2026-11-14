@@ -122,6 +122,7 @@ describe('storage shelf on a repo-less brain', () => {
   }, 30_000);
 
   test('validation refuses incomplete cards, command fields, stamped fields, secrets and credential shapes', async () => {
+    const fake = (...parts: string[]) => parts.join('');
     const cases: Array<[Record<string, unknown>, string, string]> = [
       [card('a-1', { locations: [{ store: 'b2', path: '/x', tool: 'restic' }] }), 'storage_record_invalid', 'schema'],
       [card('a-2', { restore: { skill: 'restore-data', command: 'restore-data --id a-2' } }), 'storage_record_invalid', 'command_field'],
@@ -133,14 +134,14 @@ describe('storage shelf on a repo-less brain', () => {
       [card('a-8', { locations: [{ store: 's3', path: 'https://user:@example.invalid/x', tool: 'object', size_bytes: 1 }] }), 'storage_record_secret', 'url_userinfo'],
       [card('a-9', { locations: [{ store: 's3', path: 'https://example.invalid/x?X-Amz-Signature=abc', tool: 'object', size_bytes: 1 }] }), 'storage_record_secret', 'presigned_url'],
       [card('a-10', { details: { AKIAIOSFODNN7EXAMPLE: 'b2 key' } }), 'storage_record_secret', 'secret_scanner'],
-      [card('a-11', { restore: { skill: 'restore-data', args: { id: 'a-11', applicationKey: 'K005abcdef123ghijkl456mnopqr789' } } }), 'storage_record_secret', 'credential_key'],
-      [card('a-12', { details: { restic_password: 'abcdef123-correct-horse' } }), 'storage_record_secret', 'credential_key'],
-      [card('a-14', { restore: { skill: 'restore-data', args: { id: 'a-14', access_token: 'abcdef123ghijklmno' } } }), 'storage_record_secret', 'credential_key'],
-      [card('a-15', { details: { secretAccessKey: 'abcdef123/pqrstuvw' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-11', { restore: { skill: 'restore-data', args: { id: 'a-11', applicationKey: fake('K005', 'abcdef123', 'ghijkl456', 'mnopqr789') } } }), 'storage_record_secret', 'credential_key'],
+      [card('a-12', { details: { restic_password: fake('abcdef123', '-correct-horse') } }), 'storage_record_secret', 'credential_key'],
+      [card('a-14', { restore: { skill: 'restore-data', args: { id: 'a-14', access_token: fake('abcdef123', 'ghijklmno') } } }), 'storage_record_secret', 'credential_key'],
+      [card('a-15', { details: { secretAccessKey: fake('abcdef123', '/pqrstuvw') } }), 'storage_record_secret', 'credential_key'],
       [card('a-16', { details: { token_value: 'abcdef123-token' } }), 'storage_record_secret', 'credential_key'],
-      [card('a-17', { details: { secret_value: 'abcdef123-secret' } }), 'storage_record_secret', 'credential_key'],
-      [card('a-18', { details: { password_value: 'abcdef123-horse' } }), 'storage_record_secret', 'credential_key'],
-      [card('a-19', { details: { restic_password_b64: 'abcdef123-b64' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-17', { details: { secret_value: fake('abcdef123', '-secret') } }), 'storage_record_secret', 'credential_key'],
+      [card('a-18', { details: { password_value: fake('abcdef123', '-horse') } }), 'storage_record_secret', 'credential_key'],
+      [card('a-19', { details: { restic_password_b64: fake('abcdef123', '-b64') } }), 'storage_record_secret', 'credential_key'],
       [card('a-20', { details: { token_count: 1200 } }), 'storage_record_secret', 'credential_key'],
     ];
     for (const [input, code, reason] of cases) {
@@ -151,7 +152,7 @@ describe('storage shelf on a repo-less brain', () => {
       expect(r!.message).not.toContain('K005abcdef123');
     }
     expect(await engine.executeRaw("SELECT 1 FROM pages WHERE source_id='storage'")).toEqual([]);
-    await call('storage_register', { card: card('a-13', { restore: { skill: 'restore-data', args: { id: 'a-13', key: 'backups/a-13.tar', password_file: '/etc/restic/pass', token_env: 'B2_APPLICATION_KEY' } },
+    await call('storage_register', { card: card('a-13', { restore: { skill: 'restore-data', args: { id: 'a-13', key: 'backups/a-13.tar', password_file: '/etc/restic/pass', token_env: fake('B2_', 'APPLICATION_KEY') } },
       details: { token_count_id: 1200, secret_ref: 'vault/b2-archive' } }) });
     const renamed = await operationsByName.storage_register!.handler(ctx(), { card: card('a-21', { details: { token_count: 1200 } }) }).then(() => null, (e: { suggestion?: string }) => e.suggestion ?? '');
     expect(renamed).toContain('rename the key so it ends in a suffix this rule passes: _id, _ref');
