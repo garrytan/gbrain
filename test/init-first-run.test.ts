@@ -82,7 +82,7 @@ describe('the upkeep line (GBRA-438)', () => {
     expect(n.user_message!.split(upkeepLine(false)).length).toBe(2);
     expect(n.user_message).toContain("Nothing needs an answer now");
     const [alone] = setupFirstRunNotices([{ ...bundle, decisions: bundle.decisions!.filter(d => d.id === 'upkeep'), contract_version: 1 }], 'Claude Code');
-    expect(alone.user_message).toBe(`gbrain is set up and Claude Code is wired, so memory works now. ${upkeepLine(false)} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`);
+    expect(alone.user_message).toBe(`gbrain is set up and Claude Code is wired, so memory works now. Report back (Wakeshift): off. gbrain wakeshift enable turns it on. ${upkeepLine(false)} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`);
   });
 });
 

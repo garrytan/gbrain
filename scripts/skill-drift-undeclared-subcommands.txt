@@ -37,6 +37,7 @@ providers
 publish
 recall
 repair
+setup
 skillify
 skillopt
 skillpack
