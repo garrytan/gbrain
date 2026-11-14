@@ -34,6 +34,19 @@ import { isSkillResolverCommand } from './skill-resolver-lane.ts';
 const MARKERS: BlockMarkers = { begin: '# gbrain:turn-rule:begin', end: '# gbrain:turn-rule:end', label: 'turn-rule', rerun: 'gbrain setup hermes --instructions-only' };
 const EVENT = 'pre_llm_call';
 const ALLOWLIST = 'shell-hooks-allowlist.json';
+const TURN_RULE_TEXT = 'GBrain: before answering this turn';
+
+/** True only for the exact shape hermesTurnHookCommand emits: `/bin/echo '<JSON {context}>'` with the rule text and the same quoting, not just a shared prefix. */
+function isTurnRuleCommand(c: string): boolean {
+  const m = /^\/bin\/echo '([^']*)'$/.exec(c);
+  if (!m) return false;
+  try {
+    const obj = JSON.parse(m[1]!) as unknown;
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj) || Object.keys(obj).length !== 1) return false;
+    const ctx = (obj as { context?: unknown }).context;
+    return typeof ctx === 'string' && ctx.startsWith(TURN_RULE_TEXT) && c === `/bin/echo '${JSON.stringify({ context: ctx }).replace(/'/g, '\\u0027')}'`;
+  } catch { return false; }
+}
 
 export interface HermesTurnHookOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip'; path: string; detail: string; snippet?: string }
 
@@ -230,9 +243,11 @@ export function inspectHermesTurnHook(hermesHome: string, access?: BrainFirstAcc
     const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
     const probe = probeBlock(MARKERS, text);
     const printed = access && probe.state === 'absent' ? hermesTurnHookCommand(access) : null;
-    const pasted = printed ? (loadBoundedYaml(text) as { hooks?: Record<string, unknown> } | null)?.hooks?.[EVENT] : undefined;
+    const pasted = probe.state === 'absent' ? (loadBoundedYaml(text) as { hooks?: Record<string, unknown> } | null)?.hooks?.[EVENT] : undefined;
+    // Without a recorded access, accept a hand-added entry carrying gbrain's turn rule text.
+    const ours = (c: unknown): c is string => typeof c === 'string' && (printed ? c === printed : isTurnRuleCommand(c) && !isSkillResolverCommand(c));
     const command = probe.state === 'present' ? commandIn(probe.interior)
-      : Array.isArray(pasted) && pasted.some((e) => (e as { command?: unknown } | null)?.command === printed) ? printed : null;
+      : Array.isArray(pasted) ? (pasted.map((e) => (e as { command?: unknown } | null)?.command).find(ours) ?? null) : null;
     if (!command) return { state: 'absent', path };
     return { state: readAllowlist(join(hermesHome, ALLOWLIST)).approvals.some((e) => approves(e, command)) ? 'approved' : 'unapproved', path, command };
   } catch {
