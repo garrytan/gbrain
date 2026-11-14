@@ -33,7 +33,7 @@ export const GUEST_DERIVED_PRODUCERS = {
   synthesize_concepts: { guest: 'none', reason: 'Aggregates atom pages, which extract_atoms never derives from a guest page.' },
   recompute_emotional_weight: { guest: 'none', reason: "Scores a page from its own takes and tags into that page's emotional_weight column; a guest page has no takes." },
   consolidate: { guest: 'none', reason: NO_ROWS },
-  propose_takes: { guest: 'skip', sites: [CYCLE] },
+  propose_takes: { guest: 'skip', sites: [CYCLE, 'src/core/cycle/propose-takes.ts'] },
   grade_takes: { guest: 'none', reason: NO_ROWS },
   calibration_profile: { guest: 'none', reason: NO_ROWS },
   edge_contradictions: { guest: 'none', reason: NO_ROWS },

@@ -63,6 +63,18 @@ const guestRow = async (id: string) => (await engine.executeRaw<{ writers: strin
 const configOf = (config: unknown) => (typeof config === 'string' ? JSON.parse(config) : config) as Record<string, unknown>;
 
 describe('gbrain guests init', () => {
+  test('refuses an existing source that already holds pages, in the preview and with --yes', async () => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['source-a']);
+    await engine.putPage('notes/owner-a', { title: 'Owner', type: 'note' as never, compiled_truth: 'Mine.', frontmatter: {}, timeline: '' }, { sourceId: 'source-a' } as never);
+    for (const args of [['init', '--source', 'source-a'], ['init', '--source', 'source-a', '--yes']]) {
+      exitCode = null; err = [];
+      await run(() => runGuests(engine, args));
+      expect({ args, exitCode, said: err.join('\n').includes('already holds 1 page') }).toEqual({ args, exitCode: 2, said: true });
+    }
+    expect(await guestRow('source-a')).toBeUndefined();
+    expect(configOf((await sourceRow('source-a'))!.config).guest).toBeUndefined();
+  });
+
   test('previews by default and writes nothing', async () => {
     await run(() => runGuests(engine, ['init', '--writer', 'oauth_client:client-a']));
     expect(exitCode).toBeNull();

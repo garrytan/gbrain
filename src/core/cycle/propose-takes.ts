@@ -63,6 +63,7 @@ import { ProposeTakesFailures, PROPOSE_TAKES_HOLD_RUNS, type FailedPage } from '
 import type { OperationContext } from '../operations.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseStatus, CyclePhase } from '../cycle.ts';
+import { guestSourceExclusionSql } from '../guests/derived.ts';
 
 /**
  * Bump when the extractor prompt or the JSON output shape changes. Old
@@ -316,6 +317,7 @@ async function listCandidatePages(
     "COALESCE(frontmatter->>'dream_generated', '') <> 'true'",
     "COALESCE(frontmatter->>'extracted_by', '') NOT LIKE 'extract_atoms%'",
     "COALESCE(frontmatter->>'synthesized_by', '') NOT LIKE 'synthesize_concepts%'",
+    guestSourceExclusionSql('propose_takes', 'pages'),
   ];
   const params: unknown[] = [];
   if (scope.sourceIds && scope.sourceIds.length > 0) {

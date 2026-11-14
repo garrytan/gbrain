@@ -50,6 +50,7 @@ const LEDGER: Record<string, string> = {
   restore_page: 'test/pages-source-scoping-4329.test.ts',
   purge_deleted_pages: 'test/operations-trust-boundary.test.ts',
   purge_fact: 'test/purge-fact.test.ts',
+  promote_guest_note: 'test/guest-notes-promotion.test.ts',
   confirm_memory: 'test/trust-owner-actions.test.ts',
   list_page_purges: 'test/page-purge.test.ts',
   unpurge_page: 'test/page-purge.test.ts',

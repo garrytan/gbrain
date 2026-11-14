@@ -10,6 +10,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Operation } from '../ops/contract.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 
 export const GUEST_ORIGIN = 'guest';
 /** get_brain_identity lists it: this brain stamps the guest warning on every read, so a guest broker may switch on. */
@@ -21,6 +22,17 @@ export const GUEST_MARKER_CAPABILITY = 'guest_marker_v1';
  */
 export const guestSourceSql = (config: string, id: string) =>
   `(COALESCE(${config}->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = ${id}))`;
+
+/**
+ * Runs `read` with guestSourceSql. A brain whose schema is behind v312 has no guest_sources table, so the read is
+ * retried with the config record alone instead of failing every read that returns a page.
+ */
+export async function withGuestSourceSql<T>(read: (guestSql: typeof guestSourceSql) => Promise<T>): Promise<T> {
+  try { return await read(guestSourceSql); } catch (e) {
+    if (!isMissingSchemaObject(e, 'table', 'guest_sources')) throw e;
+    return read(config => `COALESCE(${config}->>'guest' = 'true', false)`);
+  }
+}
 
 /** Whether any source is a guest source, read from the sources themselves on every call; a failed read answers yes. */
 export async function brainHasGuestSource(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {

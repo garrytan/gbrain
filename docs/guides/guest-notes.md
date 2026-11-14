@@ -63,8 +63,9 @@ gbrain guests init --writer oauth_client:client-a --yes
 
 The source is called `guests` unless you pass `--source <id>`. Running init
 again on a guest source adds the new writers and keeps the old ones. If the
-source exists already, it must have no local path; init then marks it as a guest
-source.
+source exists already, it must have no local path and hold no pages; init then
+marks it as a guest source. A source that already holds pages is refused, because
+every page in a guest source would then read as a guest's words.
 
 ## Change who may write
 
@@ -117,8 +118,8 @@ The offsite moved to Friday.
 
 A guest note is saved once, as a new page. Saving to a slug that exists is
 refused `revision_required`, and `force`, `expected_revision`, `edit_page`,
-`append_page`, `add_timeline_entry`, `add_link`, `remember`, `put_pages` and
-uploads are refused `guest_page_immutable`; a writer may delete its notes.
+`append_page`, `add_timeline_entry`, `add_link`, `remember`, `put_raw_data`,
+`put_pages` and uploads are refused `guest_page_immutable`; a writer may delete its notes.
 gbrain checks the writer list again when the note publishes, so a writer you
 remove in between is refused `source_writer_restricted`. Every refusal is in
 [write refusals](write-refusals.md#guest-source-refusals).
@@ -194,7 +195,11 @@ The guest note and its mark are not changed. Its reads now show
 `guest.promoted: true`, and the broker's delete of it is refused
 `guest_page_promoted`, so a retention sweep can't remove what you kept. You can
 still delete it from your own CLI. Promoting the same note to the same page again
-writes nothing (`already_promoted`).
+writes nothing (`already_promoted`). If a promotion stopped after the new page was
+written but before the link was recorded (an interrupted run, or a write that was
+still pending), promoting again records the link without writing the page twice.
+The note is read through the same read scope as `get_page`, so a connection that
+cannot read the guest source cannot promote from it.
 
 Agents reach the same step as the MCP tool `promote_guest_note`. Only you may
 run it: your own CLI (not under `GBRAIN_ENFORCED_MEMBER` and not with `--as`), a

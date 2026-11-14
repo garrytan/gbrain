@@ -210,7 +210,7 @@ test/get-page-federated-scope.test.ts	#4275 alias hop scope: archived sources, i
 test/git-env-guard.test.ts	(file-level)	5	readFileSync
 test/grant-execution-prerequisites.test.ts	execution prerequisite table	1	readFileSync
 test/guest-derived-registry.test.ts	guest derived-producer registry	2	readFileSync
-test/guest-derived-registry.test.ts	guest pages feed no derived rows (pglite, repo-less)	3	readFileSync
+test/guest-derived-registry.test.ts	guest pages feed no derived rows (pglite, repo-less)	4	readFileSync
 test/harness-onboarding.test.ts	harness identity and private handoff	6	readFileSync
 test/hook-command.serial.test.ts	user-prompt	18	source-surface-helper
 test/hook-push-spawn-env.test.ts	spawnDetachedPush env handoff	2	readFileSync

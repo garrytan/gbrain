@@ -19,6 +19,7 @@ import { importFromContent } from '../src/core/import-file.ts';
 import { extractStaleFromDB } from '../src/commands/extract.ts';
 import { extractTimelineFromDB } from '../src/commands/extract-timeline-db.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
+import { runPhaseProposeTakes } from '../src/core/cycle/propose-takes.ts';
 import { withWriteAttribution } from '../src/core/persistence/context.ts';
 
 const ROOT = join(import.meta.dir, '..');
@@ -89,6 +90,16 @@ describe('guest pages feed no derived rows (pglite, repo-less)', () => {
     const facts = await runExtractFacts(engine, { sourceId: 'guests' });
     expect({ scanned: facts.pagesScanned, failed: facts.pagesFailed }).toEqual({ scanned: 0, failed: 0 });
     expect(await guestRows()).toEqual({ links: 0, timeline: 0, facts: 0 });
+  }, 120_000);
+
+  test('an unscoped propose_takes run never reads a guest page and proposes nothing from it', async () => {
+    const scanned: string[] = [];
+    const ctx = { engine, config: {} as never, logger: { info() {}, warn() {}, error() {} } as never, dryRun: false, remote: false, sourceId: undefined };
+    await runPhaseProposeTakes(ctx as never, { extractor: async ({ pagePath }) => { scanned.push(pagePath); return []; } });
+    expect(scanned).toContain('notes/owner-a');
+    expect(scanned.filter(slug => slug === 'notes/guest-a' || slug === 'people/carol-example')).toEqual([]);
+    const [proposals] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM take_proposals WHERE source_id = 'guests'");
+    expect(proposals!.n).toBe(0);
   }, 120_000);
 
   test('a cycle scoped to the guest source reports the derived phases skipped', async () => {

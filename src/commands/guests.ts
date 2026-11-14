@@ -82,6 +82,13 @@ async function runInit(engine: BrainEngine, rest: string[]): Promise<void> {
     console.error(`Source "${sourceId}" has a local path (${plan.localPath}). A guest source is database-only, so gbrain will not make this one a guest source. Pick another name with --source.`);
     process.exit(2);
   }
+  if (plan.exists && !plan.guest) {
+    const [held] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
+    if (Number(held?.n ?? 0) > 0) {
+      console.error(`Source "${sourceId}" already holds ${held!.n} page(s). Every page in a guest source reads as an outside guest's words and only listed writers can change it, so gbrain will not make this one a guest source. Pick another name with --source.`);
+      process.exit(2);
+    }
+  }
   const writerLine = (list: readonly string[]) => list.length > 0 ? list.join(', ')
     : `none yet: nobody can save notes there until you add one (gbrain sources writers ${sourceId} --add ${GUEST_WRITER_FORMAT})`;
   if (!yes) {

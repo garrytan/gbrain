@@ -31,6 +31,7 @@ import { runSources } from '../src/commands/sources.ts';
 import { operationsByName } from '../src/core/operations.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { explicitReadBinding } from '../src/core/source-resolver.ts';
 
 const SRC = 'guests';
 const PLAIN = 'source-a';
@@ -145,9 +146,45 @@ describe('promote_guest_note (pglite, repo-less)', () => {
     const third = slugOf();
     await saveGuest(third);
     const stdio = await dispatchToolCall(engine, 'promote_guest_note', { slug: third, to: 'notes/kept-' + third.slice(-8) }, {
-      remote: true, transport: 'stdio', stdioMember: OWNER, sourceId: PLAIN, takesHoldersAllowList: ['world'] });
+      remote: true, transport: 'stdio', stdioMember: OWNER, sourceId: PLAIN, localFederatedSourceIds: [PLAIN, SRC], takesHoldersAllowList: ['world'] });
     expect({ isError: stdio.isError === true, text: stdio.isError ? stdio.content[0]!.text : '' }).toEqual({ isError: false, text: '' });
     expect((await promotions(third))[0]?.promoted_by_kind).toBe('local_stdio');
+  }, 120_000);
+
+  test('a stdio connection bound to a source that cannot read the guest source cannot promote from it', async () => {
+    const slug = slugOf();
+    await saveGuest(slug);
+    const isolated = 'source-isolated';
+    await engine.executeRaw(`INSERT INTO sources (id, name, config) VALUES ($1, $1, '{"federated": false}'::jsonb) ON CONFLICT (id) DO NOTHING`, [isolated]);
+    const binding = await explicitReadBinding(engine, isolated, 'env');
+    expect(binding?.sourceIds).toEqual([isolated]);
+    const opts = { remote: true, transport: 'stdio' as const, stdioMember: OWNER, sourceId: isolated, explicitReadBinding: binding, takesHoldersAllowList: ['world'] };
+    const read = parse((await dispatchToolCall(engine, 'get_page', { slug, source_id: SRC }, opts)).content[0]!.text);
+    expect(read.code ?? read.error).toBeDefined();
+    const out = await dispatchToolCall(engine, 'promote_guest_note', { slug, to: 'notes/bound-' + slug.slice(-8) }, opts);
+    expect(out.isError).toBe(true);
+    expect(await promotions(slug)).toEqual([]);
+    expect(await engine.getPage('notes/bound-' + slug.slice(-8), { sourceId: isolated })).toBeNull();
+  }, 120_000);
+
+  test('a promotion whose link was lost is finished by promoting again, with no second write', async () => {
+    const slug = slugOf();
+    const target = 'notes/recover-' + slug.slice(-8);
+    await saveGuest(slug);
+    expect((await local('promote_guest_note', { slug, to: target })).isError).toBe(false);
+    await engine.executeRaw('DELETE FROM guest_promotions WHERE target_source_id = $1 AND target_slug = $2', [PLAIN, target]);
+    const before = (await engine.readPageSnapshot(target, { sourceId: PLAIN }))!.revision;
+    const again = await local('promote_guest_note', { slug, to: target });
+    expect({ isError: again.isError, text: again.isError ? again.text : '', status: again.json.status }).toEqual({ isError: false, text: '', status: 'promoted' });
+    expect(await promotions(slug)).toEqual([{ target_source_id: PLAIN, target_slug: target, promoted_by_kind: 'local_cli' }]);
+    expect((await engine.readPageSnapshot(target, { sourceId: PLAIN }))!.revision).toBe(before);
+  }, 120_000);
+
+  test('a target page that was not promoted from this note is not linked', async () => {
+    const slug = slugOf();
+    await saveGuest(slug);
+    expect((await local('promote_guest_note', { slug, to: 'notes/owner-page' })).isError).toBe(true);
+    expect(await promotions(slug)).toEqual([]);
   }, 120_000);
 
   test('everyone else is guest_promotion_owner_only and nothing is written', async () => {

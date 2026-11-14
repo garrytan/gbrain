@@ -11,6 +11,7 @@
  * (guests/admission.ts refuseRemoteDeleteOfPromoted). The guest page and its mark are never changed.
  */
 import { OperationError, type OperationContext } from '../ops/contract.ts';
+import { federatedSearchScope } from '../ops/context.ts';
 import { serializeMarkdown } from '../markdown.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import type { PageType } from '../types.ts';
@@ -40,7 +41,8 @@ async function guestNote(ctx: OperationContext, slug: string, guestSource: strin
   const rows = await ctx.engine.executeRaw<{ id: number; source_id: string }>(
     'SELECT p.id, p.source_id FROM pages p JOIN guest_sources g ON g.source_id = p.source_id WHERE p.slug = $1 AND p.deleted_at IS NULL'
       + (guestSource ? ' AND p.source_id = $2' : '') + ' ORDER BY p.source_id', guestSource ? [slug, guestSource] : [slug]);
-  const readable = ctx.remote === false || !ctx.auth ? null : ctx.auth.allowedSources?.length ? ctx.auth.allowedSources : [ctx.auth.sourceId];
+  const scope = ctx.remote === false ? null : federatedSearchScope(ctx, guestSource);
+  const readable = scope ? scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null) : null;
   const found = rows.filter(r => !readable || readable.includes(r.source_id));
   if (!found.length) {
     throw new OperationError('page_not_found', 'No live guest note ' + slug + (guestSource ? ' in source ' + guestSource : '') + ' is visible here, so nothing was promoted.',
@@ -74,12 +76,20 @@ export async function promoteGuestNote(ctx: OperationContext, p: Record<string, 
   const content = serializeMarkdown({ ...(readers !== undefined ? { readable_by: readers } : {}), promoted_from: note.source_id + ':' + slug },
     page.compiled_truth ?? '', page.timeline ?? '', { type: page.type as PageType, title: page.title, tags: [] });
   if (ctx.dryRun) return { dry_run: true, status: 'would_promote', ...result };
+  const link = async (requestId: unknown) => {
+    const by = await requestPrincipalForContext(ctx);
+    await ctx.engine.executeRaw(
+      'INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id, request_id) VALUES ($1, $2, $3, $4, $5, $6)',
+      [note.id, targetSource, target, by.kind, by.id, typeof requestId === 'string' ? requestId : null]);
+  };
+  const written = await ctx.engine.getPage(target, { sourceId: targetSource });
+  if (written?.frontmatter?.promoted_from === note.source_id + ':' + slug) {
+    await link(null);
+    return { status: 'promoted', ...result, recovered: true };
+  }
   const params = { slug: target, content, source_id: targetSource, ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) };
   (await import('../persistence/page-visibility.ts')).assertSubmittedReaders(ctx.remote, target, content);
   const write = await submitPageMutation(ctx, { operation: 'put_page', params });
-  const by = await requestPrincipalForContext(ctx);
-  await ctx.engine.executeRaw(
-    'INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id, request_id) VALUES ($1, $2, $3, $4, $5, $6)',
-    [note.id, targetSource, target, by.kind, by.id, typeof write.request_id === 'string' ? write.request_id : null]);
+  await link(write.request_id);
   return { status: 'promoted', ...result, write };
 }

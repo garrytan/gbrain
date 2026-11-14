@@ -12,7 +12,7 @@ import { admitsTrust, compareTrust, minTrust, storedTrustTier, type TrustTier } 
 import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrustMarker } from './fence-overlay.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { activationSuppressedSql, contestedRefSql } from './sql.ts';
-import { GUEST_ORIGIN, guestSourceSql, guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
+import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, withGuestSourceSql, type GuestStamp } from '../guests/marker.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
@@ -28,8 +28,8 @@ type Exec = Pick<BrainEngine, 'executeRaw'>;
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
 type TrustRow = { id: number; source_id: string; slug: string; trust_tier: string; write_origin: unknown; flagged: boolean; guest: boolean };
-const TRUST_COLUMNS = `pages.id, pages.source_id, pages.slug, pages.trust_tier, pages.write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
-  ${guestSourceSql('s.config', 'pages.source_id')} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
+const trustColumns = (guestSql: (config: string, id: string) => string) => `pages.id, pages.source_id, pages.slug, pages.trust_tier, pages.write_origin, ${activationSuppressedSql('pages', 'pages')} AS flagged,
+  ${guestSql('s.config', 'pages.source_id')} AS guest FROM pages LEFT JOIN sources s ON s.id = pages.source_id`;
 
 /**
  * Trust fields per page id and per (source_id, slug). GBRA-504: a row in a guest source is decided here, per row from
@@ -42,15 +42,18 @@ export async function loadPageTrust(engine: Exec, refs: readonly PageRef[], opts
   const byKey = new Map<string, TrustFields>();
   const ids = [...new Set(refs.map(r => r.page_id).filter((n): n is number => typeof n === 'number' && Number.isFinite(n)))];
   const slugRefs = refs.filter(r => typeof r.page_id !== 'number');
-  const rows: Array<TrustRow & { byId: boolean }> = [];
-  if (ids.length) {
-    for (const row of await engine.executeRaw<TrustRow>(`SELECT ${TRUST_COLUMNS} WHERE pages.id = ANY($1::int[])`, [ids])) rows.push({ ...row, byId: true });
-  }
-  if (slugRefs.length) {
-    for (const row of await engine.executeRaw<TrustRow>(`SELECT ${TRUST_COLUMNS}
-        WHERE ${opts.includeDeleted ? '' : 'pages.deleted_at IS NULL AND '}(pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-      [slugRefs.map(r => r.source_id ?? 'default'), slugRefs.map(r => r.slug)])) rows.push({ ...row, byId: false });
-  }
+  const rows = await withGuestSourceSql(async guestSql => {
+    const found: Array<TrustRow & { byId: boolean }> = [];
+    if (ids.length) {
+      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)} WHERE pages.id = ANY($1::int[])`, [ids])) found.push({ ...row, byId: true });
+    }
+    if (slugRefs.length) {
+      for (const row of await engine.executeRaw<TrustRow>(`SELECT ${trustColumns(guestSql)}
+          WHERE ${opts.includeDeleted ? '' : 'pages.deleted_at IS NULL AND '}(pages.source_id, pages.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
+        [slugRefs.map(r => r.source_id ?? 'default'), slugRefs.map(r => r.slug)])) found.push({ ...row, byId: false });
+    }
+    return found;
+  });
   const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
   for (const row of rows) {
     const base = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);

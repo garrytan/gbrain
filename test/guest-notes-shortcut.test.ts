@@ -77,3 +77,36 @@ describe('a guest source the guests command never set up', () => {
     expect(out.isError || out.json?.origin === 'guest').toBe(true);
   }, 60_000);
 });
+
+describe('a brain whose schema is behind v312', () => {
+  test('reads still work without the guest tables, and a config-marked guest source is still marked', async () => {
+    const old = new PGLiteEngine();
+    await old.connect({});
+    await old.initSchema();
+    try {
+      await addMember(old, OWNER);
+      await setOwner(old, OWNER);
+      for (const id of [EDITED, LISTED]) {
+        await old.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [id]);
+        await importFromContent(old, SLUG, '---\ntype: note\ntitle: Visitor note\n---\n# Visitor note\n\nA visitor wrote this in ' + id + '.\n', { sourceId: id });
+      }
+      await old.executeRaw(`UPDATE sources SET config = config || '{"guest": true}'::jsonb WHERE id = $1`, [EDITED]);
+      await old.executeRaw('DROP TABLE guest_promotions, guest_marks, guest_sources CASCADE');
+      const read = async (op: string, params: Record<string, unknown>, sourceId: string) => {
+        const out = await dispatchToolCall(old, op, params, { remote: true, transport: 'stdio', stdioMember: OWNER, sourceId, takesHoldersAllowList: ['world'] });
+        const text = out.content[0]!.text;
+        let json: any = null;
+        try { json = JSON.parse(text); } catch { /* an error text */ }
+        return { isError: out.isError === true, text, json };
+      };
+      const plain = await read('get_page', { slug: SLUG }, LISTED);
+      expect({ isError: plain.isError, text: plain.isError ? plain.text : '', origin: plain.json?.origin === 'guest' }).toEqual({ isError: false, text: '', origin: false });
+      const listed = await read('list_pages', {}, EDITED);
+      const row = (Array.isArray(listed.json) ? listed.json : listed.json?.pages ?? []).find((r: any) => r.slug === SLUG);
+      expect({ isError: listed.isError, origin: row?.origin, tier: row?.trust_tier }).toEqual({ isError: false, origin: 'guest', tier: 'external_untrusted' });
+    } finally {
+      await disposePersistenceConsumer(old);
+      await old.disconnect();
+    }
+  }, 120_000);
+});

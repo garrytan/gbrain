@@ -240,6 +240,17 @@ describe('guest write admission (pglite, repo-less)', () => {
     expect((await put('broker', slug)).code).toBe('guest_page_immutable');
   }, 120_000);
 
+  test('raw data cannot be attached to a guest page by its writer, another credential or the owner', async () => {
+    const slug = slugOf();
+    expect((await put('broker', slug)).isError).toBe(false);
+    const data = { note: 'attached later' };
+    expect((await call('broker', 'put_raw_data', { slug, source: 'provider-a', data })).code).toBe('guest_page_immutable');
+    expect((await call('other', 'put_raw_data', { slug, source: 'provider-a', data })).code).toBe('source_writer_restricted');
+    expect((await local('put_raw_data', { slug, source: 'provider-a', data })).code).toBe('source_writer_restricted');
+    const [rows] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM raw_data r JOIN pages p ON p.id = r.page_id WHERE p.source_id = $1 AND p.slug = $2', [SRC, slug]);
+    expect(rows!.n).toBe(0);
+  }, 120_000);
+
   test('the frontmatter allowlist and the sender and group match', async () => {
     for (const [label, page] of [
       ['extra key', { extra: ['tags: [x]'] }], ['visibility', { extra: ['visibility: private'] }], ['trust key', { extra: ['trust_tier: owner'] }],
