@@ -30,11 +30,11 @@ import { buildToolDefs } from '../src/mcp/tool-defs.ts';
 import { operations } from '../src/core/operations.ts';
 import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
 import { addGroup, addMember, bindCredential } from '../src/core/access/members.ts';
-import { setOwner } from '../src/core/access/owner.ts';
+import { clearOwner, setOwner } from '../src/core/access/owner.ts';
 import { bindMemberSource, unbindMemberSource } from '../src/core/access/member-sources.ts';
 import { setMemberLabelledOnly } from '../src/core/access/labelled-only.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
-import { __setRoomDeadlineForTests, assessRoom, readRoomDeclaration, ROOM_COVERED_OPS } from '../src/core/access/room.ts';
+import { __setRoomDeadlineForTests, assessRoom, keepRoomEvidence, readRoomDeclaration, ROOM_COVERED_OPS } from '../src/core/access/room.ts';
 import { EGRESS_CAP_MIN, encodedFrameBytes } from '../src/core/egress-budget.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -257,11 +257,12 @@ for (const kind of testBackends()) {
       expect({ isError: out.isError, code: (out.json as { code?: string }).code }).toEqual({ isError: true, code: 'on_behalf_of_not_permitted' });
     }, 60_000);
 
-    test('the room argument never reaches a handler: a write with one succeeds and stores nothing of it', async () => {
+    test('the room argument never reaches a handler: a write with one succeeds, stores nothing of it and marks its own fact', async () => {
       const out = await call('owner', 'remember', { fact: 'Harbor ledger room argument note', entity: PAGES.open.slug, visibility: 'world', provenance: 'room test', content_origin: 'user_said', room: ['group:team-a'] });
       expect(out.isError).toBe(false);
-      expect((out.meta?.room as { unavailable?: string }).unavailable).toBe('op_not_covered');
-      // A write the room marks nothing on is not a partial answer: no degraded stamp, so nobody retries a committed write.
+      expect((out.json as { room_access?: unknown }).room_access).toEqual({ readable: true });
+      expect(out.meta?.room).toMatchObject({ complete: true, counts: { items: 1, readable: 1, above: 0, unknown: 0 } });
+      // A write is never stamped degraded for its marks, so nobody retries a committed write.
       expect(out.meta?.degraded).toBeUndefined();
       const [row] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM facts WHERE fact LIKE '%room argument note%' AND context IS NULL");
       expect(row!.n).toBe(1);
@@ -278,6 +279,91 @@ for (const kind of testBackends()) {
       const text = readdirSync(auditDir).map(f => readFileSync(join(auditDir, f), 'utf8')).join('\n');
       for (const key of Object.keys(PAGES) as Key[]) expect({ key, named: text.includes(PAGES[key].slug) }).toEqual({ key, named: false });
     }, 60_000);
+
+    test('remember and put_page mark their own result; a write the room cannot judge is unknown and never stamped degraded', async () => {
+      const kept = await call('owner', 'remember', { fact: 'Harbor ledger kept note', entity: PAGES.open.slug, visibility: 'private', provenance: 'room test', content_origin: 'user_said' }, { room: { header: 'alice-example' } });
+      expect(kept.isError).toBe(false);
+      expect((kept.json as { room_access?: unknown }).room_access).toEqual({ readable: false, reason: 'private_label' });
+      expect(kept.blocks.some(b => b.startsWith('[gbrain notice room_above_level kind=safety]'))).toBe(true);
+      const put = await call('owner', 'put_page', { slug: 'notes/room-write-plan', content: '---\ntype: note\ntitle: Room write plan\nreadable_by: [owner-example]\n---\n# Room write plan\n' }, { room: { meta: ['alice-example'] } });
+      expect(put.isError).toBe(false);
+      expect((put.json as { room_access?: unknown }).room_access).toEqual({ readable: false, reason: 'readers' });
+      const invalid = await call('owner', 'remember', { fact: 'Harbor ledger invalid-room note', entity: PAGES.open.slug, visibility: 'world', provenance: 'room test', content_origin: 'user_said' }, { room: { meta: [] } });
+      expect(invalid.isError).toBe(false);
+      expect((invalid.json as { room_access?: unknown }).room_access).toEqual({ readable: 'unknown', reason: 'invalid' });
+      expect(invalid.blocks.some(b => b.startsWith('[gbrain notice room_hints_unavailable kind=degraded]'))).toBe(true);
+      expect(invalid.meta?.degraded).toBeUndefined();
+    }, 60_000);
+
+    test('a think answer is marked at the strictest class of all its evidence, and the evidence never leaves the process', async () => {
+      const { declaration } = readRoomDeclaration({ header: 'alice-example' }, {});
+      const caller = { access: { owner: true, identity: ['member:owner-example'] } as never, transport: 'stdio' };
+      const think = async (evidence: Parameters<typeof keepRoomEvidence>[1]) => (await assessRoom(engine, { op: 'think', result: keepRoomEvidence({ answer: 'a' }, evidence),
+        declaration: declaration!, sourceId: SRC, caller })).result as { room_access: unknown };
+      const open = { table: 'pages' as const, sourceId: SRC, slug: PAGES.open.slug };
+      expect((await think([open])).room_access).toEqual({ readable: true });
+      expect((await think([open, { table: 'pages', sourceId: SRC, slug: PAGES.mine.slug }])).room_access).toEqual({ readable: false, reason: 'readers' });
+      expect((await think([open, { table: 'takes', id: 1 }])).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
+      expect((await think([open, { table: 'calibration', id: 0 }])).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
+      expect((await think([])).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
+      expect((await think(undefined)).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
+      const kept = keepRoomEvidence({ answer: 'a' }, [open]);
+      expect(JSON.stringify(kept)).toBe('{"answer":"a"}');
+      expect(Object.getOwnPropertySymbols({ ...kept }).length).toBe(1);
+      expect(Object.getOwnPropertySymbols(structuredClone(kept)).length).toBe(0);
+    }, 60_000);
+
+    test('think through dispatch carries its evidence to the marks', async () => {
+      const out = await call('owner', 'think', { question: 'harbor ledger planning' }, { room: { header: 'alice-example' } });
+      expect(out.isError).toBe(false);
+      const access = (out.json as { room_access?: { readable: unknown; reason?: string } }).room_access;
+      // Marked from the evidence the synthesis retrieved: with none kept, the mark would be not_identified.
+      expect(access?.reason).not.toBe('not_identified');
+      expect(out.meta?.room).toMatchObject({ counts: { items: 1 } });
+      expect(out.text).not.toContain('taint_refs');
+    }, 120_000);
+
+    test("think's graph pages keep their own source, so a same-slug page elsewhere never stands in for one the room cannot read", async () => {
+      const OTHER = 'room-other';
+      const ANCHOR = 'notes/anchor-plan';
+      await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [OTHER]);
+      await importFromContent(engine, ANCHOR, page('open'), { sourceId: SRC });
+      await importFromContent(engine, PAGES.open.slug, page('mine'), { sourceId: OTHER });
+      try {
+        await engine.addLink(ANCHOR, PAGES.open.slug, 'harbor ledger link', 'mentions', 'manual', undefined, undefined, { fromSourceId: SRC, toSourceId: OTHER });
+        const { runGather } = await import('../src/core/think/gather.ts');
+        const gather = await runGather(engine, { question: 'harbor ledger planning', anchor: ANCHOR, sourceIds: [SRC, OTHER], remote: false });
+        expect(gather.graphRefs).toContainEqual({ slug: PAGES.open.slug, sourceId: OTHER });
+        const { declaration } = readRoomDeclaration({ header: 'alice-example' }, {});
+        const caller = { access: { owner: true, identity: ['member:owner-example'] } as never, transport: 'stdio' };
+        const evidence = gather.graphRefs!.map(r => ({ table: 'pages' as const, sourceId: r.sourceId, slug: r.slug }));
+        const out = await assessRoom(engine, { op: 'think', result: keepRoomEvidence({ answer: 'a' }, evidence), declaration: declaration!, sourceId: SRC, caller });
+        expect((out.result as { room_access: unknown }).room_access).toEqual({ readable: false, reason: 'readers' });
+      } finally {
+        await engine.executeRaw('DELETE FROM pages WHERE (source_id = $1 AND slug = $2) OR source_id = $3', [SRC, ANCHOR, OTHER]);
+      }
+    }, 60_000);
+
+    test('the trusted local CLI marks the owner view; with no owner it is unbound and the fix names gbrain access owner set', async () => {
+      const { declaration } = readRoomDeclaration({ requestMeta: { room: 'alice-example' } }, undefined);
+      const local = { access: { owner: false, identity: [] } as never, transport: 'cli', local: true as const };
+      const marked = await assessRoom(engine, { op: 'get_page', result: { slug: PAGES.mine.slug, source_id: SRC }, declaration: declaration!, sourceId: SRC, caller: local });
+      expect((marked.result as { room_access: unknown }).room_access).toEqual({ readable: false, reason: 'readers' });
+      await clearOwner(engine);
+      try {
+        const unbound = await assessRoom(engine, { op: 'get_page', result: { slug: PAGES.mine.slug, source_id: SRC }, declaration: declaration!, sourceId: SRC, caller: local });
+        expect(unbound.meta.unavailable).toBe('unbound');
+        expect(unbound.notices.find(n => n.code === 'room_hints_unavailable')?.fix?.argv).toEqual(['gbrain', 'access', 'owner', 'set', '<MEMBER>']);
+      } finally { await setOwner(engine, 'owner-example'); }
+    }, 60_000);
+
+    test('a client that reached no marking brain marks every item unknown and writes no audit row', async () => {
+      const { declaration } = readRoomDeclaration({ requestMeta: { room: 'alice-example' } }, undefined);
+      const out = await assessRoom(null, { op: 'list_pages', result: [{ slug: 'a' }, { slug: 'b' }], declaration: declaration!, sourceId: SRC,
+        caller: { access: {} as never, local: true }, unavailable: { reason: 'not_supported' } });
+      expect((out.result as Array<{ room_access: unknown }>).map(i => i.room_access)).toEqual([{ readable: 'unknown', reason: 'not_supported' }, { readable: 'unknown', reason: 'not_supported' }]);
+      expect(out.stamped.map(n => n.code)).toEqual(['room_hints_unavailable']);
+    }, 30_000);
 
     test('rule 1 at the response cap: marks that would push a read over the cap are dropped, never the read', async () => {
       const slug = 'notes/wide-owner-plan';
