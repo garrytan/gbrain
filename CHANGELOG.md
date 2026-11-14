@@ -10,6 +10,41 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.721.0] - 2026-11-14
+
+**Deleting a private page no longer opens the pages derived from it: each page that was private only because of the deleted page now gets its own `visibility: private` label before the deleted page's row goes.**
+
+<!-- behavior-change: derived_origin_carry_private_gst2689 -->
+
+### Fixed
+
+- A summary whose `derived_from` names a private page, an atom extracted from a private page, and a synthesized concept built from such an atom read as private to remote callers even when their own label says world, because their origin is private. Once the origin's row was removed (an explicit `gbrain delete --purge`, or the purge after the 72-hour recovery window, including after a remote delete or a `git rm`), nothing kept them private any more, and every remote caller that is not the owner could read them through `get_page`, `get_versions`, `list_pages` and search.
+- Now gbrain gives each such page `visibility: private` first, as a label-only write. The page keeps its trust tier, no lowering proposal is filed, and on a brain with Git only the label line of its file changes. A soft delete (local or over MCP) writes the label once the delete committed, as a maintenance write (on a managed brain its batch names the delete's request id); if that write fails, the delete still goes through and the purge writes the label later. The delete's response is unchanged and names none of the labelled pages. Every purge writes the label again for each origin expired or expiring within a day before it removes any row, so an origin removed outside gbrain is covered from the next cycle.
+- Pages that are already private, pinned questions and pages that do not derive from the deleted page are never changed. A page that names readers (`readable_by`) and was hidden from them only through its private origin gets the label too and keeps its readers, so its listed readers still can't read it. The owner, a `granted_sources` credential and a listed reader read exactly the same pages as before.
+- When a label cannot be written (for example a file in the checkout that gbrain may not write), the deleted page is kept soft-deleted instead of purged. An explicit purge returns `purge_held`, the purge phase lists the page as `derived_origin_parked` and warns, and the new doctor check `derived_origin_parked` names the page with the derived page that blocks it and the reason. Once the cause is fixed, the next purge writes the label and frees the page, and the purge after removes it (a consented `gbrain pages purge-deleted --yes` does both, so its preview lists it). A page derived from it that is written while a purge runs is caught inside the purge's own transaction and holds the deleted page the same way, and a derived page that is itself soft-deleted holds it until it is purged or restored, so restoring it never brings it back readable.
+- A deleted page that is restored and later made world leaves its derived pages private until the owner relabels them. (GST-2689)
+
+**Searches stay within their four-connection limit, the extraction-lag check saves a database round trip, and four tests that failed now and then for reasons unrelated to the code under test now pass reliably.**
+
+### Fixed
+- One search or query can no longer hold a fifth database connection. Reads that turn off the query planner's JIT compiler or set a statement timeout used to take their own connection without waiting for one of the search's four slots. The projection readiness check is one of these reads, so a search running while any write was open on the database server could use five connections. These reads now wait for a slot like every other read. A read whose cancel signal fires while it waits now stops at once instead of waiting for another read to finish.
+- The extraction-lag check (used by `gbrain doctor` and the graph ranking) reads whether managed persistence is on at the same time as its config, not afterwards. On a remote database that saves one round trip.
+
+### Tests
+- The read round-trip test now holds each wave of queries until it settles, so it counts dependent round trips the same way however fast the database answers.
+- The status-mode server test no longer fails when the lock holder's process id happens to appear inside the server's random instance id. A process id in any other field still fails it.
+- Four HTTP-server end-to-end tests now remove the access members they add. Leftover members made a later test file's connection check fail.
+- The search connection limit test waits for background writes from its warmup search before it starts measuring, and checks that JIT-off and statement-timeout reads respect the limit.
+- The lock-wait sync test prints the rows that did not commit when it is about to fail, so a future failure names its cause.
+
+**On a source whose files live in Git, two paths no longer save a fact only in the database or drop it: a held fact the owner releases while managed persistence is off, and a commitment fact the Google loops job meets a passing database error on.**
+
+### Fixed
+- The Google open-loops job (`loops_extract`) now retries when saving a commitment's fact hits a passing database problem: a cancelled statement, a lock or serialization conflict, a dropped connection, or the write door giving up after its own retries (`write_interrupted`). Before, the job saved the open loop with no fact attached and moved on, so the fact for that commitment (for example "send alice-example the invoice summary by Friday") was lost. Now the job stops, the queue runs it again, and the retry saves both the fact and the loop that points at it. A write the door reports as still pending keeps the old behaviour, because it may still commit and a retry could save it twice.
+- On a source marked git-canonical (`canonical: git`, for example source-a), `gbrain trust release` of a held fact while managed persistence is turned off now refuses with `git_home_required` (reason `persistence_disabled`) and leaves the fact held, instead of writing it to the database with no file in Git. The refusal's fix previews turning managed persistence back on (`gbrain sources writer activate --confirm-quiesced --dry-run --json`); run the release again once it is on. Sources that are not git-canonical release exactly as before, and with `sync.write_through` off every write on a source stays database-only, the release included, on purpose.
+
+Facts that were dropped, or released database-only, before this fix are not recovered by upgrading. A dropped commitment fact comes back only if its email thread is extracted again; a fact already released database-only stays that way.
+
 ## [0.60.720.0] - 2026-11-14
 
 **On a brain that serves several people, gbrain now counts the pages with no label, which every member's key can still read, and names the commands that close them; `--labelled-only` keeps members to the pages labelled for them.**
