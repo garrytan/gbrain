@@ -37,6 +37,7 @@ import { holdingPageFor } from '../src/core/facts/held-fact-move.ts';
 import { writeSingleFact } from '../src/core/facts/write-single.ts';
 import { publishManagedEntityFacts } from '../src/core/facts/managed-fact-write.ts';
 import { runLoopsExtract } from '../src/core/google/loops-extract.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { durableGitRepo, git } from './helpers/git-publication.ts';
 import { managedBrain, settleManagedGitEffects, type ManagedBrain } from './helpers/managed-brain.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -251,6 +252,26 @@ for (const backend of testBackends()) describe(`[${backend}] GST-2635: the attri
     expect(await factRows(b.engine, claim)).toMatchObject([{ entity_slug: null, source_markdown_slug: HOLD, row_num: 1 }]);
     expect(git(b.root, 'show', `HEAD:${HOLD}.md`)).toContain(claim);
   }), 300_000);
+
+  for (const arm of ['page_rule', 'access_unreadable'] as const) {
+    test(`${arm === 'page_rule' ? 'a page rule' : 'an unreadable access state'} that arrives after admission, before preparation, refuses there too and writes nothing`, () => brain(true, async b => {
+      const claim = `Bob example wants the invoice summary split by project (${arm}).`;
+      let armed = true;
+      installFaultHook(async (point, detail) => {
+        if (!armed || point !== 'consumer:preparing' || detail.operation !== 'extract_facts') return;
+        armed = false;
+        if (arm === 'page_rule') await addPageRule(b.engine); else await unreadableAccess(b.engine);
+      });
+      const { reply, refusal } = await loopsWrite(b.engine, claim).finally(() => installFaultHook(undefined));
+      expect(armed).toBe(false);
+      expect(reply).toBeNull();
+      expect(refusal?.code).toBe(arm === 'page_rule' ? 'git_home_required' : 'access_policy_pending');
+      expect(refusal!.message).toContain(ENTITY);
+      expect(await factRows(b.engine, claim)).toEqual([]);
+      expect(filesHolding(b.root, claim)).toEqual([]);
+      expect(commitsHolding(b.root, claim)).toEqual([]);
+    }), 300_000);
+  }
 
   for (const arm of ['missing', 'present', 'access_unreadable'] as const) {
     test(`the loops job keeps the loop row and logs the refusal with the entity's page (${arm} arm)`, () => brain(true, async b => {
