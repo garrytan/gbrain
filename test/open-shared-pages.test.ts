@@ -25,7 +25,8 @@ import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { labelSeveral, receiptLines, receiptOk } from '../src/commands/access-serves.ts';
+import { labelSeveral, receiptLines, receiptOk, servesStatus } from '../src/commands/access-serves.ts';
+import { servesLines } from '../src/commands/setup-serves.ts';
 import { openPages, readOpenPages, printOpenPagesUpgradeNotice } from '../src/core/access/open-pages.ts';
 import { SENSITIVE_PAGE_TYPES } from '../src/core/grants/shared-exposure.ts';
 import { openSharedPagesEntry } from '../src/commands/doctor/checks/open-shared-pages.ts';
@@ -104,7 +105,7 @@ for (const kind of testBackends()) {
     afterAll(async () => { await close?.(); }, 60_000);
 
     test('sensitive types cover DMs, chat exports, conversations and mail, not meetings', () => {
-      for (const t of ['dm', 'slack-dm-day', 'email', 'conversation', 'chat']) expect(SENSITIVE_PAGE_TYPES).toContain(t);
+      for (const t of ['dm', 'slack-dm-day', 'email', 'email-digest', 'conversation', 'chat']) expect(SENSITIVE_PAGE_TYPES).toContain(t);
       expect(SENSITIVE_PAGE_TYPES).not.toContain('meeting');
     });
 
@@ -194,6 +195,38 @@ for (const kind of testBackends()) {
       for (const l of lists) expect(l.startsWith('alice-example,')).toBe(true);
       expect(CLI_FLAG_REGISTRY.access).toContain('--labelled-only');
       expect(CLI_FLAG_REGISTRY.repair).toEqual(expect.arrayContaining(['--slugs-file', '--readers']));
+      expect(CLI_FLAG_REGISTRY.access).toContain('--no-open-pages');
+    }, 60_000);
+
+    test('the printed --labelled-only command leaves out the owner, so running it is not BLOCKED', async () => {
+      const text = receiptLines(await label(ROSTER, false)).join('\n');
+      const command = text.match(/gbrain access serves several --members (\S+) --labelled-only --yes/);
+      expect(command?.[1]).toBe('bob-example');
+      const rerun = await label(command![1]!.split(','), false, { labelledOnly: true });
+      expect(rerun.members.every(m => m.action !== 'blocked')).toBe(true);
+    }, 60_000);
+
+    test('a member already labelled-only keeps that mark on a re-run without the flag and gets no open-pages tail', async () => {
+      const proof = [{ member: 'bob-example', own: 1, leaked: [] }];
+      const open = await label(ROSTER, false);
+      expect(servesLines({ mode: 'several', receipt: open, proof } as never, false).join('\n')).toContain('also reads the');
+      await setMemberLabelledOnly(engine, 'bob-example', true, { remote: false });
+      try {
+        const r = await label(ROSTER, false);
+        expect(r.members.find(m => m.id === 'bob-example')).toMatchObject({ labelled_only: 'keep' });
+        expect(servesLines({ mode: 'several', receipt: r, proof } as never, false).join('\n')).not.toContain('also reads the');
+        expect(receiptLines(r).join('\n')).not.toContain('--labelled-only --yes');
+      } finally { await setMemberLabelledOnly(engine, 'bob-example', false, { remote: false }); }
+    }, 60_000);
+
+    test('gbrain access serves counts on a several-person brain unless --no-open-pages (the setup child) skips it', async () => {
+      const spy = spyPages(engine);
+      try {
+        expect((await servesStatus(engine, { openPages: false })).open_pages).toBeUndefined();
+        expect(spy.count()).toBe(0);
+        expect((await servesStatus(engine)).open_pages?.total).toBeGreaterThan(0);
+        expect(spy.count()).toBe(1);
+      } finally { spy.restore(); }
     }, 60_000);
 
     test('the owner and labelled-only members are never counted as readers', async () => {
@@ -217,6 +250,17 @@ for (const kind of testBackends()) {
       expect((await label(['bob-example'], true, { labelledOnly: true })).members[0]).toMatchObject({ labelled_only: 'keep' });
       expect(r.open_pages!.members.reading).toBe(0);
       await setMemberLabelledOnly(engine, 'bob-example', false, { remote: false });
+    }, 60_000);
+
+    test('a derived page whose origin names its readers is not counted, like a member key does not list it', async () => {
+      await importFromContent(engine, 'labelled/origin', fm('note', 'readable_by: [alice-example]\n'), { sourceId: 'default', noEmbed: true });
+      await importFromContent(engine, 'atoms/fact-1', fm('atom', 'derived_from: [labelled/origin]\n'), { sourceId: 'default', noEmbed: true });
+      try {
+        expect(await listedAs('bob-example')).not.toContain('atoms/fact-1');
+        expect((await openPages(engine)).folders.find(f => f.folder === 'atoms')).toBeUndefined();
+      } finally {
+        await engine.executeRaw("DELETE FROM pages WHERE slug IN ('labelled/origin', 'atoms/fact-1')");
+      }
     }, 60_000);
 
     test('labelling a page lowers the count by that page', async () => {

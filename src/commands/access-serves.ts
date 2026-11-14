@@ -1,7 +1,7 @@
 /**
  * GST-363 (PR 1): `gbrain access serves`, the labelling half of a brain that serves several people.
  *
- *   gbrain access serves [--json]                        Read-only: one or several, why, owner, stdio member
+ *   gbrain access serves [--json] [--no-open-pages]      Read-only: one or several, why, owner, stdio member, open pages
  *   gbrain access serves several --members a,b [--members-file f] [--source id] [--labelled-only] [--yes] [--json]
  *
  * `several` previews, then with --yes: writes config access.serves = several, adds each member (existing ones are
@@ -85,11 +85,11 @@ function gitRootAbove(dir: string): string | null {
   }
 }
 
-export async function servesStatus(engine: BrainEngine): Promise<ServesStatus> {
+export async function servesStatus(engine: BrainEngine, opts: { openPages?: boolean } = {}): Promise<ServesStatus> {
   const view = await brainServes(engine);
   const live = (id: string | null) => (id && view.enabled_members.includes(id) ? id : null);
   const status: ServesStatus = { ...view, owner: live(await ownerMemberId(engine)), stdio_member: live(await stdioMemberId(engine)) };
-  return view.serves === 'several' ? { ...status, ...await readOpenPages(engine) } : status;
+  return view.serves === 'several' && opts.openPages !== false ? { ...status, ...await readOpenPages(engine) } : status;
 }
 
 async function plan(engine: BrainEngine, roster: string[], sourceId: string, labelledOnly: boolean): Promise<ServesReceipt> {
@@ -101,7 +101,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
       { why: 'Key files hold live credentials and must never sit where a commit could pick them up.' });
   }
   const explicit = (await engine.getConfig(SERVES_KEY))?.trim();
-  const owner = labelledOnly ? await ownerMemberId(engine) : null;
+  const owner = await ownerMemberId(engine);
   const members: ServesReceipt['members'] = [];
   for (const id of roster) {
     const m = await getMember(engine, id);
@@ -110,7 +110,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     if (labelledOnly && entry.action !== 'blocked') {
       if (id === owner) Object.assign(entry, { action: 'blocked', detail: `${id} is the brain owner, who reads the whole brain, so it is never labelled-only: leave it out of this run or name another owner first (gbrain access owner set <member>)` });
       else entry.labelled_only = m?.labelled_only ? 'keep' : 'set';
-    }
+    } else if (m?.labelled_only && entry.action !== 'blocked') entry.labelled_only = 'keep';
     members.push(entry);
   }
   const base = await currentFolderRules(engine, sourceId);
@@ -228,22 +228,28 @@ export function receiptLines(r: ServesReceipt): string[] {
     ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name})${k.detail ? `: ${k.detail}` : ''}`),
     ...(ruleWritePending(r) ? [`  The rules are not enforced yet: finish with gbrain access resume --source ${r.source_id}`] : []),
     ...r.unlabeled.map(u => `  unlabeled  ${u.source}:${u.prefix} (${u.pages} page(s)) has no folder rule, so every member reads it: name its readers with gbrain access rule add --prefix ${u.prefix} --readers <list> --source ${u.source}, or add the person with --members`),
-    ...openPagesLines(r, { labelledOnly: `gbrain access serves several --members ${r.members.map(m => m.id).join(',')}${r.source_id === 'default' ? '' : ` --source ${r.source_id}`} --labelled-only --yes` }),
+    ...openPagesLines(r, labelledOnlyCommand(r)),
     ...(r.error ? [`Stopped: ${r.error.message}`, `  Finished before it stopped: ${r.completed.join(', ') || 'nothing'}. Every step is idempotent: run the same command again to finish.`] : []),
     ...(r.applied ? [] : [blocked(r) ? 'Nothing written: fix each BLOCKED line, then run this again.' : 'Nothing written. Add --yes to apply.']),
   ];
+}
+
+/** The --labelled-only re-run for the members it would still change: never the owner, a BLOCKED member or one already labelled-only. */
+function labelledOnlyCommand(r: ServesReceipt): { labelledOnly?: string } {
+  const ids = r.members.filter(m => m.action !== 'blocked' && !m.labelled_only && m.id !== r.open_pages?.owner).map(m => m.id);
+  return ids.length ? { labelledOnly: `gbrain access serves several --members ${ids.join(',')}${r.source_id === 'default' ? '' : ` --source ${r.source_id}`} --labelled-only --yes` } : {};
 }
 
 export const receiptOk = (r: ServesReceipt): boolean => !r.error && !blocked(r) && !ruleWritePending(r) && (!r.applied || r.unlabeled.length === 0);
 
 export async function runAccessServes(engine: BrainEngine, mode: string | undefined, args: string[], json: boolean, flagValue: (args: string[], name: string) => string | undefined): Promise<void> {
   if (mode === undefined) {
-    const s = await servesStatus(engine);
+    const s = await servesStatus(engine, { openPages: !args.includes('--no-open-pages') });
     console.log(json ? JSON.stringify(s, null, 2) : [
       `This brain serves ${s.serves === 'several' ? 'several people' : 'one person'} (${s.from === 'config' ? `config ${SERVES_KEY}` : `${s.enabled_members.length} enabled member(s)`}).`,
       `  Enabled members: ${s.enabled_members.join(', ') || 'none'}`,
       `  Owner: ${s.owner ?? 'none'}; stdio server reads as: ${s.stdio_member ?? 'nobody in particular (unbound)'}`,
-      ...(s.serves === 'several' ? openPagesLines({ open_pages: s.open_pages ?? null, ...(s.open_pages_error ? { open_pages_error: s.open_pages_error } : {}) }) : [])].join('\n'));
+      ...(s.serves === 'several' && s.open_pages !== undefined ? openPagesLines({ open_pages: s.open_pages ?? null, ...(s.open_pages_error ? { open_pages_error: s.open_pages_error } : {}) }) : [])].join('\n'));
     return;
   }
   if (mode !== 'several') throw usageError(`Unknown access serves mode: ${mode}.`, 'gbrain access serves (read-only), or gbrain access serves several --members <id,...>. A one-person brain needs no step.');

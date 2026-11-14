@@ -87,7 +87,8 @@ Owner (one member who owns this brain; credentials bound to it read every page, 
                                              reach everyone that page lists
 
 Serves several people (GST-363):
-  gbrain access serves                       One or several, and why (config access.serves, else 2+ enabled members)
+  gbrain access serves [--no-open-pages]     One or several, and why (config access.serves, else 2+ enabled members);
+                                             on several, the pages every member's key reads (--no-open-pages skips the count)
   gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--labelled-only] [--yes]
                                              Preview first; --yes writes access.serves = several, adds each member,
                                              a folder rule people/<member>/ read only by that member, and one key

@@ -82,7 +82,7 @@ export function servesRoster(flags: ServesFlags, harness: string): string[] | Op
 
 /** The brain's serves view through a child, or the child's error when it cannot read the brain. */
 export function readServesStatus(launcher: string): { status: ServesStatus } | { error: string } {
-  const r = child(launcher, ['access', 'serves', '--json']);
+  const r = child(launcher, ['access', 'serves', '--json', '--no-open-pages']);
   const status = r.ok ? parsed<ServesStatus>(r.stdout) : null;
   return status && 'serves' in status ? { status } : { error: (r.stderr || r.stdout).trim() || 'gbrain access serves --json printed nothing' };
 }
