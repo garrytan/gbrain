@@ -39,7 +39,7 @@ import { prepareFenceFactAppend } from '../facts/fence-fact-append.ts';
 import { assertFactNotWithdrawn } from '../facts/single-prepare.ts';
 import { FENCE_SOURCE_DEFAULT } from '../facts/extract-from-fence.ts';
 import { isHoldingSlug, parseFactsFenceFor, type ParsedFact } from '../facts-fence.ts';
-import { holdingHome } from '../facts/held-fact-move.ts';
+import { holdingHome, refuseUnheldFact } from '../facts/held-fact-move.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
 import { claimColumns } from '../facts/typed-claim.ts';
 import { getWriteGateHold, releaseWriteGateHold, type WriteGateHold } from '../write-gate-store.ts';
@@ -124,6 +124,8 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
     target = { slug: home.slug, mode: 'append' };
     snapshot = await engine.readPageSnapshot(home.slug, { sourceId: hold.source_id, includeDeleted: true });
   }
+  // GST-2676: a fact no holding page can carry (an exact page rule, an unreadable access state) refuses, never a database-only release.
+  if (home && 'refused' in home) await refuseUnheldFact(engine, hold.source_id, str(hold.payload.entity_slug)!, home.refused, false);
   if (!target || !snapshot && !isHoldingSlug(target.slug)) return null;
   const { initializeLocalPersistence, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
   const { submissionAuthority } = await import('../persistence/authority.ts');
