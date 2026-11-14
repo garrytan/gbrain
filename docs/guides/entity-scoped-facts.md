@@ -130,7 +130,10 @@ folder kept out of Git keeps the page database-only. A rule added later moves
 the held rows it covers there in its own apply; the shared page's row is then
 removed, so the shared page never names the ruled entity. An entity under an
 exact page rule is refused with `git_home_required` (reason `facts_lane`):
-create its page with `put_page`, then remember the fact again. Forgetting or
+create its page with `put_page`, then remember the fact again. A fact the
+Google loops extraction finds for such an entity is refused the same way and
+nothing is stored for it; the loop is still recorded, and the job's log names
+the refusal and the page. Forgetting or
 replacing a held fact strikes its row too. A brain with no Git
 repository gets no notice: there the database is the record, and the fact is
 as safe as everything else in it.
