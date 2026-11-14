@@ -24,7 +24,7 @@ import { mintLegacyToken } from '../src/core/token-mint.ts';
 import { parseRescopeTokenArgs, rescopeLegacyToken } from '../src/core/grants/legacy-token.ts';
 import { noGrantFederatedScope } from '../src/core/source-resolver.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
-import { __resetPrivateVisibilityCacheForTests, privatePagesFilterFragment, withCallerAccess, type CallerAccess } from '../src/core/search/private-visibility.ts';
+import { __resetPrivateVisibilityCacheForTests, CONCEPT_INPUTS_PRIVATE_SINCE, privatePagesFilterFragment, withCallerAccess, type CallerAccess } from '../src/core/search/private-visibility.ts';
 import * as scopeRead from '../src/core/access/scope-read.ts';
 import { attestedCallerAccess } from '../src/core/access/actor.ts';
 import { setOwner } from '../src/core/access/owner.ts';
@@ -161,6 +161,10 @@ for (const kind of testBackends()) {
     test('(f) a granted_sources credential on the source still reads the atom and the concept', async () => {
       expect({ atom: await reads('granted', ATOM, 'atom'), concept: await reads('granted', CONCEPT, 'concept') }).toEqual({ atom: all, concept: all });
     }, 60_000);
+
+    test('the read rule gates on the migration that creates the function', () => {
+      expect(CONCEPT_INPUTS_PRIVATE_SINCE).toBe(v311.version);
+    });
 
     test('(g) on a brain whose schema predates v311 remote reads keep working and still hide the concept', async () => {
       await engine.executeRaw('DROP FUNCTION gbrain_concept_inputs_private(integer)');
