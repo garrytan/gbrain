@@ -20,8 +20,7 @@
  *
  * Every other hold returns null: a held take, which owner-actions.ts refuses (`unavailable`), and an unmanaged brain,
  * a hold with no entity slug, or one whose page is missing (GBRA-190 G4 owns that class), which take its transactional
- * database-only release; on a strict source an unmanaged brain, or one with sync.write_through off, refuses
- * `git_home_required` instead (GST-2692). A
+ * database-only release; on a strict source an unmanaged brain refuses `git_home_required` instead (GST-2692). A
  * deleted or private page refuses and the fact stays held; a segmented page over the ceiling, a malformed fence or a
  * row that no longer reads back refuse at preparation the same way.
  */
@@ -117,9 +116,9 @@ export async function submitTrustRelease(engine: BrainEngine, holdId: number, by
   const managed = await managedPersistenceEnabled(engine);
   const hold = await getWriteGateHold(engine, holdId);
   if (!hold || hold.kind !== 'fact') return null;
-  // GST-2692: on a strict source a release that cannot go through Git (managed persistence off, sync.write_through off) refuses, never a database-only release.
-  if ((!managed || /^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true')) && await sourceCanonicalGit(engine, hold.source_id)) {
-    throw gitHomeRequired({ source_id: hold.source_id, slug: releaseTarget(hold)?.slug ?? UNATTRIBUTED_MEMORY_SLUG }, 'no_file_form', false);
+  // GST-2692: on a strict source a release with managed persistence off refuses, never a database-only release.
+  if (!managed && await sourceCanonicalGit(engine, hold.source_id)) {
+    throw gitHomeRequired({ source_id: hold.source_id, slug: releaseTarget(hold)?.slug ?? UNATTRIBUTED_MEMORY_SLUG }, 'persistence_disabled', false);
   }
   if (!managed) return null;
   let target = releaseTarget(hold);
