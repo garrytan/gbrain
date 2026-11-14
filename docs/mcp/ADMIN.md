@@ -465,6 +465,13 @@ It never changes a grant or an exit code. A credential holding
 names, and a call that names no audience reads the credential's full grant, so
 the harness must name one on every call.
 
+The owner's own turn in a group chat is different: the owner should get the
+whole answer, so the harness declares a room (`X-Gbrain-Room` or
+`_meta.room`) instead of an audience. The read is unchanged and each item is
+marked with what the room could read. The owner's credential needs no
+`--may-act-for` for this; any other member's credential needs it to cover the
+room. See [rooms](../guides/rooms.md).
+
 `gbrain doctor --only unscoped_multi_user_token` runs the same detection over
 every active token and OAuth client, and over the local agents setup wired: it
 warns when one of them reads chat from 2+ channels, and reports a wired bot
