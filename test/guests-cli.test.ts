@@ -75,6 +75,15 @@ describe('gbrain guests init', () => {
     expect(configOf((await sourceRow('source-a'))!.config).guest).toBeUndefined();
   });
 
+  test('refuses an existing source whose only page is deleted but not yet purged', async () => {
+    await engine.executeRaw('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', ['source-a']);
+    await engine.putPage('notes/owner-a', { title: 'Owner', type: 'note' as never, compiled_truth: 'Mine.', frontmatter: {}, timeline: '' }, { sourceId: 'source-a' } as never);
+    await engine.executeRaw("UPDATE pages SET deleted_at = now() WHERE source_id = 'source-a'");
+    await run(() => runGuests(engine, ['init', '--source', 'source-a', '--yes']));
+    expect({ exitCode: exitCode as number | null, said: err.join('\n').includes('already holds 1 page') }).toEqual({ exitCode: 2, said: true });
+    expect(await guestRow('source-a')).toBeUndefined();
+  });
+
   test('previews by default and writes nothing', async () => {
     await run(() => runGuests(engine, ['init', '--writer', 'oauth_client:client-a']));
     expect(exitCode).toBeNull();

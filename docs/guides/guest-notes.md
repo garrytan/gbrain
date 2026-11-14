@@ -65,7 +65,9 @@ The source is called `guests` unless you pass `--source <id>`. Running init
 again on a guest source adds the new writers and keeps the old ones. If the
 source exists already, it must have no local path and hold no pages; init then
 marks it as a guest source. A source that already holds pages is refused, because
-every page in a guest source would then read as a guest's words.
+every page in a guest source would then read as a guest's words. Deleted pages
+that haven't been purged yet count too, because restoring one would bring it back
+into the guest source.
 
 ## Change who may write
 

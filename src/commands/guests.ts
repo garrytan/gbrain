@@ -83,9 +83,9 @@ async function runInit(engine: BrainEngine, rest: string[]): Promise<void> {
     process.exit(2);
   }
   if (plan.exists && !plan.guest) {
-    const [held] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
+    const [held] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1', [sourceId]);
     if (Number(held?.n ?? 0) > 0) {
-      console.error(`Source "${sourceId}" already holds ${held!.n} page(s). Every page in a guest source reads as an outside guest's words and only listed writers can change it, so gbrain will not make this one a guest source. Pick another name with --source.`);
+      console.error(`Source "${sourceId}" already holds ${held!.n} page(s), counting deleted pages not yet purged (a restore would bring them back). Every page in a guest source reads as an outside guest's words and only listed writers can change it, so gbrain will not make this one a guest source. Pick another name with --source.`);
       process.exit(2);
     }
   }

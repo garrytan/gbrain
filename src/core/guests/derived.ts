@@ -48,7 +48,7 @@ export const GUEST_DERIVED_PRODUCERS = {
   embed: { guest: 'none', reason: "Embeds a page's own chunks, which search needs to find the note; no text reaches another row." },
   orphans: { guest: 'none', reason: 'A read-only report; it writes no row.' },
   'schema-suggest': { guest: 'none', reason: 'Writes schema suggestions outside the canonical tables; a guest page carries only allowlisted keys.' },
-  purge: { guest: 'none', reason: 'Purges tombstones; the owner may delete guest pages.' },
+  purge: { guest: 'none', reason: 'Purges tombstones; the owner may delete guest pages. Its origin carry (repair/origin-carry.ts) labels only pages tied to an origin by derived_from, source_slug, event or a provenance link: a guest page carries none of those keys and a guest source holds no links and no owner page, so it never labels a guest page.' },
   bookkeeping_gc: { guest: 'none', reason: 'Never touches a page.' },
   publication_projections: { guest: 'skip', sites: ['src/core/persistence/page-prepare.ts'] },
   auto_links: { guest: 'skip', sites: ['src/core/persistence/page-prepare.ts'] },
