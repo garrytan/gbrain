@@ -304,6 +304,7 @@ for (const kind of testBackends()) {
       expect((await think([open])).room_access).toEqual({ readable: true });
       expect((await think([open, { table: 'pages', sourceId: SRC, slug: PAGES.mine.slug }])).room_access).toEqual({ readable: false, reason: 'readers' });
       expect((await think([open, { table: 'takes', id: 1 }])).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
+      expect((await think([open, { table: 'calibration', id: 0 }])).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
       expect((await think([])).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
       expect((await think(undefined)).room_access).toEqual({ readable: 'unknown', reason: 'not_identified' });
       const kept = keepRoomEvidence({ answer: 'a' }, [open]);

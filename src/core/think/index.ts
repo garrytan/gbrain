@@ -234,6 +234,11 @@ export interface ThinkResult {
   feedback_evidence?: Array<{ source_id: string; slug: string; content_hash: string | null }>;
   /** #5575 I2: every page, take and trajectory fact placed in the synthesis prompt; `persistSynthesis` taints from them. The op layer strips it. */
   taint_refs?: TaintRef[];
+  /**
+   * GBRA-498: what reaches the prompt beyond taint_refs, for room marks only: the anchor and the graph pages the prompt
+   * names, and a calibration profile (no page or fact id, so the answer is unknown). Never feeds trust derivation.
+   */
+  room_extra?: Array<{ table: 'pages'; sourceId: string; slug: string } | { table: 'calibration'; id: number }>;
   /** Only set when --save was true and the caller persisted a synthesis page. */
   savedSlug?: string;
   /**
@@ -1048,6 +1053,9 @@ export async function runThink(
     feedback_evidence: gather.pages.map(pg => ({ source_id: pg.source_id ?? 'default', slug: pg.slug, content_hash: pg.content_hash ?? null })),
     taint_refs: [...gather.pages.map(pg => ({ table: 'pages' as const, sourceId: pg.source_id ?? 'default', slug: pg.slug })),
       ...gather.takes.map(t => ({ table: 'takes' as const, id: t.take_id })), ...trajectoryFactIds.map(id => ({ table: 'facts' as const, id }))],
+    room_extra: [...(graphBlock ? [opts.anchor, ...gather.graphSlugs.slice(0, 30)].filter((s): s is string => !!s)
+      .map(slug => ({ table: 'pages' as const, sourceId: opts.sourceId ?? 'default', slug })) : []),
+      ...(calibrationBlockOpts ? [{ table: 'calibration' as const, id: 0 }] : [])],
     ...(extractive ? { extractive } : {}),
     usage, ...(evidenceDelivery ? { evidence_delivery: evidenceDelivery } : {}),
     diagnostics: {

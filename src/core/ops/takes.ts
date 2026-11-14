@@ -427,8 +427,8 @@ const think: Operation = {
     if (remote && (Boolean(p.save) || Boolean(p.take))) ctx.emitNotice?.(thinkNotSavedNotice());
     const { recordThinkAnswer, feedbackMetaFields } = await import('../feedback/record.ts');
     const feedbackMeta = feedbackMetaFields(await recordThinkAnswer(ctx, 'think', result));
-    const evidence = result.taint_refs;
-    delete result.feedback_evidence; delete result.taint_refs;
+    const evidence = result.taint_refs && [...result.taint_refs, ...(result.room_extra ?? [])];
+    delete result.feedback_evidence; delete result.taint_refs; delete result.room_extra;
     const { persist: _persist, persist_base: _persistBase, ...visible } = result;
     // GBRA-498: a think answer going into a room is marked at the strictest class of everything it was built from.
     return keepRoomEvidence({

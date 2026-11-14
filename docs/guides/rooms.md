@@ -89,9 +89,10 @@ Covered tools: `get_page`, `search`, `query`, `list_pages`, `find_pages`,
 declared; its answer is marked unknown with reason `op_not_covered`.
 
 A `think` answer is one item, marked at the strictest class of everything the
-synthesis retrieved, not only what it cites: it is readable only when the room
-can read every page and fact it was built from. An answer built partly from
-takes, or with no recorded evidence, is unknown (`not_identified`).
+synthesis retrieved or named in its prompt (the anchor and the graph pages
+reachable from it), not only what it cites: it is readable only when the room
+can read every one of them. An answer built partly from takes or a calibration
+profile, or with no recorded evidence, is unknown (`not_identified`).
 
 `put_page` and `remember` mark their own result: the page or fact just written
 (each item of a `remember` batch), judged as the room would read it. A write is
@@ -166,7 +167,10 @@ or the view of the member `--as` names.
   room marks leaves every item unknown (`not_supported`).
 - A command outside the operations (`gbrain think`, `gbrain doctor`, ...) runs
   unchanged and prints a line saying it marks nothing: treat all of its output
-  as above the room's level.
+  as above the room's level. The same line marks a page too large for one
+  answer, which `gbrain get` streams in parts: that output carries no
+  `room_access` and no `_meta.room`, even with `--json`, so a `--json` document
+  without `_meta.room` is never a readable one.
 
 ## Keep raw results out of the room's transcript
 
