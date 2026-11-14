@@ -200,6 +200,26 @@ for (const kind of testBackends()) {
       expect((await h.call('bob', 'get_page', { slug: derived })).text).not.toContain(page.canary);
     }, 120_000);
 
+    const privateWithoutVisibility: Array<[string, (t: string, origin: string) => string[], string]> = [
+      ['a privacy alias', () => ['access: confidential'], 'note'],
+      ['a pinned_question marker', () => ['pinned_question: true'], 'note'],
+      ['derived_from a private page', (_t, origin) => [`derived_from: [${origin}]`], 'note'],
+      ['a derived atom type', () => [], 'atom'],
+    ];
+    for (const [label, lines, type] of privateWithoutVisibility) {
+      test(`an owner put_page that leaves out labels keeps a page private by ${label} private`, async () => {
+        const origin = (await h.seed('private')).slug;
+        const t = tag();
+        const page = { slug: `notes/implicit-${t}`, canary: `gst2091implicit${t}`, title: `Note ${t}` };
+        await importFromContent(engine, page.slug, pageText(page.title, `First line ${page.canary}.`, lines(t, origin)).replace('type: note', `type: ${type}`), { sourceId: SRC });
+        expect((await h.call('bob', 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+        const out = await h.write('owner', 'put_page', page);
+        expect({ isError: out.isError, text: out.isError ? out.text : '' }).toEqual({ isError: false, text: '' });
+        expect((await h.row(page.slug)).body).toContain(`Owner change ${page.canary}.`);
+        for (const member of ['alice', 'bob']) expect((await h.call(member, 'get_page', { slug: page.slug })).text).not.toContain(page.canary);
+      }, 120_000);
+    }
+
     test('the owner still cannot delete a private page remotely: delete_page answers as before', async () => {
       const page = await h.seed('private');
       const before = await h.row(page.slug);

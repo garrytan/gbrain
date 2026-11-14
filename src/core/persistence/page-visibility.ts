@@ -1,5 +1,5 @@
 import { OperationError, opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, labelledOnlyForSql, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, labelledOnlyForSql, OWNER_MEMBER_KEY, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
 import { anyLabelledOnlyMember, labelledOnlyFor } from '../access/labelled-only.ts';
 import { hostFix } from '../ops/op-fix.ts';
 import { parseMarkdown } from '../markdown.ts';
@@ -309,15 +309,27 @@ export async function storedOwnerWrite(engine: SqlEngine, authority: WriteAuthor
 }
 
 /**
+ * GST-2091: for a whole-page rewrite that is the owner's own (storedOwnerWrite), whether the live stored page is private by
+ * the privacy rules remote reads apply (privacyPartSql: visibility, privacy aliases, pinned questions, derived types and
+ * lineage); null when the write is not the owner's. ownerWriteKeepsLabels keeps such a page private.
+ */
+export async function ownerRewriteOf(engine: SqlEngine, authority: WriteAuthority, sourceId: string, slug: string): Promise<{ privacyPrivate: boolean } | null> {
+  if (!await storedOwnerWrite(engine, authority)) return null;
+  const [row] = await engine.executeRaw<{ hidden: boolean }>(`SELECT NOT (${privacyPartSql('p')}) AS hidden FROM pages p
+    WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [sourceId, slug]);
+  return { privacyPrivate: row?.hidden === true };
+}
+
+/**
  * GST-2051: the readers a page written by a default-source member writer (defaultSourceMemberWriter) keeps when its content
  * names none: the stored page's readers when it has them, else the writer alone for a page this write creates, unless
  * the writer is the brain owner (GST-2059), whose new pages stay shared. An existing page with no readers stays as it
- * is. Only ever narrows: a page naming readers is left to the caller. `ownerRewrite` (GST-2091): first keep the stored labels the
- * owner's own whole-page rewrite leaves out (ownerWriteKeepsLabels).
+ * is. Only ever narrows: a page naming readers is left to the caller. `ownerRewrite` (GST-2091, ownerRewriteOf): first keep the
+ * stored labels the owner's own whole-page rewrite leaves out (ownerWriteKeepsLabels).
  */
 export function defaultSourceWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, owner = false,
-  ownerRewrite = false): void {
-  if (ownerRewrite) ownerWriteKeepsLabels(frontmatter, stored);
+  ownerRewrite: { privacyPrivate: boolean } | null = null): void {
+  if (ownerRewrite) ownerWriteKeepsLabels(frontmatter, stored, ownerRewrite.privacyPrivate);
   if (!writer || hasReaders(frontmatter)) return;
   const live = stored && stored.deleted_at == null ? stored : null;
   if (live && hasReaders(live.frontmatter)) frontmatter.readable_by = (live.frontmatter as Record<string, unknown>).readable_by;
@@ -327,11 +339,16 @@ export function defaultSourceWriterReaders(writer: string | null, frontmatter: R
 /**
  * GST-2091: a whole-page rewrite (put_page) by the brain owner's own credential (storedOwnerWrite) keeps the live stored
  * page's visibility and readable_by when its content leaves them out; a value the content states replaces the stored one.
+ * A page private by another privacy rule (`privacyPrivate`: an alias, a pinned question, a derived type or a private
+ * origin) becomes `visibility: private` when the content states no visibility, so dropping that key never publishes it.
  */
-function ownerWriteKeepsLabels(frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined): void {
+function ownerWriteKeepsLabels(frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, privacyPrivate: boolean): void {
   const live = stored && stored.deleted_at == null && typeof stored.frontmatter === 'object' && stored.frontmatter !== null ? stored.frontmatter as Record<string, unknown> : null;
   if (!live) return;
-  if (!Object.prototype.hasOwnProperty.call(frontmatter, 'visibility') && live.visibility !== undefined) frontmatter.visibility = live.visibility;
+  if (!Object.prototype.hasOwnProperty.call(frontmatter, 'visibility')) {
+    if (privacyPrivate) frontmatter.visibility = 'private';
+    else if (live.visibility !== undefined) frontmatter.visibility = live.visibility;
+  }
   if (!hasReaders(frontmatter) && hasReaders(live)) frontmatter.readable_by = live.readable_by;
 }
 

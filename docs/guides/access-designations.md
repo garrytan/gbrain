@@ -188,7 +188,8 @@ attested call. `gbrain access owner clear` turns it off.
 **The owner's writes.** The owner's own credential with write scope, speaking for itself (no audience, not an
 attested call, not a subagent job, no slug fence), may change a private page it reads with `put_page`, `edit_page` or
 `append_page`, and relabel it (for example `visibility: world`); a `put_page` that leaves out `visibility` or
-`readable_by` keeps the stored ones, and the revision and the journaled request (`ownerWrite`) name the owner's
+`readable_by` keeps the stored ones (a page private only by a privacy alias, a pinned question, a derived type or a
+private origin is stored as `visibility: private`), and the revision and the journaled request (`ownerWrite`) name the owner's
 credential. Readers lists and folder rules that leave the owner out still refuse it, and every other caller is refused
 as before; to keep an owner agent from changing private pages, give it a credential without write scope.
 
