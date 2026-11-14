@@ -282,7 +282,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const page = snapshot.page, sourceId = row.source_id, slug = page.slug;
   // GST-2689: a page derived from this one written after the purge's carry keeps it: soft-deleted (a live page) and parked.
   const { MID_PURGE_HOLD, parkUncarriedInPurge } = await import('../repair/origin-carry.ts');
-  if ((await parkUncarriedInPurge(tx, [Number(page.id)])).length) {
+  if ((await parkUncarriedInPurge(tx, [Number(page.id)], { recheckParked: true })).length) {
     if (!page.deleted_at) { await tx.createVersion(slug, { sourceId }); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(slug, { sourceId })); }
     return { status: 'soft_deleted', slug, source_id: sourceId, noop: !!page.deleted_at, ...(prepared.retention ? { retention: true } : {}), purge_held: MID_PURGE_HOLD };
   }

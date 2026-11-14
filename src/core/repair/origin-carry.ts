@@ -10,7 +10,7 @@
  * Two places run it. delete_page (deletePageCarryingPrivate): a soft delete, local or remote, labels the dependents once
  * the delete committed, as a maintenance write whose batch names the delete's request id (on a managed brain); a failure
  * there is left to the purge. An explicit purge labels them first; when that fails it soft-deletes instead and parks the
- * origin. Every expiry (carryPrivateBeforePurge, from purgeDeletedPagesCoordinated) labels the dependents of each expired
+ * origin, and when the origin lookup itself fails it soft-deletes and keeps any park (purge_held derived_origin_unchecked). Every expiry (carryPrivateBeforePurge, from purgeDeletedPagesCoordinated) labels the dependents of each expired
  * private origin and parks the ones it could not (persistence/derived-origin-hold.ts), so no purge removes them.
  */
 import { createHash, randomUUID } from 'node:crypto';
@@ -119,7 +119,7 @@ async function originOf(engine: BrainEngine, sourceId: string, slug: string): Pr
     const [row] = await engine.executeRaw<{ id: number; deleted: boolean }>(`SELECT p.id, p.deleted_at IS NOT NULL AS deleted FROM pages p
       WHERE p.source_id = $1 AND p.slug = $2 AND ${originSql('p')}`, [sourceId, slug], bounded);
     return row ? { id: Number(row.id), source_id: sourceId, slug, deleted: row.deleted === true } : null;
-  }).catch(() => null);
+  });
 }
 
 const parked = (origin: Origin, block: CarryBlock) => ({ source_id: origin.source_id, slug: origin.slug, page_id: origin.id, blocking_slug: block.slug, code: block.code, reason: block.reason });
@@ -141,11 +141,18 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const { finishPagePurge } = await import('../persistence/page-purge.ts');
   p.request_id ??= randomUUID();
   const batch = `derived-origin-carry:${String(p.request_id)}`;
-  const origin = typeof p.slug === 'string' ? await originOf(ctx.engine, sourceId, p.slug.toLowerCase()) : null;
+  const slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
   if (p.purge !== true) {
+    const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(() => null) : null;
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });
-    if (origin && (await originOf(ctx.engine, sourceId, origin.slug))?.deleted) await carryPrivate(ctx.engine, [origin], batch).catch(() => undefined);
+    if (origin && (await originOf(ctx.engine, sourceId, origin.slug).catch(() => null))?.deleted) await carryPrivate(ctx.engine, [origin], batch).catch(() => undefined);
     return finishPagePurge(ctx, result);
+  }
+  let origin: (Origin & { deleted: boolean }) | null;
+  try { origin = slug ? await originOf(ctx.engine, sourceId, slug) : null; }
+  catch {
+    const held = await submitPageMutation(ctx, { operation: 'delete_page', params: { ...p, purge: false, request_id: derivedRequestId(String(p.request_id)) } });
+    return { ...held, purge_held: ORIGIN_UNCHECKED_HOLD };
   }
   const block = origin ? (await carryPrivate(ctx.engine, [origin], batch)).get(origin.id) : undefined;
   if (!origin || !block) {
@@ -202,23 +209,28 @@ export async function retryParkedOrigins(engine: BrainEngine, olderThanHours: nu
   await clearDerivedOriginParks(engine, (await carryPrivateBeforePurge(engine, olderThanHours)).unparked.map(origin => origin.id));
 }
 
+/** The receipt note of an explicit purge held because its origin lookup failed; it names no page and counts none. */
+export const ORIGIN_UNCHECKED_HOLD = { code: 'derived_origin_unchecked',
+  message: 'Not purged: whether a page derived from this one would open without it could not be checked, so this page is kept soft-deleted (a parked page stays parked); purge it again once that read works, and the automatic purge checks it before it removes it.' };
+
 /** The receipt note of a purge the in-transaction recheck held; it names no page and counts none. */
 export const MID_PURGE_HOLD = { code: DERIVED_ORIGIN_PARKED_CODE,
   message: 'Not purged: a page derived from this one was written during the purge and is not labelled private yet, so this page is kept soft-deleted and parked; the next purge labels it and frees this page, and the one after removes it (gbrain doctor: derived_origin_parked).' };
 
 /**
- * Inside a purge's delete transaction, after the carry: the origins among `ids` (not already parked) that a page would
+ * Inside a purge's delete transaction, after the carry: the origins among `ids` (the bulk paths skip parked ones; the
+ * single-page purge passes `recheckParked`, so a parked origin whose carry was skipped is held too) that a page would
  * still open without, which means a dependent was written after the carry labelled the rest. The label door cannot write
  * inside this transaction (a managed label is its own publication, a Git label its own commit), so each such origin is
  * parked here, in the same transaction, and the caller skips its row delete; the next purge labels the page and the one
  * after removes the origin. The parks written, by origin.
  */
-export async function parkUncarriedInPurge(tx: BrainEngine, ids: readonly number[]): Promise<DerivedOriginPark[]> {
+export async function parkUncarriedInPurge(tx: BrainEngine, ids: readonly number[], opts: { recheckParked?: boolean } = {}): Promise<DerivedOriginPark[]> {
   if (!ids.length) return [];
   return withoutCallerAccess(async () => {
     await readHonorAliases(tx);
     const origins = (await tx.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
-      WHERE p.id = ANY($1::int[]) AND ${originSql('p')} AND ${derivedOriginPurgeHold('p')} ORDER BY p.id`, [[...ids]], bounded))
+      WHERE p.id = ANY($1::int[]) AND ${originSql('p')}${opts.recheckParked ? '' : ` AND ${derivedOriginPurgeHold('p')}`} ORDER BY p.id`, [[...ids]], bounded))
       .map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
     if (!origins.length) return [];
     const first = new Map<number, Dependent>();

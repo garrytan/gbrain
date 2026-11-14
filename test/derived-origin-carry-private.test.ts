@@ -36,6 +36,7 @@ import { bindCredential } from '../src/core/access/members.ts';
 import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { checkDerivedOriginParked } from '../src/commands/doctor/checks/purge-parks.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import * as labelWrite from '../src/core/repair/label-write.ts';
 import * as privateVisibility from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
@@ -376,6 +377,23 @@ for (const kind of testBackends()) {
       for (const who of ['unbound', 'alice'] as const) expect({ who, read: (await call(who, 'get_page', { slug: late })).text.includes(`${canaryOf(k, 'plain')}late`) }).toEqual({ who, read: false });
     }
 
+    /** Parks the origin the way a failed label does: an explicit purge whose label write fails soft-deletes and parks it. */
+    async function parkByFailedLabel(origin: string): Promise<void> {
+      const failing = spyOn(labelWrite, 'importAtRevision').mockImplementation(async () => { throw new Error('forced label failure'); });
+      try {
+        const first = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) })).text);
+        expect(first.purge_held?.code).toBe('derived_origin_parked');
+      } finally { failing.mockRestore(); }
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      expect((await checkDerivedOriginParked(engine)).status).toBe('warn');
+    }
+    async function expectCarriedHidden(k: string): Promise<void> {
+      __resetPrivateVisibilityCacheForTests();
+      for (const who of ['unbound', 'alice'] as const) for (const shape of CARRIED) {
+        expect({ who, shape, read: (await call(who, 'get_page', { slug: slugOf(k, shape) })).text.includes(canaryOf(k, shape)) }).toEqual({ who, shape, read: false });
+      }
+    }
+
     test('an explicit purge rechecks inside its transaction: a derived page written after the carry keeps the origin soft-deleted and parked', async () => {
       const k = 'midsingle';
       await seed(k);
@@ -460,6 +478,52 @@ for (const kind of testBackends()) {
       await backdate(origin);
       expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
       for (const shape of CARRIED) expect({ shape, visibility: (await fm(slugOf(k, shape))).visibility }).toEqual({ shape, visibility: 'private' });
+    }, 240_000);
+
+    test('an explicit purge whose origin lookup fails is held: a parked origin is not purged and the pages derived from it stay hidden', async () => {
+      const k = 'lookupfail';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      await parkByFailedLabel(origin);
+      const original = privateVisibility.readHonorAliases;
+      let thrown = 0;
+      const failing = spyOn(privateVisibility, 'readHonorAliases').mockImplementation(async (...args: Parameters<typeof original>) => {
+        if (new Error().stack?.includes('originOf')) { thrown++; throw new Error('forced origin lookup failure'); }
+        return original(...args);
+      });
+      let out: { isError: boolean; text: string };
+      try { out = await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) }); }
+      finally { failing.mockRestore(); }
+      expect(out.isError ? out.text : '').toBe('');
+      const receipt = JSON.parse(out.text);
+      expect(receipt.status).not.toBe('purged');
+      expect(receipt.purge_held?.code).toBe('derived_origin_unchecked');
+      expect(thrown).toBeGreaterThan(0);
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      expect((await checkDerivedOriginParked(engine)).status).toBe('warn');
+      await expectCarriedHidden(k);
+      const retried = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) })).text);
+      expect(retried.status).toBe('purged');
+      await nothingKept(origin);
+      await expectCarriedHidden(k);
+    }, 240_000);
+
+    test('the single-page purge transaction rechecks a parked origin: submitted without the carry, it is held and its derived pages stay hidden', async () => {
+      const k = 'parkedtx';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      await parkByFailedLabel(origin);
+      const ctx = { engine, config: { engine: engine.kind }, remote: false, sourceId: SRC, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as never;
+      const receipt = await withEnv({ GBRAIN_HOME: home }, async () => submitPageMutation(ctx, { operation: 'delete_page',
+        params: { slug: origin, source_id: SRC, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) } }));
+      expect(receipt.status).not.toBe('purged');
+      expect((receipt.purge_held as { code?: string } | undefined)?.code).toBe('derived_origin_parked');
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      await expectCarriedHidden(k);
+      const retried = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) })).text);
+      expect(retried.status).toBe('purged');
+      await nothingKept(origin);
+      await expectCarriedHidden(k);
     }, 240_000);
 
     test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and unparks and the one after purges', async () => {
