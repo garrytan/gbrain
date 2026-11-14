@@ -171,7 +171,7 @@ header, and the response carries `_meta.room` back:
   "_meta": { "room": ["alice-example", "group:team-a"] } }
 
 // response _meta
-{ "room": { "principals": ["alice-example", "group:team-a"], "declared_by": "harness",
+{ "room": { "principals": ["group:team-a", "member:alice-example"], "declared_by": "harness",
             "complete": true, "counts": { "items": 3, "readable": 2, "above": 1, "unknown": 0 },
             "by_reason": { "readers": 1 }, "above": [{ "source_id": "default", "slug": "notes/owner-plan", "reason": "readers" }] } }
 ```

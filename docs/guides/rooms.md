@@ -77,6 +77,11 @@ facts in `_meta.brain_hot_memory` and the saved facts a search or query returns
 `room: not readable (<reason>)` or `room: unknown (<reason>)`). With a room
 declared, treat anything in an answer that carries no mark as unknown.
 
+An item that depends on more than one page is readable only when the room can
+read every one of them: a link needs both its ends (and the page it was found
+on), a timeline row needs its own page and the page the event came from, and a
+fact on an entity card is judged in the source of the card it hangs on.
+
 Covered tools: `get_page`, `search`, `query`, `list_pages`, `find_pages`,
 `get_chunks`, `get_timeline`, `get_backlinks`, `recall` and `entity`. Every
 other tool still runs normally with a room declared; its answer is marked

@@ -96,7 +96,8 @@ export function readRoomDeclaration(channels: RoomChannels | undefined, args: Re
 type PageRef = { kind: 'page'; source_id: string; slug: string } | { kind: 'page_id'; id: number };
 type FactRef = { kind: 'fact'; id: number };
 type Ref = PageRef | FactRef;
-interface Slot { holder: Record<string, unknown>; ref: Ref | null }
+/** One marked item: its own ref, plus the other pages that gate it (a timeline event's page, a link's target and origin). */
+interface Slot { holder: Record<string, unknown>; ref: Ref | null; also?: Ref[] }
 
 const str = (v: unknown) => typeof v === 'string' && v ? v : undefined;
 const arr = (v: unknown): unknown[] => Array.isArray(v) ? v : [];
@@ -110,11 +111,24 @@ function pageIdSlot(o: unknown): Slot | null {
 }
 function factSlot(o: unknown): Slot | null {
   if (!isObj(o)) return null;
-  return { holder: o, ref: typeof o.id === 'number' ? { kind: 'fact', id: o.id } : null };
+  const id = typeof o.id === 'number' ? o.id : typeof o.id === 'string' && /^\d+$/.test(o.id) ? Number(o.id) : null;
+  return { holder: o, ref: id === null ? null : { kind: 'fact', id } };
+}
+function timelineSlot(o: unknown): Slot | null {
+  const s = pageIdSlot(o);
+  if (s && typeof s.holder.event_page_id === 'number') s.also = [{ kind: 'page_id', id: s.holder.event_page_id }];
+  return s;
+}
+function linkSlot(o: unknown, src: string): Slot | null {
+  if (!isObj(o) || typeof o.from_slug !== 'string') return pageSlot(o, src);
+  const also: Ref[] = [];
+  if (typeof o.to_slug === 'string') also.push({ kind: 'page', source_id: str(o.to_source_id) ?? src, slug: o.to_slug });
+  if (typeof o.origin_slug === 'string') also.push({ kind: 'page', source_id: str(o.origin_source_id) ?? src, slug: o.origin_slug });
+  return { holder: o, ref: { kind: 'page', source_id: str(o.from_source_id) ?? src, slug: o.from_slug }, also };
 }
 function listOf(r: unknown): unknown[] {
   if (Array.isArray(r)) return r;
-  if (isObj(r)) return Array.isArray(r.pages) ? r.pages : Array.isArray(r.results) ? r.results : [];
+  if (isObj(r)) return Array.isArray(r.pages) ? r.pages : Array.isArray(r.results) ? r.results : Array.isArray(r.rows) ? r.rows : [];
   return [];
 }
 const SKIP_KEYS = new Set(['next', 'arguments', 'fix', 'verify', 'coverage', '_meta', ROOM_ACCESS_KEY]);
@@ -124,11 +138,11 @@ function walk(v: unknown, src: string, out: Slot[], depth = 0): void {
   if (Array.isArray(v)) { for (const x of v) walk(x, src, out, depth + 1); return; }
   if (!isObj(v)) return;
   // A nested row without its own source_id belongs to the nearest enclosing object that names one (entity cards span sources).
-  src = str(v.source_id) ?? src;
+  src = str(v.source_id) ?? (isObj(v.entity) ? str(v.entity.source_id) : undefined) ?? src;
   if (typeof v.slug === 'string') out.push(pageSlot(v, src)!);
   for (const [k, x] of Object.entries(v)) {
     if (SKIP_KEYS.has(k)) continue;
-    if (k === 'facts' && Array.isArray(x)) { for (const f of x) { const s = factSlot(f); if (s) out.push(s); } continue; }
+    if ((k === 'facts' || k === 'recent_facts') && Array.isArray(x)) { for (const f of x) { const s = factSlot(f); if (s) out.push(s); } continue; }
     walk(x, src, out, depth + 1);
   }
 }
@@ -141,9 +155,8 @@ const EXTRACTORS: Record<string, (result: unknown, src: string) => Array<Slot | 
   list_pages: (r, src) => listOf(r).map(i => pageSlot(i, src)),
   find_pages: (r, src) => listOf(r).map(i => pageSlot(i, src)),
   get_chunks: r => arr(r).map(pageIdSlot),
-  get_timeline: r => arr(r).map(pageIdSlot),
-  get_backlinks: (r, src) => arr(r).map(i => isObj(i) && typeof i.from_slug === 'string'
-    ? { holder: i, ref: { kind: 'page', source_id: str(i.from_source_id) ?? src, slug: i.from_slug } } : pageSlot(i, src)),
+  get_timeline: r => arr(r).map(timelineSlot),
+  get_backlinks: (r, src) => listOf(r).map(i => linkSlot(i, src)),
   recall: (r, src) => isObj(r) ? [...arr(r.facts).map(factSlot), ...arr(r.results).map(i => pageSlot(i, src))] : [],
   entity: (r, src) => { const out: Slot[] = []; walk(r, src, out); return out; },
 };
@@ -176,7 +189,7 @@ async function decide(engine: BrainEngine, access: Partial<CallerAccess>, refs: 
         (${privacyForCaller('p', privacyPartSql('p'))}) AS privacy_ok
         FROM pages p WHERE p.id = ANY($3::int[]) OR (p.source_id, p.slug) IN (SELECT u.s, u.g FROM unnest($1::text[], $2::text[]) AS u(s, g))`,
       factSql: `SELECT f.id, (${worldOnlyFacts(true) ? factVisibilitySql('f', ['world']) : 'TRUE'} AND ${privateProvenanceFilterUnderPolicy('f')}) AS ok,
-        f.visibility = 'world' AS world FROM facts f WHERE f.id = ANY($1::int[])`,
+        f.visibility = 'world' AS world FROM facts f WHERE f.id = ANY($1::bigint[])`,
     };
   });
   const out = new Map<string, RoomAccess>();
@@ -293,6 +306,18 @@ function emptyMeta(d: RoomDeclaration): RoomMeta {
  * room_hints_unavailable notice says why. Writes one count-only audit row.
  */
 export async function assessRoom(engine: BrainEngine, input: { op: string; result: unknown; hotMemory?: unknown; retrieval?: unknown; declaration: RoomDeclaration; caller: RoomCaller; sourceId: string; deadlineMs?: number }): Promise<RoomOutcome & { hotMemory?: unknown; retrieval?: unknown }> {
+  try {
+    return await assessRoomUnguarded(engine, input);
+  } catch {
+    // Marking itself failed (a value it could not copy, a shape it could not walk): the answer goes out unmarked, flagged.
+    const d = input.declaration;
+    const notice: Notice = { code: 'room_hints_unavailable', kind: 'degraded', why: `${UNAVAILABLE_WHY.mark_failed}. The answer is complete; treat all of it as above this room's level: use it for the work, keep it out of the reply unless the ask needs it, and offer it in a private chat. [reason: mark_failed]` };
+    return { result: input.result, meta: { ...emptyMeta(d), complete: false, unavailable: 'mark_failed' }, notices: [notice], stamped: [notice],
+      ...(input.hotMemory !== undefined ? { hotMemory: input.hotMemory } : {}), ...(input.retrieval !== undefined ? { retrieval: input.retrieval } : {}) };
+  }
+}
+
+async function assessRoomUnguarded(engine: BrainEngine, input: { op: string; result: unknown; hotMemory?: unknown; retrieval?: unknown; declaration: RoomDeclaration; caller: RoomCaller; sourceId: string; deadlineMs?: number }): Promise<RoomOutcome & { hotMemory?: unknown; retrieval?: unknown }> {
   const { op, declaration: d, caller } = input;
   const meta = emptyMeta(d);
   const extractor = EXTRACTORS[op];
@@ -307,7 +332,7 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
     : d.invalid ? new RoomUnavailable('invalid', d.invalid) : null;
   let decisions = new Map<string, RoomAccess>();
   const refs = new Map<string, Ref>();
-  for (const s of slots) if (s.ref && refs.size < ROOM_MAX_REFS) refs.set(refKey(s.ref), s.ref);
+  for (const s of slots) for (const r of s.ref ? [s.ref, ...(s.also ?? [])] : []) if (refs.size < ROOM_MAX_REFS) refs.set(refKey(r), r);
   if (!unavailable && slots.length) {
     try {
       let late = false;
@@ -322,11 +347,13 @@ export async function assessRoom(engine: BrainEngine, input: { op: string; resul
   }
   const listed = new Set<string>();
   for (const s of slots) {
-    const key = s.ref ? refKey(s.ref) : null;
+    const judge = (r: Ref): RoomAccess => !refs.has(refKey(r)) ? { readable: 'unknown', reason: 'over_limit' }
+      : decisions.get(refKey(r)) ?? { readable: 'unknown', reason: 'not_found' };
+    // An item is readable only when every page that gates it is; the first page that is not gives the reason.
+    const gates = s.ref ? [s.ref, ...(s.also ?? [])].map(judge) : [];
     const access: RoomAccess = unavailable ? { readable: 'unknown', reason: unavailable.reason }
       : !s.ref ? { readable: 'unknown', reason: 'not_identified' }
-      : !refs.has(key!) ? { readable: 'unknown', reason: 'over_limit' }
-      : decisions.get(key!) ?? { readable: 'unknown', reason: 'not_found' };
+      : gates.find(a => a.readable === false) ?? gates.find(a => a.readable === 'unknown') ?? { readable: true };
     s.holder[ROOM_ACCESS_KEY] = access;
     meta.counts.items++;
     if (access.readable === true) { meta.counts.readable++; continue; }

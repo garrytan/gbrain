@@ -33,7 +33,7 @@ import { addGroup, addMember, bindCredential } from '../src/core/access/members.
 import { setOwner } from '../src/core/access/owner.ts';
 import { setMemberLabelledOnly } from '../src/core/access/labelled-only.ts';
 import { proposeRevision } from '../src/core/access/policy.ts';
-import { __setRoomDeadlineForTests, readRoomDeclaration, ROOM_COVERED_OPS } from '../src/core/access/room.ts';
+import { __setRoomDeadlineForTests, assessRoom, readRoomDeclaration, ROOM_COVERED_OPS } from '../src/core/access/room.ts';
 import { EGRESS_CAP_MIN, encodedFrameBytes } from '../src/core/egress-budget.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -361,6 +361,40 @@ for (const kind of testBackends()) {
       expect(out.isError).toBeFalsy();
       expect((JSON.parse(out.content[0]!.text) as { room_access?: unknown }).room_access).toEqual({ readable: false, reason: 'private_label' });
     }, 60_000);
+
+    test('a link, a timeline row and an entity card are judged on every page that gates them, not only the one they hang on', async () => {
+      await engine.addLink(PAGES.open.slug, PAGES.mine.slug, 'harbor ledger link', 'mentions', 'manual', undefined, undefined, { fromSourceId: SRC, toSourceId: SRC });
+      const room = { room: { header: 'group:team-a' } };
+      const links = await call('owner', 'get_backlinks', { slug: PAGES.mine.slug }, room);
+      const row = (links.json as Array<Record<string, unknown>>).find(l => l.from_slug === PAGES.open.slug)!;
+      expect(row.room_access).toEqual({ readable: false, reason: 'readers' });
+      const grouped = await call('owner', 'get_backlinks', { slug: PAGES.mine.slug, group: 'page' }, room);
+      const rows = (grouped.json as { rows: Array<Record<string, unknown>> }).rows;
+      expect(rows.length).toBeGreaterThan(0);
+      for (const r of rows) expect(r.room_access).toBeDefined();
+      const [open] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [SRC, PAGES.open.slug]);
+      const [mine] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id = $1 AND slug = $2', [SRC, PAGES.mine.slug]);
+      await engine.executeRaw("INSERT INTO timeline_entries (page_id, date, summary, event_page_id) VALUES ($1, '2026-01-02', 'Harbor ledger event', $2)", [open!.id, mine!.id]);
+      const timeline = await call('owner', 'get_timeline', { slug: PAGES.open.slug }, room);
+      const ev = (timeline.json as Array<Record<string, unknown>>).find(e => String(e.summary).includes('Harbor ledger event'))!;
+      expect(ev.room_access).toEqual({ readable: false, reason: 'readers' });
+      const card = await call('owner', 'entity', { name: PAGES.open.slug }, room);
+      const cardBody = (card.json as { card: { entity: Record<string, unknown>; recent_facts?: Array<Record<string, unknown>> } }).card;
+      const facts = cardBody.recent_facts ?? [];
+      expect(card.isError).toBe(false);
+      expect(facts.length).toBeGreaterThan(0);
+      for (const f of facts) expect(f.room_access).toBeDefined();
+      expect(cardBody.entity.room_access).toEqual({ readable: true });
+    }, 60_000);
+
+    test('if marking itself throws, the read still goes out whole, flagged mark_failed', async () => {
+      const { declaration } = readRoomDeclaration({ header: 'group:team-a' }, {});
+      const result = { slug: PAGES.open.slug, keep: () => 1 };
+      const out = await assessRoom(engine, { op: 'get_page', result, declaration: declaration!, sourceId: SRC, caller: { access: {} as never } });
+      expect(out.result).toBe(result);
+      expect(out.meta).toMatchObject({ complete: false, unavailable: 'mark_failed' });
+      expect(out.stamped.map(n => n.code)).toEqual(['room_hints_unavailable']);
+    }, 30_000);
 
     test('whoami advertises room support', async () => {
       const out = await call('owner', 'whoami', {});
