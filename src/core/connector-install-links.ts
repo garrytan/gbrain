@@ -87,3 +87,23 @@ export function connectorInstallLinks(mcpUrl: string, opts: { isPublic: boolean 
   if (cursor) links.cursor = cursor;
   return links;
 }
+
+/**
+ * `connectorInstallLinks` plus the human lines that present them, written
+ * through `say` in the `Next` block's two-column layout (`gbrain mcp expose`
+ * and `--status`). Returns the links so the caller can also carry them in
+ * its JSON document.
+ */
+export function announceInstallLinks(mcpUrl: string, opts: { isPublic: boolean; say: (line: string) => void }): ConnectorInstallLinks {
+  const links = connectorInstallLinks(mcpUrl, opts);
+  const how = 'finish authentication there.';
+  if (links.claude) {
+    opts.say(`  Claude.ai        ${links.claude}`);
+    opts.say(`                   Opens Claude's add-connector form with this MCP URL filled in; ${how}`);
+  }
+  if (links.cursor) {
+    opts.say(`  Cursor           ${links.cursor}`);
+    opts.say(`                   Opens Cursor's MCP install prompt with this URL${opts.isPublic ? '' : ' (the Cursor machine must be on your tailnet)'}; ${how}`);
+  }
+  return links;
+}

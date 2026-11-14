@@ -48,7 +48,7 @@ import {
   type ExposeReceipt, type ServiceState, type ServiceTarget, type UninstallServiceResult,
 } from '../core/serve-service.ts';
 import { registrationAdvertise, shellQuote } from '../core/mcp-registration.ts';
-import { connectorInstallLinks, type ConnectorInstallLinks } from '../core/connector-install-links.ts';
+import { announceInstallLinks, type ConnectorInstallLinks } from '../core/connector-install-links.ts';
 import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
 import { EXPOSE_FRICTION_REASONS, hostedOptionLine, hostedOptionMuted, hostedOptionNotice } from '../core/onboard/hosted-option.ts';
 
@@ -333,8 +333,7 @@ class Session {
     if (this.json) {
       this.d.out(JSON.stringify({
         status, receipt: extra.receipt ?? null, checks: this.checks, next_actions: this.nextActions,
-        ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.message ? { message: extra.message } : {}), ...(extra.plan ? { plan: extra.plan } : {}),
-        ...(extra.installLinks && Object.keys(extra.installLinks).length ? { install_links: extra.installLinks } : {}),
+        ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.message ? { message: extra.message } : {}), ...(extra.plan ? { plan: extra.plan } : {}), ...(extra.installLinks && Object.keys(extra.installLinks).length ? { install_links: extra.installLinks } : {}),
         ...(extra.consent ?? {}), ...(hosted ? { notices: [renderNotice(hosted, cliRenderContext())] } : {}),
       }));
     }
@@ -1039,19 +1038,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
   s.say(`  Owner login      ${ownerLogin}`);
   s.say('  Native OAuth     gbrain mcp admin register --help (public/confidential PKCE; exact client redirect URIs)');
   s.say('                   The native client starts authorization; the owner separately reviews consent.');
-  // One-click client links: claude.ai connects from Anthropic's cloud, so its
-  // link needs Funnel; Cursor connects from the user's machine, so it works
-  // tailnet-only too (src/core/connector-install-links.ts).
-  const installLinks = connectorInstallLinks(receipt.mcp_url, { isPublic: mode === 'funnel' });
-  if (installLinks.claude) {
-    s.say(`  Claude.ai        ${installLinks.claude}`);
-    s.say('                   Opens Claude\'s add-connector form with this MCP URL filled in; finish authentication there.');
-  }
-  if (installLinks.cursor) {
-    s.say(`  Cursor           ${installLinks.cursor}`);
-    s.say(`                   Opens Cursor's MCP install prompt with this URL${mode === 'funnel' ? '' : ' (the Cursor machine must be on your tailnet)'}; finish authentication there.`);
-  }
-  s.say(`  Machine client  gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
+  s.say(`  Machine client   gbrain mcp grant <name> --harness <id> --profile memory-writer --source default \\`);
   s.say(`                     --url ${receipt.mcp_url} \\`);
   s.say(`                     --admin-token-file ${ownerCredential} --credentials-out /private/<name>.json`);
   s.say(`  Machine install  gbrain connect ${receipt.mcp_url} --harness <id> --credentials-file /private/<name>.json --install`);
@@ -1067,7 +1054,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     'gbrain mcp expose --status',
   );
   const pending = tailnetHealth === 'pending' || localHealth === 'timeout';
-  return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, installLinks, ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
+  return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, installLinks: announceInstallLinks(receipt.mcp_url, { isPublic: mode === 'funnel', say: line => s.say(line) }), ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
 }
 
 /** The user's publish flags, for a re-run hint or the approved command (never --yes/--json/--dry-run). */
@@ -1149,16 +1136,13 @@ async function runStatus(d: Resolved, s: Session, opts: ExposeOptions): Promise<
   }
   s.say(`GBrain MCP server (${receipt.mode}) — ${receipt.mcp_url}`);
   for (const c of s.checks) s.say(`  ${c.status.padEnd(8)} ${c.name.padEnd(18)} ${c.detail}`);
-  const installLinks = connectorInstallLinks(receipt.mcp_url, { isPublic: receipt.mode === 'funnel' });
-  if (installLinks.claude) s.say(`  Claude.ai  ${installLinks.claude}`);
-  if (installLinks.cursor) s.say(`  Cursor     ${installLinks.cursor}`);
   if (!allOk) s.nextActions.push('gbrain mcp expose --yes');
   if (!allOk) return s.finish('error', 1, { receipt, reason: 'status_unhealthy' });
   // Spec: --status exits 0 only when EVERYTHING verifies. A pending tailnet
   // certificate is reported as `pending` (not `error`) so callers can tell
   // "wait a minute" from "broken", but it is still a non-zero exit.
   if (pending) { s.nextActions.push('gbrain mcp expose --status'); return s.finish('pending', 1, { receipt, reason: 'tailnet_health_pending', message: 'tailnet health still pending (first certificate issuance can take a minute) — re-run --status shortly.' }); }
-  return s.finish('exposed', 0, { receipt, installLinks });
+  return s.finish('exposed', 0, { receipt, installLinks: announceInstallLinks(receipt.mcp_url, { isPublic: receipt.mode === 'funnel', say: line => s.say(line) }) });
 }
 
 interface Leftovers {

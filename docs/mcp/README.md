@@ -49,6 +49,11 @@ Two clients take a link that opens their own add-server step with GBrain's
 name and MCP URL already filled in. Authentication still happens in the
 client afterwards; the links carry no credential.
 
+**Say to your agent:** *"give me a one-click link to add my brain to Claude"* —
+*"add my brain to Cursor"*. On the brain host, the agent runs
+`gbrain mcp expose --status` (or `gbrain mcp expose --funnel` for Claude) and
+hands you the printed link.
+
 | Client | Hosted gbrain.io link | Your own brain |
 | --- | --- | --- |
 | Claude (claude.ai, Claude Desktop) | `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=https%3A%2F%2Fgbrain.io%2Fmcp` | Printed by `gbrain mcp expose --funnel` (needs a public URL: claude.ai connects from Anthropic's cloud) |
