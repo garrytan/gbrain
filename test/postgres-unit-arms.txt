@@ -112,6 +112,7 @@ test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
 test/extract-facts-fence-failure-health-8758.test.ts
 test/extract-stale-frontmatter-loop-9295.test.ts
+test/extract-stale-managed-signal-gbra438.test.ts
 test/extract-timeline-from-meetings-managed.test.ts
 test/extraction-watermark-atoms.test.ts
 test/fact-embedding-oversized-7211.test.ts
@@ -312,8 +313,10 @@ test/links-extraction-yield.test.ts
 test/list-jobs-row-bound.test.ts
 test/list-pages-empty-type-notice-gbra449.test.ts
 test/lower-tier-label-hold.test.ts
+test/maintenance-idle-gbra438.test.ts
 test/maintenance-lowering-7917-7918.test.ts
 test/maintenance-trust-marker-7905.test.ts
+test/maintenance-unattended.test.ts
 test/managed-atom-release-resume-9079-9275.test.ts
 test/managed-cycle-pull-upstream.test.ts
 test/managed-facts-withdrawal-recovery-6506.test.ts

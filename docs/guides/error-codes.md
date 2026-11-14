@@ -374,6 +374,22 @@ Override: reason `transient`: retryable, exit 11, retryable.
 |---|---|---|---|---|---|---|
 | The autopilot job is bound to a different brain. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
+### autopilot_no_repo
+
+<a id="autopilot_no_repo"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain autopilot --install found no absolute repo directory (sync.repo_path and the default source's local_path are unset or relative), so it installed nothing. | The autopilot daemon syncs a git checkout. A repo-less brain needs no daemon: free upkeep (gbrain maintain --unattended) keeps it maintained. | Pass --repo <absolute-directory> for a brain kept in git, or check free upkeep with gbrain maintain --status. | agent | `repeat the read that failed` | 1 | no |
+
+### autopilot_pglite_daemon
+
+<a id="autopilot_pglite_daemon"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain autopilot --install refused on a PGLite brain: a daemon would hold the single-writer lock all day and block every other gbrain process. | PGLite has one writer. gbrain serve owns the lock and runs the resident sweep; free upkeep runs through gbrain maintain --unattended. | Run gbrain serve. Check upkeep with gbrain maintain --status. For a dedicated-brain daemon, re-run gbrain autopilot --install --force. | agent | `repeat the read that failed` | 1 | no |
+
 ### backup_dump_failed
 
 <a id="backup_dump_failed"></a>
@@ -1302,6 +1318,14 @@ More: [docs/guides/write-refusals.md#credential_scope_required](../../docs/guide
 
 More: [docs/guides/repair.md#managed-sync-orphans](../../docs/guides/repair.md#managed-sync-orphans)
 
+### cycle_already_running
+
+<a id="cycle_already_running"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another maintenance cycle holds the brain cycle lock, so this run skipped instead of waiting. | Cycles serialize on the gbrain-cycle lease; the holder releases it when it finishes (or its TTL lapses after a crash). | Wait for the other cycle; unattended upkeep retries on its next turn (gbrain maintain --status shows the last skip). | agent | `repeat the read that failed` | 1 | yes |
+
 ### cycle_failed
 
 <a id="cycle_failed"></a>
@@ -1649,6 +1673,14 @@ More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member
 | An engine opened from settings was disconnected, which closes it for good, so connect() and reconnect() refuse and nothing was reopened. | The request itself was wrong or no longer matches the brain; nothing was changed. | Call openEngine again with the settings to open a new engine. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/ENGINES.md#opening-an-engine-from-settings-experimental)
+
+### engine_degraded
+
+<a id="engine_degraded"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain database was unreachable (the engine is in degraded mode), so background work such as unattended upkeep skipped this run. | A degraded engine answers from its last state and reconnects on its own; writing maintenance results then would be lost or refused. | Run gbrain doctor --json and report the connection problem it names. | agent | `gbrain doctor --json` | 1 | no |
 
 ### engine_embedding_mismatch
 
@@ -3014,6 +3046,14 @@ More: [docs/guides/open-loops.md#two-detectors](../../docs/guides/open-loops.md#
 
 More: [docs/guides/write-refusals.md#maintenance_backpressure](../../docs/guides/write-refusals.md#maintenance_backpressure)
 
+### maintenance_disabled
+
+<a id="maintenance_disabled"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Free unattended upkeep is off on this brain (maintenance.auto is false), so nothing ran. | The person turned upkeep off; doctor reads it as off, not stale. | Turn it back on with gbrain config set maintenance.auto true. | agent | `repeat the read that failed` | 0 | no |
+
 ### maintenance_lock_busy
 
 <a id="maintenance_lock_busy"></a>
@@ -3023,6 +3063,22 @@ More: [docs/guides/write-refusals.md#maintenance_backpressure](../../docs/guides
 | A source-scoped dream cycle skipped its brain-wide phases because another cycle (usually autopilot maintenance) holds the shared gbrain-cycle lease; its source phases still ran. | Brain-wide phases (synthesize, patterns, embed, purge and the other mixed or global phases) must not run twice at once, so a cycle that cannot take gbrain-cycle runs only the phases its own source lease covers. | Nothing is lost: the holder runs those phases itself. To run one now, wait until the lease is released, then re-run `gbrain dream --phase <phase>` (LLM-backed phases spend; ask the user first). Run: gbrain status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
 
 More: [docs/guides/cron-schedule.md#dream-beside-autopilot](../../docs/guides/cron-schedule.md#dream-beside-autopilot)
+
+### maintenance_owned_by_autopilot
+
+<a id="maintenance_owned_by_autopilot"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An autopilot keeps this brain maintained (its brain-wide pass stamped autopilot.last_global_at within 48 hours), so free upkeep did nothing. | One owner per brain: the autopilot already runs the free phases and more, on any host sharing the database. | Nothing to do; gbrain autopilot --status shows the daemon. | agent | `repeat the read that failed` | 0 | no |
+
+### maintenance_owned_by_serve
+
+<a id="maintenance_owned_by_serve"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A live gbrain serve owns this brain and runs free upkeep while idle, so the scheduled upkeep run did nothing (serve owns upkeep). | One runner at a time: the serve holds the brain (the PGLite lock, or the warm CLI socket on Postgres) and runs the same free upkeep on its idle tick. | Nothing to do; gbrain maintain --status shows the last run and its runner. | agent | `repeat the read that failed` | 0 | no |
 
 ### managed_failure_unsettled
 
@@ -4515,6 +4571,24 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 | Long-running gbrain processes on this host run different builds, or one runs an older build than its install holds on disk: serve, the jobs supervisor, worker parents (in memory) and the job children they spawn from the install (on disk). | A process keeps the code it loaded at start, and `gbrain jobs run-child` spawns a fresh process from the install on disk for every job, so after a checkout reset or an upgrade on disk newer job code runs under an older worker and next to an older serve until each process restarts. | Restart the process the check names (serve with its service command, the supervisor with `gbrain jobs supervisor stop` then `gbrain jobs supervisor start --detach`, a worker by stopping its pid so its supervisor respawns it), then each other listed process on an older build; nothing restarts automatically. Run: gbrain doctor --only runtime_build_skew --json | agent | `gbrain doctor --only runtime_build_skew --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/troubleshooting.md#runtime-build-skew)
+
+### schedule_install_failed
+
+<a id="schedule_install_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain maintain --schedule wrote its files, but the operating-system scheduler (launchctl, systemctl --user or crontab) refused the job. | The scheduler belongs to the host: a missing user session bus, a locked crontab or a launchd error stops the job from loading. | Read the scheduler error in the message, fix it on the host, then run gbrain maintain --schedule --yes again (gbrain maintain --unschedule removes the files). | user | `gbrain doctor --json` | 1 | no |
+
+### schedule_unsupported
+
+<a id="schedule_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain maintain --schedule installed nothing: on Windows and in containers it has no installer, and it schedules the host brain only. | Windows gets the schtasks line to add by hand (minimal Windows support). In a container an operating-system schedule does not survive a redeploy, so the resident gbrain serve is the upkeep runner there. The scheduled job runs without --brain, so a mounted brain gets no schedule. | On Windows, add the printed schtasks line yourself. In a container, keep gbrain serve running; it runs free upkeep while idle. For a mounted brain, schedule gbrain --brain <id> maintain --unattended yourself. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `windows`, `container`, `mount`.
 
 ### schema_lock_blocked
 
