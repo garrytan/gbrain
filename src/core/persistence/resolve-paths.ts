@@ -25,6 +25,8 @@
  * Read-only: Git object reads and bounded lookups on existing indexes; nothing is scheduled or written.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { PageReadPolicy } from '../types.ts';
+import { pageReadFilter } from '../search/read-policy-sql.ts';
 import type { Action } from '../agent-output.ts';
 import { literalPathspecs } from '../git-env.ts';
 import { existsSync, realpathSync } from 'node:fs';
@@ -108,7 +110,7 @@ function headCommit(gitRoot: string): string | null {
 const readFix = (why: string, argv: string[], verify: string[]): Action => ({ argv, consent: [], actor: 'agent', requires_exclusive: false, why, verify: { argv: verify }, docs: DOCS });
 
 /** Resolves `paths` of one source; refuses more than RESOLVE_PATHS_MAX paths and a source without a local Git checkout. */
-export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, paths: string[]): Promise<ResolvedPaths> {
+export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, paths: string[], policy?: PageReadPolicy): Promise<ResolvedPaths> {
   if (!paths.length) throw opError('invalid_params', 'Pass at least one file path.', 'Name the repo-relative paths a commit changed, for example projects/acme-example/index.md.');
   if (paths.length > RESOLVE_PATHS_MAX) throw opError('invalid_params', `At most ${RESOLVE_PATHS_MAX} paths per call (got ${paths.length}).`, 'Split the paths into batches.');
   const [source] = await engine.executeRaw<{ local_path: string | null; last_commit: string | null; config: Record<string, unknown> | null; archived: boolean | null }>(
@@ -142,13 +144,20 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
   const atHead = head ? lsTree(gitRoot, head, gitPaths) : null;
   const heads = readBlobContents(gitRoot, [...synced.values()].filter(row => row.size <= 256 * 1024));
   const origins = normalized.map(p => p.origin);
+  // Filter both origin rows (including tombstones) and slug owners before deriving
+  // diagnostics. Filtering only the final page field still leaks state and counts,
+  // and an inaccessible case-folded twin must not appear as a slug owner.
+  const pageParams: unknown[] = [sourceId, origins];
+  const pagePolicy = pageReadFilter('pages', policy, pageParams);
   const pages = await engine.executeRaw<{ id: number; slug: string; source_path: string; deleted: boolean }>(
-    'SELECT id, slug, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND source_path = ANY($2::text[]) ORDER BY deleted_at IS NOT NULL, id DESC', [sourceId, origins]);
+    `SELECT id, slug, source_path, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND source_path = ANY($2::text[]) AND (${pagePolicy}) ORDER BY deleted_at IS NOT NULL, id DESC`, pageParams);
   const byOrigin = new Map<string, typeof pages[number]>();
   for (const page of pages) if (!byOrigin.has(page.source_path)) byOrigin.set(page.source_path, page);
   const slugs = [...new Set(origins.map(origin => resolveSlugForPath(origin)).filter(Boolean))];
+  const ownerParams: unknown[] = [sourceId, slugs];
+  const ownerPolicy = pageReadFilter('pages', policy, ownerParams);
   const owners = new Map((await engine.executeRaw<{ slug: string; source_path: string | null }>(
-    'SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[])', [sourceId, slugs])).map(row => [row.slug, row]));
+    `SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug = ANY($2::text[]) AND (${ownerPolicy})`, ownerParams)).map(row => [row.slug, row]));
   const liveSlugs = [...new Set([...byOrigin.values()].filter(page => !page.deleted).map(page => page.slug))];
   const searchability = await readPageSearchability(engine, sourceId, liveSlugs);
   const embedding = new Map([...searchability].filter(([, page]) => page.embedding_state).map(([slug, page]) => [slug, { state: page.embedding_state!, chunks: page.chunks, unembedded: page.unembedded }]));
