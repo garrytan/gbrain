@@ -130,8 +130,9 @@ When you delete a page that keeps others private, gbrain gives each page whose o
 stay private until the owner relabels them.
 
 A file removed with `git rm` outside gbrain is covered only from the next cycle: the next sync soft-deletes its page and
-the cycle's purge labels the derived pages before it removes any row. If a label cannot be written, the purge keeps the
-deleted page and `gbrain doctor` names it as `derived_origin_parked`, with the page that blocks it.
+the cycle's purge labels the derived pages before it removes any row. If a label cannot be written, or a page derived from it is
+itself soft-deleted (a restore would bring it back unlabelled), the purge keeps the deleted page until that is resolved and
+`gbrain doctor` names it as `derived_origin_parked`, with the page that blocks it.
 
 ### `pinned_question`
 
