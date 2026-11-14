@@ -9,7 +9,9 @@
  * and with the build each one's install holds on disk now:
  *
  * - serve and the other resident consumers: their `persistence_consumers`
- *   heartbeat `version` (Postgres; PGLite keeps none);
+ *   heartbeat `version` (Postgres; PGLite keeps none), minus rows this process
+ *   can prove dead (GST-2688: an old serve stopped on SIGTERM can leave its row
+ *   renewed for 30 s);
  * - the jobs supervisor: lines 4-5 of its PID file (`readSupervisorBuild`);
  * - worker parents (`gbrain jobs work`, autopilot-spawned ones included): the
  *   `version` and `install_root` of their worker-registry entries;
@@ -28,7 +30,7 @@
 import { homedir } from 'node:os';
 import type { Check } from '../../doctor.ts';
 import type { BrainEngine } from '../../../core/engine.ts';
-import { listHostConsumers, RESIDENT_CONSUMER_KINDS } from '../../../core/persistence/consumer-heartbeat.ts';
+import { consumerRowProvablyDead, listHostConsumers, RESIDENT_CONSUMER_KINDS } from '../../../core/persistence/consumer-heartbeat.ts';
 import { localHostIdentity } from '../../../core/persistence/identity.ts';
 import { compareWriterVersions } from '../../../core/persistence/writer-versions.ts';
 import { installedVersion } from '../../../core/runtime-build.ts';
@@ -94,7 +96,7 @@ export async function runtimeBuildSkewCheck(engine: BrainEngine, hostId: string,
   try {
     const byPid = new Map<number, RunningBuild>();
     for (const row of await listHostConsumers(engine, hostId)) {
-      if (row.liveness !== 'live' || row.self || !RESIDENT_CONSUMER_KINDS.includes(row.kind)) continue;
+      if (row.liveness !== 'live' || row.self || !RESIDENT_CONSUMER_KINDS.includes(row.kind) || consumerRowProvablyDead(row)) continue;
       byPid.set(row.pid, { role: row.kind, pid: row.pid, version: row.version || null, installed_version: null });
     }
     for (const entry of sources.workers()) {
