@@ -407,6 +407,10 @@
       },
       {
         "category": "brain",
+        "name": "open_shared_pages"
+      },
+      {
+        "category": "brain",
         "name": "unscoped_shared_reads"
       },
       {
@@ -1200,6 +1204,10 @@
       {
         "category": "ops",
         "name": "mcp_request_log_retention"
+      },
+      {
+        "category": "brain",
+        "name": "storage_manifest"
       },
       {
         "category": "brain",

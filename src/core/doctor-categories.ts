@@ -102,6 +102,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_store_mismatch',
   // GST-363: a brain that serves several people keeps each people/<name>/ folder to its readers (doctor/checks/unlabeled-people-folders.ts).
   'unlabeled_people_folders',
+  // GST-2670: pages every member's key reads on a brain that serves several people (doctor/checks/open-shared-pages.ts).
+  'open_shared_pages',
   // GST-363: credentials bound to nobody on a brain that serves several people (doctor/checks/unscoped-shared-reads.ts).
   'unscoped_shared_reads',
   // GST-363: config mcp.stdio_member set on a host where OpenClaw or Hermes is installed (doctor/checks/shared-stdio-binding.ts).
@@ -230,6 +232,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'source_config_shape',
   'source_routing_health',
   'stale_mentions',
+  // GST-1943: storage shelf cards that fail the card schema, interim records not adopted, a hosted shelf directory gone.
+  'storage_manifest',
   'stub_guard_24h',
   // Fact supersession threshold calibrated for the active embedding model (facts/supersession-threshold.ts).
   'supersession_calibration',

@@ -429,7 +429,7 @@ export interface CycleReport {
    *   - 'failed'  : lock acquired but all attempted phases failed
    */
   status: CycleStatus;
-  /** Present when status = 'skipped'. E.g., 'cycle_already_running' or 'no_database'. Also 'aborted' when the cycle was cancelled mid-flight (#1972), or 'stamp_write_failed' (#3504). */
+  /** Present when status = 'skipped'. E.g., 'cycle_already_running' or 'no_database'. Also 'aborted' when the cycle was cancelled mid-flight (#1972), or 'stamp_write_failed' (#3504), or 'storage_manifest_source' when the cycle's source is the storage shelf (GST-1943). */
   reason?: string;
   /** `cycle_already_running` on the DB lock: who holds it and for how long (best effort). */
   lock_holder?: { id: string; holder_pid: number; holder_host: string; age_ms: number };
@@ -1970,6 +1970,8 @@ async function runCycleUnscoped(
     ? (opts.sourceId ?? (await resolveSourceForDir(engine, brainDir)))
     : opts.sourceId;
   const orphansSourceId = opts.forceGlobalOrphans ? undefined : cycleSourceId;
+  const storageShelf = engine && cycleSourceId ? await (await import('./storage-manifest/door.ts')).isStorageManifestSource(engine, cycleSourceId) : false;
+  if (storageShelf) return { schema_version: '1', timestamp, duration_ms: Math.round(performance.now() - start), status: 'skipped', reason: 'storage_manifest_source', brain_dir: opts.brainDir, phases: [], totals: emptyTotals() };
   let sourceWindow: SourceCycleWindow | undefined;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
