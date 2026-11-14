@@ -397,6 +397,16 @@ describe('forget on remove', () => {
     expect(new Set(paths('/users/forget').map(c => c.body.user)).size).toBe(2);
   });
 
+  test('a forget that cannot be queued leaves the watch open instead of ending it unforgotten', async () => {
+    await addClient('client-f2');
+    await call('watch_job', { id: await seedJob() }, client('client-f2'));
+    const real = sqlQueryForEngine(engine);
+    const failing: typeof real = (strings, ...values) =>
+      strings.join('').includes('INSERT INTO wake_forgets') ? Promise.reject(new Error('transient')) : real(strings, ...values);
+    expect(await inHome(() => forgetWakePrincipal(failing, { kind: 'oauth_client', id: 'client-f2' }))).toEqual({ ended: 0, queued: 0 });
+    expect(await engine.executeRaw('SELECT state FROM wake_subscriptions')).toEqual([{ state: 'open' }]);
+  });
+
   test('removing an already-removed member queues its forget again, so a forget lost after the tombstone is recovered', async () => {
     await addMember('alice-example');
     await addClient('client-r', 'alice-example');

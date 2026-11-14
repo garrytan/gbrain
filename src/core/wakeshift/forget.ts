@@ -20,18 +20,18 @@ export type ForgetTarget = { member: string } | { kind: 'oauth_client' | 'legacy
 export async function forgetWakePrincipal(sql: SqlQuery, who: ForgetTarget): Promise<{ ended: number; queued: number }> {
   try {
     if ('member' in who) {
-      const ended = await sql`UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
-        WHERE member_id = ${who.member} AND state = 'open' RETURNING id`;
       const queued = await sql`INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions WHERE member_id = ${who.member}
         ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`;
+      const ended = await sql`UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+        WHERE member_id = ${who.member} AND state = 'open' RETURNING id`;
       await sql`DELETE FROM wake_terms_acceptances WHERE principal_key = ${`member:${who.member}`}`;
       return { ended: ended.length, queued: queued.length };
     }
-    const ended = await sql`UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
-      WHERE principal_kind = ${who.kind} AND principal_id = ${who.id} AND state = 'open' RETURNING id`;
     const queued = await sql`INSERT INTO wake_forgets (wake_user) SELECT DISTINCT wake_user FROM wake_subscriptions
       WHERE principal_kind = ${who.kind} AND principal_id = ${who.id} AND member_id IS NULL
       ON CONFLICT (wake_user) WHERE state = 'pending' DO NOTHING RETURNING id`;
+    const ended = await sql`UPDATE wake_subscriptions SET state = 'ended', last_error = 'principal_revoked', lease_until = NULL, updated_at = now()
+      WHERE principal_kind = ${who.kind} AND principal_id = ${who.id} AND state = 'open' RETURNING id`;
     await sql`DELETE FROM wake_terms_acceptances WHERE principal_key = ${`${who.kind}:${who.id}`}`;
     return { ended: ended.length, queued: queued.length };
   } catch (e) {
