@@ -5464,9 +5464,9 @@ More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guide
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A storage card failed validation (a missing or malformed field, a command field, or a field gbrain stamps itself); nothing was written. | Every card must say where the item is, how big it is and how to restore it, and carries no commands, so a card is complete and safe to act on when it is found months later. | Fix the field the message names and send the card again; gbrain storage-register --help lists the card fields. | agent | `repeat the read that failed` | 1 | no |
+| A storage card failed validation (a missing or malformed field, a command field, or a field gbrain stamps itself); nothing was written. | Every card must say where the item is, how big it is and how to restore it, and carries no commands, so a card is complete and safe to act on when it is found months later. | Fix the field the message names and send the card again; gbrain storage-register --help lists the card fields. For an adopt blocked on access_pending or access_unpreservable, settle the access rules over the interim page (gbrain access status) or give it readers its folder rules also list, then preview again. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`, `no_record`, `duplicate_id`.
+Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`, `no_record`, `duplicate_id`, `access_unpreservable`, `access_pending`, `labels`.
 
 More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
 

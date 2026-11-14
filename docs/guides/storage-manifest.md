@@ -57,25 +57,35 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
    after the user agrees to leave those fields out. It registers each card with `origin: adopt` through the same
    path `storage-register` uses, then tags the original `storage-manifest-adopted`. It deletes nothing. A
    credential-shaped value (a secret, an environment assignment, a credential variable, a URL password, a signed URL,
-   a value under a credential-named key such as `restore.args.password`) always refuses, whatever is dropped: fix the source page first.
+   a value under a key whose last word names a credential, such as `restore.args.password` or `restic_password`) always
+   refuses, whatever is dropped: fix the source page first. Each card takes its original's access labels (`visibility`,
+   `access`, `confidentiality`, `readable_by`), with `readable_by` narrowed to the readers that every folder rule over
+   the original also lists (readers match literally, so a member is not matched to its groups), so no card is read
+   wider than its original. An original whose readers and folder rules share no reader (`access_unpreservable`), or
+   whose rules are still being applied (`access_pending`), is blocked until you restrict the card some other way.
 3. `gbrain storage adopt --finalize` previews soft-deleting the tagged originals; its `--expect <plan_hash>` run deletes
    them (restorable for 72 hours with `gbrain restore`), only when every adopted card is on the shelf and matches its
-   original's mapped card. A restore recorded with `storage-update` since adoption is not a difference. The preview
+   original's mapped card and carries the access labels the original needs. A restore recorded with `storage-update` since adoption is not a difference. The preview
    names any `##` section in an original's body other than `## Record` (notes the card does not carry, which go with
    the page; a timeline section gbrain stores apart from the body is not listed) and flags an original longer than the 64 KiB it reads, so you read the rest first. The plan_hash binds each
    original's whole content, checked again just before each delete, so an original edited after the preview refuses
    `preview_changed`.
 
 A rerun skips cards already on the shelf that match and originals already tagged. A card on the shelf that differs is
-a conflict: it is reported and never overwritten, and its original stays untagged. Every apply reports
-`side_effects: none | partial | complete`; a run that stopped part way prints the command that finishes it.
+a conflict (a card without the original's access labels too): it is reported and never overwritten, and its original
+stays untagged. Every apply reports `side_effects: none | partial | complete`; a run that stopped part way prints the
+command that finishes it. A write gbrain accepted that has not committed yet is listed under `pending` with its
+receipt: poll it with `gbrain write-request <id>` (the command exits 10) and rerun once it has committed, never submit
+it again.
 
 ## Export and import (JSONL)
 
 `gbrain storage export --jsonl [--out <new file>]` writes every card as one JSON line, sorted by id, with the fields
-gbrain stamps (`registered_by`, `origin`). `gbrain storage import --jsonl <file>` previews each line as
+gbrain stamps (`registered_by`, `origin`) and, under `labels`, the card page's access labels. `gbrain storage import
+--jsonl <file>` previews each line as
 `create`, `identical`, `conflict` or `invalid` with a `plan_hash`; `--apply --expect <plan_hash>` registers the
-missing cards with `origin: import` (gbrain stamps both fields again), never overwrites a differing card, and skips
+missing cards with `origin: import` (gbrain stamps both fields again) and the line's labels, so a restricted card stays
+restricted, never overwrites a differing card (other labels count as a difference), and skips
 invalid lines without showing their values. Export leaves out a stored card that fails the card rules (a hand-edited card file, say) and names it. Export
 from one brain and import into an empty one reproduces every valid card.
 

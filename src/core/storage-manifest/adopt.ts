@@ -29,8 +29,12 @@ import { registerCard } from '../ops/storage-manifest.ts';
 import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
+import { ruleCoversSql } from '../access/folder-rules.ts';
+import { hasReaders, normalizeReaders } from '../access/principals.ts';
+import { canonicalJson } from '../remediation-step.ts';
 import { readShelfCards } from './find.ts';
-import { CARD_KEYS, cardContent, cardDigest, credentialShape, holdsCredential, isCommandKey, parseCardInput, STAMPED_KEYS, STORED_OBJECT_TYPE, type CardInput } from './schema.ts';
+import { accessLabels, CARD_KEYS, cardContent, cardDigest, credentialShape, holdsCredential, isCommandKey, parseCardInput, STAMPED_KEYS, STORED_OBJECT_TYPE, type AccessLabels, type CardInput } from './schema.ts';
 import { shelfWritable, STORAGE_SOURCE_ID } from './source.ts';
 
 export const ADOPT_DEFAULT_PREFIX = 'storage-manifest/';
@@ -41,7 +45,7 @@ export type RefusedReason = 'command_field' | 'stamped_field' | 'unknown_field';
 export interface RefusedField { field: string; reason: RefusedReason }
 export interface EntryProblem { code: 'storage_record_secret' | 'storage_record_invalid'; reason: string; message: string }
 export type AdoptState = 'register' | 'retag' | 'adopted' | 'conflict' | 'blocked';
-export interface AdoptEntry { slug: string; card_id: string | null; state: AdoptState; card: CardInput | null; refused: RefusedField[]; problem: EntryProblem | null }
+export interface AdoptEntry { slug: string; card_id: string | null; state: AdoptState; card: CardInput | null; labels: AccessLabels | null; refused: RefusedField[]; problem: EntryProblem | null }
 export interface AdoptOptions { sourceId: string; prefix: string }
 export interface AdoptPlan {
   action: 'adopt'; dry_run: true; source_id: string; prefix: string; shelf: 'exists' | 'creates';
@@ -49,22 +53,38 @@ export interface AdoptPlan {
 }
 export type SideEffects = 'none' | 'partial' | 'complete';
 export interface StepFailure { item: string; code: string; message: string }
+/** A write gbrain accepted that has not committed yet: poll its receipt; submitting it again is never needed. */
+export interface PendingWrite { item: string; request_id: string; state: string; poll: string[] }
+
+/** The pending write an error reports (an accepted, non-terminal receipt), or null for any other error. */
+export function pendingWrite(item: string, error: unknown): PendingWrite | null {
+  const receipt = acceptedPendingReceipt(error);
+  return receipt ? { item, request_id: receipt.request_id, state: receipt.state, poll: ['gbrain', 'write-request', receipt.request_id] } : null;
+}
+
+/** What a run changed: an accepted pending write counts as a change, and as unfinished. */
+export function sideEffects(wrote: boolean, unfinished: boolean): SideEffects {
+  return !wrote ? 'none' : unfinished ? 'partial' : 'complete';
+}
 export interface AdoptApplyResult {
   action: 'adopt'; dry_run: false; source_id: string; prefix: string; plan_hash: string; side_effects: SideEffects;
   results: Array<{ slug: string; card_id: string | null; outcome: 'registered' | 'retagged' | 'skipped' | 'conflict' }>;
-  conflicts: string[]; failure?: StepFailure; rerun?: string[]; finalize?: string[];
+  conflicts: string[]; failure?: StepFailure; pending?: PendingWrite[]; rerun?: string[]; finalize?: string[];
 }
 export interface FinalizeEntry { slug: string; card_id: string | null; state: 'delete' | 'deleted' | 'unverified' | 'not_adopted'; other_sections?: string[]; unread_tail?: boolean; content?: string }
 export interface FinalizePlan { action: 'finalize'; dry_run: true; source_id: string; prefix: string; entries: FinalizeEntry[]; plan_hash: string; summary: string[]; apply?: string[] }
 export interface FinalizeApplyResult {
   action: 'finalize'; dry_run: false; source_id: string; prefix: string; plan_hash: string; side_effects: SideEffects;
-  deleted: string[]; skipped: string[]; failure?: StepFailure; rerun?: string[];
+  deleted: string[]; skipped: string[]; failure?: StepFailure; pending?: PendingWrite[]; rerun?: string[];
 }
 
-interface InterimRow { slug: string; title: string; frontmatter: unknown; body: string | null; content_hash: string | null; long_body: boolean; tagged: boolean; deleted: boolean }
+interface InterimAccess { folder_rule_ids?: string[] | null; folder_readers?: unknown; access_pending?: boolean }
+interface InterimRow extends InterimAccess { slug: string; title: string; frontmatter: unknown; body: string | null; content_hash: string | null; long_body: boolean; tagged: boolean; deleted: boolean }
 
 const INTERIM_COLUMNS = `p.slug, p.title, p.frontmatter, ${boundedBodyPrefixSql('p')} AS body, p.content_hash,
-      coalesce(p.body_bytes, 0) > ${BOUNDED_PREFIX_BYTES} AS long_body`;
+      coalesce(p.body_bytes, 0) > ${BOUNDED_PREFIX_BYTES} AS long_body, p.folder_rule_ids,
+      (SELECT jsonb_agg(r.readable_by) FROM access_rules r WHERE r.source_id || ':' || r.rule_id = ANY(p.folder_rule_ids)) AS folder_readers,
+      EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = p.source_id AND ${ruleCoversSql('p.slug', 'pc.prefix')}) AS access_pending`;
 
 /** What a finalize plan binds for one original: its title, frontmatter and whole content (content_hash), so any edit after the preview changes it. */
 const originalDigest = (row: Pick<InterimRow, 'title' | 'frontmatter' | 'body' | 'content_hash'>) => sha256(JSON.stringify([row.title, row.frontmatter, row.content_hash ?? row.body]));
@@ -147,27 +167,52 @@ function invalidRecord(reason: string, message: string): EntryProblem {
   return { code: 'storage_record_invalid', reason, message };
 }
 
+const sameLabels = (a: AccessLabels | null | undefined, b: AccessLabels | null | undefined) => !!a && !!b && canonicalJson(a) === canonicalJson(b);
+
+/**
+ * The access labels the card takes so it is read no wider than its original: the original's own labels, with
+ * readable_by narrowed to the readers that it and every folder rule over the original all list. Readers match literally
+ * (a member is not matched to its groups), which can only narrow. A problem instead when they share no reader, or a rule
+ * over the original is still being applied.
+ */
+function originalLabels(row: InterimAccess, frontmatter: Record<string, unknown>): { labels: AccessLabels; problem: null } | { labels: null; problem: EntryProblem } {
+  const labels = accessLabels(frontmatter);
+  const raw = typeof row.folder_readers === 'string' ? JSON.parse(row.folder_readers) as unknown : row.folder_readers;
+  const rules = Array.isArray(raw) ? raw as string[][] : [];
+  if (row.access_pending || rules.length !== (row.folder_rule_ids?.length ?? 0)) {
+    return { labels: null, problem: invalidRecord('access_pending', 'an access rule over the page is still being applied, so who may read it is not settled (gbrain access status names the rule)') };
+  }
+  if (!rules.length) return { labels, problem: null };
+  const lists = [...(hasReaders(frontmatter) ? [normalizeReaders(frontmatter)!] : []), ...rules];
+  const readers = lists.reduce((common, list) => common.filter((reader) => list.includes(reader)));
+  if (!readers.length) return { labels: null, problem: invalidRecord('access_unpreservable', 'its readable_by and the folder rules over it name no reader in common, so a card cannot carry the same restriction') };
+  return { labels: { ...labels, readable_by: [...new Set(readers)].sort() }, problem: null };
+}
+
 /** Map one interim page onto a card. Pure: reads nothing beyond the row. */
-export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontmatter' | 'body'>, prefix: string): Pick<AdoptEntry, 'card' | 'refused' | 'problem'> {
+export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontmatter' | 'body'> & InterimAccess, prefix: string): Pick<AdoptEntry, 'card' | 'labels' | 'refused' | 'problem'> {
   const text = recordJson(row.body ?? '');
-  if (text === null) return { card: null, refused: [], problem: invalidRecord('no_record', 'the page has no json block under a ## Record heading in its first 64 KiB') };
+  if (text === null) return { card: null, labels: null, refused: [], problem: invalidRecord('no_record', 'the page has no json block under a ## Record heading in its first 64 KiB') };
   let record: unknown;
-  try { record = JSON.parse(text); } catch { return { card: null, refused: [], problem: invalidRecord('not_json', 'the ## Record block is not valid JSON') }; }
-  if (!record || typeof record !== 'object' || Array.isArray(record)) return { card: null, refused: [], problem: invalidRecord('not_object', 'the ## Record block is not a JSON object') };
+  try { record = JSON.parse(text); } catch { return { card: null, labels: null, refused: [], problem: invalidRecord('not_json', 'the ## Record block is not valid JSON') }; }
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return { card: null, labels: null, refused: [], problem: invalidRecord('not_object', 'the ## Record block is not a JSON object') };
   const refused: RefusedField[] = [];
   const stripped = strip(record, '', refused) as Record<string, unknown>;
   const secret = credentialAt(record, '');
-  if (secret) return { card: null, refused: [], problem: { code: 'storage_record_secret', reason: secret.shape, message: `field ${secret.field} has a credential shape (${secret.shape}); the value is not shown` } };
+  if (secret) return { card: null, labels: null, refused: [], problem: { code: 'storage_record_secret', reason: secret.shape, message: `field ${secret.field} has a credential shape (${secret.shape}); the value is not shown` } };
   const frontmatter = (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter ?? {}) as Record<string, unknown>;
   const aliases = Array.isArray(frontmatter.aliases) ? frontmatter.aliases.filter((a): a is string => typeof a === 'string') : [];
   const mapped = { ...stripped, id: stripped.id ?? row.slug.slice(prefix.length).replace(/\//g, '-'), title: stripped.title ?? row.title, aliases: stripped.aliases ?? aliases };
+  let card: CardInput;
   try {
-    return { card: parseCardInput(mapped), refused, problem: null };
+    card = parseCardInput(mapped);
   } catch (error) {
     if (!(error instanceof OperationError)) throw error;
-    return { card: null, refused, problem: { code: error.code === 'storage_record_secret' ? 'storage_record_secret' : 'storage_record_invalid',
+    return { card: null, labels: null, refused, problem: { code: error.code === 'storage_record_secret' ? 'storage_record_secret' : 'storage_record_invalid',
       reason: error.reason ?? 'schema', message: error.message.replace(/; nothing was written\.$/, '') } };
   }
+  const access = originalLabels(row, frontmatter);
+  return access.problem ? { card: null, labels: null, refused, problem: access.problem } : { card, labels: access.labels, refused, problem: null };
 }
 
 async function listInterim(ctx: OperationContext, opts: AdoptOptions, includeDeleted: boolean): Promise<InterimRow[]> {
@@ -191,31 +236,33 @@ async function assertInterimSource(ctx: OperationContext, opts: AdoptOptions): P
 export async function previewAdopt(ctx: OperationContext, opts: AdoptOptions): Promise<AdoptPlan> {
   await assertInterimSource(ctx, opts);
   const { creates, exists } = await shelfWritable(ctx.engine);
-  const shelf = new Map((await readShelfCards(ctx.engine)).map((row) => [row.id, row.card]));
+  const shelf = new Map((await readShelfCards(ctx.engine)).map((row) => [row.id, row]));
   const seen = new Set<string>();
   const entries: AdoptEntry[] = (await listInterim(ctx, opts, false)).map((row): AdoptEntry => {
     const mapped = mapInterimPage(row, opts.prefix);
     const card_id = mapped.card?.id ?? null;
-    if (card_id && seen.has(card_id)) return { slug: row.slug, card_id, state: 'blocked', card: null, refused: mapped.refused, problem: invalidRecord('duplicate_id', `another interim page maps to card id ${card_id}`) };
+    if (card_id && seen.has(card_id)) return { slug: row.slug, card_id, state: 'blocked', card: null, labels: null, refused: mapped.refused, problem: invalidRecord('duplicate_id', `another interim page maps to card id ${card_id}`) };
     if (card_id) seen.add(card_id);
     if (!mapped.card) return { slug: row.slug, card_id, state: 'blocked', ...mapped };
     const onShelf = shelf.get(mapped.card.id);
-    const existing = onShelf ? cardContent(onShelf) : null;
-    const state: AdoptState = !shelf.has(mapped.card.id) ? 'register'
-      : !existing || cardDigest(existing) !== cardDigest(mapped.card) ? 'conflict' : row.tagged ? 'adopted' : 'retag';
+    const existing = onShelf?.card ? cardContent(onShelf.card) : null;
+    const state: AdoptState = !onShelf ? 'register'
+      : !existing || cardDigest(existing) !== cardDigest(mapped.card) || !sameLabels(onShelf.labels, mapped.labels) ? 'conflict' : row.tagged ? 'adopted' : 'retag';
     return { slug: row.slug, card_id, state, ...mapped };
   });
   const counts: Record<AdoptState, number> = { register: 0, retag: 0, adopted: 0, conflict: 0, blocked: 0 };
   for (const entry of entries) counts[entry.state]++;
   const drop_fields = [...new Set(entries.filter((e) => e.state !== 'blocked').flatMap((e) => e.refused.map((f) => f.field)))].sort();
   const plan_hash = sha256(JSON.stringify({ v: 1, kind: 'adopt', source_id: opts.sourceId, prefix: opts.prefix, entries: entries.map((e) => ({
-    slug: e.slug, card: e.card ? cardDigest(e.card) : null, refused: e.refused.map((f) => `${f.field}:${f.reason}`),
+    slug: e.slug, card: e.card ? cardDigest(e.card) : null, labels: e.labels ? canonicalJson(e.labels) : null, refused: e.refused.map((f) => `${f.field}:${f.reason}`),
     problem: e.problem ? `${e.problem.code}:${e.problem.reason}` : null, conflict: e.state === 'conflict' })) }));
   const summary = [`${entries.length} interim record(s) under ${opts.prefix} in source ${opts.sourceId}: ${counts.register} to register, ${counts.retag} already on the shelf to tag, ${counts.adopted} already adopted, ${counts.conflict} conflict(s), ${counts.blocked} blocked.`];
   if (creates && counts.register) summary.push(exists ? `The first card finishes the storage shelf (source ${STORAGE_SOURCE_ID}) that an earlier creation left without its role.`
     : `The first card creates the storage shelf (source ${STORAGE_SOURCE_ID}, database-only: this brain has no Git checkout, so the database is the record).`);
+  const restricted = entries.filter((e) => e.state === 'register' && e.labels && Object.keys(e.labels).length).length;
+  if (restricted) summary.push(`${restricted} card(s) take their original's access labels (visibility, readable_by, and the readers of the folder rules over it), so each is read no wider than its original.`);
   if (drop_fields.length) summary.push(`Fields a card refuses, left out only when each is named with --drop-field: ${drop_fields.join(', ')}. The original pages keep them until finalize.`);
-  if (counts.conflict) summary.push('A conflict is a card already on the shelf that differs from the record: it is never overwritten, and its original is not tagged.');
+  if (counts.conflict) summary.push('A conflict is a card already on the shelf that differs from the record or from the access labels its original needs: it is never overwritten, and its original is not tagged.');
   if (counts.blocked) summary.push('Blocked pages need their record fixed on the page first; apply refuses until then.');
   const apply = counts.blocked || !(counts.register + counts.retag) ? undefined
     : [...adoptArgv(opts), ...drop_fields.flatMap((f) => ['--drop-field', f]), '--apply', '--expect', plan_hash];
@@ -256,48 +303,52 @@ export async function applyAdopt(ctx: OperationContext, opts: AdoptOptions & { e
         user_message: `These fields of the interim storage records cannot go on a card and would be left out: ${missing.join(', ')}. The original pages keep them until you finalize. Leave them out?` } });
   }
   const results: AdoptApplyResult['results'] = [];
+  const pending: PendingWrite[] = [];
   let failure: StepFailure | undefined;
   for (const entry of plan.entries) {
     if (entry.state === 'conflict' || entry.state === 'adopted') { results.push({ slug: entry.slug, card_id: entry.card_id, outcome: entry.state === 'conflict' ? 'conflict' : 'skipped' }); continue; }
     try {
       if (entry.state === 'register') {
-        await registerCard(ctx, entry.card!, 'adopt');
+        await registerCard(ctx, entry.card!, 'adopt', undefined, entry.labels!);
         results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'registered' });
       }
       await submitPageMutation(ctx, { operation: 'add_tag', params: { slug: entry.slug, tag: ADOPTED_TAG, source_id: opts.sourceId } });
       results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'retagged' });
     } catch (error) {
+      const held = pendingWrite(entry.slug, error);
+      if (held) { pending.push(held); continue; }
       if (!(error instanceof OperationError)) throw error;
       failure = { item: entry.slug, code: error.canonical ?? error.code, message: error.message };
       break;
     }
   }
-  const wrote = results.some((r) => r.outcome === 'registered' || r.outcome === 'retagged');
+  const wrote = pending.length > 0 || results.some((r) => r.outcome === 'registered' || r.outcome === 'retagged');
   return { action: 'adopt', dry_run: false, source_id: opts.sourceId, prefix: opts.prefix, plan_hash: plan.plan_hash,
-    side_effects: failure ? (wrote ? 'partial' : 'none') : wrote ? 'complete' : 'none', results,
+    side_effects: sideEffects(wrote, !!failure || pending.length > 0), results,
     conflicts: results.filter((r) => r.outcome === 'conflict').map((r) => r.slug),
-    ...(failure ? { failure, rerun } : { finalize: [...adoptArgv(opts), '--finalize'] }) };
+    ...(failure ? { failure } : {}), ...(pending.length ? { pending } : {}),
+    ...(failure || pending.length ? { rerun } : { finalize: [...adoptArgv(opts), '--finalize'] }) };
 }
 
 /** Preview finalize: the tagged originals to soft-delete. Writes nothing. */
 export async function previewFinalize(ctx: OperationContext, opts: AdoptOptions): Promise<FinalizePlan> {
   await assertInterimSource(ctx, opts);
-  const shelf = new Map((await readShelfCards(ctx.engine)).map((row) => [row.id, row.card]));
+  const shelf = new Map((await readShelfCards(ctx.engine)).map((row) => [row.id, row]));
   const entries: FinalizeEntry[] = (await listInterim(ctx, opts, true)).flatMap((row): FinalizeEntry[] => {
     if (!row.tagged) return row.deleted ? [] : [{ slug: row.slug, card_id: null, state: 'not_adopted' }];
-    const { card } = mapInterimPage(row, opts.prefix);
+    const { card, labels } = mapInterimPage(row, opts.prefix);
     const content = originalDigest(row);
     if (row.deleted) return [{ slug: row.slug, card_id: card?.id ?? null, state: 'deleted', content }];
     const onShelf = card ? shelf.get(card.id) : undefined;
-    const existing = onShelf ? cardContent(onShelf) : null;
-    const state = card && existing && matchesAdopted(existing, card) ? 'delete' : 'unverified';
+    const existing = onShelf?.card ? cardContent(onShelf.card) : null;
+    const state = card && existing && matchesAdopted(existing, card) && sameLabels(onShelf!.labels, labels) ? 'delete' : 'unverified';
     const other = otherSections(row.body ?? '');
     return [{ slug: row.slug, card_id: card?.id ?? null, state, ...(other.length ? { other_sections: other } : {}), ...(row.long_body || (row.body?.length ?? 0) >= BOUNDED_PREFIX_BYTES ? { unread_tail: true } : {}), content }];
   });
   const count = (state: FinalizeEntry['state']) => entries.filter((e) => e.state === state).length;
   const plan_hash = sha256(JSON.stringify({ v: 1, kind: 'finalize', source_id: opts.sourceId, prefix: opts.prefix,
     entries: entries.filter((e) => e.state !== 'not_adopted').map((e) => ({ slug: e.slug, card_id: e.card_id, unverified: e.state === 'unverified', content: e.content })) }));
-  const summary = [`${count('delete')} adopted original(s) to soft-delete (restorable for 72 hours), ${count('deleted')} already deleted, ${count('unverified')} whose card is missing or differs, ${count('not_adopted')} not adopted yet (kept).`];
+  const summary = [`${count('delete')} adopted original(s) to soft-delete (restorable for 72 hours), ${count('deleted')} already deleted, ${count('unverified')} whose card is missing or differs (in content or access labels), ${count('not_adopted')} not adopted yet (kept).`];
   const dropping = entries.filter((e) => e.state === 'delete' && e.other_sections);
   if (dropping.length) summary.push(`${dropping.length} original(s) to delete hold sections the card does not carry (${[...new Set(dropping.flatMap((e) => e.other_sections!))].join(', ')}): show the user, and move what matters into the card with gbrain storage-update before finalizing.`);
   const long = entries.filter((e) => e.state === 'delete' && e.unread_tail).map((e) => e.slug);
@@ -317,6 +368,7 @@ export async function applyFinalize(ctx: OperationContext, opts: AdoptOptions & 
       'Compare each original with its card (gbrain storage-get with the card id the finalize preview lists), fix the card or the record, then preview finalize again.', { fix: previewFix(opts, true) });
   }
   const deleted: string[] = [];
+  const pending: PendingWrite[] = [];
   let failure: StepFailure | undefined;
   for (const entry of plan.entries.filter((e) => e.state === 'delete')) {
     try {
@@ -328,13 +380,16 @@ export async function applyFinalize(ctx: OperationContext, opts: AdoptOptions & 
       await submitPageMutation(ctx, { operation: 'delete_page', params: { slug: entry.slug, source_id: opts.sourceId, ...(expected ? { expected_revision: expected } : {}) } });
       deleted.push(entry.slug);
     } catch (error) {
+      const held = pendingWrite(entry.slug, error);
+      if (held) { pending.push(held); continue; }
       if (!(error instanceof OperationError)) throw error;
       failure = { item: entry.slug, code: error.canonical ?? error.code, message: error.message };
       break;
     }
   }
   return { action: 'finalize', dry_run: false, source_id: opts.sourceId, prefix: opts.prefix, plan_hash: plan.plan_hash,
-    side_effects: failure ? (deleted.length ? 'partial' : 'none') : deleted.length ? 'complete' : 'none', deleted,
+    side_effects: sideEffects(deleted.length > 0 || pending.length > 0, !!failure || pending.length > 0), deleted,
     skipped: plan.entries.filter((e) => e.state !== 'delete').map((e) => e.slug),
+    ...(pending.length ? { pending } : {}),
     ...(failure ? { failure, rerun: failure.code === 'preview_changed' ? previewFix(opts, true).argv! : [...adoptArgv(opts), '--finalize', '--expect', plan.plan_hash] } : {}) };
 }

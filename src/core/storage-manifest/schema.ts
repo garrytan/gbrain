@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { opError, OperationError } from '../ops/contract.ts';
 import { scanTextSpans } from '../secret-scan.ts';
 import { canonicalJson } from '../remediation-step.ts';
+import { LABEL_KEYS } from '../persistence/label-edit.ts';
 
 export const STORED_OBJECT_TYPE = 'stored-object';
 export const CARD_ID_RE = /^[a-z0-9][a-z0-9-]{1,79}$/;
@@ -88,8 +89,7 @@ export type Card = CardInput & { registered_by: string; origin: (typeof ORIGINS)
 const COMMAND_KEYS = new Set(['command', 'cmd', 'script', 'exec', 'shell', 'instructions']);
 export const STAMPED_KEYS = ['registered_by', 'origin'] as const;
 const CREDENTIAL_NAME = /(?:KEY|SECRET|TOKEN|PASSWORD|PASSWD|PASS|CRED|AUTH)/i;
-const CREDENTIAL_KEY = /(?:^|_)(?:password|passwd|passphrase|secret|token|credentials?|(?:api|access|secret|application|account|private|auth|master|encryption)_?key)(?:_|$)/;
-const REFERENCE_KEY = /_(?:env|var|variable|file|path|name|ref|id)$/;
+const CREDENTIAL_KEY = /(?:^|_)(?:password|passwd|passphrase|secret|token|credentials?|(?:api|access|secret|application|account|private|auth|master|encryption)_?key)$/;
 const ENV_ASSIGNMENT = /(?:^|[\s;&|(])[A-Za-z_][A-Za-z0-9_]{1,}=\S/;
 const VAR_REFERENCE = /\$\{?([A-Za-z_][A-Za-z0-9_]*)/g;
 const URL_USERINFO = /[a-z][a-z0-9+.-]*:\/\/[^/\s@]*:[^/\s@]*@/i;
@@ -131,11 +131,14 @@ export function isCommandKey(key: string): boolean {
   return COMMAND_KEYS.has(key.toLowerCase());
 }
 
-/** A non-empty string or number under a key named for a credential (password, application_key), unless the key names where it lives (password_file, token_env). */
+/**
+ * A non-empty string or number under a key whose last word names a credential (password, restic_password, application_key).
+ * A key that only starts with one (token_env, password_file, token_count, api_key_last4) names something else.
+ */
 export function holdsCredential(key: string, value: unknown): boolean {
   if (!(typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''))) return false;
   const name = key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').replace(/-/g, '_').toLowerCase();
-  return CREDENTIAL_KEY.test(name) && !REFERENCE_KEY.test(name);
+  return CREDENTIAL_KEY.test(name);
 }
 
 function credentialKeyRefusal(path: string): OperationError {
@@ -223,6 +226,26 @@ function withoutEmpty(value: unknown): unknown {
 }
 
 /** Stable text of a card's content (null and absent fields are the same), for comparing and hashing. */
+/** The page labels that decide who reads a page (visibility, its access and confidentiality aliases, readable_by). */
+export const ACCESS_LABEL_KEYS: readonly string[] = [...LABEL_KEYS, 'readable_by'];
+export type AccessLabels = Record<string, unknown>;
+
+/** The access labels a page's frontmatter carries. */
+export function accessLabels(frontmatter: Record<string, unknown>): AccessLabels {
+  return Object.fromEntries(ACCESS_LABEL_KEYS.filter((key) => Object.hasOwn(frontmatter, key)).map((key) => [key, frontmatter[key]]));
+}
+
+/** An export line's `labels`: access label keys only, each a string (readable_by a reader or a list of readers). */
+export function parseAccessLabels(value: unknown): AccessLabels {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalid('labels', 'must be an object of access labels', 'labels');
+  for (const [key, item] of Object.entries(value)) {
+    if (!ACCESS_LABEL_KEYS.includes(key)) throw invalid(`labels.${key}`, `is not an access label (${ACCESS_LABEL_KEYS.join(', ')})`, 'labels');
+    const ok = typeof item === 'string' || (key === 'readable_by' && Array.isArray(item) && item.length > 0 && item.every((r) => typeof r === 'string'));
+    if (!ok) throw invalid(`labels.${key}`, key === 'readable_by' ? 'must be a reader or a list of readers' : 'must be a string', 'labels');
+  }
+  return value as AccessLabels;
+}
+
 export function cardDigest(card: CardInput): string {
   return canonicalJson(withoutEmpty(card));
 }

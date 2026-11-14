@@ -13,6 +13,7 @@ import { nativeFileTarget } from '../core/persistence/native-file-target.ts';
 import { opError, OperationError, type OperationContext } from '../core/ops/contract.ts';
 import { readFix } from '../core/ops/op-fix.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
+import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
 
 /**
  * Distinct nominal types for the two tier-keyed numeric maps. Both shapes
@@ -511,11 +512,19 @@ async function shelfRefusal(error: unknown, json: boolean): Promise<void> {
 
 const argvText = (argv: string[]) => argv.map(shellQuote).join(' ');
 
-function printOutcome(result: { side_effects: string; failure?: { item: string; code: string; message: string }; rerun?: string[] }): void {
+type ShelfOutcome = { side_effects: string; failure?: { item: string; code: string; message: string }; pending?: Array<{ item: string; request_id: string; poll: string[] }>; rerun?: string[] };
+
+/** Exit 1 on a failure or a conflict, else exit 10 while an accepted write is still pending (poll it; never resubmit). */
+function outcomeExit(result: ShelfOutcome, refused: boolean): void {
+  if (result.failure || refused) setCliExitVerdict(1);
+  else if (result.pending?.length) setCliExitVerdict(PENDING_WRITE_EXIT_CODE);
+}
+
+function printOutcome(result: ShelfOutcome): void {
   console.log(`Side effects: ${result.side_effects}.`);
-  if (!result.failure) return;
-  console.log(`Stopped at ${result.failure.item} (${result.failure.code}): ${result.failure.message}`);
-  if (result.rerun) console.log(`Rerun after fixing it: ${argvText(result.rerun)}`);
+  for (const held of result.pending ?? []) console.log(`Accepted, still being written: ${held.item} (poll it with ${argvText(held.poll)}; do not submit it again).`);
+  if (result.failure) console.log(`Stopped at ${result.failure.item} (${result.failure.code}): ${result.failure.message}`);
+  if (result.rerun) console.log(`${result.failure ? 'Rerun after fixing it' : 'Rerun once it has committed, to finish'}: ${argvText(result.rerun)}`);
 }
 
 async function runStorageAdopt(engine: BrainEngine, args: string[]): Promise<void> {
@@ -539,7 +548,7 @@ async function runStorageAdopt(engine: BrainEngine, args: string[]): Promise<voi
     const result = finalize
       ? expect ? await adopt.applyFinalize(ctx, { ...opts, expect }) : await adopt.previewFinalize(ctx, opts)
       : expect ? await adopt.applyAdopt(ctx, { ...opts, expect, dropFields }) : await adopt.previewAdopt(ctx, opts);
-    if (!result.dry_run && (result.failure || (result.action === 'adopt' && result.conflicts.length))) setCliExitVerdict(1);
+    if (!result.dry_run) outcomeExit(result, result.action === 'adopt' && result.conflicts.length > 0);
     if (json) { console.log(JSON.stringify(result)); return; }
     if (result.dry_run) {
       for (const line of result.summary) console.log(line);
@@ -593,7 +602,7 @@ async function runStorageJsonl(engine: BrainEngine, subcommand: 'export' | 'impo
       { fix: readFix('Prints the import plan and its plan_hash; writes nothing.', { argv: ['gbrain', 'storage', 'import', '--jsonl', file, '--json'] }) });
     if (expect !== undefined) {
       const result = await jsonl.applyImport(await shelfCliContext(engine, 'default'), file, text, expect);
-      if (result.failure || result.conflicts.length || result.invalid.length) setCliExitVerdict(1);
+      outcomeExit(result, result.conflicts.length > 0 || result.invalid.length > 0);
       if (json) { console.log(JSON.stringify(result)); return; }
       console.log(`Created ${result.created.length} card(s); ${result.identical.length} already on the shelf.`);
       if (result.conflicts.length) console.log(`Conflicts (a different card with that id is on the shelf; nothing was overwritten): ${result.conflicts.join(', ')}`);

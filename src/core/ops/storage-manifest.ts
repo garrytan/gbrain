@@ -111,13 +111,16 @@ function cardExists(id: string, revision: string): OperationError {
     { fix: getFix(id), detail: revision });
 }
 
-/** Register a new card. Exported for `storage adopt` and `storage import` (origin adopt / import). */
-export async function registerCard(ctx: OperationContext, input: CardInput, origin: (typeof ORIGINS)[number], requestId?: string): Promise<Record<string, unknown>> {
+/**
+ * Register a new card. Exported for `storage adopt` and `storage import` (origin adopt / import), which pass the access
+ * labels (visibility, readable_by) the card page must carry so it is read no wider than its original.
+ */
+export async function registerCard(ctx: OperationContext, input: CardInput, origin: (typeof ORIGINS)[number], requestId?: string, labels?: Record<string, unknown>): Promise<Record<string, unknown>> {
   await ensureStorageSource(ctx.engine);
   const existing = await ctx.engine.readPageSnapshot(input.id, { sourceId: STORAGE_SOURCE_ID });
   if (existing) throw cardExists(input.id, existing.revision);
   const card: Card = { ...input, registered_by: await principalLabel(ctx), origin };
-  const response = await writeCard(ctx, card, { requestId });
+  const response = await writeCard(ctx, card, { requestId, stored: labels });
   return { id: card.id, source_id: STORAGE_SOURCE_ID, origin, write: response };
 }
 
@@ -265,7 +268,7 @@ const storage_update: Operation = {
     const patch = parsePatch(p.patch);
     const { registered_by, origin, ...current } = found.card;
     const input = parseCardInput({ ...current, ...patch, id });
-    let card: Card = { ...input, registered_by, origin };
+    let card = { ...input, ...(registered_by !== undefined ? { registered_by } : {}), ...(origin !== undefined ? { origin } : {}) } as Card;
     if (typeof p.restored_to === 'string' && p.restored_to.trim()) {
       card = withRestore(card, { at: new Date().toISOString(), to: p.restored_to.trim(), by: await principalLabel(ctx), verified: p.restored_verified === true });
       const { registered_by: _stampedBy, origin: _stampedOrigin, ...unstamped } = card;

@@ -4,7 +4,10 @@
  *   - importing that export into an empty brain previews every line as create, and the apply (bound to its plan_hash)
  *     reproduces every card with origin import, so a second export matches the first apart from the stamps;
  *   - a rerun is idempotent (identical, side_effects none); a card on the shelf that differs is a conflict, never
- *     overwritten; invalid lines (not JSON, a credential shape, a duplicate id) are listed without their values.
+ *     overwritten; invalid lines (not JSON, a credential shape, a duplicate id) are listed without their values;
+ *   - export carries each card page's access labels and import restores them (a label difference is a conflict), so a
+ *     storage-only remote caller reads no restricted card after a recovery;
+ *   - a write accepted but still pending is reported with its receipt (side_effects partial, never none).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -30,11 +33,15 @@ afterAll(async () => {
   await target.disconnect();
 }, 60_000);
 
-const ctx = (engine: PGLiteEngine): OperationContext => ({
+const ctx = (engine: PGLiteEngine, over: Partial<OperationContext> = {}): OperationContext => ({
   engine, config: { engine: engine.kind, embedding_disabled: true } as OperationContext['config'],
-  logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: 'default',
+  logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: 'default', ...over,
 }) as OperationContext;
-const call = (engine: PGLiteEngine, name: string, params: Record<string, unknown>) => operationsByName[name]!.handler(ctx(engine), params) as Promise<Record<string, any>>;
+const call = (engine: PGLiteEngine, name: string, params: Record<string, unknown>, c: OperationContext = ctx(engine)) => operationsByName[name]!.handler(c, params) as Promise<Record<string, any>>;
+const storageOnly = (engine: PGLiteEngine) => ctx(engine, { remote: true, transport: 'http', sourceId: 'storage',
+  auth: { token: 'fixture', clientId: 'client-s', principal: { kind: 'oauth_client', id: 'client-s' }, scopes: ['read'], sourceId: 'storage', allowedSources: ['storage'] } } as Partial<OperationContext>);
+const labelsOf = (engine: PGLiteEngine, id: string) => engine.executeRaw<{ visibility: string | null; readers: unknown }>(
+  "SELECT frontmatter->>'visibility' AS visibility, frontmatter->'readable_by' AS readers FROM pages WHERE source_id = 'storage' AND slug = $1", [id]);
 
 function card(id: string, over: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -104,5 +111,39 @@ describe('storage shelf JSONL export and import', () => {
     expect(exported.lines.map((l) => JSON.parse(l).id)).toEqual(['acme-example-runs', 'dataset-a', 'dataset-b']);
     expect(exported.invalid).toEqual(['dataset-e']);
     expect(exported.skipped).toEqual([]);
+  }, 60_000);
+
+  test('export carries each card page\'s access labels and import restores them, so a storage-only remote caller reads neither restricted card', async () => {
+    await call(source, 'storage_register', { card: card('dataset-m') });
+    await call(source, 'storage_register', { card: card('dataset-p') });
+    await source.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"readable_by":["alice-example"]}'::jsonb WHERE source_id = 'storage' AND slug = 'dataset-m'`);
+    await source.executeRaw(`UPDATE pages SET frontmatter = frontmatter || '{"visibility":"private"}'::jsonb WHERE source_id = 'storage' AND slug = 'dataset-p'`);
+    const lines = (await exportShelfJsonl(source)).lines.filter((l) => ['dataset-m', 'dataset-p'].includes(JSON.parse(l).id));
+    expect(lines.map((l) => JSON.parse(l).labels)).toEqual([{ readable_by: ['alice-example'] }, { visibility: 'private' }]);
+    const text = `${lines.join('\n')}\n`;
+    const { cards: _c, ...plan } = await previewImport(target, 'labels.jsonl', text);
+    expect(plan.lines.map((l) => l.action)).toEqual(['create', 'create']);
+    expect(await applyImport(ctx(target), 'labels.jsonl', text, plan.plan_hash)).toMatchObject({ side_effects: 'complete', created: ['dataset-m', 'dataset-p'] });
+    expect(await labelsOf(target, 'dataset-m')).toEqual([{ visibility: null, readers: ['alice-example'] }]);
+    expect(await labelsOf(target, 'dataset-p')).toEqual([{ visibility: 'private', readers: null }]);
+    for (const id of ['dataset-m', 'dataset-p']) expect(await call(target, 'storage_get', { id }, storageOnly(target)).then(() => null, (e) => e.code)).toBe('not_found');
+    expect((await call(target, 'storage_get', { id: 'dataset-d' }, storageOnly(target))).card.id).toBe('dataset-d');
+
+    const relabelled = lines[0]!.replace('"readable_by":["alice-example"]', '"readable_by":["bob-example"]');
+    const unlabelled = JSON.stringify({ ...JSON.parse(lines[1]!), labels: undefined });
+    const badLabels = JSON.stringify({ ...card('dataset-q'), labels: { owner: 'alice-example' } });
+    const { cards: _again, ...second } = await previewImport(target, 'relabel.jsonl', [relabelled, unlabelled, badLabels].join('\n'));
+    expect(second.lines.map((l) => [l.id, l.action, l.reason ?? null])).toEqual([['dataset-m', 'conflict', null], ['dataset-p', 'conflict', null], ['dataset-q', 'invalid', 'labels']]);
+  }, 60_000);
+
+  test('an import write accepted but still pending is reported with its receipt, never as no change', async () => {
+    const text = `${JSON.stringify(card('dataset-w'))}\n`;
+    const { cards: _c, ...plan } = await previewImport(target, 'pending.jsonl', text);
+    const held = await applyImport(ctx(target, { writeWaitMs: 0 }), 'pending.jsonl', text, plan.plan_hash);
+    expect(held).toMatchObject({ side_effects: 'partial', created: [], pending: [{ item: 'dataset-w', poll: ['gbrain', 'write-request', expect.any(String)] }],
+      rerun: ['gbrain', 'storage', 'import', '--jsonl', 'pending.jsonl', '--apply', '--expect', plan.plan_hash] });
+    expect(held.failure).toBeUndefined();
+    for (let i = 0; i < 100 && !(await target.executeRaw("SELECT 1 FROM pages WHERE source_id = 'storage' AND slug = 'dataset-w'")).length; i++) await new Promise((r) => setTimeout(r, 100));
+    expect(await applyImport(ctx(target), 'pending.jsonl', text, plan.plan_hash)).toMatchObject({ side_effects: 'none', identical: ['dataset-w'] });
   }, 60_000);
 });

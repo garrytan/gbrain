@@ -6,7 +6,7 @@
  *     the closest cards; storage_list filters by store and status;
  *   - validation refuses a missing field, a command field, a stamped field, a scanner secret (in a value or an object
  *     key) and every credential shape (env assignment, credential variable, URL userinfo, presigned URL, a value under
- *     a credential-named key), without echoing the value; a key naming where a credential lives (token_env) passes;
+ *     a credential-named key), without echoing the value; a key whose last word names no credential (token_env, token_count, api_key_last4) passes;
  *   - storage_update keeps the page's access frontmatter (visibility, readable_by) when it rewrites the card;
  *   - the write guard: put_page, remember and forget_fact into the shelf are refused storage_source_managed, a forged
  *     parameter does not open it, and the storage verbs still write;
@@ -135,6 +135,8 @@ describe('storage shelf on a repo-less brain', () => {
       [card('a-10', { details: { AKIAIOSFODNN7EXAMPLE: 'b2 key' } }), 'storage_record_secret', 'secret_scanner'],
       [card('a-11', { restore: { skill: 'restore-data', args: { id: 'a-11', applicationKey: 'K005abcdef123ghijkl456mnopqr789' } } }), 'storage_record_secret', 'credential_key'],
       [card('a-12', { details: { restic_password: 'abcdef123-correct-horse' } }), 'storage_record_secret', 'credential_key'],
+      [card('a-14', { restore: { skill: 'restore-data', args: { id: 'a-14', access_token: 'abcdef123ghijklmno' } } }), 'storage_record_secret', 'credential_key'],
+      [card('a-15', { details: { secretAccessKey: 'abcdef123/pqrstuvw' } }), 'storage_record_secret', 'credential_key'],
     ];
     for (const [input, code, reason] of cases) {
       const r = await refusal(call('storage_register', { card: input }));
@@ -144,7 +146,8 @@ describe('storage shelf on a repo-less brain', () => {
       expect(r!.message).not.toContain('K005abcdef123');
     }
     expect(await engine.executeRaw("SELECT 1 FROM pages WHERE source_id='storage'")).toEqual([]);
-    await call('storage_register', { card: card('a-13', { restore: { skill: 'restore-data', args: { id: 'a-13', key: 'backups/a-13.tar', password_file: '/etc/restic/pass', token_env: 'B2_APPLICATION_KEY' } } }) });
+    await call('storage_register', { card: card('a-13', { restore: { skill: 'restore-data', args: { id: 'a-13', key: 'backups/a-13.tar', password_file: '/etc/restic/pass', token_env: 'B2_APPLICATION_KEY' } },
+      details: { token_count: 1200, secret_version: 'v2', password_changed_at: '2026-11-01T00:00:00Z', api_key_last4: '7c2f' } }) });
   }, 30_000);
 
   test('the write guard refuses put_page and remember into the shelf, forged parameters included', async () => {
@@ -236,6 +239,16 @@ describe('storage shelf on a repo-less brain', () => {
     const [kept] = await engine.executeRaw<{ visibility: string | null; readers: unknown }>("SELECT frontmatter->>'visibility' AS visibility, frontmatter->'readable_by' AS readers FROM pages WHERE source_id = 'storage' AND slug = 'item-b'");
     expect(kept).toEqual({ visibility: 'private', readers: ['alice-example'] });
     expect((await call('storage_get', { id: 'item-b' })).card.status).toBe('retired');
+  }, 30_000);
+
+  test('storage_update rewrites a card whose stamped fields were removed by hand', async () => {
+    await call('storage_register', { card: card('unstamped-item') });
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter #- '{storage,registered_by}' #- '{storage,origin}' WHERE source_id = 'storage' AND slug = 'unstamped-item'");
+    const { revision } = await call('storage_get', { id: 'unstamped-item' });
+    await call('storage_update', { id: 'unstamped-item', expected_revision: revision, patch: { status: 'retired' } });
+    await call('storage_update', { id: 'unstamped-item', expected_revision: (await call('storage_get', { id: 'unstamped-item' })).revision, restored_to: '/scratch/unstamped-item' });
+    const after = await call('storage_get', { id: 'unstamped-item' });
+    expect({ status: after.card.status, restores: after.card.restores.length, by: after.card.registered_by ?? null }).toEqual({ status: 'restored', restores: 1, by: null });
   }, 30_000);
 
   test('remote callers cannot write; a bound client without the storage grant reads nothing; only a grant naming the shelf reads it', async () => {

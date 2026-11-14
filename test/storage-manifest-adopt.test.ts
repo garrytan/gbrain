@@ -10,7 +10,11 @@
  *     half-finished run printed still applies; a differing card is a conflict, never overwritten, its original untagged;
  *   - finalize previews, then soft-deletes only the tagged originals whose card matches (storage_adopt_unverified when
  *     one differs), restorable afterwards;
- *   - a brain with a Git checkout refuses storage_manifest_missing until storage init has run.
+ *   - a brain with a Git checkout refuses storage_manifest_missing until storage init has run;
+ *   - each card takes its original's access labels, readable_by narrowed to the readers of the folder rules over it, so a
+ *     storage-only remote caller reads no card its original was kept from; no common reader blocks the page, and a card
+ *     that lost the labels is a conflict whose original finalize never deletes;
+ *   - a write accepted but still pending is reported with its receipt (side_effects partial, never none).
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -19,6 +23,7 @@ import { operationsByName } from '../src/core/operations.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { applyAdopt, applyFinalize, previewAdopt, previewFinalize, ADOPTED_TAG } from '../src/core/storage-manifest/adopt.ts';
+import { proposeRevision } from '../src/core/access/policy.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -38,11 +43,22 @@ beforeEach(async () => {
   await engine.unsetConfig('sync.repo_path');
 });
 
-const ctx = (): OperationContext => ({
+const ctx = (over: Partial<OperationContext> = {}): OperationContext => ({
   engine, config: { engine: engine.kind, embedding_disabled: true } as OperationContext['config'],
-  logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: 'default',
+  logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false, sourceId: 'default', ...over,
 }) as OperationContext;
-const call = (name: string, params: Record<string, unknown>) => operationsByName[name]!.handler(ctx(), params) as Promise<Record<string, any>>;
+const call = (name: string, params: Record<string, unknown>, c: OperationContext = ctx()) => operationsByName[name]!.handler(c, params) as Promise<Record<string, any>>;
+const storageOnly = () => ctx({ remote: true, transport: 'http', sourceId: 'storage',
+  auth: { token: 'fixture', clientId: 'client-s', principal: { kind: 'oauth_client', id: 'client-s' }, scopes: ['read'], sourceId: 'storage', allowedSources: ['storage'] } } as Partial<OperationContext>);
+const restrict = (prefix: string, readers: string[]) => proposeRevision(engine, 'default', [{ id: 'restricted', prefix, readable_by: readers }], { origin: 'cli', store: 'database' });
+async function committed(slug: string, sourceId: string, gone = false): Promise<void> {
+  for (let i = 0; i < 100; i++) {
+    const rows = await engine.executeRaw('SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]);
+    if (rows.length === (gone ? 0 : 1)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`${slug} did not commit`);
+}
 const refusal = (promise: Promise<unknown>) => promise.then(() => null, (e: { code?: string; canonical?: string; reason?: string; message?: string; fix?: Record<string, unknown> }) =>
   ({ code: e.canonical ?? e.code, reason: e.reason ?? null, message: e.message ?? '', fix: e.fix ?? null }));
 const opts = { sourceId: 'default', prefix: 'storage-manifest/' };
@@ -61,9 +77,9 @@ function record(id: string, over: Record<string, unknown> = {}): Record<string, 
 
 const FENCE = '```';
 
-async function interim(slug: string, rec: Record<string, unknown> | string, type = 'stored-object'): Promise<void> {
+async function interim(slug: string, rec: Record<string, unknown> | string, type = 'stored-object', labels = ''): Promise<void> {
   const json = typeof rec === 'string' ? rec : JSON.stringify(rec, null, 2);
-  const content = `---\ntype: ${type}\ntitle: Interim ${slug}\n---\n# Interim ${slug}\n\n## Record\n\n${FENCE}json\n${json}\n${FENCE}\n\n## Restore\n\nAsk the archive agent.\n`;
+  const content = `---\ntype: ${type}\ntitle: Interim ${slug}\n${labels ? `${labels}\n` : ''}---\n# Interim ${slug}\n\n## Record\n\n${FENCE}json\n${json}\n${FENCE}\n\n## Restore\n\nAsk the archive agent.\n`;
   await call('put_page', { slug, content, request_id: randomUUID() });
 }
 
@@ -245,5 +261,61 @@ describe('storage adopt on a repo-less brain', () => {
     await engine.setConfig('sync.repo_path', '/srv/data/brain-checkout');
     expect((await refusal(previewAdopt(ctx(), opts)))?.code).toBe('storage_manifest_missing');
     expect(await engine.executeRaw("SELECT 1 FROM sources WHERE id='storage'")).toEqual([]);
+  }, 60_000);
+
+  test('adopt carries each original\'s access labels and folder-rule readers, so a storage-only remote caller reads no card its original was kept from', async () => {
+    await restrict('storage-manifest/restricted/', ['member:alice-example', 'member:bob-example']);
+    await interim('storage-manifest/dataset-m', record('dataset-m'), 'stored-object', 'readable_by: [alice-example]');
+    await interim('storage-manifest/dataset-p', record('dataset-p'), 'stored-object', 'visibility: private');
+    await interim('storage-manifest/restricted/dataset-r', record('dataset-r'), 'stored-object', 'readable_by: [bob-example, carol-example]');
+    await interim('storage-manifest/dataset-o', record('dataset-o'));
+    const plan = await previewAdopt(ctx(), opts);
+    expect(Object.fromEntries(plan.entries.map((e) => [e.card_id, e.labels]))).toEqual({
+      'dataset-m': { readable_by: ['alice-example'] }, 'dataset-o': {}, 'dataset-p': { visibility: 'private' }, 'dataset-r': { readable_by: ['member:bob-example'] } });
+    expect(plan.summary.join(' ')).toContain("3 card(s) take their original's access labels");
+    expect(await applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] })).toMatchObject({ side_effects: 'complete' });
+    const stored = await engine.executeRaw<{ slug: string; visibility: string | null; readers: unknown }>(
+      "SELECT slug, frontmatter->>'visibility' AS visibility, frontmatter->'readable_by' AS readers FROM pages WHERE source_id = 'storage' ORDER BY slug");
+    expect(stored).toEqual([{ slug: 'dataset-m', visibility: null, readers: ['alice-example'] }, { slug: 'dataset-o', visibility: null, readers: null },
+      { slug: 'dataset-p', visibility: 'private', readers: null }, { slug: 'dataset-r', visibility: null, readers: ['member:bob-example'] }]);
+    for (const id of ['dataset-m', 'dataset-p', 'dataset-r']) expect((await refusal(call('storage_get', { id }, storageOnly())))?.code).toBe('not_found');
+    expect((await call('storage_get', { id: 'dataset-o' }, storageOnly())).card.id).toBe('dataset-o');
+    expect((await call('storage_list', {}, storageOnly())).cards.map((c: { id: string }) => c.id)).toEqual(['dataset-o']);
+    expect((await call('storage_list', {})).total).toBe(4);
+  }, 60_000);
+
+  test('an original whose readers and folder rules share no reader is blocked; a card that lost its original\'s labels is a conflict and its original is never finalized', async () => {
+    await restrict('storage-manifest/restricted/', ['member:alice-example']);
+    await interim('storage-manifest/restricted/dataset-x', record('dataset-x'), 'stored-object', 'readable_by: [carol-example]');
+    const blocked = await previewAdopt(ctx(), opts);
+    expect(blocked.entries.map((e) => [e.state, e.problem?.reason])).toEqual([['blocked', 'access_unpreservable']]);
+    expect((await refusal(applyAdopt(ctx(), { ...opts, expect: blocked.plan_hash, dropFields: [] })))?.reason).toBe('access_unpreservable');
+    expect(await engine.executeRaw("SELECT 1 FROM pages WHERE source_id = 'storage'")).toEqual([]);
+
+    const x = await engine.readPageSnapshot('storage-manifest/restricted/dataset-x', { sourceId: 'default' });
+    await call('delete_page', { slug: 'storage-manifest/restricted/dataset-x', expected_revision: x!.revision });
+    await interim('storage-manifest/dataset-m', record('dataset-m'), 'stored-object', 'readable_by: [alice-example]');
+    const plan = await previewAdopt(ctx(), opts);
+    await applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] });
+    await engine.executeRaw("UPDATE pages SET frontmatter = frontmatter - 'readable_by' WHERE source_id = 'storage' AND slug = 'dataset-m'");
+    expect((await previewFinalize(ctx(), opts)).entries.map((e) => [e.slug, e.state])).toEqual([['storage-manifest/dataset-m', 'unverified']]);
+    await engine.executeRaw('DELETE FROM tags WHERE tag = $1', [ADOPTED_TAG]);
+    expect((await previewAdopt(ctx(), opts)).entries.map((e) => e.state)).toEqual(['conflict']);
+  }, 60_000);
+
+  test('a write accepted but still pending is reported with its receipt, never as no change, and the rerun finishes it', async () => {
+    await interim('storage-manifest/dataset-a', record('dataset-a'));
+    const plan = await previewAdopt(ctx(), opts);
+    const held = await applyAdopt(ctx({ writeWaitMs: 0 }), { ...opts, expect: plan.plan_hash, dropFields: [] });
+    expect(held).toMatchObject({ side_effects: 'partial', results: [], pending: [{ item: 'storage-manifest/dataset-a', state: expect.any(String), poll: ['gbrain', 'write-request', expect.any(String)] }],
+      rerun: ['gbrain', 'storage', 'adopt', '--apply', '--expect', plan.plan_hash] });
+    expect(held.failure).toBeUndefined();
+    expect(held.finalize).toBeUndefined();
+    await committed('dataset-a', 'storage');
+    expect(await applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] })).toMatchObject({ side_effects: 'complete', results: [{ outcome: 'retagged' }] });
+    const finalize = await previewFinalize(ctx(), opts);
+    const deleting = await applyFinalize(ctx({ writeWaitMs: 0 }), { ...opts, expect: finalize.plan_hash });
+    expect(deleting).toMatchObject({ side_effects: 'partial', deleted: [], pending: [{ item: 'storage-manifest/dataset-a' }] });
+    await committed('storage-manifest/dataset-a', 'default', true);
   }, 60_000);
 });
