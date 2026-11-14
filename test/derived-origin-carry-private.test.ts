@@ -429,7 +429,7 @@ for (const kind of testBackends()) {
       finally { log.mockRestore(); err.mockRestore(); }
       const exit = currentExitCode();
       _resetCliExitVerdictForTests();
-      process.exitCode = prior;
+      process.exitCode = prior ?? 0;
       const text = lines.join('\n').trim();
       return { out: text.startsWith('{') ? JSON.parse(text) : null, exit };
     }
