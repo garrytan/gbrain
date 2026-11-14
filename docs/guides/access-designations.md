@@ -274,7 +274,8 @@ every reader list:
 The count never depends on who runs it, changes nothing, and never changes an exit code. Doctor warns while DM, chat,
 conversation or mail pages are open and reports other open folders as information, since a team may share them on
 purpose. A count that fails prints "count unknown" with `gbrain doctor --only open_shared_pages --json` to retry, and
-setup carries on. A one-person brain, or one with `access.serves` set to `one`, runs no count. `--labelled-only` is
+setup carries on. A one-person brain, or one with `access.serves` set to `one`, runs no count, and
+`gbrain access serves --no-open-pages` skips it. `--labelled-only` is
 opt-in and never applies to the owner: with the owner in the roster the run is BLOCKED before anything is written.
 
 ## Related
