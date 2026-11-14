@@ -4,12 +4,14 @@
  * connections those reads hold at once, so a burst of searches shares the
  * read pool instead of each one taking it whole.
  *
- * The engine's two connection seams (PostgresEngine#transactionOn for a
- * top-level transaction, runUnsafe for a statement) wait for a slot inside a
- * budget scope and hold it until the statement or the transaction's COMMIT
- * settles. Work inside a held slot runs outside the scope, so statements on
- * the transaction's own connection never wait on a second slot. Outside a
- * scope, and on PGLite, nothing changes.
+ * The engine's connection seams (PostgresEngine#transactionOn for a
+ * top-level transaction; executeRaw, including its JIT-off and
+ * statement-timeout envelopes that reserve their own connection, and
+ * runUnsafe for a statement) wait for a slot inside a budget scope and hold
+ * it until the statement or the transaction's COMMIT settles. Work inside a
+ * held slot runs outside the scope, so statements on the transaction's own
+ * connection never wait on a second slot. Outside a scope, and on PGLite,
+ * nothing changes.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { throwIfRequestAborted } from '../request-signal.ts';
