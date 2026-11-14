@@ -6,7 +6,7 @@
 import { describe, test, expect } from 'bun:test';
 import { createPublicKey, verify } from 'node:crypto';
 import { crc32, encodeWakeshiftKey, normalizeWakeshiftUrl, parseWakeshiftKey, wakeshiftAssertion, WakeshiftKeyError } from '../src/core/wakeshift/client.ts';
-import { formatDuration, jobMarker, jobWake, wakeEmitId, wakeshiftManifest, JOB_FINISHED } from '../src/core/wakeshift/events.ts';
+import { cronWake, formatDuration, jobMarker, jobWake, wakeEmitId, wakeshiftManifest, JOB_FINISHED } from '../src/core/wakeshift/events.ts';
 import { wakeshiftUserId } from '../src/core/wakeshift/config.ts';
 
 const SEED = Buffer.alloc(32, 7);
@@ -84,6 +84,13 @@ describe('wakeshift events', () => {
     expect(Buffer.byteLength(w.text)).toBeLessThan(1000);
     expect(jobWake(9, null).payload).toMatchObject({ job: 9, status: 'gone' });
     expect(jobWake(5, { ...job, id: 5, status: 'dead' }).text).toContain('is dead');
+  });
+
+  test('a cron wake says when the run finished, so the agent need not look it up', () => {
+    const w = cronWake('nightly-example', { id: 3, status: 'ok', finished_at: '2026-11-06T08:58:58.900Z' });
+    expect(w.text).toContain('nightly-example finished ok at 2026-11-06 08:58 UTC.');
+    expect(cronWake('nightly-example', { id: 4, status: 'failed', finished_at: null }).text).toContain('finished with a failure.');
+    expect(Buffer.byteLength(w.text)).toBeLessThan(1000);
   });
 
   test('markers and emit ids differ per status, per run and per watcher', () => {

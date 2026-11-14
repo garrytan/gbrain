@@ -99,6 +99,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(bundle).toMatchObject({ code: 'first_run_decisions', kind: 'ask' });
     expect(bundle.decisions.map((d: any) => d.id)).not.toContain('harness_wiring');
     expect(bundle.user_message).not.toContain("Reply 'defaults'");
+    expect(bundle.user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
 
     const before = [readFileSync(claudeJson(b), 'utf8'), readFileSync(settings(b), 'utf8'), readFileSync(receipt(b), 'utf8')];
     const second = await setup(b, ['claude-code', '--json']);
@@ -138,6 +139,7 @@ describe('gbrain setup claude-code: install lifecycle', () => {
     expect(hosted).toBeGreaterThan(r.stdout.indexOf('[first_run_decisions]'));
     expect(r.stdout.slice(block, hosted)).toContain('in the reply that reports this install');
     expect(r.stdout.slice(block, hosted)).toContain('(id: search_mode)');
+    expect(r.stdout.slice(block, hosted)).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
     expect(r.stdout.slice(hosted)).toContain('https://gbrain.io/?ref=cli-setup');
     expect(r.stdout.trimEnd().endsWith('[/AGENT]')).toBe(true);
   });
@@ -561,6 +563,7 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(first.doc.states).toEqual(['configured', 'connection-verified', 'native-verified']);
     expect(first.doc.capability).toMatchObject({ harness: 'codex', setup: 'supported', push: 'native-verified', read_events: ['SessionStart', 'UserPromptSubmit'] });
     expect(first.doc.consent.capture).toMatchObject({ value: 'declined', source: 'default' });
+    expect(first.doc.notices.find((n: any) => n.code === 'first_run_decisions').user_message).toContain('Report back (Wakeshift): off. gbrain wakeshift enable turns it on.');
     expect(readJson(join(b.gbrainHome, '.gbrain', 'config.json')).embedding_disabled).toBe(true);
     expect(toml(b).mcp_servers.gbrain).toEqual({ command: launcher(b), args: [b.bin, 'serve', '--surface', 'starter', '--advertise', 'verbs'], env: { GBRAIN_HOME: b.gbrainHome } });
     expect(Object.keys(readJson(hooksJson(b)).hooks).sort()).toEqual(['SessionStart', 'UserPromptSubmit']);
