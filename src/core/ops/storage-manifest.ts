@@ -91,6 +91,10 @@ async function writeCard(ctx: OperationContext, card: Card, opts: { expectedRevi
       ...(opts.requestId ? { request_id: opts.requestId } : {}) } });
     return response;
   } catch (error) {
+    if (error instanceof OperationError && error.code === 'revision_required' && !opts.expectedRevision) {
+      const current = await ctx.engine.readPageSnapshot(card.id, { sourceId: STORAGE_SOURCE_ID });
+      throw cardExists(card.id, current?.revision ?? 'unknown');
+    }
     if (error instanceof OperationError && error.code === 'revision_conflict') {
       const current = await ctx.engine.readPageSnapshot(card.id, { sourceId: STORAGE_SOURCE_ID });
       throw opError('storage_revision_conflict', `Card ${card.id} changed since revision ${opts.expectedRevision} was read; nothing was written.`,
@@ -101,13 +105,17 @@ async function writeCard(ctx: OperationContext, card: Card, opts: { expectedRevi
   }
 }
 
+function cardExists(id: string, revision: string): OperationError {
+  return opError('storage_card_exists', `A card with id ${id} is already on the storage shelf; nothing was written.`,
+    `Change it with gbrain storage-update ${id} --expected-revision ${revision}, or register the new item under another id.`,
+    { fix: getFix(id), detail: revision });
+}
+
 /** Register a new card. Exported for `storage adopt` and `storage import` (origin adopt / import). */
 export async function registerCard(ctx: OperationContext, input: CardInput, origin: (typeof ORIGINS)[number], requestId?: string): Promise<Record<string, unknown>> {
   await ensureStorageSource(ctx.engine);
   const existing = await ctx.engine.readPageSnapshot(input.id, { sourceId: STORAGE_SOURCE_ID });
-  if (existing) throw opError('storage_card_exists', `A card with id ${input.id} is already on the storage shelf; nothing was written.`,
-    `Change it with gbrain storage-update ${input.id} --expected-revision ${existing.revision}, or register the new item under another id.`,
-    { fix: getFix(input.id), detail: existing.revision });
+  if (existing) throw cardExists(input.id, existing.revision);
   const card: Card = { ...input, registered_by: await principalLabel(ctx), origin };
   const response = await writeCard(ctx, card, { requestId });
   return { id: card.id, source_id: STORAGE_SOURCE_ID, origin, write: response };

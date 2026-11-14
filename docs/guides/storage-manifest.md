@@ -56,8 +56,8 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
 2. The printed apply, `--apply --expect <plan_hash>` with one `--drop-field <dotted.name>` per refused field, runs
    after the user agrees to leave those fields out. It registers each card with `origin: adopt` through the same
    path `storage-register` uses, then tags the original `storage-manifest-adopted`. It deletes nothing. A
-   credential-shaped value (a secret, an environment assignment, a credential variable, a URL password, a signed URL)
-   always refuses, whatever is dropped: fix the source page first.
+   credential-shaped value (a secret, an environment assignment, a credential variable, a URL password, a signed URL,
+   a value under a credential-named key such as `restore.args.password`) always refuses, whatever is dropped: fix the source page first.
 3. `gbrain storage adopt --finalize` previews soft-deleting the tagged originals; its `--expect <plan_hash>` run deletes
    them (restorable for 72 hours with `gbrain restore`), only when every adopted card is on the shelf and matches its
    original's mapped card. A restore recorded with `storage-update` since adoption is not a difference. The preview

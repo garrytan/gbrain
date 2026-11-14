@@ -5,8 +5,8 @@
  *   - storage_find ranks exact id, then exact alias, then most of the phrase's words; a miss says not_found and lists
  *     the closest cards; storage_list filters by store and status;
  *   - validation refuses a missing field, a command field, a stamped field, a scanner secret (in a value or an object
- *     key) and every credential shape (env assignment, credential variable, URL userinfo, presigned URL), without
- *     echoing the value;
+ *     key) and every credential shape (env assignment, credential variable, URL userinfo, presigned URL, a value under
+ *     a credential-named key), without echoing the value; a key naming where a credential lives (token_env) passes;
  *   - storage_update keeps the page's access frontmatter (visibility, readable_by) when it rewrites the card;
  *   - the write guard: put_page, remember and forget_fact into the shelf are refused storage_source_managed, a forged
  *     parameter does not open it, and the storage verbs still write;
@@ -20,7 +20,9 @@
  *     when its grant names the storage source (an ungranted bound client and an unbound stdio connection are refused);
  *   - derived writers skip the shelf: a dream cycle scoped to the storage source runs no phase, and enrichment
  *     considers no card there (no model call, no page write);
- *   - a hosted shelf never becomes the sole non-default source that bare writes route to;
+ *   - a hosted shelf never becomes the sole non-default source that bare writes route to, and stays out of the
+ *     local-path source list autopilot fans out over and cycle_freshness reads (its cycle is always skipped);
+ *   - two concurrent registers of one id land once; the other is refused storage_card_exists;
  *   - a fresh keyless brain, whose default source sits in the gbrain-owned content directory init creates (no Git),
  *     counts as repo-less: the first register creates the shelf; a Git checkout there needs storage init.
  */
@@ -131,14 +133,18 @@ describe('storage shelf on a repo-less brain', () => {
       [card('a-8', { locations: [{ store: 's3', path: 'https://user:@example.invalid/x', tool: 'object', size_bytes: 1 }] }), 'storage_record_secret', 'url_userinfo'],
       [card('a-9', { locations: [{ store: 's3', path: 'https://example.invalid/x?X-Amz-Signature=abc', tool: 'object', size_bytes: 1 }] }), 'storage_record_secret', 'presigned_url'],
       [card('a-10', { details: { AKIAIOSFODNN7EXAMPLE: 'b2 key' } }), 'storage_record_secret', 'secret_scanner'],
+      [card('a-11', { restore: { skill: 'restore-data', args: { id: 'a-11', applicationKey: 'K005abcdef123ghijkl456mnopqr789' } } }), 'storage_record_secret', 'credential_key'],
+      [card('a-12', { details: { restic_password: 'abcdef123-correct-horse' } }), 'storage_record_secret', 'credential_key'],
     ];
     for (const [input, code, reason] of cases) {
       const r = await refusal(call('storage_register', { card: input }));
       expect({ id: input.id, code: r?.code, reason: r?.reason }).toEqual({ id: input.id, code, reason });
       expect(r!.message).not.toContain('abcdef123');
       expect(r!.message).not.toContain('AKIAIOSFODNN7EXAMPLE');
+      expect(r!.message).not.toContain('K005abcdef123');
     }
     expect(await engine.executeRaw("SELECT 1 FROM pages WHERE source_id='storage'")).toEqual([]);
+    await call('storage_register', { card: card('a-13', { restore: { skill: 'restore-data', args: { id: 'a-13', key: 'backups/a-13.tar', password_file: '/etc/restic/pass', token_env: 'B2_APPLICATION_KEY' } } }) });
   }, 30_000);
 
   test('the write guard refuses put_page and remember into the shelf, forged parameters included', async () => {
@@ -209,6 +215,9 @@ describe('storage shelf on a repo-less brain', () => {
   test('register never overwrites; update binds to its revision and records restores newest first', async () => {
     await call('storage_register', { card: card('item-b') });
     expect((await refusal(call('storage_register', { card: card('item-b') })))?.code).toBe('storage_card_exists');
+    const raced = await Promise.allSettled([call('storage_register', { card: card('item-r', { title: 'First' }) }), call('storage_register', { card: card('item-r', { title: 'Second' }) })]);
+    const lost = raced.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+    expect({ landed: raced.filter((r) => r.status === 'fulfilled').length, code: lost?.reason?.code }).toEqual({ landed: 1, code: 'storage_card_exists' });
     const first = await call('storage_get', { id: 'item-b' });
     await call('storage_update', { id: 'item-b', expected_revision: first.revision, restored_to: '/scratch/item-b', restored_verified: true });
     const stale = await refusal(call('storage_update', { id: 'item-b', expected_revision: first.revision, patch: { status: 'retired' } }));
@@ -270,6 +279,8 @@ describe('storage shelf on a repo-less brain', () => {
     expect(await resolveSourceWithTier(engine, null, tmpdir())).toMatchObject({ source_id: 'default', tier: 'seed_default' });
     await engine.executeRaw("INSERT INTO sources (id, name, local_path, config) VALUES ('vault-a', 'vault-a', $1, '{}'::jsonb)", [join(home, 'vault-a')]);
     expect(await resolveSourceWithTier(engine, null, tmpdir())).toMatchObject({ source_id: 'vault-a', tier: 'sole_non_default' });
+    expect((await engine.listAllSources({ localPathOnly: true })).map((s) => s.id)).toEqual(['vault-a']);
+    expect((await engine.listAllSources()).map((s) => s.id)).toContain('storage');
   }, 30_000);
 
   test('a brain with a Git checkout needs storage init first, and init needs managed persistence', async () => {

@@ -139,6 +139,11 @@ describe('storage adopt on a repo-less brain', () => {
     const keyed = (await previewAdopt(ctx(), opts)).entries.find((e) => e.slug === 'storage-manifest/dataset-k')!;
     expect(keyed).toMatchObject({ state: 'blocked', refused: [], problem: { code: 'storage_record_secret', reason: 'secret_scanner' } });
     expect(JSON.stringify(await previewAdopt(ctx(), opts))).not.toContain('AKIAIOSFODNN7EXAMPLE');
+
+    await interim('storage-manifest/dataset-p', record('dataset-p', { details: { password: 'fake-pass-value' } }));
+    const named = (await previewAdopt(ctx(), opts)).entries.find((e) => e.slug === 'storage-manifest/dataset-p')!;
+    expect(named).toMatchObject({ state: 'blocked', card: null, problem: { code: 'storage_record_secret', reason: 'credential_key' } });
+    expect(JSON.stringify(named)).not.toContain('fake-pass-value');
   }, 60_000);
 
   test('an unreadable record and a duplicate card id block the apply', async () => {

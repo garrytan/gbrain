@@ -30,7 +30,7 @@ import { boundedBodyPrefixSql } from '../page-window/bounded-lead.ts';
 import { BOUNDED_PREFIX_BYTES } from '../page-window/document.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { readShelfCards } from './find.ts';
-import { CARD_KEYS, cardContent, cardDigest, credentialShape, isCommandKey, parseCardInput, STAMPED_KEYS, STORED_OBJECT_TYPE, type CardInput } from './schema.ts';
+import { CARD_KEYS, cardContent, cardDigest, credentialShape, holdsCredential, isCommandKey, parseCardInput, STAMPED_KEYS, STORED_OBJECT_TYPE, type CardInput } from './schema.ts';
 import { shelfWritable, STORAGE_SOURCE_ID } from './source.ts';
 
 export const ADOPT_DEFAULT_PREFIX = 'storage-manifest/';
@@ -136,6 +136,7 @@ function credentialAt(value: unknown, path: string): { field: string; shape: str
   for (const [key, item] of items) {
     const keyShape = Array.isArray(value) ? null : credentialShape(key);
     if (keyShape) return { field: `${path || '(record)'} (a key)`, shape: keyShape };
+    if (!Array.isArray(value) && holdsCredential(key, item)) return { field: path ? `${path}.${key}` : key, shape: 'credential_key' };
     const found = credentialAt(item, path ? `${path}.${key}` : key);
     if (found) return found;
   }
