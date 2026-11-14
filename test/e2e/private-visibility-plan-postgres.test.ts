@@ -23,7 +23,8 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
-import { privatePagesFilterFragment } from '../../src/core/search/private-visibility.ts';
+import { privatePagesFilterFragment, withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { v311 } from '../../src/core/schema-migrations/v311-concept-inputs-private.ts';
 
 const PAGES = 3_000;
 /** The slug_rename_history rows the analyzed case writes. */
@@ -42,19 +43,26 @@ async function planCost(sql: string): Promise<number> {
   return row['QUERY PLAN'][0].Plan['Total Cost'];
 }
 
+/** The rule a remote request on a v311 brain emits: the concept-input test as gbrain_concept_inputs_private (GST-2687). */
+function remoteFragment(): string {
+  const fragment = withCallerAccess({ remotePolicy: { privacyRelaxed: false, restricted: true, schemaVersion: v311.version } }, () => privatePagesFilterFragment('p'));
+  expect(fragment).toContain('gbrain_concept_inputs_private(');
+  return fragment;
+}
+
 /** The estimated cost per page of the IN spelling (before) and the emitted rule (after), and the jit budget per page. */
-async function costPerPage(): Promise<{ before: number; after: number; budget: number }> {
+async function costPerPage(): Promise<{ before: number; after: number; local: number; budget: number }> {
   const [{ jit_above_cost }] = await getEngine().executeRaw<{ jit_above_cost: string }>(`SELECT current_setting('jit_above_cost') AS jit_above_cost`);
-  const fragment = privatePagesFilterFragment('p');
+  const fragment = remoteFragment();
   const scan = (predicate: string) => planCost(`SELECT count(*) FROM pages p WHERE ${predicate}`);
   const base = await scan('true');
   const perPage = async (predicate: string) => ((await scan(predicate)) - base) / PAGES;
-  return { before: await perPage(inSubqueryForm(fragment)), after: await perPage(fragment), budget: Number(jit_above_cost) / 500 };
+  return { before: await perPage(inSubqueryForm(fragment)), after: await perPage(fragment), local: await perPage(privatePagesFilterFragment('p')), budget: Number(jit_above_cost) / 500 };
 }
 
 /** Both spellings hide the same pages, and each rule of the fixture fires. */
 async function expectSameHiddenPages(): Promise<void> {
-  const fragment = privatePagesFilterFragment('p');
+  const fragment = remoteFragment();
   const read = (predicate: string) => getEngine().executeRaw<{ slug: string }>(`SELECT p.slug FROM pages p WHERE ${predicate} ORDER BY p.slug`);
   const emitted = (await read(fragment)).map(row => row.slug);
   const before = (await read(inSubqueryForm(fragment))).map(row => row.slug);
@@ -106,8 +114,8 @@ async function expectSameHiddenPages(): Promise<void> {
   });
 
   test('the rule costs the planner little enough per page that a 500-page read stays under jit_above_cost', async () => {
-    const { before, after, budget } = await costPerPage();
-    console.info(JSON.stringify({ metric: 'private-visibility-cost-per-page', before, after, budget }));
+    const { before, after, local, budget } = await costPerPage();
+    console.info(JSON.stringify({ metric: 'private-visibility-cost-per-page', before, after, local, budget }));
     if (before <= budget) throw new Error(`Precondition failed: the IN spelling already costs ${before} per page (budget ${budget}); this check cannot discriminate.`);
     expect(after).toBeLessThan(budget);
   });
@@ -129,8 +137,8 @@ async function expectSameHiddenPages(): Promise<void> {
     const [{ links }] = await engine.executeRaw<{ links: number }>(`SELECT count(*)::int AS links FROM links WHERE link_source = 'concept-provenance'`);
     expect(links).toBe(Math.ceil((PAGES - 4) / 23) * 2);
     await expectSameHiddenPages();
-    const { before, after, budget } = await costPerPage();
-    console.info(JSON.stringify({ metric: 'private-visibility-cost-per-page-analyzed', before, after, budget }));
+    const { before, after, local, budget } = await costPerPage();
+    console.info(JSON.stringify({ metric: 'private-visibility-cost-per-page-analyzed', before, after, local, budget }));
     if (before <= budget) throw new Error(`Precondition failed: the IN spelling already costs ${before} per page (budget ${budget}); this check cannot discriminate.`);
     expect(after).toBeLessThan(budget);
   });

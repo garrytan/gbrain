@@ -701,16 +701,16 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * move whose alias a later rename onto the old slug dropped (#8920). A concept's
  * inputs are judged the same way, moved origins included (GST-2687), by the SQL
  * function gbrain_concept_inputs_private (migration v311), one planned call per
- * page instead of the subplans. Over a shadowed `pages` (privacyPartSql), and
- * inside a remote request on a brain whose schema predates v311 or under a remote record that carries no schema
- * version (an attested or scope read), the same test runs inline, as gbrain_access_origin_restricted is
+ * page instead of the subplans, under a caller record that carries a schema version at or above v311 (a remote
+ * request, a scope or attested read). Over a shadowed `pages` (privacyPartSql), for a local caller, and on a brain
+ * whose schema predates v311 or whose version could not be read, the same test runs inline, as gbrain_access_origin_restricted is
  * skipped inside a request on a brain that never set access.restrictions_present.
  */
 function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
-  const policy = currentCallerAccess().remotePolicy;
-  const conceptInputsPrivate = !shadowedPages && (policy == null || (policy.schemaVersion ?? 0) >= v311.version) ? `gbrain_concept_inputs_private((${p}.id)::integer)`
+  const schema = currentCallerAccess().remotePolicy?.schemaVersion;
+  const conceptInputsPrivate = !shadowedPages && schema !== undefined && schema >= v311.version ? `gbrain_concept_inputs_private((${p}.id)::integer)`
     : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
       WHERE derived_input_link.from_page_id = ${p}.id AND derived_input_link.link_source = 'concept-provenance'
@@ -1176,6 +1176,12 @@ export async function readRemotePolicyNow(engine: Pick<BrainEngine, 'executeRaw'
   } catch {
     return { privacyRelaxed: process.env.GBRAIN_REMOTE_PRIVATE_PAGES === '1', restricted: true, ownerMember: null, ownerReadsRestricted: false, membersReadLineage: false, servesUnknown: true };
   }
+}
+
+/** GST-2687: the schema version a scope or attested caller record carries, read now; absent when unreadable, so the read rule stays inline. */
+export async function schemaVersionNow(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Pick<RemotePolicy, 'schemaVersion'>> {
+  const { schemaVersion } = await readRemotePolicyNow(engine);
+  return schemaVersion === undefined ? {} : { schemaVersion };
 }
 
 /** GST-363: whom the brain serves, read on its own (the requester-scope gate's re-read after an unreadable policy read). Throws when unreadable. */
