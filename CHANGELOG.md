@@ -10,6 +10,53 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.718.0] - 2026-11-14
+
+**Three ways a commit could reach the remote past the push secret scan are closed, and the scan can no longer be skipped.** In a managed root that sits in a subfolder of its repository, a commit could change that root's own `.gbrain-scan-allow` (for example to allow every path) and be pushed along with the secret it hid; it is now held for review like one at the top level. A strict (`canonical: git`) source's commit is now trusted only when its files are exactly what gbrain wrote, so anything a Git clean filter added is scanned. Git replace refs can no longer slip files into a page-write commit the scan trusts. `commitAndPush` also lost its unscanned mode, so no caller and no push handed over from a busy publish lock can publish without the scan; it reads only the commits the remote lacks, fetching a missing remote-tracking branch first.
+
+<!-- behavior-change: managed_push_scan_every_publish_gst2650 -->
+
+### Fixed
+- In a managed root below its repository's top level, the allowlist's path globs match paths relative to that root.
+- A strict-source commit made before this release that is still unpushed is scanned once when it is pushed.
+- A page-write commit whose staged file another process reset at the same moment is no longer reported as committed with the old content; the write fails and is retried.
+- The shared-checkout guide says that an uncommitted `.gbrain-scan-allow` is honoured, because it is the user's own answer to the scan.
+
+**On a source whose pages are canonical in Git, a fact the Google loops extraction finds for an entity with no page that an exact page rule names is now refused before anything is stored, the way `remember` already refused it.**
+
+### Fixed
+
+- On a `canonical: git` source, a commitment fact for an entity with no page under an exact page rule (`gbrain access rule add --slug people/bob-example --readers alice-example`) used to be stored in the database only, with no file or commit holding it, so a rebuild from Git lost it. Once `memory/unattributed` existed, the same write was refused instead, with a message that named `memory/unattributed` rather than the entity. The write is now refused `git_home_required` (reason `facts_lane`) before any row is written, and the message and fix name the entity's page to create. An access state the database role cannot read refuses `access_policy_pending` (retry), and that message now names the entity too.
+- The loops job still records the loop. Its log line reads `[loops_extract] fact projection failed … (git_home_required)` (or `(access_policy_pending)`) and names the entity's page, so an operator can see which page to create.
+- Sources that are not strict, brains with no Git repository, and fact writers that do not keep a fallback entity behave as before.
+- Facts an earlier version already stored this way are untouched: `gbrain repair facts-home --source <id>` lists them as `folder_restricted` (`page_rule`) and its apply leaves them; creating the entity's page lets the `extract_facts` upkeep step fence them.
+
+<!-- behavior-change: strict_fallback_refusal_gst2635 -->
+
+## [0.60.717.0] - 2026-11-14
+
+### Saving a fact to a holding page is faster and keeps less history
+
+**Saving a fact to a holding page (memory/unattributed, or a folder's holding page) no longer slows down and fills the database as the page grows (GST-2497).** Each save used to read the page's whole facts table about seventeen times and store another full copy of the page, so a page with thousands of facts took over a second per save and every save added a copy of it.
+- One save now reads the table at most three times. A parse of a given table is reused, and every caller gets its own copy.
+- A holding page keeps its newest five saved versions, the way large pages already do. Every fact row stays, the page still holds every row, and Git keeps every state where the brain has a repository. An older holding page sheds extra versions in batches of at most 100 on its next saves. `get_versions` and `gbrain revert` see only the five; an `as_of` read of the page says its history is incomplete, and `gbrain repair unwithdrawn-facts` lists that page's candidates as ambiguous (`--include-ambiguous` restores them).
+- After a sync, the held-fact move no longer plans a move on every sync when a folder rule covers a holding page but not the entity of a row on it. A rule that narrows a held row below its holding page's readers still moves it right after the sync.
+- On Postgres, the held-fact move's plan reads the write-through setting under the same deadline as its other reads, so a session holding the config table no longer keeps a sync past its preparation budget.
+
+<!-- behavior-change: holding_page_versions_gst2497 -->
+
+### The owner can ask a shared agent in a group chat and still get the whole answer
+
+**A harness can now tell gbrain which group chat an answer goes into, and gbrain marks every page and fact with whether the people in that chat could have read it.** The owner of a brain who asks their agent something in a team chat should get the same work as in a direct message, but the agent also needs to know what not to repeat in front of the room. Declaring the room does exactly that and nothing more. The read is never refused, shortened, reordered or failed because of it, and a call with no room returns what it always did.
+
+- Declare the room with the `X-Gbrain-Room` header (`gbrain serve --http`) or request-level `_meta.room`; a harness that can set neither may pass a `room` tool argument once `whoami` shows `features.room: true`. Entries are member ids, `group:<id>` or `guest`.
+- Each item in `get_page`, `search`, `query`, `list_pages`, `find_pages`, `get_chunks`, `get_timeline`, `get_backlinks`, `recall` and `entity` answers, each hot-memory fact and each saved fact a search returns (also shown on its line of the saved-facts block) carries `room_access`: `{readable: true}`, `{readable: false, reason}` (`readers`, `folder_rule`, `labelled_only`, `private_label`, `derived`, `personal_source`) or `{readable: "unknown", reason}`. `_meta.room` sums it up. A link, a timeline row or an entity-card fact is readable only when the room can read every page it depends on.
+- The `room_above_level` notice tells the model to use those items for the work, keep them out of the reply unless the ask needs them and offer them in a direct message. `room_hints_unavailable` says when the room could not be judged within 3 seconds or at all (the answer still goes out whole and on time, every item marked unknown, with the degraded stamp), and `room_conflict` says when a `room` argument disagreed with the harness; an argument can only add people.
+- The owner's own credential needs no `may_act_for` to declare a room, because a room only adds marks; any other member's credential needs `may_act_for` covering the room. Each marked call writes a `room_marked` row to the audience audit log with the room's principals and the counts, never page names or content.
+- No setting, no migration, and it works the same on a repo-less brain. Guide: [docs/guides/rooms.md](docs/guides/rooms.md).
+
+<!-- behavior-change: owner_room_marks_gst2639 -->
+
 ## [0.60.716.0] - 2026-11-14
 
 **Model-written Life Chronicle events no longer read as your own notes after a trust claim, legacy bearer tokens keep their tools when the default MCP surface is narrowed, every way a page is hard-deleted now clears what the page left in six side tables, the secret scan catches passwords in escaped JSON and URL-encoded values, and the drift report records where it came from.** Community wave W-A1: bug reports verified on master and fixed with our own code.

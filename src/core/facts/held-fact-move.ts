@@ -16,9 +16,11 @@ import { folderHoldingSlug, holdingSlugSql, isHoldingSlug, UNATTRIBUTED_MEMORY_S
 import { maintenancePreflight, planHeldRowDrop, submitMaintenanceIntent, submitPlannedFactFenceAdoption, type HeldDrop } from '../persistence/prepared-maintenance.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
+import { assertStrictGitHome } from '../persistence/git-declared.ts';
 import { isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
+import { requestConfigValue } from '../config-snapshot.ts';
 import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
 
 export interface HeldFactMoveOutcome {
@@ -86,9 +88,19 @@ export async function heldFactTarget(engine: BrainEngine, sourceId: string, key:
   return strict.miss === 'ambiguous' ? { ambiguous: await entityReferenceCandidates(engine, sourceId, key) } : null;
 }
 
+/**
+ * The refusal of every fact writer for an entity holdingHome refused to hold (remember, and GST-2635 the managed facts
+ * writer's attribute fallback), before anything is written: an exact page rule on a strict source refuses
+ * `git_home_required` naming the entity's page to create; otherwise the access state cannot be read, so retry.
+ */
+export async function refuseUnheldFact(engine: BrainEngine, sourceId: string, entity: string, refused: 'page_rule' | 'access_unreadable', remote: boolean): Promise<never> {
+  if (refused === 'page_rule') await assertStrictGitHome(engine, { source_id: sourceId, slug: entity }, remote);
+  throw accessStateUnreadable(sourceId, entity);
+}
+
 /** holdingHome's `access_unreadable`: the folder rules covering the entity cannot be read now, so nothing was written; retry. */
-export function accessStateUnreadable(sourceId: string): OperationError {
-  return opError('access_policy_pending', `The folder access rules of source ${sourceId} cannot be read right now, so gbrain cannot tell which holding page keeps this fact to its entity's readers; nothing was written.`,
+function accessStateUnreadable(sourceId: string, entity: string): OperationError {
+  return opError('access_policy_pending', `The folder access rules of source ${sourceId} that cover ${entity} cannot be read right now, so gbrain cannot tell which holding page keeps this fact to its entity's readers; nothing was written.`,
     'Retry the same request shortly; if it keeps failing, the brain host checks the folder access tables (gbrain doctor names the check).',
     { docs: 'docs/guides/write-refusals.md#access_policy_pending', fix: { argv: ['gbrain', 'access', 'rule', 'status', '--source', sourceId, '--json'], consent: [], actor: 'provider',
       requires_exclusive: false, why: 'Shows the folder rules and anything pending; changes nothing. The write succeeds once the rules read again.' } });
@@ -195,7 +207,8 @@ export function heldMoveIncomplete(held: Pick<HeldFactMoveOutcome, 'segmented_pa
 /**
  * GST-2492 (B2): after a sync releases its lease, the held facts a rule it applied narrows below their holding page's
  * readers (a folder rule over the shared page, an exact page rule over a folder's holding page, or a pending narrowing)
- * leave that page at once instead of at the next maintenance cycle (still the fallback after a crash). Null when none is due.
+ * leave that page at once instead of at the next maintenance cycle (still the fallback after a crash). Null when none is due:
+ * every rule covering a held row's entity also covers its holding page (a rule over the holding page alone narrows nothing).
  * A lock another session holds never keeps the sync past its preparation budget (#6318): the due check and the plan share
  * one deadline (planningView), and the move's own page reads each end at the budget. A plan cut off there rejects, a group
  * cut off in its move stays unmovable, and maintenance moves them later.
@@ -206,14 +219,15 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
   const [due] = await planning.executeRaw<{ due: boolean }>(`SELECT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $1
       AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')})
       AND f.row_num IS NOT NULL AND f.dimension IS NULL AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')}
-      AND (gbrain_access_folder_rules(f.source_id, f.entity_slug) IS DISTINCT FROM gbrain_access_folder_rules(f.source_id, f.source_markdown_slug)
+      AND (NOT COALESCE(gbrain_access_folder_rules(f.source_id, f.entity_slug), '{}') <@ COALESCE(gbrain_access_folder_rules(f.source_id, f.source_markdown_slug), '{}')
         OR (gbrain_access_pending_covers(f.source_id, f.entity_slug) AND NOT gbrain_access_pending_covers(f.source_id, f.source_markdown_slug)))) AS due`, [sourceId]);
   return due?.due ? moveHeldFacts(engine, sourceId, { planning, timeoutMs: budget }) : null;
 }
 
 /**
- * The engine the sync path plans a held move on: every raw read through it, the bare-name resolver's alias read included,
- * ends on the server at `deadlineAt`, and one ended there rejects as a PreparationDeadlineError. PGLite plans on the engine.
+ * The engine the sync path plans a held move on: every raw read through it, the bare-name resolver's alias read and
+ * holdingHome's config read included, ends on the server at `deadlineAt`, and one ended there rejects as a
+ * PreparationDeadlineError. PGLite plans on the engine.
  */
 function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
   if (engine.kind !== 'postgres') return engine;
@@ -228,6 +242,12 @@ function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
     const value = Reflect.get(target, key, target);
     // The alias read runs on the engine's own executeRaw: bound to the view, it takes the deadline too.
     if (key === 'resolveAliases') return value.bind(view);
+    if (key === 'getConfig') return async (name: string) => {
+      const held = await requestConfigValue(target, name);
+      if (held !== undefined) return held;
+      const [row] = await view.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [name]);
+      return row?.value ?? null;
+    };
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);
   return view;

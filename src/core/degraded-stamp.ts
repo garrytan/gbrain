@@ -25,6 +25,7 @@ export interface DegradedStamp {
 const RESULT_NOTICE_REASONS: ReadonlySet<string> = new Set([
   'held_files', 'references_unavailable', 'mention_index',
   'relational_chain', 'graph_walk_truncated', 'pinned_answer_stale', 'facts_unembedded', 'delta_incomplete',
+  'room_hints_unavailable',
 ]);
 
 /** One condition, one code: recall's keyword-only markers name the stage search and query already use. */

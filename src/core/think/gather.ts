@@ -66,6 +66,8 @@ export interface ThinkGatherResult {
   takes: TakeHit[];
   /** Graph nodes — slugs reachable from anchor within graphDepth. Empty when no anchor. */
   graphSlugs: string[];
+  /** GBRA-498: each graph node with its own source (a federated walk crosses sources), for room marks; the anchor first. */
+  graphRefs?: Array<{ slug: string; sourceId: string }>;
   /** Pages the search found that the window dropped as dated outside it: not evidence, but still who the question is about (GST-731). */
   outsideWindowSlugs: string[];
   /**
@@ -243,6 +245,7 @@ export async function runGather(
     : Promise.resolve([] as TakeHit[]);
 
   // Stream 4: graph walk (anchor only).
+  const graphRefs: Array<{ slug: string; sourceId: string }> = [];
   const graphPromise: Promise<string[]> = opts.anchor
     ? engine.traversePaths(opts.anchor, { depth: graphDepth, direction: 'both', ...pageScope })
         .then(paths => {
@@ -250,6 +253,7 @@ export async function runGather(
           for (const p of paths) {
             slugs.add(p.from_slug);
             slugs.add(p.to_slug);
+            graphRefs.push({ slug: p.from_slug, sourceId: p.from_source_id }, { slug: p.to_slug, sourceId: p.to_source_id });
           }
           return Array.from(slugs);
         })
@@ -318,6 +322,7 @@ export async function runGather(
     pages: pages.slice(0, gatherLimit),
     takes: fusedTakes,
     graphSlugs,
+    graphRefs: opts.anchor ? [{ slug: opts.anchor, sourceId: anchorPage?.source_id ?? opts.sourceId ?? 'default' }, ...graphRefs] : graphRefs,
     outsideWindowSlugs,
     warnings,
     diagnostics: {

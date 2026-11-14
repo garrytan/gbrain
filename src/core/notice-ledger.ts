@@ -34,7 +34,7 @@ export const COACHING_BUDGET_PER_SESSION = 2;
 /** The one muteable `ask`: an unanswered first-run bundle must stay dismissible. Every other ask always shows. */
 export const MUTEABLE_ASK_CODES: ReadonlySet<string> = new Set(['first_run_decisions']);
 /** Notices that describe THIS call's result (never deduped unless the notice carries a `dedupe_key`): the diagnosis must ride every affected call. */
-export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['degraded_recall', 'hidden_tool_content', 'empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'graph_walk_truncated', 'mention_index', 'delta_incomplete', 'identity_siblings_capped', 'references_unavailable', 'record_types_undeclared', 'alias_fanout', 'facts_unembedded', 'loops_no_google_in_scope', 'privacy_label_ignored', 'loops_source_read_failed']);
+export const PER_CALL_NOTICE_CODES: ReadonlySet<string> = new Set(['degraded_recall', 'hidden_tool_content', 'empty_retrieval', 'unknown_param', 'listing_truncated', 'former_relationships_hidden', 'source_binding_narrowed', 'local_transcripts', 'held_files', 'relational_chain', 'graph_walk_truncated', 'mention_index', 'delta_incomplete', 'identity_siblings_capped', 'references_unavailable', 'record_types_undeclared', 'alias_fanout', 'facts_unembedded', 'loops_no_google_in_scope', 'privacy_label_ignored', 'loops_source_read_failed', 'room_above_level', 'room_hints_unavailable', 'room_conflict']);
 
 /** How long a shown coverage state (a notice's `escalation`) stays shown. */
 export const COVERAGE_NOTICE_WINDOW_MS = 30 * 60 * 1000;

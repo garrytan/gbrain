@@ -778,7 +778,8 @@ except the notices that describe one call's result. HTTP is stateless, so
 dedupe is per authenticated client and session, and `degraded` and `safety`
 notices ride every affected call. At most 2 `coaching` notices per session.
 Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
-`listing_truncated`, `delta_incomplete`, `facts_unembedded`)
+`listing_truncated`, `delta_incomplete`, `facts_unembedded`, and the room
+notices `room_above_level`, `room_hints_unavailable` and `room_conflict`)
 are never deduped on any transport, with one exception: a `degraded_recall`
 whose only stages come from the brain's configuration (`embed_unavailable` on
 a keyless brain, which degrades every search the same way) shows once per
@@ -890,6 +891,19 @@ nothing; it returns in the next session until the decision is answered
 `first_run_decisions`. `gbrain doctor` (the `memory_writeback` check) and
 `gbrain onboard --check` list decisions that are open but muted, with the
 `gbrain notices unmute first_run_decisions` command.
+
+### Room notices
+
+A harness that declares the shared chat an answer goes into (`X-Gbrain-Room`,
+`_meta.room` or a `room` argument) gets the caller's full answer with each
+item marked `room_access` ([rooms](https://github.com/garrytan/gbrain/blob/master/docs/guides/rooms.md)). Three notices ride it,
+and none of them ever refuses the work:
+
+| Code | Kind | What you do |
+|---|---|---|
+| `room_above_level` | `safety` | some items are `readable: false` or `unknown` for the room: use them to do the work, keep them out of the reply unless the ask needs them, offer the rest in a direct message |
+| `room_hints_unavailable` | `degraded` | the room could not be judged (`_meta.room.unavailable` names why): the answer is complete, treat every item as above the room, and follow `fix` when one is given |
+| `room_conflict` | `safety` | the `room` argument named a different room than the harness did: the answer was marked for everyone either names; trust the harness's room |
 
 ## Degraded stamp
 

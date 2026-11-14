@@ -235,10 +235,15 @@ function audienceUnknown(principal: string) {
  * or an existing group (on_behalf_of_unknown_member). Read on every call, so a revoked permission or a disabled
  * member takes effect at once.
  */
-export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller, audience: readonly AudiencePrincipal[]): Promise<string[][]> {
-  const mayActFor = await mayActForOf(engine, caller);
-  const missing = audience.filter(p => !mayActForCovers(mayActFor, p));
-  if (missing.length) throw audienceNotPermitted(caller, audience, mayActFor, missing);
+export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
+  opts: { mayActFor?: 'enforce' | 'owner_room_assessment' } = {}): Promise<string[][]> {
+  // GBRA-498: only room.ts passes owner_room_assessment, after it checked that the caller reads as the brain owner or is
+  // the trusted local CLI; it marks results for a room and never reads as the room, so neither needs may_act_for for it.
+  if (opts.mayActFor !== 'owner_room_assessment') {
+    const mayActFor = await mayActForOf(engine, caller);
+    const missing = audience.filter(p => !mayActForCovers(mayActFor, p));
+    if (missing.length) throw audienceNotPermitted(caller, audience, mayActFor, missing);
+  }
   const memberIds = audience.filter(p => p.startsWith('member:')).map(p => p.slice('member:'.length));
   const groupIds = audience.filter(p => p.startsWith('group:')).map(p => p.slice('group:'.length));
   const members = new Map<string, string[]>();
@@ -282,29 +287,7 @@ export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'execu
 export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport?: string, audience?: readonly AudiencePrincipal[] | null, stdioMember?: string, readOnly = false): Promise<Partial<CallerAccess>> {
   const [relaxed, remotePolicy] = await Promise.all([remotePrivacyRelaxed(engine), requestRemotePolicy(engine)]);
   const restricted = remotePolicy.restricted;
-  if (audience?.length) {
-    const identities = await resolveAudienceIdentities(engine, { auth, transport }, audience);
-    const single = singleMemberAudience(audience);
-    const owner = single && audience[0] === `member:${remotePolicy.ownerMember}`
-      && isOwner(await boundIdentity(engine, auth, transport, stdioMember), remotePolicy);
-    const lineage = readOnly && single && identities.length === 1 && (owner || remotePolicy.membersReadLineage === true);
-    return {
-      identity: identities.length === 1 ? identities[0]! : [],
-      audience: [...audience],
-      audienceIdentities: identities.length > 1 ? identities : [],
-      ...(restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] }),
-      privateReadableSources: single ? privateSources ?? [] : [],
-      hidePrivate: single ? !relaxed && !owner : true,
-      owner,
-      lineage,
-      ownerReadsRestricted: owner && lineage && remotePolicy.ownerReadsRestricted === true,
-      audienceKindMembers: owner && lineage ? await audienceMemberIds(engine) : [],
-      labelledOnly: !owner && restricted && await labelledOnlyFor(engine, [...identities, await boundIdentity(engine, auth, transport, stdioMember)]),
-      applyRemoteReadPolicy: false,
-      restricted,
-      remotePolicy,
-    };
-  }
+  if (audience?.length) return audienceCallerAccess(engine, auth, privateSources, transport, audience, await resolveAudienceIdentities(engine, { auth, transport }, audience), stdioMember, readOnly, relaxed, remotePolicy);
   const identity = restricted || remotePolicy.ownerMember ? await boundIdentity(engine, auth, transport, stdioMember) : [];
   const owner = isOwner(identity, remotePolicy);
   const lineage = readOnly && identity.some(p => p.startsWith('member:')) && (owner || remotePolicy.membersReadLineage === true);
@@ -320,6 +303,38 @@ export async function remoteCallerAccess(engine: BrainEngine, auth: AuthInfo | u
     ownerReadsRestricted: owner && lineage && remotePolicy.ownerReadsRestricted === true,
     audienceKindMembers: owner && lineage ? await audienceMemberIds(engine) : [],
     labelledOnly: !owner && restricted && await labelledOnlyFor(engine, [identity]),
+    applyRemoteReadPolicy: false,
+    restricted,
+    remotePolicy,
+  };
+}
+
+/**
+ * GBRA-231: the access record of an audience whose identities resolveAudienceIdentities resolved. GBRA-498: room.ts
+ * builds a room's record with it, so a room mark and an on_behalf_of read of the same audience judge pages alike.
+ */
+export async function audienceCallerAccess(engine: BrainEngine, auth: AuthInfo | undefined, privateSources: readonly string[] | undefined, transport: string | undefined,
+  audience: readonly AudiencePrincipal[], identities: string[][], stdioMember?: string, readOnly = false,
+  relaxed?: boolean, policy?: RemotePolicy): Promise<Partial<CallerAccess>> {
+  const remotePolicy = policy ?? await requestRemotePolicy(engine);
+  const restricted = remotePolicy.restricted;
+  if (relaxed === undefined) relaxed = await remotePrivacyRelaxed(engine);
+  const single = singleMemberAudience(audience);
+  const owner = single && audience[0] === `member:${remotePolicy.ownerMember}`
+    && isOwner(await boundIdentity(engine, auth, transport, stdioMember), remotePolicy);
+  const lineage = readOnly && single && identities.length === 1 && (owner || remotePolicy.membersReadLineage === true);
+  return {
+    identity: identities.length === 1 ? identities[0]! : [],
+    audience: [...audience],
+    audienceIdentities: identities.length > 1 ? identities : [],
+    ...(restricted ? await folderAccessForAll(engine, identities) : { satisfiedRuleIds: [], folderCoverage: [] }),
+    privateReadableSources: single ? privateSources ?? [] : [],
+    hidePrivate: single ? !relaxed && !owner : true,
+    owner,
+    lineage,
+    ownerReadsRestricted: owner && lineage && remotePolicy.ownerReadsRestricted === true,
+    audienceKindMembers: owner && lineage ? await audienceMemberIds(engine) : [],
+    labelledOnly: !owner && restricted && await labelledOnlyFor(engine, [...identities, await boundIdentity(engine, auth, transport, stdioMember)]),
     applyRemoteReadPolicy: false,
     restricted,
     remotePolicy,

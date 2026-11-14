@@ -33,6 +33,7 @@ test/access-page-indexes-online.test.ts
 test/access-page-rule-fileless.test.ts
 test/access-qm-actor.test.ts
 test/access-raw-only-rules.test.ts
+test/access-room.test.ts
 test/access-token-grant-columns.test.ts
 test/access-ungranted-member-writes.test.ts
 test/access-writes.test.ts
@@ -134,6 +135,7 @@ test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
+test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
@@ -179,9 +181,11 @@ test/harness-skills-epoch.test.ts
 test/harness-verify-member-credential.test.ts
 test/held-bare-name-move-gst2492.test.ts
 test/held-fence-readers-gst2492.test.ts
+test/held-move-plan-gst2497.test.ts
 test/held-read-signals.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
+test/holding-page-saves-gst2497.test.ts
 test/hosted-repo-g7b2.test.ts
 test/ignored-privacy-labels.test.ts
 test/import-file-result-callback-gbra130.test.ts
@@ -633,6 +637,7 @@ test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
 test/strict-background-writers-gst2492.test.ts
+test/strict-fallback-refusal-gst2635.test.ts
 test/sweep-segmented-entity-9279.test.ts
 test/sync-absent-from-worktree-s27.test.ts
 test/sync-admission-6712.test.ts

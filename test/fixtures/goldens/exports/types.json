@@ -9180,6 +9180,7 @@
           "question: string",
           "quote_check?: { grounded: number; repaired: number; unverified: number; } | undefined",
           "requested_model?: string | undefined",
+          "room_extra?: ({ table: \"pages\"; sourceId: string; slug: string; } | { table: \"calibration\"; id: number; })[] | undefined",
           "rounds: number",
           "savedSlug?: string | undefined",
           "synthesisOk?: boolean | undefined",
