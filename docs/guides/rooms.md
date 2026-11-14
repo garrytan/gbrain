@@ -84,9 +84,20 @@ on), a timeline row needs its own page and the page the event came from, and a
 fact on an entity card is judged in the source of the card it hangs on.
 
 Covered tools: `get_page`, `search`, `query`, `list_pages`, `find_pages`,
-`get_chunks`, `get_timeline`, `get_backlinks`, `recall` and `entity`. Every
-other tool still runs normally with a room declared; its answer is marked
-unknown with reason `op_not_covered`.
+`get_chunks`, `get_timeline`, `get_backlinks`, `recall`, `entity`, `think`,
+`put_page` and `remember`. Every other tool still runs normally with a room
+declared; its answer is marked unknown with reason `op_not_covered`.
+
+A `think` answer is one item, marked at the strictest class of everything the
+synthesis retrieved, not only what it cites: it is readable only when the room
+can read every page and fact it was built from. An answer built partly from
+takes, or with no recorded evidence, is unknown (`not_identified`).
+
+`put_page` and `remember` mark their own result: the page or fact just written
+(each item of a `remember` batch), judged as the room would read it. A write is
+never stamped degraded for its marks, so a committed write never reads as one
+to retry; a write that is still pending, or that the room could not judge, is
+marked unknown.
 
 ## Who may ask
 
@@ -118,10 +129,11 @@ stamp (`_meta.degraded.reasons` and the `[gbrain degraded: …]` block) names
 | `invalid` | the room was empty or malformed | send a list of member ids, `group:<id>` or `guest` |
 | `not_permitted` | the credential's `may_act_for` does not cover the room | the operator widens `may_act_for` |
 | `unknown_principal` | the room names a disabled or unknown member or group | fix the name, or add the member |
-| `unbound` | the connection is bound to no member | bind the credential to a member |
+| `unbound` | the connection is bound to no member (on the CLI: the brain names no owner and no `--as` was given) | bind the credential to a member; on the CLI, `gbrain access owner set <member>` or pass `--as` |
 | `mark_failed`, `deadline` | judging failed or took more than 3 seconds | retry; nothing was changed |
 | `op_not_covered` | the tool does not mark its results | none needed; this one adds no degraded stamp, so a write is never read as partial |
 | `response_cap` | the marked answer would not fit the connection's size cap | ask for less (a window, a page of rows) to get marks |
+| `not_supported` | the CLI reached a brain host or a running brain owner that predates room marks | upgrade and restart it |
 
 Some items can be unknown inside a complete answer too: `not_found` (the item
 could not be looked up again), `not_identified` (it carries no page or fact
@@ -131,6 +143,31 @@ with the `room_hints_unavailable` notice (reason `response_cap`) and
 `_meta.room.complete: false`, each dropped first if even that does not fit;
 treat every item as above the room.
 
+## From the CLI
+
+Every operation command takes `--room <list>` (comma-separated, the same
+grammar): `gbrain query "launch plan" --room alice-example,group:team-a`. The
+command prints exactly what it prints without the flag; the room only adds
+marks. The local CLI marks the brain owner's view (`gbrain access owner set`),
+or the view of the member `--as` names.
+
+- With `--json`, every item carries `room_access` and the document carries
+  `_meta.room`. An answer that is a list becomes `{ "results": [...], "_meta":
+  { "room": {...} } }`.
+- Without `--json`, stdout is unchanged and stderr gets one
+  `[gbrain room: ...]` summary line plus a line for each item the room cannot
+  read or that is unknown.
+- `--room` with no value (a trailing `--room`, or `--room=`) is a room that
+  could not be read, never a dropped flag: the command runs, every item is
+  unknown with reason `invalid`, the degraded stamp shows, and it exits 0.
+- It works the same when a running `gbrain serve` owns a PGLite brain (that
+  owner marks the answer) and on a thin client (`--room` goes as
+  `_meta.room` and the host marks the answer). A host or owner that predates
+  room marks leaves every item unknown (`not_supported`).
+- A command outside the operations (`gbrain think`, `gbrain doctor`, ...) runs
+  unchanged and prints a line saying it marks nothing: treat all of its output
+  as above the room's level.
+
 ## Keep raw results out of the room's transcript
 
 Marks only help if the owner's raw tool results stay private. Many harnesses
@@ -138,6 +175,17 @@ store tool output in the conversation history, and in a group chat that
 history may be visible to, or replayed for, everyone in it. A harness that
 declares rooms must keep the owner's raw tool results out of any transcript
 the room can read, and store only the reply it sent.
+
+## Sends on an owner turn
+
+The same split holds for messages the agent sends. When the owner, in their own
+verified message, asks the agent to send something (in this room, another chat
+or a topic, to anyone), the agent sends it as asked, with no approval phrase
+and no draft for sign-off; a request arriving through a delegate the owner set
+up, which the host authenticates as acting for them, counts as the owner's. It
+still never messages anyone as the owner on its own initiative, and a send
+another person asks for, including one that quotes, relays or forwards the
+owner, is that person's request.
 
 ## Audit and repo-less brains
 

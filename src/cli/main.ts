@@ -361,6 +361,7 @@ async function main() {
   let subArgs = routed.subArgs;
   dispatchedCommand = command;
   if (cliOpts.as !== undefined && !helpRequested) (await import('./as-preview.ts')).refuseAsOutsideOperations(command, subArgs, !CLI_ONLY.has(command) && (cliOps.has(command) || cliAliases.has(command))); // GBRA-218
+  if (cliOpts.room !== undefined && !helpRequested && (CLI_ONLY.has(command) || !(cliOps.has(command) || cliAliases.has(command)))) process.stderr.write((await import('./room.ts')).roomNotMarkedLine(command)); // GBRA-498: never refused
   {
     const { directPoolProfileForCommand, setDirectPoolProfile } = await import('../core/direct-pool-profile.ts');
     setDirectPoolProfile(directPoolProfileForCommand(command, subArgs));
@@ -514,7 +515,7 @@ async function main() {
     return;
   }
 
-  if (cliOpts.as === undefined && !enforcedClass && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
+  if (cliOpts.as === undefined && cliOpts.room === undefined && !enforcedClass && ['search', 'query', 'get', 'recall'].includes(command) && await (await import('./cli-socket-client.ts')).maybeServeFromCliSocket(command, subArgs)) return; // warm serve socket (opt-in)
   // CLI-only commands
   if (CLI_ONLY.has(command) && enforcedClass && !helpRequested && command !== 'errors' && command !== 'protocol') {
     await (await import('./enforced-member.ts')).runEnforcedCliOnly(command, subArgs, { handleCliOnly, connectEngine });
@@ -632,7 +633,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
   if (cliOpts.as === undefined && !enforcedClass) { // GBRA-218: a --as preview runs in this process (the owner socket carries no member identity); G2: so does an enforced member
     const { runDelegatedCliOperation } = await import('../commands/persistence-delegate.ts');
     if (await runDelegatedCliOperation(op.name, params, cfgPre, {
-      brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined,
+      brain: cliOpts.brain, timeoutMs: cliOpts.timeoutMs ?? undefined, ...(cliOpts.room !== undefined ? { room: cliOpts.room } : {}),
     }, formatResult)) return;
   }
 
@@ -736,13 +737,13 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       if (op.mutating) await captureCapacityNotices(engine); // #6696 (A4)
       if (enforced && enforcedClass === 'write') await enforced.recordEnforcedReceipts(op.name, rawResult, params);
     }
-    if (op.name === 'get_page' && rawResult === (await import('./page-render.ts')).SEGMENTED_STREAMED) return;
+    if (op.name === 'get_page' && rawResult === (await import('./page-render.ts')).SEGMENTED_STREAMED) { if (cliOpts.room !== undefined) process.stderr.write((await import('./room.ts')).roomNotMarkedLine(command)); return; }
     captureRetrievalNotices(op.name, rawResult, lastRetrievalMeta, params, ctx.config);
     // ENG-2 (renderer parity by data shape): JSON-round-trip the local-engine
     // path's return value so renderers see the same shape they'd see on the
     // routed path. Date → ISO string; bigint → string (postgres.js shape);
     // Buffer → object. Microsecond-cost; eliminates a whole drift bug class.
-    const { result, stderr: noticeText } = applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta });
+    const { result, stderr: noticeText } = cliOpts.room === undefined ? applyCliOpNotices(normalizeLocalResult(rawResult), params.json === true, { op: op.name, retrieval: lastRetrievalMeta }) : await (await import('./room.ts')).directWithRoom(engine, op.name, normalizeLocalResult(rawResult), cliOpts.room, params.json === true, { sourceId: ctx.sourceId, run: asPreview.run, retrieval: lastRetrievalMeta }); // GBRA-498: --room marks it
     if (enforced && await enforced.namesHiddenPage(engine, command, result)) {
       process.stderr.write(enforced.WITHHELD_LINE(command));
       return;
@@ -834,7 +835,7 @@ async function runThinClientRouted(
     const raw = await timeCliPhase('remote', () => callRemoteTool(cfg, op.name, params, {
       timeoutMs,
       signal: sigintController.signal,
-      ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs } : {}),
+      ...(op.mutating ? { writeWaitMs: currentCliWriteWait().waitMs } : {}), ...(cliOpts.room !== undefined ? { meta: { room: cliOpts.room } } : {}),
     }).catch(async (e: unknown) => { // large pages: a page too big for one response is paged to its end, verified, then printed
       if (op.name !== 'get_page') throw e;
       const { printPagedPage, remoteErrorCode, wantsWholePage } = await import('./page-render.ts');
@@ -848,7 +849,7 @@ async function runThinClientRouted(
     const envelopeMeta = extractResponseMeta(raw);
     if (envelopeMeta?.retrieval) captureRetrievalMeta('retrieval', envelopeMeta.retrieval);
     checkHostHonoredParams(op, params, raw);
-    const { result, stderr: stampText } = withRoutedDegradedStamp(op.name, unpackToolResult(raw), envelopeMeta, params.json === true);
+    const { result, stderr: stampText } = cliOpts.room === undefined ? withRoutedDegradedStamp(op.name, unpackToolResult(raw), envelopeMeta, params.json === true) : await (await import('./room.ts')).routedWithRoom(op.name, unpackToolResult(raw), envelopeMeta, params.json === true, cliOpts.room); // GBRA-498: the host's marks, or every item unknown
     if (op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => unpackToolResult(await callRemoteTool(cfg, 'get_page', p, { timeoutMs, signal: sigintController.signal })) as Record<string, any>, // GBRA-217: an older host's
       result as Record<string, any>, params, writeStdoutFinal, { client: VERSION, host: identityCache.get(cfg.remote_mcp!.mcp_url)?.identity.version ?? null })) return; // reply fails closed
     hintAmbientNarrowing(op, params, result, ambientScope);
