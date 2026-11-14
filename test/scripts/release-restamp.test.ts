@@ -340,6 +340,20 @@ describe('release:restamp end to end', () => {
     expect(splitChangelog(read(fx.work, 'CHANGELOG.md')).sections.map((s) => s.header)[0]).toBe('## [0.1.2.0] - 2026-10-05');
   }, 120_000);
 
+  test('--continue refuses a hand resolution that puts a master-edited published migration back to the branch text', () => {
+    const fx = fixture();
+    const seed = migrationFile(208, 'seed_two');
+    branchWork(fx, '0.1.1.0', { 'src/shared.ts': 'export const GREETING = "hi from the branch";\n' });
+    landOnMaster(fx, '0.1.1.0', null, { 'src/shared.ts': 'export const GREETING = "hi from master";\n', [seed]: migration(208, 'seed_two', 'CREATE TABLE IF NOT EXISTS seed_two (id BIGINT);') });
+    expect(restamp(fx.work).code).toBe(1);
+    put(fx.work, { 'src/shared.ts': 'export const GREETING = "hi from both";\n' });
+    git(fx.work, 'checkout', 'HEAD', '--', seed);
+    git(fx.work, 'add', 'src/shared.ts', seed);
+    const r = restamp(fx.work, ['--continue']);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`${seed} is published on origin/master but this branch changes its payload`);
+  }, 120_000);
+
   test('--abort returns to the pre-run commit', () => {
     const fx = fixture();
     branchWork(fx, '0.1.1.0', { 'src/shared.ts': 'export const GREETING = "hi from the branch";\n' });
@@ -677,6 +691,17 @@ describe('release:unstamp and merge: direct', () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain('changelog.d/feature.md already exists');
     expect(read(fx.work, 'changelog.d/feature.md')).toBe('Another PR.\n');
+  }, 120_000);
+
+  test('a published migration that only master changed after the merge base does not refuse the branch', () => {
+    const fx = noticeFixture();
+    branchWork(fx, '0.1.1.0', { 'src/widgets.ts': 'export const W = 1;\n' });
+    landOnMaster(fx, '0.1.1.0', null, { ...POLICY_DIRECT, [migrationFile(208, 'seed_two')]: migration(208, 'seed_two', 'CREATE TABLE IF NOT EXISTS seed_two (id BIGINT);') });
+    const r = restamp(fx.work, ['--unstamp'], QUIET);
+    expect(r.out).not.toContain('is published on origin/master but this branch changes its payload');
+    expect(r.code).toBe(0);
+    expect(read(fx.work, migrationFile(208, 'seed_two'))).toBe(git(fx.work, 'show', `origin/master:${migrationFile(208, 'seed_two')}`));
+    expect(read(fx.work, 'changelog.d/feature.md')).toContain('Widgets now sync twice as fast.');
   }, 120_000);
 
   test('plain restamp is refused when origin/master says merge: direct', () => {

@@ -14,6 +14,7 @@
  * (source_uri) are never rendered as text (ENG-9).
  */
 import { compareTrust, storedTrustTier, trustLabel, USER_SAID_ORIGIN_MARKER, USER_SAID_TRUST_LABEL, type TrustTier } from '../trust/tier.ts';
+import { guestWarningLine, type GuestStamp } from '../guests/marker.ts';
 
 export interface TrustFields {
   trust_tier: TrustTier;
@@ -32,6 +33,8 @@ export interface TrustFields {
    * until the owner decides `proposal_ref`.
    */
   contested?: Contested;
+  /** GBRA-504: the row is an outside guest's note (origin `guest`); its mark, from guest_marks (guests/marker.ts). */
+  guest?: GuestStamp;
 }
 
 /** fact_id: the other fact of a decide proposal (dp<id>, facts/contested-claims.ts). */
@@ -112,11 +115,15 @@ export function needsDataEnvelope(tier: TrustTier): boolean {
 const ENVELOPE_TAG = 'external-data';
 const ENVELOPE_TAG_RE = /<(\/?external-data)/gi;
 
-/** One item of text context: a compact label line, or for external content a data envelope. */
+/**
+ * One item of text context: a compact label line, or for external content a data envelope. A guest note (GBRA-504) is
+ * the guest warning line and then the envelope with origin="guest", whatever tier it carries.
+ */
 export function renderTrustedText(text: string, fields: TrustFields, opts: LabelOpts = {}): string {
-  if (!needsDataEnvelope(fields.trust_tier)) return `${compactTrustLabel(fields, opts)} ${text}`;
+  if (!fields.guest && !needsDataEnvelope(fields.trust_tier)) return `${compactTrustLabel(fields, opts)} ${text}`;
   const body = text.replace(ENVELOPE_TAG_RE, '&lt;$1');
-  return `<${ENVELOPE_TAG} trust="${fields.trust_tier}" origin="${fields.origin}">\n${body}\n</${ENVELOPE_TAG}>`;
+  const envelope = fields.guest ? `<${ENVELOPE_TAG} trust="external_untrusted" origin="guest">` : `<${ENVELOPE_TAG} trust="${fields.trust_tier}" origin="${fields.origin}">`;
+  return `${fields.guest ? `${guestWarningLine(fields.guest)}\n` : ''}${envelope}\n${body}\n</${ENVELOPE_TAG}>`;
 }
 
 /** The attribute string for XML-ish prompt blocks (think `<take>`/`<page>`): `trust="…" origin="…"`. */
@@ -135,7 +142,8 @@ export function withTrustLabel<T extends object>(row: T): T & TrustFields {
 
 /** One-line variant for list items (pointers, volunteered pages, fact lines): label, or an inline data envelope below `unknown`. */
 export function renderTrustedInline(text: string, fields: TrustFields, opts: LabelOpts = {}): string {
-  if (!needsDataEnvelope(fields.trust_tier)) return text ? `${compactTrustLabel(fields, opts)} ${text}` : compactTrustLabel(fields, opts);
+  if (!fields.guest && !needsDataEnvelope(fields.trust_tier)) return text ? `${compactTrustLabel(fields, opts)} ${text}` : compactTrustLabel(fields, opts);
   const body = text.replace(ENVELOPE_TAG_RE, '&lt;$1');
+  if (fields.guest) return `${guestWarningLine(fields.guest)} <${ENVELOPE_TAG} trust="external_untrusted" origin="guest">${body}</${ENVELOPE_TAG}>`;
   return `<${ENVELOPE_TAG} trust="${fields.trust_tier}" origin="${fields.origin}">${body}</${ENVELOPE_TAG}>`;
 }

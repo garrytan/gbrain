@@ -13,7 +13,7 @@
  * Run: DATABASE_URL=... GBRAIN_TEST_ALLOW_DATABASE_URL=1 bun test test/e2e/serve-http-on-behalf-of.test.ts
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { setupDB, teardownDB, hasDatabase } from './helpers.ts';
+import { setupDB, teardownDB, hasDatabase, removeMembers } from './helpers.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { importFromContent } from '../../src/core/import-file.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
@@ -24,6 +24,7 @@ const describeE2E = skip ? describe.skip : describe;
 if (skip) console.log('Skipping E2E serve-http-on-behalf-of tests (DATABASE_URL not set)');
 
 const PORT = 19162;
+const MEMBERS = ['alice-example', 'bob-example', 'dan-example'];
 const BASE = `http://localhost:${PORT}`;
 const PAGES = {
   alice: { slug: 'notes/obo-alice', readers: '[alice-example]', canary: 'canaryoboealice' },
@@ -39,7 +40,7 @@ describeE2E('/mcp shared agent on_behalf_of over serve --http', () => {
 
   beforeAll(async () => {
     engine = await setupDB();
-    for (const id of ['alice-example', 'bob-example', 'dan-example']) await addMember(engine, id);
+    for (const id of MEMBERS) await addMember(engine, id);
     for (const key of Object.keys(PAGES) as Key[]) {
       const p = PAGES[key];
       const out = await importFromContent(engine, p.slug, `---\ntype: note\nreadable_by: ${p.readers}\n---\n# Harbor plan ${key}\n\nHarbor plan notes ${p.canary}.`, { noEmbed: true });
@@ -68,6 +69,7 @@ describeE2E('/mcp shared agent on_behalf_of over serve --http', () => {
       await new Promise(r => setTimeout(r, 1000));
       if (!serverProcess.killed) serverProcess.kill('SIGKILL');
     }
+    await removeMembers(MEMBERS);
     await teardownDB();
   }, 30_000);
 

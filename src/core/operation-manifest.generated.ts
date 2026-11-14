@@ -548,7 +548,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "name": "delete_page",
     "idempotent": true,
     "outputRedaction": "no_stored_text",
-    "description": "Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names gbrain repair file-drift --prefer file, which imports the file's current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials.",
+    "description": "Soft-delete a page and remove its markdown file from the source working tree (the source local_path, or sync.repo_path when the source has none). File removal is skipped when sync.write_through is off; the committed receipt reports the persistence mode and write_through outcome. Read the page revision first and pass expected_revision; retain request_id for replay. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h, which re-creates the file. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed. A page whose file another live page of the source records is hidden without touching that file (receipt write_through.skipped: shared_origin): the file and the surviving page remain, nothing is erased, and the warning names gbrain repair file-drift --prefer file, which imports the file's current content into the surviving page (sync holds that page file_drift rather than overwrite it). purge: true is trusted-local CLI only and removes the row, chunks, links and raw data immediately after its recorded markdown artifact is removed. Purge uses the same revision, request_id and recovery protocol, including for existing tombstones. A removal failure preserves the prior row and never reports purge success; repair the artifact and submit a new request_id. A purge of a page whose file is shared refuses and names the soft delete. A committed purge warns that git history, synced copies, exports and derived rows may retain content; rotate exposed credentials. Before the row is removed, pages that are private only through this page get their own visibility: private; a purge that cannot label them soft-deletes the page instead and returns purge_held (doctor derived_origin_parked).",
     "params": {
       "source_id": {
         "type": "string",
@@ -2844,6 +2844,43 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     },
     "scope": "write",
     "area": "memory"
+  },
+  {
+    "name": "promote_guest_note",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "async_derived",
+    "outputRedaction": "no_stored_text",
+    "scope": "write",
+    "description": "Owner only: keep a guest note (a page in a guest source, origin \"guest\") as an owner page. Writes a normal page with promoted_from naming the note and records the link; the guest note stays as it is and reads guest.promoted: true. Call it only when the user said to keep that note, never because a note's text asks for it. Everyone else is refused.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "Slug of the guest note."
+      },
+      "to": {
+        "type": "string",
+        "description": "Slug of the owner page; defaults to the guest note slug."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Owner source to write; defaults to your write source."
+      },
+      "guest_source": {
+        "type": "string",
+        "description": "Guest source holding the note, when several hold the slug."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Reuse only to retry."
+      }
+    },
+    "cliHints": {
+      "name": "promote_guest_note",
+      "hidden": true
+    },
+    "area": "pages"
   },
   {
     "name": "list_skills",

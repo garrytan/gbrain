@@ -77,8 +77,9 @@ Connectors set it for content that is private at its source: private Slack chann
 calendar events, private meetings, and sources added with `--visibility private`.
 
 Who sets it: any writer of the page, local or remote. Who clears it: the owner or the brain operator, on purpose,
-on the brain host (an edit through `put_page`, a git edit, or `gbrain repair private-labels`). A remote writer
-cannot rewrite a page its write policy hides, so an agent cannot clear a label it cannot see. Clearing widens what
+on the brain host (an edit through `put_page`, a git edit, or `gbrain repair private-labels`), or the owner's own
+remote credential with write scope (see "The owner" below). Any other remote writer cannot rewrite a page its write
+policy hides, so an agent cannot clear a label it cannot see. Clearing widens what
 other members and public callers read; do it only on the owner's ask.
 
 ### Privacy aliases: `access` and `confidentiality`
@@ -124,6 +125,16 @@ These rules follow the origin, so nobody writes them by hand:
   rule (all below).
 
 `gbrain repair visibility` stamps the explicit value on derived pages (tighten-only). The owner reads them all.
+
+When you delete a page that keeps others private, gbrain gives each page whose only privacy came from it its own
+`visibility: private` label, so it stays hidden once the deleted page's row is gone (a page that names readers keeps its
+`readable_by` and gets the label too, so its listed readers don't gain it). The label stays after that: if you restore the deleted page and later make it world, the pages derived from it
+stay private until the owner relabels them.
+
+A file removed with `git rm` outside gbrain is covered only from the next cycle: the next sync soft-deletes its page and
+the cycle's purge labels the derived pages before it removes any row. If a label cannot be written, or a page derived from it is
+itself soft-deleted (a restore would bring it back unlabelled), the purge keeps the deleted page until that is resolved and
+`gbrain doctor` names it as `derived_origin_parked`, with the page that blocks it.
 
 ### `pinned_question`
 
@@ -184,6 +195,17 @@ and are never wider than their page. Remote fact reads return private facts to t
 database, so a repo-less brain works the same. The owner relaxation applies to a credential bound to that member
 when it speaks for itself (no audience, or an audience of the owner alone); never to a shared-room audience or an
 attested call. `gbrain access owner clear` turns it off.
+
+**The owner's writes.** The owner's own credential with write scope, speaking for itself (no audience, not an
+attested call, not a subagent job, no slug fence, checked again when the write is published), may change a private page
+it reads with `put_page`, `edit_page` or `append_page`, or with `put_pages` and staged uploads (`begin_page_upload`
+and `commit_page_upload`), which write the same pages, and relabel it (for example `visibility: world`). A `put_page`
+that leaves out `visibility` or `readable_by` keeps the stored ones, and an empty `visibility` counts as left out. A
+page private only by a privacy alias, a pinned question, a derived type or a private origin is stored as
+`visibility: private` by any of these writes that states no visibility, and a pinned question keeps its
+`pinned_question`. The revision and the journaled request (`ownerWrite`) name the owner's credential. Readers lists and
+folder rules that leave the owner out still refuse it, a soft-deleted private page stays refused, and every other caller
+is refused as before; to keep an owner agent from changing private pages, give it a credential without write scope (`gbrain auth create <name> --member <owner> --scopes read`; without `--scopes` the token gets full access).
 
 **The owner opt-in.** `gbrain access owner reads-restricted on` (config `access.owner_reads_restricted`, off by
 default and unchanged on upgrade) lets the owner's credentials read the pages that `readable_by` lists, folder rules

@@ -120,6 +120,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_labelled_only_members',
   // GST-1158 F3: attest credentials that read a shared-scope source as the person (doctor/checks/attest-read-access.ts).
   'attest_read_shared_scope',
+  // GBRA-504: guest sources, their writers and the owner credentials that read them (doctor/checks/guest-source.ts).
+  'guest_source',
   'extractor_facts_expired',
   'unwithdrawn_facts',
   'loop_facts_drift',
@@ -219,6 +221,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'parked_effects',
   // #6741: managed purges parked after repeated failures (doctor/checks/purge-parks.ts).
   'purge_parked_pages',
+  // GST-2689: origins kept from the purge because a page derived from them could not be labelled private (doctor/checks/purge-parks.ts).
+  'derived_origin_parked',
   // Wave B PR 4: fact purge sweeps of stored derivation results still pending or stalled (doctor/checks/derivation-purge-sweeps.ts).
   'derivation_purge_sweeps',
   'partial_embedding',

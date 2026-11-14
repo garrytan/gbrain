@@ -97,9 +97,9 @@ function anchorFor(page: Page, slug: string) {
 }
 
 async function walkRefs(engine: BrainEngine, opts: TimelineDbOptions) {
-  const all = opts.sourceIdFilter
+  const all = await (await import('../core/guests/derived.ts')).withoutGuestSources(engine, 'extract', opts.sourceIdFilter
     ? (await engine.listAllPageRefs()).filter(r => r.source_id === opts.sourceIdFilter)
-    : await engine.listAllPageRefs();
+    : await engine.listAllPageRefs(), ref => ref.source_id);
   const wanted = opts.slugs ? new Set(opts.slugs) : null;
   return filterRefsSince(wanted ? all.filter(r => wanted.has(r.slug)) : all, opts.since);
 }

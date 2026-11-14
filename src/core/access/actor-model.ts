@@ -30,7 +30,7 @@ export const SCOPE_ATTEST_OPS: ReadonlySet<string> = new Set(['forget', 'forget_
  */
 export const ACTOR_DEFERRED_OPS: ReadonlySet<string> = new Set([
   'list_write_conflicts',
-  'capture', 'extract_facts', 'ontology_propose', 'confirm_memory', 'loops_close',
+  'capture', 'extract_facts', 'ontology_propose', 'confirm_memory', 'promote_guest_note', 'loops_close',
   'takes_add', 'takes_update', 'takes_resolve', 'takes_supersede',
   'add_timeline_entry', 'add_link', 'remove_link', 'add_tag', 'remove_tag',
   'put_page', 'put_pages', 'edit_page', 'append_page', 'delete_page', 'restore_page', 'revert_version',
