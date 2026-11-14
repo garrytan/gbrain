@@ -21,7 +21,8 @@
  * sets it (`gbrain access member kind`, `member add --kind`); a remote caller is refused.
  */
 import type { BrainEngine } from '../engine.ts';
-import type { SqlQuery } from '../sql-query.ts';
+import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
+import { forgetWakePrincipal } from '../wakeshift/forget.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
@@ -325,11 +326,15 @@ export async function previewRemoveMember(engine: BrainEngine, rawId: unknown): 
 
 export async function removeMember(engine: BrainEngine, rawId: unknown): Promise<MemberRemovalPreview> {
   const preview = await previewRemoveMember(engine, rawId);
-  if (preview.member.status === 'removed') return preview;
+  if (preview.member.status === 'removed') {
+    await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+    return preview;
+  }
   await engine.transaction(async tx => {
     await tx.executeRaw('UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), email = NULL, updated_at = now() WHERE id = $1', [preview.member.id]);
     await tx.executeRaw('DELETE FROM access_group_members WHERE member_id = $1', [preview.member.id]);
   });
+  await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
   return { ...preview, member: (await getMember(engine, preview.member.id))! };
 }
 

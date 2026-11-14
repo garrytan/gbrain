@@ -371,6 +371,30 @@ On a managed brain, scripts commit the files they write with
 keeps it current
 ([scripts and the managed checkout](../guides/shared-checkout-git.md#scripts-and-the-managed-checkout)).
 
+## Have gbrain report back to this chat
+
+When the brain owner has turned on [reporting back](../guides/wakeshift.md)
+(`gbrain wakeshift enable` on the brain host), gbrain can wake an OpenClaw
+session when a job, a pending write or a cron run it watches finishes. OpenClaw
+needs Wakeshift's own plugin for that. Where the gateway runs (in its container,
+if it's in one):
+
+```bash
+gbrain setup openclaw --wakeshift
+```
+
+It asks for consent, then runs OpenClaw's installer for the pinned
+`@wakeshift/openclaw@1.4.31` (`openclaw plugins install npm:@wakeshift/openclaw@1.4.31 --force --accept-capabilities`,
+then `openclaw plugins enable wakeshift --accept-capabilities`) and checks that
+the plugin loads. The plugin turns on OpenClaw's hooks endpoint with its own
+token. On a gateway that listens beyond this computer, setup prints
+Wakeshift's question about that endpoint; agreeing is yours to do
+(`openclaw config set plugins.entries.wakeshift.config.allowNetworkHooks true --strict-json`),
+and gbrain never sets it. The session shows a note starting `Wakeshift: connected`
+after its first watch. `gbrain doctor` warns when the installed plugin is not
+the pinned version. Remove it with
+`openclaw wakeshift reset && openclaw plugins uninstall wakeshift --force`.
+
 ## Verify
 
 `openclaw mcp list` should show `gbrain`. Then start an agent turn and ask it
