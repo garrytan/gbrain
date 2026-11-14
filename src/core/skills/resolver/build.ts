@@ -107,6 +107,12 @@ export function chooseVariant(skills: readonly SkillRecord[], previous: Variant 
   return { variant: share >= T_SHARE_ON || (previous === 'T' && share >= T_SHARE_KEEP) ? 'T' : 'D', share: Math.round(share * 1e4) / 1e4 };
 }
 
+/** The routing table a receipt's rebuild argv carries, as a BuildInput fragment (empty when it has none). */
+export function routingFromArgv(argv: readonly string[] | null | undefined): { routing?: string } {
+  const i = argv?.indexOf('--routing') ?? -1;
+  return i >= 0 && argv![i + 1] ? { routing: argv![i + 1] } : {};
+}
+
 /** The argv that rebuilds a catalog from what the receipt recorded (null for a stdin source: the adapter owns it). */
 export function buildArgs(input: BuildInput): { args: string[]; fix: string[] | null } {
   const args = ['gbrain', 'skills', 'index', 'build', '--catalog', input.catalog];

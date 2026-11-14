@@ -27,7 +27,7 @@
 import { existsSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { claudeUserSkillsDir, codexConfigPath } from '../bootstrap/host-specs.ts';
-import { buildSkillIndex, catalogStatus, listCatalogs, removeSkillIndex } from '../skills/resolver/build.ts';
+import { buildSkillIndex, catalogStatus, routingFromArgv, listCatalogs, removeSkillIndex } from '../skills/resolver/build.ts';
 import { configuredSkillDirs } from '../skills/resolver/config.ts';
 import { ResolverError } from '../skills/resolver/errors.ts';
 import { CLAUDE_PLUGINS_CATALOG, logsDir, sessionsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
@@ -72,7 +72,7 @@ async function syncPluginCatalog(home: string, dryRun: boolean): Promise<{ skill
     const n = readDirSources(roots).skills.length;
     return n ? { skills: n, step: { step: 'catalog', action: 'write', detail: `${n} plugin skills from ${base} into ${where}` } } : drop();
   }
-  const n = (await buildSkillIndex({ catalog: CLAUDE_PLUGINS_CATALOG, claudePlugins: base, harness: 'claude-code' }, { home })).catalog.skill_count;
+  const n = (await buildSkillIndex({ catalog: CLAUDE_PLUGINS_CATALOG, claudePlugins: base, harness: 'claude-code', ...routingFromArgv(status?.receipt?.rebuild_argv) }, { home })).catalog.skill_count;
   if (n < 1) { await removeSkillIndex(CLAUDE_PLUGINS_CATALOG, { home }); return { skills: 0, step: built ? { step: 'catalog', action: 'remove', detail: where } : null }; }
   return { skills: n, step: { step: 'catalog', action: 'write', detail: `${n} plugin skills from ${base} into ${where}` } };
 }
@@ -114,7 +114,7 @@ export async function syncSkillResolverSetup(opts: { harness: ResolverHarness; g
     if (skills > 0) out.steps.push({ step: 'catalog', action: fresh ? 'keep' : 'write', detail: `${skills} skills from ${dirs.join(', ')} into ${where}` });
   } else if (dirs.length && !fresh) {
     try {
-      skills = (await buildSkillIndex({ catalog, dirs, harness }, { home })).catalog.skill_count;
+      skills = (await buildSkillIndex({ catalog, dirs, harness, ...routingFromArgv(status?.receipt?.rebuild_argv) }, { home })).catalog.skill_count;
     } catch (e) {
       return { ...out, error: incomplete(dirs, `the catalog build failed (${e instanceof ResolverError ? e.code : (e as Error).message})`, 'Nothing else was written.') };
     }
