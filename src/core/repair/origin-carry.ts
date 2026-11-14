@@ -43,7 +43,8 @@ const failureOf = (error: unknown): Failure => ({ code: typeof (error as { code?
 
 async function dependentsOf(engine: BrainEngine, origins: Origin[]): Promise<Dependent[]> {
   const rows = await engine.executeRaw<{ id: number; cleared_id: number; source_id: string; slug: string; deleted: boolean }>(
-    `SELECT d.id, d.cleared_id, p.source_id, p.slug, p.deleted_at IS NOT NULL AS deleted FROM (${dependentsSql('remove')}) d JOIN pages p ON p.id = d.id ORDER BY d.id`,
+    `SELECT d.id, d.cleared_id, p.source_id, p.slug, p.deleted_at IS NOT NULL AS deleted FROM (${dependentsSql('remove')}) d
+      JOIN LATERAL (SELECT pages.source_id, pages.slug, pages.deleted_at FROM pages WHERE pages.id = d.id OFFSET 0) p ON true ORDER BY d.id`,
     [origins.map(o => o.id), origins.map(o => o.source_id), origins.map(o => o.slug), origins.map(() => '')], bounded);
   return rows.map(row => ({ id: Number(row.id), origin_id: Number(row.cleared_id), source_id: row.source_id, slug: row.slug, deleted: row.deleted === true }));
 }
