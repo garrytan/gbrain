@@ -12,14 +12,14 @@ import type { CallerAccess } from '../core/search/private-visibility.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { opError } from '../core/ops/contract.ts';
 import { writeCliError } from './cli-error.ts';
-import { CLI_COMMAND_CLASSES, OPERATION_SUBCOMMANDS, enforcedClassOf, type EnforcedClass } from './enforced-member-classes.ts';
+import { CLI_COMMAND_CLASSES, OPERATION_CLASSES, OPERATION_SUBCOMMANDS, enforcedClassOf, type EnforcedClass } from './enforced-member-classes.ts';
 
 export const ENFORCED_MEMBER_ENV = 'GBRAIN_ENFORCED_MEMBER';
 export const ENFORCED_REFUSED_TAG = 'GBRAIN_ENFORCED_REFUSED';
 export const ENFORCED_DOCS = 'docs/guides/enforced-member.md#refused';
 
 export type EnforcedReason = 'command_not_allowed' | 'member_not_usable' | 'target_not_readable' | 'label_change' | 'thin_client'
-  | 'as_flag' | 'arguments_not_allowed' | 'remember_needs_entity';
+  | 'as_flag' | 'arguments_not_allowed' | 'remember_needs_entity' | 'writes_off';
 
 const REASON_TEXT: Record<EnforcedReason, string> = {
   command_not_allowed: 'This command is not on the enforced member allow-list.',
@@ -30,6 +30,7 @@ const REASON_TEXT: Record<EnforcedReason, string> = {
   as_flag: '--as is refused under this mode.',
   arguments_not_allowed: 'These arguments are not allowed under this mode.',
   remember_needs_entity: 'remember needs --entity naming the exact slug of a page this member reads.',
+  writes_off: 'This brain refuses every write under this mode: its config access.enforced_member_writes is not checked, or could not be read.',
 };
 
 /** The mode's member value, or undefined when the mode is off (the variable unset). */
@@ -67,10 +68,12 @@ export function emitFilteredNotice(): void {
 /** A refusal whose first line says what to do instead of naming the command (the prefix and tag stay the same). */
 const REASON_HEADLINE: Partial<Record<EnforcedReason, string>> = {
   remember_needs_entity: 'remember saves a fact only with --entity <slug of a page you can read>; nothing was saved',
+  writes_off: 'writes are off for members on this brain; nothing was saved',
 };
 
 const REASON_NEXT: Partial<Record<EnforcedReason, { fix: string; recovery: string }>> = {
   remember_needs_entity: { fix: 'run the Retry command with --entity set to the exact slug of a page you can read.', recovery: 'nothing was saved, so retrying with --entity is safe.' },
+  writes_off: { fix: 'ask the brain owner to save it in a direct session (one without ' + ENFORCED_MEMBER_ENV + ').', recovery: 'nothing was saved; the same call refuses every time, so do not retry here.' },
 };
 
 const OWNER_FIX = 'ask the brain owner to run this in a direct session (one without ' + ENFORCED_MEMBER_ENV + ').';
@@ -203,11 +206,27 @@ function namedSources(op: { params: Record<string, unknown> }, params: Record<st
   return out;
 }
 
+export const ENFORCED_MEMBER_WRITES_KEY = 'access.enforced_member_writes';
+
 /**
- * An operation's argument checks before its context is built: the member resolves, every source it names is one the
- * member reads (the federated __all__ stays: the read scope already drops hidden sources), and get_stats only with --by.
+ * The brain's switch for writes under the mode, read from the database config (never the environment): unset or checked
+ * keeps writes checked; refuse, any other value and a failed read refuse them.
+ */
+export async function enforcedWritesRefused(engine: BrainEngine): Promise<boolean> {
+  try {
+    const value = await engine.getConfig(ENFORCED_MEMBER_WRITES_KEY);
+    return value !== null && value.trim().toLowerCase() !== 'checked';
+  } catch { return true; }
+}
+
+/**
+ * An operation's argument checks before its context is built: a write refuses first when the brain turned member writes
+ * off (before any member, page or source lookup, so every target answers alike; get_write_request only reads a receipt),
+ * then the member resolves, every source it names is one the member reads (the federated __all__ stays: the read scope
+ * already drops hidden sources), and get_stats only with --by.
  */
 export async function checkEnforcedOpArgs(engine: BrainEngine, command: string, op: { name: string; params: Record<string, unknown> }, params: Record<string, unknown>): Promise<void> {
+  if (OPERATION_CLASSES[op.name] === 'write' && op.name !== 'get_write_request' && await enforcedWritesRefused(engine)) await refuseEnforced(command, 'writes_off', { engine });
   await enforcedAccess(engine, command);
   for (const s of namedSources(op, params)) if (s !== '__all__') await checkEnforcedSource(engine, command, s);
   if (op.name === 'get_stats' && params.by === undefined) await refuseEnforced(command, 'arguments_not_allowed', { engine });
