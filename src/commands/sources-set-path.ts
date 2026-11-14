@@ -21,6 +21,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { assertNoOverlappingPath, SourceOpError } from '../core/sources-ops.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { clearConnectorLocalPath } from '../core/persistence/connector-path.ts';
+import { readGuestSource } from '../core/guests/sources.ts';
 
 export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promise<void> {
   if (rawArgs.includes('--clear')) return runClearPath(engine, rawArgs.filter(a => a !== '--clear'));
@@ -62,6 +63,11 @@ export async function runSetPath(engine: BrainEngine, rawArgs: string[]): Promis
   }
 
   const priorPath = existing[0]!.local_path;
+
+  if (await readGuestSource(engine, id)) {
+    console.error(`Error: source "${id}" is a guest source. A guest source is database-only, so it takes no local path or repository.`);
+    process.exit(2);
+  }
 
   if (!existsSync(path) || !statSync(path).isDirectory()) {
     console.error(`Error: path does not exist on disk (or is not a directory): ${path}`);
