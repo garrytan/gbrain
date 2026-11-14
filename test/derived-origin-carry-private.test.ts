@@ -41,6 +41,7 @@ import { readDerivedOriginParks } from '../src/core/persistence/derived-origin-h
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import * as labelWrite from '../src/core/repair/label-write.ts';
+import { dropPreadmitCache } from '../src/core/persistence/preadmit-cache.ts';
 import * as privateVisibility from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -354,6 +355,7 @@ for (const kind of testBackends()) {
         await engine.setConfig('sync.write_through', 'true');
         await engine.executeRaw('UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug=$2', [SRC, blocking]);
         await engine.executeRaw('UPDATE sources SET local_path=NULL WHERE id=$1', [SRC]);
+        dropPreadmitCache(engine);
         rmSync(checkout, { recursive: true, force: true });
       }
       expect((await selectPurgeCandidates(engine, 72)).count).toBe(0);
@@ -719,6 +721,7 @@ for (const kind of testBackends()) {
         await engine.setConfig('sync.write_through', 'true');
         await engine.executeRaw('UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug=$2', [SRC, blocking]);
         await engine.executeRaw('UPDATE sources SET local_path=NULL WHERE id=$1', [SRC]);
+        dropPreadmitCache(engine);
         rmSync(checkout, { recursive: true, force: true });
       }
       // Fixed: the next purge labels the page and unparks the origin but keeps it, since it was parked when that purge
