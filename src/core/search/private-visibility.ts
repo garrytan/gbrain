@@ -81,10 +81,14 @@ export function privatePagesFilterFragment(pageAlias: string, derived = false): 
   return `(${accessAllowedSql(pageAlias, [], [], derived)} AND ${privacyPartSql(pageAlias)})`;
 }
 
-/** The privacy rules alone (visibility, aliases, pinned questions, lineage): what the escape hatches and granted_sources may relax. */
-export function privacyPartSql(pageAlias: string): string {
+/**
+ * The privacy rules alone (visibility, aliases, pinned questions, lineage): what the escape hatches and granted_sources may relax.
+ * `shadowedPages`: the statement shadows `pages` with a CTE (a postimage, repair/private-labels.ts), which a SQL
+ * function body never reads, so the concept-input test runs inline over the shadow.
+ */
+export function privacyPartSql(pageAlias: string, shadowedPages = false): string {
   return `(${privateSnapshotFilterFragment(pageAlias)}
-    AND NOT ${derivedOriginPrivateSql(pageAlias)}
+    AND NOT ${derivedOriginPrivateSql(pageAlias, shadowedPages)}
     AND NOT ${declaredLineagePrivateSql(pageAlias)})`;
 }
 
@@ -697,15 +701,15 @@ export function privateSnapshotFilterFragment(alias: string): string {
  * move whose alias a later rename onto the old slug dropped (#8920). A concept's
  * inputs are judged the same way, moved origins included (GST-2687), by the SQL
  * function gbrain_concept_inputs_private (migration v311), one planned call per
- * page instead of the subplans. Inside a remote request on a brain whose schema
- * predates v311 the same test runs inline, as gbrain_access_origin_restricted is
+ * page instead of the subplans. Over a shadowed `pages` (privacyPartSql), and
+ * inside a remote request on a brain whose schema predates v311, the same test runs inline, as gbrain_access_origin_restricted is
  * skipped inside a request on a brain that never set access.restrictions_present.
  */
-function derivedOriginPrivateSql(p: string): string {
+function derivedOriginPrivateSql(p: string, shadowedPages: boolean): string {
   const privateOrigin = (atom: string, alias: string) => `EXISTS (SELECT 1 FROM pages ${alias} WHERE ${alias}.source_id = ${atom}.source_id
       AND ${alias}.slug = ANY(${atomOriginSlugsSql(atom)}) AND ${alias}.frontmatter->>'visibility' = 'private')`;
   const schema = currentCallerAccess().remotePolicy?.schemaVersion;
-  const conceptInputsPrivate = schema === undefined || schema >= v311.version ? `gbrain_concept_inputs_private(${p}.id)`
+  const conceptInputsPrivate = !shadowedPages && (schema === undefined || schema >= v311.version) ? `gbrain_concept_inputs_private(${p}.id)`
     : `EXISTS (SELECT 1 FROM links derived_input_link
       JOIN pages derived_input ON derived_input.id = derived_input_link.to_page_id
       WHERE derived_input_link.from_page_id = ${p}.id AND derived_input_link.link_source = 'concept-provenance'
