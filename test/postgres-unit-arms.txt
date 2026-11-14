@@ -135,6 +135,7 @@ test/fence-repair-receipts.test.ts
 test/fenced-embed-reuse-6961.test.ts
 test/file-drift-normalisation-gst2568.test.ts
 test/file-drift-soft-delete-hold-release-gbra133.test.ts
+test/folder-holding-coverage-gst2497.test.ts
 test/folder-holding-page-gst2492.test.ts
 test/forecast-journal.test.ts
 test/forget-door-landed-gst2517.test.ts
@@ -180,9 +181,11 @@ test/harness-skills-epoch.test.ts
 test/harness-verify-member-credential.test.ts
 test/held-bare-name-move-gst2492.test.ts
 test/held-fence-readers-gst2492.test.ts
+test/held-move-plan-gst2497.test.ts
 test/held-read-signals.test.ts
 test/hermes-clarify-transcripts-7396.test.ts
 test/hold-action-chain-6712.test.ts
+test/holding-page-saves-gst2497.test.ts
 test/hosted-repo-g7b2.test.ts
 test/ignored-privacy-labels.test.ts
 test/import-file-result-callback-gbra130.test.ts
