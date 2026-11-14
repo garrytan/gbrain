@@ -11,7 +11,7 @@
  * 3. Pure; no engine.
  */
 import { describe, expect, test } from 'bun:test';
-import { planMoveWaves, type ChunkMove } from '../src/core/page-state/chunk-moves.ts';
+import { planImportChunkWrites, planMoveWaves, type ChunkMove } from '../src/core/page-state/chunk-moves.ts';
 
 /** Applies the waves to `at` (index -> id), checking each wave lands only on free indexes. */
 function replay(at: Map<number, number>, waves: ChunkMove[][]): Map<number, number> {
@@ -29,6 +29,35 @@ function replay(at: Map<number, number>, waves: ChunkMove[][]): Map<number, numb
 const move = (id: number, from: number, to: number): ChunkMove => ({ id, from, to });
 
 describe('planMoveWaves', () => {
+  test('unchanged spans cost nothing; legacy NULL spans defer vector rows, not vectorless rows', () => {
+    const fresh = Array.from({ length: 6 }, (_, i) => ({ chunk_index: i, chunk_text: 'example', chunk_source: 'compiled_truth' as const,
+      projected_byte_start: i * 10, projected_byte_end: i * 10 + 7 }));
+    const kept = new Map(fresh.map(chunk => [chunk.chunk_index, { id: chunk.chunk_index + 1, chunk_index: chunk.chunk_index, vector: true,
+      projected_byte_start: chunk.projected_byte_start, projected_byte_end: chunk.projected_byte_end }]));
+    expect(planImportChunkWrites(fresh, kept, true)).toEqual({ waves: [], defer: false });
+    const legacy = new Map([...kept].map(([i, row]) => [i, { ...row, projected_byte_start: null, projected_byte_end: null }]));
+    expect(planImportChunkWrites(fresh, legacy, true).defer).toBe(true);
+    const vectorless = new Map([...legacy].map(([i, row]) => [i, { ...row, vector: false }]));
+    expect(planImportChunkWrites(fresh, vectorless, true)).toMatchObject({ defer: false });
+    expect(planImportChunkWrites(fresh, vectorless, true).waves.flat()).toHaveLength(6);
+  });
+
+  test('stationary span refreshes charge vector writes, never park and resume within budget', () => {
+    const at = new Map([[0, 10], [1, 11], [2, 12]]);
+    const stationary = { ...move(10, 0, 0), projected_byte_start: 12, projected_byte_end: 30 };
+    const plan = planMoveWaves([stationary, move(11, 1, 2), move(12, 2, 3)], at, 0);
+    expect(plan).toMatchObject({ done: false, updates: 0, waves: [] });
+    expect(plan.pending).toEqual([stationary, move(11, 1, 2), move(12, 2, 3)]);
+    expect(replay(at, plan.waves)).toEqual(at);
+    const first = planMoveWaves(plan.pending, plan.at, 1);
+    expect(first).toMatchObject({ done: false, updates: 1, waves: [[stationary]] });
+    const resumed = planMoveWaves(first.pending, first.at, 2);
+    expect(resumed).toMatchObject({ done: true, updates: 2 });
+    expect(replay(first.at, resumed.waves)).toEqual(new Map([[0, 10], [2, 11], [3, 12]]));
+    const vectorless = { ...stationary, vectorless: true };
+    expect(planMoveWaves([vectorless], at, 0)).toMatchObject({ done: true, updates: 0, waves: [[vectorless]] });
+  });
+
   test('a shift down by one (an entry above) lands in waves from the free end', () => {
     const at = new Map([[0, 10], [1, 11], [2, 12]]);
     const moves = [move(10, 0, 1), move(11, 1, 2), move(12, 2, 3)];

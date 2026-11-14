@@ -193,8 +193,9 @@ async function planProjectionKeep(tx: BrainEngine, current: PageSnapshot, contex
   const mode = current.page.contextual_retrieval_mode;
   const provenance = embeddingInputContext(context, current.page.title, context.corpusGeneration, chunks);
   const col = quoteIdentifier(context.column.name);
-  const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; movable: boolean }>(
-    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND model IS NOT DISTINCT FROM $2 AS movable FROM content_chunks WHERE page_id=$1`,
+  const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; movable: boolean; vectorless: boolean }>(
+    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND model IS NOT DISTINCT FROM $2 AS movable,
+      ${col} IS NULL AND embedding IS NULL AND embedding_image IS NULL AND embedding_multimodal IS NULL AS vectorless FROM content_chunks WHERE page_id=$1`,
     [current.page.id, context.provenanceModel])).map(row => [Number(row.id), row]));
   const currentInput = (chunk: Chunk) => {
     const hash = recorded.get(Number(chunk.id))?.embedding_input_hash ?? null;
@@ -212,7 +213,13 @@ async function planProjectionKeep(tx: BrainEngine, current: PageSnapshot, contex
   const held = new Set(inPlace.map(chunk => chunk.chunk_index));
   const open = new Map<string, ChunkInput[]>();
   for (const chunk of chunks) if (!held.has(chunk.chunk_index)) open.set(identity(chunk), [...(open.get(identity(chunk)) ?? []), chunk]);
-  const moves: ChunkMove[] = [];
+  const targets = new Map(chunks.map(chunk => [chunk.chunk_index, chunk]));
+  const moves: ChunkMove[] = inPlace.filter(chunk => (chunk.projected_byte_start ?? null) !== (targets.get(chunk.chunk_index)!.projected_byte_start ?? null)
+    || (chunk.projected_byte_end ?? null) !== (targets.get(chunk.chunk_index)!.projected_byte_end ?? null))
+    .map(chunk => ({ id: Number(chunk.id), from: chunk.chunk_index, to: chunk.chunk_index,
+    projected_byte_start: targets.get(chunk.chunk_index)!.projected_byte_start ?? null,
+    projected_byte_end: targets.get(chunk.chunk_index)!.projected_byte_end ?? null,
+    ...(recorded.get(Number(chunk.id))?.vectorless ? { vectorless: true } : {}) }));
   const moved = stored.filter(chunk => {
     if (held.has(chunk.chunk_index) && atIndex.get(chunk.chunk_index) === identity(chunk)) return false;
     if (!recorded.get(Number(chunk.id))?.movable || !currentInput(chunk)) return false;
