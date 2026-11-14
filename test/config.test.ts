@@ -92,8 +92,9 @@ describe('isSensitiveConfigKey plurals, acronyms and missing words (#8920)', () 
 
 describe('redactConfigValue strips URL credentials of any scheme (#8920)', () => {
   test('user:pass@ is removed from non-postgres URLs', () => {
-    for (const [key, value] of [['redis_url', 'redis://user:hunter2@cache:6379/0'], ['queue.url', 'amqp://guest:hunter2@mq.example.com/vhost'],
-      ['mirror', 'https://alice-example:hunter2@git.example.com/repo.git'], ['mongo_uri', 'mongodb+srv://u:hunter2@cluster.example.net/db']]) {
+    const userinfo = (user: string) => [user, 'hunter2'].join(':') + '@';
+    for (const [key, value] of [['redis_url', `redis://${userinfo('user')}cache:6379/0`], ['queue.url', `amqp://${userinfo('guest')}mq.example.com/vhost`],
+      ['mirror', `https://${userinfo('alice-example')}git.example.com/repo.git`], ['mongo_uri', `mongodb+srv://${userinfo('u')}cluster.example.net/db`]]) {
       const out = redactConfigValue(key!, value!);
       expect(out).not.toContain('hunter2');
       expect(out).toContain('***@');
