@@ -65,7 +65,7 @@ import type { PhaseResult } from '../cycle.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { ProgressReporter } from '../progress.ts';
 import { chat as gatewayChat, withBudgetTracker } from '../ai/gateway.ts';
-import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, type GlobalLlmErrorClass } from '../ai/errors.ts';
+import { createGlobalLlmHaltTracker, haltedClassOf, providerContentBlockReason, readProviderFailureSignals, type GlobalLlmErrorClass } from '../ai/errors.ts';
 import { derivedWriteThrough, reportDerivedWriteThrough } from './derived-write-through.ts';
 import { emptySessionSourceRouting, keepSessionSourceTranscripts, withSessionSourceRouting } from './synthesize-source-routing.ts';
 import { serializeMarkdown } from '../markdown.ts';
@@ -120,6 +120,13 @@ export { MAX_DETERMINISTIC_FAILURES };
  */
 const TRANSIENT_EXTRACT_ERROR_RE =
   /timeout|timed out|\b429\b|rate.?limit|\b5\d\d\b|ECONN|ETIMEDOUT|EPIPE|ENOTFOUND|fetch failed|\bnetwork\b|socket|overloaded/i;
+
+function isTransientExtractError(err: unknown, message: string): boolean {
+  const { status } = readProviderFailureSignals(err);
+  return status === 408 || status === 409
+    || (status !== undefined && status >= 500 && status < 600)
+    || TRANSIENT_EXTRACT_ERROR_RE.test(message);
+}
 
 // v0.41.2.1 (D2): brain-page discovery constants.
 //
@@ -965,6 +972,8 @@ export async function runPhaseExtractAtoms(
   if (refused) return refused;
   const budgetTracker = opts.attempt?.budgetTracker ?? new BudgetTracker({
     maxCostUsd: costGate.enforceCap ? budgetCap : undefined,
+    // A capped attempt cannot reserve for retries hidden inside the SDK.
+    providerRetries: costGate.enforceCap ? 0 : undefined,
     label: 'cycle.extract_atoms',
     pricingOverrides,
   });
@@ -1380,8 +1389,7 @@ export async function runPhaseExtractAtoms(
         });
         break;
       }
-      const transient =
-        llmHalt.lastClass() === 'rate_limit' || TRANSIENT_EXTRACT_ERROR_RE.test(message);
+      const transient = llmHalt.lastClass() === 'rate_limit' || isTransientExtractError(err, message);
       if (!transient) {
         await recordItemFailureCount(item);
         hardFailureCount++;

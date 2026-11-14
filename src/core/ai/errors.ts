@@ -255,10 +255,10 @@ export const RATE_LIMIT_HALT_STREAK = 3;
 /**
  * Request-shaped 4xx statuses that stay PER-ITEM even when wrapped in
  * AIConfigError by normalizeAIError: context length (400), request timeout
- * (408), payload too large (413), validation (422) can genuinely differ from
- * one page/take to the next, so they never justify a whole-run halt.
+ * (408), request conflict (409), payload too large (413) and validation
+ * (422) can differ between calls and do not by themselves justify a halt.
  */
-const PER_ITEM_HTTP_STATUSES = new Set([400, 408, 413, 422]);
+const PER_ITEM_HTTP_STATUSES = new Set([400, 408, 409, 413, 422]);
 
 // Billing phrases are deliberately TIGHTER than sync-failure-ledger's
 // EMBEDDING_QUOTA regex (which matches bare /billing/): a global-error hit
