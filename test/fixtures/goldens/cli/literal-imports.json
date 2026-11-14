@@ -99,6 +99,9 @@
       "graph-query": [
         "./commands/graph-query.ts"
       ],
+      "guests": [
+        "./commands/guests.ts"
+      ],
       "import": [
         "./commands/import.ts",
         "./core/agent-output.ts",

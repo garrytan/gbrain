@@ -12,6 +12,7 @@
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
 import { withEngineScope } from './engine-scope.ts';
+import { withGuestMarks } from './guests/marker.ts';
 import { OPERATION_LOADERS } from './operation-loaders.generated.ts';
 
 // ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ const OP_AREAS: Record<string, string> = {
   context_pack: 'memory-verbs', delta: 'memory-verbs',
   // pages (CRUD, versions, raw payloads, resolution)
   get_page: 'pages', put_page: 'pages', delete_page: 'pages', list_pages: 'pages', find_pages: 'pages',
-  restore_page: 'pages', purge_deleted_pages: 'pages',
+  restore_page: 'pages', purge_deleted_pages: 'pages', promote_guest_note: 'pages',
   get_versions: 'pages', revert_version: 'pages',
   resolve_slugs: 'pages', whois: 'pages', get_chunks: 'pages',
   put_raw_data: 'pages', get_raw_data: 'pages',
@@ -79,6 +80,7 @@ const OP_AREAS: Record<string, string> = {
   log_ingest: 'ingest', get_ingest_log: 'ingest',
   get_usage: 'admin',
   // files (localOnly)
+  storage_find: 'storage', storage_get: 'storage', storage_list: 'storage',
   file_list: 'files', file_upload: 'files', file_url: 'files', file_register: 'files', file_verify: 'files',
   // jobs (Minions + agent lane)
   submit_job: 'jobs', get_job: 'jobs', wait_job: 'jobs', list_jobs: 'jobs', cancel_job: 'jobs',
@@ -127,7 +129,8 @@ export function finalizeOperation(op: Operation): void {
     op.area = OP_AREAS[op.name];
   }
   // The handler runs in its engine's scope, so an embedded engine's AI calls use that engine's gateway (engine-scope.ts).
-  const handler = withOutputRedaction(op);
+  // Redaction runs after the guest stamp, so a key-like sender label in a guest mark is redacted like stored text.
+  const handler = withOutputRedaction({ handler: withGuestMarks(op, op.handler), outputRedaction: op.outputRedaction });
   op.handler = (ctx, params) => withEngineScope(ctx.engine, () => handler(ctx, params));
 }
 

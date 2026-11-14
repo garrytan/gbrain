@@ -74,6 +74,39 @@ describe('isSensitiveConfigKey (v0.36.x #892 regression)', () => {
   });
 });
 
+describe('isSensitiveConfigKey plurals, acronyms and missing words (#8920)', () => {
+  test('masks plural, acronym and credential-word keys', () => {
+    for (const key of ['github_tokens', 'oauth.tokens', 'client_secrets', 'apiKeys', 'storage.apiKeys', 'passwords', 'db.credentials',
+      'credential', 'smtp.authorization', 'Authorization', 'gpg_passphrase', 'APIKey', 'openaiAPIKey', 'apikey', 'vendor.apikeys']) {
+      expect([key, isSensitiveConfigKey(key)]).toEqual([key, true]);
+    }
+  });
+
+  test('a token or credential count is not a secret', () => {
+    for (const key of ['search.max_tokens', 'max_tokens', 'agent.max_output_tokens', 'dream.synthesize.max_prompt_tokens', 'budget_tokens',
+      'proposals.max_pending_per_credential', 'tokenizer', 'tokenizers', 'keyword_weights', 'passphrased_ok']) {
+      expect([key, isSensitiveConfigKey(key)]).toEqual([key, false]);
+    }
+  });
+});
+
+describe('redactConfigValue strips URL credentials of any scheme (#8920)', () => {
+  test('user:pass@ is removed from non-postgres URLs', () => {
+    const userinfo = (user: string) => [user, 'hunter2'].join(':') + '@';
+    for (const [key, value] of [['redis_url', `redis://${userinfo('user')}cache:6379/0`], ['queue.url', `amqp://${userinfo('guest')}mq.example.com/vhost`],
+      ['mirror', `https://${userinfo('alice-example')}git.example.com/repo.git`], ['mongo_uri', `mongodb+srv://${userinfo('u')}cluster.example.net/db`]]) {
+      const out = redactConfigValue(key!, value!);
+      expect(out).not.toContain('hunter2');
+      expect(out).toContain('***@');
+    }
+  });
+
+  test('a URL without userinfo passes through unchanged', () => {
+    expect(redactConfigValue('some_url', 'https://example.com/a@b')).toBe('https://example.com/a@b');
+    expect(redactConfigValue('mirror', 'https://git.example.com/repo.git')).toBe('https://git.example.com/repo.git');
+  });
+});
+
 describe('redactConfigValue (v0.36.x #892 — set output regression)', () => {
   test('redacts sensitive keys to ***', () => {
     expect(redactConfigValue('openai_api_key', 'sk-test-123')).toBe('***');

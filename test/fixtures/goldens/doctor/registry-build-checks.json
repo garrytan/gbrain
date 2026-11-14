@@ -407,6 +407,10 @@
       },
       {
         "category": "brain",
+        "name": "open_shared_pages"
+      },
+      {
+        "category": "brain",
         "name": "unscoped_shared_reads"
       },
       {
@@ -440,6 +444,10 @@
       {
         "category": "brain",
         "name": "attest_read_shared_scope"
+      },
+      {
+        "category": "brain",
+        "name": "guest_source"
       },
       {
         "category": "ops",
@@ -1139,6 +1147,10 @@
       },
       {
         "category": "brain",
+        "name": "derived_origin_parked"
+      },
+      {
+        "category": "brain",
         "name": "derivation_purge_sweeps"
       },
       {
@@ -1204,6 +1216,10 @@
       {
         "category": "ops",
         "name": "mcp_request_log_retention"
+      },
+      {
+        "category": "brain",
+        "name": "storage_manifest"
       },
       {
         "category": "brain",

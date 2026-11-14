@@ -132,6 +132,14 @@ Reasons: `ill_formed`, `unknown`, `disabled`, `removed`, `exists`, `unknown_grou
 
 More: [docs/guides/write-refusals.md#access_member_invalid](../../docs/guides/write-refusals.md#access_member_invalid)
 
+### access_policy_history_unreadable
+
+<a id="access_policy_history_unreadable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A folder-rule edit on a git-backed source with no folder-rule revision yet was refused before anything was written: the first sync after it rebuilds the rules from the committed history of .gbrain/access.yml, and this checkout cannot give that history (a shallow clone, or a partial clone that lacks its Git objects), so that sync would read the whole source as nobody. | A rebuild replays every committed version of the policy file so a narrowing removed by a plain commit stays applied; without the full history it can only fail closed, so the edit refuses up front and the source keeps its current reads. | In the checkout, fetch the full history (git fetch --unshallow) or the missing objects of a partial clone, then run the same gbrain access rule command again. Run: gbrain access rule status --source '{source_id}' --json | user | `gbrain doctor --json` | 1 | no |
+
 ### access_policy_invalid
 
 <a id="access_policy_invalid"></a>
@@ -1368,7 +1376,7 @@ More: [docs/ENGINES.md#serve-deep-health](../../docs/ENGINES.md#serve-deep-healt
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| Chunks of pages soft-deleted longer than the purge window (72h), which the purge would remove, are still stored. | Search never reads them; the purge lifecycle (`gbrain pages purge-deleted`, the autopilot purge phase) hard-deletes such pages and their chunks. Pages its holds keep (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair, an archived source) are not counted. The purge is brain-wide and irreversible, so it needs the user. | Preview with `gbrain pages purge-deleted --dry-run --json`, then run `gbrain pages purge-deleted --yes` once the user agrees. Run: gbrain pages purge-deleted --dry-run --json | agent | `gbrain doctor --only embedding_state --json` | 1 | no |
+| Chunks of pages soft-deleted longer than the purge window (72h), which the purge would remove, are still stored. | Search never reads them; the purge lifecycle (`gbrain pages purge-deleted`, the autopilot purge phase) hard-deletes such pages and their chunks. Pages its holds keep (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair, a parked derived-page origin, an archived source) are not counted. The purge is brain-wide and irreversible, so it needs the user. | Preview with `gbrain pages purge-deleted --dry-run --json`, then run `gbrain pages purge-deleted --yes` once the user agrees. Run: gbrain pages purge-deleted --dry-run --json | agent | `gbrain doctor --only embedding_state --json` | 1 | no |
 
 More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/troubleshooting.md#embedding-state)
 
@@ -1658,9 +1666,9 @@ More: [docs/guides/troubleshooting.md#embedding-state](../../docs/guides/trouble
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| The CLI runs under GBRAIN_ENFORCED_MEMBER and refused the command before it read or changed anything: the command or its arguments are not on the enforced member allow-list, the variable names no usable member, a target page or source is outside what the member reads, or the write would change an access or privacy label. | A launcher pins GBRAIN_ENFORCED_MEMBER so a shared agent turn acts as one member: reads show only what that member reads, writes never touch a page it cannot read or change a label, and anything not classified is refused rather than run as the trusted owner. Stderr starts with gbrain: refused under GBRAIN_ENFORCED_MEMBER=<member>: <command> [GBRAIN_ENFORCED_REFUSED]. | Do not retry here; nothing was changed. Ask the brain owner to run the command in a direct session, one without GBRAIN_ENFORCED_MEMBER. | user | `repeat the read that failed` | 3 | no |
+| The CLI runs under GBRAIN_ENFORCED_MEMBER and refused the command before it read or changed anything: the command or its arguments are not on the enforced member allow-list, the variable names no usable member, a target page or source is outside what the member reads, the write would change an access or privacy label, or the brain turned member writes off (access.enforced_member_writes). | A launcher pins GBRAIN_ENFORCED_MEMBER so a shared agent turn acts as one member: reads show only what that member reads, writes never touch a page it cannot read or change a label, and anything not classified is refused rather than run as the trusted owner. Stderr starts with gbrain: refused under GBRAIN_ENFORCED_MEMBER=<member>: <command> [GBRAIN_ENFORCED_REFUSED]. | Do not retry here; nothing was changed. Ask the brain owner to run the command in a direct session, one without GBRAIN_ENFORCED_MEMBER. | user | `repeat the read that failed` | 3 | no |
 
-Reasons: `command_not_allowed`, `member_not_usable`, `target_not_readable`, `label_change`, `thin_client`, `as_flag`, `arguments_not_allowed`, `remember_needs_entity`.
+Reasons: `command_not_allowed`, `member_not_usable`, `target_not_readable`, `label_change`, `thin_client`, `as_flag`, `arguments_not_allowed`, `remember_needs_entity`, `writes_off`.
 
 More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member.md#refused)
 
@@ -2541,6 +2549,86 @@ More: [docs/guides/write-refusals.md#drain-grant-scope](../../docs/guides/write-
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | Source relationship reconciliation is incomplete. | The server failed; this is not a caller mistake. | Server-side failure, not a caller mistake. Run `gbrain doctor --json` on the brain host; if it repeats, report it to the user. | host_admin | `gbrain doctor --json` | 1 | no |
+
+### guest_attribution_missing
+
+<a id="guest_attribution_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a guest source carried no valid guest attribution (the X-Gbrain-Guest header or request-level _meta.guest with sender_label and group); nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Send sender_label and group in _meta.guest or the X-Gbrain-Guest header, then save with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_attribution_missing](../../docs/guides/write-refusals.md#guest_attribution_missing)
+
+### guest_frontmatter_refused
+
+<a id="guest_frontmatter_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest page's frontmatter held a key outside the allowlist, or a guest_sender or guest_group that differs from its attribution; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Send only type, title, readable_by, guest_group, guest_sender and saved_at, matching the attribution. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_frontmatter_refused](../../docs/guides/write-refusals.md#guest_frontmatter_refused)
+
+### guest_mark_immutable
+
+<a id="guest_mark_immutable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest mark is never changed; it leaves only with its page. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_mark_immutable](../../docs/guides/write-refusals.md#guest_mark_immutable)
+
+### guest_page_immutable
+
+<a id="guest_page_immutable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest page is saved once, as a new page, and never changed, and a guest source holds no facts, takes or timeline entries; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Save the note again under a new slug, or ask the brain owner to promote it and edit the owner page. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_page_immutable](../../docs/guides/write-refusals.md#guest_page_immutable)
+
+### guest_page_promoted
+
+<a id="guest_page_promoted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The brain owner kept this guest note as an owner page, so it is not deleted remotely; nothing was deleted. | A guest note the owner promoted is kept on the owner's word, so a broker's retention sweep cannot remove it. | Do not retry. Treat the note as kept; only the brain owner removes it, on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_page_promoted](../../docs/guides/write-refusals.md#guest_page_promoted)
+
+### guest_promotion_owner_only
+
+<a id="guest_promotion_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only the brain owner can keep a guest note as an owner page (promote_guest_note); nothing was read or written. | A guest's words become the owner's only on the owner's word: the trusted local CLI, or a credential bound to the owner that speaks for no one else. | Do not retry. Ask the brain owner; if they want to keep the note, they run gbrain guests promote <slug> on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_promotion_owner_only](../../docs/guides/write-refusals.md#guest_promotion_owner_only)
+
+### guest_readers_invalid
+
+<a id="guest_readers_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest page's readable_by is not exactly the brain owner plus the one member or group the call speaks for; nothing was written. | The request itself was wrong or no longer matches the brain; nothing was changed. | Speak for one member or group and set readable_by to the owner and that principal. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_readers_invalid](../../docs/guides/write-refusals.md#guest_readers_invalid)
+
+### guest_source_database_only
+
+<a id="guest_source_database_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A guest source is database-only: it takes no local path or repository, and a source with one cannot become a guest source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#guest_source_database_only](../../docs/guides/write-refusals.md#guest_source_database_only)
 
 ### harness_hook_duplicates
 
@@ -5328,6 +5416,16 @@ Reasons: `missing`, `not_directory`, `permission_denied`, `symlink_loop`, `unrea
 |---|---|---|---|---|---|---|
 | Canonical preparation requires a source-content correction; this profile never writes repository files. | Only the operator of the brain host can change what blocks this. | Only the brain host's operator can resolve this. Tell the user the message and run `gbrain doctor --json` on the brain host. | host_admin | `gbrain doctor --json` | 1 | no |
 
+### source_writer_restricted
+
+<a id="source_writer_restricted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a guest source came from a credential that is not on its writer list (the local CLI, an enforced member, or a removed writer included); nothing was written. | A guest source holds notes saved for people outside the brain; only the writers the brain owner listed create pages there, so nothing else can make a guest's words look like the owner's or change them. | Do not retry. Write to another source; who may write a guest source is the brain owner's decision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#source_writer_restricted](../../docs/guides/write-refusals.md#source_writer_restricted)
+
 ### sources_not_readable
 
 <a id="sources_not_readable"></a>
@@ -5416,6 +5514,36 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 
 More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-connect.md#troubleshooting)
 
+### storage_adopt_field_refused
+
+<a id="storage_adopt_field_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Interim storage records carry fields a card refuses (a command, an unknown field, or a field stamped by gbrain), and the adopt apply did not name each one with --drop-field; nothing was written. | Adopting leaves those fields out of the card, so the user decides; the original pages keep them until finalize soft-deletes the originals. | Show the user the refused fields the adopt preview lists; with their agreement, run the apply the refusal names, which drops each with --drop-field. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_adopt_unverified
+
+<a id="storage_adopt_unverified"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An adopted interim original has no card on the storage shelf that matches its record, so finalize deleted nothing. | Finalize soft-deletes an original only when its card holds everything the record mapped to, so no archive record is lost. | Compare the original with its card (gbrain storage-get), fix the card or the record, then preview gbrain storage adopt --finalize again. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_card_exists
+
+<a id="storage_card_exists"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card with this id is already on the storage shelf; nothing was written. | Registering never overwrites a card, so two archives cannot silently share one id; a change to an existing card names the revision it read. | Change the card with gbrain storage-update <id> --expected-revision <revision from storage_get>, or register the new item under another id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
 ### storage_error
 
 <a id="storage_error"></a>
@@ -5427,6 +5555,60 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 Reasons: `database_contention`.
 
 Override: reason `database_contention`: retryable, exit 1, retryable.
+
+### storage_manifest_missing
+
+<a id="storage_manifest_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| This brain has no storage shelf to write to (or the storage source ID belongs to another source); nothing was written. | On a brain with a Git checkout the shelf is a hosted git-canonical repository, created only after the user previews it, and hosting needs managed persistence. A repo-less brain gets its database-only shelf on the first register. | Preview gbrain storage init --dir <absolute path> --dry-run and apply the command it prints after the user agrees. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_record_invalid
+
+<a id="storage_record_invalid"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card failed validation (a missing or malformed field, a command field, or a field gbrain stamps itself); nothing was written. | Every card must say where the item is, how big it is and how to restore it, and carries no commands, so a card is complete and safe to act on when it is found months later. | Fix the field the message names and send the card again; gbrain storage-register --help lists the card fields. For an adopt blocked on access_pending or access_unpreservable, settle the access rules over the interim page (gbrain access status) or give it readers its folder rules also list, then preview again. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `schema`, `command_field`, `stamped_field`, `not_json`, `not_object`, `too_large`, `id_change`, `no_record`, `duplicate_id`, `access_unpreservable`, `access_pending`, `labels`, `remote_written`.
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_record_secret
+
+<a id="storage_record_secret"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card field looks like a secret or has a credential shape; nothing was written and the value is not echoed. | Cards are read by agents and copied into the stores; credentials stay in the environment of the skill that restores an item. | Remove the secret, environment assignment, credential variable, URL password, signed-URL parameter or credential-named field from the card; a credential-named field that holds no credential can be renamed to end in _id, _ref or another suffix the rule passes. | agent | `repeat the read that failed` | 1 | no |
+
+Reasons: `secret_scanner`, `env_assignment`, `credential_variable`, `url_userinfo`, `presigned_url`, `credential_key`.
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_revision_conflict
+
+<a id="storage_revision_conflict"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A storage card changed since the revision the update named was read; nothing was written. | Updates bind to the revision they read, so two writers never silently overwrite each other; the refusal carries the current revision in detail. | Read the card again with storage_get, apply the change to what it says now, and update once with its revision. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
+
+### storage_source_managed
+
+<a id="storage_source_managed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page write targeted the storage shelf outside the storage verbs; nothing was written. | The storage source holds only validated cards, so put_page, remember and the other page writers are refused there. | Register cards with gbrain storage-register and change them with gbrain storage-update. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#storage-manifest-refusals](../../docs/guides/write-refusals.md#storage-manifest-refusals)
 
 ### store_unavailable
 

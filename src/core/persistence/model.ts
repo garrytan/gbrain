@@ -38,6 +38,12 @@ export interface WriteAuthority {
    * holding page, which is gbrain's own companion to it.
    */
   heldFor?: string;
+  /**
+   * GST-2091: the brain owner (`member:<id>`) whose own credential, with write scope and speaking for itself, made this
+   * page write (put_page, edit_page or append_page; put_pages and page uploads store those). Preparation and publication
+   * lift the privacy part of the writer's read policy only while storedOwnerWrite still holds; member access always applies.
+   */
+  ownerWrite?: string;
   databaseOnlyReason?: 'subagent_sandbox' | 'disabled_by_config' | 'no_repo_configured' | 'relative_root' | 'connector_database' | 'unbound_source' | 'overwrite_restore' | 'detached' | 'entity_page_missing';
   autoLinkTrusted?: boolean;
   restrictedNamespace?: boolean;

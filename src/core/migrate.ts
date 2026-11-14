@@ -5,7 +5,7 @@ import { resolveSchemaLockTimeoutMs, schemaLockBlockedError } from './postgres-e
 import { SCHEMA_MIGRATION_LOCK_APPLICATION_NAME } from './postgres-engine/init-schema-lock.ts';
 import { assertSchemaMigrationLockHeld, withSchemaMigrationLock } from './schema-migration-lock.ts';
 import { MIGRATIONS } from './schema-migrations/registry.generated.ts';
-import { hasPendingMigrations } from './migrate-pending.ts';
+import { hasPendingMigrations, noteSchemaVersion } from './migrate-pending.ts';
 import { assertOwnedTableShapes } from './owned-table-shapes.ts';
 import { runMigrationStatement, setQuietMigrationNotices } from './schema-migrations/helpers.ts';
 import { MIGRATION_PRELUDES, runMigrationPrelude } from './migration-preludes.ts';
@@ -380,6 +380,7 @@ export async function runMigrations(engine: BrainEngine): Promise<{ applied: num
 async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: number; current: number }> {
   const currentStr = await engine.getConfig('version');
   const current = parseInt(currentStr || '1', 10);
+  noteSchemaVersion(engine, current);
 
   // Sort by version ascending so array insertion order doesn't affect
   // correctness. Migrations MUST run in version order; if v16 accidentally
@@ -510,6 +511,7 @@ async function runMigrationsLocked(engine: BrainEngine): Promise<{ applied: numb
         // Update version after both SQL and handler succeed. Inside the same
         // catch so a stamp-write failure is also NAMED in quiet mode.
         await engine.setConfig('version', String(m.version));
+        noteSchemaVersion(engine, m.version);
       } catch (err) {
         // Quiet fresh-install replay: name the failing migration — without the
         // per-step lines, the error would otherwise be anonymous.

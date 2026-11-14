@@ -1,5 +1,5 @@
 import { OperationError, opError } from '../ops/contract.ts';
-import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, labelledOnlyForSql, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, labelledOnlyForSql, OWNER_MEMBER_KEY, privacyPartSql, privatePagesFilterForCaller, readHonorAliases, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
 import { anyLabelledOnlyMember, labelledOnlyFor } from '../access/labelled-only.ts';
 import { hostFix } from '../ops/op-fix.ts';
 import { parseMarkdown } from '../markdown.ts';
@@ -11,6 +11,8 @@ import { catalogueError } from '../error-catalogue.ts';
 import { authorizedSlug, type SqlEngine, type WriteAuthority } from './model.ts';
 import type { BrainEngine } from '../engine.ts';
 import { noGrantFloorReads } from '../source-resolver.ts';
+import { hasScope } from '../scope.ts';
+import { viewedEngine } from './switches.ts';
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -54,21 +56,28 @@ export async function authorizePageVisibility(engine: SqlEngine, authority: Writ
   }
   const anyLabelled = excludePrivate ? probe?.any_labelled ?? true : await anyLabelledOnlyMember(engine);
   const labelled = anyLabelled && await writerLabelledOnly(engine, authority, await writerIdentities(engine, authority));
+  // GST-2091: the owner's own page write (storedOwnerWrite) to a live page is held to member access without the privacy
+  // part. It is judged only for a page the privacy part hides, so every other write costs no extra lookup; a soft-deleted
+  // private page stays refused as before, so a write there never republishes it or opens its version history.
+  let owner: boolean | undefined;
+  const ownerOnLivePage = async () => await storedOwnerWrite(engine, authority)
+    && (await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1', [authority.sourceId, slug])).length > 0;
   if (!labelled && excludePrivate) {
     // Privacy is hidden whatever the policy says, and an empty identity is the strictest reading (an identity only
     // opens a page that names readers or sits under a folder rule), so a page visible with none needs no policy read
     // or member lookup.
     probe ??= (await engine.executeRaw<{ identity_may_open: boolean | null }>(`SELECT (${hiddenSql}) AS identity_may_open`, [authority.sourceId, slug]))[0];
     if (probe?.identity_may_open == null) return;
-    if (!probe.identity_may_open) throw pageNotVisibleError();
+    if (!probe.identity_may_open && !(owner = await ownerOnLivePage())) throw pageNotVisibleError();
   }
   const policy = await readRemotePolicyNow(engine);
-  const hidePrivate = (authority.excludePrivate ?? true) || !policy.privacyRelaxed;
+  const hidePrivate = excludePrivate || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted && !labelled) return;
-  const fragment = await writerReadPolicySql(engine, authority, 'pages', hidePrivate, policy.restricted);
-  const rows = await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
-    AND NOT (${fragment}) LIMIT 1`, [authority.sourceId, slug]);
-  if (rows.length) throw pageNotVisibleError();
+  const hiddenUnder = async (hide: boolean) => (await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
+    AND NOT (${await writerReadPolicySql(engine, authority, 'pages', hide, policy.restricted)}) LIMIT 1`, [authority.sourceId, slug])).length > 0;
+  if (!await hiddenUnder(hidePrivate && owner !== true)) return;
+  if (hidePrivate && owner === undefined && await ownerOnLivePage() && !await hiddenUnder(false)) return;
+  throw pageNotVisibleError();
 }
 
 /**
@@ -285,25 +294,80 @@ export async function defaultSourceWriterIsOwner(engine: SqlEngine, writer: stri
 /**
  * GST-2346 D1: whether a stored remote write came from the brain owner's own credential speaking for itself, judged
  * live from the stored authority (the request-time twin is ownerSpeaksForItself): no attested actor, no audience, no
- * subagent and no slug fence, and the principal's member is the enabled owner now. A credential unbound, a member
- * disabled or an owner changed after submission is not the owner here.
+ * subagent and no slug fence, stored or live (an OAuth client's bound_slug_prefixes, a local writer's grant ceiling), and the
+ * principal's member is the enabled owner now. A credential unbound or fenced, a member disabled or an owner changed after
+ * submission is not the owner here.
  */
-export async function storedOwnerSpeaksForItself(engine: SqlEngine, authority: WriteAuthority): Promise<boolean> {
+export async function storedOwnerSpeaksForItself(engine: SqlEngine, authority: WriteAuthority, member?: string): Promise<boolean> {
   if (!authority.remote || authority.actingFor || authority.restrictedNamespace || authority.slugPrefixes != null) return false;
-  return defaultSourceWriterIsOwner(engine, (await memberIdentityFor(engine, authority)).find(p => p.startsWith('member:')) ?? null);
+  const { principal } = authority;
+  const fence = principal.kind === 'oauth_client' ? 'SELECT bound_slug_prefixes AS prefixes FROM oauth_clients WHERE client_id=$1'
+    : principal.kind === 'local_cli' || principal.kind === 'local_stdio' ? "SELECT grant_ceiling->'slugPrefixes' AS prefixes FROM persistence_local_writers WHERE id=$1::uuid" : null;
+  if (fence && (await engine.executeRaw<{ prefixes: unknown }>(fence, [principal.id]))[0]?.prefixes != null) return false;
+  const bound = (await memberIdentityFor(engine, authority)).find(p => p.startsWith('member:')) ?? null;
+  return (member === undefined || bound === member) && defaultSourceWriterIsOwner(engine, bound);
 }
+
+/**
+ * GST-2091: whether a stored page write is the brain owner's own (WriteAuthority.ownerWrite), judged live: it still holds
+ * write scope and storedOwnerSpeaksForItself still names the same owner member. Such a write reaches a private page the
+ * owner reads; readable_by and folder rules still apply to it, like to every other writer.
+ */
+export async function storedOwnerWrite(engine: SqlEngine, authority: WriteAuthority): Promise<boolean> {
+  return !!authority.ownerWrite && hasScope(authority.scopes, 'write') && await storedOwnerSpeaksForItself(engine, authority, authority.ownerWrite);
+}
+
+/**
+ * GST-2091: for a page write that is the owner's own (storedOwnerWrite), whether the live stored page is private by the
+ * privacy rules remote reads apply (privacyPartSql: visibility, privacy aliases, pinned questions, derived types and
+ * lineage, with visibility.honor_aliases read first as remote reads do); null when the write is not the owner's.
+ * `wholePage` is a put_page, which replaces the whole frontmatter. ownerWriteKeepsLabels keeps such a page private.
+ */
+export async function ownerRewriteOf(engine: BrainEngine, authority: WriteAuthority, sourceId: string, slug: string, wholePage: boolean): Promise<OwnerRewrite | null> {
+  if (!await storedOwnerWrite(engine, authority)) return null;
+  await readHonorAliases(viewedEngine(engine));
+  const [row] = await engine.executeRaw<{ hidden: boolean }>(`SELECT NOT (${privacyPartSql('p')}) AS hidden FROM pages p
+    WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [sourceId, slug]);
+  return { privacyPrivate: row?.hidden === true, wholePage };
+}
+export interface OwnerRewrite { privacyPrivate: boolean; wholePage: boolean }
 
 /**
  * GST-2051: the readers a page written by a default-source member writer (defaultSourceMemberWriter) keeps when its content
  * names none: the stored page's readers when it has them, else the writer alone for a page this write creates, unless
  * the writer is the brain owner (GST-2059), whose new pages stay shared. An existing page with no readers stays as it
- * is. Only ever narrows: a page naming readers is left to the caller.
+ * is. Only ever narrows: a page naming readers is left to the caller. `ownerRewrite` (GST-2091, ownerRewriteOf): first keep the
+ * stored labels the owner's own whole-page rewrite leaves out (ownerWriteKeepsLabels).
  */
-export function defaultSourceWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, owner = false): void {
+export function defaultSourceWriterReaders(writer: string | null, frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, owner = false,
+  ownerRewrite: OwnerRewrite | null = null): void {
+  if (ownerRewrite) ownerWriteKeepsLabels(frontmatter, stored, ownerRewrite);
   if (!writer || hasReaders(frontmatter)) return;
   const live = stored && stored.deleted_at == null ? stored : null;
   if (live && hasReaders(live.frontmatter)) frontmatter.readable_by = (live.frontmatter as Record<string, unknown>).readable_by;
   else if (!live && !owner) frontmatter.readable_by = [writer];
+}
+
+/**
+ * GST-2091: a page write (put_page, edit_page, append_page) by the brain owner's own credential (storedOwnerWrite) to a
+ * page private by the privacy rules (`privacyPrivate`: visibility, an alias, a pinned question, a derived type or a
+ * private origin) is stored as `visibility: private` when its result states no visibility (an empty or null value
+ * states none), so removing an alias, a derived type or a lineage key never publishes it; a stored pinned_question the
+ * result leaves out is kept, since granted_sources credentials read every other private page of their sources. A
+ * whole-page rewrite (put_page) also keeps the stored visibility and readable_by its content leaves out. A value the
+ * result states replaces the stored one.
+ */
+function ownerWriteKeepsLabels(frontmatter: Record<string, unknown>, stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, rewrite: OwnerRewrite): void {
+  const live = stored && stored.deleted_at == null && typeof stored.frontmatter === 'object' && stored.frontmatter !== null ? stored.frontmatter as Record<string, unknown> : null;
+  if (!live) return;
+  const visibility = frontmatter.visibility;
+  if (visibility == null || (typeof visibility === 'string' && visibility.trim() === '')) {
+    delete frontmatter.visibility;
+    if (rewrite.privacyPrivate) frontmatter.visibility = 'private';
+    else if (rewrite.wholePage && live.visibility != null) frontmatter.visibility = live.visibility;
+  }
+  if (frontmatter.pinned_question == null && live.pinned_question != null) frontmatter.pinned_question = live.pinned_question;
+  if (rewrite.wholePage && !hasReaders(frontmatter) && hasReaders(live)) frontmatter.readable_by = live.readable_by;
 }
 
 /** The one refusal a remote writer gets for a target it may not see; other visibility refusals reuse it verbatim. */

@@ -709,6 +709,9 @@ export async function runPhaseExtractAtoms(
   opts: ExtractAtomsOpts = {},
 ): Promise<PhaseResult> {
   const sourceId = opts.sourceId ?? 'default';
+  if (await (await import('../guests/derived.ts')).skipsGuestSource(engine, 'extract_atoms', sourceId)) {
+    return { phase: 'extract_atoms', status: 'skipped', duration_ms: 0, summary: 'extract_atoms: a guest source is never extracted', details: { reason: 'guest_source', source_id: sourceId } };
+  }
   const chat = opts._chat ?? gatewayChat;
   const managed = await managedAtomSession(engine, sourceId, opts._managedRetry, opts.attempt?.writeWait, opts.signal);
   // v0.41.2.1: loadConfigWithEngine() so the dream.* DB-plane merge from Phase 1 reaches this phase.

@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 306,
+    "count": 307,
     "gaps": [
       17,
       18,
@@ -100,7 +100,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 311,
+    "latest": 312,
     "records": [
       {
         "handler": {
@@ -5035,15 +5035,28 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "wake_events",
+        "name": "concept_inputs_private",
         "sql": {
-          "length": 1942,
-          "sha256": "52ee16786f69608de107d1e9df7d13841b65654ee954fbca8fbc87fa0cbdcb4e"
+          "length": 1486,
+          "sha256": "076b907ad3a003957d757094637cf36835a53e1c5b4938ab1958a55858dc2357"
         },
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
         "version": 311
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
+        "name": "guest_notes",
+        "sql": {
+          "length": 18614,
+          "sha256": "3e4edce6a5b53e1fa0ed80b9af0a62d981fe4e085dc2f9890587c8a4eef478a9"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 312
       }
     ],
     "versions": [
@@ -5352,7 +5365,8 @@
       308,
       309,
       310,
-      311
+      311,
+      312
     ]
   },
   "normalizer": "migrations-record-v1"

@@ -4,7 +4,7 @@
 <!-- Regenerate: bun run scripts/generate-tool-catalog.ts -->
 <!-- Freshness-guarded by scripts/check-tool-catalog-fresh.sh (bun run verify). -->
 
-Every non-localOnly operation on the MCP surface: 175 tools across 26 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
+Every non-localOnly operation on the MCP surface: 176 tools across 27 areas. **Starter** marks membership in the ~41-op `starter` surface (`src/mcp/surface.ts`); **Gate** names the config key that must be true before remote callers see/call the op (`gbrain config set <key> true`). What a given token actually sees is further filtered per request by scope, bound-client fence, publish gates, and the per-client surface — see `docs/operations/mcp-surface-runbook.md`. Area names are non-contractual groupings.
 
 ## admin
 
@@ -99,14 +99,13 @@ Every non-localOnly operation on the MCP surface: 175 tools across 26 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `accept_wakeshift_terms` | Record that the user agreed to the agreement step a watch tool returned (agreement_required): this brain operator's terms and privacy policy and Wakeshift's Connector Terms and Privacy Policy. | write |  | `mcp.publish_wakeshift` |
 | `cancel_job` | Cancel a waiting, active or delayed job you may manage. | admin | yes |  |
 | `get_agent_job` | Poll a submit_agent job: status, result, queue_position. | agent | yes |  |
 | `get_job` | Get job status and details by ID. | admin |  |  |
 | `get_job_progress` | Get structured progress for a running job. | admin |  |  |
 | `get_job_stats` | Job queue statistics. | admin |  |  |
 | `list_jobs` | List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. | admin |  |  |
-| `list_watches` | List what this connection is watching through Wakeshift (jobs, write requests and crons: open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended. | write |  | `mcp.publish_wakeshift` |
+| `list_watches` | List the jobs this connection is watching through Wakeshift (open watches, plus ones that ended in the last day) with their state: open, delivered, dead or ended. | admin |  | `mcp.publish_wakeshift` |
 | `pause_job` | Pause a waiting, active or delayed background job. | admin |  |  |
 | `replay_job` | Replay a completed/failed/dead job, optionally with modified data | admin |  |  |
 | `resume_job` | Resume a paused background job (back to waiting). | admin |  |  |
@@ -114,11 +113,9 @@ Every non-localOnly operation on the MCP surface: 175 tools across 26 areas. **S
 | `send_job_message` | Send a sidechannel message to a running job's inbox (for jobs that read steering messages). | admin |  |  |
 | `submit_agent` | Submit an agent job (agent scope; tools and budget bound to your client). | agent | yes |  |
 | `submit_job` | Submit a background job. | admin |  |  |
-| `unwatch` | Stop watching: ends this connection's open Wakeshift watches on one job, write request or cron (or one watch by its id), so no wake comes for it. | write |  | `mcp.publish_wakeshift` |
+| `unwatch` | Stop watching a job: ends this connection's open Wakeshift watches on it, so no wake comes for it. | admin |  | `mcp.publish_wakeshift` |
 | `wait_job` | Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. | admin |  |  |
-| `watch_cron` | This tool notifies you: it has gbrain wake this conversation through Wakeshift the next time the named cron reports its run (ok or failed) with gbrain wakeshift emit. | admin |  | `mcp.publish_wakeshift` |
 | `watch_job` | This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. | admin |  | `mcp.publish_wakeshift` |
-| `watch_write_request` | This tool notifies you: it has gbrain wake this conversation through Wakeshift when your write request settles (committed, failed, conflict or cancelled), so you can stop polling get_write_request after write_pending. | write |  | `mcp.publish_wakeshift` |
 
 ## links
 
@@ -207,6 +204,7 @@ Every non-localOnly operation on the MCP surface: 175 tools across 26 areas. **S
 | `list_pages` | List pages by type, slug_prefix, frontmatter where; what did I touch this week: sort=updated_desc. | read | yes |  |
 | `list_write_conflicts` | Pages whose writes keep ending in a source_changed conflict, grouped by slug. | read |  |  |
 | `list_write_requests` | Your write receipts in one source, newest first (for a lost request_id). | write | yes |  |
+| `promote_guest_note` | Owner only: keep a guest note (a page in a guest source, origin "guest") as an owner page. | write |  |  |
 | `put_page` | Complete content REPLACES the whole page: read get_page include_content:true; its revision is expected_revision. | write | yes |  |
 | `put_pages` | Write up to 50 complete Markdown pages (8 MB total) in one call; use instead of put_page for more than 3 pages. | write |  |  |
 | `put_raw_data` | Store a raw provider payload (API response JSON) alongside a page, keyed by source. | write |  |  |
@@ -281,6 +279,14 @@ Every non-localOnly operation on the MCP surface: 175 tools across 26 areas. **S
 | `sources_remove` | Hard-remove a source (cascades pages/chunks/embeddings). | sources_admin |  |  |
 | `sources_resolve_path` | Read-only: what gbrain did with each file path of a source, by its own rules. | read |  |  |
 | `sources_status` | Per-source diagnostic. | read |  |  |
+
+## storage
+
+| Tool | Description | Scope | Starter | Gate |
+|---|---|---|---|---|
+| `storage_find` | Find archived items on the storage shelf (files moved to B2, Supabase Storage, S3 and similar) by a plain phrase, such as "the October Gmail dataset". | read |  |  |
+| `storage_get` | Read one card from the storage shelf by id: what the item is, every stored copy (store, bucket, path, restic repository and snapshot, size, hash, when verified), the original path, why it was archived, the restore form (restore.skill and restore.args, run by the agent's own restore skill; cards carry no commands or credentials), past restores, who registered it, and its revision. | read |  |  |
+| `storage_list` | List cards on the storage shelf, sorted by id, optionally filtered by store, status or whether a copy is still on the source machine. | read |  |  |
 
 ## tags
 

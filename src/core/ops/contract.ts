@@ -20,6 +20,7 @@ import type { RegistryCode } from '../error-registry.ts';
 import type { WriteAuthority } from '../persistence/model.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { StdioSurfaceState } from '../../mcp/surface.ts';
+import type { GuestChannels } from '../guests/admission.ts';
 
 /** Agent contract v1: the wire renderer for `fix`/`notices` in toJSON(), registered by agent-output.ts on load. */
 interface OperationErrorWireRenderer { fix(a: Action): unknown; notice(n: Notice): unknown }
@@ -572,6 +573,12 @@ export interface OperationContext {
    * config mcp.stdio_member, and a named member that is not enabled reads as nobody.
    */
   stdioMember?: string;
+  /**
+   * GBRA-504: the guest attribution channels a remote call carried (the X-Gbrain-Guest header, request-level
+   * _meta.guest), set by dispatch from the transport; never from tool arguments. Read only for a write to a guest
+   * source (guests/admission.ts), and stored nowhere for any other write.
+   */
+  guestChannels?: GuestChannels;
   /**
    * Set by transports that can widen a session's listed tools (stdio): when
    * `request_tools` returns schemas, the named tools join this session's

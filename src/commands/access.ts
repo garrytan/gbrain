@@ -87,11 +87,15 @@ Owner (one member who owns this brain; credentials bound to it read every page, 
                                              reach everyone that page lists
 
 Serves several people (GST-363):
-  gbrain access serves                       One or several, and why (config access.serves, else 2+ enabled members)
-  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--yes]
+  gbrain access serves [--no-open-pages]     One or several, and why (config access.serves, else 2+ enabled members);
+                                             on several, the pages every member's key reads (--no-open-pages skips the count)
+  gbrain access serves several --members a,b [--members-file <file>] [--source <id>] [--labelled-only] [--yes]
                                              Preview first; --yes writes access.serves = several, adds each member,
                                              a folder rule people/<member>/ read only by that member, and one key
-                                             bound to each member in a 0600 file under <config>/member-keys/
+                                             bound to each member in a 0600 file under <config>/member-keys/.
+                                             Both list the pages every member's key can still read (no rule or
+                                             readable_by restricts them); --labelled-only keeps each member to the
+                                             pages labelled for it (never the owner)
 
 Folder rules (one rulebook per source; the database store on a repo-less source, .gbrain/access.yml on a git one):
   gbrain access rule add --prefix <folder/> | --slug <page> --readers a,group:b [--raw-only] [--id <rule>] [--source <id>] [--yes]
@@ -103,8 +107,9 @@ Folder rules (one rulebook per source; the database store on a repo-less source,
   gbrain access rule list|status|history [--source <id>] [--operation <id>]
   gbrain access rule revert --to <revision> [--source <id>] [--yes]
   gbrain access rule export|import [--file <access.yml>] [--source <id>] [--yes]
-  gbrain access rule migrate [--source <id>] [--yes]
+  gbrain access rule migrate [--to git|database] [--source <id>] [--yes]
                                              Move the rules between the database and git stores
+                                             (--to database from no store commits nothing)
   gbrain access apply [--source <id>] [--revision <n>] [--yes --expect <plan_hash>]
                                              Preview held widenings; --yes approves the previewed plan
   gbrain access resume [--source <id>]       Finish a narrowing that was interrupted while stamping pages

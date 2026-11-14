@@ -109,6 +109,7 @@ import { isSegmentedPage, withoutBody } from '../core/page-body/page-shape.ts';
 import { extractSegmentedPageLinks } from '../core/page-body/segment-links.ts';
 import { STALE_TIME_BUDGET_MS, formatStaleCounts, staleExtractionCounts } from '../core/extraction-lag.ts';
 import { assertStaleSourceModeUnambiguous } from './extract-stale-options.ts';
+import { withoutGuestSources } from '../core/guests/derived.ts';
 
 // Batch size for addLinksBatch / addTimelineEntriesBatch.
 // Postgres bind-parameter limit is 65535. Links use 4 cols/row → 16K hard ceiling;
@@ -1896,12 +1897,9 @@ async function extractLinksFromDB(
   // resolve — the filter is on WHICH pages we extract FROM, not what
   // we can resolve TO.
   const readAt = await wantedReadAt(engine);
-  const allRefs = sourceIdFilter
-    ? (await engine.listAllPageRefs()).filter(r => r.source_id === sourceIdFilter)
-    : await engine.listAllPageRefs();
-  const fullRefsForResolver = sourceIdFilter
-    ? await engine.listAllPageRefs()
-    : allRefs;
+  const listedRefs = await engine.listAllPageRefs();
+  const allRefs = await withoutGuestSources(engine, 'extract', sourceIdFilter ? listedRefs.filter(r => r.source_id === sourceIdFilter) : listedRefs, ref => ref.source_id);
+  const fullRefsForResolver = listedRefs;
   // For backward-compat checks (`allSlugs.has(...)` calls below), we still
   // need a flat slug set. ALSO a per-slug → [sources] map for F10 resolution.
   //

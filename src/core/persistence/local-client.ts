@@ -17,7 +17,7 @@ import {
   isPersistenceIpcMutation, isPersistenceIpcOperation, isPersistenceIpcRegistration,
   persistenceSocketPathForConfig, requestPersistenceCapabilities, requestPersistenceOperation,
   PersistenceIpcTransportError, type PersistenceIpcCapabilities, type PersistenceIpcRegistration,
-  requestPersistenceAdministration, ownerAdministers,
+  requestPersistenceAdministration, ownerAdministers, PERSISTENCE_ROOM_MARKED_KEY, PERSISTENCE_ROOM_MAX_CHARS,
 } from './ipc.ts';
 import type { PersistenceAdminOperation } from './admin-contract.ts';
 import { currentCliWriteWait, replayWhilePending, writeExchangeBudget } from './write-wait.ts';
@@ -77,7 +77,15 @@ export function readPersistenceCliRegistration(brainId: string): PersistenceIpcR
   return value;
 }
 
-export type LocalDelegationResult = { handled: false } | { handled: true; result: unknown };
+/** `room`: the owner's marks for the room the request named (GBRA-498); absent when the owner predates room marks. */
+export type LocalDelegationResult = { handled: false } | { handled: true; result: unknown; room?: { meta: unknown; notices: unknown[] } };
+
+function delegatedResult(result: unknown, roomSent: boolean): LocalDelegationResult {
+  const marked = roomSent && result !== null && typeof result === 'object' && !Array.isArray(result)
+    ? (result as Record<string, unknown>)[PERSISTENCE_ROOM_MARKED_KEY] as { result?: unknown; meta?: unknown; notices?: unknown } | undefined : undefined;
+  if (!marked || typeof marked !== 'object') return { handled: true, result };
+  return { handled: true, result: marked.result, room: { meta: marked.meta, notices: Array.isArray(marked.notices) ? marked.notices : [] } };
+}
 
 /** How long a caller waits for a serve that already holds the datastore to bind its owner socket. */
 export const OWNER_STARTUP_WAIT_MS = 3_000;
@@ -141,7 +149,7 @@ export async function maybeDelegateLocalOperation(
   operation: string,
   params: Record<string, unknown>,
   hostConfig: GBrainConfig | null,
-  options: { brain?: string | null; source?: string | null; cwd?: string; timeoutMs?: number; writeWaitMs?: number; startupWaitMs?: number } = {},
+  options: { brain?: string | null; source?: string | null; cwd?: string; timeoutMs?: number; writeWaitMs?: number; startupWaitMs?: number; room?: string } = {},
 ): Promise<LocalDelegationResult> {
   if (!isPersistenceIpcOperation(operation)) return { handled: false };
   if (isPersistenceIpcMutation(operation)) {
@@ -177,9 +185,10 @@ export async function maybeDelegateLocalOperation(
       'Upgrade and restart the owner, then retry with the same request ID.');
   }
   const registration = readPersistenceCliRegistration(capability.brain_id);
+  const roomSent = options.room !== undefined && options.room.length <= PERSISTENCE_ROOM_MAX_CHARS && capability.room === true;
   const request = { version: 1 as const, kind: 'operation' as const, brain_id: capability.brain_id,
-    operation, params: wireParams, registration, routing: { source, cwd } };
-  if (!isPersistenceIpcMutation(operation)) return { handled: true, result: await requestPersistenceOperation(socketPath, request, options.timeoutMs) };
+    operation, params: wireParams, registration, routing: { source, cwd }, ...(roomSent ? { room: options.room } : {}) };
+  if (!isPersistenceIpcMutation(operation)) return delegatedResult(await requestPersistenceOperation(socketPath, request, options.timeoutMs), roomSent);
   // #5232: the owner waits the caller's wait within one transport deadline; an
   // owner without `write_wait` waits its own bound and the replay keeps the rest.
   const waitMs = options.writeWaitMs ?? currentCliWriteWait().waitMs;
@@ -189,5 +198,5 @@ export async function maybeDelegateLocalOperation(
     return requestPersistenceOperation(socketPath,
       capability.write_wait ? { ...request, write_wait_ms: budget.waitMs } : request, budget.timeoutMs);
   }, waitMs);
-  return { handled: true, result };
+  return delegatedResult(result, roomSent);
 }

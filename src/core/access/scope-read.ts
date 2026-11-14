@@ -9,13 +9,21 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { ALL_SOURCES } from '../source-id.ts';
-import type { CallerAccess } from '../search/private-visibility.ts';
+import type { BrainEngine } from '../engine.ts';
+import { schemaVersionNow, type CallerAccess } from '../search/private-visibility.ts';
+import { folderAccessFor } from './caller.ts';
 
 /** GST-1094: the caller record of a scope read. It is read as the scope, never as the person. Folder coverage (pending prefixes, an unreadable rulebook) is read per call, so it stays fail-closed. */
 export const SCOPE_READ_ACCESS: Partial<CallerAccess> = {
   identity: [], audienceIdentities: [], audience: null, actor: null, satisfiedRuleIds: [], privateReadableSources: [],
   hidePrivate: true, applyRemoteReadPolicy: false, restricted: true, remotePolicy: { privacyRelaxed: false, restricted: true },
 };
+
+/** A scope read's record for one call: SCOPE_READ_ACCESS with this call's folder coverage and the brain's schema version (GST-2687). */
+export async function scopeReadAccess(engine: Pick<BrainEngine, 'executeRaw'>): Promise<Partial<CallerAccess>> {
+  const { folderCoverage } = await folderAccessFor(engine, []);
+  return { ...SCOPE_READ_ACCESS, folderCoverage, remotePolicy: { privacyRelaxed: false, restricted: true, ...await schemaVersionNow(engine) } };
+}
 
 /** GST-1158 E1: the reads an attested call that names sources runs as the scope. GST-2407: context_pack reads only the source it names (assertPackConfined). */
 export const SCOPE_READ_OPS: ReadonlySet<string> = new Set([

@@ -121,6 +121,7 @@ export const PAGE_OPS: Record<string, Case> = {
   takes_remove: { who: LOCAL, skipOver: NO_FENCE_ROW, run: async (f, slug, who) => f.call(who, 'takes_remove', { slug, row_num: await f.localTake(slug) }) },
   takes_rebuild: { who: LOCAL, run: op('takes_rebuild', (_f, slug) => ({ slug })) },
   confirm_memory: { who: REMOTE, run: op('confirm_memory', (_f, slug) => ({ ref: 'p:' + SRC + '/' + slug })) },
+  promote_guest_note: { who: REMOTE, run: op('promote_guest_note', (_f, slug) => ({ slug, to: slug })) },
   extraction_review: { who: LOCAL, run: op('extraction_review', (_f, slug) => ({ action: 'distinct', slugs: [slug], of: OTHER })) },
   entity_identity_link: { who: LOCAL, run: op('entity_identity_link', (_f, slug) => ({ entity_id: 'acme-example', slug, source_id: SRC })) },
   delete_page: { who: REMOTE, replaces: true, run: op('delete_page', async (f, slug) => ({ slug, expected_revision: await f.revision(slug) })) },
@@ -161,6 +162,8 @@ export const NO_PAGE_TARGET: Record<string, string> = {
   run_onboard: 'onboarding job', run_skillopt: 'skill optimizer',
   loops_close: 'open-loop rows', loops_mute: 'open-loop rows', loops_unmute: 'open-loop rows',
   questions_pin: 'pinned questions', questions_refresh: 'pinned questions', questions_unpin: 'pinned questions',
+  storage_register: 'storage cards on the storage shelf, keyed by card id; a card (details capped at 64 KiB) is never segmented',
+  storage_update: 'storage cards on the storage shelf, keyed by card id; a card (details capped at 64 KiB) is never segmented',
 };
 
 /** segmentedRevertRefusal's message (src/core/page-state/versions.ts). */

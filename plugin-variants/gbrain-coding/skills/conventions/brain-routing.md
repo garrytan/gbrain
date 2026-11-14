@@ -75,7 +75,8 @@ still fall through to `seed_default` and require explicit `--source`.
 
 Placement AFTER `brain_default` is deliberate: a user who explicitly set
 `sources.default` via `gbrain sources default <id>` has stated intent that
-wins over the auto-route. Archived sources are excluded from the count.
+wins over the auto-route. Archived sources and the storage shelf (the `storage`
+source, which only the storage verbs write) are excluded from the count.
 
 **v0.37.7.0 tooling:**
 

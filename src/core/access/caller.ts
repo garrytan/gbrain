@@ -237,8 +237,8 @@ function audienceUnknown(principal: string) {
  */
 export async function resolveAudienceIdentities(engine: Pick<BrainEngine, 'executeRaw'>, caller: AudienceCaller, audience: readonly AudiencePrincipal[],
   opts: { mayActFor?: 'enforce' | 'owner_room_assessment' } = {}): Promise<string[][]> {
-  // GBRA-498: only room.ts passes owner_room_assessment, after it checked that the caller reads as the brain owner; it
-  // marks results for a room and never reads as the room, so the owner's credential needs no may_act_for for it.
+  // GBRA-498: only room.ts passes owner_room_assessment, after it checked that the caller reads as the brain owner or is
+  // the trusted local CLI; it marks results for a room and never reads as the room, so neither needs may_act_for for it.
   if (opts.mayActFor !== 'owner_room_assessment') {
     const mayActFor = await mayActForOf(engine, caller);
     const missing = audience.filter(p => !mayActForCovers(mayActFor, p));

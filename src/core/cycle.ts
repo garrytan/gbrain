@@ -429,7 +429,7 @@ export interface CycleReport {
    *   - 'failed'  : lock acquired but all attempted phases failed
    */
   status: CycleStatus;
-  /** Present when status = 'skipped'. E.g., 'cycle_already_running' or 'no_database'. Also 'aborted' when the cycle was cancelled mid-flight (#1972), or 'stamp_write_failed' (#3504). */
+  /** Present when status = 'skipped'. E.g., 'cycle_already_running' or 'no_database'. Also 'aborted' when the cycle was cancelled mid-flight (#1972), or 'stamp_write_failed' (#3504), or 'storage_manifest_source' when the cycle's source is the storage shelf (GST-1943). */
   reason?: string;
   /** `cycle_already_running` on the DB lock: who holds it and for how long (best effort). */
   lock_holder?: { id: string; holder_pid: number; holder_host: string; age_ms: number };
@@ -1915,6 +1915,15 @@ export async function runCycle(
 /** #7241: tell `opts.onPhaseStart` a selected phase is starting; a hook error is logged, never fatal. */
 const notifyPhaseStart = (opts: CycleOpts, phase: CyclePhase, phases: readonly CyclePhase[]): Promise<void> => Promise.resolve().then(() => opts.onPhaseStart?.(phase, phases.indexOf(phase), phases.length)).then(() => undefined, (e: unknown) => { console.warn(`[cycle] onPhaseStart hook error (non-fatal): ${e instanceof Error ? e.message : String(e)}`); });
 
+/** GBRA-504: a cycle scoped to a guest source skips every phase that would derive rows from guest pages (guests/derived.ts); each is reported skipped. */
+async function withoutGuestPhases(engine: BrainEngine | null, sourceId: string | undefined, phases: CyclePhase[], phaseResults: PhaseResult[]): Promise<CyclePhase[]> {
+  if (!engine || !sourceId || !await (await import('./guests/note.ts')).isGuestSource(engine, sourceId)) return phases;
+  const guestSkipped = new Set((await import('./guests/derived.ts')).guestSkippedPhases());
+  for (const phase of phases.filter(p => guestSkipped.has(p))) phaseResults.push({ phase, status: 'skipped', duration_ms: 0,
+    summary: 'skipped on a guest source: guest notes feed no derived rows', details: { reason: 'guest_source', source_id: sourceId } });
+  return phases.filter(p => !guestSkipped.has(p));
+}
+
 async function runCycleUnscoped(
   engine: BrainEngine | null,
   opts: CycleOpts,
@@ -1942,7 +1951,7 @@ async function runCycleUnscoped(
       phase_scope: PHASE_SCOPE[phase],
     },
   }));
-
+  phases = await withoutGuestPhases(engine, opts.sourceId, phases, phaseResults);
   // Capture as a const so it narrows to `string` inside the `else` branches of
   // the per-phase `if (brainDir === null)` guards, even within async closures
   // (const bindings narrow across closures; property accesses don't).
@@ -1970,6 +1979,8 @@ async function runCycleUnscoped(
     ? (opts.sourceId ?? (await resolveSourceForDir(engine, brainDir)))
     : opts.sourceId;
   const orphansSourceId = opts.forceGlobalOrphans ? undefined : cycleSourceId;
+  const storageShelf = engine && cycleSourceId ? await (await import('./storage-manifest/door.ts')).isStorageManifestSource(engine, cycleSourceId) : false;
+  if (storageShelf) return { schema_version: '1', timestamp, duration_ms: Math.round(performance.now() - start), status: 'skipped', reason: 'storage_manifest_source', brain_dir: opts.brainDir, phases: [], totals: emptyTotals() };
   let sourceWindow: SourceCycleWindow | undefined;
 
   const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));

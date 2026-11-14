@@ -24,11 +24,10 @@ import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './sea
 import type { FactRow } from '../engine.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { currentCallerAccess, resolveExcludePrivatePages, withCallerAccess } from '../search/private-visibility.ts';
-import { currentReadMode, SCOPE_READ_ACCESS } from '../access/scope-read.ts';
+import { currentReadMode, scopeReadAccess } from '../access/scope-read.ts';
 import { callerMember, memberPageSlug, ownMemberFactIds, SCOPE_PAGE_SLUG } from '../access/member-facts.ts';
 import { markedScopeSources, sourceNotAttested, withoutScopeSources } from '../access/attest-sources.ts';
 import { ACTOR_ARGUMENT, ACTOR_HEADER } from '../access/actor-model.ts';
-import { folderAccessFor } from '../access/caller.ts';
 import { uuidV5 } from '../persistence/preconditions.ts';
 import { isStrictIsoDateTime } from '../utils.ts';
 
@@ -197,8 +196,7 @@ const memory_recall: Operation = {
     const mode = currentReadMode();
     const cut = queryTruncated === undefined ? {} : { query_truncated: queryTruncated };
     if (!named || ctx.remote === false || mode) return { ...await recallFacts(ctx, query, maxChars, sources, named && mode !== 'person'), ...cut };
-    const { folderCoverage } = await folderAccessFor(ctx.engine, []);
-    return { ...await withCallerAccess({ ...SCOPE_READ_ACCESS, folderCoverage }, () => recallFacts(ctx, query, maxChars, sources, true)), ...cut };
+    return { ...await withCallerAccess(await scopeReadAccess(ctx.engine), () => recallFacts(ctx, query, maxChars, sources, true)), ...cut };
   },
 };
 

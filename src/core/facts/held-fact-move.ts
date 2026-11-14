@@ -18,6 +18,7 @@ import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { assertStrictGitHome } from '../persistence/git-declared.ts';
 import { isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
+import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
 import { requestConfigValue } from '../config-snapshot.ts';
@@ -65,7 +66,8 @@ export async function holdingPageFor(engine: BrainEngine, sourceId: string, enti
        (EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id=$1 AND r.prefix=$2)
          OR EXISTS (SELECT 1 FROM access_pending_coverage c WHERE c.source_id=$1 AND c.prefix=$2)) AS page_rule,
        (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted`, [sourceId, entity]).catch((error: unknown) => {
-    if (error instanceof PreparationDeadlineError) throw error;
+    // GST-2667: an error the persistence consumer prepares again (a cancel, a stale plan, contention, a lost connection) is rethrown, never a refusal.
+    if (error instanceof PreparationDeadlineError || transientDatabaseFailure(error) || transientInterruption(error)) throw error;
     return null;
   });
   const row = access?.[0];

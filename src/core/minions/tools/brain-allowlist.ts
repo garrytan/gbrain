@@ -35,10 +35,10 @@ import { putPageRejection, rethrowWithCurrentRevision } from './put-page-result.
 import { BRAIN_TOOL_ALLOWLIST } from './brain-tool-allowlist.ts';
 import { stagePutPage } from './staged-put-page.ts';
 import { withCallerAccess } from '../../search/private-visibility.ts';
-import { folderAccessFor, remoteCallerAccess } from '../../access/caller.ts';
+import { remoteCallerAccess } from '../../access/caller.ts';
 import { credentialScopeFor, requesterScopeGate, requiresRequesterScope, withServesReread } from '../../access/requester-scope.ts';
 import { attestedCallerAccess, attestRightOf, storedActorIdentity } from '../../access/actor.ts';
-import { attestedReadMode, SCOPE_READ_ACCESS, withReadMode } from '../../access/scope-read.ts';
+import { attestedReadMode, scopeReadAccess, withReadMode } from '../../access/scope-read.ts';
 import { attestedReadScope } from '../../access/member-sources.ts';
 import type { AudiencePrincipal } from '../../access/audience.ts';
 import { currentSubmissionAuthority } from '../submission-authority.ts';
@@ -328,7 +328,7 @@ function brainTool(op: Operation, opts: BuildBrainToolsOpts): ToolDef {
         ? await (async () => {
           const identity = await storedActorIdentity(ctx.engine, agent.principal, actor, op.name);
           const readMode = attestedReadMode(op.name, params, (await attestRightOf(ctx.engine, { principal: agent.principal }))?.read);
-          const access = readMode === 'scope' ? { ...SCOPE_READ_ACCESS, folderCoverage: (await folderAccessFor(ctx.engine, [])).folderCoverage } : await attestedCallerAccess(ctx.engine, actor, identity);
+          const access = readMode === 'scope' ? await scopeReadAccess(ctx.engine) : await attestedCallerAccess(ctx.engine, actor, identity);
           return withCallerAccess(access, () => withReadMode(readMode, async () => run(await attestedReadScope(ctx.engine, opCtx, actor.member, readMode === 'scope'))));
         })()
         : opCtx.auth

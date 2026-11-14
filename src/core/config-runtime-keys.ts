@@ -30,6 +30,7 @@ export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
   'access.owner_reads_restricted', // access/owner.ts (GST-2490): '1' lets owner-bound credentials read past readers lists and rules (gbrain access owner reads-restricted on)
   'access.members_read_lineage', // access/lineage.ts (GBRA-108 design 3): '1' lets a member read derived pages and facts of origins it reads (gbrain access members-read-lineage on)
   'access.serves', // access/serves.ts (GST-363): one or several; explicit wins over the enabled-member count (gbrain setup --serves several writes it)
+  'access.enforced_member_writes', // cli/enforced-member.ts (GST-2675): refuse makes GBRAIN_ENFORCED_MEMBER refuse every member write; unset or checked = writes checked as today; any other value or a failed read refuses
   'access.requester_scope_enforce', // access/requester-scope.ts (GST-363): false turns the unscoped-read refusal on a brain that serves several people into a notice (hosted, until connections are bound); default on
   'mcp.stdio_may_act_for', // access/audience.ts (GBRA-231): whom a local stdio server may act for (_meta.on_behalf_of); unset, stdio refuses every audience
   'proposals.ttl_hours', 'proposals.max_pending_per_actor', 'proposals.max_pending_per_credential', // persistence/memory-proposals.ts: held QM proposal TTL (168 h) and pending caps (10 per person, 50 per credential)

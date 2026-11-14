@@ -514,7 +514,7 @@ for (const kind of testBackends()) {
         ['commit_page_upload', { upload_id: 'x' }], ['abort_page_upload', { upload_id: 'x' }],
         ['put_raw_data', { slug: PAGES.alice.slug, source: 'crm-example', data: {} }],
         ['extract_entities', { text: 'Alice met Bob.' }], ['ontology_propose', { subject: PAGES.alice.slug, fact: 'x' }],
-        ['confirm_memory', { ref: 'p:' + SRC + '/' + PAGES.alice.slug }], ['loops_close', { id: 1 }],
+        ['confirm_memory', { ref: 'p:' + SRC + '/' + PAGES.alice.slug }], ['promote_guest_note', { slug: PAGES.alice.slug }], ['loops_close', { id: 1 }],
         ['questions_pin', { question: 'x?' }], ['questions_refresh', { id: 1 }], ['questions_unpin', { id: 1 }],
         // Shared rows with no page: answer feedback, the ingest log and loop suppression.
         ['rate_answer', { answer_id: 'x', rating: 'up' }], ['log_ingest', { source_type: 'note', source_ref: 'x', pages_updated: [], summary: 'x' }],

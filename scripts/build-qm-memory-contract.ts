@@ -42,6 +42,11 @@ const V1_PARAMS: Record<string, readonly string[]> = { memory_recall: ['query', 
 const V2_PARAMS: Record<string, readonly string[]> = { memory_recall: [...V1_PARAMS.memory_recall!, 'source_id', 'source_ids'], memory_write: [...V1_PARAMS.memory_write!, 'source_id'] };
 /** The deferred operations v1 published, frozen: GST-1158 F9 deferred more from v2 on. */
 const V1_DEFERRED_OPS: readonly string[] = ['capture', 'extract_facts', 'list_write_conflicts', 'takes_add', 'takes_resolve', 'takes_supersede', 'takes_update'];
+/**
+ * Operations deferred after v5 was published (GBRA-504 promote_guest_note). A published version never changes, so v1 to
+ * v5 leave them out and every later version lists them; an attested call is refused them either way.
+ */
+const DEFERRED_AFTER_V5: ReadonlySet<string> = new Set(['promote_guest_note']);
 /** Catalogue summaries v1 published before they changed, frozen. */
 const V1_SUMMARIES: Record<string, string> = {
   actor_not_attested: "A call named the person it serves (the x-qm-actor header or the acting_user argument) in a way gbrain does not honour: the credential holds no attest right, the operation is not in its attested operations, the argument differs from the header or comes without an attested header, or the id is not 1-256 visible ASCII characters; or a write that saves only as an attested person (memory_write) named none; or the request carries x-qm-audience, a channel audience gbrain does not serve yet. Nothing was read or written.",
@@ -199,7 +204,7 @@ export function buildQmMemoryContract(version: QmContractVersion): Record<string
         ? 'optional; on an attested call it must equal the header; with no header it is accepted only from a credential bound to a member and only naming that member (its member id or a canonical id linked to it), and the call then runs exactly as the credential; never chooses the person on its own'
         : 'optional; must equal the header; never chooses the person on its own',
       actor_id: { pattern: EXTERNAL_ID_RE.source, case_folding: false },
-      system: 'qm', default_attest_ops: [...DEFAULT_ATTEST_OPS], deferred_ops: v2 ? [...ACTOR_DEFERRED_OPS].sort() : [...V1_DEFERRED_OPS],
+      system: 'qm', default_attest_ops: [...DEFAULT_ATTEST_OPS], deferred_ops: v2 ? [...ACTOR_DEFERRED_OPS].filter(op => version > 5 || !DEFERRED_AFTER_V5.has(op)).sort() : [...V1_DEFERRED_OPS],
       audit: 'the audit trail and stored writes record the canonical external id as sent, with its linked member',
     },
     tools: [...QM_MEMORY_OPS, ...(v4 ? ['memory_propose'] : [])].sort().map(name => toolEntry(name, version)),
