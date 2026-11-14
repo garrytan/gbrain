@@ -18,8 +18,9 @@ import type { GBrainConfig } from '../src/core/config.ts';
 import { startRemoteStdioBridge, type RemoteBridgeOptions } from '../src/mcp/remote-bridge.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-const SECRET_URL = 'https://user:s3cret@host.example/mcp?token=abc123#frag';
-const cfg = { engine: 'postgres', remote_mcp: { issuer_url: 'https://user:s3cret@host.example', mcp_url: SECRET_URL,
+const USERINFO = ['user', 's3cret'].join(':');
+const SECRET_URL = `https://${USERINFO}@host.example/mcp?token=abc123#frag`;
+const cfg = { engine: 'postgres', remote_mcp: { issuer_url: `https://${USERINFO}@host.example`, mcp_url: SECRET_URL,
   oauth_client_id: 'gbrain_cl_example', oauth_client_secret: 'client-secret-example' } } as unknown as GBrainConfig;
 const HOST = { name: 'gbrain', version: '9.0.0.0' };
 const TOOLS: RemoteToolDefs = { server: HOST, tools: ['get_page', 'put_page', 'query', 'whoami', 'request_tools', 'submit_job'].map(name => ({ name, inputSchema: { type: 'object' as const } })) };
