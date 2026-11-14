@@ -113,7 +113,8 @@ add `visibility: private` to its frontmatter.
 These rules follow the origin, so nobody writes them by hand:
 - an extracted atom, a pinned-question page and a synthesized concept with no `visibility` read as private (their
   origin may be a private transcript);
-- an atom whose origin page is private, a concept with a private input, a chronicle event from a private meeting,
+- an atom whose origin page is private (also after a rename moved that page), a concept with a private input or an
+  input atom whose origin is private, a chronicle event from a private meeting,
   and any page whose `derived_from` names a private page are private whatever their own field says;
 - anything derived from a page that names `readable_by` or sits under a folder or page rule is hidden from every
   remote caller, except a credential bound to the owner: the owner reads a derived page or a fact when it reads every
@@ -123,6 +124,16 @@ These rules follow the origin, so nobody writes them by hand:
   rule (all below).
 
 `gbrain repair visibility` stamps the explicit value on derived pages (tighten-only). The owner reads them all.
+
+When you delete a page that keeps others private, gbrain gives each page whose only privacy came from it its own
+`visibility: private` label, so it stays hidden once the deleted page's row is gone (a page that names readers keeps its
+`readable_by` and gets the label too, so its listed readers don't gain it). The label stays after that: if you restore the deleted page and later make it world, the pages derived from it
+stay private until the owner relabels them.
+
+A file removed with `git rm` outside gbrain is covered only from the next cycle: the next sync soft-deletes its page and
+the cycle's purge labels the derived pages before it removes any row. If a label cannot be written, or a page derived from it is
+itself soft-deleted (a restore would bring it back unlabelled), the purge keeps the deleted page until that is resolved and
+`gbrain doctor` names it as `derived_origin_parked`, with the page that blocks it.
 
 ### `pinned_question`
 
@@ -252,6 +263,31 @@ owner's row: setting it there, or naming a labelled-only member the owner, is re
 refused (`permission_denied`). `gbrain access member list` and `gbrain access check` show it, `who-can-read` notes
 which labelled-only members a page leaves out, and doctor's `access_labelled_only_members` lists them. An older gbrain
 binary sharing the same database ignores the grant, so upgrade every binary that serves the brain before turning it on.
+
+### Pages every member's key can read
+
+On a brain that serves several people, a key bound to a member reads a page with no label like any other key: the
+binding says who is asking, and only labels decide what that person reads. So a chat export or mail import loaded
+before anyone named its readers is open to every member's key, and so are the facts drawn from it. gbrain counts those
+pages, read-only, wherever you set up or check such a brain: the `gbrain access serves several` preview and receipt
+(also shown by `gbrain setup <harness> --serves several`), `gbrain access serves`, doctor's `open_shared_pages` and
+`gbrain post-upgrade`. Each shows how many members' keys read them ("the keys of 2 of 3 members"; the owner and
+labelled-only members are never counted), the top folders, and the commands that close them, with the owner already in
+every reader list:
+
+- DMs, chat and mail: keep members to labelled pages (`gbrain access serves several --members <ids> --labelled-only`
+  or `gbrain access member labelled-only <id> on`), then name each page set's readers with
+  `gbrain repair visibility --source <id> --slugs-file <file> --readers <owner>,<list>` (preview, then
+  `--apply --expect <hash>`). A folder rule can't do this, because one chats/ folder holds DMs between different pairs.
+- A folder its readers share: `gbrain access rule add --prefix meetings/ --readers <owner>,<list> --source <id>`.
+- New pages: `readable_by: [<owner>, <list>]` in their frontmatter.
+
+The count never depends on who runs it, changes nothing, and never changes an exit code. Doctor warns while DM, chat,
+conversation or mail pages are open and reports other open folders as information, since a team may share them on
+purpose. A count that fails prints "count unknown" with `gbrain doctor --only open_shared_pages --json` to retry, and
+setup carries on. A one-person brain, or one with `access.serves` set to `one`, runs no count, and
+`gbrain access serves --no-open-pages` skips it. `--labelled-only` is
+opt-in and never applies to the owner: with the owner in the roster the run is BLOCKED before anything is written.
 
 ## Related
 

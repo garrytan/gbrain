@@ -407,6 +407,10 @@
       },
       {
         "category": "brain",
+        "name": "open_shared_pages"
+      },
+      {
+        "category": "brain",
         "name": "unscoped_shared_reads"
       },
       {
@@ -1136,6 +1140,10 @@
       {
         "category": "brain",
         "name": "purge_parked_pages"
+      },
+      {
+        "category": "brain",
+        "name": "derived_origin_parked"
       },
       {
         "category": "brain",

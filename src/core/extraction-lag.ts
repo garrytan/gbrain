@@ -59,9 +59,10 @@ export async function readExtractionLag(engine: BrainEngine, opts: { sourceId?: 
 }
 
 async function readLagRow(engine: BrainEngine, opts: { sourceId?: string; timeoutMs?: number }) {
-  const versionTs = await effectiveLinkExtractorWatermark(engine);
-  // #9295: count the wanted rows the configured sweep re-resolves (a managed or frontmatter sweep: every producer).
-  const wantedProducers = await managedPersistenceEnabled(engine) || await resolveIncludeFrontmatter(engine) ? undefined : ['body'];
+  // #9295: count the wanted rows the configured sweep re-resolves (a managed or frontmatter sweep: every producer). The
+  // managed-mode read needs no config, so it goes out with the config read rather than one round trip before the count.
+  const [versionTs, managed] = await Promise.all([effectiveLinkExtractorWatermark(engine), managedPersistenceEnabled(engine)]);
+  const wantedProducers = managed || await resolveIncludeFrontmatter(engine) ? undefined : ['body'];
   const read = async (attendance: boolean, held: boolean, guests: boolean) => {
     const { text, params } = extractionLagStatement({ sourceId: opts.sourceId, versionTs, attendance, held, guests, wantedProducers });
     return (await engine.executeRaw<{ total: number; stale: number; attendance_blocked: number; held: number }>(text, params, { timeoutMs: opts.timeoutMs ?? 10_000 }))[0];

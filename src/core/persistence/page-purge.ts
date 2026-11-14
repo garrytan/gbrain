@@ -44,6 +44,7 @@ import { PERSISTENCE_REQUEST_SLUG_INTENT_INDEX } from './schema.ts';
 import { readRequestIndexStates, REQUEST_INDEXES_REPAIR_COMMAND, type RequestIndexState } from './checkpoint-validation.ts';
 import { faultPoint } from './fault-points.ts';
 import { writeOriginDeletedMarker } from './sync-markers.ts';
+import { withTrustKeep } from './context.ts';
 import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheckRequestsCarrying, redactRequestIntents, sweepRequestsCarrying, sweepRequestsForGroups,
   type IntentRedactionTarget, type JournalSweep } from './intent-redaction.ts';
@@ -279,6 +280,12 @@ const TIMELINE_RECEIPT_CAP = 10_000;
 
 export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest, snapshot: PageSnapshot, prepared: PreparedPagePurge): Promise<Record<string, unknown>> {
   const page = snapshot.page, sourceId = row.source_id, slug = page.slug;
+  // GST-2689: a page derived from this one written after the purge's carry keeps it: soft-deleted (a live page) and parked.
+  const { MID_PURGE_HOLD, parkUncarriedInPurge } = await import('../repair/origin-carry.ts');
+  if ((await parkUncarriedInPurge(tx, [Number(page.id)], { recheckParked: true })).length) {
+    if (!page.deleted_at) { await tx.createVersion(slug, { sourceId }); await withTrustKeep(tx, ['pages'], () => tx.softDeletePage(slug, { sourceId })); }
+    return { status: 'soft_deleted', slug, source_id: sourceId, noop: !!page.deleted_at, ...(prepared.retention ? { retention: true } : {}), purge_held: MID_PURGE_HOLD };
+  }
   const actor = `${row.principal_kind}:${row.principal_id}`;
   const [stored] = await tx.executeRaw<{ content_hash: string | null; body_generation: number | string }>('SELECT content_hash,body_generation FROM pages WHERE id=$1', [page.id]);
   const storedHash = stored?.content_hash ?? null;

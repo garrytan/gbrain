@@ -71,6 +71,7 @@ test/cli-page-writes.test.ts
 test/colon-slug-windows-5032.test.ts
 test/company-brain-policy.test.ts
 test/company-brain-runtime.test.ts
+test/concept-rename-history-gst2687.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
 test/contact-rows-drift-8109.test.ts
@@ -88,6 +89,8 @@ test/decide/conflict-proposals-managed.test.ts
 test/declared-lineage-visibility.test.ts
 test/degraded-engine-recovered-surface-9224.test.ts
 test/derived-link-reconciliation.test.ts
+test/derived-origin-carry-managed.test.ts
+test/derived-origin-carry-private.test.ts
 test/direct-pool-profile.test.ts
 test/doctor-attest-read-shared-scope.test.ts
 test/doctor-database-encoding.test.ts
@@ -369,6 +372,7 @@ test/notifier-retry-unwatched-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
+test/open-shared-pages.test.ts
 test/origin-guard-6948.test.ts
 test/origin-twin-sequence-7150.test.ts
 test/origin-twins-6948.test.ts
@@ -639,6 +643,7 @@ test/stale-plan-heal.test.ts
 test/stats-health-source-scope.test.ts
 test/status-snapshot-source-scope.test.ts
 test/strict-background-writers-gst2492.test.ts
+test/strict-fact-paths-gst2692.test.ts
 test/strict-fallback-refusal-gst2635.test.ts
 test/sweep-segmented-entity-9279.test.ts
 test/sync-absent-from-worktree-s27.test.ts

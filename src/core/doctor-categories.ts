@@ -102,6 +102,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'access_policy_store_mismatch',
   // GST-363: a brain that serves several people keeps each people/<name>/ folder to its readers (doctor/checks/unlabeled-people-folders.ts).
   'unlabeled_people_folders',
+  // GST-2670: pages every member's key reads on a brain that serves several people (doctor/checks/open-shared-pages.ts).
+  'open_shared_pages',
   // GST-363: credentials bound to nobody on a brain that serves several people (doctor/checks/unscoped-shared-reads.ts).
   'unscoped_shared_reads',
   // GST-363: config mcp.stdio_member set on a host where OpenClaw or Hermes is installed (doctor/checks/shared-stdio-binding.ts).
@@ -219,6 +221,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'parked_effects',
   // #6741: managed purges parked after repeated failures (doctor/checks/purge-parks.ts).
   'purge_parked_pages',
+  // GST-2689: origins kept from the purge because a page derived from them could not be labelled private (doctor/checks/purge-parks.ts).
+  'derived_origin_parked',
   // Wave B PR 4: fact purge sweeps of stored derivation results still pending or stalled (doctor/checks/derivation-purge-sweeps.ts).
   'derivation_purge_sweeps',
   'partial_embedding',

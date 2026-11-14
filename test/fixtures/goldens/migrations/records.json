@@ -1,12 +1,11 @@
 {
   "golden": {
-    "count": 306,
+    "count": 307,
     "gaps": [
       17,
       18,
       19,
-      100,
-      311
+      100
     ],
     "helpers": {
       "ALIAS_TABLES": "cddd37c636af42d862c08ca7754a57dfe9d12576b769fa8f74a5f02c803f67a0",
@@ -5036,6 +5035,19 @@
       {
         "handler": "absent",
         "idempotent": true,
+        "name": "concept_inputs_private",
+        "sql": {
+          "length": 1486,
+          "sha256": "076b907ad3a003957d757094637cf36835a53e1c5b4938ab1958a55858dc2357"
+        },
+        "sqlFor": "absent",
+        "transaction": "absent",
+        "verify": "absent",
+        "version": 311
+      },
+      {
+        "handler": "absent",
+        "idempotent": true,
         "name": "guest_notes",
         "sql": {
           "length": 17488,
@@ -5353,6 +5365,7 @@
       308,
       309,
       310,
+      311,
       312
     ]
   },

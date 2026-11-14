@@ -48,7 +48,7 @@ async function runEmbeddingState(ctx: DoctorContext): Promise<Check[]> {
     if ((counts.quarantined ?? 0) > 0) notes.push('Quarantined pages are reviewed under quarantined_pages.');
     if ((counts.keyword_only ?? 0) > 0) notes.push('Keyword-only chunks sit on embed_skip pages by design (split the page or approve a higher content_sanity.bytes_block; `gbrain pages unsearchable --state keyword_only` lists them).');
     if (deleted.within_window > 0) notes.push(`${deleted.within_window} chunk(s) on pages soft-deleted within ${deleted.window_hours}h wait for the purge lifecycle.`);
-    if (deleted.held > 0) notes.push(`${deleted.held} chunk(s) on pages soft-deleted more than ${deleted.window_hours}h ago are held from the purge by design (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair or an archived source).`);
+    if (deleted.held > 0) notes.push(`${deleted.held} chunk(s) on pages soft-deleted more than ${deleted.window_hours}h ago are held from the purge by design (a derived retirement inside generations.restore_days, a restorable atom, an open rename-identity pair, a parked derived-page origin or an archived source).`);
     if (deleted.purgeable > 0 || healable > 0) {
       const warnings: string[] = [];
       if (deleted.purgeable > 0) warnings.push(`${deleted.purgeable} chunk(s) belong to pages soft-deleted more than ${deleted.window_hours}h ago; \`gbrain pages purge-deleted\` removes them (preview with --dry-run --json; it is brain-wide and irreversible, so ask the user first).`);

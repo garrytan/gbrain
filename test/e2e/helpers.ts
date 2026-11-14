@@ -230,6 +230,17 @@ export async function setupLegacyEmbeddingDB(): Promise<PostgresEngine> {
 }
 
 /**
+ * Delete the access members a file added. Two or more enabled members make the
+ * shared brain serve several people, and every later file's unbound remote
+ * reads are then refused with requester_scope_required. Deleting (not
+ * disabling) fires the serves trigger, which writes access.serves_derived
+ * back to one. Call in afterAll() before teardownDB().
+ */
+export async function removeMembers(ids: readonly string[]): Promise<void> {
+  await engine?.executeRaw('DELETE FROM access_members WHERE id = ANY($1::text[])', [ids]);
+}
+
+/**
  * Disconnect from DB. Call in afterAll() of each test file.
  */
 export async function teardownDB(): Promise<void> {

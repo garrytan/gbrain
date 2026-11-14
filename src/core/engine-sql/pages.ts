@@ -28,6 +28,7 @@ import { quarantineFilterFragment } from '../quarantine.ts';
 import { rederiveHiddenSql } from '../eligibility/sql.ts';
 import { validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { DELETE_BATCH_SIZE } from '../engine-constants.ts';
+import { derivedOriginPurgeHold } from '../persistence/derived-origin-hold.ts';
 import { jsonbParam, type SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead, ScopedRead } from './brands.ts';
 import type { ScopedReadRunner } from './cjk-search.ts';
@@ -342,7 +343,8 @@ export async function purgeDeletedPages(
           AND NOT EXISTS (SELECT 1 FROM op_checkpoints dg WHERE dg.op = 'sync-identity-downgrade' AND dg.fingerprint = pages.id::text
             AND dg.completed_keys->0->>'disposition' IS NULL AND pages.deleted_at = (dg.completed_keys->0->>'old_deleted_at')::timestamptz)
           AND ${trustedSql(atomRetirementPurgeHold('pages'))}
-          AND ${trustedSql(derivedRetirementPurgeHold('pages'))}${excluded}
+          AND ${trustedSql(derivedRetirementPurgeHold('pages'))}
+          AND ${trustedSql(derivedOriginPurgeHold('pages'))}${excluded}
         ORDER BY deleted_at ASC, slug ASC
       `);
       const pages = rows.map((r) => ({
@@ -367,7 +369,9 @@ export async function purgeDeletedPages(
           -- #7013: a restorable re-extraction retirement waits out its hold (atomRetirementPurgeHold).
           AND ${trustedSql(atomRetirementPurgeHold('pages'))}
           -- GBRA-161: every derived retirement waits out its hold (derivedRetirementPurgeHold).
-          AND ${trustedSql(derivedRetirementPurgeHold('pages'))}${excluded}
+          AND ${trustedSql(derivedRetirementPurgeHold('pages'))}
+          -- GST-2689: an origin whose derived pages could not be labelled private stays parked (derivedOriginPurgeHold).
+          AND ${trustedSql(derivedOriginPurgeHold('pages'))}${excluded}
         RETURNING slug, source_id, deleted_at::text AS deleted_at
       `);
       await expireGonePageFacts(tx, rows);
