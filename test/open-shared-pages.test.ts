@@ -209,12 +209,12 @@ for (const kind of testBackends()) {
     test('a member already labelled-only keeps that mark on a re-run without the flag and gets no open-pages tail', async () => {
       const proof = [{ member: 'bob-example', own: 1, leaked: [] }];
       const open = await label(ROSTER, false);
-      expect(servesLines({ mode: 'several', receipt: open, proof } as never, false).join('\n')).toContain('also reads the');
+      expect(servesLines({ mode: 'several', receipt: open, proof } as never, false).join('\n')).toContain('can also read open pages');
       await setMemberLabelledOnly(engine, 'bob-example', true, { remote: false });
       try {
         const r = await label(ROSTER, false);
         expect(r.members.find(m => m.id === 'bob-example')).toMatchObject({ labelled_only: 'keep' });
-        expect(servesLines({ mode: 'several', receipt: r, proof } as never, false).join('\n')).not.toContain('also reads the');
+        expect(servesLines({ mode: 'several', receipt: r, proof } as never, false).join('\n')).not.toContain('can also read open pages');
         expect(receiptLines(r).join('\n')).not.toContain('--labelled-only --yes');
       } finally { await setMemberLabelledOnly(engine, 'bob-example', false, { remote: false }); }
     }, 60_000);
@@ -261,6 +261,42 @@ for (const kind of testBackends()) {
       } finally {
         await engine.executeRaw("DELETE FROM pages WHERE slug IN ('labelled/origin', 'atoms/fact-1')");
       }
+    }, 60_000);
+
+    test('relaxed remote privacy counts the private pages a member key then lists', async () => {
+      const before = await openPages(engine);
+      expect(before.private).toBeGreaterThan(0);
+      await withEnv({ GBRAIN_REMOTE_PRIVATE_PAGES: '1' }, async () => {
+        expect(await listedAs('bob-example')).toContain('private/diary');
+        const relaxed = await openPages(engine);
+        expect(relaxed.private).toBe(0);
+        expect(relaxed.total).toBe(before.total + before.private);
+      });
+    }, 60_000);
+
+    test('a member bound through config mcp.stdio_member counts as reading, with no key', async () => {
+      await addMember(engine, 'carol-example');
+      const before = await openPages(engine);
+      await engine.setConfig('mcp.stdio_member', 'carol-example');
+      try {
+        const r = await openPages(engine);
+        expect(r.members).toEqual({ reading: before.members.reading + 1, counted: before.members.counted });
+      } finally {
+        await engine.unsetConfig('mcp.stdio_member');
+        await engine.executeRaw("UPDATE access_members SET disabled_at = now() WHERE id = 'carol-example'");
+      }
+    }, 60_000);
+
+    test('with no member key reading anything, the open pages are still counted and doctor reports information', async () => {
+      await setMemberLabelledOnly(engine, 'bob-example', true, { remote: false });
+      try {
+        const r = await openPages(engine);
+        expect(r.members.reading).toBe(0);
+        expect(r.total).toBeGreaterThan(0);
+        expect(r.sensitive).toBeGreaterThan(0);
+        expect(await doctor()).toMatchObject({ status: 'ok', severity: 'info' });
+        expect(receiptLines(await label(['bob-example'], false)).join('\n')).toContain("No member's key reads");
+      } finally { await setMemberLabelledOnly(engine, 'bob-example', false, { remote: false }); }
     }, 60_000);
 
     test('labelling a page lowers the count by that page', async () => {

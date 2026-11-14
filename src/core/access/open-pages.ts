@@ -4,7 +4,7 @@
  * reads it like an unbound one (requester-scope.ts gates who may ask; only labels decide what a member reads). The
  * count is the read path's own floor (accessAllowedSql with an empty identity, built outside any caller record, so it
  * never depends on who asks), split into the pages members read and the visibility: private pages they do not
- * (unless the operator relaxed search.remote_private_pages). "Members" are the enabled members other than the owner;
+ * (unless this process sees remote privacy relaxed, or a reading member's grant opens that source's private pages). "Members" are the enabled members other than the owner;
  * a labelled-only member reads no open page, and each other member reads the sources its bound tokens and OAuth
  * clients read. Read-only and best effort everywhere it is shown: access serves several (preview and receipt),
  * gbrain access serves, doctor open_shared_pages and post-upgrade. Callers gate on brainServes first, so a
@@ -12,9 +12,10 @@
  * brain gets it unchanged.
  */
 import type { BrainEngine } from '../engine.ts';
-import { accessAllowedSql, privacyPartSql, readHonorAliases, resolveExcludePrivatePages, withoutCallerAccess } from '../search/private-visibility.ts';
-import { credentialReadSources, SENSITIVE_PAGE_TYPES } from '../grants/shared-exposure.ts';
-import { grantFromClient, grantFromRow, grantFromTokenRow, type PrincipalGrant } from '../grants/model.ts';
+import { accessAllowedSql, privacyPartSql, readHonorAliases, remotePrivacyRelaxed, withoutCallerAccess } from '../search/private-visibility.ts';
+import { credentialReadSources, SENSITIVE_PAGE_TYPES, stdioReadSources } from '../grants/shared-exposure.ts';
+import { grantFromClient, grantFromRow, grantFromTokenRow, privatePagesSources, type PrincipalGrant } from '../grants/model.ts';
+import { stdioMemberId } from './caller.ts';
 import { localFederatedSourceIds } from '../source-resolver.ts';
 import { isStatementTimeout } from '../persistence/bounded-reads.ts';
 import { agentBlock } from '../agent-markers.ts';
@@ -29,13 +30,14 @@ export interface OpenFolder { source: string; folder: string; pages: number; sen
 export interface OpenPages {
   /** The brain owner (access.owner_member), whom every printed reader list starts with; null when none is set. */
   owner: string | null;
-  /** reading: members other than the owner, not labelled-only, whose keys read a counted source; counted: members other than the owner. */
+  /** reading: members other than the owner, not labelled-only, whose keys (or config mcp.stdio_member binding) read a source; counted: members other than the owner. */
   members: { reading: number; counted: number };
+  /** The sources counted: those the reading members read, or every source when no member reads one. */
   sources: string[];
   total: number;
   /** Open pages of a DM, chat, conversation or mail type (SENSITIVE_PAGE_TYPES). */
   sensitive: number;
-  /** Open pages that visibility: private (or a privacy alias) keeps from members; counted in total when the operator relaxed remote privacy. */
+  /** Open pages that visibility: private (or a privacy alias) keeps from members; counted in total instead where remote privacy is relaxed or a reading member's grant opens private pages. */
   private: number;
   folders: OpenFolder[];
   other: { folders: number; pages: number; sensitive: number };
@@ -57,9 +59,14 @@ async function mintedReadSources(engine: BrainEngine, source: string): Promise<s
   return await localFederatedSourceIds(engine, 'default', 'seed_default').catch(() => undefined) ?? ['default'];
 }
 
-/** Each counted member (enabled, not the owner) with the sources its keys read; empty for a labelled-only member. */
-async function memberReads(engine: BrainEngine, owner: string | null, planned: OpenPagesOptions['planned']): Promise<Map<string, Set<string>>> {
+/**
+ * Each counted member (enabled, not the owner) with the sources its keys and a config mcp.stdio_member binding read
+ * (empty for a labelled-only member), and the sources whose private pages some reading member's grant opens. A harness
+ * entry's serve --stdio-member is not in the database, so it is not seen here.
+ */
+async function memberReads(engine: BrainEngine, owner: string | null, planned: OpenPagesOptions['planned']): Promise<{ reads: Map<string, Set<string>>; privateSources: Set<string> }> {
   const reads = new Map<string, Set<string>>();
+  const privateOf = new Map<string, Set<string>>();
   const labelledOnly = new Set<string>();
   for (const m of await engine.executeRaw<{ id: string; labelled_only: unknown }>(
     'SELECT id, labelled_only FROM access_members WHERE disabled_at IS NULL AND tombstoned_at IS NULL ORDER BY id')) {
@@ -81,8 +88,15 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
   ];
   for (const { member, grant } of credentials) {
     const set = reads.get(member);
-    if (set) for (const s of await sourcesOf(grant)) set.add(s);
+    if (!set) continue;
+    for (const s of await sourcesOf(grant)) set.add(s);
+    const priv = privateOf.get(member) ?? new Set<string>();
+    privateOf.set(member, priv);
+    for (const s of privatePagesSources(grant)) priv.add(s);
   }
+  const stdio = await stdioMemberId(engine);
+  const stdioSet = stdio ? reads.get(stdio) : undefined;
+  if (stdioSet) for (const s of await stdioReadSources(engine)) stdioSet.add(s);
   if (planned) {
     const minted = await mintedReadSources(engine, planned.source);
     for (const id of planned.members) {
@@ -94,7 +108,9 @@ async function memberReads(engine: BrainEngine, owner: string | null, planned: O
     }
   }
   for (const id of labelledOnly) reads.get(id)?.clear();
-  return reads;
+  const privateSources = new Set<string>();
+  for (const [id, set] of reads) if (set.size) for (const s of privateOf.get(id) ?? []) privateSources.add(s);
+  return { reads, privateSources };
 }
 
 async function bounded<T>(engine: BrainEngine, fn: (e: BrainEngine) => Promise<T>): Promise<T> {
@@ -102,7 +118,7 @@ async function bounded<T>(engine: BrainEngine, fn: (e: BrainEngine) => Promise<T
   return engine.transaction(async (tx) => {
     await tx.executeRaw(`SET LOCAL statement_timeout = ${OPEN_PAGES_TIMEOUT_MS}`);
     return fn(tx);
-  });
+  }, { readOnly: true });
 }
 
 /** The open pages the counted members' keys read (OpenPages); throws when the access state cannot be read. */
@@ -113,14 +129,15 @@ export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}
       throw Object.assign(new Error('the folder-rule state cannot be read, so every page reads as covered and a count would say 0'), { code: 'open_pages_unknown' });
     }
     const owner = await ownerMemberId(engine);
-    const reads = await memberReads(engine, owner, opts.planned);
+    const { reads, privateSources } = await memberReads(engine, owner, opts.planned);
     const reading = [...reads.values()].filter(s => s.size > 0);
-    const sources = [...new Set(reading.flatMap(s => [...s]))].sort();
+    const read = [...new Set(reading.flatMap(s => [...s]))].sort();
+    const sources = read.length ? read : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(s => s.id);
     const result: OpenPages = { owner, members: { reading: reading.length, counted: reads.size }, sources, total: 0, sensitive: 0, private: 0,
       folders: [], other: { folders: 0, pages: 0, sensitive: 0 }, top_sensitive: null };
     if (!sources.length) return result;
     await readHonorAliases(engine);
-    const hidePrivate = await resolveExcludePrivatePages(engine, true);
+    const relaxed = await remotePrivacyRelaxed(engine);
     const params: unknown[] = [sources];
     const exclude = (opts.exclude ?? []).map(x => {
       params.push(x.source, x.prefix);
@@ -136,7 +153,7 @@ export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}
     const byType = new Map<string, { source: string; type: string; pages: number }>();
     for (const row of rows) {
       const n = Number(row.pages);
-      if (row.visible !== true && hidePrivate) { result.private += n; continue; }
+      if (row.visible !== true && !relaxed && !privateSources.has(row.source)) { result.private += n; continue; }
       const key = `${row.source}/${row.folder}`;
       const f = folders.get(key) ?? { source: row.source, folder: row.folder, pages: 0, sensitive: 0 };
       folders.set(key, f);
@@ -190,7 +207,7 @@ export function openPagesLines(read: OpenPagesRead, opts: { prefix?: string; lab
   if (!o) return [`${head}count unknown (${read.open_pages_error?.message ?? 'not read'}); retry with ${read.open_pages_error?.retry ?? RETRY}`];
   if (!o.total) return [head + openPagesHeadline(o)];
   const readers = `${o.owner ? `${o.owner},` : ''}<list>`;
-  const shared = o.folders.find(f => !f.sensitive && f.folder !== '(root)');
+  const shared = o.folders.find(f => !f.sensitive && f.folder !== '(root)' && f.folder !== 'people');
   const where = [...o.folders.map(f => `${folderName(f)} ${f.pages}${f.sensitive ? ` (${f.sensitive} of them DMs, chat or mail)` : ''}`),
     ...(o.other.folders ? [`${o.other.folders} more ${o.other.folders === 1 ? 'folder' : 'folders'} ${o.other.pages}`] : [])].join(', ');
   return [
@@ -207,7 +224,7 @@ export async function printOpenPagesUpgradeNotice(engine: BrainEngine): Promise<
   try {
     if ((await brainServes(engine)).serves !== 'several') return;
     const read = await readOpenPages(engine);
-    if (!read.open_pages?.sensitive) return;
+    if (!read.open_pages?.sensitive || !read.open_pages.members.reading) return;
     console.log('');
     console.log(agentBlock({
       why: `This brain serves several people. ${openPagesHeadline(read.open_pages)} A key bound to a member reads a page with no readers like any other key.`,

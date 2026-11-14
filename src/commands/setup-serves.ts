@@ -209,7 +209,7 @@ function openTail(r: ServesReceipt | undefined, member: string): string {
   if (!r || r.open_pages === undefined) return '';
   if (!open) return '; open pages unknown';
   if (!open.total || r.members.find(m => m.id === member)?.labelled_only || member === open.owner) return '';
-  return `; it also reads the ${open.total} open page(s) listed above`;
+  return `; its keys can also read open pages listed above (${open.total} across the members' sources)`;
 }
 
 export function servesLines(o: ServesOutcome, dryRun: boolean): string[] {
