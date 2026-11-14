@@ -61,9 +61,10 @@ add-connector form with the name and URL already filled in. For hosted
 https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=https%3A%2F%2Fgbrain.io%2Fmcp
 ```
 
-`gbrain mcp expose --funnel` prints the same link for your own brain's URL.
-For any other HTTPS endpoint, URL-encode it into `connectorUrl`. Then continue
-at step 5 below. The link uses claude.ai's own page parameters, which Anthropic
+For your own brain, the link needs the public URL from
+`gbrain mcp expose --funnel`, which prints it (`--status` repeats it); the
+tailnet-only URL from step 1 does not get one. For any other public HTTPS
+endpoint, URL-encode it into `connectorUrl`. Then continue at step 5 below. The link uses claude.ai's own page parameters, which Anthropic
 does not document; if the form opens empty, use the manual steps.
 
 1. Open Claude Desktop

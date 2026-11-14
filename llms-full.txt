@@ -136,6 +136,13 @@ Next — choose the connection method supported by the intended client
   Check            gbrain mcp expose --status
 ```
 
+With `--funnel`, the `Next` block also prints a `Claude.ai` line under
+`Native OAuth`: a claude.ai link that opens Claude's add-connector form with
+the name `GBrain` and this MCP URL already filled in. Authentication is still
+chosen in that form. `--json` carries the same link as `claude_connector_link`,
+and `--status` repeats it. The tailnet-only default omits it, because claude.ai
+connects from Anthropic's cloud and cannot reach a tailnet-only URL.
+
 The `Engine` and `Local agents` lines depend on the engine the receipt
 recorded: a Postgres brain prints `Local agents     gbrain bootstrap harness
 --yes --port 3131` because minting works while the server runs.

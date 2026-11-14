@@ -126,7 +126,8 @@ Next — choose the connection method supported by the intended client
 With `--funnel`, the `Next` block also prints a `Claude.ai` line under
 `Native OAuth`: a claude.ai link that opens Claude's add-connector form with
 the name `GBrain` and this MCP URL already filled in. Authentication is still
-chosen in that form. The tailnet-only default omits the line, because claude.ai
+chosen in that form. `--json` carries the same link as `claude_connector_link`,
+and `--status` repeats it. The tailnet-only default omits it, because claude.ai
 connects from Anthropic's cloud and cannot reach a tailnet-only URL.
 
 The `Engine` and `Local agents` lines depend on the engine the receipt

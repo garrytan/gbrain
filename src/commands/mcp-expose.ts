@@ -324,7 +324,7 @@ class Session {
     this.checks.push(c);
     return c;
   }
-  finish(status: ExposeStatus, code: number, extra: { receipt?: ExposeReceipt | null; reason?: string; message?: string; plan?: string[]; consent?: Record<string, unknown> } = {}): number {
+  finish(status: ExposeStatus, code: number, extra: { receipt?: ExposeReceipt | null; reason?: string; message?: string; plan?: string[]; consent?: Record<string, unknown>; claudeConnectorLink?: string | null } = {}): number {
     const where = EXPOSE_FRICTION_REASONS.has(extra.reason ?? '') ? 'mcp_expose_friction'
       : this.firstPublish && (status === 'exposed' || status === 'pending') ? 'mcp_expose' : null;
     const hosted = where ? hostedOptionNotice(where, this.d.mutedNotices()) : null;
@@ -334,6 +334,7 @@ class Session {
       this.d.out(JSON.stringify({
         status, receipt: extra.receipt ?? null, checks: this.checks, next_actions: this.nextActions,
         ...(extra.reason ? { reason: extra.reason } : {}), ...(extra.message ? { message: extra.message } : {}), ...(extra.plan ? { plan: extra.plan } : {}),
+        ...(extra.claudeConnectorLink ? { claude_connector_link: extra.claudeConnectorLink } : {}),
         ...(extra.consent ?? {}), ...(hosted ? { notices: [renderNotice(hosted, cliRenderContext())] } : {}),
       }));
     }
@@ -1061,7 +1062,7 @@ async function runPublish(d: Resolved, s: Session, opts: ExposeOptions): Promise
     'gbrain mcp expose --status',
   );
   const pending = tailnetHealth === 'pending' || localHealth === 'timeout';
-  return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
+  return s.finish(pending ? 'pending' : 'exposed', pending ? 2 : 0, { receipt, claudeConnectorLink: claudeLink, ...(pending ? { reason: tailnetHealth === 'pending' ? 'tailnet_health_pending' : 'local_health_timeout' } : {}) });
 }
 
 /** The user's publish flags, for a re-run hint or the approved command (never --yes/--json/--dry-run). */
@@ -1143,13 +1144,15 @@ async function runStatus(d: Resolved, s: Session, opts: ExposeOptions): Promise<
   }
   s.say(`GBrain MCP server (${receipt.mode}) — ${receipt.mcp_url}`);
   for (const c of s.checks) s.say(`  ${c.status.padEnd(8)} ${c.name.padEnd(18)} ${c.detail}`);
+  const claudeLink = receipt.mode === 'funnel' ? claudeConnectorLink(receipt.mcp_url) : null;
+  if (claudeLink) s.say(`  Claude.ai  ${claudeLink}`);
   if (!allOk) s.nextActions.push('gbrain mcp expose --yes');
   if (!allOk) return s.finish('error', 1, { receipt, reason: 'status_unhealthy' });
   // Spec: --status exits 0 only when EVERYTHING verifies. A pending tailnet
   // certificate is reported as `pending` (not `error`) so callers can tell
   // "wait a minute" from "broken", but it is still a non-zero exit.
   if (pending) { s.nextActions.push('gbrain mcp expose --status'); return s.finish('pending', 1, { receipt, reason: 'tailnet_health_pending', message: 'tailnet health still pending (first certificate issuance can take a minute) — re-run --status shortly.' }); }
-  return s.finish('exposed', 0, { receipt });
+  return s.finish('exposed', 0, { receipt, claudeConnectorLink: claudeLink });
 }
 
 interface Leftovers {

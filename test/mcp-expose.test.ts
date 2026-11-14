@@ -675,6 +675,18 @@ describe('happy path: linux-systemd', () => {
     expect(await runMcpExpose(['--yes'], g.deps)).toBe(0);
     expect(g.stdout.join('\n')).not.toContain('claude.ai/customize/connectors');
   });
+  test('--json carries claude_connector_link for Funnel only, and --status repeats it', async () => {
+    const link = `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=GBrain&connectorUrl=${encodeURIComponent(`https://${DNS}/mcp`)}`;
+    const f = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--funnel', '--json'], f.deps)).toBe(0);
+    expect(jsonDoc(f).claude_connector_link).toBe(link);
+    f.stdout.length = 0;
+    expect(await runMcpExpose(['--status', '--json'], f.deps)).toBe(0);
+    expect(jsonDoc(f).claude_connector_link).toBe(link);
+    const g = fakeTailnet();
+    expect(await runMcpExpose(['--yes', '--json'], g.deps)).toBe(0);
+    expect('claude_connector_link' in jsonDoc(g)).toBe(false);
+  });
   test('tailnet health pending → exit 2, status pending, receipt still written', async () => {
     const f = fakeTailnet({ tailnetHealthy: false });
     expect(await runMcpExpose(['--yes', '--json'], f.deps)).toBe(2);

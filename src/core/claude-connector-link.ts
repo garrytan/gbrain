@@ -19,7 +19,12 @@ export const CLAUDE_CONNECTOR_DEFAULT_NAME = 'GBrain';
 /**
  * The prefilled add-connector link for `mcpUrl`, or null when the URL is not
  * an absolute https URL (claude.ai connects from Anthropic's cloud and only
- * accepts https endpoints, so any other link would open a form that fails).
+ * accepts https endpoints, so any other link would open a form that fails) or
+ * when it embeds userinfo (a credential in the URL would land in a claude.ai
+ * query string, browser history and anywhere the link is pasted).
+ *
+ * Values are percent-encoded with encodeURIComponent (a space is `%20`, never
+ * `+`), so the dialog reads them the same whichever decoder claude.ai uses.
  */
 export function claudeConnectorLink(mcpUrl: string, name: string = CLAUDE_CONNECTOR_DEFAULT_NAME): string | null {
   let parsed: URL;
@@ -28,7 +33,8 @@ export function claudeConnectorLink(mcpUrl: string, name: string = CLAUDE_CONNEC
   } catch {
     return null;
   }
-  if (parsed.protocol !== 'https:' || !parsed.hostname) return null;
-  const params = new URLSearchParams({ modal: 'add-custom-connector', connectorName: name, connectorUrl: parsed.href });
-  return `${CLAUDE_ADD_CONNECTOR_BASE}?${params.toString()}`;
+  if (parsed.protocol !== 'https:' || !parsed.hostname || parsed.username || parsed.password) return null;
+  return `${CLAUDE_ADD_CONNECTOR_BASE}?modal=add-custom-connector`
+    + `&connectorName=${encodeURIComponent(name)}`
+    + `&connectorUrl=${encodeURIComponent(parsed.href)}`;
 }
