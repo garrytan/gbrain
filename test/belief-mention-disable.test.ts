@@ -198,8 +198,6 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
     if (engineCase.name === 'postgres') test('disable waits for an origin publisher but never sweeps a new unlocked origin', async () => {
       await brain(async b => {
         await seed(b);
-        await b.put(origin, beliefPage({ type: 'note', title: 'Notes', prose: 'No entity names.' }));
-        expect((await runMentionPass(b.engine, { sourceId: b.sourceId })).removed).toBe(1);
         const actor = await maintenanceAttribution(b.engine), last = await b.lastId();
         const ready = Promise.withResolvers<number>(), release = Promise.withResolvers<void>();
         const point = unmanagedBeliefPoint(b.sourceId, [origin], 'fixture_publisher');
@@ -207,7 +205,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
           await tx.lockPageKeys([{ sourceId: b.sourceId, slug: origin }]);
           await tx.executeRaw('SELECT source_id FROM mention_index_status WHERE source_id=$1 FOR SHARE', [b.sourceId]);
           await point.run(tx, async () => {
-            await tx.addLinksBatch([{ from_slug: origin, to_slug: target, from_source_id: b.sourceId, to_source_id: b.sourceId, link_source: 'mentions' }]);
+            await tx.addLinksBatch([{ from_slug: origin, to_slug: target, from_source_id: b.sourceId, to_source_id: b.sourceId, link_type: 'mentions', link_source: 'mentions' }]);
             ready.resolve(Number((await tx.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'))[0]!.pid));
             await release.promise;
           });
@@ -237,6 +235,65 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
         await journal(b, removed);
         const publications = [...new Set(events.map(e => e.publication_id))];
         expect(await b.engine.executeRaw('SELECT publication_id FROM belief_commit_marks WHERE publication_id=ANY($1::uuid[])', [publications])).toHaveLength(publications.length);
+      });
+    }, 180_000);
+
+    if (engineCase.name === 'postgres') test('uncovered disable does not invert status and page reader locks', async () => {
+      await brain(async b => {
+        await seed(b);
+        const ready = Promise.withResolvers<number>(), release = Promise.withResolvers<void>();
+        const holding = b.engine.transaction(async tx => {
+          await tx.executeRaw('SELECT source_id FROM mention_index_status WHERE source_id=$1 FOR SHARE', [b.sourceId]);
+          ready.resolve(Number((await tx.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'))[0]!.pid));
+          await release.promise;
+          await tx.executeRaw('SELECT id FROM pages WHERE source_id=$1 FOR SHARE', [b.sourceId]);
+        });
+        void holding.catch(ready.reject);
+        let pending: ReturnType<typeof runMentionPass> | undefined;
+        let results: PromiseSettledResult<unknown>[] = [];
+        try {
+          const pid = await ready.promise;
+          pending = disable(b);
+          void pending.catch(() => undefined);
+          await waitFor(async () => (await b.engine.executeRaw<{ waiting: boolean }>(
+            `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1::int=ANY(pg_blocking_pids(pid))
+              AND query LIKE '%mention_index_status%') AS waiting`, [pid]))[0]!.waiting,
+          { timeoutMs: 20_000, label: 'uncovered disable waits on the status reader' });
+        } finally {
+          release.resolve();
+          results = await Promise.allSettled(pending ? [holding, pending] : [holding]);
+        }
+        expect(results.filter(r => r.status === 'rejected').map(r => r.reason?.code)).not.toContain('40P01');
+        expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
+        expect(await pending).toMatchObject({ removed: 1, state: 'disabled' });
+        expect(await links(b)).toEqual([]);
+        expect(await b.events()).toEqual([]);
+      }, { enable: false });
+    }, 180_000);
+
+    test('covered disable leaves unrelated origin guards unchanged', async () => {
+      await brain(async b => {
+        await seed(b);
+        const unrelated = 'notes/unrelated-test', actor = await maintenanceAttribution(b.engine);
+        const point = unmanagedBeliefPoint(b.sourceId, [unrelated], 'fixture_unrelated_page');
+        await b.engine.transaction(tx => withCoordinatedWrite(tx, [b.sourceId], async () => {
+          await point.run(tx, () => tx.putPage(unrelated,
+            { type: 'note', title: 'Unrelated', compiled_truth: 'No entity names.' }, { sourceId: b.sourceId, inline: true }));
+          await tx.executeRaw(`DELETE FROM page_write_guards WHERE source_incarnation=(SELECT incarnation FROM sources WHERE id=$1) AND slug=$2`, [b.sourceId, unrelated]);
+        }, actor));
+        await point.commit(b.engine);
+        const guards = () => b.engine.executeRaw<{ slug: string }>(
+          `SELECT g.slug FROM page_write_guards g JOIN sources s ON s.incarnation=g.source_incarnation WHERE s.id=$1 ORDER BY g.slug`, [b.sourceId]);
+        const before = await guards(), last = await b.lastId();
+        expect(before.some(g => g.slug === unrelated)).toBe(false);
+        expect((await scanBeliefDrift(b.engine, b.sourceId, { deep: true })).drifted).toEqual([]);
+        expect(await disable(b)).toMatchObject({ removed: 1, state: 'disabled' });
+        expect(await guards()).toEqual(before);
+        expect(await links(b)).toEqual([]);
+        const events = await b.events(last);
+        expect(events.map(e => [e.slug, e.event_type, e.origin, e.cause.op]))
+          .toEqual([[origin, 'link.retracted', 'unmanaged', 'mention_pass']]);
+        await journal(b, events);
       });
     }, 180_000);
   });
