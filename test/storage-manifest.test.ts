@@ -121,6 +121,16 @@ describe('storage shelf on a repo-less brain', () => {
     expect((await call('storage_find', { query: 'export', store: 'supabase' })).hits).toEqual([]);
   }, 30_000);
 
+  test('a card asked for by its exact title is an exact hit, even when the title tokenizes as one word (a file name, an email)', async () => {
+    await call('storage_register', { card: card('arc-one', { title: 'mail-archive.tar.gz', description: null }) });
+    await call('storage_register', { card: card('arc-two', { title: 'alice@example.com mailbox', description: null }) });
+    for (const [title, id] of [['mail-archive.tar.gz', 'arc-one'], ['Alice@Example.com Mailbox', 'arc-two']]) {
+      const found = await call('storage_find', { query: title });
+      expect(found).toMatchObject({ not_found: false, closest: [] });
+      expect(found.hits[0]).toMatchObject({ id, match: 'title' });
+    }
+  }, 30_000);
+
   test('validation refuses incomplete cards, command fields, stamped fields, secrets and credential shapes', async () => {
     const fake = (...parts: string[]) => parts.join('');
     const cases: Array<[Record<string, unknown>, string, string]> = [
