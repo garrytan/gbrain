@@ -1,0 +1,14 @@
+**The conversation archive is now on by default for personal brains, runs from the maintenance pass, ranks a little below your own pages, and has a doctor check (GST-2768).**
+
+<!-- behavior-change: transcript_archive_default_gst2768 -->
+
+### Changed
+- `transcripts.archive.enabled` unset now resolves on when the brain is personal (`brain.audience` personal, or the audience heuristic reads it as personal) and off on a shared or unknown brain, a thin client and a remote caller; an explicit on or off always wins, and a config read failure resolves off. A shared brain is only offered the archive. Existing personal brains see a one-time upgrade notice with the off command, `gbrain transcripts archive off`.
+- Search and query: an archive page ranks a little below a written page that scores close to it (rank prior 0.8), and one result list keeps at most two archive hits per day, unless the query asks about a conversation or a date. `search.rank_priors false` turns both off.
+- `gbrain init` and `gbrain setup <harness>` state the archive in their first-run settings (on, or offered on a shared brain), what leaves the machine, and how to turn it off.
+
+### Added
+- The maintenance pass runs the archive: unattended upkeep (a serve's idle tick, `gbrain maintain --unattended` and its schedule) and the autopilot tick archive the forward days, then one capped backfill run (`transcripts.archive.backfill_days_per_run`) of older days until none are left, at most once per `transcripts.archive.maintenance_floor_min` (default 360). It never runs when the archive resolves off, never fails the pass, and records its outcome in `transcripts.archive.last_maintenance`. Backfilled pages stay keyword-only until `gbrain embed --held`; no facts extraction or Dream synthesis runs on archive pages. A managed brain is left to `gbrain transcripts archive run`.
+- Doctor check `transcript_archive_freshness`: warns when a harness's newest archived day is more than `transcripts.archive.stale_days` (default 2) behind its newest session day (fix: `gbrain transcripts archive run`, or `backfill --from <day>` for a wider gap), when no maintenance pass has run the archive in that long (fix: `gbrain autopilot --install`), and lists held days with their codes. Off is ok; a harness with no readable sessions is informational.
+- Docs: `docs/guides/conversation-archive.md` (default-on behaviour, what leaves the machine, the off switch, backfill and the held embedding, the doctor check, retiring a home-made pipeline).
+- Tests: `test/transcripts-archive-default.test.ts`, `test/transcripts-archive-maintenance.test.ts`, `test/search-archive-rank-prior.test.ts`, `test/doctor-transcript-archive-freshness.test.ts`, `test/upgrade-transcript-archive-notice.test.ts`, and the archive line in `test/init-first-run.test.ts`.

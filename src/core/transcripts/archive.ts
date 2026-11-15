@@ -1,5 +1,6 @@
 /**
- * archive.ts — the built-in conversation archive (GST-2768, PR 2: core and legacy adoption; off unless turned on).
+ * archive.ts — the built-in conversation archive (GST-2768): on by default on a personal brain, offered on a shared one
+ * (archive-default.ts); the maintenance pass runs it (archive-maintenance.ts).
  *
  * gbrain transcripts archive run | backfill --from --to | status | adopt-legacy | on | off.
  *
@@ -45,6 +46,7 @@ import { importFromContent } from '../import-file.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { classifyBrainAudience } from '../facts/writeback-audience.ts';
+import { ARCHIVE_ENABLED_KEY, resolveArchiveEnabled } from './archive-default.ts';
 import { listGroups, listMembers } from '../access/members.ts';
 import { ownerView } from '../access/owner.ts';
 import { holdPageEmbedding } from '../page-embedding-budget.ts';
@@ -60,7 +62,7 @@ import {
 
 export type { ArchiveChannel } from './archive-day.ts';
 
-export const ARCHIVE_ENABLED_KEY = 'transcripts.archive.enabled';
+export { ARCHIVE_ENABLED_KEY } from './archive-default.ts';
 export const ARCHIVE_TIMEZONE_KEY = 'transcripts.archive.timezone';
 export const ARCHIVE_SOURCE_KEY = 'transcripts.archive.source';
 export const ARCHIVE_BACKFILL_CAP_KEY = 'transcripts.archive.backfill_days_per_run';
@@ -200,15 +202,15 @@ export interface ArchiveRunOpts {
 }
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
-const truthy = (v: string | null | undefined) => ['1', 'true', 'on', 'yes'].includes(String(v ?? '').trim().toLowerCase());
 
 /** The group principal a group or room conversation may be shared with, once the operator creates it: group:chat-<hash8>. */
 export function archiveGroupPrincipal(harness: TranscriptFormat, conversationKey: string): string {
   return 'chat-' + conversationHash8(harness, conversationKey);
 }
 
+/** The resolved switch (archive-default.ts): an explicit on or off wins; unset is on for a personal brain only. */
 export async function archiveEnabled(engine: Pick<BrainEngine, 'getConfig'>): Promise<boolean> {
-  return truthy(await engine.getConfig(ARCHIVE_ENABLED_KEY));
+  return (await resolveArchiveEnabled(engine)).enabled;
 }
 
 export async function setArchiveEnabled(engine: BrainEngine, on: boolean): Promise<void> {
@@ -312,7 +314,7 @@ async function ensureSource(engine: BrainEngine, sourceId: string): Promise<{ lo
   return { local_path: null };
 }
 
-const offFix: Action = { argv: ['gbrain', 'transcripts', 'archive', 'on'], consent: [], actor: 'user', why: 'Turns the conversation archive on for this brain; it is off unless the owner turns it on.', requires_exclusive: false };
+const offFix: Action = { argv: ['gbrain', 'transcripts', 'archive', 'on'], consent: [], actor: 'user', why: 'Turns the conversation archive on for this brain: it is off here because it was turned off, or because a shared brain is only offered it.', requires_exclusive: false };
 const ownerFix: Action = {
   argv: ['gbrain', 'access', 'owner', 'set', '<MEMBER>'], consent: [], actor: 'user', ask_user: true, requires_exclusive: false,
   inputs: [{ name: 'MEMBER', how: 'Ask the user which enabled member is the brain owner (gbrain access member list).' }],
@@ -398,7 +400,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   if (!enabled && !dryRun) {
     return emptyResult(opts.mode, {
       source_id: await configuredSource(engine, opts.sourceId),
-      message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on.',
+      message: 'The conversation archive is off on this brain, so nothing was read or written. It stays off until the owner turns it on (a shared brain is only offered it).',
       fix: offFix,
     });
   }

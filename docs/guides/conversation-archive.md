@@ -1,17 +1,75 @@
 # Conversation archive
 
 The conversation archive writes one redacted page per conversation per local day, read from your agent harnesses
-(Claude Code, Codex, OpenClaw, Hermes, Grok), plus one index page per day. It is **off** until you turn it on, and
-it only runs when you run it: nothing is scheduled yet.
+(Claude Code, Codex, OpenClaw, Hermes, Grok), plus one index page per day. On a **personal** brain it is **on by
+default** and the maintenance pass runs it; a **shared** team brain is only offered it and stays off until its owner
+turns it on.
 
 ```bash
-gbrain transcripts archive on                          # turn it on for this brain
+gbrain transcripts archive off                         # turn it off; pages already written stay
+gbrain transcripts archive on                          # turn it on (a shared brain, or after off)
 gbrain transcripts archive run --dry-run               # preview the last two local days
 gbrain transcripts archive run                         # write them
 gbrain transcripts archive backfill --from 2026-09-01  # older history, newest days first
 gbrain transcripts archive status                      # readers, timezone, archived and held days
-gbrain transcripts archive off                         # stop; pages already written stay
+gbrain doctor --only transcript_archive_freshness      # is it keeping up?
 ```
+
+## On by default
+
+`transcripts.archive.enabled` decides. Set to on or off, it always wins. Unset, it is on when the brain is personal
+(`brain.audience personal`, or an undeclared brain the audience heuristic reads as personal; see
+[ambient writeback](ambient-writeback.md#who-gets-asked-and-who-is-never-asked)) and off on a shared or unknown brain,
+which is only offered it. It is always off on a thin client and for a remote caller: the archive reads the harness
+sessions of the brain host's own machine. If the setting cannot be read, it counts as off.
+
+`gbrain init` and `gbrain setup <harness>` state the archive in their first-run settings, and an existing personal
+brain sees a one-time upgrade notice saying it is on and how to turn it off. Neither waits for an answer.
+
+## What leaves the machine
+
+- On a keyless brain, nothing: pages are written to the local brain and searched by keyword.
+- With an embedding key, new days are embedded by that provider like any new page, under the maintenance embedding
+  cap (`maintenance.embed_daily_usd`). Older history written by backfill is keyword-only, and its embedding waits
+  until you see the price and approve it:
+
+  ```bash
+  gbrain embed --held --dry-run     # what it would cost
+  gbrain embed --held               # after you agree
+  ```
+
+- No facts are extracted and no Dream synthesis runs on archive pages.
+
+## The maintenance pass
+
+The archive runs from the existing maintenance pass: the idle upkeep of an agent's `gbrain serve`,
+`gbrain maintain --unattended` (and `gbrain maintain --schedule`), and the autopilot tick (`gbrain autopilot --install`).
+Each pass archives the forward window (`archive run`), then one capped `backfill` run of older days, newest first,
+until none are left. It runs at most once per `transcripts.archive.maintenance_floor_min` (default 360), one runner at
+a time, never when the archive is off, and never fails the pass: its outcome, errors included, is recorded in
+`transcripts.archive.last_maintenance` and shown by doctor. A managed brain writes archive pages through the CLI's
+write coordinator, so the pass leaves it to a scheduled `gbrain transcripts archive run`.
+
+## Search
+
+An archive page ranks a little below a page you wrote that scores close to it (rank prior 0.8), and one result list
+holds at most two archive hits for the same day. A question about a conversation or a date ("what did we discuss",
+"when did ...", "yesterday", `2026-11-02`) ranks archive pages like any other. `gbrain config set search.rank_priors
+false` turns both off.
+
+## Doctor
+
+`gbrain doctor --only transcript_archive_freshness` (brain category) warns when:
+
+- a harness's newest archived day is more than `transcripts.archive.stale_days` (default 2) behind the newest session
+  day its reader sees. The fix is `gbrain transcripts archive run`, or
+  `gbrain transcripts archive backfill --from <first missing day>` when the gap is wider than one run;
+- the archive is on but no maintenance pass has run it in that long. The fix is `gbrain autopilot --install`
+  (a persistent service, so it asks first);
+- days are held (each is listed with its code, such as `archive_owner_unset` or `archive_redaction_failed`), a reader
+  failed, or the last pass recorded an error.
+
+Off is ok with no detail, and a harness with no readable sessions is informational.
 
 Every command takes `--json` and `--source <id>` (the archive source, `conversations` by default).
 
@@ -40,19 +98,21 @@ days already written. `run` covers today and the previous `transcripts.archive.r
 the next run, and the next run skips the days already finished. A run reads each session file once to learn its
 days, then reads again only the conversations on the days it writes, and writes them in batches, so a folder of
 thousands of sessions stays bounded in memory. Backfilled pages are searchable by keyword at once, and their
-embedding is held until you approve its cost with `gbrain embed --held`.
+embedding is held until you approve its cost (`gbrain embed --held --dry-run` shows it, `gbrain embed --held` runs it).
 
 ## Old archive folders
 
-If an earlier tool already archived conversations into a folder, `adopt-legacy` lists the days it covers so
-backfill skips them instead of writing a second copy:
+If an earlier tool already archived conversations into a folder (a home-made script or cron job), retire it in three
+steps. First, `adopt-legacy` lists the days the folder covers so backfill skips them instead of writing a second copy:
 
 ```bash
 gbrain transcripts archive adopt-legacy --dir ~/brain/conversations            # preview, writes nothing
 gbrain transcripts archive adopt-legacy --dir ~/brain/conversations --apply    # record the covered days
 ```
 
-The old pages are never changed or deleted.
+The old pages are never changed or deleted. Second, remove the old script's schedule yourself (its crontab line or
+scheduled job), so two archivers do not run side by side. Third, let the maintenance pass fill the gap, or run
+`gbrain transcripts archive backfill --from <day>` now.
 
 ## Privacy
 

@@ -1,5 +1,5 @@
 /**
- * gbrain transcripts archive — the day-sliced conversation archive (GST-2768). Off unless the owner turns it on.
+ * gbrain transcripts archive — the day-sliced conversation archive (GST-2768). On by default on a personal brain, offered on a shared one.
  *
  *   run                          archive the last few local days from every readable harness
  *   backfill --from D [--to D]   archive a date range, newest first, capped per run; embedding held for approval
@@ -22,7 +22,8 @@ const HELP = `Usage:
   gbrain transcripts archive on | off [--json]
 
 Writes one redacted page per conversation per local day (conversations/<harness>/<day>/...) plus a day index
-(conversations/days/<day>) into the archive source (default "conversations"). Off unless turned on with
+(conversations/days/<day>) into the archive source (default "conversations"). On by default on a personal brain,
+where the maintenance pass runs it; "gbrain transcripts archive off" stops it, and a shared brain turns it on with
 "gbrain transcripts archive on". Backfilled pages are keyword-only until "gbrain embed --held" approves their cost.
 Guide: docs/guides/conversation-archive.md`;
 

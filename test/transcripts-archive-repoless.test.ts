@@ -7,6 +7,8 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { ARCHIVE_TIMEZONE_KEY, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import { archivedPages, conversation, staticReader } from './helpers/transcript-archive.ts';
+import { addMember } from '../src/core/access/members.ts';
+import { setOwner } from '../src/core/access/owner.ts';
 
 let engine: PGLiteEngine;
 
@@ -39,7 +41,10 @@ describe('repo-less archive (pglite)', () => {
     expect((await archivedPages(engine)).map(p => p.slug.split('/').slice(0, 3).join('/'))).toEqual(['conversations/days/2026-11-10', 'conversations/grok/2026-11-10']);
   }, 60_000);
 
-  test('off by default: an unset switch refuses to write and says how to turn it on; a dry run previews', async () => {
+  test('off by default on a shared brain: an unset switch refuses to write and says how to turn it on; a dry run previews', async () => {
+    await engine.setConfig('brain.audience', 'shared');
+    await addMember(engine, 'alice-example');
+    await setOwner(engine, 'alice-example');
     const readers = [staticReader('grok', [conversation('grok', 'grok-session-2', [['user', '2026-11-10T08:00:00.000Z', 'hello']])])];
     const off = await runTranscriptArchive(engine, { mode: 'run', readers, now: new Date('2026-11-10T09:00:00Z') });
     expect(off.enabled).toBe(false);
