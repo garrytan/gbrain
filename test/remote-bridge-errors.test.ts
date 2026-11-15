@@ -30,7 +30,7 @@ afterAll(() => { for (const h of homes) rmSync(h, { recursive: true, force: true
 
 type Forward = (c: GBrainConfig, name: string, args: Record<string, unknown>, o: ForwardRemoteToolOptions & { meta?: Record<string, unknown> }) => Promise<CallToolResult>;
 
-async function startBridge(over: { forward?: Forward; list?: () => Promise<RemoteToolDefs>; transport?: RemoteBridgeOptions['transport'] } = {}) {
+async function startBridge(over: { forward?: Forward; list?: () => Promise<RemoteToolDefs>; transport?: RemoteBridgeOptions['transport']; advertise?: RemoteBridgeOptions['advertise'] } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-bridge-unit-'));
   homes.push(home);
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
@@ -38,7 +38,7 @@ async function startBridge(over: { forward?: Forward; list?: () => Promise<Remot
   const exits: number[] = [];
   const stdin = Object.assign(new EventEmitter(), { isTTY: true });
   await withEnv({ GBRAIN_HOME: home, GBRAIN_SURFACE: undefined }, () => startRemoteStdioBridge(cfg, {
-    installFatalHandlers: false, mcpStdio: false, eofDrainMs: 0,
+    installFatalHandlers: false, mcpStdio: false, eofDrainMs: 0, ...(over.advertise ? { advertise: over.advertise } : {}),
     transport: over.transport ?? (() => serverSide),
     lifecycle: { stdin: stdin as never, signals: new EventEmitter() as never, log: (m: string) => { logs.push(m); }, exit: (c?: number) => { exits.push(c ?? 0); },
       getParentPid: () => 1, probeWatchdog: () => false },
@@ -233,4 +233,23 @@ describe('audience', () => {
       expect(sent).toBe(1);
     } finally { await b.close(); }
   });
+});
+
+describe('request_tools schemas the host describes enter the bridge tool list', () => {
+  const hostVerbsOnly: RemoteToolDefs = { server: HOST, tools: ['query', 'request_tools'].map(name => ({ name, inputSchema: { type: 'object' as const } })) };
+  const described = { content: [{ type: 'text' as const, text: JSON.stringify({ tools: [{ name: 'get_page', description: 'Read a page', inputSchema: { type: 'object', properties: { slug: { type: 'string' } } } }] }) }] };
+
+  for (const advertise of [undefined, 'verbs'] as const) {
+    test(`a tool the host lists only after request_tools is listed next time (advertise=${advertise ?? 'none'})`, async () => {
+      const b = await startBridge({ list: async () => hostVerbsOnly, forward: async () => described, ...(advertise ? { advertise } : {}) });
+      try {
+        expect((await b.client.listTools()).tools.map(x => x.name)).not.toContain('get_page');
+        const r = await b.client.callTool({ name: 'request_tools', arguments: { tools: ['get_page'] } });
+        expect(r.isError ?? false).toBe(false);
+        const after = (await b.client.listTools()).tools;
+        expect(after.map(x => x.name)).toContain('get_page');
+        expect(after.find(x => x.name === 'get_page')?.inputSchema).toEqual({ type: 'object', properties: { slug: { type: 'string' } } });
+      } finally { await b.close(); }
+    });
+  }
 });

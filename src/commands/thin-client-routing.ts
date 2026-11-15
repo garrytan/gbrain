@@ -68,11 +68,13 @@ export async function routeThinClientCommand(
   // form refuses here with a fix that keeps its flags, so the caller's generic refusal never renders `Fix: gbrain serve`.
   if (command === 'serve' && !args.includes('--help') && !args.includes('-h')) {
     const { parseBridgeServeArgs, serveThinClientRefusal } = await import('../mcp/remote-bridge-args.ts');
-    const { exitCliError } = await import('../cli/cli-error.ts');
+    const { exitCliError, usageError } = await import('../cli/cli-error.ts');
+    const { getCliOptions } = await import('../core/cli-options.ts');
+    if (getCliOptions().brain) exitCliError(usageError('--brain is not supported on a thin-client install: the remote server is a single brain.', 'Remove --brain, or run from a machine with local mounts (`gbrain mounts list`).'), 'serve');
     const parsed = (() => { try { return parseBridgeServeArgs(args); } catch (error) { return exitCliError(error, 'serve'); } })();
     if (!parsed.bridge) return exitCliError(serveThinClientRefusal(parsed.refused, cfg.remote_mcp?.mcp_url ?? ''), 'serve');
     const { startRemoteStdioBridge } = await import('../mcp/remote-bridge.ts');
-    const timeoutMs = (await import('../core/cli-options.ts')).getCliOptions().timeoutMs;
+    const timeoutMs = getCliOptions().timeoutMs;
     await startRemoteStdioBridge(cfg, { surface: parsed.surface, advertise: parsed.advertise, sourceGuard: parsed.sourceGuard, ...(timeoutMs ? { timeoutMs } : {}) });
     return true;
   }

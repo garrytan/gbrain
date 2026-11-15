@@ -119,6 +119,7 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
   const listing = stdioToolListing(async () => advertise, session, { sendToolListChanged: async () => notify() });
   const listingNarrowed = () => session.allowedOps !== undefined || (advertise !== null && surfaceWiderThan(session.surface, advertise));
   const hostNames = new Set<string>();
+  const revealedDefs = new Map<string, Tool>();
   const warnedUnknown = new Set<string>();
   const render: RenderContext = {
     transport: 'stdio', surface: session.surface,
@@ -134,9 +135,10 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
 
   /** The host's tools for this token that this session may call, before the advertise listing. */
   const callableTools = (defs: RemoteToolDefs): Tool[] => {
+    const all = [...defs.tools, ...[...revealedDefs.values()].filter(r => !defs.tools.some(t => t.name === r.name))];
     hostNames.clear();
-    for (const t of defs.tools) hostNames.add(t.name);
-    const hostTools = defs.tools.filter(t => !byName.get(t.name)?.localOnly && !byName.get(t.name)?.cliOnly);
+    for (const t of all) hostNames.add(t.name);
+    const hostTools = all.filter(t => !byName.get(t.name)?.localOnly && !byName.get(t.name)?.cliOnly);
     if (!listingNarrowed()) return hostTools;
     const unknown = hostTools.filter(t => !byName.has(t.name) && !warnedUnknown.has(t.name)).map(t => t.name);
     if (unknown.length) {
@@ -225,6 +227,11 @@ async function runBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions, deps: Std
         out.catalog = (body.catalog as Array<{ area: string; tools: Array<{ name: string }> }>).map(g => ({ ...g, tools: g.tools.filter(t => allowed.has(t.name)) })).filter(g => g.tools.length);
         out.total_tools = (out.catalog as Array<{ tools: unknown[] }>).reduce((n, g) => n + g.tools.length, 0);
       }
+    }
+    if (Array.isArray(body.tools)) {
+      const fresh = (body.tools as Tool[]).filter(t => typeof t?.name === 'string' && isPlainObject(t.inputSchema) && !hostNames.has(t.name) && !revealedDefs.has(t.name));
+      for (const t of fresh) revealedDefs.set(t.name, t);
+      if (fresh.length && !listingNarrowed()) notify();
     }
     if (Array.isArray(body.tools) && body.tools.length && listingNarrowed()) {
       const names = (body.tools as Array<{ name?: unknown }>).map(t => t.name).filter((n): n is string => typeof n === 'string');

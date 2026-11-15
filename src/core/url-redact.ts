@@ -71,7 +71,7 @@ export function redactUrlsInText(text: string): string {
  * a remote URL past its path can carry a secret; host results never pass here.
  */
 export function stripUrlSecrets(text: string): string {
-  return text.replace(/(\w[\w+.-]*:\/\/)(\S*@)?([^\s/?#@]*)([^\s?#]*)(?:[?#]\S*)?/g, (_m, scheme: string, _user, host: string, path: string) => `${scheme}${host}${path}`);
+  return text.replace(/(\w[\w+.-]*:\/\/)([^\s/?#]*@)?([^\s/?#@]*)([^\s?#]*)(?:[?#]\S*)?/g, (_m, scheme: string, _user, host: string, path: string) => `${scheme}${host}${path}`);
 }
 
 /** `stripUrlSecrets` over every string inside a value (objects and arrays recursively); other values pass through. */
