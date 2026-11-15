@@ -233,9 +233,13 @@ export async function writePageAliases(tx: BrainEngine, slug: string, sourceId: 
   ]);
 }
 
+async function lockMentionPublication(tx: Pick<BrainEngine, 'executeRaw'>): Promise<void> {
+  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', ['gbrain:mention-publish']);
+}
 /** Turn the index off for one source: plain mention links, derived aliases, entries and page state go; typed_ner rows stay. */
 async function disableSource(engine: BrainEngine, managed: boolean, sourceId: string): Promise<number> {
   const { removed, beliefs } = await aliasWrite(engine, managed, sourceId, async tx => {
+    await lockMentionPublication(tx);
     const journaled = (await beliefCoveredSources(tx, [sourceId])).has(sourceId);
     const origins = await tx.executeRaw<{ slug: string }>(
       `SELECT DISTINCT f.slug FROM links l JOIN pages f ON f.id = l.from_page_id
@@ -567,6 +571,7 @@ async function reconcileSource(engine: BrainEngine, sourceId: string, gazetteer:
     // page keys are locked first, as every publisher locks them before the page rows.
     let beliefs = null as ReturnType<typeof unmanagedBeliefPoint> | null;
     const outcome = await engine.transaction(async tx => {
+      await lockMentionPublication(tx);
       const journaled = (await beliefCoveredSources(tx, [sourceId])).has(sourceId);
       if (journaled) await tx.lockPageKeys(readable.map(p => ({ sourceId: p.source_id, slug: p.slug })));
       if (!sameGenerations(generations, await readGenerations(tx, genSources, true))) return null;
