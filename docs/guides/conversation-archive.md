@@ -146,7 +146,7 @@ private conversations never land in the shared repository.
 Pages archived while the brain was personal name no readers. The first archive run after the brain becomes shared
 keeps them to the owner before it writes anything: every folder that holds an archive page at that moment (one per
 harness and day, such as `conversations/codex/2026-10-01/`, plus `conversations/days/`) gets an access rule readable
-only by the owner. This re-scope **replaces any existing rule on those folders, including one the owner made wider on
+only by the owner. Other pages in the archive source, outside `conversations/`, keep the rules they had. This re-scope **replaces any existing rule on those folders, including one the owner made wider on
 purpose**; re-add the wider readers afterwards (`gbrain access rule add`, which waits for `gbrain access apply`) if
 you still want them. A rule on the whole `conversations/` folder is left in place, and a page under both rules is read
 only by members both allow. Folders written later get no rule, so a group conversation archived on the shared brain

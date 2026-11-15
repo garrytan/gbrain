@@ -324,8 +324,8 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
 }
 
 /**
- * Pages written while the brain was personal name no readers. When the brain has become shared, every folder (or root
- * page) that holds a page of the source at that moment, or a day the ledger recorded (a write the coordinator accepted
+ * Pages written while the brain was personal name no readers. When the brain has become shared, every folder under
+ * conversations/ that holds an archive page at that moment, or a day the ledger recorded (a write the coordinator accepted
  * and has not published yet), is kept to the owner by a rule (a narrowing, so it applies and
  * restamps at once; a rule already at one of those folders is replaced, a wider one included) before the run writes
  * anything, then the new audience is recorded. Folders written later are not covered, so a group conversation archived
@@ -342,7 +342,7 @@ async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy:
     if (await policy.readAccessStore(engine, sourceId) === 'git') return;
     const folderOf = (slug: string) => slug.includes('/') ? slug.replace(/[^/]+$/, '') : slug;
     const pageFolders = await engine.executeRaw<{ folder: string }>(
-      "SELECT DISTINCT CASE WHEN strpos(slug, '/') > 0 THEN regexp_replace(slug, '[^/]+$', '') ELSE slug END AS folder FROM pages WHERE source_id = $1", [sourceId]);
+      "SELECT DISTINCT regexp_replace(slug, '[^/]+$', '') AS folder FROM pages WHERE source_id = $1 AND slug LIKE 'conversations/%'", [sourceId]);
     const ledger = await readArchiveLedger(engine, sourceId);
     const folders = [...new Set([...pageFolders.map(r => r.folder), ...ledger.flatMap(e => e.slug ? [folderOf(e.slug)] : []), ...(ledger.length ? ['conversations/days/'] : [])])].sort();
     const rules = folders.map(folder => {
