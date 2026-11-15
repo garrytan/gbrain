@@ -70,6 +70,7 @@ import type { TrustTier } from '../trust/tier.ts';
 import type { Operation, OperationContext } from './contract.ts';
 import { invalidParam, paramUse, readFix } from './op-fix.ts';
 import { parseSourceIdsParam, requestSourceScope, SOURCE_IDS_PARAM } from './search-source-scope.ts';
+import { chooseFill, queryFillPage, withoutFill } from './search-fill.ts';
 import { capVectorOnlyPages, remotePageCap } from '../search/remote-page-cap.ts';
 import {
   parseSourceIdParam,
@@ -208,44 +209,9 @@ async function withEvidence(ctx: OperationContext, p: Record<string, unknown>, r
   return { rows: d.results, evidence: { delivery: d.delivery, explicitSnippet: typeof p.snippet_chars === 'number' && Number.isFinite(p.snippet_chars) } };
 }
 
-type Delivered = Awaited<ReturnType<typeof withEvidence>>;
-
-/** GST-2762: the rows without the keyless any-word fill's rows (the same array when it added none). */
-const withoutFill = (rows: SearchResult[]): SearchResult[] => rows.some(r => r.keyword_fill) ? rows.filter(r => !r.keyword_fill) : rows;
-
-/**
- * GST-2762: the keyless any-word fill reaches the caller only when every other
- * row stays exactly as it is without the fill. reference is the op's stages
- * over the pipeline's rows less the fill. A fill row is kept only for a page
- * the reference does not already return and only while the page is under
- * limit; rerun then repeats the stages over the pipeline's other rows plus
- * those, so a fill row passes each stage like any other row. That second
- * result, its fill rows placed last, is returned with its evidence delivery
- * only when its rows less the fill, and what compared reads from it, equal the
- * reference's before delivery and (delivery's own per-row record aside) after
- * it. Otherwise the reference is returned and the fill is withheld for this
- * request.
- */
-export async function chooseFill<T extends { results: SearchResult[] }>(found: SearchResult[], reference: T, limit: number, rerun: (hits: SearchResult[]) => Promise<T>,
-  compared: (t: T) => unknown, deliver: (rows: SearchResult[]) => Promise<Delivered>): Promise<T & { delivered?: Delivered }> {
-  const page = (r: SearchResult) => JSON.stringify([r.source_id ?? 'default', r.slug]);
-  const returned = new Set(reference.results.map(page));
-  const fill = found.filter(r => r.keyword_fill && !returned.has(page(r))).slice(0, Math.max(0, limit - reference.results.length));
-  if (!fill.length) return reference;
-  const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-  const again = await rerun([...withoutFill(found), ...fill]);
-  const filled = { ...again, results: [...withoutFill(again.results), ...again.results.filter(r => r.keyword_fill)] };
-  if (!same(compared({ ...filled, results: withoutFill(filled.results) }), compared(reference))) return reference;
-  const base = await deliver(reference.results);
-  const delivered = await deliver(filled.results);
-  // Delivery's own per-row record (delivered) is left out: it appears on every row once any row is expanded, and the row's text is compared.
-  const text = (rows: SearchResult[]) => rows.map(({ delivered: _record, ...row }: SearchResult & { delivered?: unknown }) => row);
-  return same(text(withoutFill(delivered.rows)), text(base.rows)) ? { ...filled, delivered } : { ...reference, delivered: base };
-}
-
 /** withEvidence + the response meta for the rows actually returned + searchOutput. */
 async function evidenceOutput(ctx: OperationContext, p: Record<string, unknown>, results: SearchResult[], plan: EvidencePlan | null, scope: DeliveryScope,
-  meta: HybridSearchMeta | null, snippetCap: number, timings: SearchTimings, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>, keepEnumerated = false, delivered?: Delivered): Promise<SearchResult[]> {
+  meta: HybridSearchMeta | null, snippetCap: number, timings: SearchTimings, buildMeta: (rows: SearchResult[]) => Promise<Record<string, unknown>>, keepEnumerated = false, delivered?: Awaited<ReturnType<typeof withEvidence>>): Promise<SearchResult[]> {
   return timings.stage('response', async () => {
     // Every returned row is a copy of one of `results`, so their page trust is read alongside evidence delivery.
     const pageTrust = loadPageTrust(ctx.engine, results.filter(r => typeof r.fact_row?.id !== 'number'));
@@ -882,9 +848,8 @@ const search: Operation = {
       stampDeepResearchIds(results);
       return { capped, declarations, fanned, results };
     };
-    const searchScope = { ...scope, excludePrivate };
     const page = await chooseFill(found, await opStages(withoutFill(found), true), limit, hits => opStages(hits, false),
-      t => [t.results, t.fanned.fanout, t.fanned.entity, t.capped.meta], rows => withEvidence(ctx, p, rows, plan, searchScope, capturedMeta));
+      t => [t.results, t.fanned.fanout, t.fanned.entity, t.capped.meta], rows => withEvidence(ctx, p, rows, plan, { ...scope, excludePrivate }, capturedMeta));
     const { capped, declarations, fanned, results } = page;
     const latency_ms = Date.now() - startedAt;
     bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
@@ -897,6 +862,20 @@ const search: Operation = {
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
 };
+
+/** GST-2762: the query op's stages after retrieval, run over the rows without the keyless fill (first, with its notices) and again with them (queryFillPage). */
+function queryOpStages(ctx: OperationContext, p: Record<string, unknown>, queryText: string, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving }: { pageCap: Parameters<typeof capVectorOnlyPages>[1];
+  timings: SearchTimings; querySourceScope: SourceScope; excludePrivate: boolean; types?: string[]; where?: ReturnType<typeof whereOpParam>; plan: EvidencePlan | null; queryEmbedding: Float32Array | null; resolving: ReturnType<typeof startEntityResolution> }) {
+  return async (hits: SearchResult[], first: boolean) => {
+    const { rows: primaryRows, meta: pageCapMeta } = capVectorOnlyPages(hits, pageCap);
+    const declarations = new DeclarationMemo();
+    const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
+      { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText), resolving));
+    if (first) await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
+    const results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
+    return { pageCapMeta, declarations, fanned, results, grade: gradeRetrievalConfidence(results, { query: queryText }) };
+  };
+}
 
 const query: Operation = {
   name: 'query',
@@ -1136,16 +1115,7 @@ const query: Operation = {
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
       explain: p.explain === true, explainTarget: explainPrep?.trace, _timings: timings,
     });
-    // GST-2762: the stages run over the pipeline's rows less the keyless fill (first, with its notices), then over all of them (chooseFill).
-    const opStages = async (hits: SearchResult[], first: boolean) => {
-      const { rows: primaryRows, meta: pageCapMeta } = capVectorOnlyPages(hits, pageCap);
-      const declarations = new DeclarationMemo();
-      const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
-        { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText), resolving));
-      if (first) await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
-      const results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
-      return { pageCapMeta, declarations, fanned, results, grade: gradeRetrievalConfidence(results, { query: queryText }) };
-    };
+    const opStages = queryOpStages(ctx, p, queryText, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving });
     const reference = await opStages(withoutFill(found), true);
     let { results, pageCapMeta } = reference;
     // #1663 — CRAG confidence gate. Grade what retrieval returned (zero-LLM;
@@ -1270,16 +1240,9 @@ const query: Operation = {
     }
     const latency_ms = Date.now() - startedAt;
 
-    const finish = async (rows: SearchResult[]) => {
-      const kept = (await keepFrontmatterMatches(ctx.engine, rows, where)).map(r => ({ ...r }));
-      stampDeepResearchIds(kept);
-      return kept;
-    };
     const queryScope = { ...querySourceScope, excludePrivate, detail };
-    // An escalated run has no reference to compare the fill against, so it keeps its rows without the fill.
-    const page = crag.escalated ? { ...reference, results: await finish(results) }
-      : await chooseFill(found, { ...reference, results: await finish(results) }, await resolveEffectiveLimit(ctx, p), async hits => { const again = await opStages(hits, false); return { ...again, results: await finish(again.results) }; },
-        t => [t.results, t.fanned.fanout, t.fanned.entity, t.pageCapMeta, t.grade], rows => withEvidence(ctx, p, rows, plan, queryScope, capturedMeta));
+    const page = await queryFillPage(ctx.engine, where, found, reference, results, crag.escalated, () => resolveEffectiveLimit(ctx, p), hits => opStages(hits, false),
+      t => [t.results, t.fanned.fanout, t.fanned.entity, t.pageCapMeta, t.grade], rows => withEvidence(ctx, p, rows, plan, queryScope, capturedMeta));
     results = page.results;
     const { declarations, fanned } = page;
 

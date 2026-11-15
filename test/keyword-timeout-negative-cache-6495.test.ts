@@ -205,10 +205,10 @@ describe('keyword timeout negative cache: the engine runner', () => {
   test('the any-word fill (orFill) is cached apart from an ordinary search: its timeout never makes the next search skip its keyword statement', async () => {
     const h = harness();
     h.failNext(TIMEOUT);
-    expect(await outcome(() => h.engine.searchKeyword('contract terms', { ...CACHE, orFill: true }))).toBe('57014');
+    expect(await outcome(() => h.engine.searchKeyword('contract terms', { ...CACHE, orFallback: true, orFill: true }))).toBe('57014');
     h.failNext(null);
     expect(await outcome(() => h.engine.searchKeyword('contract terms', CACHE))).toBe('ran');
-    expect(await outcome(() => h.engine.searchKeyword('contract terms', { ...CACHE, orFill: true }))).toBe('skipped');
+    expect(await outcome(() => h.engine.searchKeyword('contract terms', { ...CACHE, orFallback: true, orFill: true }))).toBe('skipped');
   });
 
   test('zero extra statements per search; one TTL read and one counter write per timeout', async () => {

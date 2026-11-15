@@ -79,16 +79,15 @@ function appendPages(rows: SearchResult[], more: SearchResult[], limit: number):
  * them while the vector arm is healthy). `runProbe` runs the arm's statement
  * with a match and a rank query; `runRelaxed` runs the engine's retry.
  *
- * GST-2762: with orFill (hybrid's keyword-only path) a first page whose strict
- * rows leave the candidate pool short also runs the retry, and its rows fill
- * the pool after every strict row, tagged `keyword_relaxed` and `keyword_fill`, each scored below
- * the lowest strict score so a raw-score sort keeps them under all-word hits.
+ * GST-2762: with orFill (the keyless any-word fill's own call) only the retry
+ * runs, on the first page, and its rows come back tagged `keyword_relaxed` and
+ * `keyword_fill`; the caller already holds the strict rows (search/hybrid/keyword-only.ts).
  */
 export async function keywordArmRows<R>(a: {
   query: string;
   strict: R[];
   orFallback?: boolean;
-  /** GST-2762: fill a short first page of strict rows with the retry's rows (SearchOpts.orFill). */
+  /** GST-2762: run only the retry, for the keyless any-word fill (SearchOpts.orFill). */
   orFill?: boolean;
   limit: number;
   offset: number;
@@ -101,19 +100,13 @@ export async function keywordArmRows<R>(a: {
   onIncomplete?: (reason: 'timeout' | 'provider_error') => void;
 }): Promise<SearchResult[]> {
   const failed = <T>(err: unknown): T[] => { a.onIncomplete?.(isTimeoutError(err) ? 'timeout' : 'provider_error'); return []; };
+  const orQuery = a.orFallback ? buildOrFallbackWebsearchQuery(a.query) : null;
+  if (a.orFill) return orQuery && a.offset === 0 ? (await a.runRelaxed(orQuery)).map(r => ({ ...a.toResult(r), keyword_relaxed: true as const, keyword_fill: true as const })) : [];
   const handles = a.orFallback && a.offset === 0 && a.runHandles ? slugHandles(a.query) : null;
   const named = handles ? await a.runHandles!(handles).catch(failed<SearchResult>) : [];
-  const orQuery = a.orFallback ? buildOrFallbackWebsearchQuery(a.query) : null;
   const probeQuery = orQuery && a.offset === 0 ? identifierProbeQuery(a.query) : null;
   const probe = probeQuery ? (await a.runProbe(probeQuery, orQuery!).catch(failed<R>)).map(a.toResult) : [];
-  const fill = a.orFill === true && a.offset === 0 && a.strict.length > 0 && a.strict.length < a.limit;
-  if ((a.strict.length > 0 && !fill) || !orQuery) return appendPages(named, appendPages(a.strict.map(a.toResult), probe, a.limit), a.limit);
-  const relaxedRows = fill ? await a.runRelaxed(orQuery).catch(failed<R>) : await a.runRelaxed(orQuery);
-  const relaxed = relaxedRows.map(r => ({ ...a.toResult(r), keyword_relaxed: true as const }));
-  if (!fill) return appendPages(named, appendPages(probe, relaxed, a.limit), a.limit);
-  const strict = appendPages(a.strict.map(a.toResult), probe, a.limit);
-  const floor = Math.min(...strict.map(r => r.score));
-  const top = Math.max(...relaxed.map(r => r.score));
-  const below = relaxed.map(r => ({ ...r, keyword_fill: true as const, score: floor * 0.5 * (top > 0 ? r.score / top : 1) }));
-  return appendPages(named, appendPages(strict, below, a.limit), a.limit);
+  if (a.strict.length > 0 || !orQuery) return appendPages(named, appendPages(a.strict.map(a.toResult), probe, a.limit), a.limit);
+  const relaxed = (await a.runRelaxed(orQuery)).map(r => ({ ...a.toResult(r), keyword_relaxed: true as const }));
+  return appendPages(named, appendPages(probe, relaxed, a.limit), a.limit);
 }

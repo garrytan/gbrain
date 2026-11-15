@@ -1024,7 +1024,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `ssl_required` | the server demands SSL — `?sslmode=require` rewrite (rewrite tier) |
 | `pool_exhausted` | 53300 / session-slot exhaustion — [pool sizing](#pool-sizing) guidance: `export GBRAIN_POOL_SIZE=6` per long-running process, fewer processes |
 | `conn_refused` | ECONNREFUSED — docker-start arm for gbrain's own container; pooler rewrite for Supabase direct URLs |
-| `dns_failed` | ENOTFOUND/EAI_AGAIN — one bounded retry; persistent + Supabase suggests a paused project |
+| `dns_failed` | ENOTFOUND/EAI_AGAIN — one bounded retry; persistent on a Supabase direct host suggests a paused project, while on a Supabase pooler URL it points at this machine's DNS and network (the shared pooler host resolves whatever a project's state) |
 | `network_unreachable` | ENETUNREACH/ETIMEDOUT — often an IPv6-only direct host; session-pooler rewrite |
 | `conn_dropped` | 08xxx / reset mid-connection — transient, bounded reconnect |
 | `server_starting` | "the database system is starting up" — retry shortly |

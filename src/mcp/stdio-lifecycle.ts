@@ -60,6 +60,29 @@ export function resolveEofDrainMs(defaultMs: number = DEFAULT_EOF_DRAIN_MS): num
   return Math.floor(n);
 }
 
+/** How long an exit waits for buffered stdout; a reader that stopped reading cannot hold the process past it. */
+export const STDOUT_DRAIN_MS = 5_000;
+
+/**
+ * GST-2760: the process exit both stdio servers use. Bun's process.exit drops stdout it still buffers natively (an
+ * 8 MiB reply written just before exit arrives as 64 KiB), so the exit waits for stdout.end() to report the buffer
+ * flushed, an error (the reader is gone) or STDOUT_DRAIN_MS, whichever comes first.
+ */
+export function exitAfterStdoutDrains(exit: (code?: number) => void = (code) => { process.exit(code); }, stdout: Writable = process.stdout, boundMs = STDOUT_DRAIN_MS): (code?: number) => void {
+  return (code) => {
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      exit(code);
+    };
+    const timer = setTimeout(finish, boundMs);
+    stdout.once('error', finish);
+    try { stdout.end(finish); } catch { finish(); }
+  };
+}
+
 export interface StdioLifecycleDeps {
   stdin: NodeJS.ReadableStream & { isTTY?: boolean };
   signals: Pick<NodeJS.Process, 'on'>;

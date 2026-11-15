@@ -1362,7 +1362,7 @@ export interface SearchOpts extends PageReadPolicy {
    * link resolution ("John Smith" matching every John and every Smith). `searchTitles` ignores this flag.
    */
   orFallback?: boolean;
-  /** GST-2762: with orFallback, fill a short first page of strict rows with the OR retry's rows, after them and tagged `keyword_relaxed`; hybrid sets it only with no embedding provider. */
+  /** GST-2762: with orFallback, run only the OR retry, on the first page, and tag its rows `keyword_relaxed` and `keyword_fill`; the keyless any-word fill's own call, which already holds the strict rows. */
   orFill?: boolean;
   /** #6495: hybrid's keyword arm opts in to the Postgres keyword timeout negative cache (postgres-engine/keyword-timeout-cache.ts); PGLite ignores it. */
   keywordTimeoutCache?: boolean;

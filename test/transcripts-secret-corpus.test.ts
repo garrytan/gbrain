@@ -6,7 +6,7 @@
  * (test/fixtures/transcripts/synthetic-credentials.ts).
  */
 import { describe, expect, test } from 'bun:test';
-import { NAMED_SECRET_RULES } from '../src/core/secret-scan.ts';
+import { NAMED_SECRET_RULES, TRANSCRIPT_LANE_SCAN_OPTS, scanText } from '../src/core/secret-scan.ts';
 import { redactSession } from '../src/core/transcripts/render.ts';
 import type { ParsedSession } from '../src/core/transcripts/types.ts';
 import { SYNTHETIC_CREDENTIAL_CORPUS } from './fixtures/transcripts/synthetic-credentials.ts';
@@ -29,6 +29,44 @@ describe('synthetic credential corpus', () => {
     const out = run({ meta: { harness: 'claude-code', sessionId: 'netrc-quoted' }, messages: [{ role: 'user', timestamp: TS(0), text: `machine api.acme-example.test login alice-example password "${pw}"` }] });
     expect(out).not.toContain(pw);
     expect(out).toContain('password \\"<REDACTED:labeled_credential>\\"');
+  });
+
+  test('a .netrc entry written over several lines: the password is redacted', () => {
+    const pw = ['Synth', 'NetrcMulti4321'].join('');
+    for (const text of [
+      `machine api.acme-example.test\n  login alice-example\n  password ${pw}`,
+      `machine api.acme-example.test\nlogin alice-example\npassword "${pw}"`,
+      `machine api.acme-example.test login alice-example\n    password ${pw}`,
+      `default\n  password ${pw}\n  login alice-example`,
+    ]) {
+      const out = run({ meta: { harness: 'claude-code', sessionId: 'netrc-multi' }, messages: [{ role: 'user', timestamp: TS(0), text }] });
+      expect([text, out.includes(pw)]).toEqual([text, false]);
+      expect(out).toContain('<REDACTED:labeled_credential>');
+    }
+  });
+
+  test('a blank or comment line inside a multi-line .netrc stanza does not end it', () => {
+    const pw = ['Synth', 'NetrcGap7788'].join('');
+    for (const text of [
+      `machine api.acme-example.test\nlogin alice-example\n\npassword ${pw}`,
+      `machine api.acme-example.test\n# service account\nlogin alice-example\npassword ${pw}`,
+      `machine api.acme-example.test\n  login alice-example\n  # rotated monthly\n\n  password "${pw}"`,
+    ]) {
+      const out = run({ meta: { harness: 'claude-code', sessionId: 'netrc-gap' }, messages: [{ role: 'user', timestamp: TS(0), text }] });
+      expect([text, out.includes(pw)]).toEqual([text, false]);
+      expect(scanText(text, TRANSCRIPT_LANE_SCAN_OPTS).map((f) => f.pattern)).toEqual(['labeled_credential']);
+    }
+  });
+
+  test('prose near a .netrc shape is not redacted', () => {
+    for (const text of [
+      'machine learning\npassword managers are useful',
+      'machine api.acme-example.test\nthen we talked\npassword hunter2x',
+      'we used the machine api.acme-example.test\npassword Synth4242pw',
+    ]) {
+      const out = redactSession({ meta: { harness: 'claude-code', sessionId: 'netrc-prose' }, messages: [{ role: 'user', timestamp: TS(0), text }] }, { patterns: [] }).session.messages[0]!.text;
+      expect(out).toBe(text);
+    }
   });
 
   for (const e of SYNTHETIC_CREDENTIAL_CORPUS) {
