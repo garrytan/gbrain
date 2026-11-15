@@ -75,6 +75,8 @@ export const DEFAULT_QUIET_MINUTES = 180;
 const LEDGER_PREFIX = 'transcripts.archive.ledger.';
 const PIN_PREFIX = 'transcripts.archive.pinned_timezone.';
 const LEGACY_PREFIX = 'transcripts.archive.legacy.';
+/** The audience (personal or shared) the archive last ran under, per configured source. */
+const AUDIENCE_PREFIX = 'transcripts.archive.audience.';
 const INGESTED_VIA = 'cli:transcripts-archive';
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -303,6 +305,33 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
   return readers;
 }
 
+/**
+ * Pages written while the brain was personal name no readers. When the brain has become shared, the source's whole archive
+ * folder is kept to the owner by a folder rule (a narrowing, so it applies and restamps at once) before the run writes
+ * anything, then the new audience is recorded. A source whose rules live in git is left to its access.yml.
+ */
+async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
+  const key = AUDIENCE_PREFIX + sourceId;
+  const now = privacy.shared ? 'shared' : 'personal';
+  const recorded = await engine.getConfig(key);
+  if (recorded === now) return;
+  if (privacy.shared && !privacy.owner) return;
+  if (privacy.shared && recorded === 'personal' && (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) {
+    const policy = await import('../access/policy.ts');
+    const { normalizeRule } = await import('../access/folder-rules.ts');
+    if (await policy.readAccessStore(engine, sourceId) === 'git') return;
+    const normalized = normalizeRule({ prefix: 'conversations/', readable_by: [privacy.owner] });
+    if ('problem' in normalized) throw new Error('the owner-only archive rule is invalid: ' + normalized.problem);
+    const rule = normalized.rule;
+    const current = await policy.appliedRules(engine, sourceId);
+    const kept = current.find(r => r.prefix === rule.prefix);
+    if (!kept || kept.readable_by.join() !== rule.readable_by.join()) {
+      await policy.proposeRevision(engine, sourceId, [...current.filter(r => r.prefix !== rule.prefix), rule], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
+    }
+  }
+  await engine.setConfig(key, now);
+}
+
 function isGitRepo(path: string | null): boolean {
   return !!path && existsSync(join(path, '.git'));
 }
@@ -438,6 +467,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
     : opts.context ?? (opts.makeContext && await managedPersistenceEnabled(engine) ? await opts.makeContext(sourceId) : undefined);
   const managed = !!context && await managedPersistenceEnabled(engine);
   const writeMode: ArchiveRunResult['write_mode'] = managed ? 'coordinator' : (!privacy.shared && isGitRepo(source.local_path) ? 'repo' : 'database');
+  if (!dryRun) await reconcileAudience(engine, await configuredSource(engine, opts.sourceId), privacy);
   const tz = await archiveTimeZone(engine, sourceId);
   if (!tz.pinned && !dryRun) await engine.setConfig(PIN_PREFIX + sourceId, tz.timezone);
   const today = localDay(now.toISOString(), tz.timezone);
