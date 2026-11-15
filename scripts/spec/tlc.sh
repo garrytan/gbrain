@@ -13,7 +13,8 @@
 #   TLC_ERROR      TLC stopped (parse or semantic error, out of memory): the log names the line
 # Env: TLA2TOOLS (a jar to use; otherwise scripts/spec/tla-jar.sh downloads the pinned one), TLC_OUT (logs; default
 # .context/tlc), TLC_WORKERS (default: every CPU; configs run one at a time), TLC_TIMEOUT_S, TLC_JAVA_OPTS, TLC_NIGHTLY (1 also runs
-# the *Nightly.cfg configs, which take too long for every pull request).
+# the *Nightly.cfg configs, which take too long for every pull request). A *Full.cfg config runs only when named:
+#   bash scripts/spec/tlc.sh refresh-barrier RefreshBarrierAdoptFull.cfg
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 jar="$(bash "$root/scripts/spec/tla-jar.sh")"
@@ -31,7 +32,10 @@ for dir in "${specs[@]}"; do
   module="$(cd "$dir" && ls *.tla | head -1)"; module="${module%.tla}"
   if [ $# -ge 2 ]; then cfgs=("$2"); else
     cfgs=(); for c in "$dir"/"$module"*.cfg; do
-      case "$c" in *Nightly.cfg) [ "${TLC_NIGHTLY:-0}" = 1 ] || { echo "skip $(basename "$dir")/$(basename "$c") (nightly only; TLC_NIGHTLY=1 runs it)"; continue; } ;; esac
+      case "$c" in
+        *Nightly.cfg) [ "${TLC_NIGHTLY:-0}" = 1 ] || { echo "skip $(basename "$dir")/$(basename "$c") (nightly only; TLC_NIGHTLY=1 runs it)"; continue; } ;;
+        *Full.cfg) echo "skip $(basename "$dir")/$(basename "$c") (full run only: bash scripts/spec/tlc.sh $(basename "$dir") $(basename "$c"))"; continue ;;
+      esac
       cfgs+=("$(basename "$c")")
     done
   fi
@@ -45,8 +49,11 @@ workers="${TLC_WORKERS:-$cpus}"
 run() { # dir module cfg -> runs TLC on a private copy, so its states/ directory never lands in the tree
   local dir="$1" module="$2" cfg="$3" work="$out/$(basename "$1")-${3%.cfg}" rc=0
   rm -rf "$work"; mkdir -p "$work/tmp"; cp "$dir/$module.tla" "$dir/$cfg" "$work/"
+  # -lncheck final: the same state space and the same temporal properties, checked once when the search ends instead of
+  # again and again while it runs. RefreshBarrierLivenessNightly.cfg (469,848 distinct states, 4 cores): 18 min 27 s
+  # without it; 12 min 31 s and 13 min 44 s in two runs with it. Safety-only configs are unaffected.
   (cd "$work" && "$timeout_bin" --kill-after=10 "$limit" java ${TLC_JAVA_OPTS:--XX:+UseParallelGC} -Djava.io.tmpdir="$work/tmp" \
-     -cp "$jar" tlc2.TLC -workers "$workers" -config "$cfg" -metadir "$work/states" "$module.tla") > "$work/tlc.log" 2>&1 || rc=$?
+     -cp "$jar" tlc2.TLC -workers "$workers" -lncheck final -config "$cfg" -metadir "$work/states" "$module.tla") > "$work/tlc.log" 2>&1 || rc=$?
   echo "$rc" > "$work/rc"
 }
 for job in "${jobs[@]}"; do IFS='|' read -r d m c <<< "$job"; run "$d" "$m" "$c"; done

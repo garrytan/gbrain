@@ -162,9 +162,16 @@ invariant. Behind constants it also models the stacked follow-ups: writes held f
 | `RefreshBarrier.cfg` | #8682, with the fix for the fenced-orphan finding below modelled: two writes (one blind), one refresh, one foreign commit: every safety property. |
 | `RefreshBarrierEnv.cfg` | The same with a shared-skill restore and a credential revocation that may each run once, no foreign commit. |
 | `RefreshBarrierLiveness.cfg` | `FairSpec`, one write: every deferred write leaves deferral and every admitted write ends. `RefreshBarrierLivenessNightly.cfg` checks two writes (nightly). |
-| `RefreshBarrierAdopt.cfg` | #8708 on #8705 with its fixes: an uncommitted local edit adopted by a drift refusal, no foreign commit. `RefreshBarrierAdoptNightly.cfg` adds the foreign commit (nightly). |
+| `RefreshBarrierAdopt.cfg` | #8708 on #8705 with its fixes: an uncommitted local edit adopted by a drift refusal, no foreign commit. `RefreshBarrierAdoptBlindNightly.cfg` and `RefreshBarrierAdoptExpectedNightly.cfg` add the foreign commit with one write each, blind and with `expected_revision` (nightly, about 10 s each); `RefreshBarrierAdoptFull.cfg` adds it with both writes (by hand, below). |
 | `RefreshBarrierImport.cfg` | #8705 with its fixes (03b89121): writes held for an import, a later write held beside them, the import expiry, deferral behind `recovery_required`: every property. |
 | `RefreshBarrierAbortLiveness.cfg` | `FairSpec` without outside help (`OutsideHelp = FALSE`): no scheduled sync runs and time never forces the wait limit, and the foreign commit lands while a refresh drains, so the refresh aborts and a write deferred behind it is held for that import. Every deferred write still leaves deferral and every write ends, through the sync a refresh run owes after an aborted refresh (GST-1853). |
+
+`RefreshBarrierAdoptFull.cfg` is the one case the nightly leaves out: two writes interleaving with an adopted local
+edit and a foreign commit in the same run. `RefreshBarrierAdopt.cfg` checks two writes with adoption on every pull
+request, and `RefreshBarrier.cfg` checks two writes with a foreign commit. It is too big for the nightly job, so
+`tlc.sh` runs it only when named; it passed on master ecc7a62c with 47,861,182 distinct states in 22 minutes on 4 CPUs:
+
+    TLC_TIMEOUT_S=3000 bash scripts/spec/tlc.sh refresh-barrier RefreshBarrierAdoptFull.cfg
 
 Every config kills the refreshing process once (`MaxCrashes = 1`), at any step, after which `recoverOne` resumes the
 refresh row it left. A refresh that finds HEAD moved at the merge aborts and the tick retries, as `fenceAndMerge` does,
