@@ -346,7 +346,7 @@ describe('page edits (brains that record a change by editing pages)', () => {
     await rewrite('people/alice-example', 'Alice Example', BEFORE);
     await rewrite('people/alice-example', 'Alice Example', AFTER);
     const [{ id }] = await engine.executeRaw<{ id: number }>(`SELECT max(id) AS id FROM page_versions`);
-    const base = await turnContextWithBrief(engine, 'default', { kind: 'turn_context', protocol: 2, secret: 'x', sessionId: 'se', window: [{ role: 'user', text: 'Draft a reply to Alice Example' }] });
+    const base = await turnContextWithBrief(engine, 'default', { kind: 'turn_context', protocol: 2, secret: 'x', sessionId: 'se', window: [{ role: 'user', text: 'Draft a reply to Alice Example' }] }, clock());
     briefDelivered(engine, 'default', base, 'se');
     await awaitPendingVolunteerEventWrites();
     const rows = await engine.executeRaw<{ match_arm: string; rationale: string }>(`SELECT match_arm, rationale FROM context_volunteer_events WHERE channel = 'brief'`);
@@ -542,7 +542,7 @@ describe('repeat suppression', () => {
 describe('telemetry', () => {
   test('a delivered brief logs one row per item under channel brief', async () => {
     const id = await fact('Moved to Acme Example as CFO.', 'people/alice-example');
-    const base = await turnContextWithBrief(engine, 'default', { kind: 'turn_context', protocol: 2, secret: 'x', sessionId: 'st', window: [{ role: 'user', text: 'Draft a reply to Alice Example' }] });
+    const base = await turnContextWithBrief(engine, 'default', { kind: 'turn_context', protocol: 2, secret: 'x', sessionId: 'st', window: [{ role: 'user', text: 'Draft a reply to Alice Example' }] }, clock());
     expect(base.brief?.trigger).toBe('lexicon');
     expect(base.text.startsWith(`${TURN_CONTEXT_ENVELOPE}\n\n${BRIEF_HEADER}`)).toBe(true);
     briefDelivered(engine, 'default', base, 'st');
