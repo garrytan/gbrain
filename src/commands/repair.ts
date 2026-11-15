@@ -107,6 +107,7 @@ export const REPAIR_HELP = `Usage: gbrain repair [<kind>] [--apply] [--source <i
        gbrain repair segmented-tiling --source <id> [--slug <slug>]... [--apply --expect <preview-hash>] [--json]
        gbrain repair visibility [--source <id>] (--slug <slug>... | --slugs-file <file>) --readers <id,group:<g>,...|none>
                                 [--allow-without-owner] [--apply --expect <preview-hash>] [--json]
+       gbrain repair visibility --propose [--source <id>] [--out <dir>] [--json]
 ${REPAIR_ORDER_HELP}
 ${REPAIR_CONTACTS_HELP}
        gbrain repair rename-identity --source <id> [--slug <new-slug> [--from <old-slug>] [--close]
@@ -152,6 +153,12 @@ Options:
                  visibility --readers: the pages, one slug per line (blank lines and # comments ignored).
   --allow-without-owner
                  visibility --readers: accept readers that leave out the brain owner, whose own keys then stop reading those pages.
+  --propose      visibility: preview readers for the pages every member's key can read (no readable_by, no rule) on a brain
+                 that serves several people. Matches each participants, attendees, to, from and cc address to an enabled
+                 member by declared email (exact), groups the pages by reader set (owner first), writes one slugs file per
+                 set and prints the --readers command for each; a page with any unmatched address is listed, never
+                 guessed. Labels nothing.
+  --out <dir>    visibility --propose: where the slugs files go (default <config dir>/visibility-proposals; never inside a git work tree).
   --cwd <prefix>, --session <id>, --principal <label>
                  agent-session-facts: sessions whose recorded cwd is under an absolute prefix, or this session id, are agent-launched
                  (both repeatable); --principal names the agent in the note when no speaker sidecar does. The hash covers them.
@@ -219,10 +226,11 @@ Pages a sync soft-deleted although Git never held their file (restore before the
 Pages a managed sync's checkpoint moved past with an older version of their file: docs/guides/repair.md#rows-behind.
 Facts of a strict source with no Git home (preview, apply): docs/guides/repair.md#facts-home.
 A sources add --url clone whose pull stops at pull_blocked_local_changes: docs/guides/repair.md#url-clone-fences.
+Proposed readers for the pages every member's key reads (visibility --propose): docs/guides/repair.md#propose-readers.
 Renames whose identity sync did not keep (rename-identity): docs/guides/live-sync.md#renaming-a-page.`;
 
-const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner']);
-const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal']);
+const BOOLEAN_FLAGS = new Set(['--apply', '--all', '--json', '--no-embed', '--include-ambiguous', '--include-cross-entity', '--diff', '--yes', '--no-llm', '--all-drifted', '--include-failures', '--force', '--close', '--held', '--allow-without-owner', '--propose']);
+const VALUE_FLAGS = new Set(['--readers', '--slugs-file', '--out', '--rules', '--source', '--limit', '--expect', '--only', '--skip', '--slug', '--max-usd', '--prefer', '--request', '--class', '--since', '--keep', '--request-id', '--older-than', '--from', '--side', '--state', '--after', '--cursor', '--provenance', '--kind', '--mode', '--run', '--key', '--generation', '--day', '--cwd', '--session', '--principal']);
 /** Flags only some kinds accept, with the kinds that do. */
 const KIND_FLAGS: Record<string, readonly string[]> = {
   '--only': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--skip': ['frontmatter', 'fences', 'slug-conflicts', 'file-drift', CONTENT_LANE], '--diff': ['frontmatter', 'fences', 'slug-conflicts', CONTENT_LANE], '--yes': ['frontmatter', 'conversation-labels', 'stuck-recovery', 'ghost-pages', 'legacy-twins', 'rename-identity', 'url-clone-fences'],
@@ -234,13 +242,13 @@ const KIND_FLAGS: Record<string, readonly string[]> = {
   '--after': ['uncommitted-deletions'],
   '--kind': ['generations'], '--mode': ['generations'], '--run': ['generations'], '--key': ['generations'], '--generation': ['generations'], '--day': ['fact-claim-dates'], '--rules': ['secret-spans'],
   '--cwd': ['agent-session-facts'], '--session': ['agent-session-facts'], '--principal': ['agent-session-facts'],
-  '--readers': ['visibility'], '--slugs-file': ['visibility'], '--allow-without-owner': ['visibility'],
+  '--readers': ['visibility'], '--slugs-file': ['visibility'], '--allow-without-owner': ['visibility'], '--propose': ['visibility'], '--out': ['visibility'],
 };
 const VALUE_EXAMPLES: Record<string, string> = { '--source': 'default', '--limit': '50', '--expect': 'PLAN_HASH', '--only': 'notes/a.md', '--skip': 'notes/a.md',
   '--slug': 'notes/a', '--max-usd': '0.50', '--prefer': 'file', '--request': 'REQUEST_UUID', '--class': 'review_required', '--since': '7d', '--side': 'deleted', '--state': 'tombstone_edited', '--keep': 'prior',
   '--request-id': '123e4567-e89b-42d3-a456-426614174000', '--older-than': '30d', '--from': 'notes/old', '--after': '1200', '--cursor': 'NEXT_CURSOR', '--provenance': 'never_committed',
   '--kind': 'atom', '--mode': 'restore', '--run': 'RUN_ID', '--key': 'page:notes/a', '--generation': '42', '--day': '2026-01-15', '--rules': 'openai,aws_access_key',
-  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a', '--readers': 'alice-example,group:team-a', '--slugs-file': 'slugs.txt' };
+  '--cwd': '/srv/agent-workers', '--session': 'SESSION_ID', '--principal': 'worker-a', '--readers': 'alice-example,group:team-a', '--slugs-file': 'slugs.txt', '--out': '/srv/proposals' };
 /** A usage refusal whose fix is the read-only preview (gbrain repair without --apply writes nothing). */
 const invalid = (message: string, suggestion: string, preview: string[] = ['gbrain', 'repair', '--json']) => opError('invalid_params', message, suggestion,
   { fix: readFix('Previews the repair; without --apply it writes nothing.', { argv: preview }) });
@@ -251,7 +259,7 @@ interface RepairArgs { kind?: string; apply: boolean; all: boolean; json: boolea
   held: boolean; side?: string; state?: string; provenance?: string; cursor?: string;
   keep?: 'prior' | 'disk' | 'withdrawn'; requestId?: string; olderThan?: string; includeFailures: boolean; force: boolean; from?: string; close: boolean; afterPage?: number;
   generationKind?: string; generationMode?: string; run?: string; key?: string; generation?: number; day?: string; rules?: string[];
-  cwdPrefixes: string[]; sessions: string[]; principal?: string; readers?: string; slugsFile?: string; allowWithoutOwner: boolean }
+  cwdPrefixes: string[]; sessions: string[]; principal?: string; readers?: string; slugsFile?: string; allowWithoutOwner: boolean; propose: boolean; out?: string }
 
 /** `--max-usd` on a kind that never calls a paid model: the cap belongs to the doctor remediation run. */
 function maxUsdRefusal(flag: string, cap: string | undefined, kind: string | undefined): OperationError {
@@ -295,7 +303,7 @@ function readSlugsFile(path: string): string[] {
 /** Strict parse: every flag is known, value flags carry a value, at most one kind. */
 export function parseRepairArgs(args: string[]): RepairArgs {
   const parsed: RepairArgs = { apply: false, all: false, json: false, noEmbed: false, includeAmbiguous: false, includeCrossEntity: false, diff: false, yes: false, noLlm: false, only: [], skip: [], slugs: [],
-    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [], allowWithoutOwner: false };
+    allDrifted: false, held: false, requests: [], includeFailures: false, force: false, close: false, cwdPrefixes: [], sessions: [], allowWithoutOwner: false, propose: false };
   const used = new Set<string>();
   const positional: string[] = [];
   let maxUsdText: string | undefined;
@@ -328,6 +336,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
       else if (flag === '--force') parsed.force = true;
       else if (flag === '--close') parsed.close = true;
       else if (flag === '--allow-without-owner') parsed.allowWithoutOwner = true;
+      else if (flag === '--propose') parsed.propose = true;
       else parsed.noEmbed = true;
       continue;
     }
@@ -341,6 +350,7 @@ export function parseRepairArgs(args: string[]): RepairArgs {
     else if (flag === '--slug') parsed.slugs.push(value);
     else if (flag === '--readers') parsed.readers = value;
     else if (flag === '--slugs-file') parsed.slugsFile = value;
+    else if (flag === '--out') parsed.out = value;
     else if (flag === '--max-usd') { maxUsdText = value; maxUsdFlag = flag; }
     else if (flag === '--prefer') {
       if (value !== 'file' && value !== 'database') throw invalid('--prefer takes file or database.', 'Pass --prefer file (the canonical file wins) or --prefer database (the database copy wins).',
@@ -417,6 +427,12 @@ export function parseRepairArgs(args: string[]): RepairArgs {
   if (parsed.readers === undefined && (parsed.slugsFile !== undefined || parsed.allowWithoutOwner)) {
     throw invalid(`${parsed.slugsFile !== undefined ? '--slugs-file' : '--allow-without-owner'} applies only with --readers.`,
       'Set readers on named pages: gbrain repair visibility --slugs-file <file> --readers <ids> (or --slug <slug>).', ['gbrain', 'repair', 'visibility', '--json']);
+  }
+  if (parsed.out !== undefined && !parsed.propose) throw invalid('--out applies only with --propose.', 'Preview proposed readers: gbrain repair visibility --propose --out <dir>.', ['gbrain', 'repair', 'visibility', '--propose', '--json']);
+  if (parsed.propose) {
+    const extra = args.map(token => token.split('=')[0]!).find(flag => flag.startsWith('-') && !['--propose', '--source', '--out', '--json'].includes(flag));
+    if (extra) throw invalid(`${extra} does not apply with --propose: it only previews, so it takes --source, --out and --json.`,
+      'Run gbrain repair visibility --propose, then preview and apply each printed --readers command on its own.', ['gbrain', 'repair', 'visibility', '--propose', ...(parsed.source ? ['--source', parsed.source] : []), '--json']);
   }
   if (parsed.slugsFile !== undefined && parsed.slugs.length) throw invalid('Pass --slug or --slugs-file, not both.', 'List every page in the slugs file, or name them with --slug.', ['gbrain', 'repair', 'visibility', '--json']);
   if (used.has('--yes') && REPAIR_REGISTRY.find(spec => spec.kind === parsed.kind)?.consent !== 'destructive') throw invalid('`--yes` is not accepted by gbrain repair; pass --apply to write.',
@@ -512,7 +528,14 @@ export async function runRepairCommand(engine: BrainEngine, args: string[]): Pro
   if (args.includes('--help') || args.includes('-h')) { console.log(REPAIR_HELP); return; }
   const { kind, apply, all, json, noEmbed, includeAmbiguous, includeCrossEntity, source, expect, only, skip, slugs, diff, noLlm, maxUsd, limit: limitText,
     prefer, requests, allDrifted, driftClass, since, held, side, state, provenance, cursor, keep, requestId, olderThan, includeFailures, force, from, close, afterPage,
-    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner } = parseRepairArgs(args);
+    generationKind, generationMode, run, key, generation, day, rules, cwdPrefixes, sessions, principal, readers, slugsFile, allowWithoutOwner, propose, out } = parseRepairArgs(args);
+  if (propose) {
+    if (source) await resolveRepairScope(engine, source);
+    const { proposeVisibility, proposalLines } = await import('./repair-propose.ts');
+    const proposal = await proposeVisibility(engine, { ...(source ? { source } : {}), ...(out ? { out } : {}) });
+    console.log(json ? JSON.stringify(proposal, null, 2) : proposalLines(proposal).join('\n'));
+    return;
+  }
   const readersRequest = readers === undefined ? undefined : { readers, ...(allowWithoutOwner ? { allowWithoutOwner } : {}), ...(slugsFile ? { slugsFile: { path: slugsFile, slugs: readSlugsFile(slugsFile) } } : {}) };
   const generations: GenerationsSelection | undefined = kind === 'generations' ? { kind: generationKind ?? '', mode: (generationMode ?? 'restore') as GenerationMode,
     ...(run ? { run } : {}), ...(since ? { since } : {}), ...(key ? { key } : {}), ...(generation !== undefined ? { generation } : {}), ...(held ? { held } : {}) } : undefined;
