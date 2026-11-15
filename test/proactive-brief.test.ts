@@ -555,14 +555,14 @@ describe('telemetry', () => {
 
   test('without a clock, turn_context stops brief work 300 ms into the request', async () => {
     await fact('Moved to Acme Example as CFO.', 'people/alice-example');
-    const req = { kind: 'turn_context', protocol: 2, secret: 'x', sessionId: 'cut', window: [{ role: 'user', text: 'Draft a reply to Alice Example' }] } as const;
+    const turn = (c?: BriefClock) => turnContextWithBrief(engine, 'default', { kind: 'turn_context', protocol: 2, secret: 'x', sessionId: 'cut', window: [{ role: 'user', text: 'Draft a reply to Alice Example' }] }, c);
     const start = Date.now();
     let calls = 0;
     const now = spyOn(Date, 'now').mockImplementation(() => (calls++ === 0 ? start : start + TURN_BRIEF_CUTOFF_MS + 1));
     try {
       expect(TURN_BRIEF_CUTOFF_MS).toBe(300);
-      expect((await turnContextWithBrief(engine, 'default', req)).brief).toBeUndefined();
-      expect((await turnContextWithBrief(engine, 'default', req, clock(start))).brief?.trigger).toBe('lexicon');
+      expect((await turn()).brief).toBeUndefined();
+      expect((await turn(clock(start))).brief?.trigger).toBe('lexicon');
     } finally {
       now.mockRestore();
     }
