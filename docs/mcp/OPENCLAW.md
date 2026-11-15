@@ -106,6 +106,27 @@ client registration, so the brain owner turns that on and approves the consent
 the login succeeds, OpenClaw leaves the server out of agent turns. Publish the
 endpoint with `gbrain mcp expose` ([remote MCP](../guides/remote-mcp.md)).
 
+### Or: a thin client's stdio bridge
+
+When OpenClaw should keep a stdio entry, install gbrain on the OpenClaw
+machine as a thin client of the brain host and register its `gbrain serve`,
+which relays every call to the host with that client's grant (it opens no
+local database). On the brain host, `gbrain agent register` with
+`--harness openclaw` prints these lines with your client filled in; run them
+on the OpenClaw machine:
+
+```bash
+gbrain init --mcp-only --issuer-url https://<brain-host> --mcp-url https://<brain-host>/mcp \
+  --oauth-client-id <client_id> --oauth-client-secret <client_secret>
+openclaw mcp add gbrain --command "$(command -v gbrain)" --arg serve --arg --surface --arg starter --arg --advertise --arg verbs
+```
+
+If gbrain's bundle plugin is installed there, it already registers gbrain:
+run only the `init` line. To keep this client apart from another gbrain on
+that machine, put `GBRAIN_HOME=<dir>` before the `init` line and add
+`--env GBRAIN_HOME=<dir>` to the `mcp add` line. What the bridge relays and
+how it reports failures: [stdio bridge](../architecture/thin-client.md#stdio-bridge).
+
 ## One bot for several people, in DMs
 
 When one OpenClaw bot answers several people, each in their own DM, each DM can

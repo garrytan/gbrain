@@ -15,7 +15,7 @@ import type { BrainEngine } from '../engine.ts';
 import { OWNER_MEMBER_KEY, OWNER_READS_RESTRICTED_KEY } from '../search/private-visibility.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
-import { ACCESS_ID_RE } from './principals.ts';
+import { ACCESS_ID_RE, normalizePrincipal } from './principals.ts';
 import { boundCredentials, memberIdentity } from './members.ts';
 import type { CredentialRef } from './members.ts';
 
@@ -49,6 +49,38 @@ export async function ownerView(engine: BrainEngine): Promise<OwnerView> {
   } catch (e) {
     return { owner: null, inactive: { value: raw, reason: e instanceof Error ? e.message : String(e) }, bound_credentials: [], reads_restricted };
   }
+}
+
+/**
+ * GST-2698: the owner a reader list must name: the live owner, else a configured owner that is a member id but not
+ * enabled now (live false). Null when no owner is set, so a brain without an owner never refuses a list.
+ */
+export async function readersOwner(engine: BrainEngine): Promise<{ owner: string | null; live: boolean }> {
+  const view = await ownerView(engine);
+  if (view.owner) return { owner: view.owner, live: true };
+  const inactive = view.inactive ? normalizePrincipal(view.inactive.value) : null;
+  return { owner: inactive?.startsWith('member:') ? inactive.slice('member:'.length) : null, live: false };
+}
+
+/**
+ * GST-2476, GST-2698: readers that leave out the owner close `what` to the owner's own keys on every read path
+ * (access/caller.ts), so `gbrain repair visibility --readers` and `gbrain access rule add` refuse such a list unless
+ * --allow-without-owner. A group that holds the owner does not count. `principals` are normalized (member:<id>, group:<id>).
+ */
+export function readersOmitOwnerError(owner: string, live: boolean, principals: string[], what: string): OperationError {
+  const shown = principals.map(p => p.startsWith('member:') ? p.slice('member:'.length) : p);
+  return opError('invalid_params', 'These readers leave out the brain owner "' + owner + '"' + (live ? '' : ' (configured, not enabled now)') + ', so the owner\'s own keys could no longer read ' + what + '; nothing was written. Name the owner, or pass --allow-without-owner.',
+    'Add the owner to the list (--readers ' + [...shown, owner].join(',') + '), or pass --allow-without-owner if the owner should not read it. A group that holds the owner does not count.',
+    { reason: 'readers_omit_owner' });
+}
+
+/**
+ * GST-2128: the reader list a printed `gbrain access rule add` command names: `readers` plus the owner readersOwner names,
+ * when one is set and not listed, so pasting it is not refused readers_omit_owner. An unreadable owner prints `readers`.
+ */
+export async function hintReaders(engine: BrainEngine, readers: string[]): Promise<string> {
+  const owner = await readersOwner(engine).then(r => r.owner, () => null);
+  return (owner && !readers.includes(owner) ? [...readers, owner] : readers).join(',');
 }
 
 /** GST-2490: is access.owner_reads_restricted on? Unset, anything but '1', or unreadable is off (nothing widens). */

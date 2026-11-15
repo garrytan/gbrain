@@ -26,6 +26,7 @@ import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { exemptGuestWriter, withOutputRedaction } from '../src/core/search/output-redaction.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { readsUnscopedOnPurpose } from './helpers/reads-unscoped.ts';
+import { stampGuestNotes } from '../src/core/guests/stamp.ts';
 
 const SRC = 'guests';
 const PLAIN = 'source-a';
@@ -170,6 +171,13 @@ describe('guest marks reach only callers who can read the note', () => {
     }
     expect(stamps((await call('local', 'get_page', { slug: HOST })).text).map(s => s.guest.writer)).toEqual([writer]);
     expect(stamps((await preview('bob-example', 'get_raw_data', { slug: HOST })).text).map(s => s.at).sort()).toEqual([GONE, GUEST, String(ids[GUEST])].sort());
+  });
+
+  test("(g) a result the stamp cannot copy refuses the read and leaves the handler's own object unmarked", async () => {
+    const own = { source_id: SRC, slug: GUEST, title: 'held by the handler', render: () => 'not cloneable' };
+    const outcome = await stampGuestNotes({ engine, remote: false, sourceId: SRC } as never, own).then(() => 'stamped', (e: Error) => e.message);
+    expect({ refused: outcome.includes('could not copy'), origin: (own as Record<string, unknown>).origin, guest: (own as Record<string, unknown>).guest })
+      .toEqual({ refused: true, origin: undefined, guest: undefined });
   });
 
   test('(e) output redaction runs after the stamp, so a key-like sender label is redacted for a remote reader', async () => {

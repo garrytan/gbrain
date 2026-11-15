@@ -2358,6 +2358,7 @@
         "stats",
         "tune"
       ],
+      "serve": [],
       "sources": [
         "shared-skills"
       ],

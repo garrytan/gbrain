@@ -28,7 +28,7 @@ import { parseAudience } from '../src/core/access/audience.ts';
 import { remoteCallerAccess } from '../src/core/access/caller.ts';
 import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { changeGuestWriters, initGuestSource } from '../src/core/guests/sources.ts';
-import { GUEST_HEADER, parseGuestAttribution } from '../src/core/guests/admission.ts';
+import { GUEST_HEADER, insertGuestMark, parseGuestAttribution } from '../src/core/guests/admission.ts';
 import { preparePageAdmission } from '../src/core/persistence/page-mutations.ts';
 import { admitWrite } from '../src/core/persistence/journal.ts';
 import { disposePersistenceConsumer, waitForWrite } from '../src/core/persistence/service.ts';
@@ -123,6 +123,11 @@ beforeAll(async () => {
 afterAll(async () => { await disposePersistenceConsumer(engine); await engine.disconnect(); }, 60_000);
 
 describe('guest attribution channel', () => {
+  test('a guest mark that writes no row fails instead of passing silently', async () => {
+    const row = { source_id: SRC, slug: 'guests/no-such-page', principal_kind: 'oauth_client', principal_id: 'client-a', request_id: randomUUID() };
+    expect(await insertGuestMark(engine, row, META, 'member:bob-example').then(() => 'no error', (e: Error) => e.message)).toContain('guest mark');
+  });
+
   test('header form is URL-encoded sender_label and group; meta form is _meta.guest', () => {
     expect(GUEST_HEADER).toBe('X-Gbrain-Guest');
     expect(parseGuestAttribution({ header: 'sender_label=Bob%20Example&group=team-a' })).toEqual(META);
