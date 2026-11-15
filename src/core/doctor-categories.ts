@@ -288,6 +288,8 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'transcript_secret_exposure',
   // GST-2768: the conversation archive keeping up with the harness sessions (doctor/checks/transcript-archive.ts).
   'transcript_archive_freshness',
+  // GST-2731: facts pages with undated fact lines (doctor/checks/facts-pages.ts).
+  'facts_undated_lines',
   // #5254 — pages written database-only to a source with no canonical owner.
   'unbound_source',
   'undeclared_db_only_pages',

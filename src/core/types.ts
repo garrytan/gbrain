@@ -65,6 +65,7 @@ export const ALL_PAGE_TYPES: readonly string[] = [
   // never mined into the facts table). Pack entries in gbrain-base.yaml.
   'event', 'diary',
   'question', // C4 pinned-question page (question + owner notes; owner-private, never evidence; src/core/questions/pages.ts)
+  'facts', // GST-2731 quotable facts page (me/facts, company/facts): one dated line per fact; doctor facts_undated_lines
 ] as const;
 
 /**
