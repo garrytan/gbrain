@@ -9,7 +9,8 @@
  * clients read. Read-only and best effort everywhere it is shown: access serves several (preview and receipt),
  * gbrain access serves, doctor open_shared_pages and post-upgrade. Callers gate on brainServes first, so a
  * one-person brain, or one pinned to access.serves one, never runs it. Everything is database state, so a repo-less
- * brain gets it unchanged.
+ * brain gets it unchanged. gbrain repair visibility --propose (commands/repair-propose.ts) reads the same pages through
+ * withOpenScope, openPageSql and membersReadOpen.
  */
 import type { BrainEngine } from '../engine.ts';
 import { accessAllowedSql, privacyPartSql, readHonorAliases, remotePrivacyRelaxed, withoutCallerAccess } from '../search/private-visibility.ts';
@@ -121,8 +122,29 @@ async function bounded<T>(engine: BrainEngine, fn: (e: BrainEngine) => Promise<T
   }, { readOnly: true });
 }
 
-/** The open pages the counted members' keys read (OpenPages); throws when the access state cannot be read. */
-export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}): Promise<OpenPages> {
+/** Who reads the open pages: the owner, the counted members, the sources their keys read, and how private pages read. */
+export interface OpenScope {
+  owner: string | null;
+  members: { reading: number; counted: number };
+  /** The sources the reading members read, or every source when no member reads one. */
+  sources: string[];
+  /** Remote privacy is relaxed, so members read visibility: private pages too. */
+  relaxed: boolean;
+  /** Sources whose private pages some reading member's grant opens. */
+  privateSources: string[];
+}
+
+/** The open-page predicate over pages alias `p`: live, and the read path's floor with an empty identity admits it. */
+export const openPageSql = (p: string) => `${p}.deleted_at IS NULL AND ${accessAllowedSql(p, [], [])}`;
+
+/** Whether the members read an open page of `source` whose privacyPartSql value is `visible`. */
+export const membersReadOpen = (scope: OpenScope, source: string, visible: unknown) => visible === true || scope.relaxed || scope.privateSources.includes(source);
+
+/**
+ * The OpenScope; throws open_pages_unknown when the folder-rule state cannot be read. `read` then runs a query built on
+ * openPageSql under the same statement bound, outside any caller record, so it never depends on who asks.
+ */
+export async function withOpenScope<T>(engine: BrainEngine, opts: OpenPagesOptions, read: (scope: OpenScope, bounded: <R>(fn: (e: BrainEngine) => Promise<R>) => Promise<R>) => Promise<T>): Promise<T> {
   return withoutCallerAccess(async () => {
     const [state] = await engine.executeRaw<{ unreadable: unknown }>('SELECT gbrain_access_state_unreadable() AS unreadable');
     if (state?.unreadable === true) {
@@ -131,29 +153,38 @@ export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}
     const owner = await ownerMemberId(engine);
     const { reads, privateSources } = await memberReads(engine, owner, opts.planned);
     const reading = [...reads.values()].filter(s => s.size > 0);
-    const read = [...new Set(reading.flatMap(s => [...s]))].sort();
-    const sources = read.length ? read : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(s => s.id);
-    const result: OpenPages = { owner, members: { reading: reading.length, counted: reads.size }, sources, total: 0, sensitive: 0, private: 0,
+    const readSources = [...new Set(reading.flatMap(s => [...s]))].sort();
+    const sources = readSources.length ? readSources : (await engine.executeRaw<{ id: string }>('SELECT id FROM sources ORDER BY id')).map(s => s.id);
+    if (sources.length) await readHonorAliases(engine);
+    const relaxed = sources.length ? await remotePrivacyRelaxed(engine) : false;
+    const scope: OpenScope = { owner, members: { reading: reading.length, counted: reads.size }, sources, relaxed, privateSources: [...privateSources].sort() };
+    return read(scope, fn => bounded(engine, fn));
+  });
+}
+
+/** The open pages the counted members' keys read (OpenPages); throws when the access state cannot be read. */
+export async function openPages(engine: BrainEngine, opts: OpenPagesOptions = {}): Promise<OpenPages> {
+  return withOpenScope(engine, opts, async (scope, boundedRead) => {
+    const { owner, sources } = scope;
+    const result: OpenPages = { owner, members: scope.members, sources, total: 0, sensitive: 0, private: 0,
       folders: [], other: { folders: 0, pages: 0, sensitive: 0 }, top_sensitive: null };
     if (!sources.length) return result;
-    await readHonorAliases(engine);
-    const relaxed = await remotePrivacyRelaxed(engine);
     const params: unknown[] = [sources];
     const exclude = (opts.exclude ?? []).map(x => {
       params.push(x.source, x.prefix);
       return ` AND NOT (p.source_id = $${params.length - 1} AND starts_with(p.slug, $${params.length}))`;
     }).join('');
-    const rows = await bounded(engine, e => e.executeRaw<{ source: string; folder: string; type: string | null; visible: unknown; pages: number | string }>(
+    const rows = await boundedRead(e => e.executeRaw<{ source: string; folder: string; type: string | null; visible: unknown; pages: number | string }>(
       `SELECT p.source_id AS source, CASE WHEN strpos(p.slug, '/') > 0 THEN split_part(p.slug, '/', 1) ELSE '(root)' END AS folder,
               p.type AS type, (${privacyPartSql('p')}) AS visible, count(*)::int AS pages
          FROM pages p
-        WHERE p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND ${accessAllowedSql('p', [], [])}${exclude}
+        WHERE ${openPageSql('p')} AND p.source_id = ANY($1::text[])${exclude}
         GROUP BY 1, 2, 3, 4`, params));
     const folders = new Map<string, OpenFolder>();
     const byType = new Map<string, { source: string; type: string; pages: number }>();
     for (const row of rows) {
       const n = Number(row.pages);
-      if (row.visible !== true && !relaxed && !privateSources.has(row.source)) { result.private += n; continue; }
+      if (!membersReadOpen(scope, row.source, row.visible)) { result.private += n; continue; }
       const key = `${row.source}/${row.folder}`;
       const f = folders.get(key) ?? { source: row.source, folder: row.folder, pages: 0, sensitive: 0 };
       folders.set(key, f);
