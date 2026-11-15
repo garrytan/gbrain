@@ -54,9 +54,9 @@ For the intended unconfigured local brain:
 gbrain init --pglite --no-embedding
 ```
 
-PGLite runs locally without a database server or Docker. **Relay the printed
-search-mode cost matrix and confirm the user's choice before continuing**, as
-required by [Step 3.5](../../INSTALL_FOR_AGENTS.md#step-35-confirm-search-mode-with-the-user-do-not-skip).
+PGLite runs locally without a database server or Docker. **Tell the user the
+search mode in effect and the printed cost matrix** when you report the install, as
+described in [Step 3.5](../../INSTALL_FOR_AGENTS.md#step-35-tell-the-user-which-search-mode-is-in-effect-do-not-skip).
 The matrix illustrates model API costs, not the price of a Codex or Claude
 subscription. Choosing a mode does not enable paid APIs or automatic capture.
 
