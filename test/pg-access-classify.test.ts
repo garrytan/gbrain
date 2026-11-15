@@ -220,7 +220,7 @@ describe('supabase enrichment', () => {
     const pooler = classifyPgAccessError(errWithCode('ENOTFOUND'), { url: POOLER }).remediation;
     expect(pooler).toContain("this machine's DNS/network");
     expect(pooler).not.toContain('paused');
-    const direct = classifyPgAccessError(errWithCode('ENOTFOUND'), { url: 'postgresql://postgres:pw@db.abc123.supabase.co:5432/postgres' }).remediation; /* allow-pg-url-literal */
+    const direct = classifyPgAccessError(errWithCode('ENOTFOUND'), { url: 'postgresql://postgres@db.abc123.supabase.co:5432/postgres' }).remediation;
     expect(direct).toContain('paused');
   });
 
