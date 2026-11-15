@@ -33,6 +33,14 @@ describe('fetchAlphaRelease', () => {
     expect(f.urls.some(u => u.includes('releases/latest'))).toBe(false);
   });
 
+  test('a 3-part or suffixed VERSION resolves the same release the alpha update check offers', async () => {
+    const f = fakeFetch({
+      [VERSION_URL]: { status: 200, body: 'v0.60.722.0-fixwave\n' },
+      [TAG_URL]: { status: 200, body: JSON.stringify({ tag_name: 'v0.60.722.0', assets: [] }) },
+    });
+    expect((await fetchAlphaRelease(f.impl))?.tag).toBe('v0.60.722.0');
+  });
+
   test('an unreadable or malformed VERSION, or a missing release, gives null', async () => {
     expect(await fetchAlphaRelease(fakeFetch({ [VERSION_URL]: { status: 500, body: '' } }).impl)).toBeNull();
     expect(await fetchAlphaRelease(fakeFetch({ [VERSION_URL]: { status: 200, body: '<html>not a version</html>' } }).impl)).toBeNull();

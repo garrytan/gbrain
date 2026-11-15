@@ -139,6 +139,8 @@ interface Setup {
   release?: { draft: boolean; id?: number } | null;
   /** Make the release edit (marking it Latest) fail. */
   failWrite?: boolean;
+  /** The tag GitHub calls Latest now; absent: none. */
+  latest?: string;
   soakWorkflow?: string;
   repo?: FakeRepo;
 }
@@ -162,6 +164,10 @@ function harness(setup: Setup = {}) {
     async ghApi(path) {
       api.push(path);
       if (path.endsWith('/permission')) return setup.role ?? { permission: 'write', role_name: 'maintain' };
+      if (path.endsWith('/releases/latest')) {
+        if (!setup.latest) throw new Error(`gh api ${path} failed: HTTP 404: Not Found`);
+        return { tag_name: setup.latest };
+      }
       if (path.includes('/releases/tags/')) {
         if (setup.release === null) throw new Error(`gh api ${path} failed: HTTP 404: Not Found`);
         return setup.release ?? { draft: false, id: 42 };
@@ -283,7 +289,7 @@ describe('promote', () => {
     const h = harness();
     const p = await promote(h.deps, inputs());
     expect(p).toMatchObject({ version: '0.60.361.0', commit: sha('b'), tree: sha('2'), previous: '0.60.360.0', scoreboard: RUN_URL, recordCreated: true, promotedAt: '2026-10-21T17:00:00Z' });
-    expect(h.api).toEqual([`repos/${REPO}/collaborators/alice-example/permission`, `repos/${REPO}/releases/tags/v0.60.361.0`, `repos/${REPO}/actions/runs/123456`]);
+    expect(h.api).toEqual([`repos/${REPO}/collaborators/alice-example/permission`, `repos/${REPO}/releases/tags/v0.60.361.0`, `repos/${REPO}/actions/runs/123456`, `repos/${REPO}/releases/latest`]);
     const pushes = h.calls.filter(c => c.startsWith('push'));
     expect(pushes).toEqual([
       `push --atomic --force-with-lease=refs/tags/stable:tagobj-stable-old --force-with-lease=refs/heads/stable-record: origin refs/tags/stable-v0.60.361.0:refs/tags/stable-v0.60.361.0 refs/tags/stable:refs/tags/stable ${h.repo.recordBranch}:refs/heads/stable-record`,
@@ -830,6 +836,37 @@ describe('GitHub Latest release', () => {
     const editFails = harness({ failWrite: true });
     await refusedAsync(promote(editFails.deps, inputs()), /stable now points at v0\.60\.361\.0, but marking its GitHub release Latest failed \(gh api PATCH .* HTTP 502\); run `bun scripts\/release-channel\.ts backfill --apply`/);
     expect(editFails.repo.remote!.stable).not.toBe('tagobj-stable-old');
+  });
+
+  test('rolledUpNotes keeps an entry\'s own ## sub-headings, like its upgrade steps', () => {
+    const changelog = ['## [0.60.361.0] - 2026-10-21', '', 'Lead.', '', '## To take advantage of v0.60.361.0', '', 'Run gbrain upgrade.', '', '### Itemized changes', '- one', '', '## [0.60.360.0] - 2026-10-20', 'old', ''].join('\n');
+    const notes = rolledUpNotes(changelog, '0.60.360.0', '0.60.361.0', REPO);
+    expect(notes).toContain('## To take advantage of v0.60.361.0\n\nRun gbrain upgrade.');
+    expect(notes).toContain('### Itemized changes\n- one');
+    expect(notes).not.toContain('old');
+  });
+
+  test('rolledUpNotes links the CHANGELOG instead of writing an entry too long for GitHub', () => {
+    const notes = rolledUpNotes(['## [0.60.361.0] - 2026-10-21', '', 'x'.repeat(125_000), ''].join('\n'), '0.60.360.0', '0.60.361.0', REPO);
+    expect(notes.length).toBeLessThan(1000);
+    expect(notes).toContain(`read them in [CHANGELOG.md](https://github.com/${REPO}/blob/v0.60.361.0/CHANGELOG.md)`);
+  });
+
+  test('a forward promotion never moves Latest back to an older release; a rollback does', async () => {
+    const forward = harness({ latest: 'v0.60.365.0' });
+    forward.repo.changelog = CHANGELOG;
+    await promote(forward.deps, inputs());
+    expect(forward.writes).toEqual([]);
+    expect(forward.logs.at(-1)).toContain("GitHub's Latest stays v0.60.365.0, which is newer than v0.60.361.0");
+
+    const same = harness({ latest: 'v0.60.360.0' });
+    await promote(same.deps, inputs());
+    expect(same.writes).toHaveLength(1);
+
+    const back = harness({ latest: 'v0.60.365.0', run: { status: 'completed', conclusion: 'success', path: SOAK, head_sha: sha('c') } });
+    back.repo.tags['v0.60.359.0'] = { commit: sha('c') };
+    await promote(back.deps, inputs({ version: '0.60.359.0', rollback: true, reason: 'regression in 0.60.360.0' }));
+    expect(back.writes).toHaveLength(1);
   });
 
   test('a release with no id refuses before anything moves', async () => {

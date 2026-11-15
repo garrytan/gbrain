@@ -476,7 +476,8 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     rollback, reason,
   };
   const message = renderTagMessage(fields);
-  const notes = rollback ? null : rolledUpNotes((await deps.git(['show', `${releaseRef}:CHANGELOG.md`])).stdout, fields.previous, version, deps.repo);
+  const changelog = rollback ? null : await deps.git(['show', `${releaseRef}:CHANGELOG.md`]);
+  const notes = changelog === null ? null : rolledUpNotes(changelog.code === 0 ? changelog.stdout : '', fields.previous, version, deps.repo);
 
   // The evidence record: carried forward from the previous record commit (none before the first promotion).
   const prior = await readPriorRecord(deps);
@@ -498,7 +499,7 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     'Moving the stable tag failed and nothing changed on the remote (stable may have moved since this run read it); re-run this workflow, which re-reads the current stable.');
   if (!recordExists) deps.log(`[promote-stable] pushed record tag stable-v${version}.`);
   deps.log(`[promote-stable] stable now points at v${version} (${commit}).`);
-  await markLatest(deps, releaseId, version, notes);
+  await markLatest(deps, releaseId, version, notes, rollback);
 
   const promotion: Promotion = { ...fields, recordCreated: !recordExists, knownBad };
   deps.summary(renderSummary(promotion, notPromotable));
@@ -520,7 +521,7 @@ export function rolledUpNotes(changelog: string, previous: string | null, versio
   const sections: string[][] = [];
   let current: string[] | null = null;
   for (const line of changelog.split('\n')) {
-    if (line.startsWith('## ')) {
+    if (line.startsWith('## [')) {
       const v = /^## \[(\d+(?:\.\d+){2,3})\]/.exec(line)?.[1];
       current = v && wanted(v) ? [line] : null;
       if (current) sections.push(current);
@@ -538,13 +539,35 @@ export function rolledUpNotes(changelog: string, previous: string | null, versio
     kept.push(body);
     size += body.length + 1;
   }
+  if (kept[0]!.length + intro.length + 200 > RELEASE_NOTES_MAX) return `${intro}\nThe notes are too long for this page; read them in [CHANGELOG.md](${link}).\n`;
   const dropped = bodies.length - kept.length;
   const tail = dropped ? `\n${dropped} older ${dropped === 1 ? 'entry is' : 'entries are'} in [CHANGELOG.md](${link}).\n` : '';
   return [intro, ...kept].join('\n') + tail;
 }
 
-/** Mark a release GitHub's "Latest": clear pre-release, set make_latest, and replace the notes when `notes` is given. */
-export async function markLatest(deps: PromoteDeps, releaseId: number, version: string, notes: string | null): Promise<void> {
+/** The version of the release GitHub calls Latest now, or null when there is none or it cannot be read. */
+export async function latestReleaseVersion(deps: Pick<PromoteDeps, 'repo' | 'ghApi'>): Promise<string | null> {
+  try {
+    const tag = ((await deps.ghApi(`repos/${deps.repo}/releases/latest`)) as { tag_name?: string }).tag_name ?? '';
+    const v = tag.replace(/^v/, '');
+    return VERSION_RE.test(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Mark a release GitHub's "Latest": clear pre-release, set make_latest, and replace the notes when `notes` is given.
+ * A forward promotion never moves Latest to an older release than the current one: binaries released before
+ * pre-releases existed download `releases/latest` as their newest release, so moving it back would downgrade them. Latest
+ * then stays put until stable passes it. A rollback moves it back on purpose.
+ */
+export async function markLatest(deps: PromoteDeps, releaseId: number, version: string, notes: string | null, rollback = false): Promise<void> {
+  const latest = await latestReleaseVersion(deps);
+  if (!rollback && latest && compareVersions(latest, version) > 0) {
+    deps.log(`[promote-stable] GitHub's Latest stays v${latest}, which is newer than v${version}; it moves to the stable release once stable passes it.`);
+    return;
+  }
   try {
     await deps.ghApiWrite('PATCH', `repos/${deps.repo}/releases/${releaseId}`, { prerelease: false, make_latest: 'true', ...(notes === null ? {} : { body: notes }) });
   } catch (error) {
@@ -569,7 +592,7 @@ export function processDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.
       return JSON.parse(r.stdout || '{}');
     },
     async git(args, input) {
-      const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', ...(input !== undefined ? { input } : {}) });
+      const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...(input !== undefined ? { input } : {}) });
       return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
     },
     now: () => new Date(),

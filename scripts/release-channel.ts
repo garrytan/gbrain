@@ -20,7 +20,7 @@
  *
  * Runs from a checkout with gh signed in to an account that can edit releases (apply only) and git able to fetch tags.
  */
-import { compareVersions, parseTagMessage, processDeps, Refusal, rolledUpNotes, type PromoteDeps } from './promote-stable.ts';
+import { compareVersions, latestReleaseVersion, parseTagMessage, processDeps, Refusal, rolledUpNotes, type PromoteDeps } from './promote-stable.ts';
 
 export type ReleaseDeps = Pick<PromoteDeps, 'repo' | 'ghApi' | 'ghApiWrite' | 'git' | 'log'>;
 export interface ReleaseRow { id: number; tag_name: string; draft: boolean; prerelease: boolean }
@@ -74,7 +74,9 @@ export async function readStable(deps: ReleaseDeps): Promise<{ version: string; 
 async function changelogAt(deps: ReleaseDeps, version: string): Promise<string> {
   const fetched = await deps.git(['fetch', '--no-tags', 'origin', `refs/tags/v${version}`]);
   if (fetched.code !== 0) throw new Refusal(`Could not fetch the tag v${version} (${fetched.stderr.trim().split('\n').at(-1)}); check the remote, then re-run.`);
-  return (await deps.git(['show', 'FETCH_HEAD:CHANGELOG.md'])).stdout;
+  const shown = await deps.git(['show', 'FETCH_HEAD:CHANGELOG.md']);
+  if (shown.code !== 0) throw new Refusal(`Could not read CHANGELOG.md at v${version} (${shown.stderr.trim().split('\n').at(-1)}); re-run.`);
+  return shown.stdout;
 }
 
 const list = (targets: readonly Target[]) => targets.length ? targets.map(t => `v${t.version}`).join(', ') : 'none';
@@ -82,12 +84,16 @@ const list = (targets: readonly Target[]) => targets.length ? targets.map(t => `
 export async function run(deps: ReleaseDeps, argv: string[]): Promise<void> {
   const [command, ...rest] = argv;
   const apply = rest.includes('--apply');
-  const latestNow = await deps.ghApi(`repos/${deps.repo}/releases/latest`).then(r => (r as { tag_name?: string }).tag_name ?? 'none', () => 'none');
+  const latestVersion = await latestReleaseVersion(deps);
+  const latestNow = latestVersion ? `v${latestVersion}` : 'none';
 
   if (command === 'backfill') {
     const stable = await readStable(deps);
     const plan = planBackfill(await listReleases(deps), stable.version);
     if (!plan.latest) throw new Refusal(`The stable release v${stable.version} has no published GitHub release; publish it before backfilling.`);
+    if (latestVersion && compareVersions(latestVersion, stable.version) > 0) {
+      throw new Refusal(`GitHub's Latest is v${latestVersion}, newer than stable v${stable.version}. Backfilling now would move Latest back, and binaries released before this change install whatever Latest is, so they would downgrade; run backfill after stable passes v${latestVersion}. Would mark pre-release: ${plan.markPrerelease.length} (${list(plan.markPrerelease)}).`);
+    }
     const notes = stable.rollback ? null : rolledUpNotes(await changelogAt(deps, stable.version), stable.previous, stable.version, deps.repo);
     deps.log(`release-channel backfill (${apply ? 'apply' : 'preview: nothing written; re-run with --apply to write'})`);
     deps.log(`current Latest: ${latestNow}`);
@@ -96,6 +102,7 @@ export async function run(deps: ReleaseDeps, argv: string[]): Promise<void> {
     deps.log(`mark pre-release: ${plan.markPrerelease.length} (${list(plan.markPrerelease)})`);
     deps.log(`older releases left alone: ${plan.olderUntouched}`);
     if (!apply) return;
+    if ((await readStable(deps)).version !== stable.version) throw new Refusal('stable moved while the plan was being built (a promotion ran); nothing was written, re-run backfill.');
     await deps.ghApiWrite('PATCH', `repos/${deps.repo}/releases/${plan.latest.id}`, { prerelease: false, make_latest: 'true', ...(notes === null ? {} : { body: notes }) });
     for (const t of plan.markPrerelease) await deps.ghApiWrite('PATCH', `repos/${deps.repo}/releases/${t.id}`, { prerelease: true, make_latest: 'false' });
     deps.log(`applied: v${plan.latest.version} is Latest; ${plan.markPrerelease.length} marked pre-release`);

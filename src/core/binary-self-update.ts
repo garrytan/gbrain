@@ -171,7 +171,7 @@ export async function fetchAlphaRelease(fetchImpl: typeof fetch = fetch): Promis
       signal: AbortSignal.timeout(5_000),
     });
     if (!res.ok) return null;
-    const version = /^v?(\d+\.\d+\.\d+\.\d+)\s*$/.exec((await res.text()).slice(0, 256).split('\n')[0] ?? '')?.[1];
+    const version = /^v?(\d+\.\d+\.\d+(?:\.\d+)?)(?:[-+][0-9A-Za-z.-]+)?$/.exec(((await res.text()).slice(0, 256).trim().split('\n')[0] ?? '').trim())?.[1];
     if (!version) return null;
     return fetchReleaseJson(`https://api.github.com/repos/garrytan/gbrain/releases/tags/v${version}`, fetchImpl);
   } catch {

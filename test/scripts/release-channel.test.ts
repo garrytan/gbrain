@@ -14,16 +14,17 @@ const row = (id: number, version: string, prerelease = false, draft = false): Re
 const RELEASES = [row(5, '1.0.5'), row(4, '1.0.4', true), row(3, '1.0.3'), row(2, '1.0.2'), row(1, '1.0.1'), row(9, '1.0.6', false, true), { id: 8, tag_name: 'nightly', draft: false, prerelease: false }];
 const CHANGELOG = ['## [1.0.5] - d', 'five', '## [1.0.4] - d', 'four', '## [1.0.3] - d', 'three', '## [1.0.2] - d', 'two', '## [1.0.1] - d', 'one', ''].join('\n');
 
-function fakeDeps(stable = '1.0.3', previous: string | null = '1.0.1', rollback = false) {
+function fakeDeps(stable = '1.0.3', previous: string | null = '1.0.1', rollback = false, latest = `v${stable}`) {
   const logs: string[] = [];
   const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
-  const message = renderTagMessage({ version: stable, commit: 'a'.repeat(40), tree: 'b'.repeat(40), soakRun: 'https://example.com/run', scoreboard: 'https://example.com/run', promotedBy: 'alice-example', promotedAt: '2026-11-14T00:00:00Z', previous, rollback, reason: rollback ? 'regression' : '' });
+  let reads = 0;
+  const messageFor = (v: string) => renderTagMessage({ version: v, commit: 'a'.repeat(40), tree: 'b'.repeat(40), soakRun: 'https://example.com/run', scoreboard: 'https://example.com/run', promotedBy: 'alice-example', promotedAt: '2026-11-14T00:00:00Z', previous, rollback, reason: rollback ? 'regression' : '' });
   const deps: ReleaseDeps = {
     repo: REPO,
     async ghApi(path) {
       if (path.endsWith('/git/ref/tags/stable')) return { object: { sha: 'c'.repeat(40), type: 'tag' } };
-      if (path.includes('/git/tags/')) return { message };
-      if (path.endsWith('/releases/latest')) return { tag_name: 'v1.0.5' };
+      if (path.includes('/git/tags/')) return { message: messageFor(reads++ === 0 ? stable : f.movedTo ?? stable) };
+      if (path.endsWith('/releases/latest')) return { tag_name: latest };
       if (path.includes('/releases?')) return path.endsWith('page=1') ? RELEASES : [];
       throw new Error(`unexpected api ${path}`);
     },
@@ -31,7 +32,8 @@ function fakeDeps(stable = '1.0.3', previous: string | null = '1.0.1', rollback 
     async git(args) { return args[0] === 'show' ? { code: 0, stdout: CHANGELOG, stderr: '' } : { code: 0, stdout: '', stderr: '' }; },
     log: line => logs.push(line),
   };
-  return { deps, logs, writes };
+  const f: { deps: ReleaseDeps; logs: string[]; writes: typeof writes; movedTo?: string } = { deps, logs, writes };
+  return f;
 }
 
 describe('plans', () => {
@@ -61,6 +63,16 @@ describe('run', () => {
       { path: `repos/${REPO}/releases/3`, body: { prerelease: false, make_latest: 'true', body: rolledUpNotes(CHANGELOG, '1.0.1', '1.0.3', REPO) } },
       { path: `repos/${REPO}/releases/5`, body: { prerelease: true, make_latest: 'false' } },
     ]);
+  });
+
+  test('backfill refuses while GitHub\'s Latest is newer than stable, and writes nothing if stable moves mid-run', async () => {
+    const ahead = fakeDeps('1.0.3', '1.0.1', false, 'v1.0.5');
+    await expect(run(ahead.deps, ['backfill', '--apply'])).rejects.toThrow(/GitHub's Latest is v1\.0\.5, newer than stable v1\.0\.3\. Backfilling now would move Latest back.*Would mark pre-release: 1 \(v1\.0\.5\)/);
+    expect(ahead.writes).toEqual([]);
+    const moved = fakeDeps();
+    moved.movedTo = '1.0.5';
+    await expect(run(moved.deps, ['backfill', '--apply'])).rejects.toThrow(/stable moved while the plan was being built/);
+    expect(moved.writes).toEqual([]);
   });
 
   test('backfill keeps a rollback stable\'s notes', async () => {
