@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { performSync } from '../src/commands/sync.ts';
@@ -64,9 +65,19 @@ describe.each(backends.map(url => [engineName(url), url] as const))('plain-direc
   }), 180_000);
 });
 
-test('sources add without --force names what sync does with a forced plain directory', () => managedBrain(async ({ engine, root }) => {
+test('a plain folder outside any git repository registers without --force (GST-2732)', () => managedBrain(async ({ engine, root }) => {
+  const dir = join(root, '..', 'plain-folder');
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'note.md'), '# A note\n');
+  await runManagedSourceLifecycle(engine, { operation: 'add', sourceId: 'source-b', path: dir, requireGitContent: true });
+  const [row] = await engine.executeRaw<{ id: string }>("SELECT id FROM sources WHERE id='source-b'");
+  expect(row?.id).toBe('source-b');
+}), 120_000);
+
+test('sources add without --force refuses a git repository with nothing committed and names what --force does', () => managedBrain(async ({ engine, root }) => {
   const dir = join(root, '..', 'plain-notes');
   mkdirSync(dir, { recursive: true });
+  execFileSync('git', ['-C', dir, 'init', '-q']);
   await expect(runManagedSourceLifecycle(engine, { operation: 'add', sourceId: 'source-a', path: dir, requireGitContent: true }))
     .rejects.toMatchObject({ code: 'not_a_git_repo', suggestion: expect.stringContaining('sync then imports its files without Git') });
 }), 120_000);
