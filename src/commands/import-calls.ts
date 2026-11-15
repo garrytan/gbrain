@@ -15,9 +15,10 @@
  *     (facts_backstop: false), so nothing paid runs;
  *   - the file path is redacted like the title (call_import.file), and the page waits for the owner's approval before
  *     anything embeds it (call_import.embedding_hold, the conversation archive's any-size hold);
- *   - each file imports once: a rerun finds the page its file made by its folder and path (call_import.root and file
- *     under the prefix, not the computed slug, which a new modified day can move) and reports it unchanged, or kept when the file
- *     changed since, and never writes it again. The prefix is slugified per segment, as stored slugs are. Two files that map to one slug get a short hash
+ *   - each file imports once: a rerun finds the page its file made by its folder and path under the prefix (call_import.root
+ *     and path, a digest of the folder and the unredacted relative path, so two names a redaction pattern makes alike stay
+ *     apart; a page stored before path existed is found by its file), not by the computed slug, which a new modified day
+ *     can move, and reports it unchanged, or kept when the file changed since, and never writes it again. The prefix is slugified per segment, as stored slugs are. Two files that map to one slug get a short hash
  *     of their path on the second.
  *
  * These are not agent sessions: nothing here touches conversations/ or the conversation archive switch.
@@ -44,6 +45,8 @@ export interface CallPage {
   rel: string;
   /** The relative path as stored and printed: redacted like the title and body. */
   file: string;
+  /** call_import.path: a digest of the folder and the unredacted relative path, the file's identity across reruns. */
+  path?: string;
   slug: string;
   title: string;
   date: string;
@@ -105,7 +108,7 @@ function firstLine(text: string): string {
 }
 
 /** The page one call file becomes: slug, title, date, and the redacted, structure-neutral content. */
-export function callPageFor(rel: string, text: string, mtimeMs: number, prefix: string, patterns: ImportRedactionPattern[], root?: string): CallPage {
+export function callPageFor(rel: string, text: string, mtimeMs: number, prefix: string, patterns: ImportRedactionPattern[], root?: string, pathId?: string): CallPage {
   const redact = (s: string): string => redactCallPath(s, patterns).file;
   const name = redact(basename(rel).replace(CALL_FILE_RE, ''));
   const lead = LEADING_DATE_RE.exec(name);
@@ -131,17 +134,18 @@ export function callPageFor(rel: string, text: string, mtimeMs: number, prefix: 
     'call_import:',
     `  file: ${JSON.stringify(path.file)}`,
     ...(root ? [`  root: ${JSON.stringify(root)}`] : []),
+    ...(pathId ? [`  path: ${JSON.stringify(pathId)}`] : []),
     `  hash: ${JSON.stringify(hash)}`,
     `  redactions: ${redacted.redactionCount + path.redactions}`,
     '  embedding_hold: call_import',
     '---',
   ].join('\n');
-  return { rel, file: path.file, slug: `${prefix}/${date}-${slugTitle}`, title, date, date_from: fromName ? 'file_name' : fromLine ? 'first_line' : 'modified', content: `${frontmatter}\n${body}\n`, redactions: redacted.redactionCount + path.redactions, hash };
+  return { rel, file: path.file, ...(pathId ? { path: pathId } : {}), slug: `${prefix}/${date}-${slugTitle}`, title, date, date_from: fromName ? 'file_name' : fromLine ? 'first_line' : 'modified', content: `${frontmatter}\n${body}\n`, redactions: redacted.redactionCount + path.redactions, hash };
 }
 
-const callImportOf = (frontmatter: unknown): { file?: unknown; root?: unknown; hash?: unknown } | null => {
+const callImportOf = (frontmatter: unknown): { file?: unknown; root?: unknown; path?: unknown; hash?: unknown } | null => {
   const ci = (frontmatter as { call_import?: unknown } | null)?.call_import;
-  return ci && typeof ci === 'object' ? ci as { file?: unknown; root?: unknown; hash?: unknown } : null;
+  return ci && typeof ci === 'object' ? ci as { file?: unknown; root?: unknown; path?: unknown; hash?: unknown } : null;
 };
 
 /** A file path with the same credential redaction as the call's title, so a secret in a file name is never stored or printed. */
@@ -169,35 +173,41 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
     dryRun: false, remote: false, cliOpts: getCliOptions(), sourceId, writeWaitMs: CLI_WRITE_WAIT_MS } as Parameters<typeof putPage.handler>[0];
   const files = listCallFiles(dir);
   const root = callRootId(dir);
-  const priorSlugs = new Map((await engine.executeRaw<{ slug: string; file: string }>(
-    `SELECT slug, frontmatter->'call_import'->>'file' AS file FROM pages
+  const prior = await engine.executeRaw<{ slug: string; file: string; path: string | null }>(
+    `SELECT slug, frontmatter->'call_import'->>'file' AS file, frontmatter->'call_import'->>'path' AS path FROM pages
       WHERE source_id = $1 AND deleted_at IS NULL AND starts_with(slug, $2) AND frontmatter->'call_import'->>'root' = $3
         AND frontmatter->'call_import'->>'file' IS NOT NULL`,
-    [sourceId, `${prefix}/`, root])).map(r => [r.file, r.slug]));
-  const sameImport = (frontmatter: unknown, file: string): boolean => { const ci = callImportOf(frontmatter); return ci?.file === file && ci.root === root; };
+    [sourceId, `${prefix}/`, root]);
+  const byPath = new Map(prior.filter(r => r.path).map(r => [r.path, r.slug]));
+  const byFile = new Map(prior.filter(r => !r.path).map(r => [r.file, r.slug]));
+  const sameImport = (frontmatter: unknown, page: CallPage): boolean => {
+    const ci = callImportOf(frontmatter);
+    return ci?.root === root && (typeof ci.path === 'string' ? ci.path === page.path : ci.file === page.file);
+  };
   const results: CallFileResult[] = [];
   const used = new Set<string>();
   for (const path of files) {
     const rel = relative(dir, path);
     let page: CallPage;
     try {
-      page = callPageFor(rel, readFileSync(path, 'utf8'), lstatSync(path).mtimeMs, prefix, patterns, root);
+      page = callPageFor(rel, readFileSync(path, 'utf8'), lstatSync(path).mtimeMs, prefix, patterns, root, createHash('sha256').update(`${dir}\u0000${rel}`).digest('hex').slice(0, 16));
     } catch (e) {
       results.push({ file: redactCallPath(rel, patterns).file, slug: '', status: 'error', error: e instanceof Error ? e.message : String(e) });
       continue;
     }
     const suffixed = `${page.slug}-${createHash('sha256').update(`${root}/${rel}`).digest('hex').slice(0, 6)}`;
-    const priorSlug = priorSlugs.get(page.file);
+    const legacy = byFile.get(page.file);
+    const priorSlug = byPath.get(page.path!) ?? (legacy && !used.has(legacy) ? legacy : undefined);
     let slug = priorSlug ?? (used.has(page.slug) ? suffixed : page.slug);
     let existing = await engine.readPageSnapshot(slug, { sourceId });
-    if (!priorSlug && existing && !sameImport(existing.page.frontmatter, page.file) && slug !== suffixed) {
+    if (!priorSlug && existing && !sameImport(existing.page.frontmatter, page) && slug !== suffixed) {
       slug = suffixed;
       existing = await engine.readPageSnapshot(slug, { sourceId });
     }
     used.add(slug);
     const base = { file: page.file, slug, date_from: page.date_from, redactions: page.redactions };
     if (existing) {
-      if (!sameImport(existing.page.frontmatter, page.file)) results.push({ ...base, status: 'error', error: `${slug} already holds another page; rename the file to import it` });
+      if (!sameImport(existing.page.frontmatter, page)) results.push({ ...base, status: 'error', error: `${slug} already holds another page; rename the file to import it` });
       else results.push({ ...base, status: callImportOf(existing.page.frontmatter)?.hash === page.hash ? 'unchanged' : 'kept' });
       continue;
     }
