@@ -9,11 +9,12 @@
 # A line counts when it names changelog.d, a .md file other than README.md and
 # the repository root (ROOT, REPO, REPO_ROOT, import.meta.dir, __dirname or
 # process.cwd()). Fixture paths built under a temporary directory don't.
+# Seam: GBRAIN_GUARD_ROOT (fixture tree root, used by scripts/guard-self-test.sh).
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "${GBRAIN_GUARD_ROOT:-$(dirname "$0")/..}"
 
-hits="$(grep -rnE 'changelog\.d' test/ \
+hits="$(grep -rnE --exclude-dir=guards 'changelog\.d' test/ \
   | grep -E '[A-Za-z0-9_.-]+\.md' \
   | grep -vE "changelog\.d['\"/, ]+README\.md" \
   | grep -E '\b(ROOT|REPO|REPO_ROOT)\b|import\.meta\.dir|__dirname|process\.cwd\(\)' || true)"
