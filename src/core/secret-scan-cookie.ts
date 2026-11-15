@@ -16,16 +16,17 @@
  * `Set-Cookie:` only the first pair is a cookie: the attributes that follow
  * (`Path=/`, `Max-Age=3600`) are kept. Parsing stops at the first segment
  * that is not `name=value`, so prose (`Cookie: chocolate chip`) is never
- * claimed. Values shorter than 8 characters (preference flags such as
- * `theme=dark`), placeholders (`<…>`, `$VAR`, `{…}`) and masks (`...`, `***`)
+ * claimed. A `'` or `,` inside a value and a JSON-escaped `\/` are part of it.
+ * Values shorter than 8 characters (preference flags such as
+ * `theme=dark`), placeholders (`<…>`, `$VAR`, `{…}`, `%VAR%`) and masks (`...`, `***`)
  * are left alone. Every quantifier is bounded; the parse is linear in the line.
  */
 
 const COOKIE_HEAD_RE = /(?:(?:^|[^A-Za-z0-9_-])(set-)?cookie\\?["'`]?\s{0,4}:|(?:^|\s)(-b|--cookie)(?=[\s=]))[\s=]{0,4}\\?["'`]?/gi;
-const COOKIE_PAIR_RE = /([!#$%&*+.^_|~0-9A-Za-z-]{1,128})=("?)([^\s;"',\\]{0,4096})/y;
+const COOKIE_PAIR_RE = /([!#$%&*+.^_|~0-9A-Za-z-]{1,128})=("?)((?:[^\s;"',\\]|[',](?=[^\s;"',\\])|\\\/){0,4096})/y;
 const COOKIE_SEP_RE = /\s{0,4};\s{0,4}/y;
-const PLACEHOLDER_RE = /^[<$%{[]/;
-const CURL_BEFORE_RE = /(?:^|[^A-Za-z0-9_-])curl(?:\.exe)?(?:\s|$)/i;
+const PLACEHOLDER_RE = /^(?:[<${[]|%[A-Za-z_][A-Za-z0-9_]{0,64}%$)/;
+const CURL_RE = /(?:^|[^A-Za-z0-9_-])curl(?:\.exe)?(?:\s|$)/i;
 const MASK_RE = /^[.*xX•_-]+$/;
 
 /** Minimum cookie value length claimed. */
@@ -37,11 +38,12 @@ export const COOKIE_PRECHECK_RE = /cookie|-b\s/i;
 /** The cookie values on `line`: `start` of the value, the value, and `from`, where its header starts. */
 export function cookieHeaderValues(line: string): Array<{ start: number; value: string; from: number }> {
   const out: Array<{ start: number; value: string; from: number }> = [];
+  let curlAt: number | undefined;
   COOKIE_HEAD_RE.lastIndex = 0;
   for (let head = COOKIE_HEAD_RE.exec(line); head !== null; head = COOKIE_HEAD_RE.exec(line)) {
     const setCookie = head[1] !== undefined;
     let at = COOKIE_HEAD_RE.lastIndex;
-    if (head[2] !== undefined && !CURL_BEFORE_RE.test(line.slice(Math.max(0, head.index - 512), head.index))) continue;
+    if (head[2] !== undefined && !((curlAt ??= line.search(CURL_RE)) >= 0 && curlAt < head.index)) continue;
     for (;;) {
       COOKIE_PAIR_RE.lastIndex = at;
       const m = COOKIE_PAIR_RE.exec(line);

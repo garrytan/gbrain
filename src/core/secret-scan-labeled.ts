@@ -117,6 +117,7 @@ const NETRC_HEAD = '(?:^|\\s)(?:machine\\s{1,4}[^\\s]{1,253}|default)(?:\\s{1,4}
  * `labeled_credential`: a `.netrc` password, and the value on the line after a dangling key label.
  */
 export const TRANSCRIPT_LABELED_PATTERNS: readonly TranscriptLabeledPattern[] = [
+  { form: 'single', source: `(${NETRC_HEAD}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE})` },
   { form: 'single', source: `(${NETRC_HEAD})(${BARE_VALUE})${BARE_END}` },
   { form: 'key', continuation: 'key', source: `(^\\s{0,8}${QUOTE})(${QUOTED_VALUE})(?=${QUOTE}[,;]?\\s*$)` },
   { form: 'key', continuation: 'key', source: `(^\\s{0,8})(${BARE_VALUE})(?=[.,;]?\\s*$)` },

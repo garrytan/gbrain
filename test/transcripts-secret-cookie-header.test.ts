@@ -48,6 +48,21 @@ describe('cookie_header: cookie values are redacted, names kept', () => {
     });
   }
 
+  test('an apostrophe inside an earlier cookie does not stop parsing', () => {
+    expect(one(`Cookie: theme=ab'cd; sid=${SID}`)).toBe("Cookie: theme=ab'cd; sid=<REDACTED:cookie_header>");
+  });
+  test('a percent-encoded value is redacted, not taken for a placeholder', () => {
+    expect(one(`Cookie: sid=%2F${SID}`)).toBe('Cookie: sid=<REDACTED:cookie_header>');
+  });
+  test('a value holding a comma or a JSON-escaped slash is redacted whole', () => {
+    expect(one(`Cookie: sid=${SID},${CSRF}`)).toBe('Cookie: sid=<REDACTED:cookie_header>');
+    expect(one(`{"cookie": "sid=abc\\/${SID}"}`)).toBe('{"cookie": "sid=<REDACTED:cookie_header>"}');
+  });
+  test('curl -b far into a long command line is still a cookie', () => {
+    const out = one(`curl -H "X-Trace: ${'t'.repeat(600)}" -b 'sid=${SID}' https://app.acme-example.test/`);
+    expect(out).not.toContain(SID);
+    expect(out).toContain("-b 'sid=<REDACTED:cookie_header>'");
+  });
   test('a cookie value echoed in a later message is scrubbed too', () => {
     const out = redact([`Cookie: sid=${SID}`, `the session id is ${SID} right?`]);
     expect(out.join('\n')).not.toContain(SID);

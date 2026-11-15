@@ -24,6 +24,13 @@ describe('synthetic credential corpus', () => {
     expect(SYNTHETIC_CREDENTIAL_CORPUS.some((e) => e.messages.length > 1)).toBe(true);
   });
 
+  test('a quoted .netrc password is redacted', () => {
+    const pw = ['Synth', 'Netrc98765'].join('');
+    const out = run({ meta: { harness: 'claude-code', sessionId: 'netrc-quoted' }, messages: [{ role: 'user', timestamp: TS(0), text: `machine api.acme-example.test login alice-example password "${pw}"` }] });
+    expect(out).not.toContain(pw);
+    expect(out).toContain('password \\"<REDACTED:labeled_credential>\\"');
+  });
+
   for (const e of SYNTHETIC_CREDENTIAL_CORPUS) {
     test(`${e.id} (${e.shape}) in message bodies`, () => {
       const out = run({

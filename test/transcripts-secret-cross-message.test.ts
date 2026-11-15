@@ -41,6 +41,9 @@ describe('a label in one message, its value in the next', () => {
     const out = redact(['password:', `${PW}\nand the rest of the note`]);
     expect(out[1]).toBe('<REDACTED:labeled_credential>\nand the rest of the note');
   });
+  test('a NUL after the label does not defeat the join', () => {
+    expect(redact(['password:\u0000', PW])).toEqual(['password:', '<REDACTED:labeled_credential>']);
+  });
   test('blank lines before the value in the next message are skipped', () => {
     expect(redact(['here is my API key:', `\n\n${KEY}`])[1]).toBe('\n\n<REDACTED:labeled_credential>');
   });

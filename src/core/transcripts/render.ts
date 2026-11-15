@@ -208,7 +208,7 @@ export function redactSession(
     // same redaction as bodies (a secret or private name in a display name
     // must not bypass the scan).
     // Cross-message join: a label the previous message left dangling reads this message's first line as its value.
-    const leading = i > 0 ? trailingDanglingLabel(session.messages[i - 1]!.text, TRANSCRIPT_LANE_SCAN_OPTS) : null;
+    const leading = i > 0 ? trailingDanglingLabel(sanitizeForJsonb(session.messages[i - 1]!.text), TRANSCRIPT_LANE_SCAN_OPTS) : null;
     return { m, text: plan(m.text, leading), speaker: m.speaker ? plan(m.speaker) : undefined };
   });
   const titlePlan = session.meta.title ? plan(session.meta.title) : undefined;
