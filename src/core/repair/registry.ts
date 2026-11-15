@@ -57,6 +57,7 @@ import { atomsRestoreRepair } from './atoms-restore.ts';
 import { atomFenceRowsRepair } from './atom-fence-rows.ts';
 import { extractorFactsRepair } from './extractor-facts.ts';
 import { unwithdrawnFactsRepair } from './unwithdrawn-facts.ts';
+import { purgedPageFactsRepair } from './purged-page-facts.ts';
 import { conversationLabelsRepair } from './conversation-labels.ts';
 import { capturedFactsRepair } from './captured-facts.ts';
 import { agentSessionFactsRepair, agentSessionFlagArgs } from './agent-session-facts.ts';
@@ -251,6 +252,20 @@ const SPECS: Record<RepairKind, Omit<RepairKindSpec, 'kind'>> = {
       + 'superseded or duplicated fact is never restored; --include-ambiguous adds facts of pages whose version history has a gap. Preview-bound: '
       + '--apply --expect <hash> restores exactly the previewed set, bound to each page\'s revision; a changed page or fact reports changed_since_preview. '
       + 'Database-only; no page is rewritten.',
+  },
+  'purged-page-facts': {
+    handler: purgedPageFactsRepair, embeds: 'none', checks: ['purged_page_facts'], explicit_only: true, preview_bound: true, consent: 'destructive',
+    consentText: {
+      what: 'Retire the previewed facts that purges left active after their page was gone',
+      why: 'The preview listed each fact extracted from a page that no longer exists; applying it expires exactly those rows.',
+      risk: 'Database rows only: no page or file changes. Rows are expired, not deleted, so their history stays; recall stops returning them. '
+        + 'A row that changed since the preview, or whose page came back, is kept.',
+      user_message: 'Retire the previewed facts left over from purged pages? Recall stops returning them; the rows are expired, not deleted.',
+    },
+    summary: 'Retire facts that purges before the #8859 fix left active: page-extraction facts filed on no page whose context names a page that no longer '
+      + 'exists. Rows of a page the purge ledger records are evidenced; rows of a page gone with no purge record (a retention purge, or a rename that did '
+      + 'not carry its facts) are retired only with --include-ambiguous; withdrawn, superseded and referenced rows are never touched. Preview-bound: '
+      + '--apply --expect <hash> --yes expires exactly the previewed rows; a row that changed since reports changed_since_preview. Database-only; runs only when named.',
   },
   'conversation-labels': {
     handler: conversationLabelsRepair, embeds: 'none', checks: ['conversation_label_facts'], explicit_only: true, consent: 'destructive',
