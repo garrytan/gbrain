@@ -5,17 +5,21 @@
  * them, or a bare name two pages match, named as candidates). Ok when all are 0. Otherwise a warning with the
  * counts by group (facts/facts-home.ts), any `held_fact_unmovable` rows with their reason, and the read-only preview of
  * `gbrain repair facts-home` as the fix. A source that is not strict is not judged (its database keeps such facts by
- * design); `db_ahead_of_git` stays informational. Bounded by the same budget as the census (`GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS`).
+ * design); `db_ahead_of_git` stays informational. Bounded by the same budget as the census (`GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS`); the page walk reads
+ * the `DOCTOR_GIT_GAP_NEWEST` most recently changed pages per source and the message states that window (GBRA-541). A census the
+ * budget stopped, or one that could not run, is the unknown convention (`warn`, `health: unknown`), never ok, and so is a fenced fact on a
+ * page older than the window, whose file the census did not look for.
  */
 import type { Check } from '../../doctor.ts';
 import { scanDeadline } from '../budget.ts';
+import { boundUnknownDetails } from '../bounded-unknown.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { doctorVerify } from '../check-fix.ts';
-import { censusGitGap, factsWithoutGitHome } from '../../sources-git-gap.ts';
+import { factsWithoutGitHome } from '../../sources-git-gap.ts';
 import { FACTS_HOME_DOCS, factsHomePreviewCommand, scanFactsHome, type FactsHomeGroup } from '../../../core/facts/facts-home.ts';
-import { gitGapScanTimeoutMs } from './db-ahead-of-git.ts';
+import { censusWindow, doctorGitGapCensus, gitGapScanTimeoutMs } from './db-ahead-of-git.ts';
 
-interface SourceFacts { source_id: string; complete: boolean; outside_git: number; held_over_30_days: number; groups: Partial<Record<FactsHomeGroup, number>>;
+interface SourceFacts { source_id: string; complete: boolean; window: string; outside_git: number; facts_on_unread_pages: number; held_over_30_days: number; groups: Partial<Record<FactsHomeGroup, number>>;
   held_fact_unmovable: Array<{ code: 'held_fact_unmovable'; fact_id: number; entity_slug: string | null; reason: string }> }
 
 async function runStrictFactsOutsideGit(ctx: DoctorContext): Promise<Check[]> {
@@ -32,9 +36,10 @@ async function runStrictFactsOutsideGit(ctx: DoctorContext): Promise<Check[]> {
     const deadlineAt = scanDeadline(ctx, gitGapScanTimeoutMs());
     const sources: SourceFacts[] = [];
     for (const row of rows) {
-      const census = await censusGitGap(engine, row.id, { sample: 0, deadlineAt });
+      const census = await doctorGitGapCensus(engine, row.id, deadlineAt);
       const scan = await scanFactsHome(engine, row.id);
-      sources.push({ source_id: row.id, complete: census.complete, outside_git: factsWithoutGitHome(census.rows_without_git_home),
+      sources.push({ source_id: row.id, complete: census.complete, window: censusWindow(census), outside_git: factsWithoutGitHome(census.rows_without_git_home),
+        facts_on_unread_pages: census.facts_on_unread_pages ?? 0,
         held_over_30_days: scan.counts.held_over_30_days,
         groups: Object.fromEntries(Object.entries(scan.counts).filter(([, n]) => n > 0)),
         held_fact_unmovable: scan.rows.filter(r => r.group === 'held_fact_unmovable').slice(0, 20)
@@ -42,9 +47,23 @@ async function runStrictFactsOutsideGit(ctx: DoctorContext): Promise<Check[]> {
     }
     const details = { sources, docs: FACTS_HOME_DOCS };
     const flagged = sources.filter(source => source.outside_git > 0 || source.held_over_30_days > 0 || source.held_fact_unmovable.length > 0);
+    const partial = sources.filter(source => !source.complete);
+    if (!flagged.length && partial.length) {
+      checks.push({ name: 'strict_facts_outside_git', status: 'warn', details: { ...details, ...boundUnknownDetails('git_gap_timeout') },
+        message: `Health unknown, not clear: the census of ${partial.map(s => `${s.source_id} (${s.window})`).join(', ')} stopped at its ${gitGapScanTimeoutMs() / 1000}s budget, so facts on pages it did not read were not judged. `
+          + 'Count every page with gbrain sources git-gap <source-id>.' });
+      return checks;
+    }
+    const unread = sources.filter(source => source.facts_on_unread_pages > 0);
+    if (!flagged.length && unread.length) {
+      checks.push({ name: 'strict_facts_outside_git', status: 'warn', details: { ...details, ...boundUnknownDetails('git_gap_newest') },
+        message: `Health unknown, not clear: ${unread.map(s => `${s.source_id} has ${s.facts_on_unread_pages} fenced fact(s) on pages older than its census window (${s.window})`).join('; ')}, so whether those pages have a committed file was not checked. `
+          + 'Count every page with gbrain sources git-gap <source-id>.' });
+      return checks;
+    }
     if (!flagged.length) {
       checks.push({ name: 'strict_facts_outside_git', status: 'ok', details,
-        message: `Every fact of each strict source has a Git home and none has been held for more than 30 days: ${sources.map(s => `${s.source_id}${s.complete ? '' : ' (census partial)'}`).join(', ')}.` });
+        message: `Every fact of each strict source has a Git home and none has been held for more than 30 days: ${sources.map(s => `${s.source_id} (${s.window})`).join(', ')}.` });
       return checks;
     }
     const describe = (source: SourceFacts) => `${source.source_id}: ${source.outside_git} fact(s) without a Git home${source.complete ? '' : ' (census partial)'}, `
@@ -58,7 +77,7 @@ async function runStrictFactsOutsideGit(ctx: DoctorContext): Promise<Check[]> {
         why: `Lists the facts of ${first} without a Git home by group, read-only; its --apply --expect <hash> writes the ones it can to memory/unattributed. Repeat for each source in details.sources.`,
         verify: doctorVerify('strict_facts_outside_git') } });
   } catch (error) {
-    checks.push({ name: 'strict_facts_outside_git', status: 'ok', details: { health: 'unknown', docs: FACTS_HOME_DOCS },
+    checks.push({ name: 'strict_facts_outside_git', status: 'warn', details: { health: 'unknown', docs: FACTS_HOME_DOCS },
       message: `Could not count the facts of strict sources without a Git home (${error instanceof Error ? error.message : String(error)}); gbrain sources git-gap <source-id> counts them for one source.` });
   }
   return checks;

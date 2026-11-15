@@ -116,7 +116,7 @@ describe('audit-secrets uses the transcript-lane rules', () => {
     await resetPgliteState(engine);
   });
 
-  test('a stored page with a cookie header is affected; the audit version moved to 6', async () => {
+  test('a stored page with a cookie header is affected; the audit version moved to 7', async () => {
     await engine.putPage('conversations/sessions/2026-01-02-codex-cccccccccccc', {
       type: 'conversation', title: 'session', compiled_truth: `intro\ncurl -H 'Cookie: sid=${SID}' https://app.acme-example.test/`,
       frontmatter: { transcript_import: { harness: 'codex', session_id: 'cookie' } },
@@ -125,6 +125,48 @@ describe('audit-secrets uses the transcript-lane rules', () => {
     expect(result.by_pattern).toEqual({ cookie_header: 1 });
     expect(result.pages[0]!.lines).toEqual([2]);
     expect(JSON.stringify(result)).not.toContain(SID);
-    expect(TRANSCRIPT_SECRET_AUDIT_VERSION).toBe(6);
+    expect(TRANSCRIPT_SECRET_AUDIT_VERSION).toBe(7);
+  });
+
+  test('the audit finds the follow-up shapes on a stored page', async () => {
+    const pw = ['Synth', 'NetrcMulti4321'].join('');
+    await engine.putPage('conversations/sessions/2026-01-03-codex-dddddddddddd', {
+      type: 'conversation', title: 'session',
+      compiled_truth: [
+        'machine api.acme-example.test', '  login alice-example', `  password ${pw}`,
+        "curl 'https://app.acme-example.test/' \\", `  -b 'sid=${SID}'`,
+        `{"headers": "Cookie: csrf=\\"${CSRF}\\""}`,
+      ].join('\n'),
+      frontmatter: { transcript_import: { harness: 'codex', session_id: 'follow-up' } },
+    });
+    const result = await auditTranscriptSecrets(engine);
+    expect(result.by_pattern).toEqual({ labeled_credential: 1, cookie_header: 2 });
+    expect(result.pages[0]!.lines).toEqual([3, 5, 6]);
+    for (const s of [pw, SID, CSRF]) expect(JSON.stringify(result)).not.toContain(s);
   });
 });
+
+describe('GST-2768 follow-up: continued curl lines and JSON-escaped quoted values', () => {
+  test('a -b cookie on its own continued line of a multi-line curl command is redacted', () => {
+    const input = [`curl 'https://app.acme-example.test/api' \\`, `  -H 'accept: */*' \\`, `  -b 'sid=${SID}; csrf=${CSRF}' \\`, '  --compressed'].join('\n');
+    const out = one(input);
+    expect(out).not.toContain(SID);
+    expect(out).not.toContain(CSRF);
+    expect(out).toContain("  -b 'sid=<REDACTED:cookie_header>; csrf=<REDACTED:cookie_header>' \\");
+  });
+  test('a JSON-escaped quoted cookie value is redacted', () => {
+    expect(one(`{"headers": "Cookie: sid=\\"${SID}\\"; csrf=\\"${CSRF}\\""}`)).toBe('{"headers": "Cookie: sid=\\"<REDACTED:cookie_header>\\"; csrf=\\"<REDACTED:cookie_header>\\""}');
+    expect(one(`Cookie: sid=\\\\\\"${SID}\\\\\\"`)).toBe('Cookie: sid=\\\\\\"<REDACTED:cookie_header>\\\\\\"');
+  });
+  test('ordinary text near these shapes stays', () => {
+    const notCurl = ['make build \\', '  && git checkout -b feature=abcdefgh12345'].join('\n');
+    expect(one(notCurl)).toBe(notCurl);
+    const ended = ['curl https://app.acme-example.test/ \\', '  --compressed', 'git checkout -b feature=abcdefgh12345'].join('\n');
+    expect(one(ended)).toBe(ended);
+    const prefs = '{"headers": "Cookie: theme=\\"dark\\"; lang=\\"en\\""}';
+    expect(one(prefs)).toBe(prefs);
+    const prose = '{"msg": "tick the cookie: \\"remember me\\" box"}';
+    expect(one(prose)).toBe(prose);
+  });
+});
+
