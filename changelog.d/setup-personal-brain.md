@@ -1,0 +1,9 @@
+**`gbrain setup claude-code --shape personal` (or `codex`) gives a new brain a starting shape: three empty starter pages about you, your notes folder imported read only, and a short block that tells the agent to read those pages.** The pages are `me/facts`, `me/voice` and `me/how-i-decide`. Each is an empty form marked `status: stub`, so nothing about you is invented, and a re-run never overwrites a page you have edited. `--notes DIR` imports that folder's markdown without writing into it; above 500 files setup prints the import command instead of running it. Setup then checks that keyless search finds one of your notes and prints a question to try in a new session. A brand-new brain set up by an agent without `--shape` gets a `brain_shape` question in its first-run decisions, and nothing is written until it is answered. `--shape none` removes the block and keeps the pages. Every command setup hands back keeps the run's `--scope project` and `--source`, and the import and page writes go to the pinned source. The draft-in-voice skill now treats a stub page as missing.
+
+### Itemized changes
+
+- `src/commands/setup-brain-layout.ts` (new): the starter pages, the managed `gbrain:brain-layout` block, the read-only notes import and search check, and the `brain_shape` decision. A page is written only when `gbrain get` reports `page_not_found`; any other read error is reported as pending instead of overwriting. The notes count skips symlinked folders.
+- `src/commands/setup.ts`: new `--shape personal|none` and `--notes DIR` flags for `claude-code` and `codex`; `--shape company` is refused for now. `--no-instructions` also takes out a layout block an earlier run wrote.
+- `skills/draft-in-voice/SKILL.md` (and the plugin copy): a `status: stub` page counts as missing.
+- Docs: new `docs/guides/brain-layout.md`.
+- Tests: new `test/setup-brain-layout.test.ts`.
