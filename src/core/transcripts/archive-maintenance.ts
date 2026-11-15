@@ -9,7 +9,9 @@
  * (transcripts.archive.backfill_days_per_run, newest first, embedding held as archive_backfill) until backfill has
  * nothing left. One pass is bounded by a count (the run window, transcripts.archive.run_window_days, and
  * backfill_days_per_run) and by time (ARCHIVE_MAINTENANCE_BUDGET_MS: no reader or conversation starts after it).
- * A managed brain is skipped (its writes need the CLI's coordinator context), with a code doctor shows.
+ * On a managed brain each day page is a put_page write request through the write coordinator (submitPageMutation),
+ * under the same local_cli identity as gbrain transcripts archive run; the wait for it counts against the budget, and a
+ * write the coordinator accepted but has not published yet counts as archived and is not written again.
  *
  * Never throws: every outcome, an archive error included, is recorded in transcripts.archive.last_maintenance, which
  * the transcript_archive_freshness doctor check reads. No fact extraction, no Dream synthesis, no embedding call.
@@ -17,7 +19,11 @@
 
 import type { BrainEngine } from '../engine.ts';
 import { tryAcquireDbLock } from '../db-lock.ts';
-import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import type { OperationContext } from '../ops/contract.ts';
+import type { GBrainConfig } from '../config.ts';
+import { persistenceConsumerConfig } from '../persistence/service.ts';
+import { resolveCliWriteWaitMs } from '../persistence/write-wait.ts';
+import { insideCoordinatedWrite } from '../persistence/context.ts';
 import { resolveArchiveEnabled } from './archive-default.ts';
 import { addDays } from './archive-day.ts';
 import type { ArchiveReader, ArchiveRunResult, runTranscriptArchive } from './archive.ts';
@@ -44,6 +50,8 @@ export interface ArchiveMaintenanceRecord {
   code?: string;
   message?: string;
   written: number;
+  /** Day writes the coordinator accepted and publishes later (a managed brain); recorded, not written again. */
+  accepted?: number;
   held: number;
   errors: ArchiveMaintenanceError[];
   backfill?: { written: number; deferred: number; done: boolean };
@@ -107,11 +115,9 @@ export async function runArchiveMaintenance(engine: BrainEngine, opts: ArchiveMa
     if (prior && prior.status !== 'skipped' && now.getTime() - Date.parse(prior.at) < floorMs) {
       return { status: 'not_due', message: 'The archive last ran at ' + prior.at + '; the next pass runs it after ' + ARCHIVE_MAINTENANCE_FLOOR_KEY + '.' };
     }
-    if (await managedPersistenceEnabled(engine)) {
-      const record: ArchiveMaintenanceRecord = {
-        at, runner: opts.runner, status: 'skipped', code: 'archive_managed_brain', written: 0, held: 0, errors: [],
-        message: 'Managed brains aren\'t covered by the automatic archive yet: the maintenance pass skips them. Run gbrain transcripts archive run to archive now; it writes through the CLI\'s write coordinator.',
-      };
+    if (insideCoordinatedWrite()) {
+      const record: ArchiveMaintenanceRecord = { at, runner: opts.runner, status: 'skipped', code: 'archive_inside_publication', written: 0, held: 0, errors: [],
+        message: 'The pass was called inside a coordinated write, where submitting to the coordinator would wait on itself; the next pass archives.' };
       await save(engine, record);
       return { status: 'skipped', code: record.code, message: record.message!, record };
     }
@@ -120,21 +126,28 @@ export async function runArchiveMaintenance(engine: BrainEngine, opts: ArchiveMa
     try {
       const run = opts.run ?? (await import('./archive.ts')).runTranscriptArchive;
       const readers = opts.readers;
+      const makeContext = async (sourceId: string): Promise<OperationContext> => {
+        const config = persistenceConsumerConfig(engine) ?? ({ engine: engine.kind } as GBrainConfig);
+        return { engine, config, remote: false, admissionOrigin: 'background', sourceId, dryRun: false,
+          logger: { info() {}, warn() {}, error() {} }, writeWaitMs: resolveCliWriteWaitMs({ config }) };
+      };
       const record: ArchiveMaintenanceRecord = { at, runner: opts.runner, status: 'ok', written: 0, held: 0, errors: [] };
       try {
         const deadlineAtMs = Date.now() + (opts.budgetMs ?? ARCHIVE_MAINTENANCE_BUDGET_MS);
-        const forward = await run(engine, { mode: 'run', now, deadlineAtMs, ...(readers ? { readers } : {}) });
+        const forward = await run(engine, { mode: 'run', now, deadlineAtMs, makeContext, ...(readers ? { readers } : {}) });
         record.written += forward.written;
+        if (forward.accepted) record.accepted = (record.accepted ?? 0) + forward.accepted;
         record.held += forward.held;
         record.errors.push(...resultErrors(forward));
         const state = await engine.getConfig(ARCHIVE_BACKFILL_STATE_KEY).catch(() => null);
         const done = !!state && (JSON.parse(state) as { done?: boolean }).done === true;
         if (forward.stopped_at_deadline) record.stopped_at_deadline = true;
         if (!done && forward.from && !record.stopped_at_deadline && Date.now() < deadlineAtMs) {
-          const backfill = await run(engine, { mode: 'backfill', from: ARCHIVE_BACKFILL_EARLIEST, to: addDays(forward.from, -1), now, deadlineAtMs, ...(readers ? { readers } : {}) });
+          const backfill = await run(engine, { mode: 'backfill', from: ARCHIVE_BACKFILL_EARLIEST, to: addDays(forward.from, -1), now, deadlineAtMs, makeContext, ...(readers ? { readers } : {}) });
           if (backfill.stopped_at_deadline) record.stopped_at_deadline = true;
           const errors = resultErrors(backfill);
           record.written += backfill.written;
+          if (backfill.accepted) record.accepted = (record.accepted ?? 0) + backfill.accepted;
           record.held += backfill.held;
           record.errors.push(...errors);
           record.backfill = { written: backfill.written, deferred: backfill.deferred_days.length, done: backfill.deferred_days.length === 0 && errors.length === 0 && !backfill.stopped_at_deadline };

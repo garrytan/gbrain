@@ -44,6 +44,8 @@ import type { Action } from '../agent-output.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { importFromContent } from '../import-file.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
+import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
+import { CLI_WRITE_WAIT_MS } from '../persistence/write-wait.ts';
 import { classifyItemFailure } from '../item-failure.ts';
 import { classifyBrainAudience } from '../facts/writeback-audience.ts';
 import { ARCHIVE_ENABLED_KEY, resolveArchiveEnabled } from './archive-default.ts';
@@ -139,7 +141,8 @@ export interface ArchiveLedgerEntry {
   updated_at?: string;
 }
 
-export type ArchiveDayStatus = 'written' | 'unchanged' | 'held' | 'planned' | 'skipped_legacy' | 'kept' | 'error';
+/** accepted: the write coordinator accepted the day's write and publishes it later; the day is recorded and not written again. */
+export type ArchiveDayStatus = 'written' | 'accepted' | 'unchanged' | 'held' | 'planned' | 'skipped_legacy' | 'kept' | 'error';
 
 export interface ArchiveDayOutcome {
   harness: string;
@@ -169,6 +172,7 @@ export interface ArchiveRunResult {
   to: string;
   days: ArchiveDayOutcome[];
   written: number;
+  accepted: number;
   unchanged: number;
   held: number;
   planned: number;
@@ -328,7 +332,7 @@ const ownerFix: Action = {
 function emptyResult(mode: 'run' | 'backfill', base: Partial<ArchiveRunResult>): ArchiveRunResult {
   return {
     mode, enabled: false, dry_run: false, source_id: DEFAULT_ARCHIVE_SOURCE, timezone: 'UTC', write_mode: 'database', privacy: 'personal',
-    from: '', to: '', days: [], written: 0, unchanged: 0, held: 0, planned: 0, skipped_legacy: 0, index_pages: [], deferred_days: [], info: [], errors: [],
+    from: '', to: '', days: [], written: 0, accepted: 0, unchanged: 0, held: 0, planned: 0, skipped_legacy: 0, index_pages: [], deferred_days: [], info: [], errors: [],
     ...base,
   };
 }
@@ -521,7 +525,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     if (!batch.length) return;
     await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, batch);
     for (const w of batch) {
-      if (w.outcome.status !== 'written' || !w.ledger) continue;
+      if ((w.outcome.status !== 'written' && w.outcome.status !== 'accepted') || !w.ledger) continue;
       ledger.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger);
       touched.add(w.outcome.day);
     }
@@ -660,7 +664,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     }
   }
   for (const w of indexWrites) {
-    if (w.outcome.status === 'written' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
+    if (w.outcome.status === 'written' || w.outcome.status === 'accepted' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
     else if (w.outcome.status === 'error') result.errors.push({ harness: 'index', reader: 'day-index', code: w.outcome.code ?? 'archive_commit_failed', message: 'the day index ' + w.outcome.slug + ' was not written: ' + (w.outcome.message ?? 'no detail') });
   }
 
@@ -668,10 +672,12 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   result.days.push(...pending);
   for (const d of result.days) {
     if (d.status === 'written') result.written++;
+    else if (d.status === 'accepted') result.accepted++;
     else if (d.status === 'unchanged') result.unchanged++;
     else if (d.status === 'held') result.held++;
     else if (d.status === 'planned') result.planned++;
   }
+  pastDeadline();
   if (result.stopped_at_deadline) result.info.push('the run reached its time limit; the conversations it did not reach wait for the next run');
   if (result.deferred_days.length) result.info.push(result.deferred_days.length + ' older day(s) wait for the next backfill run (' + ARCHIVE_BACKFILL_CAP_KEY + ' caps one run)');
   return result;
@@ -728,19 +734,37 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
     }
     for (const w of writes) w.outcome.status = 'written';
   } else {
-    for (const w of writes) {
+    const deadline = opts.deadlineAtMs;
+    const coordinated = async (submit: (ctx: OperationContext) => Promise<unknown>): Promise<boolean> => {
+      const ctx = target.context!;
       try {
+        await submit(deadline === undefined ? ctx : { ...ctx, writeWaitMs: Math.max(0, Math.min(ctx.writeWaitMs ?? CLI_WRITE_WAIT_MS, deadline - Date.now())) });
+        return false;
+      } catch (err) {
+        if (acceptedPendingReceipt(err)) return true;
+        throw err;
+      }
+    };
+    for (const w of writes) {
+      if (writeMode === 'coordinator' && deadline !== undefined && w.harness !== 'index' && Date.now() >= deadline) break;
+      try {
+        let accepted = false;
         for (const part of w.parts) {
-          const r = writeMode === 'coordinator'
-            ? await submitTranscriptPart(target.context!, engine, sourceId, part, provenance(w.harness))
-            : await importFromContent(engine, part.slug, part.content, { sourceId, noEmbed: true, ...provenance(w.harness) });
+          if (writeMode === 'coordinator') {
+            accepted = await coordinated(async ctx => {
+              const r = await submitTranscriptPart(ctx, engine, sourceId, part, provenance(w.harness));
+              if (r.status === 'error') throw new Error('the page write for ' + part.slug + ' returned an error');
+            }) || accepted;
+            continue;
+          }
+          const r = await importFromContent(engine, part.slug, part.content, { sourceId, noEmbed: true, ...provenance(w.harness) });
           if (r.status === 'error') throw new Error('the page write for ' + part.slug + ' returned an error');
         }
         for (const stale of w.staleSlugs) {
-          if (writeMode === 'coordinator') await deleteStaleTranscriptPart(target.context!, engine, sourceId, stale);
+          if (writeMode === 'coordinator') accepted = await coordinated(ctx => deleteStaleTranscriptPart(ctx, engine, sourceId, stale)) || accepted;
           else await engine.deletePages([stale], { sourceId });
         }
-        w.outcome.status = 'written';
+        w.outcome.status = accepted ? 'accepted' : 'written';
       } catch (err) {
         if (classifyItemFailure(err).scope === 'run') throw err;
         const e = err as { code?: string; message?: string };
@@ -749,6 +773,7 @@ async function flushWrites(engine: BrainEngine, opts: ArchiveRunOpts, target: { 
     }
   }
   for (const w of writes) {
+    if (w.outcome.status === 'accepted' && w.ledger) await writeLedger(engine, w.ledger);
     if (w.outcome.status !== 'written') continue;
     if (w.raw) await engine.putRawData(w.parts[0]!.slug, 'transcript:' + w.harness, w.raw, { sourceId });
     if (w.hold) {

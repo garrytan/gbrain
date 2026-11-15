@@ -54,9 +54,10 @@ and the next pass picks up the rest.
 `gbrain transcripts archive run` archives now, on demand, whatever the pass is doing; it works with automatic
 maintenance turned off (`maintenance.auto false`).
 
-Managed brains aren't covered by the automatic pass yet: it records `archive_managed_brain` and skips them, and doctor
-says so. On a managed brain, run `gbrain transcripts archive run` yourself (or on a schedule); it writes through the
-CLI's write coordinator.
+On a managed brain the pass writes each day page as a `put_page` write request through the write coordinator, under the
+same local identity as `gbrain transcripts archive run` (`local_cli`). Waiting for the coordinator counts against the
+120 seconds; a write it accepted but has not published yet counts as archived, publishes on the coordinator's next turn,
+and is not written again.
 
 ## Search
 

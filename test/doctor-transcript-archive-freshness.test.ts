@@ -123,12 +123,4 @@ describe('transcript_archive_freshness', () => {
     expect(check.status).toBe('warn');
     expect(check.message).toContain('archive_reader_failed');
   });
-
-  test('a managed brain skipped by the pass says it is not covered yet and names the on-demand run', async () => {
-    await engine.setConfig(ARCHIVE_MAINTENANCE_KEY, JSON.stringify({ at: new Date(NOW.getTime() - 60_000).toISOString(), runner: 'serve', status: 'skipped', code: 'archive_managed_brain', written: 0, held: 0, errors: [] }));
-    const check = await checkTranscriptArchiveFreshness(engine, { readers: [staticReader('codex', [])], nowMs: NOW.getTime() });
-    expect(check.status).toBe('warn');
-    expect(check.message).toContain('managed brains aren\'t covered by the automatic archive yet');
-    expect(check.fix?.argv).toEqual(['gbrain', 'transcripts', 'archive', 'run']);
-  });
 });
