@@ -60,9 +60,24 @@ export const PERSISTENCE_REQUEST_REPLAY_ID_INDEX = { name: 'persistence_requests
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_slug_sequence
   ON persistence_requests(source_id,slug,sequence)`;
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX = { name: 'persistence_requests_slug_sequence', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL } as const;
+/**
+ * The managed sync pass's request watermark: the idle pin's probe (sync-pass.ts `passIdleProbe`, newer than
+ * `converged.request_hwm`) and the converged stamp (sync-pass-batch.ts `readConvergedWatermark`) read the newest request of a
+ * worktree and the newest worktree-less request of a source incarnation (writes admitted with sync.write_through=false). No
+ * index led with the worktree, so the probe's OR filtered the whole request table on every idle pin of a busy brain, and
+ * a sparse worktree's max walked the sequence key back past every newer row. Postgres builds both CONCURRENTLY in the
+ * persistence_request_watermark_indexes migration (`transaction: false`); PGLite inline.
+ */
+export const PERSISTENCE_REQUEST_WORKTREE_SEQUENCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_worktree_sequence
+  ON persistence_requests(worktree_id,sequence)`;
+export const PERSISTENCE_REQUEST_WORKTREE_SEQUENCE_INDEX = { name: 'persistence_requests_worktree_sequence', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_WORKTREE_SEQUENCE_INDEX_SQL } as const;
+export const PERSISTENCE_REQUEST_DATABASE_SEQUENCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_database_sequence
+  ON persistence_requests(source_id,source_incarnation,sequence) WHERE worktree_id IS NULL`;
+export const PERSISTENCE_REQUEST_DATABASE_SEQUENCE_INDEX = { name: 'persistence_requests_database_sequence', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_DATABASE_SEQUENCE_INDEX_SQL } as const;
 /** Every request-table index built online (a migration, then `gbrain repair request-indexes` and doctor `persistence_request_indexes`). */
 export const PERSISTENCE_REQUEST_ONLINE_INDEXES = [...PERSISTENCE_SYNC_RUN_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_ID_INDEX,
-  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX] as const;
+  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX,
+  PERSISTENCE_REQUEST_WORKTREE_SEQUENCE_INDEX, PERSISTENCE_REQUEST_DATABASE_SEQUENCE_INDEX] as const;
 /**
  * #6317: the movement watermark (the newest committed receipt of a worktree)
  * that `writer movement`, `data_moving` and doctor `managed_sync_not_moving`
@@ -135,6 +150,7 @@ export const POSTGRES_CONCURRENT_PERSISTENCE_INDEXES: ReadonlySet<string> = new 
   PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL, PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL, PERSISTENCE_SYNC_WATERMARK_INDEX_SQL, PERSISTENCE_COMPACTABLE_INDEX_SQL,
   PERSISTENCE_REQUEST_SLUG_INTENT_INDEX_SQL, PERSISTENCE_REQUEST_ID_INDEX_SQL, PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
   PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL,
+  PERSISTENCE_REQUEST_WORKTREE_SEQUENCE_INDEX_SQL, PERSISTENCE_REQUEST_DATABASE_SEQUENCE_INDEX_SQL,
 ]);
 /** Durable infrastructure: never reconstruct or discard these rows during page reindexing. */
 export const PERSISTENCE_SCHEMA_STATEMENTS = [
@@ -233,6 +249,8 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
   PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
   PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL,
   PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL,
+  PERSISTENCE_REQUEST_WORKTREE_SEQUENCE_INDEX_SQL,
+  PERSISTENCE_REQUEST_DATABASE_SEQUENCE_INDEX_SQL,
   `CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC)`,
   `CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,

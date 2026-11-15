@@ -1298,9 +1298,15 @@ export async function idleTickProbe(engine: BrainEngine, input: { sourceId: stri
 
 /**
  * #6712 PR 4b (design v3.2 §2.2): the idle tick's database reads in one statement: the pass row, whether a request of the
- * worktree is newer than the converged watermark (a range on the unique `sequence` index; `requestHwm` overrides the
- * row's), whether any request is open (`persistence_requests_pending`), and how many of the ids recorded in
- * `converged.open_at_stamp` are still open (`r:<request>` requests, `e:<effect>` Git effects; `openAtStamp` null reads the
+ * worktree is newer than the converged watermark (the worktree's newest request and the incarnation's newest worktree-less
+ * one, each a backward step on persistence_requests_worktree_sequence / persistence_requests_database_sequence, the same
+ * maxima readConvergedWatermark stamps; `requestHwm` overrides the row's. Each orders by its index's whole key and states
+ * the key as a degenerate BETWEEN, not `=`: with `=` the planner drops the constant key columns from the ORDER BY, so the
+ * order is `sequence DESC` alone and the `sequence` key serves it, walking back through other worktrees' rows looking for
+ * a match; for a source with no worktree-less requests that walk read the whole table (a bare max() planned the same).
+ * A range on the `sequence` key filtered by the OR read every row above the watermark of every worktree, and the planner
+ * took a sequential scan of the whole request table on a busy brain), whether any request is open
+ * (`persistence_requests_pending`), and how many of the ids recorded in `converged.open_at_stamp` are still open (`r:<request>` requests, `e:<effect>` Git effects; `openAtStamp` null reads the
  * row's, so the probe needs no earlier read of the row), and whether a writeback in `converged.writeback` has an uncommitted Git effect.
  */
 export async function passIdleProbe(engine: Pick<BrainEngine, 'executeRaw'>, input: { sourceId: string; incarnation: string; worktreeId: string;
@@ -1310,8 +1316,11 @@ export async function passIdleProbe(engine: Pick<BrainEngine, 'executeRaw'>, inp
     stamp AS (SELECT unnest(COALESCE($5::text[], ARRAY(SELECT jsonb_array_elements_text(CASE WHEN jsonb_typeof(value->'obligations'->'converged'->'open_at_stamp')='array'
       THEN value->'obligations'->'converged'->'open_at_stamp' ELSE '[]'::jsonb END) FROM pass))) AS id)
     SELECT (SELECT value FROM pass) AS pass_row,
-      EXISTS (SELECT 1 FROM persistence_requests WHERE sequence > COALESCE($3::bigint, ((SELECT value FROM pass)->'obligations'->'converged'->>'request_hwm')::bigint, 0)
-        AND (worktree_id = $4 OR worktree_id IS NULL AND source_id = $6 AND source_incarnation = $7::uuid)) AS newer,
+      COALESCE(GREATEST((SELECT sequence FROM persistence_requests WHERE (worktree_id) BETWEEN ($4::uuid) AND ($4::uuid)
+            ORDER BY worktree_id DESC, sequence DESC LIMIT 1),
+          (SELECT sequence FROM persistence_requests WHERE worktree_id IS NULL AND (source_id, source_incarnation) BETWEEN ($6, $7::uuid) AND ($6, $7::uuid)
+            ORDER BY source_id DESC, source_incarnation DESC, sequence DESC LIMIT 1))
+        > COALESCE($3::bigint, ((SELECT value FROM pass)->'obligations'->'converged'->>'request_hwm')::bigint, 0), false) AS newer,
       EXISTS (SELECT 1 FROM persistence_requests WHERE state IN ('queued','running','recovering') AND (worktree_id = $4 OR worktree_id IS NULL AND source_id = $6 AND source_incarnation = $7::uuid)) AS pending,
       (SELECT count(*) FROM persistence_requests WHERE state IN ('queued','running','recovering') AND (worktree_id = $4 OR worktree_id IS NULL AND source_id = $6 AND source_incarnation = $7::uuid)
         AND 'r:'||request_id::text IN (SELECT id FROM stamp))

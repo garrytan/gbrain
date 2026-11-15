@@ -316,6 +316,7 @@ import { v312 } from './v312-guest-notes.ts';
 import { v313 } from './v313-wake-events.ts';
 import { v314 } from './v314-guest-notes-fail-closed.ts';
 import { v315 } from './v315-facts-context-head-index.ts';
+import { v316 } from './v316-persistence-request-watermark-indexes.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -630,4 +631,5 @@ export const MIGRATIONS: Migration[] = [
   v313,
   v314,
   v315,
+  v316,
 ];

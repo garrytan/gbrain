@@ -1705,6 +1705,10 @@ CREATE INDEX IF NOT EXISTS persistence_requests_replay_id
   ON persistence_requests(request_id);
 CREATE INDEX IF NOT EXISTS persistence_requests_slug_sequence
   ON persistence_requests(source_id,slug,sequence);
+CREATE INDEX IF NOT EXISTS persistence_requests_worktree_sequence
+  ON persistence_requests(worktree_id,sequence);
+CREATE INDEX IF NOT EXISTS persistence_requests_database_sequence
+  ON persistence_requests(source_id,source_incarnation,sequence) WHERE worktree_id IS NULL;
 CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC);
 CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,
