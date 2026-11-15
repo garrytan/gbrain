@@ -196,5 +196,5 @@ export const COOKIE_PROSE_NEGATIVES: readonly string[] = [
   'Check the Cookie: header in devtools if login fails.',
   'Cookie: <your session cookie here>',
   'Cookie: sid=...; theme=...',
-  'Cookie: sid=$SESSION_COOKIE',
+  'Cookie: sid=$SID; theme=dark',
 ];
