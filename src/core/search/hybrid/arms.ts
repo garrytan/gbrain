@@ -289,7 +289,7 @@ export function startVectorSide(req: HybridRequest, multimodalProviderProbe: str
 /** Lexical then relational arms on the critical path; a failure waits for the vector side to settle before it is rethrown. */
 export async function runLexicalAndRelational(req: HybridRequest, earlyModality: ModalityMode, vectorSide: VectorSide | null) {
   try {
-    const lexical = await req.timer.stage('lexical', () => withUrgentSearchConnections(() => runLexicalArms(req, earlyModality, vectorSide === null)));
+    const lexical = await req.timer.stage('lexical', () => withUrgentSearchConnections(() => runLexicalArms(req, earlyModality, vectorSide === null && !req.opts?.decide?.keywordOnly)));
     const relationalList = await req.timer.stage('relational', () => withUrgentSearchConnections(() => buildRelationalList(req)));
     return { lexical, relationalList };
   } catch (err) {

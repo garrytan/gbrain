@@ -138,6 +138,12 @@ for (const kind of testBackends()) {
       expect(rows.map(r => r.slug).indexOf('events/quokka-offsite')).toBeGreaterThanOrEqual(firstFill);
     });
 
+    test('a keyword-only retrieval the caller asked for (decide.keywordOnly, used on brains with embeddings too) gets no fill', async () => {
+      const rows = await hybridSearch(engine, QUERY, { limit: 20, expansion: false, decide: { keywordOnly: true } } as never);
+      expect(rows.some(r => r.keyword_fill)).toBe(false);
+      expect(rows.map(r => r.slug)).not.toContain(CAROL);
+    });
+
     test('without orFill the keyword arm keeps its strict rows only (the path brains with embeddings take)', async () => {
       const rows = await engine.searchKeyword(QUERY, { limit: 50, orFallback: true });
       expect(rows.map(r => r.slug).sort()).toEqual(['company/decisions', 'company/pricing']);

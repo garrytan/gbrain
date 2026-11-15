@@ -4,8 +4,8 @@
 
 ### Itemized changes
 
-- `src/core/search/keyword-identifier-probe.ts`: with `orFill`, a short first page of all-words rows runs the any-word retry and appends its rows (tagged `keyword_relaxed` and `keyword_fill`, scored below the lowest all-words row).
-- `src/core/search/hybrid/arms.ts`, `hybrid/keyword-only.ts`: hybrid search asks for the fill only on its keyword-only path; fill rows for pages another arm found are dropped, and the rest sort after every other row.
+- `src/core/search/keyword-identifier-probe.ts`: with `orFill`, a short first page of all-words rows runs the any-word retry and appends its rows (tagged `keyword_relaxed` and `keyword_fill`, scored below the lowest all-words row); a failed retry keeps the all-words rows and reports the keyword arm incomplete.
+- `src/core/search/hybrid/arms.ts`, `hybrid/keyword-only.ts`: hybrid search asks for the fill only when no embedding provider is available (not when a caller asks for keyword-only retrieval); fill rows for pages another arm found are dropped, dedup and rank priors run on the other rows as if the fill were absent, and the fill rows follow below the last of them.
 - `src/core/search/alias-fanout.ts`: a page the fill found moves up as the alias row when the alias search finds it.
 - `src/core/search/explain-target.ts`: arm ranks from a fill row are marked `relaxed`, and the reason says the page matched only some words.
-- Tests: new `test/search/keyless-any-word-fill.test.ts` (PGLite and Postgres); the keyless statement count, the C5 golden (pages appended only) and the lean-rows key comparison are updated.
+- Tests: new `test/search/keyless-any-word-fill.test.ts` (PGLite and Postgres); the keyless statement count, the C5 golden (pages appended only), the evidence off-path golden (keyless query and think list the fill pages), the export-surface golden and the lean-rows key comparison are updated.
