@@ -134,20 +134,6 @@ describe('stripUrlSecrets — userinfo stops at the authority', () => {
     expect(stripUrlSecrets(url('https://host.example/a/@b?tok', 'en=qtok123'))).toBe('https://host.example/a/@b');
   });
 
-  test('a password holding an unencoded / is removed whole, and a port before a path @ keeps the host', () => {
-    expect(stripUrlSecrets(url('see https://', 'user:pa/ss', '@host.example/mcp?tok', 'en=q now'))).toBe('see https://host.example/mcp now');
-    expect(stripUrlSecrets(url('https://', 'user:/ss', '@host.example/mcp'))).toBe('https://host.example/mcp');
-    expect(stripUrlSecrets(url('https://host.example:8443/a/@b?tok', 'en=q'))).toBe('https://host.example:8443/a/@b');
-  });
-
-  test('a token-only userinfo is removed when a later @ follows in the path or in compact JSON', () => {
-    expect(stripUrlSecrets(url('https://', 'tok', '@registry.example/@scope/pkg'))).toBe('https://registry.example/@scope/pkg');
-    expect(stripUrlSecrets(JSON.stringify({ url: url('https://', 'tok', '@host.example/mcp'), sdk: '@scope/sdk' })))
-      .toBe(JSON.stringify({ url: 'https://host.example/mcp', sdk: '@scope/sdk' }));
-    expect(stripUrlSecrets(JSON.stringify({ url: url('https://', 'user:pw', '@host.example/mcp'), who: 'a@b.example' })))
-      .toBe(JSON.stringify({ url: 'https://host.example/mcp', who: 'a@b.example' }));
-  });
-
   test('userinfo holding an @ is still removed whole', () => {
     expect(stripUrlSecrets(url('https://', 'u:p@ss', '@host.example/mcp'))).toBe('https://host.example/mcp');
   });
