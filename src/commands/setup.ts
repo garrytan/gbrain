@@ -227,6 +227,11 @@ Flags:
                        500 markdown files, setup prints the import command instead.
   --docs DIR           With --shape company or both: import a company docs folder into
                        the company source the same way, read only.
+  --transcripts DIR    With --shape company or both (not --team): import exported call
+                       transcripts (.txt, .md) once each as company/calls/<date>-<title>
+                       pages in the company source: words kept, credentials redacted,
+                       keyword-only, readable by whoever reads that source. Setup says
+                       who that is. Not the conversation archive (conversations/).
   --team | --solo      With a company shape: --team prints where a team's shared company
                        brain lives and creates nothing for it; --solo (the default) makes
                        the company part on this brain.
@@ -313,11 +318,13 @@ interface SetupFlags {
   notes?: string | null;
   /** GST-2731: the company docs folder imported read only with --shape company; null for --docs none. */
   docs?: string | null;
+  /** GST-2731: the call-transcript folder imported read only into the company source; null for --transcripts none. */
+  transcripts?: string | null;
   /** GST-2731: --team, the company part lives on a shared brain; setup prints the route and creates nothing for it. */
   team?: boolean;
 }
 
-const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member']);
+const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--serves', '--members', '--members-file', '--stdio-member']);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -727,13 +734,13 @@ function liveServeConflict(live: NonNullable<Target['live_owner']>, harness: Set
  * (nothing is written until it is answered, --yes included).
  */
 async function layoutFor(harness: SetupHarnessId, flags: SetupFlags, launcher: string, instructions: BrainFirstOutcome | null, brainCreate: boolean): Promise<{ outcome: LayoutOutcome | null; notices: (base: Notice[]) => Notice[] }> {
-  let shape: { brain?: BrainShape; notes?: string | null; docs?: string | null; team?: boolean } = { brain: flags.brain, notes: flags.notes, docs: flags.docs, team: flags.team };
+  let shape: { brain?: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } = { brain: flags.brain, notes: flags.notes, docs: flags.docs, transcripts: flags.transcripts, team: flags.team };
   const ask = brainCreate && !shape.brain;
   if (ask && !flags.json && isInteractive()) shape = await askBrainShape();
   const scope = flags.scope ?? 'user';
   const source = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
   const outcome = applyBrainLayout({ harness, scope, source, launcher, instructionsPath: instructions?.path ?? null, instructionsDeclined: instructions?.decision.value === 'declined',
-    flags: { brain: shape.brain, notes: shape.notes, docs: shape.docs, team: shape.team, dryRun: flags.dryRun } });
+    flags: { brain: shape.brain, notes: shape.notes, docs: shape.docs, transcripts: shape.transcripts, team: shape.team, dryRun: flags.dryRun } });
   return { outcome, notices: (base) => [...(ask && !shape.brain ? withBrainShape(base, brainShapeDecision(harness, undefined, scope, source)) : base), ...layoutNotices(outcome, harness, scope, source)] };
 }
 

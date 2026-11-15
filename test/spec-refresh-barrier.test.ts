@@ -12,6 +12,7 @@ const SPEC = join(ROOT, 'spec/tla/refresh-barrier');
 const CONFIGS = readdirSync(SPEC).filter(f => f.endsWith('.cfg')).sort();
 const read = (cfg: string) => readFileSync(join(SPEC, cfg), 'utf8');
 const SAFETY = [...read('RefreshBarrier.cfg').matchAll(/^INVARIANT (\w+)$/gm)].map(m => m[1]!);
+const LIVENESS = ['DeferredLeaves', 'EveryWriteEnds'];
 
 function constants(cfg: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -29,11 +30,23 @@ describe('spec/tla/refresh-barrier configs', () => {
       .toEqual({ ImportHolds: 'FALSE', RecoveryDefers: 'FALSE', AdoptLocalEdits: 'FALSE' });
   });
 
+  test('the liveness configs on each set of constants check both liveness properties between them', () => {
+    const byConstants = new Map<string, Set<string>>();
+    for (const cfg of CONFIGS.filter(c => read(c).includes('SPECIFICATION FairSpec'))) {
+      const key = JSON.stringify(constants(cfg));
+      const props = byConstants.get(key) ?? new Set<string>();
+      for (const m of read(cfg).matchAll(/^PROPERTY (\w+)$/gm)) props.add(m[1]!);
+      byConstants.set(key, props);
+    }
+    expect(byConstants.size).toBeGreaterThan(0);
+    for (const props of byConstants.values()) expect([...props].sort()).toEqual(LIVENESS);
+  });
+
   for (const cfg of CONFIGS) {
     test(cfg + ': checks every safety invariant, or the liveness properties', () => {
       const text = read(cfg);
       const checked = [...text.matchAll(/^(?:INVARIANT|PROPERTY) (\w+)$/gm)].map(m => m[1]!);
-      if (text.includes('SPECIFICATION FairSpec')) expect(checked).toEqual(['DeferredLeaves', 'EveryWriteEnds']);
+      if (text.includes('SPECIFICATION FairSpec')) expect(checked.length > 0 && checked.every(p => LIVENESS.includes(p)), checked.join()).toBe(true);
       else expect(checked).toEqual(SAFETY);
     });
     test(cfg + ': kills the refreshing process at least once', () => {

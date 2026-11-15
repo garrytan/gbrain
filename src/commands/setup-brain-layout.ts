@@ -12,6 +12,11 @@
  *     when the brain serves one person; otherwise its `source_not_in_default_search` notice asks the user;
  *   - a one-shot import of the notes folder (personal) and the docs folder (company), read only, never written.
  *     Over IMPORT_INLINE_MAX markdown files setup hands the agent the import command instead;
+ *   - with --transcripts, a one-shot import of exported call transcripts (.txt, .md) as company/calls/<date>-<title>
+ *     pages in the company source (gbrain import --calls: credentials redacted, keyword-only, each file once), and a
+ *     line naming who can read them, read from gbrain access who-can-read; the pages carry no readers of their own;
+ *   - me/facts and company/facts carry type: facts, and the block tells the agent to quote only their dated lines;
+ *   - one line saying what the conversation archive is doing on this brain (on, off or offered), read from doctor;
  *   - a managed layout block beside the brain-first block, telling the agent which pages to read and to quote
  *     facts and numbers only from the facts pages. `--shape none` removes the block and keeps the pages;
  *   - a keyless check that default search finds an imported file, and one question to ask in a new session.
@@ -40,16 +45,20 @@ export interface LayoutFlags {
   notes?: string | null;
   /** An absolute company docs folder; null for an explicit `--docs none`. */
   docs?: string | null;
+  /** An absolute folder of exported call transcripts; null for an explicit `--transcripts none`. */
+  transcripts?: string | null;
   /** --team: the company part belongs on a shared brain, so setup prints the route and creates nothing for it. */
   team?: boolean;
   dryRun: boolean;
 }
 
 export const IMPORT_INLINE_MAX = 500;
-export const LAYOUT_VERSION = 2;
+export const LAYOUT_VERSION = 3;
 export const LAYOUT_BEGIN = '<!-- gbrain:brain-layout:begin -->';
 export const LAYOUT_END = '<!-- gbrain:brain-layout:end -->';
 export const COMPANY_SOURCE = 'company';
+export const CALLS_PREFIX = `${COMPANY_SOURCE}/calls`;
+const CALL_FILES = /\.(txt|md)$/i;
 
 export type LayoutScope = 'user' | 'project';
 
@@ -62,13 +71,14 @@ export const setupArgv = (harness: string, scope: LayoutScope = 'user', source: 
 
 const markers = (harness: string, scope: LayoutScope, source: string | null, shape: BrainShape): BlockMarkers => ({ begin: LAYOUT_BEGIN, end: LAYOUT_END, label: 'brain-layout', rerun: [...setupArgv(harness, scope, source), '--shape', shape === 'none' ? 'personal' : shape].join(' ') });
 
-export interface StarterPage { slug: string; title: string; body: string }
+export interface StarterPage { slug: string; title: string; body: string; type?: string }
 
 /** The personal starter pages: empty forms with one marked example line each. */
 export const PERSONAL_PAGES: readonly StarterPage[] = [
   {
     slug: 'me/facts',
     title: 'Facts about me',
+    type: 'facts',
     body: 'True things about me that agents may say. One dated line per fact, with where it came from. '
       + 'Never overwrite a line: when something changes, add a new dated line.\n\n'
       + '- Example (delete me): 2026-01-01: I live in example-city. Source: I said so.',
@@ -94,6 +104,7 @@ export const COMPANY_PAGES: readonly StarterPage[] = [
   {
     slug: 'company/facts',
     title: 'Company facts',
+    type: 'facts',
     body: 'Numbers and facts agents may quote. One line each, with a date and where it came from. '
       + 'Never overwrite a line: when a number changes, add a new dated line.\n\n'
       + '- Example (delete me): 2026-01-01: 12 paying customers. Source: billing export.',
@@ -132,7 +143,7 @@ export const COMPANY_PAGES: readonly StarterPage[] = [
 ];
 
 export function renderStarterPage(p: StarterPage): string {
-  return `---\ntitle: ${p.title}\nstatus: stub\n---\n# ${p.title}\n\n${p.body}\n\n`
+  return `---\ntitle: ${p.title}\n${p.type ? `type: ${p.type}\n` : ''}status: stub\n---\n# ${p.title}\n\n${p.body}\n\n`
     + '_This page is an empty form (status: stub). It holds no facts until you add your own lines; then remove the stub line from the frontmatter._\n';
 }
 
@@ -155,13 +166,14 @@ export function renderLayoutBlock(harness: string, scope: LayoutScope = 'user', 
       '- Add a new decision to company/decisions as a dated entry with why, who and what would make us revisit it.',
       `- Save company facts and decisions with --source ${COMPANY_SOURCE}; personal ones go to the default source.`);
   }
-  lines.push('- Never overwrite a page: add a new dated line. Save facts I tell you with remember, naming where they came from.',
+  lines.push('- A page with type: facts holds one dated line per fact: quote only its dated lines, and add a new fact as a new dated line.',
+    '- Never overwrite a page: add a new dated line. Save facts I tell you with remember, naming where they came from.',
     '- A page whose frontmatter says status: stub is an empty form: it holds no facts yet.');
   return lines.join('\n');
 }
 
-/** Markdown files under `dir` (dot folders skipped), counted up to `cap` + 1, with the first one found. */
-export function countNotes(dir: string, cap = IMPORT_INLINE_MAX): { count: number; first: string | null } {
+/** Markdown files (or files matching `files`) under `dir` (dot folders skipped), counted up to `cap` + 1, with the first one found. */
+export function countNotes(dir: string, cap = IMPORT_INLINE_MAX, files = /\.(md|markdown)$/i): { count: number; first: string | null } {
   let count = 0;
   let first: string | null = null;
   const walk = (d: string): void => {
@@ -175,7 +187,7 @@ export function countNotes(dir: string, cap = IMPORT_INLINE_MAX): { count: numbe
       try { st = lstatSync(p); } catch { continue; }
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) walk(p);
-      else if (/\.(md|markdown)$/i.test(name)) { count++; first ??= p; }
+      else if (files.test(name)) { count++; first ??= p; }
     }
   };
   walk(dir);
@@ -206,12 +218,12 @@ export function candidateNoteFolders(home: string = homedir()): string[] {
   return [...new Set([...vaults, ...fixed])].filter(p => { try { return statSync(p).isDirectory(); } catch { return false; } });
 }
 
-/** --shape / --notes / --docs / --team validation; a string is the refusal (nothing written). */
-export function parseLayoutFlags(value: (flag: string) => string | undefined, has: (flag: string) => boolean, harness: string | undefined): { brain?: BrainShape; notes?: string | null; docs?: string | null; team?: boolean } | string {
+/** --shape / --notes / --docs / --transcripts / --team validation; a string is the refusal (nothing written). */
+export function parseLayoutFlags(value: (flag: string) => string | undefined, has: (flag: string) => boolean, harness: string | undefined): { brain?: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } | string {
   const brain = value('--shape') as BrainShape | undefined;
   if (brain !== undefined && !['personal', 'company', 'both', 'none'].includes(brain)) return `unknown --shape '${brain}'; pass personal, company, both or none`;
-  const out: { brain?: BrainShape; notes?: string | null; docs?: string | null; team?: boolean } = brain ? { brain } : {};
-  const folders = [['--notes', 'notes', hasPersonal, 'personal or both'], ['--docs', 'docs', hasCompany, 'company or both']] as const;
+  const out: { brain?: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } = brain ? { brain } : {};
+  const folders = [['--notes', 'notes', hasPersonal, 'personal or both'], ['--docs', 'docs', hasCompany, 'company or both'], ['--transcripts', 'transcripts', hasCompany, 'company or both']] as const;
   for (const [flag, key, needs, shapes] of folders) {
     const raw = value(flag);
     if (raw === undefined) continue;
@@ -226,7 +238,9 @@ export function parseLayoutFlags(value: (flag: string) => string | undefined, ha
   if (has('--team') && has('--solo')) return '--team and --solo do not go together';
   if ((has('--team') || has('--solo')) && !hasCompany(brain)) return '--team and --solo need --shape company or both';
   if (has('--team')) {
-    if (out.docs) return `--docs imports into this machine's company source, and with --team the company part lives on a shared brain; drop --docs or use --solo (gbrain setup ${harness ?? '<harness>'} --shape ${brain} --solo)`;
+    for (const flag of ['docs', 'transcripts'] as const) {
+      if (out[flag]) return `--${flag} imports into this machine's company source, and with --team the company part lives on a shared brain; drop --${flag} or use --solo (gbrain setup ${harness ?? '<harness>'} --shape ${brain} --solo)`;
+    }
     out.team = true;
   }
   return out;
@@ -234,15 +248,29 @@ export function parseLayoutFlags(value: (flag: string) => string | undefined, ha
 
 export interface ImportOutcome { dir: string; files: number; action: 'imported' | 'deferred' | 'failed'; argv: string[]; detail?: string }
 
+/** The call-transcript import: counts from gbrain import --calls, and who can read the pages (gbrain access who-can-read). */
+export interface TranscriptsOutcome extends ImportOutcome {
+  imported?: number;
+  unchanged?: number;
+  kept?: number;
+  redactions?: number;
+  readers?: { members: 'every_source_reader' | string[] | null; serves: 'one' | 'several' | null; detail: string };
+  /** What can send call text off this machine, from doctor's auto_chronicle and extract_atoms_backlog checks. */
+  egress?: { leaves: boolean | null; detail: string };
+}
+
 export interface LayoutOutcome {
   shape: BrainShape;
   pages: Array<{ slug: string; source: string | null; action: 'write' | 'keep' | 'failed'; detail?: string }>;
   notes: ImportOutcome | null;
   docs: ImportOutcome | null;
+  transcripts: TranscriptsOutcome | null;
   company: { source: string; action: 'created' | 'kept' | 'team' | 'failed'; federated: boolean | null; root: string | null; detail?: string } | null;
   block: { path: string; action: 'write' | 'keep' | 'remove' | 'skip' | 'preserve'; detail: string } | null;
   check: { ok: boolean; query: string | null; detail: string };
   next_question: string | null;
+  /** What the conversation archive is doing on this brain, read from doctor's transcript_archive_freshness check. */
+  archive: { state: 'on' | 'off' | 'offered' | 'unknown'; detail: string } | null;
 }
 
 /** A gbrain child; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
@@ -294,6 +322,73 @@ function importFolder(exec: Run, launcher: string, dir: string, source: string |
   return { outcome: { dir, files: count, action: 'imported', argv }, title: first ? noteTitle(first) : null };
 }
 
+/** Who can read the call pages, from gbrain access who-can-read on one of them and gbrain access serves; read only. */
+function readersOf(exec: Run, launcher: string, slug: string): NonNullable<TranscriptsOutcome['readers']> {
+  const unknown = { members: null, serves: null, detail: `unknown; run gbrain access who-can-read ${slug} --source ${COMPANY_SOURCE}` };
+  let page: { readers: string[] | null; members: 'every_source_reader' | string[] } | undefined;
+  let serves: { serves?: 'one' | 'several'; enabled_members?: string[] } = {};
+  try { page = (JSON.parse(exec([launcher, 'access', 'who-can-read', slug, '--source', COMPANY_SOURCE, '--json'], undefined, null).stdout) as { pages?: Array<NonNullable<typeof page>> }).pages?.[0]; } catch { return unknown; }
+  try { serves = JSON.parse(exec([launcher, 'access', 'serves', '--json', '--no-open-pages'], undefined, null).stdout) as typeof serves; } catch { /* the serves clause is left out */ }
+  if (!page) return unknown;
+  const who = serves.serves === 'several' ? `this brain serves several people: ${(serves.enabled_members ?? []).join(', ') || 'none enabled'}`
+    : serves.serves === 'one' ? 'this brain serves one person' : null;
+  const members = page.members;
+  const clauses = [...(members === 'every_source_reader' ? [] : [`access rules on source ${COMPANY_SOURCE} cover ${CALLS_PREFIX}/`]), ...(who ? [who] : [])];
+  const detail = `${members === 'every_source_reader' ? `everyone who can read source ${COMPANY_SOURCE}` : `${members.join(', ') || 'no member'} only`}${clauses.length ? ` (${clauses.join('; ')})` : ''}`;
+  return { members, serves: serves.serves ?? null, detail };
+}
+
+/** One read-only import of a call-transcript folder into the company source, deferred to the agent above IMPORT_INLINE_MAX files. */
+function importCalls(exec: Run, launcher: string, dir: string, dryRun: boolean): TranscriptsOutcome {
+  const { count } = countNotes(dir, IMPORT_INLINE_MAX, CALL_FILES);
+  const args = ['import', dir, '--calls', '--prefix', CALLS_PREFIX, '--no-embed'];
+  const argv = ['gbrain', ...args, '--source', COMPANY_SOURCE];
+  if (count > IMPORT_INLINE_MAX) return { dir, files: count, action: 'deferred', argv, detail: `more than ${IMPORT_INLINE_MAX} call files; run the import as its own step` };
+  if (dryRun) return { dir, files: count, action: 'imported', argv, detail: 'would import (read only)' };
+  const imp = exec([launcher, ...args, '--json'], undefined, COMPANY_SOURCE);
+  let doc: { imported?: number; unchanged?: number; kept?: number; errors?: number; redactions?: number; pages?: Array<{ slug: string; status: string; error?: string }> };
+  try { doc = JSON.parse(imp.stdout) as typeof doc; } catch { return { dir, files: count, action: 'failed', argv, detail: lastLine(imp.stderr || imp.stdout) }; }
+  const landed = (doc.pages ?? []).filter(p => p.status !== 'error');
+  const failed = (doc.pages ?? []).find(p => p.status === 'error');
+  const counts = { imported: doc.imported ?? 0, unchanged: doc.unchanged ?? 0, kept: doc.kept ?? 0, redactions: doc.redactions ?? 0 };
+  if (!landed.length && (failed || imp.code !== 0)) return { dir, files: count, action: 'failed', argv, ...counts, detail: failed?.error ?? lastLine(imp.stderr) };
+  return { dir, files: count, action: 'imported', argv, ...counts, ...(failed ? { detail: `${doc.errors} file(s) not imported: ${failed.error}` } : {}),
+    ...(landed[0] ? { readers: readersOf(exec, launcher, landed[0].slug) } : {}) };
+}
+
+type DoctorChecks = Array<{ name: string; details?: Record<string, unknown> }>;
+
+/** Whether scheduled extraction can send imported call text to a chat provider; embedding stays held either way. */
+export function callEgress(checks: DoctorChecks): NonNullable<TranscriptsOutcome['egress']> {
+  if (!['auto_chronicle', 'extract_atoms_backlog'].every(name => checks.some(c => c.name === name))) {
+    return { leaves: null, detail: 'could not be checked; gbrain doctor --only auto_chronicle,extract_atoms_backlog shows it' };
+  }
+  const details = (name: string) => checks.find(c => c.name === name)?.details;
+  const chronicle = details('auto_chronicle');
+  const chat = chronicle?.chat_available;
+  const readers: string[] = [];
+  if (chronicle?.enabled === true && chat === true) readers.push(`event extraction (auto_chronicle, at most ${chronicle.daily_limit} page(s) a day)`);
+  if (details('extract_atoms_backlog')?.pack_declares_phase === true && chat !== false) readers.push('atom extraction (within cycle.extract_atoms.budget_usd)');
+  const held = 'embedding waits for your approval';
+  return readers.length
+    ? { leaves: true, detail: `with a chat model key set, ${readers.join(' and ')} can send call text to your chat provider, within the limits you set; ${held}` }
+    : { leaves: false, detail: `nothing; no extraction reads call pages here, and ${held}` };
+}
+
+/** What the conversation archive is doing here, from doctor's transcript_archive_freshness check; its first-run notice is not repeated. With `calls`, the same doctor run also reads what can send call text off this machine. */
+function archiveState(exec: Run, launcher: string, calls: TranscriptsOutcome | null): NonNullable<LayoutOutcome['archive']> {
+  const only = ['transcript_archive_freshness', ...(calls ? ['auto_chronicle', 'extract_atoms_backlog'] : [])];
+  const out = exec([launcher, 'doctor', '--only', only.join(','), '--json'], undefined, null);
+  let checks: DoctorChecks = [];
+  try { checks = (JSON.parse(out.stdout) as { checks?: DoctorChecks }).checks ?? []; } catch { /* unknown below */ }
+  if (calls) calls.egress = callEgress(checks);
+  const details = checks.find(c => c.name === 'transcript_archive_freshness')?.details as { enabled?: boolean; offered?: boolean } | undefined;
+  if (!details) return { state: 'unknown', detail: 'could not be read; gbrain transcripts archive status shows it' };
+  if (details.enabled) return { state: 'on', detail: 'on: your agent conversations are kept, redacted, under conversations/; call transcripts are separate (gbrain transcripts archive off turns it off)' };
+  if (details.offered) return { state: 'offered', detail: 'offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)' };
+  return { state: 'off', detail: 'off (gbrain transcripts archive on turns it on)' };
+}
+
 /** Whether keyless search (scoped to `source`, or default search for null) puts `title` in its top 5. */
 function searchFinds(exec: Run, launcher: string, title: string, source: string | null): boolean {
   const hits = exec([launcher, 'search', title, '--json'], undefined, source);
@@ -331,7 +426,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
   const source = opts.source ?? null;
   const scope = opts.scope ?? 'user';
   const team = !!flags.team;
-  const empty = (shape: BrainShape, block: LayoutOutcome['block']): LayoutOutcome => ({ shape, pages: [], notes: null, docs: null, company: null, block, check: { ok: true, query: null, detail: 'nothing to check' }, next_question: null });
+  const empty = (shape: BrainShape, block: LayoutOutcome['block']): LayoutOutcome => ({ shape, pages: [], notes: null, docs: null, transcripts: null, company: null, block, check: { ok: true, query: null, detail: 'nothing to check' }, next_question: null, archive: null });
   const written = flags.brain ? blockShape(flags.brain, team) : undefined;
   const removed = opts.instructionsDeclined ? syncLayoutBlock(opts.instructionsPath, harness, scope, source, 'none', flags.dryRun) : null;
   const block = opts.instructionsDeclined ? (removed?.action === 'skip' ? null : removed)
@@ -378,6 +473,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
             if (found) outcome.next_question = `In a new session, ask: "what did we decide about ${title}, and why?"`;
           }
         }
+        if (flags.transcripts) outcome.transcripts = importCalls(exec, launcher, flags.transcripts, flags.dryRun);
         if (!outcome.next_question && !flags.dryRun && !hasPersonal(flags.brain)) {
           outcome.next_question = 'Run gbrain sources demo company-brain to see how a company brain answers, then add one dated line to company/decisions and ask about it in a new session.';
         }
@@ -391,6 +487,7 @@ export function applyBrainLayout(opts: { harness: string; scope?: LayoutScope; s
       : { ok: false, query: null, detail: 'me/facts could not be read back' };
     outcome.next_question = 'Add one dated line to me/facts, then in a new session ask: "what does my brain say about me?"';
   }
+  if (!flags.dryRun) outcome.archive = archiveState(exec, launcher, outcome.transcripts?.action === 'imported' ? outcome.transcripts : null);
   return outcome;
 }
 
@@ -418,6 +515,15 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
   for (const [label, i] of [['notes', o.notes], ['docs', o.docs]] as const) {
     if (i) lines.push(`  ${label.padEnd(8)} ${i.action === 'imported' ? `${would}import ${i.files} file(s) from ${i.dir} (read only)` : `${i.action}: ${i.detail ?? ''} (${i.argv.join(' ')})`}`);
   }
+  const t = o.transcripts;
+  if (t) {
+    lines.push(t.action !== 'imported' ? `  calls    ${t.action}: ${t.detail ?? ''} (${t.argv.join(' ')})`
+      : `  calls    ${would}import ${t.files} call file(s) from ${t.dir} as ${CALLS_PREFIX}/<date>-<title> (read only, credentials redacted)`
+        + (t.imported === undefined ? '' : `: ${t.imported} new, ${t.unchanged} unchanged, ${t.kept} kept, ${t.redactions} credential(s) redacted${t.detail ? `; ${t.detail}` : ''}`));
+    if (t.readers) lines.push(`           readable by: ${t.readers.detail}`);
+    if (t.egress) lines.push(`           what leaves this machine: ${t.egress.detail}`);
+  }
+  if (o.archive) lines.push(`  archive  conversation archive ${o.archive.detail}`);
   if (!dryRun && o.shape !== 'none' && o.check.detail !== 'nothing to check') lines.push(`  check    ${o.check.ok ? 'ok' : 'not verified'}: ${o.check.detail}`);
   if (o.next_question) lines.push(`Next question: ${o.next_question}`);
   return lines;
@@ -427,11 +533,11 @@ export function describeLayout(o: LayoutOutcome, dryRun: boolean): string[] {
 export function layoutNotices(o: LayoutOutcome | null, harness: string, scope: LayoutScope = 'user', source: string | null = null): Notice[] {
   if (!o) return [];
   const out: Notice[] = [];
-  for (const i of [o.notes, o.docs]) {
+  for (const i of [o.notes, o.docs, o.transcripts]) {
     if (!i || i.action === 'imported') continue;
     out.push({
       code: 'brain_layout_import_pending', kind: 'coaching',
-      why: i.action === 'deferred' ? `${i.dir} holds more than ${IMPORT_INLINE_MAX} markdown files, so setup did not import it inline.`
+      why: i.action === 'deferred' ? `${i.dir} holds more than ${IMPORT_INLINE_MAX} ${i === o.transcripts ? 'call' : 'markdown'} files, so setup did not import it inline.`
         : `The import of ${i.dir} did not finish (${i.detail ?? 'unknown error'}); nothing else changed.`,
       fix: { argv: i.argv, consent: [], actor: 'agent', requires_exclusive: true, why: 'Imports the folder (read only) into the brain; run it as its own step.' },
     });
@@ -484,7 +590,7 @@ export function brainShapeDecision(harness: string, folders: string[] = candidat
     options: [
       ...folders.slice(0, 3).map((f, i) => ({ id: `personal_notes_${i + 1}`, label: `Personal brain, importing ${f}`, argv: [...shape('personal'), '--notes', f] })),
       { id: 'personal', label: 'Personal brain, no notes folder yet', argv: shape('personal') },
-      { id: 'company', label: 'Company brain, just me (add --docs <folder> to import company docs)', argv: shape('company') },
+      { id: 'company', label: 'Company brain, just me (add --docs <folder> for company docs, --transcripts <folder> for call transcripts)', argv: shape('company') },
       { id: 'both', label: 'Personal and company brain, just me', argv: shape('both') },
       { id: 'company_team', label: 'Company brain shared with a team (prints where it lives; creates nothing)', argv: [...shape('company'), '--team'] },
       { id: 'none', label: 'No starter pages (memory works as it is)' },
@@ -495,8 +601,8 @@ export function brainShapeDecision(harness: string, folders: string[] = candidat
 }
 
 /** The inline brain_shape questions; readLine answers eof (decline) unless isInteractive(). */
-export async function askBrainShape(folders: string[] = candidateNoteFolders()): Promise<{ brain?: BrainShape; notes?: string | null; docs?: string | null; team?: boolean }> {
-  const line = async (prompt: string): Promise<string | null> => { const r = await readLine({ prompt }); return r.kind === 'line' ? r.text.trim() : null; };
+export async function askBrainShape(folders: string[] = candidateNoteFolders(), read: typeof readLine = readLine): Promise<{ brain?: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean }> {
+  const line = async (prompt: string): Promise<string | null> => { const r = await read({ prompt }); return r.kind === 'line' ? r.text.trim() : null; };
   const pick = await line('What are you making?  1) a personal brain  2) a company brain  3) both  4) skip  [4]: ');
   const brain = ({ '1': 'personal', '2': 'company', '3': 'both' } as Record<string, BrainShape>)[pick ?? ''];
   if (!brain) return {};
@@ -509,11 +615,14 @@ export async function askBrainShape(folders: string[] = candidateNoteFolders()):
     process.stderr.write(`${picked} is not a folder; skipping that import (run gbrain import <dir> --no-embed later)\n`);
     return null;
   };
-  const out: { brain: BrainShape; notes?: string | null; docs?: string | null; team?: boolean } = { brain };
+  const out: { brain: BrainShape; notes?: string | null; docs?: string | null; transcripts?: string | null; team?: boolean } = { brain };
   if (hasPersonal(brain)) out.notes = await folder('Notes folder to import, read only', folders[0]);
   if (hasCompany(brain)) {
     out.team = (await line('Just you, or a team?  1) just me  2) a team  [1]: ')) === '2';
-    if (!out.team) out.docs = await folder('Company docs folder to import, read only');
+    if (!out.team) {
+      out.docs = await folder('Company docs folder to import, read only');
+      out.transcripts = await folder('Folder of call transcripts (.txt or .md exports) to import, read only');
+    }
   }
   return out;
 }
