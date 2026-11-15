@@ -149,9 +149,12 @@ function projectionReadinessFix(): Action {
 function projectionPendingWhy(coverage: RetrievalCoverage, could: number, total: number): string {
   const counted = `(${could} of ${total}${coverage.capped ? '+' : ''} pending page(s) could match this query)`;
   const images = coverage.could_affect.pending_images ?? 0;
-  if (images === 0) return `recently written pages are being indexed and are not in the search index yet ${counted}`;
+  const rebuild = coverage.rebuild;
+  const rate = rebuild?.pages_per_second ? `, at about ${rebuild.pages_per_second < 10 ? rebuild.pages_per_second.toFixed(1) : Math.round(rebuild.pages_per_second)} page(s) per second measured since it started` : '';
+  const progress = rebuild ? `; the search index rebuild an upgrade started is ${rebuild.done} of ${rebuild.total} page(s) done${rate}, and \`gbrain doctor --only text_projection_readiness\` shows its progress` : '';
+  if (images === 0) return `${rebuild ? 'pages wait for that rebuild' : 'recently written pages are being indexed'} and are not in the search index yet ${counted}${progress}`;
   const text = could - images;
-  return `${images} image page(s) that could match are not in the search index and will not be indexed on their own: sealable images wait for \`gbrain projections drain\` and the rest for a paid re-import (\`gbrain embed --stale --images\`), and doctor's text_projection_readiness check counts them by class${text > 0 ? `; ${text} recently written page(s) are being indexed` : ''} ${counted}`;
+  return `${images} image page(s) that could match are not in the search index and will not be indexed on their own: sealable images wait for \`gbrain projections drain\` and the rest for a paid re-import (\`gbrain embed --stale --images\`), and doctor's text_projection_readiness check counts them by class${text > 0 ? `; ${text} recently written page(s) are being indexed` : ''} ${counted}${progress}`;
 }
 
 /** Doctor on the brain host; `run_doctor` where callable (renderAction drops it otherwise). */
@@ -208,7 +211,7 @@ export function degradedRecallNotice(
   const byChoice = opts.optedOut || entries.some(s => s.reason === 'embedding_disabled');
   const emb = fixKind === 'embeddings' ? (byChoice ? { byChoice: true } as { fix?: Action; byChoice: boolean } : embeddingsFix(opts.config, opts.transport)) : undefined;
   const onlyKeywordNeedsDoctor = keywordSkipped && names.every(n => n === 'keyword_arm_failed' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
-  const onlyImagesNeedDoctor = (opts.coverage?.could_affect?.pending_images ?? 0) > 0 && names.every(n => n === 'projection_pending' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
+  const onlyImagesNeedDoctor = ((opts.coverage?.could_affect?.pending_images ?? 0) > 0 || opts.coverage?.rebuild !== undefined) && names.every(n => n === 'projection_pending' || DEGRADED_STAGE_GUIDANCE[n].fix !== 'doctor');
   const fix = emb ? emb.fix
     : fixKind === 'doctor' ? (onlyKeywordNeedsDoctor ? keywordPlanFix() : onlyImagesNeedDoctor ? projectionReadinessFix() : doctorFix('Doctor names the failing retrieval dependency and its fix.'))
     : rerank ? rerankFix(rerank, opts.retry) : undefined;
