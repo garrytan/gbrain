@@ -25,6 +25,7 @@ import type { BrainEngine } from '../engine.ts';
 import { extractCandidates, isCommonCapitalizedWord } from '../context/entity-salience.ts';
 import { isFactEntityPage, resolveStrictEntityReference, type StrictResolution } from '../entities/resolve.ts';
 import { remoteReadFloorSql } from '../search/private-visibility.ts';
+import { PAGE_EXTRACTION_SOURCE_LIST } from './gone-page-facts.ts';
 
 export type InferredVia = 'page' | 'mention';
 export type InferMissReason = 'ambiguous' | 'unverified_match' | 'no_mention' | 'no_page';
@@ -56,8 +57,7 @@ export function contextHead(context: string | null | undefined): string | null {
   return head || null;
 }
 
-/** facts.source values written by page-extraction paths, whose context head is the source page slug. */
-const PAGE_EXTRACTION_SOURCES = new Set(['mcp:put_page', 'sync:import', 'file_upload', 'code_import']);
+const PAGE_EXTRACTION_SOURCES = new Set<string>(PAGE_EXTRACTION_SOURCE_LIST);
 
 /**
  * The page a stored fact was extracted from, when its row records one: a

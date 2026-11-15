@@ -56,7 +56,7 @@ skips interactive prompts, not all side effects.
 GBRAIN_NO_AUTOPILOT_INSTALL=1 GBRAIN_NO_REEMBED=1 gbrain upgrade --no-autopilot-install
 ```
 
-The autopilot opt-out reaches package postinstall hooks and migration
+The autopilot opt-out reaches the migration
 orchestrators, and skips existing service-unit rewrites. Other migrations still
 run. `GBRAIN_NO_REEMBED=1` independently skips potentially paid reindexing.
 The same command upgrades a clone linked with Bun: it fetches, checks the new
@@ -77,7 +77,7 @@ bun install -g github:garrytan/gbrain#stable
 gbrain init --pglite --no-embedding
 ```
 
-> **If `bun install -g` hits a postinstall error** (Bun blocks postinstall hooks in some environments), the CLI prints a recovery hint pointing at [#218](https://github.com/garrytan/gbrain/issues/218). Run `gbrain doctor` to diagnose, then `gbrain apply-migrations --yes --no-autopilot-install` manually. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && GBRAIN_NO_AUTOPILOT_INSTALL=1 bun install && bun link`.
+> **Reinstalled over an existing brain?** The install runs no scripts. The first gbrain command applies schema migrations, and when upgrade migrations are still pending it says so with the command that runs them ([#218](https://github.com/garrytan/gbrain/issues/218)): `gbrain apply-migrations --yes --no-autopilot-install`. Run `gbrain doctor` if that exits 1. The deterministic fallback is `git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain && GBRAIN_NO_AUTOPILOT_INSTALL=1 bun install && bun link`.
 
 The init flow detects your repo size and suggests Supabase for brains > 1000 markdown files. Agent-harness installs that want Postgres first can run the ladder instead:
 

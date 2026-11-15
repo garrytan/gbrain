@@ -706,7 +706,7 @@ export type BreadcrumbTransition = 'applied' | 'failed' | null;
  *   - No breadcrumb → nothing to do.
  *   - currentVersion >= breadcrumb → the swap+relaunch worked. The swap
  *     installs whatever is current at swap time (`git pull`, `bun update`,
- *     `releases/latest`), so a release published after the update check lands
+ *     the release `latest-stable` names), so a release published after the update check lands
  *     a NEWER version than the breadcrumb names (#5813). Clear it, record
  *     `last_applied_version`, and drop `failed_versions` entries at or below
  *     the running version: `decideSelfUpgrade` only acts on a strictly newer

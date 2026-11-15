@@ -47,7 +47,7 @@ export const PI_NO_EXTENSIONS_NOTE = 'Pi started with extensions off (pi --no-ex
 
 export interface PiSkillState {
   v: 1; gbrain_version: string; library_sha256: string; mode: 'live'; catalog: string; skill_dirs: string[];
-  top_k: number; min_match: string; exclude_ids: string[]; pinned_block: string; pinned_ids: string[]; catalog_ids: string[];
+  top_k: number; min_match: string; top_gate?: number; exclude_ids: string[]; pinned_block: string; pinned_ids: string[]; catalog_ids: string[];
 }
 export interface PiSkillStep { step: 'catalog' | 'library' | 'state' | 'extension' | 'self-test' | 'verify'; action: 'write' | 'keep' | 'remove' | 'skip' | 'run'; detail: string }
 export interface PiSkillResult {
@@ -121,12 +121,12 @@ export async function syncPiSkillExtension(opts: PiSkillSyncOptions): Promise<Pi
   if (!opts.gbrainBin.startsWith('/')) return fail('skill_resolver_setup_incomplete', 'No absolute gbrain binary was found for the extension (Pi may start with no PATH that has gbrain); pass --gbrain-bin. Nothing was written.');
   const dirs = piSkillDirs();
   if (dirs.length === 0) return fail('skill_resolver_setup_incomplete', `No Pi skill directory exists (looked for ${join(piAgentDir(), 'skills')} and ${join(home0(), '.agents', 'skills')}). Add a skill to one of them, then run setup again. Nothing was written.`);
-  let lane: { top_k: number; min_match: string; exclude_ids: string[] };
+  let lane: { top_k: number; min_match: string; top_gate?: number; exclude_ids: string[] };
   try {
     const read = readResolverConfig(home);
     const section = read.state === 'ok' ? (read.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {} : {};
     const s = laneTurnSettings(section, 'pi');
-    lane = { top_k: s.top_k ?? TOP_K_DEFAULT, min_match: s.min_match_strength ?? FLOOR_DEFAULT, exclude_ids: s.exclude ?? [] };
+    lane = { top_k: s.top_k ?? TOP_K_DEFAULT, min_match: s.min_match_strength ?? FLOOR_DEFAULT, ...(s.top_gate !== undefined ? { top_gate: s.top_gate } : {}), exclude_ids: s.exclude ?? [] };
   } catch (e) {
     if (e instanceof ResolverError && e.code === 'skill_resolver_config_invalid') return fail('skill_resolver_config_invalid', `${e.message} Nothing was written.`);
     throw e;
@@ -165,7 +165,7 @@ export async function syncPiSkillExtension(opts: PiSkillSyncOptions): Promise<Pi
   }
   out.steps.push({ step: 'library', action: lib.wrote ? 'write' : 'keep', detail: lib.path });
   const state: PiSkillState = { v: 1, gbrain_version: VERSION, library_sha256: lib.sha256, mode: 'live', catalog, skill_dirs: dirs, top_k: lane.top_k, min_match: lane.min_match,
-    exclude_ids: lane.exclude_ids, pinned_block: pins.block, pinned_ids: pins.ids, catalog_ids: ids.slice(0, CATALOG_IDS_MAX) };
+    ...(lane.top_gate !== undefined ? { top_gate: lane.top_gate } : {}), exclude_ids: lane.exclude_ids, pinned_block: pins.block, pinned_ids: pins.ids, catalog_ids: ids.slice(0, CATALOG_IDS_MAX) };
   const stateText = `${JSON.stringify(state, null, 2)}\n`;
   const stateChanged = (() => { try { return readFileSync(piSkillStatePath(home), 'utf8') !== stateText; } catch { return true; } })();
   if (stateChanged) { mkdirSync(home, { recursive: true }); atomicWriteTextFile(piSkillStatePath(home), stateText, { freshMode: 0o600 }); }

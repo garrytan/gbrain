@@ -8,7 +8,7 @@ can load, and Google source files other local users can read. `gbrain repair`
 fixes those and the other kinds listed in
 [What each kind fixes](#what-each-kind-fixes). Every run is a preview unless
 you pass `--apply`.
-The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `atom-fence-rows`, `extractor-facts`, `unwithdrawn-facts`,
+The explicit-only kinds, among them `google-file-modes`, `stale-atoms`, `atoms-restore`, `atom-fence-rows`, `extractor-facts`, `unwithdrawn-facts`, `purged-page-facts`,
 `captured-facts`, `agent-session-facts`, `redacted-facts`, `loop-facts`, `ontology-facts`, `orphan-children`, `failed-writes`, `frontmatter`, `managed-sync-orphans`, `content-receipt-root`, `stuck-recovery`, `aliases`, `rename-identity` and `segmented-mirror`, run only when you name them (see [Explicit-only repair kinds](#explicit-only-repair-kinds)).
 `gbrain doctor --remediation-plan` lists the same kinds as repair steps, and
 `gbrain doctor --remediate --yes --include-repairs --expect <plan_hash>` runs them under a budget
@@ -228,8 +228,8 @@ gives each a fresh row number); it never deletes or rewrites a page.
 | `--limit <n>` | Repair at most `n` items per kind in this run (a positive integer; with `--all`, up to `n` for each kind). Rerun the same command to continue. |
 | `--no-embed` | `safe-chunks` and `contextual-mode`: skip the embedding provider. Run `gbrain embed --stale` later. `timeline` and `visibility` pages are re-embedded by their publication either way. |
 | `--all` | Run every automatic kind in order. Explicit-only kinds are listed with their preview command, never run. |
-| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `atoms-restore`, `extractor-facts`, `unwithdrawn-facts`, `captured-facts`, `redacted-facts`, `loop-facts`, `failed-writes`, `frontmatter`, `managed-sync-orphans` and `content-receipt-root`. |
-| `--include-ambiguous` | `extractor-facts`, `unwithdrawn-facts`, `captured-facts` and `agent-session-facts`: widen the hashed set to `ambiguous` facts. `frontmatter`: add interpretive file changes. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts), [Captured facts](#captured-facts) and [Frontmatter](#frontmatter). |
+| `--expect <hash>` | Explicit-only kinds: apply exactly the set the preview printed under this hash. Required with `--apply` for `stale-atoms`, `atoms-restore`, `extractor-facts`, `unwithdrawn-facts`, `purged-page-facts`, `captured-facts`, `redacted-facts`, `loop-facts`, `failed-writes`, `frontmatter`, `managed-sync-orphans` and `content-receipt-root`. |
+| `--include-ambiguous` | `extractor-facts`, `unwithdrawn-facts`, `purged-page-facts`, `captured-facts` and `agent-session-facts`: widen the hashed set to `ambiguous` facts. `frontmatter`: add interpretive file changes. Pass it to both the preview and the apply. See [Extractor facts](#extractor-facts), [Captured facts](#captured-facts) and [Frontmatter](#frontmatter). |
 | `--only <path>`, `--skip <path>` | `frontmatter` only: select source-relative files (repeatable). The hash covers the selection, so pass the same flags to the apply. |
 | `--diff` | `frontmatter` only: print every per-file diff instead of one sample per class (`--json` always carries all of them). |
 | `--yes` | `frontmatter --apply` only: the user agreed to the previewed file changes (destructive consent). Without it a terminal asks, and a run without a terminal exits 3 with the consent payload. |
@@ -2582,6 +2582,47 @@ file is written. Each page publishes one database-only
 managed `extract_facts` runs from this release on keep these rows active,
 except a row whose claim the page's fence now states, which still retires.
 
+<a id="purged-page-facts"></a>
+### Purged page facts
+
+Before #8859 was fixed, purging a page (`gbrain delete --purge`, or the
+retention purge of a page deleted more than 72 hours ago) left behind the
+facts extracted from that page that were filed on no page: their context
+named the page, but nothing tied them to it. They stayed active, so recall
+kept returning claims from a page you had removed. Purges now take them;
+`gbrain repair purged-page-facts` retires the ones older purges left.
+
+```bash
+gbrain doctor                                   # purged_page_facts
+gbrain repair purged-page-facts                 # preview: every candidate with its class
+gbrain repair purged-page-facts --apply --expect <hash> --yes
+gbrain repair purged-page-facts --include-ambiguous   # also rows of pages gone with no purge record
+```
+
+A candidate is an active fact written by page extraction, filed on no page,
+whose context starts with the slug of a page that no longer exists in its
+source (not even as a deleted page, which a restore could bring back). A
+slug with no `/` counts only when the purge ledger records it.
+
+- **evidenced**: the purge ledger records a purge of that page after the fact
+  was written. Retired by default.
+- **ambiguous**: the page is gone with no purge record. A retention purge
+  leaves none, and neither does a rename that did not carry its facts, so
+  these are retired only with `--include-ambiguous` on both the preview and
+  the apply.
+- **excluded** (listed, never retired): the claim was withdrawn, the row is
+  superseded, or another fact or an open loop references it.
+
+The apply needs the preview's hash and your consent (`--yes`, or a terminal
+prompt). It expires exactly the previewed rows that are still active,
+unchanged and still without a page; anything else is reported as
+`changed_since_preview` and kept, and a row that appeared after the preview
+is never touched. Rows are expired, not deleted, so their history stays. The
+repair writes no purge record, so the same claim could be saved again later. On a
+managed brain each batch of up to 200 facts is one database-only
+`managed_maintenance_expire_purged_page_facts` request. It works the same on
+a repo-less brain: no page or file is written.
+
 <a id="conversation-labels"></a>
 ### Conversation labels
 
@@ -2792,14 +2833,16 @@ matches. A page stored in segments is read as evidence up to 16 MiB.
 | --- | --- | --- |
 | `evidenced` | Every text that proves a restoration proves the same one. | By `--apply --expect <hash>` |
 | `ambiguous` | A text holds two different spans around the same words, or two texts prove different restorations. | Never; listed |
-| `unproven` | No page it came from exists any more (`no_source_page`), or none still holds the words around the marker (`not_in_source`). | Never; listed |
+| `unproven` | No page it came from exists any more (`no_source_page`), or none still holds the words around the marker (`not_in_source`), or the fact's row number names no active row with its text in its page's `## Facts` fence and it did not come from the conversation extractor (`fence_row_missing`; the listing shows the restored text). | Never; listed |
 | `segmented` | Proved, but the fact's row sits in the `## Facts` fence of a page stored in segments, which this repair does not rewrite (`segmented_page`). The listing shows the restored text. | Never; listed |
 
 The apply restores exactly the previewed set. A fact that changed since the
 preview reports `changed_since_preview` and keeps its text. A fact with a row
 in its page's `## Facts` fence has that row's claim rewritten in the page
 (one revision-bound `put_page` per page, which re-chunks and re-embeds the
-page); a fact with no fence row is rewritten database-only (one maintenance
+page); a fact with no row number, or a conversation-extractor fact whose
+row number names no fence row (its page has no `## Facts` fence), is
+rewritten database-only, row number kept (one maintenance
 request per page on a managed brain) and gets `restored: redacted-facts
 repair` appended to its context; its vector no longer matches its text, so
 the next `gbrain embed` re-embeds it. Page history keeps the damaged
@@ -4685,6 +4728,7 @@ Then recover what doctor names, in this order (skip a step whose check is ok):
 | `[gbrain] warning: OPENAI_API_KEY in this process's environment differs from openai_api_key …`; doctor `embedding_key_source` warns | `embedding_key_source` ([provider key source](#embedding-key-source)) | `gbrain doctor` (`embedding_key_source`) | remove the variable and restart that process, or `gbrain config unset openai_api_key` | the warning no longer prints; `gbrain doctor` shows `embedding_key_source` ok | user (owns the key) | `credentials` |
 | `The OpenAI embedding provider rejected its key (HTTP 401)` | [`embedding_auth_failed`](write-refusals.md#embedding_auth_failed) | `gbrain doctor` (`embedding_key_source`, `embedding_provider`) | the printed fix for the key source in effect, then `gbrain embed --stale` | `gbrain doctor` shows `embedding_provider` ok | user (owns the key) | `credentials`; `paid` for `embed --stale` |
 | Conversation facts missing from recall after managed writes | `extractor_facts_expired` | `gbrain repair extractor-facts` | `gbrain repair extractor-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | `destructive` (rewrites expired facts) |
+| Recall still returns claims from a page you purged; doctor `purged_page_facts` warns | `purged_page_facts` ([purged page facts](#purged-page-facts)) | `gbrain repair purged-page-facts` | `gbrain repair purged-page-facts --apply --expect <hash> --yes` (no purge record: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | destructive (`--yes`) |
 | Facts missing from recall after a page write or `extract_facts` run, although no fence of their page held them; doctor `unwithdrawn_facts` warns | `unwithdrawn_facts` ([unwithdrawn facts](#unwithdrawn-facts)) | `gbrain repair unwithdrawn-facts` | `gbrain repair unwithdrawn-facts --apply --expect <hash>` (ambiguous: add `--include-ambiguous` to both) | `gbrain doctor` | brain host, after the user agrees | none |
 | Recall returns conversation facts such as "Date said …" or "Attendees said …", or facts dated 1970-01-01; doctor `conversation_label_facts` warns; the upgrade banner prints `conversation_label_facts: N (explicit_kind_required; …)` | `gbrain repair conversation-labels` (ambiguous: add `--include-ambiguous`) | `gbrain repair conversation-labels --apply --expect <hash> --yes`, then the printed `gbrain extract-conversation-facts --slugs … --dry-run` | `gbrain doctor --only conversation_label_facts --json` | brain host, after the user agrees | `destructive` (retires facts; no model calls) |
 

@@ -26,7 +26,7 @@ import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { normalizeRule, type FolderRule } from '../core/access/folder-rules.ts';
 import { addMember, getMember, parseIdList } from '../core/access/members.ts';
-import { ownerMemberId } from '../core/access/owner.ts';
+import { hintReaders, ownerMemberId } from '../core/access/owner.ts';
 import { stdioMemberId } from '../core/access/caller.ts';
 import { brainServes, SERVES_KEY, unlabeledPeopleFolders, type PeopleFolder, type ServesView } from '../core/access/serves.ts';
 import { setMemberLabelledOnly } from '../core/access/labelled-only.ts';
@@ -114,15 +114,19 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     members.push(entry);
   }
   const base = await currentFolderRules(engine, sourceId);
-  const rules: ServesReceipt['rules'] = roster.map((id) => {
+  const hinted = await Promise.all(roster.map(id => hintReaders(engine, [id])));
+  const rules: ServesReceipt['rules'] = roster.map((id, i) => {
     const r = normalizeRule({ prefix: `people/${id}/`, readable_by: [id] });
     if ('problem' in r) return { id, prefix: `people/${id}/`, readers: [id], action: 'blocked', detail: r.problem };
     const clash = base.find(b => b.prefix === r.rule.prefix || b.id === r.rule.id);
     if (!clash) return { id: r.rule.id, prefix: r.rule.prefix, readers: r.rule.readable_by, action: 'add' };
-    if (clash.prefix === r.rule.prefix && clash.readable_by.length === 1 && clash.readable_by[0] === `member:${id}`) return { id: clash.id, prefix: clash.prefix, readers: clash.readable_by, action: 'keep' };
+    const hint = new Set(hinted[i]!.split(',').map(reader => `member:${reader}`));
+    const settled = (clash.readable_by.length === 1 && clash.readable_by[0] === `member:${id}`)
+      || (clash.readable_by.length === hint.size && clash.readable_by.every(p => hint.has(p)));
+    if (clash.prefix === r.rule.prefix && settled) return { id: clash.id, prefix: clash.prefix, readers: clash.readable_by, action: 'keep' };
     const readers = clash.readable_by.map(p => p.replace(/^member:/, '')).join(', ');
     return { id: r.rule.id, prefix: r.rule.prefix, readers: r.rule.readable_by, action: 'blocked',
-      detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${id} --source ${sourceId}` };
+      detail: `rule "${clash.id}" on ${clash.prefix} already exists, readable by ${readers}, not by ${id} alone; change it with gbrain access rule add --id ${clash.id} --prefix ${clash.prefix} --readers ${hinted[i]} --source ${sourceId}` };
   });
   const keys: ServesReceipt['keys'] = [];
   for (const id of roster) {

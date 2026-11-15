@@ -63,6 +63,11 @@ const ROUTING_ROWS: string[][] = [
   ['get', 'alice-example'],
   ['wakeshift', 'watch', 'job', '1'],
   ['wakeshift', 'status'],
+  ['serve', '--http'],
+  ['serve', '--http', '--port', '3131'],
+  ['serve', '--access', 'read-only'],
+  ['serve', '--surface', 'Starter'],
+  ['serve', '--advertise=bogus'],
 ];
 
 const VOLATILE_ROWS: string[][] = [['status'], ['capture', 'hello']];

@@ -70,7 +70,7 @@ function token(): string | undefined {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined;
 }
 
-/** Published (non-draft, non-prerelease) release tags, newest first, reading pages until 'enough' holds. */
+/** Published (non-draft) release tags, newest first, reading pages until 'enough' holds. Pre-releases count: every batch release is published as one, and only the stable release is not. */
 export async function fetchReleases(repo: string, enough: (releases: Release[]) => boolean, fetchImpl: typeof fetch = fetch): Promise<Release[]> {
   const out: Release[] = [];
   const auth = token();
@@ -79,10 +79,10 @@ export async function fetchReleases(repo: string, enough: (releases: Release[]) 
       headers: { accept: 'application/vnd.github+json', 'user-agent': 'gbrain-upgrade-matrix', ...(auth ? { authorization: 'Bearer ' + auth } : {}) },
     });
     if (!res.ok) throw new Error('GET releases page ' + page + ' returned HTTP ' + res.status + (auth ? '' : ' (unauthenticated: set GITHUB_TOKEN)'));
-    const rows = await res.json() as Array<{ tag_name: string; published_at: string | null; draft: boolean; prerelease: boolean }>;
+    const rows = await res.json() as Array<{ tag_name: string; published_at: string | null; draft: boolean }>;
     for (const r of rows) {
       const m = RELEASE_TAG.exec(r.tag_name);
-      if (m && !r.draft && !r.prerelease && r.published_at) out.push({ tag: r.tag_name, version: m[1]!, published_at: r.published_at });
+      if (m && !r.draft && r.published_at) out.push({ tag: r.tag_name, version: m[1]!, published_at: r.published_at });
     }
     if (rows.length < 100 || enough(out)) break;
   }

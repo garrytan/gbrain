@@ -79,7 +79,7 @@ describe('fix-wave closeout run', () => {
     expect(r.code).toBe(0);
     expect(calls).toEqual(['get 5085', 'comment 5085', 'close 5085', 'get 5089', 'comment 5089', 'close 5089']);
     expect(comments[5085]![0]).toContain(COMMENT_MARKER);
-    expect(comments[5085]![0]).toContain('Fix-wave PR #9000 (v0.60.70.0 fix wave 9)');
+    expect(comments[5085]![0]).toContain('Pull request #9000 (v0.60.70.0 fix wave 9)');
     expect(comments[5085]![0]).toContain('`Contributed by @alice-example`');
     expect(comments[5089]![0]).not.toContain('Contributed by');
     expect(r.summary).toContain('#5085: closed (@alice-example, credited)');

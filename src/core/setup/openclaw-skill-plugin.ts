@@ -60,6 +60,8 @@ export interface OpenclawSkillAgentState {
   skill_dirs: string[];
   top_k: number;
   min_match: string;
+  /** skills.resolver.top_gate when set (0 turns the gate off); unset leaves the resolver's default. */
+  top_gate?: number;
   /** skills.resolver.pinned: skills OpenClaw loads itself, so they are never suggested. */
   exclude_ids: string[];
   live_fraction: number;
@@ -235,11 +237,11 @@ export interface OpenclawSkillSyncOptions {
 }
 
 /** The lane's own turn settings for openclaw (per_harness, then the global keys), else the OpenClaw defaults. Throws skill_resolver_config_invalid on a bad value, as every lane does. */
-function openclawLaneConfig(home: string): { top_k: number; min_match: string; exclude_ids: string[] } {
+function openclawLaneConfig(home: string): { top_k: number; min_match: string; top_gate?: number; exclude_ids: string[] } {
   const read = readResolverConfig(home);
   const section = read.state === 'ok' ? (read.doc.skills as { resolver?: Record<string, unknown> } | undefined)?.resolver ?? {} : {};
   const s = laneTurnSettings(section, 'openclaw');
-  return { top_k: s.top_k ?? OPENCLAW_TOP_K_DEFAULT, min_match: s.min_match_strength ?? OPENCLAW_FLOOR_DEFAULT, exclude_ids: s.exclude ?? [] };
+  return { top_k: s.top_k ?? OPENCLAW_TOP_K_DEFAULT, min_match: s.min_match_strength ?? OPENCLAW_FLOOR_DEFAULT, ...(s.top_gate !== undefined ? { top_gate: s.top_gate } : {}), exclude_ids: s.exclude ?? [] };
 }
 
 /** Turn the plugin on (live or shadow) for some agents, or refresh what is on. Never throws for an expected failure. */
@@ -300,7 +302,7 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const pins = dryRun ? { block: '', ids: [], unknown: [] as string[] } : pinnedBlockFor(home, catalog, 'openclaw');
     agents[id] = {
       mode: opts.mode ?? before?.mode ?? 'live', catalog, skill_dirs: dirs,
-      top_k: lane.top_k, min_match: lane.min_match, exclude_ids: [...new Set([...lane.exclude_ids, ...hidden])],
+      top_k: lane.top_k, min_match: lane.min_match, ...(lane.top_gate !== undefined ? { top_gate: lane.top_gate } : {}), exclude_ids: [...new Set([...lane.exclude_ids, ...hidden])],
       live_fraction: tune.live_fraction ?? before?.live_fraction ?? 1, pins_route: tune.pins_route ?? before?.pins_route ?? 'system',
       pinned_block: pins.block, pinned_ids: pins.ids, owner_sender_ids: tune.owner_sender_ids ?? before?.owner_sender_ids ?? [],
     };

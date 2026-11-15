@@ -5,13 +5,14 @@
  *   bun scripts/ci-reuse.ts --workflow test|e2e --sha <push sha> --repo <owner/name>
  *        --output <GITHUB_OUTPUT> [--summary <GITHUB_STEP_SUMMARY>] [--record <reuse.json>]
  *
- * A push to master is a merge commit M. Its run may reuse the full run of the
- * same workflow that already ran the complete full suite on M's tree: the
- * workflow_dispatch on the PR head branch (full-ci.yml, or a hand-run
- * `gh workflow run`) or an earlier push run. Pull-request runs are the cheap
- * tier and never candidates. Fail-closed: reuse=true only when
- *   (a) M is a merge commit (two parents) whose tree equals the candidate's
- *       recorded tree;
+ * A push to master is a merge commit M or a one-parent (squashed) commit S. Its
+ * run may reuse the full run of the same workflow that already ran the complete
+ * full suite on its tree: the workflow_dispatch on the PR head branch
+ * (full-ci.yml, or a hand-run `gh workflow run`) or an earlier push run.
+ * Pull-request runs are the cheap tier and never candidates. Fail-closed:
+ * reuse=true only when
+ *   (a) the push is a merge commit (two parents) or a one-parent commit, and
+ *       its tree equals the candidate's recorded tree;
  *   (b) the candidate is a same-repository workflow_dispatch or push run
  *       whose LATEST attempt completed with conclusion success;
  *   (c) its full-suite job (`full-suite` / `e2e-full-suite`, by name, exactly
@@ -23,9 +24,15 @@
  * A diagnostic dispatch (test.yml native_only, race_hunt, stress_*; e2e.yml
  * full_corpus, order_hunt) skips the full-suite job, so (c) rejects it.
  * Candidates on head M^2 (the merged PR head) come first, newest first; then
- * recent successful dispatch and push runs whose head tree equals M's tree. Any
- * API error, cancelled, failed or in-progress attempt, missing or cheap
- * artifact, tree mismatch or non-merge push gives reuse=false with a reason.
+ * recent successful dispatch and push runs whose head tree equals M's tree. S
+ * has no merged head, so only the landed pull request's own run counts: a head
+ * GitHub names for S (commits/<sha>/pulls) with S's tree, whose newest dispatch
+ * or push run decides, as in the remote gate: a newer failed or in-progress
+ * full run gives no reuse, a cancelled run or one that skipped the full job
+ * looks further back. S with no pull request behind it, or whose lookup fails,
+ * runs in full. Any API error, cancelled, failed or in-progress attempt,
+ * missing or cheap artifact, tree mismatch or root commit gives reuse=false
+ * with a reason.
  *
  * Writes reuse, source_run_id, source_run_attempt, source_sha, tree and reason
  * to --output, one summary line (the reused run URL, or the fallback reason)
@@ -64,6 +71,8 @@ export interface ReuseDeps {
   commit(sha: string): Promise<Commit>;
   runsForHead(file: string, sha: string): Promise<FullRun[]>;
   recentSuccessfulRuns(file: string): Promise<FullRun[]>;
+  /** Head commits of the pull requests GitHub associates with commit `sha` (a squashed landing names its pull request); a fork head's runs are refused like any fork run. */
+  pullHeads(sha: string): Promise<string[]>;
   jobs(runId: number, attempt: number): Promise<JobRow[]>;
   artifact(runId: number, name: string): Promise<{ value?: unknown; reason?: string }>;
 }
@@ -105,7 +114,8 @@ export async function decide(deps: ReuseDeps, p: Profile, sha: string, repo: str
   try {
     const push = await deps.commit(sha);
     tree = push.tree;
-    if (push.parents.length !== 2) return { reuse: false, reason: 'not_merge_commit', detail: `push ${sha} has ${push.parents.length} parent(s); only a two-parent merge commit can reuse its merged head's run`, tree, rejected };
+    if (push.parents.length === 1) return await decideOneParent(deps, p, sha, tree, repo, rejected);
+    if (push.parents.length !== 2) return { reuse: false, reason: 'not_merge_commit', detail: `push ${sha} has ${push.parents.length} parent(s); only a merge commit or a one-parent commit can reuse a run`, tree, rejected };
     const head = push.parents[1]!;
     const headTree = (await deps.commit(head)).tree;
     const primary = (await deps.runsForHead(p.file, head)).filter(r => r.head_sha === head && isCandidate(r)).sort((a, b) => b.id - a.id);
@@ -131,6 +141,34 @@ export async function decide(deps: ReuseDeps, p: Profile, sha: string, repo: str
     return { reuse: false, reason: 'api_error', detail: `reading the push commit, runs, jobs or artifacts failed: ${e instanceof Error ? e.message : String(e)}`, tree, rejected };
   }
   if (!rejected.length) return { reuse: false, reason: 'no_candidate', detail: `no ${p.workflow} workflow_dispatch or push run exists on the merged head or on another head with tree ${tree}`, tree, rejected };
+  return { reuse: false, reason: rejected[0]!.reason, detail: rejected.map(r => r.detail).join('; '), tree, rejected };
+}
+
+/**
+ * A one-parent push (a squashed landing) has no merged head, so only the landed pull request's own run can stand in:
+ * the heads GitHub names for the commit, with the push's tree. Every run on those heads is read by head, and the
+ * newest one decides. A push no pull request names (a hand revert, a direct push) always runs in full.
+ */
+async function decideOneParent(deps: ReuseDeps, p: Profile, sha: string, tree: string, repo: string, rejected: Rejection[]): Promise<Decision> {
+  const heads: string[] = [];
+  for (const head of new Set(await deps.pullHeads(sha))) {
+    if (head !== sha && (await deps.commit(head)).tree === tree) heads.push(head);
+  }
+  const runs = (await Promise.all(heads.map(async head => (await deps.runsForHead(p.file, head)).filter(r => r.head_sha === head && isCandidate(r) && r.head_repository?.full_name === repo)))).flat().sort((a, b) => b.id - a.id);
+  for (const run of runs) {
+    const full = (await deps.jobs(run.id, run.run_attempt)).filter(j => j.name === p.job);
+    if (full.some(j => j.conclusion === 'skipped') || (run.status === 'completed' && full.length === 0)) {
+      rejected.push({ run_id: run.id, reason: 'full_suite_missing', detail: `run ${run.id} attempt ${run.run_attempt} did not run ${p.job} (not a full-profile run)` });
+      continue;
+    }
+    const why = await reject(deps, p, run, repo, tree, tree);
+    if (!why) return accept(run, tree, rejected, `head ${run.head_sha.slice(0, 12)} (same tree as the one-parent push)`);
+    rejected.push({ run_id: run.id, ...why });
+    if (why.reason === 'run_in_progress' || why.reason === 'run_failed' || why.reason === 'full_suite_not_success') {
+      return { reuse: false, reason: why.reason, detail: `the newest full run on tree ${tree} decides: ${why.detail}`, tree, rejected };
+    }
+  }
+  if (!rejected.length) return { reuse: false, reason: 'no_candidate', detail: `no pull request GitHub names for one-parent push ${sha} has a head with tree ${tree} and a ${p.workflow} workflow_dispatch or push run`, tree, rejected };
   return { reuse: false, reason: rejected[0]!.reason, detail: rejected.map(r => r.detail).join('; '), tree, rejected };
 }
 
@@ -292,6 +330,9 @@ export function apiDeps(client: GitHubClient): ReuseDeps {
     async recentSuccessfulRuns(file) {
       const pages = await Promise.all(CANDIDATE_EVENTS.map(event => client.request<{ workflow_runs: FullRun[] }>('GET', `repos/{repo}/actions/workflows/${file}/runs?event=${event}&status=success&per_page=100`)));
       return pages.flatMap(p => p.workflow_runs);
+    },
+    async pullHeads(sha) {
+      return (await client.request<Array<{ head: { sha: string } }>>('GET', `repos/{repo}/commits/${sha}/pulls`)).map(pr => pr.head.sha);
     },
     jobs: (runId, attempt) => attemptJobs(client, runId, attempt),
     artifact: (runId, name) => fetchArtifactJson(client, runId, name, TREE_FILE),

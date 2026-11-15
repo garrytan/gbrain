@@ -310,7 +310,7 @@ async function resolveTurn(event, ctx, opts) {
   const w = ensureWorker(s);
   if (!w) return finish({ outcome: 'error', code: 'skill_resolver_worker_unavailable' });
   const reset = resetNext.delete(sessionKey);
-  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: [...(Array.isArray(a.pinned_ids) ? a.pinned_ids : []), ...(Array.isArray(a.exclude_ids) ? a.exclude_ids : [])].slice(0, 1024), shadow: arm !== 'live', ...(reset ? { reset_session: true } : {}) };
+  const input = { message: text, session_id: sessionKey, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, exclude: [...(Array.isArray(a.pinned_ids) ? a.pinned_ids : []), ...(Array.isArray(a.exclude_ids) ? a.exclude_ids : [])].slice(0, 1024), shadow: arm !== 'live', ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}), ...(reset ? { reset_session: true } : {}) };
   const reply = await ask(w, { type: 'resolve', input, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: a.skill_dirs || [] });
   if (reply.late) {
     if (reset) resetNext.add(sessionKey);
@@ -399,7 +399,7 @@ export default {
     if (warm.code) { dropWorker(); return { ok: false, code: warm.code }; }
     const a = s.agents[agentId];
     const t0 = Date.now();
-    const reply = await ask(w, { type: 'resolve', input: { message, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, shadow: true }, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: [] });
+    const reply = await ask(w, { type: 'resolve', input: { message, harness: 'openclaw', top_k: Number.isInteger(a.top_k) ? a.top_k : 3, shadow: true, ...(typeof a.top_gate === 'number' ? { top_gate: a.top_gate } : {}) }, catalog: a.catalog, deadlineMs: DEADLINE_MS - 5, floor: a.min_match || null, dirs: [] });
     dropWorker();
     if (reply.late) return { ok: false, code: 'skill_resolve_timeout', ms: Date.now() - t0 };
     if (reply.code && !reply.block) return { ok: false, code: reply.code, ms: Date.now() - t0 };

@@ -207,11 +207,10 @@ async function runSchemaVersion(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
 
-  // 6. Schema version — also surfaces the #218 "postinstall silently failed"
-  // state: if schema_version is 0/missing but the DB connected, migrations
-  // never ran. That's the same class as a half-migrated install, just from a
-  // different root cause (Bun blocked our top-level postinstall on global
-  // install). Message is actionable either way.
+  // 6. Schema version — also surfaces the #218 state: if schema_version is
+  // 0/missing but the DB connected, migrations never ran. That's the same
+  // class as a half-migrated install, just from a different root cause (an
+  // interrupted install). Message is actionable either way.
   progress.heartbeat('schema_version');
   let schemaVersion = 0;
   try {

@@ -34,6 +34,14 @@ each entry by its sha256 fingerprint. Transcript capture (`SessionEnd`, with
 setup reports `native-verified` when it owns the trusted `UserPromptSubmit`
 hook. Details: [setup guide](../guides/setup.md#codex).
 
+Codex starts an MCP server with a short list of environment variables, so a key
+you exported in your shell does not reach gbrain on its own. Setup therefore
+lists the provider key names (`OPENAI_API_KEY`, `VOYAGE_API_KEY`,
+`ANTHROPIC_API_KEY` and the other provider `*_API_KEY` and `*_BASE_URL` names)
+under `env_vars` in `[mcp_servers.gbrain]`. Codex forwards each one that is set
+and skips the rest, so a key you already use gives the session semantic search.
+Only names are written, never values.
+
 ## Install as a Codex plugin (recommended)
 
 gbrain ships as a native Codex plugin — MCP server + a curated brain-first

@@ -45,7 +45,7 @@ describe('contributor audit on the fixture range', () => {
       expect(byPr[103]).toMatchObject({ result: 'setup_failed', reason: 'baseline_red' });
       expect(byPr[104]).toMatchObject({ result: 'not_audited', reason: 'no_product_change' });
       expect(byPr[106]).toMatchObject({ result: 'does_not_discriminate', audited_at: f.head });
-      expect(byPr[107]).toMatchObject({ result: 'not_audited', reason: 'no_tests' });
+      expect(byPr[107]).toMatchObject({ result: 'not_audited', reason: 'no_tests', subject: 'Fix score (#107)', author: 'hana-example' });
       expect(byPr[105].result).toBe('conflict');
       expect(byPr[105].reason).toContain('src/clamp.ts');
       expect(report.exit_code).toBe(1);
