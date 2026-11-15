@@ -173,6 +173,16 @@ describe('storage adopt on a repo-less brain', () => {
     expect((await refusal(applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] })))).toMatchObject({ code: 'storage_record_invalid' });
   }, 60_000);
 
+  test('a record cut off by the 64 KiB read is reported as truncated, not as a page with no record', async () => {
+    const notes = `## Notes\n\n${'archive notes line\n'.repeat(4000)}\n`;
+    const content = `---\ntype: stored-object\ntitle: Long record\n---\n# Long record\n\n${notes}## Record\n\n${FENCE}json\n${JSON.stringify(record('dataset-long'), null, 2)}\n${FENCE}\n`;
+    await call('put_page', { slug: 'storage-manifest/dataset-long', content, request_id: randomUUID() });
+    const plan = await previewAdopt(ctx(), opts);
+    expect(plan.entries.map((e) => [e.slug, e.state, e.problem?.code ?? null, e.problem?.reason ?? null])).toEqual([['storage-manifest/dataset-long', 'blocked', 'storage_record_invalid', 'truncated']]);
+    expect(plan.entries[0]!.problem!.message).toContain('64 KiB');
+    expect((await refusal(applyAdopt(ctx(), { ...opts, expect: plan.plan_hash, dropFields: [] })))).toMatchObject({ code: 'storage_record_invalid', reason: 'truncated' });
+  }, 60_000);
+
   test('a matching card is only tagged, a differing one is a conflict, and a half-finished run applies with the hash it printed', async () => {
     await interim('storage-manifest/dataset-a', record('dataset-a'));
     await interim('storage-manifest/dataset-b', record('dataset-b'));

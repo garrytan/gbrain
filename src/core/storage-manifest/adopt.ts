@@ -190,9 +190,10 @@ function originalLabels(row: InterimAccess, frontmatter: Record<string, unknown>
 }
 
 /** Map one interim page onto a card. Pure: reads nothing beyond the row. */
-export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontmatter' | 'body'> & InterimAccess, prefix: string): Pick<AdoptEntry, 'card' | 'labels' | 'refused' | 'problem'> {
+export function mapInterimPage(row: Pick<InterimRow, 'slug' | 'title' | 'frontmatter' | 'body'> & Partial<Pick<InterimRow, 'long_body'>> & InterimAccess, prefix: string): Pick<AdoptEntry, 'card' | 'labels' | 'refused' | 'problem'> {
   if (row.write_channel?.startsWith('mcp:')) return { card: null, labels: null, refused: [], problem: invalidRecord('remote_written', `the page was last written by a remote client (${row.write_channel}); adopt takes only records written on this machine or by sync`) };
   const text = recordJson(row.body ?? '');
+  if (text === null && (row.long_body || (row.body?.length ?? 0) >= BOUNDED_PREFIX_BYTES)) return { card: null, labels: null, refused: [], problem: invalidRecord('truncated', 'the page is longer than the 64 KiB adopt reads and no complete json block under a ## Record heading is in that part, so the record is cut off or past it; move the ## Record section to the top of the page') };
   if (text === null) return { card: null, labels: null, refused: [], problem: invalidRecord('no_record', 'the page has no json block under a ## Record heading in its first 64 KiB') };
   let record: unknown;
   try { record = JSON.parse(text); } catch { return { card: null, labels: null, refused: [], problem: invalidRecord('not_json', 'the ## Record block is not valid JSON') }; }
