@@ -26,6 +26,7 @@ import { projectionClassSql, sealableImageSql } from './projection-class.ts';
 import { advanceProjectionCursor, ineligibleKey, rememberIneligible, residentWindowCtes, type ProjectionScanCursor } from './projection-window.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
+import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 
 /**
  * Complete the searchable snapshot only after its sanitized chunks are installed.
@@ -194,7 +195,7 @@ async function planProjectionKeep(tx: BrainEngine, current: PageSnapshot, contex
   const provenance = embeddingInputContext(context, current.page.title, context.corpusGeneration, chunks);
   const col = quoteIdentifier(context.column.name);
   const recorded = new Map((await tx.executeRaw<{ id: number; embedding_input_hash: string | null; movable: boolean }>(
-    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND model IS NOT DISTINCT FROM $2 AS movable FROM content_chunks WHERE page_id=$1`,
+    `SELECT id,embedding_input_hash,${movableChunkSql(col)} AND ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${context.column.dimensions}`)} AS movable FROM content_chunks WHERE page_id=$1`,
     [current.page.id, context.provenanceModel])).map(row => [Number(row.id), row]));
   const currentInput = (chunk: Chunk) => {
     const hash = recorded.get(Number(chunk.id))?.embedding_input_hash ?? null;
@@ -253,7 +254,7 @@ async function planDeferredReplacement(tx: BrainEngine, sourceId: string, slug: 
   await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND NOT(id=ANY($2::int[]))', [pageId, plan.kept.map(chunk => Number(chunk.id))]);
   // chunk-visibility-ok: the kept rows of a deferred replacement whose vector the current page no longer accepts
   const stale = (await tx.executeRaw<{ id: number }>(`SELECT id FROM content_chunks WHERE page_id=$1 AND ${quoteIdentifier(context.column.name)} IS NOT NULL
-    AND (model IS DISTINCT FROM $2 OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[]))) ORDER BY chunk_index`,
+    AND (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${quoteIdentifier(context.column.name)}) = ${context.column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[]))) ORDER BY chunk_index`,
   [pageId, plan.provenanceModel, plan.current])).map(row => Number(row.id));
   const moved = new Set(plan.moves.map(move => move.id));
   const occupied = new Set([...plan.kept.filter(row => !moved.has(Number(row.id))).map(row => row.chunk_index), ...plan.moves.map(move => move.to)]);
@@ -358,7 +359,7 @@ export async function installPageProjection(engine: BrainEngine, prepared: Proje
       await tx.executeRaw(`UPDATE content_chunks SET ${col}=NULL,
         embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,
         embedding_pending_since=COALESCE(embedding_pending_since,now()) WHERE page_id=$1 AND
-        (model IS DISTINCT FROM $2 OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[])))`,
+        (NOT ${chunkModelMatchesSql('model', '$2', `vector_dims(${col}) = ${column.dimensions}`)} OR embedded_text_hash <> md5(chunk_text) OR NOT(id=ANY($3::int[])))`,
       [snapshot.page.id, provenanceModel, currentIds]);
     } else if (opts.seal) await tx.deleteChunks(slug, { sourceId });
     await tx.upsertChunks(slug, chunks, { sourceId, expectedRevision: snapshot.revision, embeddingColumn: context.column });

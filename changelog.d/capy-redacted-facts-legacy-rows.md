@@ -1,0 +1,6 @@
+**`gbrain repair redacted-facts` now restores facts the conversation extractor wrote, which keep a row number on a page with no Facts fence (#8820).**
+
+### Fixed
+- `src/core/repair/redacted-facts.ts`: a fact with a row number is treated as a Facts-fence row only while its page's fence holds an active row with its text at that number. A conversation-extractor fact with no such fence row is now restored in place, keeping its row number, by the same row-exact rewrite as a database-only fact; its page is not changed. Before, the preview listed these facts as `evidenced` and the apply left them damaged with `changed_since_preview`. Any other fact whose fence row is gone is now listed as `unproven` (`fence_row_missing`) instead of `evidenced`, so the preview no longer promises a restore the apply cannot make. The repair is still preview-first: `--apply --expect <hash>` restores only the previewed set. Reported by @tarush1989.
+- Docs: `docs/guides/repair.md` (redacted facts class table and apply paragraph).
+- Tests: `test/repair-redacted-facts.test.ts` (PGLite, and Postgres through `test/e2e/repair-redacted-facts-postgres.test.ts`): a managed brain restores an extractor fact and leaves its page revision unchanged; an unmanaged brain restores an extractor fact and keeps a non-extractor fact whose fence row is gone. Both failed before the fix on both engines.
