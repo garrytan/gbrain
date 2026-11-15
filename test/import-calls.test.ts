@@ -248,4 +248,22 @@ describe('call import, in process', () => {
     spyOn(console, 'log').mockImplementation(() => {});
     expect(await runCallImport(engine, dir, ['--calls', '--prefix', 'legacy'], { json: false })).toMatchObject({ imported: 0, errors: 0 });
   });
+
+  test('a write still pending is reported pending, not as an error, and exits 10', async () => {
+    const dir = realpathSync(temp('gbrain-calls-pending-'));
+    writeFileSync(join(dir, '2026-05-02 pending.txt'), 'Alice: pending.\n');
+    const requestId = '7a1c0d2e-0000-4000-8000-00000000ca11';
+    spyOn(operations.find(op => op.name === 'put_page')!, 'handler').mockImplementation((async () => {
+      const error = new OperationError('write_pending', 'The page write was accepted and is still running.', 'Poll the receipt.');
+      error.writeRequest = { request_id: requestId, state: 'queued', retry_after_ms: 500 } as never;
+      throw error;
+    }) as never);
+    const lines: string[] = [];
+    spyOn(console, 'log').mockImplementation((line: string) => { lines.push(line); });
+    const result = await runCallImport(engine, dir, ['--calls', '--prefix', 'pending'], { json: false });
+    expect(result).toMatchObject({ imported: 0, errors: 0, failures: [] });
+    expect(currentExitCode()).toBe(10);
+    expect(lines.join('\n')).toContain('1 pending');
+    expect(lines.join('\n')).toContain(`gbrain write-request -- ${requestId}`);
+  });
 });

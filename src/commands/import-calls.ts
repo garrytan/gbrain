@@ -28,13 +28,15 @@ import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, relative } from 'node:path';
 import type { BrainEngine } from '../core/engine.ts';
 import type { RunImportResult } from './import.ts';
-import { writeJsonDocument } from '../core/cli-force-exit.ts';
+import { setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { loadConfig } from '../core/config.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { slugifySegment } from '../core/sync.ts';
 import { neutralizeOutsideText } from '../core/outside-content.ts';
 import { loadImportRedactionPatterns, redactSession, type ImportRedactionPattern } from '../core/transcripts/render.ts';
-import { CLI_WRITE_WAIT_MS } from '../core/persistence/write-wait.ts';
+import { acceptPendingCovers, acceptPendingRequested, CLI_WRITE_WAIT_MS, pendingReceiptOf, pollCommand } from '../core/persistence/write-wait.ts';
+import { PENDING_WRITE_EXIT_CODE } from '../core/exit-codes.ts';
+import { cliRenderContext } from '../core/agent-output.ts';
 
 export const CALL_FILE_RE = /\.(txt|md)$/i;
 export const DEFAULT_CALL_PREFIX = 'calls';
@@ -59,11 +61,14 @@ export interface CallPage {
 export interface CallFileResult {
   file: string;
   slug: string;
-  status: 'imported' | 'unchanged' | 'kept' | 'error';
+  status: 'imported' | 'unchanged' | 'kept' | 'pending' | 'error';
   date_from?: CallPage['date_from'];
   redactions?: number;
   git_state?: string;
   error?: string;
+  /** A pending write: its request and the command that reads its receipt. */
+  request_id?: string;
+  poll?: string;
 }
 
 /** .txt and .md files under `dir`, sorted; dot entries and symlinks are skipped. */
@@ -186,6 +191,7 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
   };
   const results: CallFileResult[] = [];
   const used = new Set<string>();
+  let uncovered = 0;
   for (const path of files) {
     const rel = relative(dir, path);
     let page: CallPage;
@@ -215,22 +221,27 @@ export async function runCallImport(engine: BrainEngine, dir: string, args: stri
       const receipt = await putPage.handler(ctx, { slug, content: page.content, request_id: randomUUID() }) as { persistence?: { git_state?: string } } | null;
       results.push({ ...base, status: 'imported', ...(receipt?.persistence?.git_state ? { git_state: receipt.persistence.git_state } : {}) });
     } catch (e) {
-      results.push({ ...base, status: 'error', error: e instanceof Error ? e.message : String(e) });
+      const receipt = pendingReceiptOf(e);
+      if (receipt && !acceptPendingCovers(receipt)) uncovered++;
+      if (receipt) results.push({ ...base, status: 'pending', request_id: receipt.request_id, poll: pollCommand(receipt.request_id, (e as { fix?: { argv?: readonly string[] } }).fix, cliRenderContext().routing) });
+      else results.push({ ...base, status: 'error', error: e instanceof Error ? e.message : String(e) });
     }
   }
   const count = (s: CallFileResult['status']) => results.filter(r => r.status === s).length;
   const imported = count('imported');
   const errors = count('error');
+  const pending = count('pending');
   const redactions = results.filter(r => r.status === 'imported').reduce((n, r) => n + (r.redactions ?? 0), 0);
   const failures = results.filter(r => r.status === 'error').map(r => ({ path: r.file, error: r.error ?? 'unknown error' }));
   if (opts.json) {
     await writeJsonDocument(JSON.stringify({
-      status: errors > 0 ? 'partial' : 'success', mode: 'calls', source_id: sourceId, prefix, total_files: files.length,
-      imported, unchanged: count('unchanged'), kept: count('kept'), errors, redactions, pages: results, failures,
+      status: errors > 0 ? 'partial' : pending > 0 ? 'pending' : 'success', mode: 'calls', source_id: sourceId, prefix, total_files: files.length,
+      imported, unchanged: count('unchanged'), kept: count('kept'), pending, errors, redactions, pages: results, failures,
     }));
   } else {
-    console.log(`Call import into source ${sourceId} under ${prefix}/: ${imported} imported, ${count('unchanged')} unchanged, ${count('kept')} kept (changed since import, not overwritten), ${errors} error(s); ${redactions} credential(s) redacted.`);
-    for (const r of results) console.log(`  ${r.status.padEnd(9)} ${r.slug || '-'}  <- ${r.file}${r.error ? ` (${r.error})` : ''}`);
+    console.log(`Call import into source ${sourceId} under ${prefix}/: ${imported} imported, ${count('unchanged')} unchanged, ${count('kept')} kept (changed since import, not overwritten), ${pending} pending (accepted, still being written), ${errors} error(s); ${redactions} credential(s) redacted.`);
+    for (const r of results) console.log(`  ${r.status.padEnd(9)} ${r.slug || '-'}  <- ${r.file}${r.error ? ` (${r.error})` : ''}${r.poll ? ` (still being written; check with ${r.poll} before importing again)` : ''}`);
   }
+  if (!errors && pending && (!acceptPendingRequested(getCliOptions().acceptPending) || uncovered > 0)) setCliExitVerdict(PENDING_WRITE_EXIT_CODE);
   return { imported, skipped: results.length - imported, errors, chunksCreated: 0, failures };
 }
