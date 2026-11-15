@@ -6,7 +6,7 @@
  * Serial: every test runs under withEnv with GBRAIN_HOME at a temporary home holding config.json and the 0600 key file.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -171,16 +171,23 @@ describe('the spool', () => {
 
   test('a direct emit records its own run even when the spool cannot be ingested', async () => {
     const dir = await spoolDir();
-    mkdirSync(join(dir, 'rejected'), { recursive: true });
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'rejected'), '', { mode: 0o600 });
     writeFileSync(join(dir, '0000000000001-aaaaaaaaaaaaaaaa.json'), '{not json', { mode: 0o600 });
-    chmodSync(join(dir, 'rejected'), 0o500);
-    try {
-      const r = await captured(() => runWakeshift(engine, ['emit', 'cron.finished', '--name', 'nightly-example', '--status', 'ok']));
-      expect(r.err).toContain('could not take the spooled cron runs');
-      expect((await runs()).map(x => [x.name, x.status])).toEqual([['nightly-example', 'ok']]);
-    } finally {
-      chmodSync(join(dir, 'rejected'), 0o700);
-    }
+    const r = await captured(() => runWakeshift(engine, ['emit', 'cron.finished', '--name', 'nightly-example', '--status', 'ok']));
+    expect(r.err).toContain('could not take the spooled cron runs');
+    expect((await runs()).map(x => [x.name, x.status])).toEqual([['nightly-example', 'ok']]);
+  });
+
+  test('a run spooled through a symlink to the datastore is ingested by the drainer that opened the real path', async () => {
+    const link = join(home, 'brain-link.pglite');
+    rmSync(link, { force: true });
+    symlinkSync(datastore, link);
+    await engine.executeRaw("INSERT INTO wake_crons (name) VALUES ('nightly-example')");
+    await inHome(() => spoolCronRun(link, { name: 'nightly-example', status: 'ok' }));
+    await inHome(() => drainWakes(engine));
+    expect((await runs()).map(x => [x.name, x.status])).toEqual([['nightly-example', 'ok']]);
+    expect(await pending()).toHaveLength(0);
   });
 
   test('a spooled run of an unregistered cron is recorded with the same hint as the direct path, and the next direct emit takes leftovers', async () => {

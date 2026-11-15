@@ -12,7 +12,7 @@
  * spooled while reporting back is off, and Postgres brains never spool: their emit connects or reports the outage.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { gbrainPath } from '../config.ts';
@@ -29,9 +29,15 @@ const CLAIMED = /^\d{13}-[0-9a-f]{16}\.json\.claimed-[0-9a-f]{16}$/;
 
 export interface CronRun { name: string; status: 'ok' | 'failed'; finished_at: string }
 
-/** The spool directory of the PGLite brain at `databasePath`, under this gbrain home. */
+/**
+ * The spool directory of the PGLite brain at `databasePath`, under this gbrain home, keyed by the datastore's
+ * canonical path as the PGLite lock is, so two spellings of one datastore (a symlink) share one spool. A path that
+ * cannot be resolved keys by its absolute spelling.
+ */
 export function cronSpoolDir(databasePath: string): string {
-  return gbrainPath('wakeshift-spool', createHash('sha256').update(resolve(databasePath)).digest('hex').slice(0, 16));
+  let path = resolve(databasePath);
+  try { path = realpathSync(path); } catch { /* not resolvable: the absolute spelling */ }
+  return gbrainPath('wakeshift-spool', createHash('sha256').update(path).digest('hex').slice(0, 16));
 }
 
 /** Record one run: the direct emit (no time, so now()) or a spooled one (its own time, skipped when already recorded). */
