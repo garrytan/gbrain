@@ -170,7 +170,7 @@ export async function findIssueByTitle(client: GitHubClient, label: string, titl
 
 export const labelNames = (issue: Issue): string[] => (issue.labels ?? []).map(l => (typeof l === 'string' ? l : l.name));
 
-/** On every issue our own automation opens, so the community's reports can be listed without it (CONTRIBUTING.md, "Community issues"). */
+/** On every issue our own automation opens, so the community's reports can be listed without it (CONTRIBUTING.md, "How an outside pull request is handled"). */
 export const AGENT_FILED_LABEL = 'agent-filed';
 
 export async function createIssue(client: GitHubClient, title: string, body: string, labels: string[]): Promise<Issue> {

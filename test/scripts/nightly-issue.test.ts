@@ -929,7 +929,10 @@ describe('master-red: push-to-master runs', () => {
     const open = both.issues.filter(i => i.title === 'Master red: Test' && i.state === 'open');
     expect(open).toHaveLength(1);
     expect(both.labeled('master-red')).toHaveLength(1);
-    for (const twin of both.issues.filter(i => i.title === 'Master red: Test' && i.state === 'closed')) expect(twin.body).toContain(`Duplicate of #${open[0]!.number}`);
+    for (const twin of both.issues.filter(i => i.title === 'Master red: Test' && i.state === 'closed')) {
+      expect(twin.body).toContain(`Duplicate of #${open[0]!.number}`);
+      expect(labelNames(twin)).toEqual(['agent-filed']);
+    }
   });
 
   test('E2E Tests closes only when every previously failing test file was among the files a run executed and passed', async () => {

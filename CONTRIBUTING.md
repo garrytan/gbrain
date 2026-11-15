@@ -844,8 +844,9 @@ closed two weeks after that if nobody answers.
 The same three things make a bug report easy to act on. To see what the
 community has reported, without the issues our own agents and CI file, use the
 [community issues](https://github.com/garrytan/gbrain/issues?q=is%3Aissue%20is%3Aopen%20-label%3Aagent-filed)
-search: it lists open issues without the `agent-filed` label, which every
-issue our automation opens carries.
+search: it lists open issues without the `agent-filed` label, which our CI
+scripts add to every issue they open and which we have added to the open
+issues our own agents filed.
 
 The **Fix-wave gate** check runs on every PR into master. It fails every PR
 whose head branch is not in `garrytan/gbrain` itself, and posts the comment
