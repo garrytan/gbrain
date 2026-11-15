@@ -164,8 +164,12 @@ export async function resolveSourcePaths(engine: BrainEngine, sourceId: string, 
     `SELECT id, slug, source_path, deleted_at IS NOT NULL AS deleted, COALESCE(${pageReadFilter('pages', policy, pageParams)}, false) AS readable
        FROM pages WHERE source_id=$1 AND source_path = ANY($2::text[]) ORDER BY deleted_at IS NOT NULL, id DESC`, pageParams);
   const byOrigin = new Map<string, typeof pages[number]>();
-  for (const page of pages) if (page.readable === true && !byOrigin.has(page.source_path)) byOrigin.set(page.source_path, page);
-  const hidden = new Set(pages.filter(page => !byOrigin.has(page.source_path)).map(page => page.source_path));
+  const hidden = new Set<string>();
+  for (const page of pages) {
+    if (byOrigin.has(page.source_path) || hidden.has(page.source_path)) continue;
+    if (page.readable === true) byOrigin.set(page.source_path, page);
+    else hidden.add(page.source_path);
+  }
   const slugs = [...new Set(origins.map(origin => resolveSlugForPath(origin)).filter(Boolean))];
   const ownerParams: unknown[] = [sourceId, slugs];
   const owners = new Map((await engine.executeRaw<{ slug: string; source_path: string | null }>(

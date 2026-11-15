@@ -102,6 +102,10 @@ for (const backend of testBackends()) {
       const argv = detail.slice(detail.indexOf('gbrain access rule add')).split(' ');
       expect(readers(argv)).toBe(`alice-example,${OWNER}`);
       expect(await preview(engine, argv)).toBeNull();
+      const quiet = spyOn(console, 'log').mockImplementation(() => {});
+      try { await runAccessRules(engine, 'rule', [...argv.slice(3), '--yes', '--json'], true); } finally { quiet.mockRestore(); }
+      const again = await withEnv({ GBRAIN_HOME: home }, () => labelSeveral(engine, ['alice-example'], 'default', false, true));
+      expect(again.rules.find(r => r.prefix === 'people/alice-example/')!.action).toBe('keep');
     }, 120_000);
   });
 }

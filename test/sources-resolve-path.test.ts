@@ -188,6 +188,11 @@ test('a page the caller may not read answers exactly like a path with no file or
       'team/open.md': note('Open'),
     });
     await s.sync();
+    const columns = (await engine.executeRaw<{ name: string }>(
+      "SELECT column_name AS name FROM information_schema.columns WHERE table_name = 'pages' AND column_name NOT IN ('id', 'slug', 'source_path', 'deleted_at') AND is_generated = 'NEVER' ORDER BY ordinal_position"))
+      .map(c => c.name).join(', ');
+    await unmanaged(engine, () => engine.executeRaw(
+      `INSERT INTO pages (slug, source_path, deleted_at, ${columns}) SELECT 'team/old-kept', 'team/kept.md', now() - interval '1 day', ${columns} FROM pages WHERE source_id = $1 AND slug = 'team/open'`, [s.id]));
     const paths = ['team/kept.md', 'team/private.md', 'team/open.md', 'team/KEPT.md', 'team/nothing-here.md'];
     const call = async (stdioMember?: string) => {
       const result = await dispatchToolCall(engine, 'sources_resolve_path', { id: s.id, paths },
