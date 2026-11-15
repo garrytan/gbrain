@@ -14,7 +14,7 @@ import { join, resolve } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { readCodexTomlTable } from '../src/core/bootstrap/codex-toml.ts';
-import { HOOK_LAUNCHER_SCRIPT, ensureHookLauncher, hookLauncherScript, hookLauncherState } from '../src/core/setup/hook-launcher.ts';
+import { HOOK_LAUNCHER_SCRIPT, ensureHookLauncher, hookLauncherScript, hookLauncherState, launcherRuntimeDir } from '../src/core/setup/hook-launcher.ts';
 import { hookLauncherProblem } from '../src/core/setup/turn-hook-check.ts';
 import { launcherLaneFindings } from '../src/core/setup/launcher-lanes.ts';
 import { refreshHookLaunchers } from '../src/core/setup/hook-launcher-refresh.ts';
@@ -144,6 +144,34 @@ describe('the launcher carries the runtime setup ran under, and only when gbrain
     expect(r.stdout.toString().trim()).toBe(join(bunDir, 'bun'));
     rmSync(join(bunDir, 'bun'));
     expect(hookLauncherState(launcher, bunDir)).toMatchObject({ state: 'stale', detail: expect.stringContaining(join(bunDir, 'bun')) });
+  });
+
+  test('the bun on PATH is recorded when it is this same Bun, so a per-version install directory a Bun upgrade deletes is not', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-launcher-onpath-'));
+    roots.push(root);
+    const stable = join(root, 'stable', 'bin');
+    const other = join(root, 'other', 'bin');
+    mkdirSync(stable, { recursive: true });
+    mkdirSync(other, { recursive: true });
+    symlinkSync(process.execPath, join(stable, 'bun'));
+    writeFileSync(join(other, 'bun'), '#!/bin/sh\n');
+    chmodSync(join(other, 'bun'), 0o755);
+    await withEnv({ PATH: `${stable}:${BARE_PATH}` }, async () => { expect(launcherRuntimeDir()).toBe(stable); });
+    await withEnv({ PATH: `${other}:${BARE_PATH}` }, async () => { expect(launcherRuntimeDir()).toBe(resolve(process.execPath, '..')); });
+  });
+
+  test('setup moves a launcher that records another Bun onto the one it runs under', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-launcher-switch-'));
+    roots.push(root);
+    const [a, b] = ['a', 'b'].map((n) => join(root, n, 'bin'));
+    for (const d of [a!, b!]) { mkdirSync(d, { recursive: true }); symlinkSync(process.execPath, join(d, 'bun')); }
+    const launcher = join(root, 'home', 'hook-launcher', 'gbrain-hook');
+    ensureHookLauncher(launcher, a!);
+    expect(hookLauncherState(launcher, b!).state).toBe('current');
+    ensureHookLauncher(launcher, b!);
+    expect(readFileSync(launcher, 'utf8')).toBe(hookLauncherScript(b!));
+    ensureHookLauncher(launcher, null);
+    expect(readFileSync(launcher, 'utf8')).toBe(hookLauncherScript(b!));
   });
 
   test('a compiled gbrain (no runtime) keeps the launcher it had, which needs no bun', () => {

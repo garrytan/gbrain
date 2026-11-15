@@ -10,4 +10,4 @@ important: blocker
 - `gbrain doctor` reports a launcher that records no Bun, or one whose Bun is gone, instead of calling the wiring healthy.
 
 ### To take this fix
-- `gbrain upgrade` (its post-upgrade step rewrites the launcher), or rerun `gbrain setup codex`. Neither changes config.toml, hooks.json or Codex's trust entries.
+- `gbrain upgrade` (its post-upgrade step rewrites the default install's launcher), or rerun `gbrain setup codex`. Neither changes config.toml, hooks.json or Codex's trust entries. A launcher under another gbrain home is rewritten by rerunning the setup that wrote it; `gbrain doctor` names it.

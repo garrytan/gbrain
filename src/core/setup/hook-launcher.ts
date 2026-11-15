@@ -25,7 +25,7 @@
  * Bun, and its launcher stays the plain one.
  */
 import { randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, win32 } from 'node:path';
 import { configDir } from '../config.ts';
 import { isScriptRuntime } from '../cli-preflight.ts';
@@ -69,11 +69,19 @@ exec "$@"
 `);
 }
 
-/** The directory of the Bun this gbrain runs under, as a hook shell path; null for a compiled gbrain, which needs none. */
+const sameFile = (a: string, b: string) => { try { return realpathSync(a) === realpathSync(b); } catch { return false; } };
+
+/**
+ * The directory of the Bun this gbrain runs under, as a hook shell path; null for a compiled gbrain, which needs none.
+ * The bun on PATH wins when it is this same Bun: execPath is the resolved file, which for Homebrew, mise or asdf sits in
+ * a per-version directory that a Bun upgrade deletes, while the PATH entry survives it.
+ */
 export function launcherRuntimeDir(): string | null {
-  if (!isScriptRuntime()) return null;
-  const bun = /^bun(\.exe)?$/i.test(basename(process.execPath)) ? process.execPath : Bun.which('bun');
-  return bun && isAbsolute(bun) ? hookShellPath(dirname(bun)) : null;
+  if (!isScriptRuntime() || typeof Bun === 'undefined') return null;
+  const self = /^bun(\.exe)?$/i.test(basename(process.execPath)) ? process.execPath : null;
+  const onPath = Bun.which('bun', { PATH: process.env.PATH ?? '' });
+  const bun = onPath && isAbsolute(onPath) && (self === null || sameFile(onPath, self)) ? onPath : self;
+  return bun ? hookShellPath(dirname(bun)) : null;
 }
 
 const bunIn = (dir: string) => join(msysToNativePath(dir), process.platform === 'win32' ? 'bun.exe' : 'bun');
@@ -111,7 +119,8 @@ export function hookLauncherState(path: string, runtimeDir: string | null = laun
 /**
  * Write (or refresh) the launcher and return its path. Throws when its
  * directory holds anything else: gbrain never deletes a file it did not write,
- * and a hook routed through that directory would refuse anyway.
+ * and a hook routed through that directory would refuse anyway. A script-mode
+ * gbrain rewrites a launcher that records another Bun, so it starts under this one.
  */
 export function ensureHookLauncher(path: string = hookLauncherPath(), runtimeDir: string | null = launcherRuntimeDir()): string {
   const dir = dirname(path);
@@ -119,7 +128,7 @@ export function ensureHookLauncher(path: string = hookLauncherPath(), runtimeDir
   chmodSync(dir, 0o700);
   const other = readdirSync(dir).find((n) => n !== HOOK_LAUNCHER_NAME);
   if (other !== undefined) throw new Error(`${dir} holds ${other}, which gbrain did not write; the hook launcher runs gbrain from that directory, so remove it, then run this again`);
-  if (hookLauncherState(path, runtimeDir).state === 'current') return path;
+  if (hookLauncherState(path, runtimeDir).state === 'current' && (runtimeDir === null || readFileSync(path, 'utf8') === hookLauncherScript(runtimeDir))) return path;
   // The temp file sits beside the directory, never in it: a hook running meanwhile would refuse to start next to it.
   const tmp = join(dirname(dir), `.${HOOK_LAUNCHER_DIR}.tmp-${randomBytes(6).toString('hex')}`);
   try {
