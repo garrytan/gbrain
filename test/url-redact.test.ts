@@ -134,6 +134,12 @@ describe('stripUrlSecrets — userinfo stops at the authority', () => {
     expect(stripUrlSecrets(url('https://host.example/a/@b?tok', 'en=qtok123'))).toBe('https://host.example/a/@b');
   });
 
+  test('a password holding an unencoded / is removed whole, and a port before a path @ keeps the host', () => {
+    expect(stripUrlSecrets(url('see https://', 'user:pa/ss', '@host.example/mcp?tok', 'en=q now'))).toBe('see https://host.example/mcp now');
+    expect(stripUrlSecrets(url('https://', 'user:/ss', '@host.example/mcp'))).toBe('https://host.example/mcp');
+    expect(stripUrlSecrets(url('https://host.example:8443/a/@b?tok', 'en=q'))).toBe('https://host.example:8443/a/@b');
+  });
+
   test('userinfo holding an @ is still removed whole', () => {
     expect(stripUrlSecrets(url('https://', 'u:p@ss', '@host.example/mcp'))).toBe('https://host.example/mcp');
   });

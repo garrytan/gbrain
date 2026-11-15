@@ -69,9 +69,18 @@ export function redactUrlsInText(text: string): string {
  * path: `demo://user:pw@host.example/mcp?token=x#y` becomes
  * `demo://host.example/mcp`. For bridge-built diagnostics, where any part of
  * a remote URL past its path can carry a secret; host results never pass here.
+ * Userinfo runs to the last `@` before the query: a password may hold an
+ * unencoded `/` (`user:pa/ss@host`), so a `/` ends it only when what comes
+ * before is a host (no `:`, or `:` and a port), which keeps `host/a/@b`.
  */
 export function stripUrlSecrets(text: string): string {
-  return text.replace(/(\w[\w+.-]*:\/\/)([^\s/?#]*@)?([^\s/?#@]*)([^\s?#]*)(?:[?#]\S*)?/g, (_m, scheme: string, _user, host: string, path: string) => `${scheme}${host}${path}`);
+  return text.replace(/(\w[\w+.-]*:\/\/)([^\s?#]*)(?:[?#]\S*)?/g, (_m, scheme: string, rest: string) => {
+    const at = rest.lastIndexOf('@');
+    if (at < 0) return `${scheme}${rest}`;
+    const user = rest.slice(0, at);
+    const slash = user.indexOf('/');
+    return slash < 0 || /:(?!\d+$)/.test(user.slice(0, slash)) ? `${scheme}${rest.slice(at + 1)}` : `${scheme}${rest}`;
+  });
 }
 
 /** `stripUrlSecrets` over every string inside a value (objects and arrays recursively); other values pass through. */
