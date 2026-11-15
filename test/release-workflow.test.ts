@@ -236,13 +236,14 @@ describe('scripts/changelog-entry.sh --pr-list', () => {
     }
   });
 
-  test('a release that never published is listed in the next one, and a commit with no PR number gets a bare line', () => {
+  test('a release that never published is listed in the next one, a commit with no PR number gets a bare line, and a headline that cites another PR prints every number once in one bracket', () => {
     const repo = fixture();
     try {
       commit(repo, 'v0.1.1.0 release (#13)', { VERSION: '0.1.1.0\n', 'CHANGELOG.md': section('0.1.1.0', 'Unpublished.'), 'changelog.d/a-alpha.md': null, 'changelog.d/b-beta.md': null });
       commit(repo, 'Direct fix', { 'changelog.d/c-gamma.md': '**The test passes after a release.**\n' });
-      commit(repo, 'v0.1.2.0 release (#15)', { VERSION: '0.1.2.0\n', 'CHANGELOG.md': section('0.1.2.0', 'Second.'), 'changelog.d/c-gamma.md': null });
-      expect(run(repo, '--pr-list', '0.1.2.0')).toBe('- Search finds old pages again (#12)\n- Sync is faster (#11)\n- The test passes after a release\n\n\nSecond.\n');
+      commit(repo, 'Note the test fix (#14)', { 'changelog.d/d-delta.md': '**The notice test keeps passing after a release (#9).**\n' });
+      commit(repo, 'v0.1.2.0 release (#15)', { VERSION: '0.1.2.0\n', 'CHANGELOG.md': section('0.1.2.0', 'Second.'), 'changelog.d/c-gamma.md': null, 'changelog.d/d-delta.md': null });
+      expect(run(repo, '--pr-list', '0.1.2.0')).toBe('- Search finds old pages again (#12)\n- Sync is faster (#11)\n- The test passes after a release\n- The notice test keeps passing after a release (#9, #14)\n\n\nSecond.\n');
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }

@@ -49,9 +49,11 @@ list_changes() {
       subject="$(git log --first-parent --diff-filter=A --format=%s -1 "$release^" -- "$path")"
       pr="$(printf '%s\n' "$subject" | sed -nE 's/.*\(#([0-9]+)\)[[:space:]]*$/\1/p; s/^Merge pull request #([0-9]+).*/\1/p' | head -n1)"
       headline="${headline%.}"
-      if [ -n "$pr" ]; then
-        headline="${headline% (#$pr)}"
-        printf -- '- %s (#%s)\n' "$headline" "$pr"
+      cited="$(printf '%s\n' "$headline" | sed -nE 's/.*[[:space:]]\((#[0-9]+(, #[0-9]+)*)\)$/\1/p')"
+      if [ -n "$cited" ]; then headline="${headline% ("$cited")}"; fi
+      if [ -n "$pr" ] && [[ ", $cited, " != *", #$pr, "* ]]; then cited="${cited:+$cited, }#$pr"; fi
+      if [ -n "$cited" ]; then
+        printf -- '- %s (%s)\n' "$headline" "$cited"
       else
         printf -- '- %s\n' "$headline"
       fi
