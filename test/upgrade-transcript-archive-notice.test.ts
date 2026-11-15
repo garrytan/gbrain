@@ -4,11 +4,13 @@
  * per-channel markers (no new sentinel): an existing brain sees it once, with the off command; a shared brain reads
  * the offer (the on command) and the notice never turns anything on. PGLite.
  *
- * The row is pending until a release dates it, so the test adds it to the loaded table for the duration of the file
- * (dated at the newest disclosed release, so the notice id is unchanged) and removes it afterwards.
+ * Before a release dates the row, the test adds it to the loaded table for the duration of the file (dated at the
+ * newest disclosed release, so the notice id is unchanged) and removes it afterwards; once a release has dated it, the
+ * table already holds it and the test adds nothing. The release also folds the changelog fragment into CHANGELOG.md,
+ * so the marker is read from whichever of the two holds it.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -26,6 +28,7 @@ const table = BEHAVIOR_CHANGES as Array<{ since: string; id?: string; text: unkn
 const NO_CHAIN = { GBRAIN_CHAT_FALLBACK_CHAIN: undefined, GBRAIN_CHAT_FALLBACK_ON_REFUSAL: undefined };
 
 let engine: PGLiteEngine;
+let pushed = false;
 
 function upgradedHome(brainKey: string): string {
   const home = mkdtempSync(join(tmpdir(), 'archive-notice-'));
@@ -39,12 +42,17 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  table.push({ since: BEHAVIOR_NOTICE_SINCE, id: ID, text });
+  if (!table.some(row => row.id === ID)) {
+    table.push({ since: BEHAVIOR_NOTICE_SINCE, id: ID, text });
+    pushed = true;
+  }
 });
 
 afterAll(async () => {
-  const at = table.findIndex(row => row.id === ID);
-  if (at >= 0) table.splice(at, 1);
+  if (pushed) {
+    const at = table.findIndex(row => row.id === ID);
+    if (at >= 0) table.splice(at, 1);
+  }
   await engine.disconnect();
 });
 
@@ -53,8 +61,9 @@ describe('the conversation archive upgrade notice', () => {
     expect(text.length).toBeLessThanOrEqual(2000);
     expect(text).not.toContain('\n');
     for (const phrase of ['gbrain transcripts archive off', 'conversations', 'gbrain embed --held --dry-run', 'keyless', 'gbrain transcripts archive on']) expect(text).toContain(phrase);
-    const fragment = readFileSync(join(ROOT, 'changelog.d', 'transcript-archive-default.md'), 'utf8');
-    expect(fragment).toContain('<!-- behavior-change: ' + ID + ' -->');
+    const fragmentPath = join(ROOT, 'changelog.d', 'transcript-archive-default.md');
+    const entry = readFileSync(existsSync(fragmentPath) ? fragmentPath : join(ROOT, 'CHANGELOG.md'), 'utf8');
+    expect(entry).toContain('<!-- behavior-change: ' + ID + ' -->');
   });
 
   test('an upgraded brain sees it once, with the off command', async () => {
