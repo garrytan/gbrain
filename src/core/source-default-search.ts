@@ -19,9 +19,22 @@ export async function newSourceJoinsDefaultSearch(engine: BrainEngine): Promise<
   }
 }
 
+/** The choice an earlier attempt with this request id was accepted with, so an identical retry replays it instead of re-reading the row it wrote. */
+async function acceptedChoice(engine: BrainEngine, opts: AddSourceOpts): Promise<AddSourceOpts | null> {
+  if (!opts.requestId) return null;
+  const [prior] = await engine.executeRaw<{ digest: string }>('SELECT digest FROM persistence_topology_changes WHERE request_id = $1::uuid AND source_id = $2', [opts.requestId, opts.id]);
+  if (!prior) return null;
+  const { managedSourceAddInput } = await import('./persistence/managed-sources.ts');
+  const { topologyIntent } = await import('./persistence/source-lifecycle.ts');
+  const { digest } = await import('./persistence/digest.ts');
+  return [{ ...opts, federated: true }, opts].find(candidate => digest(topologyIntent(managedSourceAddInput(candidate))) === prior.digest) ?? null;
+}
+
 /** Folder and Git sources only: connectors keep their own defaults (GitHub and Google federated, meetings and Slack chats out). */
 export async function withDefaultSearchChoice(engine: BrainEngine, opts: AddSourceOpts): Promise<AddSourceOpts> {
   if (opts.federated != null || opts.github || opts.google || opts.meetings || opts.slack || opts.addedByRemoteCaller) return opts;
+  const accepted = await acceptedChoice(engine, opts);
+  if (accepted) return accepted;
   const joins = await newSourceJoinsDefaultSearch(engine);
   if (opts.localPath && (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1 AND local_path IS NULL', [opts.id])).length > 0) return opts;
   return joins ? { ...opts, federated: true } : opts;

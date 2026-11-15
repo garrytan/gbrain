@@ -171,6 +171,7 @@ async function handleGitHubItemEvent(
   payload: Buffer,
   res: Response,
   eventName: string,
+  deliveryId: string | undefined,
 ): Promise<void> {
   const ref = extractGitHubItemRef(parsed);
   if (ref === null) {
@@ -227,9 +228,19 @@ async function handleGitHubItemEvent(
   // #8799: the key names the item and its intent, so a deletion never reuses an edit's refresh. The waiting cap is per
   // source, so a cap hit can return another item's job: unless that job covers this event (the same item and intent, or an
   // explicit source-wide sync for an edit), it is a refusal, never this event's 202. A busy source defers the job (sync handler).
+  // An event joins a refresh of its item that has not started; otherwise its delivery id keys a new one, so an event
+  // after the refresh began is never dropped and a GitHub redelivery (same delivery id) maps to its first job.
   const deleted = eventName === 'issues' && parsed.action === 'deleted';
-  const idempotencyKey = `webhook:item:${source.id}:${ref.repo}:${ref.number}:${deleted ? 'delete' : 'refresh'}:${Math.floor(Date.now() / 30_000)}`;
+  const idempotencyKey = `webhook:item:${source.id}:${ref.repo}:${ref.number}:${deleted ? 'delete' : 'refresh'}:${deliveryId || Math.floor(Date.now() / 30_000)}`;
   try {
+    const [waiting] = await engine.executeRaw<{ id: number }>(
+      `SELECT id FROM minion_jobs WHERE name = 'sync' AND status = 'waiting' AND data->>'sourceId' = $1 AND data->'github_item'->>'repo' = $2
+         AND data->'github_item'->>'number' = $3 AND COALESCE(data->'github_item'->>'deleted', 'false') = $4 ORDER BY id LIMIT 1`,
+      [source.id, ref.repo, String(ref.number), String(deleted)]);
+    if (waiting) {
+      res.status(202).json({ job_id: Number(waiting.id), source_id: source.id, item: ref });
+      return;
+    }
     const queue = new MinionQueue(engine);
     const job = await queue.add(
       'sync',
@@ -774,7 +785,7 @@ function mountGitHubWebhook(app: Express, ctx: ServeHttpContext): void {
       // comment / review / label / assignee / milestone / check events
       // refresh exactly the item that changed.
       if (GH_ITEM_EVENTS.has(event)) {
-        await handleGitHubItemEvent(engine, parsed, sigHeader, payload, res, event);
+        await handleGitHubItemEvent(engine, parsed, sigHeader, payload, res, event, req.header('X-GitHub-Delivery'));
         return;
       }
 

@@ -547,13 +547,20 @@ export function rolledUpNotes(changelog: string, previous: string | null, versio
 
 /** The version of the release GitHub calls Latest now, or null when there is none or it cannot be read. */
 export async function latestReleaseVersion(deps: Pick<PromoteDeps, 'repo' | 'ghApi'>): Promise<string | null> {
+  return readLatestReleaseVersion(deps).catch(() => null);
+}
+
+/** The current Latest release's version; null when there is none (404). Any other failed read throws. */
+async function readLatestReleaseVersion(deps: Pick<PromoteDeps, 'repo' | 'ghApi'>): Promise<string | null> {
+  let release: { tag_name?: string };
   try {
-    const tag = ((await deps.ghApi(`repos/${deps.repo}/releases/latest`)) as { tag_name?: string }).tag_name ?? '';
-    const v = tag.replace(/^v/, '');
-    return VERSION_RE.test(v) ? v : null;
-  } catch {
-    return null;
+    release = (await deps.ghApi(`repos/${deps.repo}/releases/latest`)) as { tag_name?: string };
+  } catch (error) {
+    if (/HTTP 404/.test((error as Error).message)) return null;
+    throw error;
   }
+  const v = (release.tag_name ?? '').replace(/^v/, '');
+  return VERSION_RE.test(v) ? v : null;
 }
 
 /**
@@ -563,8 +570,15 @@ export async function latestReleaseVersion(deps: Pick<PromoteDeps, 'repo' | 'ghA
  * then stays put until stable passes it. A rollback moves it back on purpose.
  */
 export async function markLatest(deps: PromoteDeps, releaseId: number, version: string, notes: string | null, rollback = false): Promise<void> {
-  const latest = await latestReleaseVersion(deps);
-  if (!rollback && latest && compareVersions(latest, version) > 0) {
+  let latest: string | null = null;
+  if (!rollback) {
+    try {
+      latest = await readLatestReleaseVersion(deps);
+    } catch (error) {
+      throw new Refusal(`stable now points at v${version}, but GitHub's current Latest release could not be read (${(error as Error).message.split('\n')[0]}), so Latest was left alone; run \`bun scripts/release-channel.ts backfill --apply\` from a checkout to set it (${DOCS}).`);
+    }
+  }
+  if (latest && compareVersions(latest, version) > 0) {
     deps.log(`[promote-stable] GitHub's Latest stays v${latest}, which is newer than v${version}; it moves to the stable release once stable passes it.`);
     return;
   }

@@ -6,10 +6,14 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { runEvalLongMemEval } from '../src/commands/eval-longmemeval.ts';
 import type { ThinkLLMClient } from '../src/core/think/index.ts';
 import { buildQaAccuracy } from '../src/eval/longmemeval/qa-accuracy.ts';
+import { createBenchmarkBrain } from '../src/eval/longmemeval/harness.ts';
+import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 
 let dir: string;
 let dataset: string;
-beforeAll(() => {
+let engine: PGLiteEngine;
+beforeAll(async () => {
+  engine = await createBenchmarkBrain();
   dir = mkdtempSync(join(tmpdir(), 'lme-reader-mode-'));
   dataset = join(dir, 'dataset.jsonl');
   writeFileSync(dataset, JSON.stringify({
@@ -18,7 +22,10 @@ beforeAll(() => {
     haystack_sessions: [{ session_id: 's1', turns: [{ role: 'user', content: 'I like mint tea.' }] }],
   }) + '\n');
 });
-afterAll(() => rmSync(dir, { recursive: true, force: true }));
+afterAll(async () => {
+  await engine.disconnect();
+  rmSync(dir, { recursive: true, force: true });
+});
 
 const base = () => [dataset, '--keyword-only', '--no-trajectory', '--no-embed-cache', '--by-type', '--model', 'anthropic:claude-sonnet-4-6'];
 const rows = (path: string) => readFileSync(path, 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -35,8 +42,8 @@ describe('reader mode CLI receipts', () => {
     const notesPath = join(dir, 'notes.jsonl');
     const directCalls: Anthropic.MessageCreateParamsNonStreaming[] = [];
     const notesCalls: Anthropic.MessageCreateParamsNonStreaming[] = [];
-    await runEvalLongMemEval([...base(), '--reader-mode', 'direct', '--output', directPath], { client: stub('end_turn', directCalls), exitOnError: false });
-    await runEvalLongMemEval([...base(), '--output', notesPath], { client: stub('end_turn', notesCalls), exitOnError: false });
+    await runEvalLongMemEval([...base(), '--reader-mode', 'direct', '--output', directPath], { client: stub('end_turn', directCalls), exitOnError: false, engine });
+    await runEvalLongMemEval([...base(), '--output', notesPath], { client: stub('end_turn', notesCalls), exitOnError: false, engine });
     expect(directCalls).toHaveLength(1);
     expect(notesCalls).toHaveLength(1);
     expect(directCalls[0].messages).toEqual(notesCalls[0].messages);
@@ -54,15 +61,15 @@ describe('reader mode CLI receipts', () => {
     expect(notesSummary.run_config.reader).toMatchObject({ mode: 'notes', max_tokens: 1024, config_hash: notes.reader_config_hash });
     expect(direct.retrieval_config_hash).toBe(notes.retrieval_config_hash);
 
-    await expect(runEvalLongMemEval([...base(), '--reader-mode', 'notes', '--output', directPath, '--resume-from', directPath, '--allow-mixed-run-config'], { client: stub('end_turn', []), exitOnError: false })).rejects.toThrow('exit 1');
+    await expect(runEvalLongMemEval([...base(), '--reader-mode', 'notes', '--output', directPath, '--resume-from', directPath, '--allow-mixed-run-config'], { client: stub('end_turn', []), exitOnError: false, engine })).rejects.toThrow('exit 1');
     expect(rows(directPath)[0].reader_mode).toBe('direct');
-    await runEvalLongMemEval([...base(), '--reader-mode', 'direct', '--output', directPath, '--resume-from', directPath], { client: stub('end_turn', []), exitOnError: false });
+    await runEvalLongMemEval([...base(), '--reader-mode', 'direct', '--output', directPath, '--resume-from', directPath], { client: stub('end_turn', []), exitOnError: false, engine });
   });
 
   test('max_tokens records cutoff as error, keeps its denominator, and fails instead of judging partial text', async () => {
     const path = join(dir, 'cutoff.jsonl');
     const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
-    await expect(runEvalLongMemEval([...base(), '--reader-mode', 'notes', '--reader-max-tokens', '512', '--output', path], { client: stub('max_tokens', calls), exitOnError: false })).rejects.toThrow('exit 1');
+    await expect(runEvalLongMemEval([...base(), '--reader-mode', 'notes', '--reader-max-tokens', '512', '--output', path], { client: stub('max_tokens', calls), exitOnError: false, engine })).rejects.toThrow('exit 1');
     expect(calls[0].max_tokens).toBe(512);
     const [row, summary] = rows(path);
     expect(row).toMatchObject({ reader_mode: 'notes', reader_max_tokens: 512, reader_finish_reason: 'max_tokens', hypothesis: '', error: 'reader_max_tokens', reader_partial_output: 'mint' });
@@ -74,7 +81,7 @@ describe('reader mode CLI receipts', () => {
   test('invalid reader flags fail before any provider call', async () => {
     for (const flags of [['--reader-mode', 'summarize'], ['--reader-max-tokens', '0'], ['--reader-max-tokens', '1.5'], ['--reader-max-tokens', 'NaN']]) {
       const calls: Anthropic.MessageCreateParamsNonStreaming[] = [];
-      await expect(runEvalLongMemEval([...base(), ...flags], { client: stub('end_turn', calls), exitOnError: false })).rejects.toThrow('exit 1');
+      await expect(runEvalLongMemEval([...base(), ...flags], { client: stub('end_turn', calls), exitOnError: false, engine })).rejects.toThrow('exit 1');
       expect(calls).toHaveLength(0);
     }
   });
@@ -86,7 +93,7 @@ describe('reader mode CLI receipts', () => {
     ] as const) {
       const path = join(dir, `${name}.jsonl`);
       const client: ThinkLLMClient = { create: async (params) => ({ model: params.model, content: [{ type: 'text', text }], stop_reason: reason }) as Anthropic.Message };
-      await expect(runEvalLongMemEval([...base(), '--output', path], { client, exitOnError: false })).rejects.toThrow('exit 1');
+      await expect(runEvalLongMemEval([...base(), '--output', path], { client, exitOnError: false, engine })).rejects.toThrow('exit 1');
       const [row] = rows(path);
       expect(row).toMatchObject({ hypothesis: '', reader_finish_reason: reason, error });
       if (text) expect(row.reader_partial_output).toBe(text);
