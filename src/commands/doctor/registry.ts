@@ -376,9 +376,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   mcpRequestLogRetentionEntry,
   // GST-1943: the storage shelf: cards failing the card schema, interim records not adopted, a hosted shelf directory gone.
   storageManifestEntry,
-  fenceIntegrityEntry,
   // GST-2731: facts pages (type: facts) with fact lines that carry no date (read-only; the fix asks the user for the dates).
   factsPagesEntry,
+  fenceIntegrityEntry,
   searchModeEntry,
 ];
 

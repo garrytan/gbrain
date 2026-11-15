@@ -4239,6 +4239,13 @@
         },
         {
           "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "Every fact line on 0 facts page(s) carries a date.",
+          "name": "facts_undated_lines",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "details": {
             "docs": "docs/guides/write-refusals.md#invalid_fence",
             "model_repair": {
@@ -4364,13 +4371,6 @@
           "elapsed_ms": "<volatile>",
           "message": "No malformed facts or takes fence is held, stored or waiting in a checkout (2 source(s) scanned).",
           "name": "fence_integrity",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "elapsed_ms": "<volatile>",
-          "message": "Every fact line on 0 facts page(s) carries a date.",
-          "name": "facts_undated_lines",
           "status": "ok"
         },
         {

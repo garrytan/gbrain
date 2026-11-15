@@ -1231,11 +1231,11 @@
       },
       {
         "category": "brain",
-        "name": "fence_integrity"
+        "name": "facts_undated_lines"
       },
       {
         "category": "brain",
-        "name": "facts_undated_lines"
+        "name": "fence_integrity"
       },
       {
         "category": "ops",
