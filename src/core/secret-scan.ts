@@ -35,10 +35,7 @@ import {
   LABELED_CREDENTIAL_PATTERNS,
   ECHO_MIN_CHARS_LABELED,
   LABELED_PRECHECK_RE,
-  TRANSCRIPT_LABELED_PATTERNS,
-  NETRC_PRECHECK_RE,
   danglingFor,
-  keyLabelValueIsCredential,
   netrcStanzaOpen,
   type DanglingForm,
   labeledEchoEligible,
@@ -116,6 +113,7 @@ import {
 import type { ScanWork } from './secret-scan-work.ts';
 export { createScanWork, type ScanWork } from './secret-scan-work.ts';
 import { COOKIE_PRECHECK_RE, ECHO_MAX_UNIQUE_COOKIE, cookieHeaderValues, curlContinues } from './secret-scan-cookie.ts';
+import { compileTranscriptPatterns } from './secret-scan-transcript.ts';
 export { TRANSCRIPT_LANE_SCAN_OPTS, trailingDanglingLabel } from './secret-scan-labeled.ts';
 
 // ── Patterns ────────────────────────────────────────────────────────────────
@@ -720,18 +718,7 @@ function buildPatterns(opts: ScanOpts): CompiledPattern[] {
       });
     }
   }
-  if (opts.transcriptRules) {
-    for (const p of TRANSCRIPT_LABELED_PATTERNS) {
-      out.push({
-        name: 'labeled_credential',
-        // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- compile-time literal; bounded quantifiers, pinned by test/secret-scan-perf.test.ts
-        re: new RegExp(p.source, 'gi'),
-        ...(p.continuation ? { continuation: p.continuation } : { precheck: (line: string) => NETRC_PRECHECK_RE.test(line) }),
-        validate: p.form === 'key' ? keyLabelValueIsCredential : (value: string, head: string) => labeledValueIsCredential(value, 'single', head),
-        subject: neutralizeRedactionMarkers,
-      });
-    }
-  }
+  if (opts.transcriptRules) out.push(...compileTranscriptPatterns());
   return out;
 }
 
