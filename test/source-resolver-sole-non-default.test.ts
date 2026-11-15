@@ -24,7 +24,7 @@ import {
 } from '../src/core/source-resolver.ts';
 import { withEnv } from './helpers/with-env.ts';
 
-type StubSource = { id: string; local_path: string | null; archived?: boolean };
+type StubSource = { id: string; local_path: string | null; archived?: boolean; config?: Record<string, unknown> };
 
 function makeStub(
   sources: StubSource[],
@@ -45,7 +45,7 @@ function makeStub(
       }
       if (sql.includes('archived = false')) {
         return sources.filter(s => s.local_path !== null && s.id !== 'default' && s.archived !== true)
-          .map(s => ({ id: s.id })) as unknown as T[];
+          .map(s => ({ id: s.id, config: s.config ?? {} })) as unknown as T[];
       }
       if (sql.includes('local_path IS NOT NULL AND id != \'default\'')) {
         return sources.filter(s => s.local_path !== null && s.id !== 'default')
@@ -236,6 +236,28 @@ describe('#1434 — sole_non_default tier', () => {
     expect(line).toContain("'studiovault'");
     expect(line).toContain("'default'");
     expect(line).toContain('non-empty');
+  });
+
+  test('#3070 (GST-2732): no flip warning when the side source is federated, since default search already reads it', async () => {
+    const engine = makeStub(
+      [
+        { id: 'default', local_path: null },
+        { id: 'company', local_path: '/tmp/company', config: { federated: true } },
+      ],
+      null,
+      { defaultActivePages: 1 },
+    );
+    const originalError = console.error;
+    const errLines: string[] = [];
+    console.error = (...args: unknown[]) => { errLines.push(args.join(' ')); };
+    try {
+      await withEnv({ GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE: undefined }, async () => {
+        expect((await resolveSourceWithTier(engine, null, '/tmp')).source_id).toBe('default');
+      });
+    } finally {
+      console.error = originalError;
+    }
+    expect(errLines.length).toBe(0);
   });
 
   test('#3070: the flip warning is suppressed via GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1', async () => {

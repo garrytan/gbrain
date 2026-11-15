@@ -31,25 +31,21 @@ start here.
    Reason `wedged` means one migration failed three or more times in a row: relay its `fix` (ask the user)
    instead of reinstalling; they fix the cause, then `gbrain apply-migrations --force-retry <version>`.
 
-Bun blocks gbrain's postinstall on `bun install -g` (`Blocked 1 postinstall`); a new install can skip it: the script only repeats the refusal every gbrain command prints on a Bun below the floor and runs `gbrain apply-migrations --yes --non-interactive`, which has nothing to migrate before a brain exists, and `gbrain setup` creates the brain and applies its setup migrations.
-
 2. Set up keyless memory for the harness: `gbrain setup claude-code` (on Codex, `gbrain setup codex`)
    creates the brain if none exists, wires MCP and verifies it. Otherwise, or for any other harness, init keyless
    memory: `gbrain init --pglite --no-embedding` (zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
-3. **STOP — ask the user about search mode.** `gbrain init` auto-applied a
-   default but printed a 9-cell cost matrix (mode × downstream model)
-   preceded by `[AGENT]` markers. You MUST relay the matrix to the operator
-   and confirm their choice before continuing. Cost spread between corners
-   is about 200x — silent acceptance is the wrong default. After
-   `gbrain setup <harness>` the harness is already wired when the matrix
-   appears in setup's one first-run settings block, so there is nothing left
-   to continue: relay the matrix and the other settings in the reply that
-   reports the install, as the settings in effect and how to change them,
-   and apply the user's choice when they give it. Don't end the install on a
-   question that needs another turn before memory works. See
-   [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) Step 3.5 for the
-   exact ask-the-user protocol. The same banner fires on `gbrain post-upgrade`
+3. **Connect, then tell the user the search mode in effect.** `gbrain init`
+   auto-applied a default and printed a 9-cell cost matrix (mode × downstream
+   model) preceded by `[AGENT]` markers. Cost spread between corners is about
+   200x, so the user must see it, but don't stop the install to ask: on every
+   harness, connect memory first (`gbrain setup <harness>` does it on Claude
+   Code and Codex; elsewhere, do the `harness_wiring` step init printed), then
+   relay the matrix and the other settings in the reply that reports the
+   install, as the settings in effect and how to change them, and apply the
+   user's choice when they give it. Nothing paid turns on without a key the
+   user supplied. See [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md)
+   Step 3.5 for the wording. The same banner fires on `gbrain post-upgrade`
    for a brain created before v0.32.3, when search modes arrived.
 4. Read [`./INSTALL_FOR_AGENTS.md`](./INSTALL_FOR_AGENTS.md) for the full step-by-step
    flow (keyless memory, optional API capabilities, maintenance, verification).

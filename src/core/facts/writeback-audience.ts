@@ -42,6 +42,8 @@ export interface BrainAudienceResult {
   audience: BrainAudience;
   /** Human-readable evidence, surfaced verbatim by doctor + the config caution. */
   reasons: string[];
+  /** Set when 'personal' is a fallback because the client-usage read failed, not evidence: callers that widen access read it as not personal. */
+  unproven?: true;
 }
 
 export async function classifyBrainAudience(
@@ -93,6 +95,6 @@ export async function classifyBrainAudience(
     // The declaration read above already proved the DB reachable — a failed
     // usage read here means the multi-client infra isn't there (fresh or
     // pre-OAuth brain), which is itself personal-shaped evidence.
-    return { audience: 'personal', reasons: [...reasons, 'no shared declaration; client-usage heuristic unavailable'] };
+    return { audience: 'personal', unproven: true, reasons: [...reasons, 'no shared declaration; client-usage heuristic unavailable'] };
   }
 }

@@ -438,7 +438,7 @@ describeE2E('v0.18.0 multi-source — sources table surface', () => {
     await teardownDB();
   });
 
-  test('default source is seeded federated=true; new sources default to isolated', async () => {
+  test('default source is seeded federated=true; on a shared brain new sources default to isolated, on a personal one they join', async () => {
     const conn = getConn();
     const engine = getEngine();
 
@@ -449,11 +449,22 @@ describeE2E('v0.18.0 multi-source — sources table surface', () => {
     // Defensive cleanup: sources isn't in helpers.ALL_TABLES, so residual
     // rows from prior test runs can shadow this INSERT via ON CONFLICT
     // DO NOTHING. Delete first, then create.
-    await conn.unsafe(`DELETE FROM sources WHERE id = 'isolatedsrc'`);
-    await runSources(engine as unknown as Parameters<typeof runSources>[0], ['add', 'isolatedsrc']);
+    await conn.unsafe(`DELETE FROM sources WHERE id IN ('isolatedsrc', 'personalsrc')`);
+    await engine.setConfig('brain.audience', 'shared');
+    try {
+      await runSources(engine as unknown as Parameters<typeof runSources>[0], ['add', 'isolatedsrc']);
+    } finally {
+      await engine.setConfig('brain.audience', 'personal');
+    }
     const iso = await conn.unsafe(`SELECT config FROM sources WHERE id = 'isolatedsrc'`);
     const isoConfig = typeof iso[0].config === 'string' ? JSON.parse(iso[0].config) : iso[0].config;
-    expect(isoConfig.federated).toBeUndefined();  // omitted → isolated-by-default
+    expect(isoConfig.federated).toBeUndefined();
+
+    await runSources(engine as unknown as Parameters<typeof runSources>[0], ['add', 'personalsrc']);
+    const personal = await conn.unsafe(`SELECT config FROM sources WHERE id = 'personalsrc'`);
+    const personalConfig = typeof personal[0].config === 'string' ? JSON.parse(personal[0].config) : personal[0].config;
+    expect(personalConfig.federated).toBe(true);
+    await conn.unsafe(`DELETE FROM sources WHERE id = 'personalsrc'`);
   });
 
   test('federate / unfederate flips config.federated on real DB', async () => {
