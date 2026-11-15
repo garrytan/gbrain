@@ -108,7 +108,14 @@ Every source row stores `config.federated: boolean` in its JSONB config.
 | Value | Meaning |
 |-------|---------|
 | `true` | Source participates in unqualified `gbrain search "X"` results. |
-| `false` (default for new sources) | Source only searched when explicitly named via `--source <id>` or qualified citation. |
+| `false` or unset | Source only searched when explicitly named via `--source <id>` or qualified citation. |
+
+A new source added without `--federated` or `--no-federated` is federated on
+a brain only you use (`access.serves` is one, `brain.audience` reads personal,
+and you are not on a thin client). On a shared brain it stays unset, and
+`sources add` and `sync --source <id>` print a `source_not_in_default_search`
+notice whose fix is `gbrain sources federate <id>`. Sources you added before
+this change keep their setting.
 
 The seeded `default` source is `federated=true` so single-source brains
 behave as you'd expect — every page appears in search.
@@ -556,12 +563,13 @@ frozen manifest was classified under the old strategy. Connector sources
 
 ## The git requirement for --path sources
 
-Every `--path` source must be a git repository (or live inside one — a
-subdirectory of a git repo works too) with at least one committed, tracked
-file under that path. `gbrain sources add` validates this at registration
-time and refuses a directory that doesn't qualify — no `.git` at all, a
-`git init` with no commit yet, or a commit made before `git add` — with an
-actionable error instead of silently registering a source that will fail
+A plain folder that is not inside any git repository registers as is: sync
+imports its files without Git, so there is no git history, and a file you
+remove from the folder keeps its page. A `--path` inside a git repository
+(or a subdirectory of one) needs at least one committed, tracked file under
+that path. `gbrain sources add` validates this at registration time and
+refuses a repository that doesn't qualify — a `git init` with no commit yet,
+or a commit made before `git add` — with an actionable error instead of silently registering a source that will fail
 (or worse, "succeed" while importing nothing) on its first `gbrain sync`.
 Fix it with:
 

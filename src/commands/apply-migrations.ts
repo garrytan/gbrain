@@ -8,7 +8,7 @@
  *
  * Invoked from:
  *   - `gbrain upgrade` → runPostUpgrade() tail (Lane A-5)
- *   - package.json `postinstall` (Lane A-5)
+ *   - `gbrain setup <harness>` on the brain it just created
  *   - explicit user / host-agent after registering new handlers (Lane C-1)
  */
 
@@ -558,7 +558,7 @@ async function applyParsed(cli: ApplyMigrationsArgs, args: string[]): Promise<{ 
   const installed = VERSION.replace(/^v/, '').trim() || '0.0.0';
   const report: RunReport = { doc: { status: 'ok', installed } };
 
-  // First-install guard (postinstall hook calls us even on `bun add gbrain`
+  // First-install guard (an older release's postinstall calls us even on `bun add gbrain`
   // before the user has run `gbrain init`). No config = no brain = nothing
   // to migrate. Exit silently for --yes / --non-interactive so postinstall
   // stays quiet; mention the init step when invoked interactively.

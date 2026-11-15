@@ -331,7 +331,13 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
   if (checkout) {
     const agents = patchManagedDurabilityBlock(root, input.sourceId, input.dryRun);
     const file = relative(root, findResolverFile(root) ?? join(root, 'AGENTS.md'));
-    report.agents = { ...agents, ...(agents.status === 'fixed' && !input.dryRun ? { commit: `The durability block is a non-page file: review it and commit it with gbrain git commit-push --path ${root} -m "<msg>" -- ${file}; it rides the owner's next push.` } : {}) };
+    // GST-2767: the verb itself commits nothing (the apply never moves HEAD); whenever the file it owns is not committed,
+    // including an untracked copy an earlier run left while the block is already current, it names the exact door command.
+    const status = input.dryRun ? null : await execFileBounded('git', ['-C', root, 'status', '--porcelain', '--untracked-files=all', '--', file], { timeout: 10_000, env: gitChildEnv({ ...GIT_ENV }) });
+    const pending = !!status && (status.error !== null || status.stdout.trim() !== '');
+    report.agents = { ...agents, file, ...(pending ? {
+      commit: `The durability block is a non-page file: review it and commit it with gbrain git commit-push --path ${root} -m "<msg>" -- ${file}; it rides the owner's next push.`,
+      commit_argv: ['gbrain', 'git', 'commit-push', '--path', root, '-m', `gbrain: durability rules for source ${input.sourceId}`, '--', file] } : {}) };
   }
   if (input.dryRun) {
     const state = await writerAdminState(engine);
