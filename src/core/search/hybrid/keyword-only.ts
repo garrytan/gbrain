@@ -38,7 +38,9 @@ export async function searchWithoutEmbeddings(
   // issue #160: stamp unverified stubs BEFORE fusion so the compiled-truth
   // boost skips them (flag survives fusion's result spread).
   await stampUnverifiedExtractions(engine, [...keywordResults, ...titleResults, ...relationalList], opts);
-  let noEmbedResults = keywordResults;
+  const otherPages = new Set([...titleResults, ...relationalList].map(r => `${r.source_id ?? 'default'}:${r.slug}`));
+  const keywordList = keywordResults.filter(r => !r.keyword_fill || !otherPages.has(`${r.source_id ?? 'default'}:${r.slug}`));
+  let noEmbedResults = keywordList;
   const trace = opts?.explainTarget;
   if (trace) {
     trace.observe('arm:keyword', keywordResults);
@@ -47,7 +49,7 @@ export async function searchWithoutEmbeddings(
   }
   if (relationalList.length > 0 || titleResults.length > 0) {
     const fk = opts?.rrfK ?? RRF_K;
-    const noEmbedLists: FusionListEntry[] = [{ list: keywordResults, k: fk, arm: 'keyword' }];
+    const noEmbedLists: FusionListEntry[] = [{ list: keywordList, k: fk, arm: 'keyword' }];
     if (titleResults.length > 0) noEmbedLists.push({ list: titleResults, k: fk, arm: 'title' });
     if (relationalList.length > 0) noEmbedLists.push({ list: relationalList, k: fk, arm: 'relational' });
     noEmbedResults = rrfFusionWeighted(noEmbedLists, ctBoost, opts?.explain === true || trace !== undefined);
@@ -58,6 +60,10 @@ export async function searchWithoutEmbeddings(
     await applyIdentityBoosts(req, noEmbedResults, generatedRead);
     noEmbedResults.sort((a, b) => b.score - a.score);
     noEmbedResults = await applyFeedbackStage(engine, noEmbedResults, { reranked: false });
+    // GST-2735: the any-word fill only adds pages no other arm found, after every other row.
+    const kept = noEmbedResults.filter(r => !r.keyword_fill);
+    let floor = kept.length ? kept[kept.length - 1]!.score : Infinity;
+    noEmbedResults = [...kept, ...noEmbedResults.filter(r => r.keyword_fill).map(r => ({ ...r, score: (floor = Math.min(r.score, floor * 0.999)) }))];
   }
   // T3/T4 — alias hop + evidence stamp even without an embedding provider
   // (the named-thing fix is most valuable exactly when vector is unavailable).

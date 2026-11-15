@@ -81,7 +81,7 @@ function appendPages(rows: SearchResult[], more: SearchResult[], limit: number):
  *
  * GST-2735: with orFill (hybrid's keyword-only path) a first page whose strict
  * rows leave the candidate pool short also runs the retry, and its rows fill
- * the pool after every strict row, tagged `keyword_relaxed`, each scored below
+ * the pool after every strict row, tagged `keyword_relaxed` and `keyword_fill`, each scored below
  * the lowest strict score so a raw-score sort keeps them under all-word hits.
  */
 export async function keywordArmRows<R>(a: {
@@ -113,6 +113,6 @@ export async function keywordArmRows<R>(a: {
   const strict = appendPages(a.strict.map(a.toResult), probe, a.limit);
   const floor = Math.min(...strict.map(r => r.score));
   const top = Math.max(...relaxed.map(r => r.score));
-  const below = relaxed.map(r => ({ ...r, score: floor * 0.5 * (top > 0 ? r.score / top : 1) }));
+  const below = relaxed.map(r => ({ ...r, keyword_fill: true as const, score: floor * 0.5 * (top > 0 ? r.score / top : 1) }));
   return appendPages(named, appendPages(strict, below, a.limit), a.limit);
 }

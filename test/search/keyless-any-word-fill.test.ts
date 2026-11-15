@@ -29,6 +29,7 @@ const PAGES: Array<[string, string, string, Record<string, unknown>?, string?]> 
   ['company/decisions', 'Decisions log', '2026-09-12: no free plan. We keep SSO on the Pro plan, not the Starter plan, because support load grows.'],
   [CAROL, 'Call with carol-example', 'carol-example asked whether SSO could come with Starter. Her team is twelve people and needs Okta.'],
   ['company/onboarding', 'Onboarding playbook', 'Send the welcome email, book the kickoff call and share the setup guide.'],
+  ['company/starter-checklist', 'Starter checklist', 'Starter accounts get the checklist on day one.'],
   ['company/private-call', 'Private call', 'SSO SSO SSO Starter Starter Starter: the board call about acme-example.', { visibility: 'private' }],
   ['company/readers-call', 'Readers call', 'SSO SSO SSO Starter Starter Starter: the hiring call.', { readable_by: ['alice-example'] }],
   ['side/call', 'Side call', 'SSO SSO SSO Starter Starter Starter: a call in another source.', {}, 'side'],
@@ -67,15 +68,29 @@ for (const kind of testBackends()) {
     test('a page holding most of the query words is found when other pages hold all of them', async () => {
       const rows = await operationsByName.query!.handler(ctx, { query: QUERY, expand: false }) as Array<{ slug: string }>;
       const slugs = rows.map(r => r.slug);
-      expect(slugs.slice(0, 2).sort()).toEqual(['company/decisions', 'company/pricing']);
       expect(slugs).toContain(CAROL);
+      for (const full of ['company/decisions', 'company/pricing']) expect(slugs.indexOf(full)).toBeLessThan(slugs.indexOf(CAROL));
+      expect(slugs.indexOf('company/decisions')).toBeGreaterThan(-1);
+      expect(slugs.indexOf('company/pricing')).toBeGreaterThan(-1);
+    });
+
+    test('the fill only adds pages, after every row search returns without it', async () => {
+      const rows = await hybridSearch(engine, QUERY, { limit: 20, expansion: false });
+      const firstFill = rows.findIndex(r => r.keyword_fill === true);
+      expect(firstFill).toBeGreaterThan(0);
+      expect(rows.slice(firstFill).every(r => r.keyword_fill === true)).toBe(true);
+      expect(rows.slice(0, firstFill).map(r => r.slug)).toContain('company/starter-checklist');
     });
 
     test('a fill row is marked keyword_relaxed and ranks below every all-words row', async () => {
       const rows = await hybridSearch(engine, QUERY, { limit: 10, expansion: false });
-      expect(rows.slice(0, 2).map(r => [r.slug, r.keyword_relaxed])).toEqual([['company/decisions', undefined], ['company/pricing', undefined]]);
-      expect(rows.slice(2).map(r => r.slug)).toContain(CAROL);
-      expect(rows.slice(2).every(r => r.keyword_relaxed === true && r.score < rows[1]!.score)).toBe(true);
+      const firstFill = rows.findIndex(r => r.keyword_fill === true);
+      const before = rows.slice(0, firstFill);
+      expect(before.map(r => r.slug)).toEqual(expect.arrayContaining(['company/decisions', 'company/pricing']));
+      expect(before.filter(r => r.slug !== 'company/starter-checklist').every(r => r.keyword_relaxed === undefined)).toBe(true);
+      const fill = rows.slice(firstFill);
+      expect(fill.map(r => r.slug)).toContain(CAROL);
+      expect(fill.every(r => r.keyword_relaxed === true && r.score < Math.min(...before.map(b => b.score)))).toBe(true);
     });
 
     test('explain_target names the fill: the arm rank is marked relaxed and the why says some words matched', async () => {

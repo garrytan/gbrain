@@ -20,7 +20,8 @@
  * turns fan-out off). Each runs as a keyword-only query that requires the
  * name as a phrase and ranks by the query's other content terms (no embedding
  * or rerank call), 5 rows each; at most 8 new pages are spliced after the top
- * two results, each carrying `matched_alias`. Fan-out never changes offsets
+ * two results, each carrying `matched_alias`; a page the keyless any-word fill
+ * found (keyword_fill) moves up as the alias row instead. Fan-out never changes offsets
  * or counts. The `fanout` meta says what was searched and skipped.
  */
 
@@ -236,7 +237,7 @@ export async function withAliasFanOut(engine: BrainEngine, results: SearchResult
     const skipped = names.slice(max).map(n => n.alias);
     const found = await Promise.all(searched.map(n => searchAliasRequired(engine, n.alias, terms, { ...searchOpts, limit: FANOUT_ROWS_PER_ALIAS })
       .catch(() => [] as SearchResult[])));
-    const seen = new Set(results.map(r => `${r.source_id ?? ''}\0${r.slug}`));
+    const seen = new Set(results.filter(r => !r.keyword_fill).map(r => `${r.source_id ?? ''}\0${r.slug}`));
     const fresh: SearchResult[] = [];
     searched.forEach((n, i) => {
       for (const r of found[i]!) {
@@ -253,7 +254,9 @@ export async function withAliasFanOut(engine: BrainEngine, results: SearchResult
       truncated: skipped.length > 0,
     };
     if (!fresh.length) return { results, fanout, ...(entity ? { entity } : {}) };
-    return { results: [...results.slice(0, 2), ...fresh, ...results.slice(2)], fanout, ...(entity ? { entity } : {}) };
+    const spliced = new Set(fresh.map(r => `${r.source_id ?? ''}\0${r.slug}`));
+    const rest = results.filter(r => !r.keyword_fill || !spliced.has(`${r.source_id ?? ''}\0${r.slug}`));
+    return { results: [...rest.slice(0, 2), ...fresh, ...rest.slice(2)], fanout, ...(entity ? { entity } : {}) };
   } catch {
     return { results };
   }

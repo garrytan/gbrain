@@ -14,9 +14,9 @@
  * never change a row, an order or a score.
  * Regenerate with KEYWORD_RANKING_WRITE=1 only for an intended ranking change.
  *
- * It also pins how many keyword statements one search runs: one when the
- * strict (AND) query matches, two when it matches nothing and the OR fallback
- * re-runs it.
+ * It also pins how many keyword statements one keyless search runs: one when
+ * the strict (AND) query fills the candidate pool, two when it leaves the pool
+ * short or matches nothing and the OR fallback re-runs it (GST-2735).
  */
 import { afterAll, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -185,13 +185,13 @@ for (const kind of testBackends()) {
       expect(search('quarterly budget review')).toEqual([]);
     });
 
-    test('one keyword statement per search, two when the strict query matches nothing', async () => {
+    test('one keyword statement when the strict query fills the candidate pool, two when it leaves the pool short or matches nothing', async () => {
       let statements = 0;
       const count = (sql: unknown) => { if (typeof sql === 'string' && sql.includes('ts_rank(cc.search_vector')) statements++; };
       const restore = spyKeywordStatements(engine, kind, count);
       try {
         const runs = async (q: string) => { statements = 0; await hybridSearch(engine, q, { limit: 10, expansion: false }); return statements; };
-        expect(await runs(phrase(3, 0))).toBe(1);
+        expect(await runs(phrase(3, 0))).toBe(2);
         expect(await runs(COMMON)).toBe(1);
         expect(await runs('what did we decide about vindre and talquo')).toBe(2);
       } finally {
