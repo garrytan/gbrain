@@ -8351,6 +8351,7 @@
       {
         "kind": "interface",
         "members": [
+          "_anyWordFill?: boolean | undefined",
           "_embeddingOptedOut?: boolean | undefined",
           "_queryEmbedDeadline?: (() => QueryEmbedDeadline) | undefined",
           "_queryPrefix?: string | undefined",

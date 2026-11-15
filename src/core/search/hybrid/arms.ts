@@ -46,7 +46,8 @@ export async function resolveEarlyModality(req: HybridRequest): Promise<Modality
 
 /** Keyword + title FTS arms, fetched concurrently (fail-open per arm, rethrow when both hit a dead database). */
 export async function runLexicalArms(req: HybridRequest, earlyModality: ModalityMode): Promise<LexicalArms> {
-  const { engine, query, opts, searchOpts, identityTierOpts, degraded } = req;
+  const { engine, query, opts, identityTierOpts, degraded } = req;
+  const searchOpts = opts?._anyWordFill ? { ...req.searchOpts, orFill: true } : req.searchOpts;
   // Run keyword search (always available, no API key needed).
   //
   // v0.36 cross-modal (D9): skip keyword for 'image'-only modality. Image

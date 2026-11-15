@@ -16,7 +16,6 @@ import { dedupResults, segmentRegions } from '../dedup.ts';
 import { enforceTokenBudget } from '../token-budget.ts';
 import { pushDegraded, stampBudgetStage } from './degraded.ts';
 import { stampEvidence } from '../evidence.ts';
-import { collapseResults } from '../collapse.ts';
 import { applyEvidenceGate } from '../decide-stage.ts';
 import { collapsePool, prioritize } from './rank.ts';
 import { readGeneratedPages } from '../provenance-demotion.ts';
@@ -85,7 +84,7 @@ export async function searchWithoutEmbeddings(
     noEmbedRelSlot = r.decision;
   }
   trace?.observe('return_pool', noEmbedPool);
-  const noEmbedSliced = await appendAnyWordFill(req, noEmbedPool.slice(offset, offset + limit), earlyModality, keywordResults);
+  const noEmbedSliced = noEmbedPool.slice(offset, offset + limit);
   trace?.observe('limit_slice', noEmbedSliced);
   // v0.32.3 search-lite: budget enforcement on the no-embedding-provider path.
   const { results: noEmbedBudgeted, meta: noEmbedBudgetMeta } = enforceTokenBudget(noEmbedSliced, resolvedMode.tokenBudget);
@@ -143,45 +142,6 @@ export async function searchWithoutEmbeddings(
     ...(noEmbedRelSlot ? { relational_evidence_slot: noEmbedRelSlot } : {}),
   });
   return noEmbedBudgeted;
-}
-
-/**
- * GST-2735: a first page shorter than the limit gets the pages that hold only some of the query's words,
- * after every row search returned without them. The rows above are left exactly as they were: the fill
- * only appends pages they and their collapsed families do not hold, scored below the last of them and
- * marked keyword_fill. It runs the keyword arm's own statement with the arm's options, so the caller's
- * read policy applies unchanged. A later page (offset above zero) and a caller-requested keyword-only
- * retrieval (decide.keywordOnly) get no fill.
- */
-async function appendAnyWordFill(req: HybridRequest, page: SearchResult[], earlyModality: LexicalArms['earlyModality'], keywordResults: SearchResult[]): Promise<SearchResult[]> {
-  const { engine, query, opts, limit, offset, resolvedMode } = req;
-  if (offset > 0 || page.length >= limit || opts?.decide?.keywordOnly || earlyModality === 'image') return page;
-  // The retry adds nothing when the strict rows were none (the arm already ran it) or filled the arm's pool.
-  if (keywordResults.length === 0 || keywordResults.some(r => r.keyword_relaxed) || keywordResults.length >= (req.searchOpts.limit ?? Infinity)) return page;
-  const key = (r: SearchResult) => `${r.source_id ?? 'default'}:${r.slug}`;
-  const held = new Set(page.map(key));
-  const candidates: SearchResult[] = [];
-  const fillOpts = { ...req.searchOpts, orFill: true };
-  const rows = await engine.searchKeyword(query, opts?.useCache === false ? fillOpts : { ...fillOpts, keywordTimeoutCache: true }).catch(() => [] as SearchResult[]);
-  for (const r of rows) {
-    if (!r.keyword_fill || held.has(key(r))) continue;
-    held.add(key(r));
-    candidates.push(r);
-  }
-  if (candidates.length === 0) return page;
-  await stampUnverifiedExtractions(engine, candidates, opts);
-  stampEvidence(candidates, { cosineFloor: resolvedMode.evidence_cosine_floor });
-  const fill: SearchResult[] = [];
-  for (const r of candidates) {
-    if (page.length + fill.length >= limit) break;
-    const probe = [...page, ...fill, r].map(x => ({ ...x }));
-    if (resolvedMode.collapse && (await collapseResults(engine, probe, { ...req.aliasHopOpts, facts: req.collapseFacts ??= new Map() })).length < probe.length) continue;
-    fill.push(r);
-  }
-  let floor = page.length ? Math.min(...page.map(r => r.score)) : Infinity;
-  const below = (score: number) => (floor = Math.min(score, floor - Math.max(Math.abs(floor) * 0.01, Number.EPSILON)));
-  opts?.explainTarget?.observe('arm:keyword_fill', fill);
-  return [...page, ...fill.map(r => ({ ...r, score: below(r.score) }))];
 }
 
 /** Every vector arm came back empty or failed: keyword fallback. */

@@ -54,6 +54,7 @@ import { factEmbeddingDisabled } from '../embedding-disabled.ts';
 import { capSessionPool, collapsePool, expandStructuralNeighbors, finalizeHybridResults, fuseArms, rerankAndPin, sizeReturnPool } from './hybrid/rank.ts';
 import { type StageTimer, UNTIMED } from './stage-timings.ts';
 import { needsEngineScope, withEngineScope } from '../engine-scope.ts';
+import { withAnyWordFill } from './hybrid/any-word-fill.ts';
 
 export const RRF_K = 60;
 const COMPILED_TRUTH_BOOST = 2.0;
@@ -952,6 +953,8 @@ export interface HybridSearchOpts extends SearchOpts {
   _queryPrefix?: string;
   /** INTERNAL — the brain opted out of embedding (factEmbeddingDisabled), read once per request: keyword-only, no query embed. */
   _embeddingOptedOut?: boolean;
+  /** GST-2735: the keyless any-word fill's second run (search/hybrid/any-word-fill.ts). */
+  _anyWordFill?: boolean;
   /** INTERNAL — the op's per-request stage-timing collector (search/stage-timings.ts); absent = untimed. */
   _timings?: StageTimer;
 
@@ -1135,7 +1138,8 @@ export async function hybridSearch(
   const { lexical, relationalList } = await runLexicalAndRelational(req, earlyModality, vectorSide);
   const postFusionOpts = buildPostFusionOpts(req);
   if (!vectorSide) {
-    return timer.stage('post_fusion', () => searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe));
+    const rows = await timer.stage('post_fusion', () => searchWithoutEmbeddings(req, lexical, relationalList, postFusionOpts, providerProbe));
+    return withAnyWordFill(hybridSearch, req, lexical, rows);
   }
 
   const { effectiveModality, vectorArms, queryEmbedding, imageQueryEmbedding, unifiedDone } = await joinVectorSide(req, vectorSide);

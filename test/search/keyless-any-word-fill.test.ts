@@ -17,7 +17,7 @@ import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
-import { hybridSearch } from '../../src/core/search/hybrid.ts';
+import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
 import { TargetTrace, diagnoseTrace } from '../../src/core/search/explain-target.ts';
 import { keywordArmRows } from '../../src/core/search/keyword-identifier-probe.ts';
 import { installFixtureChunks } from '../helpers/page-projection.ts';
@@ -135,7 +135,7 @@ for (const kind of testBackends()) {
 
     test('a dated fill row stays below the all-words rows when the query asks when', async () => {
       const dated = 'Quokka offsite on 2026-03-02.';
-      await engine.putPage('events/quokka-offsite', { type: 'note', title: 'Offsite', compiled_truth: dated, frontmatter: {} });
+      await engine.putPage('events/quokka-offsite', { type: 'event', title: 'Offsite', compiled_truth: dated, frontmatter: {} });
       await installFixtureChunks(engine, 'events/quokka-offsite', [{ chunk_index: 0, chunk_text: dated, chunk_source: 'compiled_truth' }]);
       await engine.executeRaw(`UPDATE pages SET effective_date = '2026-03-02', effective_date_source = 'frontmatter' WHERE slug = 'events/quokka-offsite'`);
       const rows = await hybridSearch(engine, 'when quokka workshop', { limit: 20, expansion: false });
@@ -143,6 +143,38 @@ for (const kind of testBackends()) {
       expect(firstFill).toBeGreaterThan(0);
       expect(rows.slice(firstFill).every(r => r.keyword_fill === true)).toBe(true);
       expect(rows.map(r => r.slug).indexOf('events/quokka-offsite')).toBeGreaterThanOrEqual(firstFill);
+    });
+
+    test('a redirect stub that only fills is replaced by its target, as in an ordinary result', async () => {
+      const put = async (slug: string, type: string, body: string, frontmatter: Record<string, unknown> = {}) => {
+        await engine.putPage(slug, { type, title: 'Record', compiled_truth: body, frontmatter });
+        await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth' }]);
+      };
+      await put('notes/heron-audit', 'note', 'Heron ledger audit for the spring count.');
+      await put('records/heron-old', 'concept-redirect', 'Heron ledger moved. See [current](/records/heron-current).', { redirect_to: '/records/heron-current' });
+      await put('records/heron-current', 'concept', 'The marsh registry for this year.');
+      const rows = await hybridSearch(engine, 'heron ledger audit', { limit: 10, expansion: false });
+      const slugs = rows.map(r => r.slug);
+      expect(slugs[0]).toBe('notes/heron-audit');
+      expect(slugs).not.toContain('records/heron-old');
+      expect(rows.find(r => r.slug === 'records/heron-current')?.keyword_fill).toBe(true);
+    });
+
+    test('a superseded page that only fills carries its superseded warning', async () => {
+      const put = async (slug: string, body: string) => {
+        await engine.putPage(slug, { type: 'note', title: 'Record', compiled_truth: body, frontmatter: {} });
+        await installFixtureChunks(engine, slug, [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth' }]);
+      };
+      await put('notes/egret-review', 'Egret roster review notes.');
+      await put('records/egret-old', 'Egret roster from the old survey.');
+      await put('records/egret-new', 'The colony count from the new survey.');
+      await engine.addLink('records/egret-new', 'records/egret-old', '', 'supersedes', 'manual');
+      _resetSupersedeProbeForTests();
+      const rows = await hybridSearch(engine, 'egret roster review', { limit: 10, expansion: false });
+      const old = rows.find(r => r.slug === 'records/egret-old');
+      expect(old?.keyword_fill).toBe(true);
+      expect(old?.superseded).toBe(true);
+      expect(old?.superseded_by).toBe('records/egret-new');
     });
 
     describe('a declared alias beats the fill', () => {
