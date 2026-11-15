@@ -55,7 +55,9 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
    `stamped_field`). It writes nothing and prints a `plan_hash`. The index page (`<prefix>index`) is skipped.
 2. The printed apply, `--apply --expect <plan_hash>` with one `--drop-field <dotted.name>` per refused field, runs
    after the user agrees to leave those fields out. It registers each card with `origin: adopt` through the same
-   path `storage-register` uses, then tags the original `storage-manifest-adopted`. It deletes nothing. A
+   path `storage-register` uses, then tags the original `storage-manifest-adopted`. It deletes nothing. On a hosted
+   shelf it then runs the shelf's managed `--no-pull` sync, so the shelf's sync checkpoint reaches the cards it
+   committed; `index` reports it, with the sync to run when it stayed behind. A
    credential-shaped value (a secret, an environment assignment, a credential variable, a URL password, a signed URL,
    a value under a credential-named key such as `restore.args.password`, `restic_password` or `token_count`, unless the
    key ends in `_id`, `_ref`, `_name`, `_path`, `_file`, `_env`, `_var` or `_variable`) always refuses, whatever is

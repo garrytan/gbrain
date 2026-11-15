@@ -564,6 +564,7 @@ async function runStorageAdopt(engine: BrainEngine, args: string[]): Promise<voi
       for (const row of result.results) console.log(`  ${row.outcome.padEnd(10)} ${row.slug}${row.card_id ? ` -> ${row.card_id}` : ''}`);
       if (result.conflicts.length) console.log(`Conflicts (a different card with that id is on the shelf; nothing was overwritten): ${result.conflicts.join(', ')}`);
       printOutcome(result);
+      if (result.index?.resume) console.log(`The shelf's sync checkpoint is behind the cards committed; index them with ${argvText(result.index.resume)}`);
       if (result.finalize) console.log(`Originals are kept. Preview deleting them: ${argvText(result.finalize)}`);
       return;
     }
