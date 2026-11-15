@@ -298,3 +298,145 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
     }, 180_000);
   });
 }
+
+import type { BrainEngine } from '../src/core/engine.ts';
+import { enableBeliefLedger } from '../src/core/belief/coverage.ts';
+import { readEvents } from './helpers/belief-ledger.ts';
+import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
+
+for (const engineCase of testBackends().map(beliefEngineCase).filter(c => c.name === 'postgres')) {
+  describe('cross-source reconcile during covered disable (postgres)', () => {
+    for (const overlap of [false, true]) {
+      test((overlap ? 'target is the outgoing origin' : 'disjoint outgoing origin control') + ' completes both passes with accurate history', async () => {
+        await beliefBrain(async b => {
+          const other = 'cross-source-target-test', incoming = 'notes/cross-source-test';
+          const outgoing = overlap ? target : 'notes/disjoint-test', localTarget = 'companies/falcon-test';
+          const actor = await maintenanceAttribution(b.engine);
+          await b.engine.setConfig('schema_pack', 'gbrain-base-v2');
+          await b.engine.setConfig('link_resolution.cross_source', 'true');
+          await b.engine.transaction(async tx => {
+            await tx.executeRaw("SELECT set_config('gbrain.topology_change','on',true)");
+            await tx.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1)', [other]);
+          });
+          await b.engine.transaction(tx => withCoordinatedWrite(tx, [other], async () => {
+            await tx.putPage(localTarget, { type: 'company', title: 'Falcon Ventures', compiled_truth: 'A synthetic company.' }, { sourceId: other });
+            await tx.putPage(target, { type: 'company', title: 'Zebra Holdings',
+              compiled_truth: overlap ? 'Met Falcon Ventures.' : 'A synthetic company.' }, { sourceId: other });
+            if (!overlap) await tx.putPage(outgoing, { type: 'note', title: 'Separate origin', compiled_truth: 'Met Falcon Ventures.' }, { sourceId: other });
+          }, actor));
+          expect(await enableBeliefLedger(b.engine, other)).toMatchObject({ complete: true, certified: true });
+          await b.put(incoming, beliefPage({ type: 'note', title: 'Cross-source note', prose: 'No names yet.' }));
+          expect(await runMentionPass(b.engine, { sourceId: other })).toMatchObject({ state: 'complete', created: 1 });
+          expect(await runMentionPass(b.engine, { sourceId: b.sourceId })).toMatchObject({ state: 'complete', created: 0 });
+          await b.put(incoming, beliefPage({ type: 'note', title: 'Cross-source note', prose: 'Met Zebra Holdings.' }));
+          await disposePersistenceConsumer(b.engine);
+          const before = await readEvents(b.engine, other);
+          const asserted = before.findLast(e => e.event_type === 'link.asserted')!;
+          expect(asserted.slug).toBe(outgoing);
+          const last = Number((await b.engine.executeRaw<{ id: number }>('SELECT max(id) AS id FROM belief_events'))[0]!.id);
+          const release = Promise.withResolvers<void>();
+          let paused: { pid: number; rows: LinkBatchInput[] } | undefined;
+          let calls = 0, invoked = 0;
+          let enabled: ReturnType<typeof runMentionPass> | undefined, disabled: ReturnType<typeof runMentionPass> | undefined;
+          let results: PromiseSettledResult<unknown>[] = [], barrierError: unknown;
+          let blocked: Array<{ pid: number; query: string; blockers: number[] }> = [];
+          const concurrent = new Proxy(b.engine, { get(engine, key) {
+            if (key === 'transaction') return <T>(run: (tx: BrainEngine) => Promise<T>) => engine.transaction(async tx => {
+              await tx.executeRaw("SET LOCAL statement_timeout = '25s'");
+              return run(new Proxy(tx, { get(inner, member) {
+                if (member === 'addLinksBatch') return async (...args: Parameters<BrainEngine['addLinksBatch']>) => {
+                  if (args[0].some(r => r.from_source_id === b.sourceId && r.to_source_id === other)) {
+                    calls++;
+                    paused = { pid: Number((await inner.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'))[0]!.pid), rows: args[0] };
+                    await release.promise;
+                    invoked++;
+                  }
+                  return inner.addLinksBatch(...args);
+                };
+                const value = Reflect.get(inner, member);
+                return typeof value === 'function' ? value.bind(inner) : value;
+              } }));
+            });
+            const value = Reflect.get(engine, key);
+            return typeof value === 'function' ? value.bind(engine) : value;
+          } });
+          let disabledPid: number | undefined;
+          const disabling = new Proxy(b.engine, { get(engine, key) {
+            if (key === 'transaction') return <T>(run: (tx: BrainEngine) => Promise<T>) => engine.transaction(async tx => {
+              await tx.executeRaw("SET LOCAL statement_timeout = '25s'");
+              disabledPid = Number((await tx.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid'))[0]!.pid);
+              return run(tx);
+            });
+            const value = Reflect.get(engine, key);
+            return typeof value === 'function' ? value.bind(engine) : value;
+          } });
+          const watchdog = setTimeout(() => release.resolve(), 20_000);
+          try {
+            enabled = runMentionPass(concurrent, { sourceId: b.sourceId });
+            void enabled.catch(error => { barrierError = error; });
+            await waitFor(() => { if (barrierError) throw barrierError; return paused !== undefined; },
+              { timeoutMs: 15_000, label: 'enabled pass reaches its real cross-source link insertion' });
+            await b.engine.setConfig('mentions.auto_link', 'false');
+            disabled = runMentionPass(disabling, { sourceId: other });
+            void disabled.catch(error => { barrierError = error; });
+            await waitFor(async () => {
+              if (barrierError) throw barrierError;
+              blocked = await b.engine.executeRaw<{ pid: number; query: string; blockers: number[] }>(
+                `SELECT pid, query, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity
+                  WHERE datname=current_database() AND pid=$2::int AND $1::int=ANY(pg_blocking_pids(pid))`, [paused!.pid, disabledPid ?? null]);
+              return blocked.length > 0;
+            }, { timeoutMs: 15_000, label: 'actual covered disable waits behind the enabled publisher' });
+          } finally {
+            release.resolve();
+            clearTimeout(watchdog);
+            results = await Promise.allSettled([enabled, disabled].filter(p => p !== undefined));
+          }
+          const errors = results.flatMap(r => r.status === 'rejected' ? [{ code: r.reason?.code, message: r.reason?.message, detail: r.reason?.detail }] : []);
+          const afterLinks = await links(b);
+          const status = await b.engine.executeRaw('SELECT source_id, state, pending, error FROM mention_index_status WHERE source_id=ANY($1::text[]) ORDER BY source_id', [[b.sourceId, other]]);
+          const events = (await Promise.all([readEvents(b.engine, b.sourceId, last), readEvents(b.engine, other, last)])).flat();
+          const drift = await Promise.all([b.sourceId, other].map(sourceId => scanBeliefDrift(b.engine, sourceId, { deep: true })));
+          console.log('CROSS_SOURCE_DISABLE_RECEIPT=' + JSON.stringify({ overlap, syntheticInterleaving: true, paused, disabledPid, calls, invoked, blocked,
+            results: results.map(r => r.status === 'fulfilled' ? { status: r.status, value: r.value } : { status: r.status, code: r.reason?.code, message: r.reason?.message, detail: r.reason?.detail }),
+            links: afterLinks, status, events, drift }));
+          expect(calls).toBe(1);
+          expect(invoked).toBe(1);
+          expect(errors.map(e => e.code)).not.toContain('40P01');
+          expect(results.map(r => r.status)).toEqual(['fulfilled', 'fulfilled']);
+          expect(await enabled).toMatchObject({ state: 'complete', created: 1, removed: 0 });
+          expect((await enabled)?.failed ?? 0).toBe(0);
+          expect(await disabled).toMatchObject({ state: 'disabled', removed: 1 });
+          expect(afterLinks).toEqual([{ source_id: b.sourceId, slug: incoming, target_source: other, target,
+            link_type: 'mentions', link_source: 'mentions', link_kind: null }]);
+          expect(status).toEqual([
+            { source_id: other, state: 'disabled', pending: 0, error: null },
+            { source_id: b.sourceId, state: 'complete', pending: 0, error: null },
+          ].sort((a, z) => a.source_id.localeCompare(z.source_id)));
+          expect(await b.engine.getConfig('mentions.auto_link')).toBe('false');
+          for (const table of ['mention_gazetteer_entries', 'page_mention_state']) {
+            expect(await b.engine.executeRaw(`SELECT 1 FROM ${table} WHERE source_id=$1`, [other])).toEqual([]);
+          }
+          expect(await b.engine.executeRaw("SELECT 1 FROM page_aliases WHERE source_id=$1 AND origin IN ('declared','subject')", [other])).toEqual([]);
+          expect(events.map(e => [e.source_id, e.slug, e.event_type, e.origin, e.cause.op])).toEqual([
+            [b.sourceId, incoming, 'link.asserted', 'unmanaged', 'mention_pass'],
+            [other, outgoing, 'link.retracted', 'unmanaged', 'mention_pass'],
+          ]);
+          const retracted = events[1]!;
+          const { origin_field, link_kind, resolution_type, assertion_tense } = asserted.value!;
+          expect(retracted).toMatchObject({ subject_key: asserted.subject_key,
+            prior_hash: valueHash({ origin_field, link_kind, resolution_type, assertion_tense }), value: null, value_hash: null });
+          expect(events[0]!.value_hash).toBe(valueHash(events[0]!.value));
+          for (const e of events) {
+            expect(e.event_key).toBe(eventKeyHex(e.publication_id, e.subject_key, e.event_type));
+            expect(e.cause.request).toBe(e.publication_id);
+            expect(e.state_hash).toBe((await currentStateHash(b.engine, e.source_id, e.source_incarnation, e.slug, { readOnly: true })).hash);
+          }
+          const publications = [...new Set(events.map(e => e.publication_id))];
+          expect(await b.engine.executeRaw('SELECT publication_id FROM belief_commit_marks WHERE publication_id=ANY($1::uuid[])', [publications])).toHaveLength(2);
+          expect(drift.map(d => d.drifted)).toEqual([[], []]);
+          expect((await readEvents(b.engine, other)).filter(e => e.id <= last)).toEqual(before);
+        }, { managed: true, databaseUrl: engineCase.databaseUrl });
+      }, 180_000);
+    }
+  });
+}
