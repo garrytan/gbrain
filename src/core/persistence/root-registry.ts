@@ -38,7 +38,8 @@ export function enclosingGitMetadata(root: string): string | null {
 /**
  * #7988: the git metadata directory of the checkout `root` belongs to: its own `.git`, or an enclosing checkout whose HEAD
  * tracks `root` (a committed subdirectory). A directory a checkout only encloses (a connector clone or a plain directory
- * under a dotfiles home) belongs to none. A Git read that fails for another reason keeps the enclosing checkout.
+ * under a dotfiles home) belongs to none, and so does an enclosing `.git` that is not a repository (#9430). A Git read
+ * that fails for another reason keeps the enclosing checkout.
  */
 export function checkoutGitMetadata(root: string): string | null {
   const own = gitMetadataDirectory(root);
@@ -46,8 +47,15 @@ export function checkoutGitMetadata(root: string): string | null {
   const enclosing = enclosingGitMetadata(root);
   if (!enclosing) return null;
   try { execFileSync('git', ['-C', root, 'rev-parse', '--verify', '--quiet', 'HEAD:./'], { stdio: 'ignore', timeout: 10_000, env: gitChildEnv() }); }
-  catch (error) { if ((error as { status?: unknown }).status === 1) return null; }
+  catch (error) { if ((error as { status?: unknown }).status === 1 || !isGitDirectory(enclosing)) return null; }
   return enclosing;
+}
+/** #9430: Git's own test for a repository directory: HEAD, plus objects/ and refs/ in its common directory (`commondir` in a linked worktree). */
+function isGitDirectory(metadata: string): boolean {
+  if (!existsSync(join(metadata, 'HEAD'))) return false;
+  let common = metadata;
+  try { common = resolve(metadata, readFileSync(join(metadata, 'commondir'), 'utf8').trim()); } catch { /* not a linked worktree */ }
+  return existsSync(join(common, 'objects')) && existsSync(join(common, 'refs'));
 }
 /** An idle refresh must not touch inode metadata, so chmod only when the mode differs (#5297). */
 function ensureMode(path: string, mode: number): void {

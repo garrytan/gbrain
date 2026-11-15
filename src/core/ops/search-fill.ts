@@ -21,8 +21,8 @@ export const withoutFill = (rows: SearchResult[]): SearchResult[] => rows.some(r
  * result, its fill rows placed last, is returned with its evidence delivery
  * only when its rows less the fill, and what compared reads from it, equal the
  * reference's before delivery and (delivery's own per-row record aside) after
- * it. Otherwise the reference is returned and the fill is withheld for this
- * request.
+ * it. Otherwise, or when the rerun or the fill's delivery fails (GST-2786),
+ * the reference is returned and the fill is withheld for this request.
  */
 export async function chooseFill<T extends { results: SearchResult[] }, D extends { rows: SearchResult[] }>(found: SearchResult[], reference: T, limit: number, rerun: (hits: SearchResult[]) => Promise<T>,
   compared: (t: T) => unknown, deliver: (rows: SearchResult[]) => Promise<D>): Promise<T & { delivered?: D }> {
@@ -31,11 +31,13 @@ export async function chooseFill<T extends { results: SearchResult[] }, D extend
   const fill = found.filter(r => r.keyword_fill && !returned.has(page(r))).slice(0, Math.max(0, limit - reference.results.length));
   if (!fill.length) return reference;
   const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
-  const again = await rerun([...withoutFill(found), ...fill]);
+  let again: T;
+  try { again = await rerun([...withoutFill(found), ...fill]); } catch { return reference; }
   const filled = { ...again, results: [...withoutFill(again.results), ...again.results.filter(r => r.keyword_fill)] };
   if (!same(compared({ ...filled, results: withoutFill(filled.results) }), compared(reference))) return reference;
   const base = await deliver(reference.results);
-  const delivered = await deliver(filled.results);
+  let delivered: D;
+  try { delivered = await deliver(filled.results); } catch { return { ...reference, delivered: base }; }
   // Delivery's own per-row record (delivered) is left out: it appears on every row once any row is expanded, and the row's text is compared.
   const text = (rows: SearchResult[]) => rows.map(({ delivered: _record, ...row }: SearchResult & { delivered?: unknown }) => row);
   return same(text(withoutFill(delivered.rows)), text(base.rows)) ? { ...filled, delivered } : { ...reference, delivered: base };

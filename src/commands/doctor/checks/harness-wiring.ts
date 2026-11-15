@@ -38,6 +38,7 @@ import { resolveGbrainBin } from '../../../core/gbrain-bin.ts';
 import { enabledPluginLanes } from '../../../core/bootstrap/plugin-lanes.ts';
 import { claudeConfigDir, claudeUserSettingsPath, opencodeProjectConfigPath } from '../../../core/bootstrap/host-specs.ts';
 import { readReceipt } from '../../../core/bootstrap/format.ts';
+import { CODEX_PROJECT_CONFIG } from '../../../core/bootstrap/adopted-connections.ts';
 import { resolveGbrainHome } from '../../../core/gbrain-home.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import type { Check } from '../../doctor.ts';
@@ -142,10 +143,17 @@ export function parseCodexRegistration(text: string, name: string, source: strin
 const codexConfigPath = () => join(process.env.CODEX_HOME || join(home(), '.codex'), 'config.toml');
 const opencodeConfigPath = () => join(process.env.XDG_CONFIG_HOME || join(home(), '.config'), 'opencode', 'opencode.json');
 
+/** #9398: the user config first, then the receipt workspace's project config (the one `--adopt` records). */
 function codexRegistration(name: string): HarnessRegistration | null {
-  const path = codexConfigPath();
-  if (!existsSync(path)) return null;
-  try { return parseCodexRegistration(readFileSync(path, 'utf8'), name, path); } catch { return null; }
+  const ws = bootstrapReceipt()?.workspace_dir;
+  for (const path of [codexConfigPath(), ...(ws ? [join(ws, CODEX_PROJECT_CONFIG)] : [])]) {
+    if (!existsSync(path)) continue;
+    try {
+      const registration = parseCodexRegistration(readFileSync(path, 'utf8'), name, path);
+      if (registration) return registration;
+    } catch { /* unreadable: try the next config */ }
+  }
+  return null;
 }
 
 function opencodeRegistration(name: string): HarnessRegistration | null {
@@ -177,7 +185,7 @@ function recordedUnreadableRegistrations(harnesses: readonly ReadinessHarness[])
   if (!receipt) return [];
   const configFor = (harness: ReadinessHarness, scope: string): string => harness === 'claude-code'
     ? (scope === 'project' ? join(receipt.workspace_dir, '.mcp.json') : join(home(), '.claude.json'))
-    : harness === 'codex' ? codexConfigPath() : scope === 'project' ? opencodeProjectConfigPath(receipt.workspace_dir) : opencodeConfigPath();
+    : harness === 'codex' ? (scope === 'project' ? join(receipt.workspace_dir, CODEX_PROJECT_CONFIG) : codexConfigPath()) : scope === 'project' ? opencodeProjectConfigPath(receipt.workspace_dir) : opencodeConfigPath();
   const readable = (path: string) => { try { readFileSync(path); return true; } catch { return false; } };
   return receipt.registrations
     .filter((r) => harnesses.includes(r.host) && (r.detail?.split('+') ?? []).includes('mcp'))
