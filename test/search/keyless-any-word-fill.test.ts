@@ -15,7 +15,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { SearchResult } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { operationsByName } from '../../src/core/operations.ts';
-import { chooseFill } from '../../src/core/ops/search.ts';
+import { chooseFill } from '../../src/core/ops/search-fill.ts';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
