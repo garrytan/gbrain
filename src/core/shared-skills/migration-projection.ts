@@ -74,8 +74,7 @@ export async function assertExportProjectionRoundtrip(engine: BrainEngine, page:
     if (changed.length) conflicts.push(`facts row ${fact.row_num}: ${changed.join(', ')}`);
   }
   for (const fact of facts) if (!storedFacts.some(row => row.row_num === fact.row_num)) conflicts.push(`facts row ${fact.row_num}: would insert a missing database row`);
-  const normalized = buildTakeRows(takes.map(take => takesPreparation.toBatchInput(pageId, take,
-    take.active ? null : Number(take.source?.match(/superseded by #(\d+)/)?.[1]) || null))).rows;
+  const normalized = buildTakeRows(takes.map(take => takesPreparation.toCanonicalBatchInput(pageId, take))).rows;
   for (const stored of storedTakes) {
     const take = takes.find(row => row.rowNum === stored.row_num), base = normalized.find(row => row.row_num === stored.row_num);
     if (!take || !base) { conflicts.push(`takes row ${stored.row_num}: missing canonical row`); continue; }

@@ -9,7 +9,7 @@
  * canonical value and never look at other cells, so the validator can
  * recompute what a rule may output for a given before value.
  */
-import { isValidHolder, TAKE_KIND_VALUES } from '../takes-fence.ts';
+import { isValidHolder, supersessionCitation, TAKE_KIND_VALUES } from '../takes-fence.ts';
 import type { FenceKind } from './types.ts';
 
 export const FACTS_COLUMNS = [
@@ -270,7 +270,8 @@ export function appendOriginalKind(context: string, word: string): string {
 }
 
 /** The `superseded by #N` reference a facts context or takes source cell carries. */
-export function supersededRef(text: string): number | null {
+export function supersededRef(text: string, kind: FenceKind = 'facts'): number | null {
+  if (kind === 'takes') return supersessionCitation(text);
   const m = /superseded by #(\d+)/i.exec(text);
   if (!m) return null;
   const n = parseInt(m[1]!, 10);

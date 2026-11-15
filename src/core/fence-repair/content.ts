@@ -17,7 +17,7 @@
  */
 import { parseFactsFence } from '../facts-fence.ts';
 import { stripStrikethrough } from '../fence-shared.ts';
-import { parseTakesFence } from '../takes-fence.ts';
+import { parseTakesFence, rewriteSupersessionCitation } from '../takes-fence.ts';
 import type { MergeOrigins } from './merge.ts';
 import { planRowRules, type CellText, type RowPlan } from './rules.ts';
 import { extractRawRows, rowNumOf, type RawFence, type RawRow, type RawSection } from './raw-rows.ts';
@@ -181,7 +181,7 @@ function claimKey(row: RawRow): string {
 const REF_COLUMN: Record<FenceKind, string> = { facts: 'context', takes: 'source' };
 
 function refOf(kind: FenceKind, w: RowWork): number | null {
-  return supersededRef(w.row.byColumn.get(REF_COLUMN[kind])?.text ?? '');
+  return supersededRef(w.row.byColumn.get(REF_COLUMN[kind])?.text ?? '', kind);
 }
 
 function renumber(pass: Pass, kind: FenceKind): void {
@@ -249,7 +249,9 @@ function localTarget(pass: Pass, kind: FenceKind, w: RowWork, num: number, group
 function refEdit(w: RowWork, kind: FenceKind): void {
   const column = REF_COLUMN[kind];
   const change = w.plan!.changes.find(c => c.column === column);
-  const raw = (change?.raw ?? w.row.byColumn.get(column)?.raw ?? '').replace(/(superseded by #)\d+/i, `$1${w.refTo}`);
+  const before = change?.raw ?? w.row.byColumn.get(column)?.raw ?? '';
+  const raw = kind === 'takes' ? rewriteSupersessionCitation(before, w.refTo!)
+    : before.replace(/(superseded by #)\d+/i, `$1${w.refTo}`);
   if (change) change.raw = raw;
   else w.plan!.changes.push({ column, raw, class: 'renumber' });
 }

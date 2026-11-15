@@ -124,6 +124,21 @@ function reservationRow(rowNum: number): ParsedTake {
 export const TAKES_FENCE_BEGIN = '<!--- gbrain:takes:begin -->';
 export const TAKES_FENCE_END   = '<!--- gbrain:takes:end -->';
 
+/** Last citation wins, case-insensitively; an invalid last target never revives an older one. */
+export function supersessionCitation(source: string | null | undefined): number | null {
+  const match = [...(source ?? '').matchAll(/superseded by #(\d+)/gi)].at(-1);
+  const row = match ? Number(match[1]) : NaN;
+  return Number.isInteger(row) && row > 0 && row <= 2_147_483_647 ? row : null;
+}
+
+/** Rewrite only the effective citation, retaining earlier provenance verbatim. */
+export function rewriteSupersessionCitation(source: string, row: number): string {
+  const last = [...source.matchAll(/superseded by #(\d+)/gi)].at(-1);
+  if (!last) return source;
+  const start = last.index! + last[0].length - last[1].length;
+  return source.slice(0, start) + row + source.slice(start + last[1].length);
+}
+
 /**
  * Holder grammar (v0.32 — EXP-4). The contract documented on ParsedTake.holder
  * lifted to a runtime check.

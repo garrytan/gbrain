@@ -61,6 +61,21 @@ for (let i = 1; i <= 85; i++) {
 const ISSUE_BODY = [facts(FIRST), facts(SECOND)].join('\n');
 
 describe('merge_fences', () => {
+  test('#8390 takes renumbering follows only the last mixed-case citation and validates that same edit', () => {
+    const source = 'memo; superseded by #1; SUPERSEDED BY #2';
+    const before = page([takes([takesRow(2, 'Existing target')]),
+      takes([takesRow(1, '~~Old claim~~', { src: source }), takesRow(2, 'Replacement')])].join('\n'));
+    const r = run(before);
+    expectRepaired(r);
+    const rows = parseTakesFence(r.page.compiled_truth).takes;
+    const target = rows.find(t => t.claim === 'Replacement')!;
+    expect(target.rowNum).not.toBe(2);
+    expect(rows.find(t => t.claim === 'Old claim')!.source).toBe(`memo; superseded by #1; SUPERSEDED BY #${target.rowNum}`);
+    const wrong = page(r.page.compiled_truth.replace(`memo; superseded by #1; SUPERSEDED BY #${target.rowNum}`,
+      `memo; superseded by #${target.rowNum}; SUPERSEDED BY #2`));
+    expect(validate(r, wrong)).toMatchObject({ ok: false });
+  });
+
   test('two balanced facts fences merge into one: duplicates dropped, collisions renumbered, the reference follows, the second heading goes', () => {
     const r = run(page(ISSUE_BODY));
     expect(classes(r)).toEqual(['merge_fences', 'renumber']);

@@ -45,6 +45,7 @@ import {
   renderTakesFence,
   upsertTakeRow,
   supersedeRow,
+  supersessionCitation,
   TAKES_FENCE_BEGIN,
   TAKES_FENCE_END,
   type ParsedTake,
@@ -424,7 +425,8 @@ function toBatchInput(pageId: number, t: ParsedTake, supersededBy?: number | nul
 
 /** The row a canonical takes fence projects: an inactive row citing `superseded by #N` points at row N. */
 function toCanonicalBatchInput(pageId: number, t: ParsedTake): TakeBatchInput {
-  return toBatchInput(pageId, t, t.active ? null : Number(t.source?.match(/superseded by #(\d+)/)?.[1]) || null);
+  const target = supersessionCitation(t.source);
+  return toBatchInput(pageId, t, t.active || target === t.rowNum ? null : target);
 }
 
 async function withTakesLock<T>(
