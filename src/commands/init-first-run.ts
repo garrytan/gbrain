@@ -23,7 +23,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { resolveGbrainBin } from '../core/gbrain-bin.ts';
 import { configReadiness, embeddingEnablement, harnessWiringEntry } from '../core/readiness.ts';
 import type { SearchMode } from '../core/search/mode.ts';
-import { costMatrixSentence } from '../core/search/mode-advice.ts';
+import { costMatrixSentence, OPENAI_COST_MATRIX_MODELS } from '../core/search/mode-advice.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 
 export interface InitFirstRunInputs {
@@ -171,7 +171,9 @@ const WRITEBACK_IN_EFFECT = 'agents save only what you ask them to remember, unt
  */
 export function setupFirstRunNotices(initNotices: readonly unknown[], harness: string, opts: { reportBack?: boolean } = {}): Notice[] {
   const bundle = initNotices.find((n): n is Notice => (n as Notice | null)?.code === 'first_run_decisions');
-  const decisions = (bundle?.decisions ?? []).filter(d => d.id !== 'harness_wiring');
+  const matrix = costMatrixSentence(harness === 'Codex' ? OPENAI_COST_MATRIX_MODELS : undefined);
+  const decisions = (bundle?.decisions ?? []).filter(d => d.id !== 'harness_wiring')
+    .map(d => (d.id === 'search_mode' ? { ...d, question: `Which search mode should this brain use? ${matrix}` } : d));
   if (decisions.length === 0) return [];
   const searchMode = decisions.find(d => d.id === 'search_mode');
   const upkeep = decisions.find(d => d.id === 'upkeep');
@@ -189,7 +191,7 @@ export function setupFirstRunNotices(initNotices: readonly unknown[], harness: s
     why: `Setup is complete: the brain is ready and ${harness} is wired, so memory works now. These first-run settings are in effect as listed; none blocks memory or needs a new session to answer. `
       + 'Relay them once, in the reply that reports this install, as the current settings and how to change them; do not hold the install open or end it waiting on an answer. '
       + 'When the user picks an option, run its command. Automatic saving (`writeback`) is separate from setup\'s capture decision (Stop/SessionEnd hooks); while unanswered it comes back in a later session until the user answers or mutes it.',
-    user_message: `gbrain is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''} ${reportBack}${upkeep ? ` ${upkeep.question}` : ''}${searchMode ? ` ${costMatrixSentence()}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
+    user_message: `gbrain is set up and ${harness} is wired, so memory works now.${inEffect.length ? ` In effect: ${inEffect.join('; ')}.` : ''} ${reportBack}${upkeep ? ` ${upkeep.question}` : ''}${searchMode ? ` ${matrix}` : ''} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     decisions,
   }];
 }

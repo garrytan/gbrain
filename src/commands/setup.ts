@@ -564,7 +564,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     if (flags.remove) return await runRemove(flags, receiptRead.setup, paths.receiptPath, brainHome, out);
 
     const hostedUrl = cfg?.remote_mcp?.mcp_url ?? receiptRead.hosted?.mcp_url ?? (receiptRead.hosted ? 'a hosted brain' : undefined);
-    if (hostedUrl) return refuse(hostedConnection(hostedUrl, receiptRead.hosted !== null, flags.name), out);
+    if (hostedUrl) return refuse(hostedConnection(hostedUrl, receiptRead.hosted !== null, flags), out);
     const prior = receiptRead.setup;
     if (prior && prior.gbrain_home !== brainHome) {
       return refuse(ownerConflict('other_install', `The '${flags.name}' connection belongs to the gbrain install at ${prior.gbrain_home}, not ${brainHome}.`, {
@@ -594,7 +594,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     }
     const binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectClaudeSetup(plan); }
-    if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name), out);
+    if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags), out);
 
     const pluginOwner = flags.name === 'gbrain' ? claudePluginProvidesName(claudeUserSettingsPath(), 'gbrain') : null;
     if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'claude-code', flags.stdioMember), out);
@@ -764,7 +764,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     if (flags.remove) return await runCodexRemove(flags, receiptRead.setup, paths.receiptPath, brainHome, out);
 
     const hostedUrl = cfg?.remote_mcp?.mcp_url ?? receiptRead.hosted?.mcp_url ?? (receiptRead.hosted ? 'a hosted brain' : undefined);
-    if (hostedUrl) return refuse(hostedConnection(hostedUrl, receiptRead.hosted !== null, flags.name, 'codex'), out);
+    if (hostedUrl) return refuse(hostedConnection(hostedUrl, receiptRead.hosted !== null, flags, 'codex'), out);
     const prior = receiptRead.setup;
     if (prior && prior.gbrain_home !== brainHome) {
       return refuse(ownerConflict('other_install', `The '${flags.name}' connection belongs to the gbrain install at ${prior.gbrain_home}, not ${brainHome}.`, {
@@ -793,7 +793,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     }
     const binding = entryBinding(flags, found.mcp.stdioMember);
     if (binding.member) { plan = { ...plan, stdioMember: binding.member }; found = inspectCodexSetup(plan); }
-    if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags.name, 'codex'), out);
+    if (found.mcp.state === 'remote') return refuse(hostedConnection(found.mcp.url ?? 'a hosted brain', true, flags, 'codex'), out);
 
     const pluginOwner = codexPluginProvidesName(paths.configPath, flags.name);
     if (pluginOwner && flags.stdioMember !== undefined) return refuse(pluginBindingRefusal(pluginOwner, 'codex', flags.stdioMember), out);
@@ -902,11 +902,12 @@ async function runCodexRemove(flags: SetupFlags, receipt: CodexSetupReceipt | nu
   return finish(out, { harness: 'codex', dryRun: flags.dryRun, remove: true, steps: r.steps, states: [], verify: null, notices: [], notes: r.notes, preserved: r.preserved, instructions, skills, resolver });
 }
 
-function hostedConnection(url: string, wired: boolean, name: string, harness: SetupHarnessId = 'claude-code'): OperationError {
+function hostedConnection(url: string, wired: boolean, flags: Pick<SetupFlags, 'name' | 'skillResolver'>, harness: SetupHarnessId = 'claude-code'): OperationError {
   const label = HARNESS_LABEL[harness];
+  const resolver = flags.skillResolver === 'on' ? ` The skill resolver needs no local brain: set it up with \`gbrain setup ${harness} --skills-index-only --skill-loading resolve\`.` : '';
   return opError('setup_hosted_connection',
-    `This machine already reaches a hosted brain (${url})${wired ? ` and ${label}'s '${name}' entry points at it` : ''}; gbrain setup will not create a second, local brain.`,
-    wired ? 'Nothing to do: the hosted connection is wired. `gbrain doctor --only harness_wiring` verifies it.' : `Connect ${label} to it with \`gbrain connect ${url} --harness ${harness} --install\`.`,
+    `This machine already reaches a hosted brain (${url})${wired ? ` and ${label}'s '${flags.name}' entry points at it` : ''}; gbrain setup will not create a second, local brain.`,
+    (wired ? 'Nothing to do: the hosted connection is wired. `gbrain doctor --only harness_wiring` verifies it.' : `Connect ${label} to it with \`gbrain connect ${url} --harness ${harness} --install\`.`) + resolver,
     { docs: 'docs/guides/repair.md#setup-hosted-connection',
       fix: wired
         ? { argv: ['gbrain', 'doctor', '--only', 'harness_wiring', '--json'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Shows which brain the registration reaches and smoke-tests it.' }

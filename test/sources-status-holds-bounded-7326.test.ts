@@ -5,7 +5,7 @@ import type { GitHoldItem } from '../src/core/persistence/sync-holds.ts';
 const item = (i: number, code: string): GitHoldItem => ({
   path: `notes/file-${String(i).padStart(4, '0')}.md`, code: code as GitHoldItem['code'], message: 'held: a location-only message '.repeat(20),
   slug: null, stale: false, held_since: '2026-01-01T00:00:00Z', docs: 'docs/guides/write-refusals.md',
-  fix: { argv: ['gbrain', 'repair', 'frontmatter', '--source', 'source-a'], why: 'Previews the repair; read-only. '.repeat(10) } as unknown as GitHoldItem['fix'],
+  fix: { argv: ['gbrain', 'repair', 'frontmatter', '--source', 'source-a'], consent: [], actor: 'agent', requires_exclusive: false, why: 'Previews the repair; read-only. '.repeat(10) },
 });
 
 const holds = (n: number): GitHoldStatus => ({

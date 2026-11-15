@@ -22,6 +22,10 @@ export async function pendingUpgradeMigrationsNotice(engine: BrainEngine, comman
     const { loadCompletedMigrations } = await import('../core/preferences.ts');
     if (loadCompletedMigrations().length === 0) return null;
     const summary = migrationLedgerSummary(version, await declinedMigrations(engine));
+    if (summary.wedged.length > 0) {
+      const { wedgedMigrationFix } = await import('../commands/apply-migrations.ts');
+      return { ...migrationsNotice(`Upgrade migration(s) ${summary.wedged.join(', ')} failed several runs in a row and are wedged; the command ran, and apply-migrations --yes will not clear them until the cause is fixed.`), fix: wedgedMigrationFix(summary.wedged) };
+    }
     const pending = [...summary.pending, ...summary.partial];
     if (pending.length === 0) return null;
     const notice = migrationsNotice(`${pending.length} upgrade migration(s) have not finished on this brain yet (${pending.join(', ')}); the command ran, and gbrain apply-migrations --yes --no-autopilot-install finishes the upgrade.`);

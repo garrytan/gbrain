@@ -414,7 +414,7 @@ export function classifyPgAccessError(err: unknown, ctx?: PgAccessContext): PgAc
       transient: row.transient,
       sqlstate: looksLikeSqlstate(code),
       message,
-      remediation: ctx?.url && !looksLikeSupabase(ctx.url) && row.plainRemediation ? row.plainRemediation
+      remediation: ctx?.url && row.plainRemediation && (!looksLikeSupabase(ctx.url) || (row.reason === 'dns_failed' && isSupabasePoolerUrl(ctx.url))) ? row.plainRemediation
         : row.remediation ?? (CODES as Record<string, { suggestion?: string }>)[code ?? '']?.suggestion ?? UNKNOWN_REMEDIATION,
       fix: contextualFix(row.reason, ctx?.url) ?? row.fix,
       supabase: supabaseHints(ctx?.url, row.reason),

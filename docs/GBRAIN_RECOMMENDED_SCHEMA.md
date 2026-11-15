@@ -306,7 +306,7 @@ whole `Meeting: Agreed on the Q2 plan` text is the summary, because `Note: …`
 and `TODO: …` are ordinary prose. gbrain's own writers (`add_timeline_entry`,
 the extractors) keep writing the em dash.
 
-All sections are optional — include what you have, leave empty sections as `[No data yet]` rather than omitting them. **The structure itself is a prompt for future enrichment.** When a section says `[No data yet]`, the agent knows what to look for next time it encounters this person.
+All sections are optional — include what you have and omit a section until there is something to put under it (`gbrain lint` flags an empty section, `[No data yet]` included). **The template itself is a prompt for future enrichment.** A section the page lacks tells the agent what to look for next time it encounters this person.
 
 The principle: facts are table stakes. Context is the value.
 
@@ -631,7 +631,7 @@ Each cron job is essentially: "wake up, read a skill, do the work, post results 
 
 **Weekly:**
 - **Brain lint** — run the full maintenance pass: contradictions, stale pages, orphans, missing cross-references, MECE filing violations. Post a report.
-- **Enrichment sweep** — find brain pages that haven't been enriched in 90+ days, or pages with many `[No data yet]` sections. Queue them for re-enrichment.
+- **Enrichment sweep** — find brain pages that haven't been enriched in 90+ days, or pages missing many of their type's template sections. Queue them for re-enrichment.
 - **Contact sync** — pull recent additions from your contacts, cross-reference with brain. Create pages for significant new contacts.
 
 ### How crons feed the brain
@@ -943,7 +943,7 @@ RAG re-derives knowledge from scratch on every query. The brain pre-computes syn
 - **Cross-references are pre-built.** You don't need the LLM to discover that Person A works at Company B and was in Meeting C — that's already linked.
 - **Contradictions are pre-flagged.** When new data conflicts with old data, the agent resolves or flags it during ingest, not at query time.
 - **The compilation is persistent.** Each source ingested makes the brain richer. Nothing is thrown away or re-derived.
-- **The structure itself is a prompt.** Empty sections ("What They Believe: [No data yet]") tell the agent what to look for next.
+- **The template itself is a prompt.** A template section the page lacks ("What They Believe") tells the agent what to look for next.
 
 ## Page Lifecycle
 

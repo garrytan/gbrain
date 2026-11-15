@@ -869,6 +869,14 @@ describe('GitHub Latest release', () => {
     expect(back.writes).toHaveLength(1);
   });
 
+  test('a forward promotion that cannot read the current Latest leaves it alone and says so (#9408)', async () => {
+    const h = harness();
+    const ghApi = h.deps.ghApi;
+    h.deps.ghApi = async path => { if (path.endsWith('/releases/latest')) throw new Error(`gh api ${path} failed: HTTP 502: Bad Gateway`); return ghApi(path); };
+    await refusedAsync(promote(h.deps, inputs()), /stable now points at v0\.60\.361\.0, but GitHub's current Latest release could not be read \(gh api .* HTTP 502.*\), so Latest was left alone; run `bun scripts\/release-channel\.ts backfill --apply`/);
+    expect(h.writes).toEqual([]);
+  });
+
   test('a release with no id refuses before anything moves', async () => {
     const h = harness({ release: { draft: false } });
     await refusedAsync(promote(h.deps, inputs()), /has no id, so it cannot be marked Latest/);
