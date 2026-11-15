@@ -240,8 +240,8 @@ export function archiveMessageId(m: { role: string; timestamp: string; text: str
 
 const daySignature = (ids: Iterable<string>) => sha256([...new Set(ids)].sort().join(','));
 
-async function configInt(engine: BrainEngine, key: string, fallback: number): Promise<number> {
-  const n = Number((await engine.getConfig(key))?.trim());
+function positiveInt(value: string | null, fallback: number): number {
+  const n = Number(value?.trim());
   return Number.isSafeInteger(n) && n > 0 ? n : fallback;
 }
 
@@ -281,7 +281,7 @@ function machineTimeZone(): string {
 /** The pinned timezone, or the one the first run will pin. */
 async function archiveTimeZone(engine: BrainEngine, sourceId: string): Promise<{ timezone: string; pinned: boolean; configured: string }> {
   const configured = (await engine.getConfig(ARCHIVE_TIMEZONE_KEY))?.trim() || machineTimeZone();
-  const pinned = (await engine.getConfig(PIN_PREFIX + sourceId))?.trim();
+  const pinned = (await engine.getConfig(`${PIN_PREFIX}${sourceId}`))?.trim();
   return pinned ? { timezone: pinned, pinned: true, configured } : { timezone: assertTimeZone(configured), pinned: false, configured };
 }
 
@@ -313,9 +313,8 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
  * anything, then the new audience is recorded. A source whose rules live in git is left to its access.yml.
  */
 async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
-  const key = AUDIENCE_PREFIX + sourceId;
   const now = privacy.shared ? 'shared' : 'personal';
-  const recorded = await engine.getConfig(key);
+  const recorded = await engine.getConfig(`${AUDIENCE_PREFIX}${sourceId}`);
   if (recorded === now) return;
   if (privacy.shared && !privacy.owner) return;
   if (privacy.shared && recorded === 'personal' && (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) {
@@ -331,7 +330,7 @@ async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy:
       await policy.proposeRevision(engine, sourceId, [...current.filter(r => r.prefix !== rule.prefix), rule], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
     }
   }
-  await engine.setConfig(key, now);
+  await engine.setConfig(`${AUDIENCE_PREFIX}${sourceId}`, now);
 }
 
 function isGitRepo(path: string | null): boolean {
@@ -478,7 +477,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   let to: string;
   if (opts.mode === 'run') {
     to = today;
-    from = addDays(today, -(await configInt(engine, ARCHIVE_RUN_WINDOW_KEY, DEFAULT_RUN_WINDOW_DAYS)));
+    from = addDays(today, -(positiveInt(await engine.getConfig(ARCHIVE_RUN_WINDOW_KEY), DEFAULT_RUN_WINDOW_DAYS)));
   } else {
     if (!opts.from || !DAY_RE.test(opts.from) || (opts.to && !DAY_RE.test(opts.to))) {
       const { opError } = await import('../ops/contract.ts');
@@ -559,16 +558,16 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   // A day held in the ledger for every conversation on it is retried on every backfill run without counting against
   // the cap, and a day that fails during this run hands its slot to the next older day.
   const heldDays = new Set([...allDays].filter(day => items.every(it => !it.days.includes(day) || !!ledger.get(it.entry.harness + '.' + it.hash + '.' + day)?.held)));
-  const cap = opts.mode === 'backfill' ? await configInt(engine, ARCHIVE_BACKFILL_CAP_KEY, DEFAULT_BACKFILL_DAYS_PER_RUN) : 0;
+  const cap = opts.mode === 'backfill' ? positiveInt(await engine.getConfig(ARCHIVE_BACKFILL_CAP_KEY), DEFAULT_BACKFILL_DAYS_PER_RUN) : 0;
   const ordered = [...allDays].filter(d => !heldDays.has(d)).sort().reverse();
 
   const redact = opts.redact ?? ((s: ParsedSession) => redactSession(s, { patterns }));
   const pageCeiling = dryRun ? Math.floor(PAGE_MAX_BYTES * PAGE_CEILING_FILL) : await transcriptPageCeiling(engine);
-  const quietMs = (await configInt(engine, ARCHIVE_QUIET_MINUTES_KEY, DEFAULT_QUIET_MINUTES)) * 60_000;
+  const quietMs = positiveInt(await engine.getConfig(ARCHIVE_QUIET_MINUTES_KEY), DEFAULT_QUIET_MINUTES) * 60_000;
   const groups = new Map<string, boolean>();
   const pending: ArchiveDayOutcome[] = [];
   const pendingKey = INDEX_PENDING_PREFIX + sourceId;
-  const touched = new Set<string>(dryRun ? [] : await readDays(engine, pendingKey));
+  const touched = new Set<string>(dryRun ? [] : readDays(await engine.getConfig(`${INDEX_PENDING_PREFIX}${sourceId}`)));
   let batch: DayWrite[] = [];
   let batchBytes = 0;
   const flushBatch = async () => {
@@ -733,9 +732,9 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
   return result;
 }
 
-async function readDays(engine: BrainEngine, key: string): Promise<string[]> {
+function readDays(value: string | null): string[] {
   try {
-    const days = JSON.parse((await engine.getConfig(key)) ?? '[]') as unknown;
+    const days = JSON.parse(value ?? '[]') as unknown;
     return Array.isArray(days) ? days.filter((d): d is string => typeof d === 'string' && DAY_RE.test(d)) : [];
   } catch {
     return [];
@@ -844,7 +843,7 @@ export interface ArchiveStatus {
 
 export async function archiveStatus(engine: BrainEngine, opts: { sourceId?: string; readers?: ArchiveReader[] } = {}): Promise<ArchiveStatus> {
   const { sourceId } = await effectiveSource(engine, opts.sourceId);
-  const pinned = (await engine.getConfig(PIN_PREFIX + sourceId))?.trim() || null;
+  const pinned = (await engine.getConfig(`${PIN_PREFIX}${sourceId}`))?.trim() || null;
   const configured = (await engine.getConfig(ARCHIVE_TIMEZONE_KEY))?.trim() || machineTimeZone();
   const entries = await readArchiveLedger(engine, sourceId);
   const out: ArchiveStatus = {
@@ -901,8 +900,14 @@ function legacyFiles(dir: string, base = dir, depth = 0, out: string[] = []): st
 function frontmatterField(head: string, field: string): string | null {
   const m = /^---\r?\n([\s\S]*?)\r?\n---/.exec(head);
   if (!m) return null;
-  const line = new RegExp('^' + field + ':\\s*["\']?([^"\'\\r\\n]+)', 'm').exec(m[1]!);
-  return line ? line[1]!.trim() : null;
+  for (const line of m[1]!.split(/\r?\n/)) {
+    if (!line.startsWith(field + ':')) continue;
+    const value = line.slice(field.length + 1).trim().replace(/^["']/, '');
+    const end = value.search(/["']/);
+    const out = (end < 0 ? value : value.slice(0, end)).trim();
+    return out || null;
+  }
+  return null;
 }
 
 /**
