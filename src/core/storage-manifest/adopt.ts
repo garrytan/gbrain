@@ -62,13 +62,20 @@ export function pendingWrite(item: string, error: unknown): PendingWrite | null 
   return receipt ? { item, request_id: receipt.request_id, state: receipt.state, poll: ['gbrain', 'write-request', receipt.request_id] } : null;
 }
 
+/** The receipt id of a committed write's response, to report beside the record it wrote. */
+function receiptId(response: unknown): { request_id?: string } {
+  const id = (response as { request_id?: unknown } | null)?.request_id;
+  return typeof id === 'string' ? { request_id: id } : {};
+}
+
 /** What a run changed: an accepted pending write counts as a change, and as unfinished. */
 export function sideEffects(wrote: boolean, unfinished: boolean): SideEffects {
   return !wrote ? 'none' : unfinished ? 'partial' : 'complete';
 }
 export interface AdoptApplyResult {
   action: 'adopt'; dry_run: false; source_id: string; prefix: string; plan_hash: string; side_effects: SideEffects;
-  results: Array<{ slug: string; card_id: string | null; outcome: 'registered' | 'retagged' | 'skipped' | 'conflict' }>;
+  results: Array<{ slug: string; card_id: string | null; outcome: 'registered' | 'retagged' | 'skipped' | 'conflict'; request_id?: string }>;
+  counts: { adopted: number; skipped: number; refused: number; pending: number };
   conflicts: string[]; failure?: StepFailure; pending?: PendingWrite[]; rerun?: string[]; finalize?: string[];
 }
 export interface FinalizeEntry { slug: string; card_id: string | null; state: 'delete' | 'deleted' | 'unverified' | 'not_adopted'; other_sections?: string[]; unread_tail?: boolean; content?: string }
@@ -313,11 +320,11 @@ export async function applyAdopt(ctx: OperationContext, opts: AdoptOptions & { e
     if (entry.state === 'conflict' || entry.state === 'adopted') { results.push({ slug: entry.slug, card_id: entry.card_id, outcome: entry.state === 'conflict' ? 'conflict' : 'skipped' }); continue; }
     try {
       if (entry.state === 'register') {
-        await registerCard(ctx, entry.card!, 'adopt', undefined, entry.labels!);
-        results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'registered' });
+        const registered = await registerCard(ctx, entry.card!, 'adopt', undefined, entry.labels!);
+        results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'registered', ...receiptId(registered.write) });
       }
-      await submitPageMutation(ctx, { operation: 'add_tag', params: { slug: entry.slug, tag: ADOPTED_TAG, source_id: opts.sourceId } });
-      results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'retagged' });
+      const tagged = await submitPageMutation(ctx, { operation: 'add_tag', params: { slug: entry.slug, tag: ADOPTED_TAG, source_id: opts.sourceId } });
+      results.push({ slug: entry.slug, card_id: entry.card_id, outcome: 'retagged', ...receiptId(tagged) });
     } catch (error) {
       const held = pendingWrite(entry.slug, error);
       if (held) { pending.push(held); continue; }
@@ -329,6 +336,8 @@ export async function applyAdopt(ctx: OperationContext, opts: AdoptOptions & { e
   const wrote = pending.length > 0 || results.some((r) => r.outcome === 'registered' || r.outcome === 'retagged');
   return { action: 'adopt', dry_run: false, source_id: opts.sourceId, prefix: opts.prefix, plan_hash: plan.plan_hash,
     side_effects: sideEffects(wrote, !!failure || pending.length > 0), results,
+    counts: { adopted: new Set(results.filter((r) => r.outcome === 'retagged').map((r) => r.slug)).size, skipped: results.filter((r) => r.outcome === 'skipped').length,
+      refused: results.filter((r) => r.outcome === 'conflict').length + (failure ? 1 : 0), pending: pending.length },
     conflicts: results.filter((r) => r.outcome === 'conflict').map((r) => r.slug),
     ...(failure ? { failure } : {}), ...(pending.length ? { pending } : {}),
     ...(failure || pending.length ? { rerun } : { finalize: [...adoptArgv(opts), '--finalize'] }) };

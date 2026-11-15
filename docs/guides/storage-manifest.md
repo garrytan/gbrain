@@ -76,7 +76,8 @@ Agents that archived before the shelf existed often kept interim pages: `type: s
 
 A rerun skips cards already on the shelf that match and originals already tagged. A card on the shelf that differs is
 a conflict (a card without the original's access labels too): it is reported and never overwritten, and its original
-stays untagged. Every apply reports `side_effects: none | partial | complete`; a run that stopped part way prints the
+stays untagged. Every apply reports `side_effects: none | partial | complete`; an adopt apply also reports `counts`
+(`adopted`, `skipped`, `refused`, `pending`) and, on each `results` row that wrote, the write's `request_id`. A run that stopped part way prints the
 command that finishes it. A write gbrain accepted that has not committed yet is listed under `pending` with its
 receipt: poll it with `gbrain write-request <id>` (the command exits 10) and rerun once it has committed, never submit
 it again.
