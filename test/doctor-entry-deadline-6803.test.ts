@@ -26,7 +26,7 @@ import postgres from '#postgres';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { buildChecks, type Check } from '../src/commands/doctor.ts';
-import { CHEAP_INCIDENT_CHECKS, DOCTOR_CHECK_REGISTRY, runDoctorRegistry } from '../src/commands/doctor/registry.ts';
+import { CHEAP_INCIDENT_CHECKS, DOCTOR_CHECK_REGISTRY, LOST_WRITE_CHECKS, runDoctorRegistry } from '../src/commands/doctor/registry.ts';
 import { connectionGateEntry } from '../src/commands/doctor/checks/db-connection.ts';
 import { frontmatterEntry } from '../src/commands/doctor/checks/content-quality.ts';
 import { homeDirInWorktreeEntry } from '../src/commands/doctor/checks/local-audits.ts';
@@ -101,6 +101,18 @@ test('C2: every entry that emits a cheap incident check runs before the first fu
   expect(after.slice(firstScan).filter(cheap).map((e) => e.name)).toEqual([]);
   const emitted = new Set(DOCTOR_CHECK_REGISTRY.flatMap((e) => e.emits));
   expect([...CHEAP_INCIDENT_CHECKS].filter((n) => !emitted.has(n))).toEqual([]);
+});
+
+test('GBRA-541: every entry that emits a lost-write check runs right after the privacy check, before the full scans', () => {
+  const gate = DOCTOR_CHECK_REGISTRY.indexOf(connectionGateEntry);
+  const after = DOCTOR_CHECK_REGISTRY.slice(gate + 1);
+  const lostWrite = (e: DoctorEntry) => e.emits.some((n) => LOST_WRITE_CHECKS.has(n));
+  const early = (e: DoctorEntry) => e.tier === 'ops' || e.emits.some((n) => CHEAP_INCIDENT_CHECKS.has(n) || n === 'derived_visibility') || lostWrite(e);
+  const firstOther = after.findIndex((e) => !early(e));
+  expect(firstOther).toBeGreaterThan(0);
+  expect(after.slice(firstOther).filter(lostWrite).map((e) => e.name)).toEqual([]);
+  const emitted = new Set(DOCTOR_CHECK_REGISTRY.flatMap((e) => e.emits));
+  expect([...LOST_WRITE_CHECKS].filter((n) => !emitted.has(n))).toEqual([]);
 });
 
 test('#8979: a local probe that hangs is killed at its entry deadline instead of blocking the run past it', async () => {
