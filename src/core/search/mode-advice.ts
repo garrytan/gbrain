@@ -109,9 +109,8 @@ export function agentBannerLines(applied: SearchMode, reason: string): string[] 
     '═══════════════════════════════════════════════════════════════',
     '',
     ...agentBlock({
-      ask: 'Which search mode should this brain use: conservative, balanced or tokenmax?',
-      why: `The default above (${applied}) was auto-selected from the Reason line. Before continuing, show this matrix to your operator and ask which mode they want; INSTALL_FOR_AGENTS.md Step 3.5 has the full protocol.`,
-      next: 'ask_user: if the operator picks differently, run `gbrain config set search.mode <conservative|balanced|tokenmax>` (or `gbrain init --search-mode <mode>` at install time).',
+      why: `Search mode ${applied} is in effect, auto-selected from the Reason line. Tell the operator the mode in effect and this matrix in the reply that reports the install; nothing waits on an answer (INSTALL_FOR_AGENTS.md Step 3.5).`,
+      next: 'If the operator picks another mode, run `gbrain config set search.mode <conservative|balanced|tokenmax>`.',
       verify: 'gbrain search modes',
     }).trimEnd().split('\n'),
     '',

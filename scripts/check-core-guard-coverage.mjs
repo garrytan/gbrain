@@ -52,6 +52,7 @@ const EXEMPT = {
   'src/core/repair/unwithdrawn-facts.ts': 'owner-run, preview-bound repair putting expired fact rows back to their recorded before-state (row number and lifecycle); page text is unchanged',
   'src/core/repair/redacted-facts.ts': 'owner-run, preview-bound repair rewriting the text of database-only fact rows to words a source page proves; page text is unchanged (fenced rows publish through put_page, preparePageMutation)',
   'src/core/repair/visibility.ts': 'owner-run, preview-first repair that only tightens database-only fact rows from world to private; page text is unchanged (fenced rows and page labels publish through put_page, preparePageMutation)',
+  'src/core/repair/purged-page-facts.ts': 'owner-run repair expiring fact rows of pages that no longer exist (shrinks only; no page text)',
   'src/core/repair/conversation-labels.ts': 'owner-run repair expiring fact rows and writing an outcome row (shrinks only; page text unchanged)',
   'src/core/shared-skills/publication.ts': 'skill bundles, not pages',
   'src/core/persistence/prepared-import.ts': 'type definitions shared by import preparers; prepares nothing itself',

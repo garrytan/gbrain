@@ -2216,6 +2216,20 @@
           {
             "category": "brain",
             "details": {
+              "ambiguous": 0,
+              "capped": false,
+              "docs": "docs/guides/repair.md#purged-page-facts",
+              "evidenced": 0,
+              "repair": "purged-page-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact extracted from a page is left active after that page was purged.",
+            "name": "purged_page_facts",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
               "capped": false,
               "docs": "docs/guides/repair.md#conversation-labels",
               "evidenced": 0,
@@ -7583,6 +7597,20 @@
             "elapsed_ms": "<volatile>",
             "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
             "name": "unwithdrawn_facts",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "ambiguous": 0,
+              "capped": false,
+              "docs": "docs/guides/repair.md#purged-page-facts",
+              "evidenced": 0,
+              "repair": "purged-page-facts"
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "No fact extracted from a page is left active after that page was purged.",
+            "name": "purged_page_facts",
             "status": "ok"
           },
           {

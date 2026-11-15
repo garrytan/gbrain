@@ -97,8 +97,8 @@ test('classic: with one committable and one skipped path, the first is committed
   expect(e.fix?.next).toBe('report');
   expect(headBlob(f, 'people/bob-example.md')).toContain('Second version.');
   expect(remoteTip(f)).toBe(head(f));
-  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string }[]; committed: string; pushed: string };
-  expect(detail.skipped).toEqual([{ path: nested, reason: 'not_staged' }]);
+  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string; why: string }[]; committed: string; pushed: string };
+  expect(detail.skipped).toEqual([{ path: nested, reason: 'not_staged', why: 'it sits inside the nested Git repository imports, so git add stages nothing for it' }]);
   expect(detail.committed).toBe(head(f));
   expect(detail.pushed).toBe(head(f));
   expect(readFileSync(join(f.home, '.gbrain', 'brain-push.log'), 'utf8')).toContain(`[push] ok main ${head(f).slice(0, 7)}`);
@@ -113,8 +113,9 @@ test('classic: a skip-worktree entry under a named directory and a page inside a
   expect(r.exitCode).not.toBe(0);
   const e = envelope(r.stdout);
   expect(e.code).toBe('commit_paths_skipped');
-  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string }[] };
-  expect(detail.skipped).toEqual([{ path: 'imports/carol-example.md', reason: 'not_staged' }, { path: 'people/bob-example.md', reason: 'skip_worktree' }]);
+  const detail = JSON.parse(e.detail!) as { skipped: { path: string; reason: string; why: string }[] };
+  expect(detail.skipped).toEqual([{ path: 'imports/carol-example.md', reason: 'not_staged', why: 'it sits inside the nested Git repository imports, so git add stages nothing for it' },
+    { path: 'people/bob-example.md', reason: 'skip_worktree', why: 'the index entry carries the skip-worktree flag, so git add does not see the edit on disk' }]);
   expect(head(f)).toBe(before);
 }, 60_000);
 

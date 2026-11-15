@@ -156,7 +156,27 @@ export interface BinarySelfUpdateDeps {
 }
 
 async function defaultFetchRelease(): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
-  return fetchReleaseJson('https://api.github.com/repos/garrytan/gbrain/releases/latest');
+  return fetchAlphaRelease();
+}
+
+/**
+ * The alpha channel's release: the version in VERSION at the `latest-stable` tag (which release.yml moves on every
+ * published release), then that exact release. Not `releases/latest`: GitHub's Latest is the stable release, and
+ * every batch release is published as a pre-release, so reading it would quietly put alpha binaries on stable.
+ */
+export async function fetchAlphaRelease(fetchImpl: typeof fetch = fetch): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
+  try {
+    const res = await fetchImpl('https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION', {
+      headers: { 'User-Agent': 'gbrain-self-upgrade' },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) return null;
+    const version = /^v?(\d+\.\d+\.\d+(?:\.\d+)?)(?:[-+][0-9A-Za-z.-]+)?$/.exec(((await res.text()).slice(0, 256).trim().split('\n')[0] ?? '').trim())?.[1];
+    if (!version) return null;
+    return fetchReleaseJson(`https://api.github.com/repos/garrytan/gbrain/releases/tags/v${version}`, fetchImpl);
+  } catch {
+    return null;
+  }
 }
 
 /** GBRA-175: one named release (the stable channel's), in the same shape as the latest release. */
@@ -164,9 +184,9 @@ export function fetchReleaseByTag(tag: string): Promise<{ tag: string; assets: R
   return fetchReleaseJson(`https://api.github.com/repos/garrytan/gbrain/releases/tags/${encodeURIComponent(tag)}`);
 }
 
-async function fetchReleaseJson(url: string): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
+async function fetchReleaseJson(url: string, fetchImpl: typeof fetch = fetch): Promise<{ tag: string; assets: ReleaseAsset[] } | null> {
   try {
-    const res = await fetch(url, {
+    const res = await fetchImpl(url, {
       headers: { 'User-Agent': 'gbrain-self-upgrade' },
       signal: AbortSignal.timeout(5_000),
     });

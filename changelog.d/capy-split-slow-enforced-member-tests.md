@@ -1,7 +1,0 @@
-**Two slow test files are split along their own seams, so no file comes near CI's 300-second per-file limit.** `test/enforced-member.serial.test.ts` took 185 to 191 s on a 4-vCPU machine, and CI killed it at 300 s on slow runners with no assertion failing. It is now three serial files that take at most 77 s each. `test/setup-serves-several.test.ts` took 193 to 240 s and is now three unit files that take at most 78 s each. The tests and assertions are unchanged (27 and 645, and 27 and 270), and no product code, timeout, budget or retry count changed.
-
-### Tests
-
-- `test/enforced-member.serial.test.ts` keeps the reads and refusals. Writes and the git commit-push suite move to `test/enforced-member-writes.serial.test.ts`, and the `access.enforced_member_writes` case moves to `test/enforced-member-writes-setting.serial.test.ts`. Each file seeds its own brain through `test/helpers/enforced-member-brain.ts`.
-- The spawned `gbrain setup` cases split out of `test/setup-serves-several.test.ts` into `test/setup-serves-stdio-member.test.ts` and `test/setup-serves-upgrade.test.ts`, with the shared box in `test/helpers/setup-serves-box.ts`.
-- The new serial files get rows in `scripts/serial-files.tsv`, `test/postgres-unit-arms.txt` and `scripts/postgres-arm-weights.json`. The unit and serial weight maps get no hand-added rows, because they must match the miner's metadata, so new files use the p75 estimate until the next re-mine.

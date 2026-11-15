@@ -134,7 +134,7 @@ function world(w: World) {
         const run = runs.find(r => path.endsWith(`/${r.id}`))!;
         return { status: run.status, conclusion: run.conclusion, path: '.github/workflows/production-soak.yml', head_sha: run.head_sha };
       }
-      if (path.includes('/releases/tags/')) return { draft: false };
+      if (path.includes('/releases/tags/')) return { draft: false, id: 42 };
       if (path.endsWith('/permission')) return { permission: 'none' };
       throw new Error(`unexpected api ${path}`);
     },
@@ -143,6 +143,7 @@ function world(w: World) {
     log: line => logs.push(line),
     summary: () => {},
     async ghPost(path, body) { posts.push({ path, body }); },
+    async ghApiWrite() { return {}; },
     async scoreboards(id) { return runs.find(r => r.id === id)?.boards ?? CLEAN; },
   };
   return { deps, posts, pushes, api, logs, tags, record: () => (record.head ? objects[record.head] : undefined) };

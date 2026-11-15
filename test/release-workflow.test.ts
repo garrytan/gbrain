@@ -2,14 +2,14 @@
  * Contract pin between .github/workflows/release.yml and
  * src/core/binary-self-update.ts (#3521).
  *
- * Binary installs download upgrade assets from `releases/latest` by the exact
+ * Binary installs download upgrade assets from the release `latest-stable` names, by the exact
  * names expectedAssetName() returns. If the workflow's build matrix or the
  * release `files:` list drifts from those names, self-update silently degrades
  * to notify-only (`no_asset`) for everyone — this test is the guard.
  */
 import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EXPECTED_BUILDER_IDS, expectedAssetName } from '../src/core/binary-self-update.ts';
@@ -215,5 +215,52 @@ describe('release.yml publish-template skip is visible (D-10)', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('which release GitHub calls Latest', () => {
+  test('release.yml publishes every batch release as a pre-release that never becomes Latest', () => {
+    const step = WORKFLOW.slice(WORKFLOW.indexOf('- name: Create release'), WORKFLOW.indexOf('- name: Advance latest-stable'));
+    expect(step).toMatch(/^\s+prerelease: true$/m);
+    expect(step).toMatch(/^\s+make_latest: 'false'$/m);
+  });
+
+  test('a hand re-run that repairs the current stable release refuses instead of turning it back into a pre-release', () => {
+    const job = WORKFLOW.slice(WORKFLOW.indexOf('\n  release:\n'));
+    const start = job.indexOf('- name: Refuse to republish the current stable release');
+    expect(start).toBeGreaterThan(-1);
+    expect(start).toBeLessThan(job.indexOf('- name: Create release'));
+    const step = job.slice(start, job.indexOf('- name: Create release'));
+    expect(step).toContain('RELEASE_SHA: ${{ needs.ci-gate.outputs.sha }}');
+    const script = step.slice(step.indexOf('run: |') + 'run: |'.length).split('\n').map(l => l.replace(/^ {10}/, '')).join('\n');
+    const dir = mkdtempSync(join(tmpdir(), 'release-stable-guard-'));
+    try {
+      writeFileSync(join(dir, 'git'), '#!/bin/sh\n[ "$1 $2 $3" = "ls-remote origin refs/tags/stable^{}" ] || exit 9\nprintf "%s\\trefs/tags/stable^{}\\n" "$STABLE_SHA"\n', { mode: 0o755 });
+      const runWith = (stable: string) => {
+        try {
+          return { code: 0, out: execFileSync('bash', ['-c', script], { env: { PATH: `${dir}:/usr/bin:/bin`, RELEASE_SHA: 'a'.repeat(40), RELEASE_VERSION: '0.60.722.0', STABLE_SHA: stable }, encoding: 'utf8', stdio: 'pipe' }) };
+        } catch (e) {
+          const err = e as { status: number; stdout: string; stderr: string };
+          return { code: err.status, out: err.stdout + err.stderr };
+        }
+      };
+      const stable = runWith('a'.repeat(40));
+      expect(stable.code).toBe(1);
+      expect(stable.out).toContain('v0.60.722.0 is the current stable release');
+      expect(runWith('b'.repeat(40))).toEqual({ code: 0, out: '' });
+      expect(runWith('')).toEqual({ code: 0, out: '' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('no workflow reads releases/latest, and the macOS signature check takes its tag from latest-stable', () => {
+    const dir = join(ROOT, '.github/workflows');
+    for (const file of readdirSync(dir)) {
+      const body = readFileSync(join(dir, file), 'utf8').split('\n').filter(l => !l.trimStart().startsWith('#')).join('\n');
+      expect({ file, reads: body.includes('releases/latest') }).toEqual({ file, reads: false });
+    }
+    const mac = readFileSync(join(dir, 'macos-validation.yml'), 'utf8');
+    expect(mac).toContain('https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION');
   });
 });

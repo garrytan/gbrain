@@ -887,6 +887,8 @@ export interface SearchResult {
    * strict-match rows.
    */
   keyword_relaxed?: boolean;
+  /** GST-2762: a keyword_relaxed row the keyless any-word fill added (SearchOpts.orFill); it only adds pages, after the rest. */
+  keyword_fill?: true;
   /** Set on rows search's alias fan-out spliced in: the entity's other name that found this page (search/alias-fanout.ts). */
   matched_alias?: string;
   /** `search` `match: "keyword"`: an enumerated page whose text did not fit the evidence budget keeps its row, without text. */
@@ -1353,18 +1355,15 @@ export interface SearchOpts extends PageReadPolicy {
    */
   sourceIds?: string[];
   /**
-   * fix/title-retrieval-arm (D2, Reviewer F1): opt-in AND→OR keyword-recall
-   * fallback. When true, `searchKeyword` retries ONCE with OR-of-terms after
-   * the strict websearch AND query returns zero rows (strict results always
-   * win when non-empty). Default false/undefined = strict-AND only — the
-   * pre-fix contract. hybridSearch opts in for its keyword arm; precision
-   * consumers (enrichment countMentions, link-extraction resolution, eval
-   * paths) MUST NOT set this: OR-matches would inflate mention counts and
-   * relax link-candidate resolution ("John Smith" matching every John and
-   * every Smith). `searchTitles` has its own page-grain fallback and
-   * ignores this flag.
+   * fix/title-retrieval-arm (D2, Reviewer F1): opt-in AND→OR keyword-recall fallback. When true, `searchKeyword`
+   * retries ONCE with OR-of-terms after the strict websearch AND query returns zero rows (strict rows win when
+   * non-empty); unset = strict-AND only. hybridSearch opts in for its keyword arm; precision consumers
+   * (countMentions, link-extraction resolution, eval paths) MUST NOT: OR-matches inflate mention counts and relax
+   * link resolution ("John Smith" matching every John and every Smith). `searchTitles` ignores this flag.
    */
   orFallback?: boolean;
+  /** GST-2762: with orFallback, fill a short first page of strict rows with the OR retry's rows, after them and tagged `keyword_relaxed`; hybrid sets it only with no embedding provider. */
+  orFill?: boolean;
   /** #6495: hybrid's keyword arm opts in to the Postgres keyword timeout negative cache (postgres-engine/keyword-timeout-cache.ts); PGLite ignores it. */
   keywordTimeoutCache?: boolean;
   /** Keyword `score` query (websearch syntax) while `query` decides the matches (alias fan-out); ignored on the CJK path. */

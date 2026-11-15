@@ -365,12 +365,13 @@ export type PurgeFilter = (page: { source_id: string; slug: string }) => boolean
 
 export async function purgeDeletedPagesCoordinated(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter; release?: readonly number[] } = {}): Promise<DeletedPagePurge> {
   const { release = [], ...purge } = opts;
+  const owed = new Set((await readDerivedOriginParks(engine)).filter(park => park.held_request_id).map(park => park.page_id));
   const carried = await (await import('../repair/origin-carry.ts')).carryPrivateBeforePurge(engine, olderThanHours);
   const origins = originParked(carried.parks);
   // GST-2689: a consented manual purge releases now the parked origins its preview counted, once their carry landed.
   await clearDerivedOriginParks(engine, carried.unparked.filter(origin => release.includes(origin.id)).map(origin => origin.id));
   await faultPoint('purge:after_carry');
-  const result = await purgeExpired(engine, olderThanHours, purge);
+  const result = await purgeExpired(engine, olderThanHours, { ...purge, owed });
   const reparked = new Set(result.blocked.filter(b => b.code === DERIVED_ORIGIN_PARKED_CODE).map(b => `${b.source_id}/${b.slug}`));
   await clearDerivedOriginParks(engine, carried.unparked.filter(origin => !reparked.has(`${origin.source_id}/${origin.slug}`)).map(origin => origin.id));
   const parked = origins.length + (result.origin_parked ?? 0);
@@ -383,7 +384,7 @@ function originParked(parks: DerivedOriginPark[]): DeletedPagePurge['blocked'] {
       + 'the next purge tries again once the cause is fixed (gbrain doctor: derived_origin_parked).' }));
 }
 
-async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter }): Promise<DeletedPagePurge> {
+async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: { retryParked?: boolean; automatic?: boolean; only?: PurgeFilter; owed?: ReadonlySet<number> }): Promise<DeletedPagePurge> {
   const { parkUncarriedInPurge } = await import('../repair/origin-carry.ts');
   if (!await managedPersistenceEnabled(engine)) {
     // #7130: a brain deactivated after managed syncs keeps their tombstones' records and receipts, so the hold applies here too.
@@ -459,7 +460,7 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
       // Restored and deleted again since the scan: its recovery window restarted.
       if (new Date(snapshot.page.deleted_at).getTime() >= new Date(row.cutoff).getTime()) { deferred++; continue; }
       const purged = await submitPageMutation(ctx, { operation: 'delete_page', waitMs: maintenancePublishWaitMs(), params: { slug: row.slug, source_id: row.source_id,
-        purge: true, retention: true, expected_revision: snapshot.revision, request_id: randomUUID() } });
+        purge: true, ...(opts.owed?.has(Number(snapshot.page.id)) ? {} : { retention: true }), expected_revision: snapshot.revision, request_id: randomUUID() } });
       if ((purged.purge_held as { code?: unknown } | undefined)?.code === DERIVED_ORIGIN_PARKED_CODE) {
         reparked.push(...await readDerivedOriginParks(engine).then(parks => parks.filter(park => park.page_id === Number(snapshot.page.id))));
         continue;

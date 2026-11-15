@@ -1,0 +1,1 @@
+`gbrain sources add <id> --path <folder>` no longer needs `--force` for a plain folder outside any git repository: it registers as a plain directory (sync imports its files without Git, a removed file keeps its page). The `not_a_git_repo` refusal now applies only to a path inside a git repository with no committed, tracked content.

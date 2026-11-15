@@ -1229,7 +1229,7 @@ export class PostgresEngine implements BrainEngine {
     // (postgres-engine/search-settings.ts).
     const statementTimeout = await this.keywordStatementTimeoutSetting();
     const runKeyword = (queryText: string, relaxed = false, rankText = queryText) => this.keywordTimeouts.run(opts?.keywordTimeoutCache === true, this,
-      [statementTimeout, relaxed, rawQuery, collapseWebsearchDashRuns(queryText), collapseWebsearchDashRuns(rankText), params.slice(1), opts?.sourceIds ?? null, opts?.sourceId ?? null], () =>
+      [statementTimeout, relaxed, rawQuery, collapseWebsearchDashRuns(queryText), collapseWebsearchDashRuns(rankText), params.slice(1), opts?.sourceIds ?? null, opts?.sourceId ?? null, ...(opts?.orFill ? ['any-word fill'] : [])], () =>
       this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, (tx) => {
         const boundParams = params.map((v, i) => i === 0 ? collapseWebsearchDashRuns(queryText) : i === rankIdx && !opts?.rankQuery ? collapseWebsearchDashRuns(rankText) : v);
         return tx.unsafe(rawQuery, boundParams as Parameters<typeof tx.unsafe>[1]);
@@ -1243,7 +1243,7 @@ export class PostgresEngine implements BrainEngine {
     // relaxes; precision consumers keep the strict-AND contract. #7491: the
     // identifier probe and the relaxed-row tag (#3617 follow-up) live in
     // search/keyword-identifier-probe.ts.
-    return keywordArmRows<Record<string, unknown>>({ query, strict, orFallback: opts?.orFallback, limit, offset, toResult: rowToSearchResult, onIncomplete: opts?.onKeywordIncomplete,
+    return keywordArmRows<Record<string, unknown>>({ query, strict, orFallback: opts?.orFallback, orFill: opts?.orFill, limit, offset, toResult: rowToSearchResult, onIncomplete: opts?.onKeywordIncomplete,
       runProbe: (match, rank) => runKeyword(match, true, rank),
       runHandles: handles => keywordPagesImpl.searchHandlePages((read, settings) => this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, tx => read(scopedRead(this.engineSqlOn(tx))), { alwaysTransaction: true, jitOff: true, settings }), query, handles, opts, limit, { statementTimeout, statementSettings: KEYWORD_STATEMENT_SETTINGS }),
       runRelaxed: async (orQuery) => {
