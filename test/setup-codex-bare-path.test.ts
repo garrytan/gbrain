@@ -146,7 +146,7 @@ describe('the launcher carries the runtime setup ran under, and only when gbrain
     expect(hookLauncherState(launcher, bunDir)).toMatchObject({ state: 'stale', detail: expect.stringContaining(join(bunDir, 'bun')) });
   });
 
-  test('the bun on PATH is recorded when it is this same Bun, so a per-version install directory a Bun upgrade deletes is not', async () => {
+  test('the bun on PATH is recorded when it is this same Bun, so a per-version install directory a Bun upgrade deletes is not', () => {
     const root = mkdtempSync(join(tmpdir(), 'gbrain-launcher-onpath-'));
     roots.push(root);
     const stable = join(root, 'stable', 'bin');
@@ -156,8 +156,8 @@ describe('the launcher carries the runtime setup ran under, and only when gbrain
     symlinkSync(process.execPath, join(stable, 'bun'));
     writeFileSync(join(other, 'bun'), '#!/bin/sh\n');
     chmodSync(join(other, 'bun'), 0o755);
-    await withEnv({ PATH: `${stable}:${BARE_PATH}` }, async () => { expect(launcherRuntimeDir()).toBe(stable); });
-    await withEnv({ PATH: `${other}:${BARE_PATH}` }, async () => { expect(launcherRuntimeDir()).toBe(resolve(process.execPath, '..')); });
+    expect(launcherRuntimeDir(`${stable}:${BARE_PATH}`)).toBe(stable);
+    expect(launcherRuntimeDir(`${other}:${BARE_PATH}`)).toBe(resolve(process.execPath, '..'));
   });
 
   test('setup moves a launcher that records another Bun onto the one it runs under', () => {

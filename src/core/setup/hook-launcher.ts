@@ -76,10 +76,10 @@ const sameFile = (a: string, b: string) => { try { return realpathSync(a) === re
  * The bun on PATH wins when it is this same Bun: execPath is the resolved file, which for Homebrew, mise or asdf sits in
  * a per-version directory that a Bun upgrade deletes, while the PATH entry survives it.
  */
-export function launcherRuntimeDir(): string | null {
+export function launcherRuntimeDir(searchPath?: string): string | null {
   if (!isScriptRuntime() || typeof Bun === 'undefined') return null;
   const self = /^bun(\.exe)?$/i.test(basename(process.execPath)) ? process.execPath : null;
-  const onPath = Bun.which('bun', { PATH: process.env.PATH ?? '' });
+  const onPath = Bun.which('bun', searchPath === undefined ? undefined : { PATH: searchPath });
   const bun = onPath && isAbsolute(onPath) && (self === null || sameFile(onPath, self)) ? onPath : self;
   return bun ? hookShellPath(dirname(bun)) : null;
 }
