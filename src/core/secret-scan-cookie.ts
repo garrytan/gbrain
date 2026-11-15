@@ -16,15 +16,16 @@
  * (`Path=/`, `Max-Age=3600`) are kept. Parsing stops at the first segment
  * that is not `name=value`, so prose (`Cookie: chocolate chip`) is never
  * claimed. A `'` or `,` inside a value and a JSON-escaped `\/` are part of it.
+ * A quoted value may be JSON-escaped (`sid=\"…\"`, `sid=\\\"…\\\"`), and a `-b` on a continued
+ * line of a multi-line curl command (Chrome's "Copy as cURL": every line before it ends in `\`)
+ * counts as a curl argument (`curlContinues`).
  * Values shorter than 8 characters (preference flags such as
  * `theme=dark`), placeholders (`<…>`, `$VAR`, `{…}`, `%VAR%`) and masks (`...`, `***`)
  * are left alone. Every quantifier is bounded; the parse is linear in the line.
- * Not caught: a `-b` on a continued line of a multi-line curl command
- * (Chrome's "Copy as cURL") and a JSON-escaped quoted value (`sid=\"…\"`).
  */
 
 const COOKIE_HEAD_RE = /(?:(?:^|[^A-Za-z0-9_-])(set-)?cookie\\?["'`]?\s{0,4}:|(?:^|\s)(-b|--cookie)(?=[\s=]))[\s=]{0,4}\\?["'`]?/gi;
-const COOKIE_PAIR_RE = /([!#$%&*+.^_|~0-9A-Za-z-]{1,128})=("?)((?:[^\s;"',\\]|[',](?=[^\s;"',\\])|\\\/){0,4096})/y;
+const COOKIE_PAIR_RE = /([!#$%&*+.^_|~0-9A-Za-z-]{1,128})=((?:\\{1,3})?"|)((?:[^\s;"',\\]|[',](?=[^\s;"',\\])|\\\/){0,4096})/y;
 const COOKIE_SEP_RE = /\s{0,4};\s{0,4}/y;
 const PLACEHOLDER_RE = /^(?:[<${[]|%[A-Za-z_][A-Za-z0-9_]{0,64}%$)/;
 const CURL_RE = /(?:^|[^A-Za-z0-9_-])curl(?:\.exe)?(?:\s|$)/i;
@@ -43,27 +44,35 @@ export const COOKIE_VALUE_MIN_CHARS = 8;
 /** Cheap gate before the header regex runs on a line. */
 export const COOKIE_PRECHECK_RE = /cookie|-b\s/i;
 
-/** The cookie values on `line`: `start` of the value, the value, and `from`, where its header starts. */
-export function cookieHeaderValues(line: string): Array<{ start: number; value: string; from: number }> {
+/** True when the line after `line` still belongs to a curl command: `line` ends in `\` and is a curl line or one continued from it (`inCurl`). */
+export function curlContinues(line: string, inCurl: boolean): boolean {
+  return /\\\s{0,4}$/.test(line) && (inCurl || CURL_RE.test(line));
+}
+
+/**
+ * The cookie values on `line`: `start` of the value, the value, and `from`, where its header starts.
+ * `inCurl`: the line continues a curl command (`curlContinues`), so a `-b` on it is curl's.
+ */
+export function cookieHeaderValues(line: string, inCurl = false): Array<{ start: number; value: string; from: number }> {
   const out: Array<{ start: number; value: string; from: number }> = [];
   let curlAt: number | undefined;
   COOKIE_HEAD_RE.lastIndex = 0;
   for (let head = COOKIE_HEAD_RE.exec(line); head !== null; head = COOKIE_HEAD_RE.exec(line)) {
     const setCookie = head[1] !== undefined;
     let at = COOKIE_HEAD_RE.lastIndex;
-    if (head[2] !== undefined && !((curlAt ??= line.search(CURL_RE)) >= 0 && curlAt < head.index)) continue;
+    if (head[2] !== undefined && !inCurl && !((curlAt ??= line.search(CURL_RE)) >= 0 && curlAt < head.index)) continue;
     for (;;) {
       COOKIE_PAIR_RE.lastIndex = at;
       const m = COOKIE_PAIR_RE.exec(line);
       if (m === null) break;
-      const quoted = m[2] === '"';
-      if (quoted && line[COOKIE_PAIR_RE.lastIndex] !== '"') break;
+      const quote = m[2]!;
+      if (quote !== '' && !line.startsWith(quote, COOKIE_PAIR_RE.lastIndex)) break;
       const value = m[3]!;
       if (value.length >= COOKIE_VALUE_MIN_CHARS && !PLACEHOLDER_RE.test(value) && !MASK_RE.test(value)) {
-        out.push({ start: m.index + m[1]!.length + 1 + m[2]!.length, value, from: head.index });
+        out.push({ start: m.index + m[1]!.length + 1 + quote.length, value, from: head.index });
       }
       if (setCookie) break;
-      COOKIE_SEP_RE.lastIndex = COOKIE_PAIR_RE.lastIndex + (quoted ? 1 : 0);
+      COOKIE_SEP_RE.lastIndex = COOKIE_PAIR_RE.lastIndex + quote.length;
       if (COOKIE_SEP_RE.exec(line) === null) break;
       at = COOKIE_SEP_RE.lastIndex;
     }
