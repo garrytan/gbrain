@@ -316,7 +316,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
     expect(applied.applied).toBe(1);
     const lines: string[] = [];
     const spy = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); });
-    try { await runAccessRules(engine, 'rule', ['add', '--slug', 'notes/ruled-example', '--readers', 'alice-example', '--source', 'default', '--yes', '--json'], true); } finally { spy.mockRestore(); }
+    try { await runAccessRules(engine, 'rule', ['add', '--slug', 'notes/ruled-example', '--readers', 'alice-example', '--allow-without-owner', '--source', 'default', '--yes', '--json'], true); } finally { spy.mockRestore(); }
     expect(JSON.parse(lines.join(NL)).state).toBe('applied');
     expect((await row(engine, 'notes/labelled-example')).frontmatter.visibility).toBe('private');
     expect((await row(engine, 'notes/ruled-example')).frontmatter.visibility).toBeUndefined();
@@ -346,7 +346,7 @@ for (const backend of testBackends()) describe('[' + backend + '] label repairs 
   const rules = async (engine: BrainEngine, argv: string[]) => {
     const lines: string[] = [];
     const spy = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.map(String).join(' ')); });
-    try { await runAccessRules(engine, 'rule', [...argv, '--json'], true); } finally { spy.mockRestore(); }
+    try { await runAccessRules(engine, 'rule', [...argv, '--allow-without-owner', '--json'], true); } finally { spy.mockRestore(); }
     return JSON.parse(lines.join(NL));
   };
 
