@@ -14,8 +14,9 @@ import { addGroup, addMember, bindCredential } from '../src/core/access/members.
 import { setOwner } from '../src/core/access/owner.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { importFromContent } from '../src/core/import-file.ts';
-import { appliedRules } from '../src/core/access/policy.ts';
-import { MAX_RULES, parsePolicyYaml, serializePolicyYaml } from '../src/core/access/folder-rules.ts';
+import { appliedRules, proposeRevision } from '../src/core/access/policy.ts';
+import { MAX_RULES, normalizeRule, parsePolicyYaml, serializePolicyYaml } from '../src/core/access/folder-rules.ts';
+import assert from 'node:assert';
 import { runAccessRules } from '../src/commands/access-rules.ts';
 import { ARCHIVE_TIMEZONE_KEY, archiveGroupPrincipal, archiveStatus, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import { checkTranscriptArchiveFreshness } from '../src/commands/doctor/checks/transcript-archive.ts';
@@ -55,14 +56,17 @@ async function cli(args: string[]): Promise<Record<string, unknown>> {
 const day = (i: number) => new Date(Date.UTC(2026, 0, 1) + i * 86_400_000).toISOString().slice(0, 10);
 const canary = (i: number) => 'canary-day-' + String(i).padStart(4, '0');
 
-/** One real archive run while personal, then FOLDERS - 1 more archive folders seeded directly, then the switch to shared. */
-async function longPersonalHistoryThenShared(): Promise<string[]> {
+/**
+ * One real archive run while personal, then folders - 1 more archive folders seeded directly, then the switch to shared,
+ * with otherRules owner-only rules outside conversations/ already applied to the source.
+ */
+async function longPersonalHistoryThenShared(folderCount = FOLDERS, otherRules = 0): Promise<string[]> {
   await engine.setConfig('brain.audience', 'personal');
   const reader = staticReader('codex', [conversation('codex', 'cap-session', [['user', '2026-11-04T10:00:00.000Z', canary(0) + ' personal era note']])]);
   const first = await runTranscriptArchive(engine, { mode: 'run', readers: [reader], now: NOW });
   expect(first.privacy).toBe('personal');
   const slugs = [(await archivedPages(engine, SRC)).find(p => p.body.includes(canary(0)))!.slug];
-  for (let i = 1; i < FOLDERS; i++) {
+  for (let i = 1; i < folderCount; i++) {
     const harness = ['claude-code', 'codex', 'openclaw'][i % 3]!;
     const slug = 'conversations/' + harness + '/' + day(i) + '/session-' + i;
     await importFromContent(engine, slug, ['---', 'type: conversation', 'title: Session ' + i, '---', '# Session ' + i, '', canary(i) + ' personal era note.'].join('\n'), { sourceId: SRC, noEmbed: true });
@@ -71,8 +75,16 @@ async function longPersonalHistoryThenShared(): Promise<string[]> {
   await engine.setConfig('brain.audience', 'shared');
   for (const id of ['alice-example', 'bob-example']) await addMember(engine, id);
   await setOwner(engine, 'alice-example');
+  if (otherRules) {
+    const rules = Array.from({ length: otherRules }, (_, i) => normalizeRule({ prefix: 'notes/topic-' + i + '/', readable_by: ['alice-example'] }));
+    await proposeRevision(engine, SRC, rules.map(r => ('rule' in r ? r.rule : assert.fail(r.problem))), { origin: 'cli', store: 'database', proposedBy: 'test' });
+    expect((await appliedRules(engine, SRC)).length).toBe(otherRules);
+  }
   return slugs;
 }
+
+const statusLine = async () => (await archiveStatus(engine, { readers: [] })).rescope;
+const doctorLine = async () => checkTranscriptArchiveFreshness(engine, { readers: [staticReader('codex', [])], nowMs: NOW.getTime() });
 
 describe('the archive re-scope past the folder-rule limit (pglite, remote=true)', () => {
   test(FOLDERS + ' archive folders: every day closes to a non-owner, the rulebook validates, and rule list, add and apply still work', async () => {
@@ -140,5 +152,54 @@ describe('the archive re-scope past the folder-rule limit (pglite, remote=true)'
     expect(text(await dispatchToolCall(engine, 'get_page', { slug: groupSlug }, ctx(member)))).not.toContain('canary-group-after-0009');
     expect(text(await dispatchToolCall(engine, 'get_page', { slug: groupSlug }, ctx(other)))).not.toContain('canary-group-after-0009');
     expect(text(await dispatchToolCall(engine, 'get_page', { slug: groupSlug }, ctx(await token('alice-example'))))).toContain('canary-group-after-0009');
+  }, 600_000);
+});
+
+describe('what status and doctor say after the folder-cap fallback (pglite, remote=true)', () => {
+  test('once the owner widens the conversations/ rule, status and doctor stop saying the folder is kept to the owner', async () => {
+    await longPersonalHistoryThenShared(3, MAX_RULES - 2);
+    await runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('codex', [])], now: NOW });
+    expect((await appliedRules(engine, SRC)).length).toBeLessThanOrEqual(MAX_RULES);
+    expect(await statusLine()).toMatchObject({ code: 'archive_rescope_folder_cap' });
+
+    const id = (await appliedRules(engine, SRC)).find(r => r.prefix === 'conversations/')!.id;
+    const widen = ['rule', 'add', '--id', String(id), '--prefix', 'conversations/', '--readers', 'alice-example,bob-example', '--source', SRC];
+    await cli(widen);
+    await cli([...widen, '--yes']);
+    const applyPreview = await cli(['apply', '--source', SRC]);
+    if (applyPreview.plan_hash) await cli(['apply', '--source', SRC, '--yes', '--expect', String(applyPreview.plan_hash)]);
+    expect((await appliedRules(engine, SRC)).find(r => r.prefix === 'conversations/')!.readable_by).toEqual(['member:alice-example', 'member:bob-example']);
+
+    expect(await statusLine()).toBeUndefined();
+    const doctor = await doctorLine();
+    expect(doctor.message).not.toContain('archive_rescope_folder_cap');
+    expect(doctor.message).not.toContain('to the owner');
+  }, 600_000);
+
+  test('200 folders and 100 other rules: the line says the folders with the other rules pass the limit, not the folders alone', async () => {
+    await longPersonalHistoryThenShared(200, 100);
+    await runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('codex', [])], now: NOW });
+    const line = await statusLine();
+    expect(line).toMatchObject({ code: 'archive_rescope_folder_cap' });
+    expect(line!.message).toMatch(/fill 20\d folders, and one owner-only rule per folder/);
+    expect(line!.message).not.toMatch(/folders, more than the/);
+    expect(line!.message).toContain("with the source's other rules would pass the " + MAX_RULES + ' rules');
+  }, 600_000);
+
+  test('a source already at the limit in other rules ends one over it: the days stay closed and status names the failed export', async () => {
+    const slugs = await longPersonalHistoryThenShared(3, MAX_RULES);
+    await runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('codex', [])], now: NOW });
+    const rules = await appliedRules(engine, SRC);
+    expect(rules.length).toBe(MAX_RULES + 1);
+    expect(rules.filter(r => r.prefix.startsWith('notes/')).length).toBe(MAX_RULES);
+    expect(parsePolicyYaml(serializePolicyYaml(rules)).ok).toBe(false);
+    const other = await token('bob-example');
+    for (const [i, slug] of slugs.entries()) expect(text(await dispatchToolCall(engine, 'get_page', { slug }, ctx(other)))).not.toContain(canary(i));
+
+    const line = await statusLine();
+    expect(line).toMatchObject({ code: 'archive_rescope_folder_cap' });
+    expect(line!.message).toContain('now holds ' + (MAX_RULES + 1) + ' rules');
+    expect(line!.message).toContain('gbrain access rule export then import fails validation');
+    expect((await doctorLine()).message).toContain('gbrain access rule export then import fails validation');
   }, 600_000);
 });

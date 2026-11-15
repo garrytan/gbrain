@@ -691,7 +691,7 @@
   "test/serve-status-mode.serial.test.ts": 68700,
   "test/serve-sync-handoff.serial.test.ts": 4100,
   "test/setup-brain-first.test.ts": 62000,
-  "test/setup-brain-layout.test.ts": 131300,
+  "test/setup-brain-layout.test.ts": 236100,
   "test/setup-codex-bare-path.test.ts": 90000,
   "test/setup-serves-several.test.ts": 134100,
   "test/setup.test.ts": 507300,

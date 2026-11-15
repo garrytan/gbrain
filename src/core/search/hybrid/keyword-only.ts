@@ -127,15 +127,21 @@ async function anyWordFill(req: HybridRequest, lexical: LexicalArms, postFusionO
     return [];
   }
   if (candidates.length === 0) return [];
-  markKeywordHits(candidates);
-  const staged = await keylessRowStages(req, { ...lexical, keywordResults: candidates, titleResults: [] }, [], postFusionOpts, pool);
-  let ceiling = Math.min(Infinity, ...pool.map(r => r.score).filter(Number.isFinite));
-  const marked = staged.map(r => {
-    const cap = ceiling > 0 ? ceiling * 0.99 : ceiling;
-    ceiling = Number.isFinite(r.score) ? Math.min(r.score, cap) : Number.isFinite(cap) ? cap : 0;
-    return { ...r, keyword_fill: true as const, score: ceiling };
-  });
-  const judged = await gateFillRows(req.decide, query, marked, pool.length);
+  // GST-2786: a fault in the fill's own stages or checks withholds the fill; the page keeps the rows it had without it.
+  let judged: SearchResult[] | null;
+  try {
+    markKeywordHits(candidates);
+    const staged = await keylessRowStages(req, { ...lexical, keywordResults: candidates, titleResults: [] }, [], postFusionOpts, pool);
+    let ceiling = Math.min(Infinity, ...pool.map(r => r.score).filter(Number.isFinite));
+    const marked = staged.map(r => {
+      const cap = ceiling > 0 ? ceiling * 0.99 : ceiling;
+      ceiling = Number.isFinite(r.score) ? Math.min(r.score, cap) : Number.isFinite(cap) ? cap : 0;
+      return { ...r, keyword_fill: true as const, score: ceiling };
+    });
+    judged = await gateFillRows(req.decide, query, marked, pool.length);
+  } catch {
+    judged = null;
+  }
   if (judged === null) {
     pushDegraded(degraded, 'keyword_candidates_incomplete', 'provider_error');
     return [];
