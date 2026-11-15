@@ -735,7 +735,7 @@ export interface PushLogOutcome {
 const PUSH_LOG_OK = /^(\S+) \[push\] (?:ok|ok-after-rebase|ok-after-merge|ok-already-on-remote) (\S+)\b/;
 const PUSH_LOG_LOCAL_ONLY = /^(\S+) \[push\] (?:LOCAL-ONLY|CONFLICT), NEEDS ATTENTION: (\S+) /;
 
-export type PushLogKind = 'ok' | 'ok-after-merge' | 'nothing' | 'local-only' | 'refused' | 'conflict' | 'lock-timeout' | 'checkout-lagging';
+export type PushLogKind = 'ok' | 'ok-after-merge' | 'nothing' | 'local-only' | 'refused' | 'conflict' | 'lock-timeout' | 'checkout-lagging' | 'skipped';
 
 /**
  * #6530: one `brain-push.log` line per `gbrain git commit-push` outcome, in the
@@ -746,12 +746,13 @@ export function appendPushLog(kind: PushLogKind, branch: string, sha: string, de
   try {
     const at = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
     const short = sha ? sha.slice(0, 7) : '-';
-    const clean = (detail ?? '').replace(/\s+/g, ' ').slice(0, 200);
+    const clean = (detail ?? '').replace(/\s+/g, ' ').slice(0, kind === 'skipped' ? 2000 : 200);
     const line = kind === 'ok' ? `[push] ok ${branch} ${short}`
       : kind === 'ok-after-merge' ? `[push] ok-after-merge ${branch} ${short}`
       : kind === 'nothing' ? `[push] ok-already-on-remote ${branch} ${short}`
       : kind === 'lock-timeout' ? `[push] lock-timeout ${branch}`
       : kind === 'checkout-lagging' ? `[push] checkout-lagging ${branch} ${short} ${clean}`
+      : kind === 'skipped' ? `[push] SKIPPED, NEEDS ATTENTION: ${branch} @ ${short} git did not commit named path(s), ${clean}. Run: gbrain errors commit_paths_skipped`
       : kind === 'refused' ? `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} the push was refused (${clean}). Run: gbrain git commit-push --push-only`
       : kind === 'conflict' ? `[push] CONFLICT, NEEDS ATTENTION: ${branch} local and remote changed the same file. Run: gbrain git commit-push --push-only --resolve <path>=ours|theirs`
       : `[push] LOCAL-ONLY, NEEDS ATTENTION: ${branch} @ ${short} could not reach the remote. Run: gbrain git commit-push --push-only`;

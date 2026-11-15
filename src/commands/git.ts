@@ -337,8 +337,10 @@ export async function runGit(args: string[]): Promise<number> {
     if (code === 'commit_paths_skipped' || code === 'writer_coordinator_required') {
       // GST-2116: the other named paths may have been pushed before the run failed, or their push failed (`publish`); the push log records either.
       try {
-        const d = JSON.parse(String((e as { detail?: string }).detail ?? '{}')) as { pushed?: string; branch?: string; publish?: { code: string | null; detail: string | null } };
+        const d = JSON.parse(String((e as { detail?: string }).detail ?? '{}')) as { pushed?: string; branch?: string; committed?: string | null;
+          skipped?: Array<{ path: string; reason: string; why?: string }>; publish?: { code: string | null; detail: string | null } };
         if (d.pushed && d.branch) appendPushLog('ok', d.branch, d.pushed);
+        if (d.skipped?.length && d.branch) appendPushLog('skipped', d.branch, d.committed ?? '', `${code}: ${d.skipped.map(s => `${s.path} (${s.reason}${s.why ? `: ${s.why}` : ''})`).join('; ')}`);
         if (d.publish) failed = d.publish;
       } catch { /* best-effort */ }
     }

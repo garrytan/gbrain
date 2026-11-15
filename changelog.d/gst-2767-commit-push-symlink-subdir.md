@@ -1,0 +1,13 @@
+---
+important: data-loss
+---
+**`gbrain git commit-push` now commits pages named through a symlinked source path, says why for each path it leaves out, `gbrain embed` stops reading a source id as a page, and `sources writer git-durability --enable` names the exact command to commit the AGENTS.md it writes.**
+
+<!-- behavior-change: commit_push_symlinked_source_gst2767 -->
+
+### Fixed
+- A source whose path is a symlink to a folder inside its Git repository (for example a source at `~/source-a` pointing to `repo-a/brain`) can be committed with paths spelled through the link: `gbrain git commit-push --path ~/source-a -- ~/source-a/notes/daily/2026` commits the new and modified files in that folder. Before, a path spelled through the link was refused as outside the checkout, or failed with "beyond a symbolic link" when the link sat inside the repository, so scheduled writes stayed out of Git. A named file that is itself a symlink is still committed as the link.
+- An empty or broken `.git` folder left under a source path no longer makes commit-push report `commit_paths_skipped` for a folder Git committed. Only a folder that Git treats as its own repository counts as nested.
+- Each path commit-push leaves out now says why, in the message and in the JSON detail (`skipped[].why`, next to `reason`), and the push log gets one `[push] SKIPPED, NEEDS ATTENTION` line naming every skipped path and its reason. A wrapper that keeps only the error code still leaves the reason in the log.
+- `gbrain embed --status --source <id>` no longer fails with "Page not found: <id>". Embed has no `--status` flag, so a single-page run now refuses any flag it doesn't take with `unknown_flag` (exit 2) before it asks for spend approval, and names `gbrain embed --stale --dry-run --json` as the free way to read embedding coverage. The page slug is now the first argument that isn't a flag or a flag's value, so `--source`, `--batch-size`, `--priority`, `--max-usd` and `--pace-max-concurrency` values are never read as the slug.
+- `gbrain sources writer git-durability <source> --enable` still commits nothing itself, but whenever the AGENTS.md (or RESOLVER.md) it owns is not committed it now returns the exact `gbrain git commit-push` command as `agents.commit_argv`, with a real commit message. That includes a copy an earlier version left untracked while the block is already current, which used to get no hint at all and stayed untracked.

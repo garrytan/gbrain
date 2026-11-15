@@ -28,10 +28,11 @@
 import { appendFileSync, copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { rangeSecretRefusal, scanRange } from './range-secret-scan.ts';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { execFileSync } from '../spawn.ts';
 import { gitChildEnv, literalPathspecs } from '../git-env.ts';
 import { GIT_ENV, GIT_ENV_AUTH, GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
+import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { acquireNativeLock, acquireNativeLockSync, type NativeLockSyncHandle } from '../persistence/native-lock.ts';
 import { recordCommit, recordIntent } from './commit-ledger.ts';
@@ -324,7 +325,10 @@ export function scopePaths(root: string, paths: string[], cwd: string): string[]
   }
   const out: string[] = [];
   for (const p of paths) {
-    const abs = resolve(cwd, p);
+    // GST-2767: a path reached through a symlinked directory (a source path linked to a subdirectory of the checkout) names
+    // the file at its real location; only the parent is resolved, so a named symlink file stays itself.
+    const named = resolve(cwd, p);
+    const abs = join(canonicalFilesystemPath(dirname(named)), basename(named));
     const rel = relative(root, abs);
     if (rel === '' || rel === '.' || rel.startsWith('..') || isAbsolute(rel)) {
       throw opError('commit_paths_invalid', `Path ${p} is ${rel === '' || rel === '.' ? 'the whole checkout' : 'outside the checkout'}.`,
@@ -437,7 +441,7 @@ function restoreIndex(root: string, rel: string[], before: string[], flagged: st
 interface CommitScope { roots: string[]; lockPath: string; markHeld: boolean; bases?: ReadonlyMap<string, string>; untrack?: 'any' | { dbOnly: ManagedFilesystemRoot } }
 
 /** A named path `git add -A` left out of the index while still exiting 0 (GST-2116). */
-export interface SkippedPath { path: string; reason: 'assume_unchanged' | 'skip_worktree' | 'not_staged' }
+export interface SkippedPath { path: string; reason: 'assume_unchanged' | 'skip_worktree' | 'not_staged'; why: string }
 
 /** The flagged index entries in `listed` (`ls-files -v`: lower case for assume-unchanged, S for skip-worktree) whose bytes on disk HEAD lacks. A skip-worktree entry absent from disk is a sparse checkout, not a change. */
 function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
@@ -460,7 +464,9 @@ function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
     // An entry git cannot hash (a missing required filter, an unreadable file, a directory now) counts as changed, so it is reported, never dropped.
     const disk = hashed && (hashed.code === 0 ? hashed.stdout.trim() : undefined);
     const committed = git(root, ['rev-parse', '--verify', '--quiet', `HEAD:${path}`]).stdout.trim() || null;
-    if (disk !== committed) changed.push({ path, reason });
+    if (disk !== committed) changed.push({ path, reason, why: reason === 'skip_worktree'
+      ? 'the index entry carries the skip-worktree flag, so git add does not see the edit on disk'
+      : 'the index entry carries the assume-unchanged flag, so git add does not see the edit on disk' });
   }
   return changed;
 }
@@ -474,14 +480,18 @@ function flaggedChanges(root: string, listed: string[]): SkippedPath[] {
  * directory are left out as git leaves them; a named ignored file is refused by `git add` itself.
  */
 function unstagedPaths(root: string, rel: string[], listed: string[], dirtyBefore: Map<string, string>, sha: string | null): SkippedPath[] {
-  const skipped = new Map(flaggedChanges(root, listed).map(s => [s.path, s.reason]));
-  for (const path of unindexedFiles(root, rel, listed)) if (!skipped.has(path)) skipped.set(path, 'not_staged');
+  const skipped = new Map(flaggedChanges(root, listed).map(s => [s.path, s]));
+  const notStaged = (path: string, why: string) => { if (!skipped.has(path)) skipped.set(path, { path, reason: 'not_staged', why }); };
+  for (const path of unindexedFiles(root, rel, listed)) {
+    const nested = nestedRepositoryOf(root, path);
+    notStaged(path, nested ? `it sits inside the nested Git repository ${nested}, so git add stages nothing for it` : 'git add left it out of the index');
+  }
   // Only a named directory can hide an unstaged change from the two checks above (a nested repository inside it).
   const dirs = rel.filter(path => { try { return lstatSync(join(root, path)).isDirectory(); } catch { return false; } });
   // Status lists nothing under a directory that sits inside an untracked nested repository.
   for (const path of dirs) {
-    const parents = path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'));
-    if (!skipped.has(path) && parents.some(parent => existsSync(join(root, parent, '.git')))) skipped.set(path, 'not_staged');
+    const nested = nestedRepositoryOf(root, path);
+    if (nested) notStaged(path, `it sits inside the nested Git repository ${nested}, so git add stages nothing under it`);
   }
   // GST-2128: an entry that was clean before the add, or a tracked one this commit carried, is another writer's later change, not a skip.
   const status = directoryStatus(root, dirs);
@@ -489,9 +499,25 @@ function unstagedPaths(root: string, rel: string[], listed: string[], dirtyBefor
   for (const [path, xy] of status) {
     if (xy[1] === ' ' || skipped.has(path) || !dirtyBefore.has(path)) continue;
     if (xy !== '??' && carried.has(path) && carried.get(path) !== '160000') continue;
-    skipped.set(path, 'not_staged');
+    notStaged(path, xy === '??' ? 'it is still untracked after the commit' : `it still differs from the last commit after the commit (git status ${xy.trim()})`);
   }
-  return [...skipped].map(([path, reason]) => ({ path, reason })).sort((a, b) => a.path.localeCompare(b.path));
+  return [...skipped.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/**
+ * GST-2767: the directory above `path` (repository-relative) that Git treats as a nested repository, or null. A `.git`
+ * entry alone is not one: an empty or broken `.git` left under a source path is ignored by git, which stages and commits
+ * the files beneath it, so only a directory that is its own work-tree top level counts.
+ */
+function nestedRepositoryOf(root: string, path: string): string | null {
+  const parts = path.split('/');
+  for (let i = 1; i < parts.length; i++) {
+    const dir = parts.slice(0, i).join('/');
+    if (!existsSync(join(root, dir, '.git'))) continue;
+    const top = git(join(root, dir), ['rev-parse', '--show-toplevel']);
+    if (top.code === 0 && canonicalFilesystemPath(top.stdout.trim()) === canonicalFilesystemPath(join(root, dir))) return dir;
+  }
+  return null;
 }
 
 /** The `git status` entries under the named paths that are directories, as path (a nested repository keeps its trailing /) to XY code. */
@@ -524,7 +550,7 @@ function unindexedFiles(root: string, rel: string[], listed: string[]): string[]
  * owner's to save (`writer_coordinator_required`); anything else is `commit_paths_skipped`.
  */
 function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitPushResult, managed?: ManagedFilesystemRoot, publish?: unknown): OperationError {
-  const list = `${skipped.slice(0, 20).map(s => `${s.path} (${s.reason})`).join(', ')}${skipped.length > 20 ? ', ...' : ''}`;
+  const list = `${skipped.slice(0, 20).map(s => `${s.path} (${s.reason}: ${s.why})`).join(', ')}${skipped.length > 20 ? ', ...' : ''}`;
   const pushed = !!result.committed && (result.outcome === 'pushed' || result.outcome === 'pushed_checkout_lagging');
   const done = result.committed
     ? `The other named paths were committed as ${result.committed.slice(0, 7)}${pushed ? ` and pushed to ${result.remote}/${result.branch}` : ', not pushed'}.`
@@ -547,7 +573,7 @@ function skippedPathsError(root: string, skipped: SkippedPath[], result: CommitP
   const named = skipped.map(s => s.path);
   const indexed = new Set(git(root, ['ls-files', '-z', '--', ...literalPathspecs(named)]).stdout.split('\0').filter(Boolean));
   const atHead = new Set(git(root, ['ls-tree', '-z', '--name-only', 'HEAD', '--', ...literalPathspecs(named)]).stdout.split('\0').filter(Boolean));
-  const removals = skipped.filter(s => s.reason === 'not_staged' && atHead.has(s.path) && !indexed.has(s.path) && existsSync(join(root, s.path))).map(s => s.path);
+  const removals = skipped.filter(s => s.reason === 'not_staged' && atHead.has(s.path) && !indexed.has(s.path) && existsSync(join(root, s.path)) && !statSync(join(root, s.path)).isDirectory()).map(s => s.path);
   if (removals.length && removals.length === skipped.length) {
     return opError('commit_paths_skipped', `git did not commit ${skipped.length} named path(s) in ${root}: ${list}. They are staged for removal from Git (git rm --cached) while the files stay on disk, and commit-push does not commit that removal. ${rest}`,
       `To stop tracking them and keep the files, run gbrain git commit-push --untrack -m <msg> -- ${removals.map(p => shellQuote([p])).join(' ')}; to keep them tracked, git -C ${shellQuote([root])} restore --staged -- ${removals.map(p => shellQuote([p])).join(' ')}.`,
