@@ -152,7 +152,7 @@ export function diagnoseTrace(
       ? { target, state: 'reinjected', code: 'target_reinjected', rank: idx + 1, arms, stages,
           why: 'The page was cut earlier and put back on page 1 by the relational evidence slot or an identity tier (exact slug/title, declared alias).' }
       : { target, state: 'retrieved', code: 'target_returned', rank: idx + 1, arms, stages,
-          why: `The page is result #${idx + 1}; score_details on that row shows how its score was formed.${returned[idx].keyword_relaxed === true ? ' It matched only some of the query\'s words (keyword_relaxed: the any-word fallback), so it ranks below pages holding every word.' : ''}` };
+          why: `The page is result #${idx + 1}; score_details on that row shows how its score was formed.${returned[idx].keyword_fill === true ? ' It matched only some of the query\'s words, so it was added after the other results (keyword_fill: the keyless any-word fill).' : returned[idx].keyword_relaxed === true ? ' It matched only some of the query\'s words (keyword_relaxed: the any-word fallback).' : ''}` };
   }
   const into = returned.findIndex(r => r.collapsed?.some(c => c.slug === trace.target.slug && (trace.target.sourceId === undefined || (c.source_id ?? 'default') === trace.target.sourceId)));
   if (into >= 0) {
