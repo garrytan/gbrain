@@ -34,7 +34,9 @@ import { resolveEntitiesToPointers, logDeliveredReflexPointers } from '../core/c
 import { lexicalArmsEnabled } from '../core/context/reflex.ts';
 import { VOLUNTEER_MAX_PAGES_CAP } from '../core/context/volunteer.ts';
 import { assembleTurnContext, TURN_CONTEXT_DEFAULT_MAX_BYTES, type TurnContextResult } from '../core/context/turn-context.ts';
-import { attachBrief, briefEnabled, BRIEF_MAX_BYTES, recordBriefDelivered, turnBrief, TURN_BRIEF_CUTOFF_MS, withBriefDeadline } from '../core/context/proactive-brief.ts';
+import { attachBrief, briefEnabled, BRIEF_MAX_BYTES, recordBriefDelivered, turnBrief, TURN_BRIEF_CUTOFF_MS, withBriefDeadline, type BriefClock } from '../core/context/proactive-brief.ts';
+
+const turnBriefClock = (now = Date.now()): BriefClock => ({ now, stopAt: now + TURN_BRIEF_CUTOFF_MS });
 import { proactiveEligibility } from '../core/eligibility/registry.ts';
 import { readHotMemorySessionOnly } from '../core/facts/meta-hook.ts';
 import { makeContextPackIpcHandler } from './context-pack-handler.ts';
@@ -69,12 +71,11 @@ function defaultRebindDelayMs(): number {
  * Wave 5 D5 proactive brief (default off): the legacy block is assembled
  * first and stands on its own; when `context.proactive_brief` is on, the
  * brief runs in what is left of a request-start cutoff (its queries stop once
- * it passes), inside a byte reservation taken from the legacy block, and
+ * it passes; `clock` defaults to that cutoff from now), inside a byte reservation taken from the legacy block, and
  * leads the text. Off, this is the legacy assembly exactly. Always assembles
  * against the serve's OWN registered source [CX2-10].
  */
-export async function turnContextWithBrief(engine: BrainEngine, sourceId: string, req: TurnContextRequest): Promise<TurnContextResult> {
-  const clock = { now: Date.now(), stopAt: Date.now() + TURN_BRIEF_CUTOFF_MS };
+export async function turnContextWithBrief(engine: BrainEngine, sourceId: string, req: TurnContextRequest, clock: BriefClock = turnBriefClock()): Promise<TurnContextResult> {
   const briefOn = await briefEnabled(engine);
   const base = await assembleTurnContext(engine, {
     sourceId,

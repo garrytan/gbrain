@@ -139,6 +139,24 @@ and its own keys would stop reading the page; a group the owner belongs to does
 not count. Pass `--allow-without-owner` when that is what you want. A page whose
 readers changed after the preview is skipped.
 
+<a id="propose-readers"></a>
+**Proposed readers.** On a brain that serves several people, `gbrain repair visibility --propose [--source <id>] [--out <dir>] [--json]`
+suggests readers for the pages every member's key can read (no `readable_by`, no
+folder or page rule). It reads each such page's `participants`, `attendees`, `to`, `from` and
+`cc` addresses and matches each one to an enabled member by the email declared on it
+(`gbrain access member set <id> --email <address>`), exactly and ignoring case. Pages
+whose addresses all match are grouped by reader set, with the owner first in every set. Each set gets
+a slugs file (mode 0600, in `<config dir>/visibility-proposals/` or `--out`, never inside a
+git work tree) and the `--readers` command above to preview it, then apply it with
+`--apply --expect <hash>`. A page with any address that names no enabled member is
+listed as unmatched and gets no proposal, and so is a page whose slug a slugs file cannot carry (it
+starts with `#`, has surrounding spaces or holds a line break): label it with `--slug`. DM, chat and mail pages with no address list are listed by
+folder with a `gbrain access rule add --prefix <folder>/ --readers <owner>,<list>` command to fill in.
+Labelling a page also hides its derived atoms, facts and chronicle events from every remote caller
+except the owner, unless `access.members_read_lineage` is on. `--propose` itself labels nothing
+and changes nothing any key reads. A one-person brain, or one with `access.serves` set to `one`, gets
+"nothing to propose". It works the same on a repo-less brain.
+
 No lock or transaction spans the run, so a long list does not hold up other
 writers. On a managed brain the apply admits a source's pages together, one
 admission window at a time; on Postgres the owner publishes them in groups of
@@ -2774,14 +2792,16 @@ matches. A page stored in segments is read as evidence up to 16 MiB.
 | --- | --- | --- |
 | `evidenced` | Every text that proves a restoration proves the same one. | By `--apply --expect <hash>` |
 | `ambiguous` | A text holds two different spans around the same words, or two texts prove different restorations. | Never; listed |
-| `unproven` | No page it came from exists any more (`no_source_page`), or none still holds the words around the marker (`not_in_source`). | Never; listed |
+| `unproven` | No page it came from exists any more (`no_source_page`), or none still holds the words around the marker (`not_in_source`), or the fact's row number names no active row with its text in its page's `## Facts` fence and it did not come from the conversation extractor (`fence_row_missing`; the listing shows the restored text). | Never; listed |
 | `segmented` | Proved, but the fact's row sits in the `## Facts` fence of a page stored in segments, which this repair does not rewrite (`segmented_page`). The listing shows the restored text. | Never; listed |
 
 The apply restores exactly the previewed set. A fact that changed since the
 preview reports `changed_since_preview` and keeps its text. A fact with a row
 in its page's `## Facts` fence has that row's claim rewritten in the page
 (one revision-bound `put_page` per page, which re-chunks and re-embeds the
-page); a fact with no fence row is rewritten database-only (one maintenance
+page); a fact with no row number, or a conversation-extractor fact whose
+row number names no fence row (its page has no `## Facts` fence), is
+rewritten database-only, row number kept (one maintenance
 request per page on a managed brain) and gets `restored: redacted-facts
 repair` appended to its context; its vector no longer matches its text, so
 the next `gbrain embed` re-embeds it. Page history keeps the damaged
