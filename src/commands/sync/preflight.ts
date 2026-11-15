@@ -7,7 +7,7 @@
  * phases drain.
  */
 import { existsSync, realpathSync } from 'fs';
-import { resolve as pathResolve, join } from 'path';
+import { dirname, resolve as pathResolve, join } from 'path';
 import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { currentCompanyBrainSync } from '../../core/company-brain/profile.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
@@ -544,7 +544,9 @@ async function discoverSyncGitRoot(
     if (reprobedRoot !== null) {
       gitContextRoot = realpathSync(reprobedRoot);
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- repoPath is the operator-configured local sync repo (sync is localOnly) and '.git' is a constant name
-    } else if (existsSync(join(repoPath, '.git'))) {
+    } else if (existsSync(join(repoPath, '.git')) || enclosingGitEntry(repoPath)) {
+      // GST-2767: a brain dir inside an unreadable repository (dubious ownership, a broken .git above it) must not get
+      // a nested repository of its own that shadows the outer one.
       throw err;
     } else {
       serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
@@ -554,6 +556,13 @@ async function discoverSyncGitRoot(
     }
   }
   return gitContextRoot;
+}
+
+/** Whether a folder above `repoPath` (through any link in it) holds a `.git` entry. */
+function enclosingGitEntry(repoPath: string): boolean {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- repoPath is the operator-configured local sync repo and '.git' is a constant name
+  for (let at = dirname(realpathSync(repoPath)); dirname(at) !== at; at = dirname(at)) if (existsSync(join(at, '.git'))) return true;
+  return false;
 }
 
 /** Detached-HEAD / origin detection, the bookmark read, the git pull and HEAD (with the unborn-HEAD self-heal). */

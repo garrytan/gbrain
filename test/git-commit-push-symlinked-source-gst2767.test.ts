@@ -163,6 +163,8 @@ for (const kind of ['classic', 'managed'] as const) {
     expect(r.exitCode).toBe(0);
     expect((JSON.parse(r.stdout) as { outcome: string }).outcome).toBe('nothing_to_commit');
     expect(pushLog(f)).not.toContain('SKIPPED');
+    expect(committed(f, 'HEAD')).toEqual(['brain/' + YEAR + '/alice-example.md']);
+    expect(clean(f)).toBe('');
   }, 60_000);
 
   test(kind + ': a named folder whose tracked file is staged for removal and still on disk is refused as staged_for_removal, the dry run says the same, and nothing is re-added or removed', async () => {
@@ -207,3 +209,40 @@ test('the dry run reports the same skipped path and reason as the real run for a
   expect(skippedOf(d)).toEqual([{ path: 'brain/imports/export.csv', reason: 'not_staged', why: expect.stringContaining('nested Git repository brain/imports') }]);
   expect(d.message).not.toContain('staged for removal');
 }, 60_000);
+
+/** The source folder's own .git is a link to the repository's .git (repo-a/brain/.git -> ../.git), made on purpose. */
+for (const kind of ['classic', 'managed'] as const) {
+  for (const via of ['link', 'real', 'repo'] as const) {
+    for (const change of [false, true]) {
+      test(kind + ', path via ' + via + ', ' + (change ? 'a new and an edited page' : 'nothing new') + ': a .git linked to the repository\'s own .git commits the pages at their place in the tree and reports nothing skipped', async () => {
+        const f = fixture(kind + '-gitlink-' + via + '-' + change, kind);
+        symlinkSync('../.git', join(f.repo, 'brain', '.git'));
+        if (change) write(f);
+        const at = via === 'link' ? f.link : via === 'real' ? join(f.repo, 'brain') : f.repo;
+        const named = via === 'repo' ? join(f.repo, 'brain', YEAR) : join(at, YEAR);
+        const head = git(f.repo, 'rev-parse', 'HEAD');
+        const dry = await runCli(['git', 'commit-push', '--json', '--dry-run', '--path', at, '-m', 'write pages', '--', named], { cwd: dir, home: f.home, env: identity });
+        const r = await runCli(['git', 'commit-push', '--json', '--path', at, '-m', 'write pages', '--', named], { cwd: dir, home: f.home, env: identity });
+        for (const x of [dry, r]) {
+          expect(x.stdout).not.toContain('commit_paths_skipped');
+          expect(x.stdout).not.toContain('staged for removal');
+          expect(x.exitCode).toBe(0);
+        }
+        const out = JSON.parse(r.stdout) as { outcome: string; repo: string; paths: string[] };
+        expect(out.repo).toBe(f.repo);
+        expect(out.paths).toEqual(['brain/' + YEAR]);
+        expect(git(f.repo, 'ls-tree', '-r', '--name-only', 'HEAD').split('\n')).toEqual(['README.md', ...committed(f, 'HEAD')]);
+        expect(git(f.repo, 'status', '--porcelain')).toBe('');
+        if (!change) {
+          expect(out.outcome).toBe('nothing_to_commit');
+          expect(git(f.repo, 'rev-parse', 'HEAD')).toBe(head);
+          expect(committed(f, 'HEAD')).toEqual(['brain/' + YEAR + '/alice-example.md']);
+          return;
+        }
+        expect(committed(f, 'HEAD')).toEqual(['brain/' + YEAR + '/alice-example.md', 'brain/' + YEAR + '/bob-example.md']);
+        expect(git(f.repo, 'show', 'HEAD:brain/' + YEAR + '/alice-example.md')).toContain('Second version.');
+        if (kind === 'classic') expect(remoteTip(f)).toBe(git(f.repo, 'rev-parse', 'HEAD'));
+      }, 60_000);
+    }
+  }
+}

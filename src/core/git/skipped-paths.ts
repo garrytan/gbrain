@@ -86,11 +86,14 @@ export function unstagedPaths(root: string, rel: string[], listed: string[], dir
  */
 export function nestedRepositoryOf(root: string, path: string): string | null {
   const parts = path.split('/');
+  const own = git(root, ['rev-parse', '--absolute-git-dir']).stdout.trim();
   for (let i = 1; i < parts.length; i++) {
     const dir = parts.slice(0, i).join('/');
     if (!existsSync(join(root, dir, '.git'))) continue;
     const top = git(join(root, dir), ['rev-parse', '--show-toplevel']);
-    if (top.code === 0 && canonicalFilesystemPath(top.stdout.trim()) === canonicalFilesystemPath(join(root, dir))) return dir;
+    if (top.code !== 0 || canonicalFilesystemPath(top.stdout.trim()) !== canonicalFilesystemPath(join(root, dir))) continue;
+    const gitDir = git(join(root, dir), ['rev-parse', '--absolute-git-dir']).stdout.trim();
+    if (!own || canonicalFilesystemPath(gitDir) !== canonicalFilesystemPath(own)) return dir;
   }
   return null;
 }
@@ -135,3 +138,19 @@ export function checkoutBehindStrayGitfile(dir: string): string | null {
   }
   return null;
 }
+
+/**
+ * GST-2767: the folder whose own `.git` is the repository `top` reached through a linked `.git` (repo-a/brain/.git ->
+ * ../.git). Git then reports the linked folder as the top level and would commit its files at the wrong place in the
+ * tree, so the real work tree is the folder that holds that git directory; any other `top` is returned unchanged.
+ */
+export function worktreeOfGitdir(top: string): string {
+  const gitDir = git(top, ['rev-parse', '--absolute-git-dir']);
+  if (gitDir.code !== 0) return top;
+  const real = canonicalFilesystemPath(gitDir.stdout.trim());
+  for (let at = dirname(canonicalFilesystemPath(top)); dirname(at) !== at; at = dirname(at)) {
+    if (existsSync(join(at, '.git')) && canonicalFilesystemPath(join(at, '.git')) === real) return at;
+  }
+  return top;
+}
+

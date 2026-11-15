@@ -32,7 +32,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { literalPathspecs } from '../git-env.ts';
 import { git, gitOk, type GitRun } from './git-run.ts';
 export type { SkippedPath } from './skipped-paths.ts';
-import { checkoutBehindStrayGitfile, directoryStatus, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
+import { checkoutBehindStrayGitfile, directoryStatus, worktreeOfGitdir, flaggedChanges, stagedRemovals, STAGED_FOR_REMOVAL_WHY, unindexedFiles, unstagedPaths, type SkippedPath } from './skipped-paths.ts';
 import { GIT_SSRF_SUBCOMMAND_FLAGS, ownRemoteTransportFlags as transportFlags } from '../git-transport.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 import { assertManagedFilesystemWrite, hasFilesystemPublication, managedFilesystemRootFor, type ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
@@ -182,7 +182,7 @@ export function checkoutRoot(dir: string): string {
     throw opError('commit_paths_invalid', `${dir} is not inside a git checkout.`,
       'Run the command inside the brain checkout or pass --path <checkout>.');
   }
-  return top;
+  return worktreeOfGitdir(top);
 }
 
 function resolveCtx(root: string): Ctx {
