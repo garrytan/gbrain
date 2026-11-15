@@ -111,6 +111,33 @@ for (const kind of testBackends()) {
       for (const slug of RESTRICTED) expect(remote.map(r => r.slug)).not.toContain(slug);
     });
 
+    test('a fill row never pushes an all-words page out through the type-diversity cap', async () => {
+      for (let i = 1; i <= 5; i++) {
+        const body = `Quokka workshop notes, part ${i}: agenda and follow-ups.`;
+        await engine.putPage(`notes/quokka-${i}`, { type: 'note', title: `Quokka ${i}`, compiled_truth: body, frontmatter: {} });
+        await installFixtureChunks(engine, `notes/quokka-${i}`, [{ chunk_index: 0, chunk_text: body, chunk_source: 'compiled_truth' }]);
+      }
+      const partial = 'Quokka Inc. is a company in the directory.';
+      await engine.putPage('companies/quokka', { type: 'company', title: 'Directory entry', compiled_truth: partial, frontmatter: {} });
+      await installFixtureChunks(engine, 'companies/quokka', [{ chunk_index: 0, chunk_text: partial, chunk_source: 'compiled_truth' }]);
+      const rows = await hybridSearch(engine, 'quokka workshop', { limit: 10, expansion: false });
+      const notes = rows.filter(r => !r.keyword_fill).map(r => r.slug).sort();
+      expect(notes).toEqual(['notes/quokka-1', 'notes/quokka-2', 'notes/quokka-3', 'notes/quokka-4', 'notes/quokka-5']);
+      expect(rows.map(r => r.slug)).toContain('companies/quokka');
+    });
+
+    test('a dated fill row stays below the all-words rows when the query asks when', async () => {
+      const dated = 'Quokka offsite on 2026-03-02.';
+      await engine.putPage('events/quokka-offsite', { type: 'note', title: 'Offsite', compiled_truth: dated, frontmatter: {} });
+      await installFixtureChunks(engine, 'events/quokka-offsite', [{ chunk_index: 0, chunk_text: dated, chunk_source: 'compiled_truth' }]);
+      await engine.executeRaw(`UPDATE pages SET effective_date = '2026-03-02', effective_date_source = 'frontmatter' WHERE slug = 'events/quokka-offsite'`);
+      const rows = await hybridSearch(engine, 'when quokka workshop', { limit: 20, expansion: false });
+      const firstFill = rows.findIndex(r => r.keyword_fill === true);
+      expect(firstFill).toBeGreaterThan(0);
+      expect(rows.slice(firstFill).every(r => r.keyword_fill === true)).toBe(true);
+      expect(rows.map(r => r.slug).indexOf('events/quokka-offsite')).toBeGreaterThanOrEqual(firstFill);
+    });
+
     test('without orFill the keyword arm keeps its strict rows only (the path brains with embeddings take)', async () => {
       const rows = await engine.searchKeyword(QUERY, { limit: 50, orFallback: true });
       expect(rows.map(r => r.slug).sort()).toEqual(['company/decisions', 'company/pricing']);

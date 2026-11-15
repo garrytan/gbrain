@@ -60,15 +60,19 @@ export async function searchWithoutEmbeddings(
     await applyIdentityBoosts(req, noEmbedResults, generatedRead);
     noEmbedResults.sort((a, b) => b.score - a.score);
     noEmbedResults = await applyFeedbackStage(engine, noEmbedResults, { reranked: false });
-    // GST-2735: the any-word fill only adds pages no other arm found, after every other row.
-    const kept = noEmbedResults.filter(r => !r.keyword_fill);
-    let floor = kept.length ? kept[kept.length - 1]!.score : Infinity;
-    noEmbedResults = [...kept, ...noEmbedResults.filter(r => r.keyword_fill).map(r => ({ ...r, score: (floor = Math.min(r.score, floor * 0.999)) }))];
   }
   // T3/T4 — alias hop + evidence stamp even without an embedding provider
   // (the named-thing fix is most valuable exactly when vector is unavailable).
   trace?.observe('fused', noEmbedResults);
-  const noEmbedDeduped = prioritize(req, await collapsePool(req, dedupResults(noEmbedResults, { regions: await segmentRegions(engine, noEmbedResults) })));
+  // GST-2735: the any-word fill only adds pages, after every other row: dedup and rank priors run on the
+  // other rows as if the fill were absent, then on the fill rows alone, which follow below the last other row.
+  const rankPool = async (rows: SearchResult[]) => rows.length ? prioritize(req, await collapsePool(req, dedupResults(rows, { regions: await segmentRegions(engine, rows) }))) : [];
+  const kept = await rankPool(noEmbedResults.filter(r => !r.keyword_fill));
+  const keptPages = new Set(kept.map(r => `${r.source_id ?? 'default'}:${r.slug}`));
+  let floor = kept.length ? kept[kept.length - 1]!.score : Infinity;
+  const below = (score: number) => (floor = Math.min(score, floor - Math.max(Math.abs(floor) * 1e-3, Number.EPSILON)));
+  const fill = (await rankPool(noEmbedResults.filter(r => r.keyword_fill))).filter(r => !keptPages.has(`${r.source_id ?? 'default'}:${r.slug}`));
+  const noEmbedDeduped = [...kept, ...fill.map(r => ({ ...r, score: below(r.score) }))];
   trace?.observe('deduped', noEmbedDeduped);
   const noEmbedPreExact = await applyAliasHop(engine, noEmbedDeduped, query, aliasHopOpts);
   // #1663 — structural exact-lookup tier (slug / exact-title identity).
