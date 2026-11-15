@@ -5,8 +5,8 @@
  *
  *   bun scripts/contributor-audit-fixture.ts <empty-dir>
  *
- * The range <base>..<head> holds six merges, each a shape the audit must tell
- * apart, plus one open PR that conflicts with head:
+ * The range <base>..<head> holds six landed PRs (five merges, one squash), each
+ * a shape the audit must tell apart, plus one open PR that conflicts with head:
  *
  *   #101 fix clamp     product fix + a test that pins it      → discriminates
  *   #102 greet suffix  product change + a test that never calls it → does_not_discriminate

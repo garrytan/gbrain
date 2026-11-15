@@ -133,7 +133,8 @@ complete full-suite run of the same workflow (`scripts/ci-reuse.ts`, in Test
   profile `full`).
 - The recorded tree equals both the push tree and the tree of the run's head.
 
-The push itself must be a merge commit. Anything else, an API error or a
+The push itself must be a merge commit; a squashed landing has one parent, so
+its push never reuses and runs in full. Anything else, an API error or a
 partial, cancelled or diagnostic run included, leaves reuse unset, so the push
 runs in full. A reusing push skips every full lane and both aggregates, records the
 reused run in its summary, and runs the `reused-full-suite` job with the
