@@ -1,0 +1,11 @@
+**`gbrain setup --transcripts DIR` imports your exported call transcripts into the company brain with credentials removed, `me/facts` and `company/facts` become quotable facts pages, and setup says what the conversation archive is doing (GST-2731).**
+
+### Added
+- `gbrain setup claude-code|codex --shape company|both --transcripts DIR` (also asked at a terminal, after the docs folder) imports `.txt` and `.md` call or meeting transcripts from any recorder into the `company` source, one page per file at `company/calls/<date>-<title>`. Every credential in the text (API keys, tokens, passwords, plus your own redaction patterns) is replaced by a `<REDACTED:…>` marker before anything is stored, with the same redaction the conversation archive uses. Pages are keyword-only and not mined for facts. Each file is imported once: a rerun reports it unchanged, and a file changed since keeps its first page. Above 500 files setup prints the import command instead. `--transcripts` needs the company part on this brain, so it is refused with `--team`.
+- Setup prints who can read the call pages: everyone who can read the `company` source on a brain that serves one person, or the members the source's access rules allow on a brain that serves several. The pages carry no readers of their own.
+- `gbrain import DIR --calls [--prefix company/calls] [--source company]`, the same import on its own (implies `--no-embed`).
+- Page type `facts` (base packs; gbrain-base-v2 is now 1.7.0). `me/facts` and `company/facts` are created with `type: facts`, and the instructions setup writes for the agent say to quote only a facts page's dated lines and to add a new fact as a new dated line.
+- Doctor check `facts_undated_lines`: warns about a facts page with a fact line that has no date, naming the page and the line numbers (never the text), and asks you for the dates. It changes nothing.
+- Setup's report ends with one line on the conversation archive: on, off, or offered (a brain that may serve several people is only offered it).
+- Docs: `docs/guides/brain-layout.md`.
+- Tests: `test/import-calls.test.ts`, `test/doctor-facts-undated-lines.test.ts`, and the transcripts cases in `test/setup-brain-layout.test.ts`.

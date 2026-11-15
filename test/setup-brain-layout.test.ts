@@ -10,15 +10,18 @@
  *     or docs folder, a page written before the shape question is answered (--yes
  *     included), an inline import of a huge folder, a company source federated on a
  *     shared brain, anything created for the company part with --team.
+ *     --transcripts (PR 3): a call imported twice, a planted credential stored, a call page readable more widely
+ *     than its source, a call page under conversations/, a missing archive line.
  *  3. New flags on an existing command; test/setup.test.ts keeps the rest of setup.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
-import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
-import { COMPANY_PAGES, LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision, renderLayoutBlock, layoutNotices, applyBrainLayout, countNotes } from '../src/commands/setup-brain-layout.ts';
+import { COMPANY_PAGES, LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision, renderLayoutBlock, layoutNotices, applyBrainLayout, countNotes, askBrainShape, describeLayout } from '../src/commands/setup-brain-layout.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -352,5 +355,158 @@ describe('layout units', () => {
     symlinkSync(root, join(root, 'loop-b'));
     writeFileSync(join(root, 'n.md'), '# N\n');
     expect(countNotes(root)).toEqual({ count: 1, first: join(root, 'n.md') });
+  });
+});
+
+const plantedToken = (): string => 'github' + '_pat_' + randomBytes(24).toString('hex');
+function callsDir(b: Box, token: string): string {
+  const dir = join(b.root, 'call-exports');
+  mkdirSync(join(dir, 'q1'), { recursive: true });
+  writeFileSync(join(dir, '2026-03-04 acme-example renewal.txt'), `Alice: we agreed to move acme-example to annual billing.\nBob: the deploy key is ${token} for the record.\n`);
+  writeFileSync(join(dir, 'q1', 'weekly-sync.md'), '# Weekly sync 2026-02-01\n\nAlice: pricing stays at 20 dollars per seat.\n');
+  const undated = join(dir, 'kickoff.txt');
+  writeFileSync(undated, 'Kickoff with acme-example\nBob: the first milestone is onboarding.\n');
+  utimesSync(undated, new Date(2026, 0, 15, 12), new Date(2026, 0, 15, 12));
+  writeFileSync(join(dir, 'slides.pdf'), 'not a call');
+  return dir;
+}
+const CALL_SLUGS = ['company/calls/2026-03-04-acme-example-renewal', 'company/calls/2026-02-01-weekly-sync', 'company/calls/2026-01-15-kickoff-with-acme-example'];
+const callPages = async (b: Box): Promise<string[]> => {
+  const r = await gbrain(b, ['list', '--source', 'company', '--json']);
+  return (JSON.parse(r.stdout) as Array<{ slug: string }>).map((p) => p.slug).filter((s) => s.startsWith('company/calls/')).sort();
+};
+
+describe('setup --transcripts', () => {
+  test('a repo-less brain imports each call once into the company source, redacted, with the source readers and the archive line', async () => {
+    const b = box();
+    const token = plantedToken();
+    const calls = callsDir(b, token);
+    const before = treeHash(calls);
+    const r = await setup(b, ['claude-code', '--shape', 'company', '--transcripts', calls]);
+    expect(r.exitCode).toBe(0);
+    const t = r.doc.brain_layout.transcripts;
+    expect(t).toMatchObject({ action: 'imported', files: 3, imported: 3, unchanged: 0, kept: 0 });
+    expect(t.argv).toEqual(['gbrain', 'import', calls, '--calls', '--prefix', 'company/calls', '--no-embed', '--source', 'company']);
+    expect(t.redactions).toBeGreaterThanOrEqual(1);
+    expect(t.readers).toEqual({ members: 'every_source_reader', serves: 'one', detail: 'everyone who can read source company (this brain serves one person)' });
+    expect(r.doc.brain_layout.archive.state).toBe('on');
+    expect(r.doc.brain_layout.archive.detail).toContain('call transcripts are separate');
+    expect(await callPages(b)).toEqual([...CALL_SLUGS].sort());
+    const page = await gbrain(b, ['get', CALL_SLUGS[0]!, '--source', 'company']);
+    expect(page.exitCode).toBe(0);
+    expect(page.stdout).toContain('Alice: we agreed to move acme-example to annual billing.');
+    expect(page.stdout).not.toContain(token);
+    expect(page.stdout).toContain('<REDACTED:github_pat>');
+    expect(page.stdout).not.toContain('readable_by');
+    expect(page.stdout).toContain('facts_backstop: false');
+    expect((await gbrain(b, ['get', 'company/facts', '--source', 'company'])).stdout).toContain('type: facts');
+    expect(treeHash(calls)).toBe(before);
+
+    const again = await setup(b, ['claude-code', '--shape', 'company', '--transcripts', calls]);
+    expect(again.exitCode).toBe(0);
+    expect(again.doc.brain_layout.transcripts).toMatchObject({ action: 'imported', imported: 0, unchanged: 3, kept: 0 });
+    expect(await callPages(b)).toEqual([...CALL_SLUGS].sort());
+  }, 300_000);
+
+  test('a git-backed company source gets the call files in its working tree, redacted', async () => {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    const repo = join(b.root, 'company-repo');
+    mkdirSync(repo);
+    execSync('git init -q && git config user.email t@example.com && git config user.name t && echo "# Company" > README.md && git add README.md && git commit -qm init', { cwd: repo });
+    expect((await gbrain(b, ['sources', 'add', 'company', '--path', repo, '--json'])).exitCode).toBe(0);
+    const token = plantedToken();
+    const r = await setup(b, ['claude-code', '--shape', 'company', '--transcripts', callsDir(b, token)]);
+    expect(r.exitCode).toBe(0);
+    expect(r.doc.brain_layout.company).toMatchObject({ action: 'kept', root: repo });
+    expect(r.doc.brain_layout.transcripts).toMatchObject({ action: 'imported', imported: 3 });
+    const file = readFileSync(join(repo, 'company', 'calls', '2026-03-04-acme-example-renewal.md'), 'utf8');
+    expect(file).toContain('<REDACTED:github_pat>');
+    expect(file).not.toContain(token);
+    expect(file).not.toContain('readable_by');
+    expect((await gbrain(b, ['get', CALL_SLUGS[0]!, '--source', 'company'])).stdout).not.toContain(token);
+  }, 300_000);
+
+  test('on a shared brain the call pages get the company source rules as their readers, never wider', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--shape', 'company'])).exitCode).toBe(0);
+    expect((await gbrain(b, ['access', 'serves', 'several', '--members', 'alice-example,bob-example', '--yes', '--json'])).exitCode).toBe(0);
+    expect((await gbrain(b, ['access', 'rule', 'add', '--prefix', 'company/calls/', '--readers', 'alice-example', '--source', 'company', '--yes', '--json'])).exitCode).toBe(0);
+    const r = await setup(b, ['claude-code', '--shape', 'company', '--stdio-member', 'alice-example', '--transcripts', callsDir(b, plantedToken())]);
+    expect(r.exitCode).toBe(0);
+    const t = r.doc.brain_layout.transcripts;
+    expect(t.imported).toBe(3);
+    expect(t.readers.members).toEqual(['alice-example']);
+    expect(t.readers.serves).toBe('several');
+    expect(t.readers.detail).toStartWith('alice-example only (access rules on source company cover company/calls/; this brain serves several people');
+    for (const slug of CALL_SLUGS) {
+      const who = JSON.parse((await gbrain(b, ['access', 'who-can-read', slug, '--source', 'company', '--json'])).stdout).pages[0];
+      expect(who.readers).toBeNull();
+      expect(who.members).toEqual(['alice-example']);
+    }
+  }, 300_000);
+});
+
+describe('transcripts units', () => {
+  test('--transcripts needs a local company shape', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-layout-calls-flag-'));
+    roots.push(dir);
+    const parse = (args: string[]) => parseLayoutFlags((f) => { const i = args.indexOf(f); return i < 0 ? undefined : args[i + 1]; }, (f) => args.includes(f), 'claude-code');
+    expect(parse(['--shape', 'personal', '--transcripts', dir])).toContain('--shape company or both');
+    expect(parse(['--transcripts', dir])).toContain('--shape company or both');
+    expect(parse(['--shape', 'company', '--team', '--transcripts', dir])).toContain('drop --transcripts or use --solo');
+    expect(parse(['--shape', 'both', '--transcripts', dir])).toEqual({ brain: 'both', transcripts: dir });
+    expect(parse(['--shape', 'company', '--transcripts', 'none'])).toEqual({ brain: 'company', transcripts: null });
+  });
+
+  test('a call folder over the inline limit is handed to the agent as the import command', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-layout-calls-bulk-'));
+    roots.push(dir);
+    for (let i = 0; i < 501; i++) writeFileSync(join(dir, `call-${i}.txt`), 'hello\n');
+    const calls: string[][] = [];
+    const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'company', transcripts: dir, dryRun: false },
+      run: (argv) => {
+        calls.push(argv);
+        if (argv[1] === 'sources') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'company', local_path: '/c', federated: true }] }), stderr: '' };
+        return argv[1] === 'get' ? { code: 0, stdout: '{}', stderr: '' } : { code: 0, stdout: '{}', stderr: '' };
+      } })!;
+    expect(o.transcripts).toMatchObject({ action: 'deferred', files: 501 });
+    expect(calls.some((c) => c[1] === 'import')).toBe(false);
+    const n = layoutNotices(o, 'claude-code').find((x) => x.code === 'brain_layout_import_pending')!;
+    expect(n.why).toContain('more than 500 call files');
+    expect(n.fix!.argv).toEqual(['gbrain', 'import', dir, '--calls', '--prefix', 'company/calls', '--no-embed', '--source', 'company']);
+  });
+
+  test('the human report names who reads the call pages and what the archive is doing', () => {
+    const o = { shape: 'company', pages: [], notes: null, docs: null, company: null, block: null, check: { ok: true, query: null, detail: 'nothing to check' }, next_question: null,
+      transcripts: { dir: '/calls', files: 2, action: 'imported', argv: [], imported: 2, unchanged: 0, kept: 0, redactions: 1, readers: { members: 'every_source_reader', serves: 'one', detail: 'everyone who can read source company (this brain serves one person)' } },
+      archive: { state: 'offered', detail: 'offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)' } } as any;
+    const lines = describeLayout(o, false);
+    expect(lines).toContain('           readable by: everyone who can read source company (this brain serves one person)');
+    expect(lines.find((l) => l.startsWith('  calls '))).toContain('2 new, 0 unchanged, 0 kept, 1 credential(s) redacted');
+    expect(lines).toContain('  archive  conversation archive offered, not on: this brain may serve more than one person (gbrain transcripts archive on turns it on)');
+  });
+
+  test('at a terminal, a local company brain asks for a call-transcript folder after the docs folder', async () => {
+    const docs = mkdtempSync(join(tmpdir(), 'gbrain-layout-ask-docs-'));
+    const calls = mkdtempSync(join(tmpdir(), 'gbrain-layout-ask-calls-'));
+    roots.push(docs, calls);
+    const answering = (answers: string[]) => {
+      const prompts: string[] = [];
+      return { prompts, read: async ({ prompt }: { prompt: string }) => { prompts.push(prompt); const a = answers.shift(); return a === undefined ? { kind: 'eof' as const } : { kind: 'line' as const, text: a }; } };
+    };
+    const solo = answering(['2', '1', docs, calls]);
+    expect(await askBrainShape([], solo.read as any)).toEqual({ brain: 'company', team: false, docs, transcripts: calls });
+    expect(solo.prompts[3]).toContain('call transcripts');
+    const team = answering(['3', '', '2']);
+    expect(await askBrainShape([], team.read as any)).toEqual({ brain: 'both', notes: null, team: true });
+    expect(team.prompts.some((p) => p.includes('call transcripts'))).toBe(false);
+  });
+
+  test('the facts starter pages carry type: facts and the block names the facts convention', () => {
+    expect(renderStarterPage(PERSONAL_PAGES.find((p) => p.slug === 'me/facts')!)).toContain('\ntype: facts\n');
+    expect(renderStarterPage(COMPANY_PAGES.find((p) => p.slug === 'company/facts')!)).toContain('\ntype: facts\n');
+    expect(renderStarterPage(COMPANY_PAGES.find((p) => p.slug === 'company/decisions')!)).not.toContain('type:');
+    expect(renderLayoutBlock('claude-code', 'user', null, 'both')).toContain('A page with type: facts holds one dated line per fact: quote only its dated lines');
   });
 });

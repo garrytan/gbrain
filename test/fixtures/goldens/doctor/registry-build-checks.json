@@ -1234,6 +1234,10 @@
         "name": "fence_integrity"
       },
       {
+        "category": "brain",
+        "name": "facts_undated_lines"
+      },
+      {
         "category": "ops",
         "name": "search_mode"
       },

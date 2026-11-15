@@ -6,7 +6,7 @@ first session.
 
 ```bash
 gbrain setup claude-code --shape personal --notes ~/notes
-gbrain setup claude-code --shape company --docs ~/acme-example/docs
+gbrain setup claude-code --shape company --docs ~/acme-example/docs --transcripts ~/acme-example/calls
 gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
 # Codex: the same with gbrain setup codex
 ```
@@ -40,6 +40,27 @@ gbrain setup claude-code --shape both --notes ~/notes --docs ~/acme-example/docs
   empty form marked `status: stub`.
 - **Your company docs, read only.** `--docs DIR` imports that folder into the `company`
   source the same way `--notes` does, with the same 500-file limit.
+- **Your call transcripts, read only.** `--transcripts DIR` imports exported call and
+  meeting transcripts (`.txt` and `.md` files, from any recorder) into the `company`
+  source, one page per file: `company/calls/<date>-<title>`. The date comes from a
+  `YYYY-MM-DD` at the start of the file name, else from the first line, else from the
+  file's modified day; the title is the rest of a dated file name, else the first line.
+  The words are kept as written, except that every credential (API keys, tokens,
+  passwords) is replaced by a `<REDACTED:…>` marker before anything is stored, with the
+  same redaction the conversation archive uses. A line that would read as page structure
+  gets a leading backslash. The pages are keyword-only (no embedding cost) and are not
+  mined for facts. Each file is imported once: a re-run reports it unchanged, and a file
+  you changed since keeps its first page (delete the page to import it again). Above 500
+  files setup prints the import command instead (`gbrain import DIR --calls --prefix
+  company/calls --no-embed --source company`). It needs the company part on this brain,
+  so it does not go with `--team`.
+- **Who reads the call pages.** They carry no readers of their own, so whoever can read
+  the `company` source reads them, and no one else. Setup prints who that is, for example
+  `readable by: everyone who can read source company (this brain serves one person)`, or
+  on a brain that serves several people, the members the source's access rules allow
+  (`gbrain access who-can-read <slug> --source company` shows the same). These are not
+  your agent conversations: those go to `conversations/` through the
+  [conversation archive](conversation-archive.md), which `--transcripts` never touches.
 
 `--shape both` does both parts.
 
@@ -49,14 +70,21 @@ A short block in the agent's instruction file, next to the brain-first block
 (`~/.claude/CLAUDE.md` for Claude Code, `$CODEX_HOME/AGENTS.md` for Codex). It names the
 pages to read for the parts you chose, says to state facts about you only from `me/facts`
 and company numbers only from `company/facts`, to add decisions to `company/decisions` as
-dated entries, to save company facts with `--source company`, and that a `status: stub`
-page holds no facts yet. `--no-instructions` skips it, and takes it out again if an
+dated entries, to save company facts with `--source company`, to quote only the dated
+lines of a page whose frontmatter says `type: facts` (`me/facts` and `company/facts` do),
+and that a `status: stub` page holds no facts yet. `--no-instructions` skips it, and takes it out again if an
 earlier run wrote it.
 
 Then setup checks that keyless search finds one of your notes or docs by its title (for
 company docs, through default search when the source is in it) and prints a question to
 try in a new session. With no docs folder, it suggests `gbrain sources demo company-brain`
-to see how a company brain answers.
+to see how a company brain answers. The report also says what the conversation archive is
+doing on this brain: on, off, or offered (a brain that may serve several people is only
+offered it).
+
+`gbrain doctor` notes a facts page with a fact line that has no date
+(`facts_undated_lines`). It names the page and the line numbers, changes nothing, and
+asks you for the dates.
 
 ## A team company brain
 
@@ -78,7 +106,8 @@ this brain; moving it to a shared brain later is a separate step.
 ## Without the flag
 
 A brand-new brain set up without `--shape` asks once when a person is at the terminal:
-personal, company, both or skip, then the folders, then just you or a team. When an agent
+personal, company, both or skip, then the folders, then just you or a team, then (for a
+company brain on this machine) a folder of call transcripts. When an agent
 runs setup (`--json`, or no terminal), the question comes back as the `brain_shape`
 decision in the `first_run_decisions` notice, with the exact command for each answer.
 Nothing is written until it is answered, `--yes` included.
@@ -93,5 +122,5 @@ source stay; delete pages with `gbrain delete <slug>` (company ones with
 
 > Install gbrain and give it a shape: run `gbrain setup claude-code --shape personal`
 > (or `company`, or `both`). If I have a notes folder, add `--notes <that folder>`; for
-> company docs, add `--docs <that folder>`; if my team will share the company brain, add
-> `--team`. Then tell me what it wrote and the question to try.
+> company docs, add `--docs <that folder>`; for exported call transcripts, add
+> `--transcripts <that folder>`; if my team will share the company brain, add `--team`. Then tell me what it wrote and the question to try.
