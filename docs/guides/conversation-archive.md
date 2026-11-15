@@ -47,8 +47,16 @@ The archive runs from the existing maintenance pass: the idle upkeep of an agent
 Each pass archives the forward window (`archive run`), then one capped `backfill` run of older days, newest first,
 until none are left. It runs at most once per `transcripts.archive.maintenance_floor_min` (default 360), one runner at
 a time, never when the archive is off, and never fails the pass: its outcome, errors included, is recorded in
-`transcripts.archive.last_maintenance` and shown by doctor. A managed brain writes archive pages through the CLI's
-write coordinator, so the pass leaves it to a scheduled `gbrain transcripts archive run`.
+`transcripts.archive.last_maintenance` and shown by doctor. One pass is bounded by count (the run window and
+`transcripts.archive.backfill_days_per_run` older days) and by time: after 120 seconds it starts no new conversation,
+and the next pass picks up the rest.
+
+`gbrain transcripts archive run` archives now, on demand, whatever the pass is doing; it works with automatic
+maintenance turned off (`maintenance.auto false`).
+
+Managed brains aren't covered by the automatic pass yet: it records `archive_managed_brain` and skips them, and doctor
+says so. On a managed brain, run `gbrain transcripts archive run` yourself (or on a schedule); it writes through the
+CLI's write coordinator.
 
 ## Search
 

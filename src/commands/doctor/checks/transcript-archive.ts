@@ -68,6 +68,10 @@ export async function checkTranscriptArchiveFreshness(
     if (status.held.length) problems.push(status.held.length + ' day(s) held: ' + status.held.slice(0, 10).map(h => h.harness + ' ' + h.day + ' (' + h.code + ')').join(', ') + (status.held.length > 10 ? ', ...' : ''));
     const record = await readArchiveMaintenance(engine);
     if (record?.errors.length) problems.push('the last maintenance pass (' + record.at + ', ' + record.runner + ') recorded ' + record.errors.map(e => e.code).filter((c, i, a) => a.indexOf(c) === i).join(', ') + ': ' + record.errors[0]!.message.slice(0, 200));
+    else if (record?.status === 'skipped' && record.code === 'archive_managed_brain') {
+      problems.push('managed brains aren\'t covered by the automatic archive yet, so the maintenance pass skipped it; run gbrain transcripts archive run to archive now');
+      fix ??= agentFix(['gbrain', 'transcripts', 'archive', 'run'], 'Archives the last ' + (runWindow + 1) + ' local days now, through the CLI\'s write coordinator; the automatic pass does not cover managed brains yet.', name);
+    }
     else if (record?.status === 'skipped' && record.code) problems.push('the last maintenance pass skipped the archive (' + record.code + '): ' + (record.message ?? ''));
     let staleSince: number | null = record ? Date.parse(record.at) : null;
     if (staleSince === null) {

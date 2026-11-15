@@ -8,8 +8,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { CycleReport } from '../src/core/cycle.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { ARCHIVE_ENABLED_KEY, ARCHIVE_TIMEZONE_KEY } from '../src/core/transcripts/archive.ts';
-import { readArchiveMaintenance, runArchiveMaintenance } from '../src/core/transcripts/archive-maintenance.ts';
+import { ARCHIVE_ENABLED_KEY, ARCHIVE_TIMEZONE_KEY, type ArchiveReader } from '../src/core/transcripts/archive.ts';
+import { ARCHIVE_MAINTENANCE_BUDGET_MS, readArchiveMaintenance, runArchiveMaintenance } from '../src/core/transcripts/archive-maintenance.ts';
 import { runUnattendedMaintenance, type SafePhaseProviders } from '../src/core/maintenance/run.ts';
 import { archivedPages, conversation, staticReader } from './helpers/transcript-archive.ts';
 
@@ -95,3 +95,34 @@ describe('the archive step of unattended upkeep', () => {
     expect((await runArchiveMaintenance(engine, { runner: 'test', now: new Date(NOW.getTime() + 60_000), readers: readers() })).status).toBe('not_due');
   }, 60_000);
 });
+
+describe('one pass is bounded by a count and a time limit', () => {
+  test('a backfill run archives at most transcripts.archive.backfill_days_per_run older days', async () => {
+    await engine.setConfig('brain.audience', 'personal');
+    await engine.setConfig('transcripts.archive.backfill_days_per_run', '2');
+    const old = ['2026-10-01', '2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05'].map((day, i) => conversation('codex', 'codex-old-' + i, [['user', day + 'T08:00:00.000Z', 'old day ' + day]]));
+    const outcome = await runArchiveMaintenance(engine, { runner: 'test', now: NOW, readers: [staticReader('codex', old)] });
+    expect(outcome.record!.backfill).toMatchObject({ written: 2, deferred: 3, done: false });
+  }, 60_000);
+
+  test('a pass stops starting conversations at its time budget (ARCHIVE_MAINTENANCE_BUDGET_MS) and leaves the rest for the next pass', async () => {
+    await engine.setConfig('brain.audience', 'personal');
+    expect(ARCHIVE_MAINTENANCE_BUDGET_MS).toBe(120_000);
+    const slow: ArchiveReader = {
+      harness: 'codex', name: 'codex-slow',
+      async *scan(opts) {
+        for (let i = 0; i < 10; i++) {
+          const conv = conversation('codex', 'codex-slow-' + i, [['user', '2026-11-10T08:0' + i + ':00.000Z', 'slow conversation ' + i]]);
+          yield { harness: 'codex', conversationKey: conv.conversationKey, sessionId: conv.conversationKey, days: [opts.dayOf('2026-11-10T08:00:00.000Z')],
+            load: async () => { await new Promise(resolve => setTimeout(resolve, 60)); return conv; } };
+        }
+      },
+    };
+    const outcome = await runArchiveMaintenance(engine, { runner: 'test', now: NOW, readers: [slow], budgetMs: 150 });
+    expect(outcome.record!.stopped_at_deadline).toBe(true);
+    expect(outcome.record!.written).toBeGreaterThan(0);
+    expect(outcome.record!.written).toBeLessThan(10);
+    expect(outcome.record!.backfill).toBeUndefined();
+  }, 60_000);
+});
+

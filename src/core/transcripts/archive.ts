@@ -179,6 +179,8 @@ export interface ArchiveRunResult {
   errors: ArchiveReaderError[];
   message?: string;
   fix?: Action;
+  /** The run reached deadlineAtMs and left conversations for the next run. */
+  stopped_at_deadline?: boolean;
 }
 
 export interface ArchiveRunOpts {
@@ -197,6 +199,8 @@ export interface ArchiveRunOpts {
   redact?: (session: ParsedSession) => RedactedSession;
   /** Repository path: commit the written files (default gbrain git commit-push -- <paths>). */
   commitPaths?: (root: string, paths: string[], message: string) => Promise<void>;
+  /** Stop starting new readers and conversations at this instant (epoch ms); what was not reached waits for the next run. */
+  deadlineAtMs?: number;
   /** Repository path: import the committed files (default an in-process sync of the source). */
   syncSource?: (engine: BrainEngine, sourceId: string, root: string) => Promise<void>;
 }
@@ -444,12 +448,14 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   const sinceMs = opts.mode === 'run' ? Date.parse(from + 'T00:00:00.000Z') - 2 * 86_400_000 : undefined;
   const minMtimeMs = opts.mode === 'backfill' ? Date.parse(from + 'T00:00:00.000Z') - 2 * 86_400_000 : sinceMs;
   const dayOf = (ts: string) => localDay(ts, tz.timezone);
+  const pastDeadline = () => opts.deadlineAtMs !== undefined && Date.now() >= opts.deadlineAtMs && (result.stopped_at_deadline = true);
   const entries: ArchiveScanEntry[] = [];
   for (const reader of readers) {
+    if (pastDeadline()) break;
     if (reader.unavailable) { result.info.push(reader.unavailable); continue; }
     try {
       let found = 0;
-      for await (const entry of scanReader(reader, { sinceMs, minMtimeMs, dayOf })) { entries.push(entry); found++; }
+      for await (const entry of scanReader(reader, { sinceMs, minMtimeMs, dayOf })) { entries.push(entry); found++; if (pastDeadline()) break; }
       if (found === 0) result.info.push('no readable sessions for ' + reader.harness + '; use gbrain connectors or an export with gbrain transcripts ingest');
     } catch (err) {
       if (classifyItemFailure(err).scope === 'run') throw err;
@@ -529,6 +535,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   };
 
   const processRound = async (allowed: Set<string> | null) => { for (const { entry, hash, days } of items) {
+    if (pastDeadline()) break;
     const todo = [...(allowed ? days.filter(d => allowed!.has(d)) : days)].sort().reverse();
     if (todo.length === 0) continue;
     const outcomes = todo.map(day => ({ harness: entry.harness, conversation_key_hash: hash, day, status: 'planned' as ArchiveDayStatus } as ArchiveDayOutcome));
@@ -617,7 +624,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     let good = 0;
     let round = new Set([...heldDays, ...ordered.slice(0, cap)]);
     next = Math.min(cap, ordered.length);
-    while (round.size) {
+    while (round.size && !pastDeadline()) {
       const start = pending.length;
       await processRound(round);
       const ok = new Set(pending.slice(start).filter(o => o.status !== 'held' && o.status !== 'error').map(o => o.day));
@@ -665,6 +672,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     else if (d.status === 'held') result.held++;
     else if (d.status === 'planned') result.planned++;
   }
+  if (result.stopped_at_deadline) result.info.push('the run reached its time limit; the conversations it did not reach wait for the next run');
   if (result.deferred_days.length) result.info.push(result.deferred_days.length + ' older day(s) wait for the next backfill run (' + ARCHIVE_BACKFILL_CAP_KEY + ' caps one run)');
   return result;
 }
