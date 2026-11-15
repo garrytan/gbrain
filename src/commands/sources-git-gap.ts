@@ -63,6 +63,8 @@ export interface GitGapCensus {
   newest?: number;
   /** With `newest`: the oldest `updated_at` among the pages it selected, so a reader sees how far back it looked (null: no page). */
   newest_since?: string | null;
+  /** With `newest`: fenced fact rows on live pages outside that window, whose file the census did not look for. */
+  facts_on_unread_pages?: number;
   /** The source's live pages, counted in SQL before the scan, so a partial scan's `pages` reads against the whole source. */
   live_pages: number;
   states: Record<PageState, number>;
@@ -169,13 +171,17 @@ export async function censusGitGap(engine: BrainEngine, sourceId: string, opts: 
   const policy = { mirror, databaseOnlySource: root === null, dbOnly: (slug: string) => root !== null && isSourceDbOnlySlug(root, slug, 'refuse'), ignored: new Set<string>() };
   let newest: string[] | null = null;
   if (opts.newest !== undefined) {
-    const rows = await engine.transaction(async tx => {
+    const { rows, unread } = await engine.transaction(async tx => {
       await tx.executeRaw('SET TRANSACTION READ ONLY');
-      return tx.executeRaw<{ id: string; updated_at: string }>(`SELECT id::text, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+      const rows = await tx.executeRaw<{ id: string; updated_at: string }>(`SELECT id::text, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
         FROM pages WHERE source_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC, id DESC LIMIT $2`, [sourceId, opts.newest]);
+      const [unread] = await tx.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM facts f
+        JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
+        WHERE f.source_id=$1 AND f.row_num IS NOT NULL AND NOT (p.id = ANY($2::bigint[]))`, [sourceId, rows.map(row => row.id)]);
+      return { rows, unread: Number(unread?.n ?? 0) };
     });
     newest = rows.map(row => row.id);
-    Object.assign(census, { newest: opts.newest, newest_since: rows.at(-1)?.updated_at ?? null });
+    Object.assign(census, { newest: opts.newest, newest_since: rows.at(-1)?.updated_at ?? null, facts_on_unread_pages: unread });
   }
   for (let cursor = '0', offset = 0; ;) {
     if (opts.deadlineAt !== undefined && Date.now() >= opts.deadlineAt) { census.complete = false; break; }
