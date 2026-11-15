@@ -31,7 +31,7 @@ import { VERSION } from '../version.ts';
 import { hiddenToolHint } from './hidden-tool-hint.ts';
 import { installInstructionsResolver, MCP_SERVER_DESCRIPTION, resolveMcpInstructions } from './instructions.ts';
 import { BRIDGE_LOG_PREFIX, bridgeCallFailure, bridgeInternalFailure, bridgeListFailure, bridgeRefusal, endpointLabel, writeBridgeTrace, type BridgeErrorContext } from './remote-bridge-errors.ts';
-import { installStdioShutdownTriggers, mcpStdioTransport, probeWatchdogAvailable, readLiveParentPid, resolveEofDrainMs, type StdioLifecycleDeps } from './stdio-lifecycle.ts';
+import { exitAfterStdoutDrains, installStdioShutdownTriggers, mcpStdioTransport, probeWatchdogAvailable, readLiveParentPid, resolveEofDrainMs, type StdioLifecycleDeps } from './stdio-lifecycle.ts';
 import { clampSurface, createStdioSurfaceState, isMcpSurface, resolveStdioSurface, sessionWidenAllowed, stdioToolListing, surfaceWiderThan, SURFACE_SOURCE_LABEL, type McpSurface } from './surface.ts';
 import { stripUrlSecrets } from '../core/url-redact.ts';
 
@@ -74,7 +74,7 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> => v !== null &
 /** Start the bridge on this process's stdio. Resolves once the transport is connected; the lifecycle exits the process. */
 export async function startRemoteStdioBridge(cfg: GBrainConfig, opts: RemoteBridgeOptions = {}): Promise<void> {
   const deps: StdioLifecycleDeps = {
-    stdin: process.stdin, signals: process, exit: (code?: number) => { process.exit(code); }, log: (msg: string) => console.error(msg),
+    stdin: process.stdin, signals: process, exit: exitAfterStdoutDrains(), log: (msg: string) => console.error(msg),
     getParentPid: readLiveParentPid, setInterval: (fn, ms) => setInterval(fn, ms), clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
     probeWatchdog: probeWatchdogAvailable, ...opts.lifecycle,
   };

@@ -94,7 +94,7 @@ G8a ships it as `gbrain sources canonical <source-id> --to git|mixed [--dry-run 
 
 ## The git-gap census
 
-`gbrain sources git-gap <source-id> [--sample n] [--json]` is the read-only preview conversion will bind to, and doctor `db_ahead_of_git` reports its totals per source with a Git checkout (informational in G1: always ok). It compares every live page with the blob committed at HEAD, read with hardened plumbing (`ls-tree`, `cat-file --batch`, `check-ignore`), so no repository filter, textconv or hook runs. It never reads `git status` or `git diff`. Each page lands in exactly one state:
+`gbrain sources git-gap <source-id> [--sample n] [--json]` is the read-only preview conversion will bind to, and doctor `db_ahead_of_git` reports its totals per source with a Git checkout (informational in G1: the gap never warns; doctor reads the 800 most recently changed pages per source and says how far back it looked, and a census it could not finish is health unknown, never ok). It compares every live page with the blob committed at HEAD, read with hardened plumbing (`ls-tree`, `cat-file --batch`, `check-ignore`), so no repository filter, textconv or hook runs. It never reads `git status` or `git diff`. Each page lands in exactly one state:
 
 | State | Meaning | What conversion does with it |
 |---|---|---|

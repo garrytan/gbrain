@@ -31,7 +31,7 @@
  * leaves pending fingerprints the next run treats as owned, so a resume never
  * duplicates an entry, and an untrusted hook never runs.
  */
-import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { ownedEntryFingerprint } from '../bootstrap/adopted-connections.ts';
@@ -255,6 +255,21 @@ export interface CodexApplyResult { steps: CodexSetupStep[]; receipt: CodexSetup
  * `beforeMcp` runs after the receipt is prepared (the brain init step);
  * `abortAfter` is the crash-injection test seam.
  */
+/** The current text of each file setup may rewrite, read before it writes; absent files have nothing to back up. */
+function readOriginals(paths: string[]): Array<{ path: string; text: string }> {
+  return paths.filter((path) => existsSync(path)).map((path) => ({ path, text: readFileSync(path, 'utf8') }));
+}
+
+/** Keep `<file>.bak.<stamp>` of each file setup changed (the autopilot convention); one note per backup. */
+function keepBackups(originals: Array<{ path: string; text: string }>): string[] {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return originals.filter(({ path, text }) => !existsSync(path) || readFileSync(path, 'utf8') !== text).map(({ path, text }) => {
+    const bakPath = `${path}.bak.${stamp}`;
+    writeFileSync(bakPath, text, { mode: 0o600 });
+    return `${path} as it was before setup changed it: ${bakPath}`;
+  });
+}
+
 export async function applyCodexSetup(
   plan: CodexSetupPlan,
   consent: SetupConsent,
@@ -263,6 +278,7 @@ export async function applyCodexSetup(
   const paths = codexSetupPaths(plan.name);
   mkdirSync(dirname(paths.configPath), { recursive: true, mode: 0o700 });
   const lock = await acquireBootstrapLock(dirname(paths.configPath));
+  const originals = readOriginals([paths.configPath, paths.hooksPath]);
   try {
     // The MCP table and every hook command start gbrain through the launcher, so it goes down before anything names it (#8424, #8426).
     ensureHookLauncher(hookLauncherPath(plan.brainHome));
@@ -384,7 +400,11 @@ export async function applyCodexSetup(
     if (opts.abortAfter === 'trust') throw new SetupAbortInjected('trust');
     receipt.status = 'installed';
     save();
+    notes.push(...keepBackups(originals));
     return { steps, receipt, changed: true, preserved, notes };
+  } catch (e) {
+    keepBackups(originals);
+    throw e;
   } finally {
     lock.release();
   }
@@ -395,6 +415,7 @@ export interface CodexRemoveResult { steps: CodexSetupStep[]; preserved: CodexPr
 /** Remove exactly what the receipt owns by fingerprint (trust, hooks, MCP, receipt); edited entries survive and are reported. */
 export async function removeCodexSetup(receipt: CodexSetupReceipt, receiptPath: string, opts: { dryRun: boolean }): Promise<CodexRemoveResult> {
   const lock = await acquireBootstrapLock(dirname(receipt.config_path));
+  const originals = readOriginals([receipt.config_path, receipt.hooks_path]);
   try {
     const steps: CodexSetupStep[] = [];
     const preserved: CodexPreserved[] = [];
@@ -464,7 +485,11 @@ export async function removeCodexSetup(receipt: CodexSetupReceipt, receiptPath: 
         steps.push({ step: 'receipt', action: 'remove', detail: receiptPath });
       }
     }
+    notes.push(...keepBackups(originals));
     return { steps, preserved, notes, receiptRemoved };
+  } catch (e) {
+    keepBackups(originals);
+    throw e;
   } finally {
     lock.release();
   }

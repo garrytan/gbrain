@@ -1,13 +1,15 @@
 /**
- * GST-2731: \`gbrain setup <harness> --shape personal [--notes <dir>]\` (setup-brain-layout.ts).
+ * GST-2731: \`gbrain setup <harness> --shape personal|company|both [--notes <dir>] [--docs <dir>] [--team]\` (setup-brain-layout.ts).
  *
  * Authoring gate:
- *  1. Protects: the starter pages are create-only empty forms, the notes folder is
- *     read and never written, a new brain set up by an agent gets the brain_shape
- *     decision and no pages, and the layout block lives beside the brain-first block.
+ *  1. Protects: the starter pages are create-only empty forms, the notes and docs
+ *     folders are read and never written, a new brain set up by an agent gets the
+ *     brain_shape decision and no pages, the layout block lives beside the brain-first
+ *     block, and the company source joins default search only on a one-person brain.
  *  2. Fails on: a re-run that overwrites an edited page, a byte changed in the notes
- *     folder, a page written before the shape question is answered (--yes included),
- *     an inline import of a huge folder, a company brain accepted before it exists.
+ *     or docs folder, a page written before the shape question is answered (--yes
+ *     included), an inline import of a huge folder, a company source federated on a
+ *     shared brain, anything created for the company part with --team.
  *  3. New flags on an existing command; test/setup.test.ts keeps the rest of setup.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
@@ -16,7 +18,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
-import { LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision, renderLayoutBlock, layoutNotices, applyBrainLayout, countNotes } from '../src/commands/setup-brain-layout.ts';
+import { COMPANY_PAGES, LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision, renderLayoutBlock, layoutNotices, applyBrainLayout, countNotes } from '../src/commands/setup-brain-layout.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
 const roots: string[] = [];
@@ -152,18 +154,86 @@ describe('setup --shape personal', () => {
     expect(readFileSync(join(b.home, '.codex', 'AGENTS.md'), 'utf8')).toContain(LAYOUT_BEGIN);
   }, 120_000);
 
-  test('--shape company is refused before anything is written', async () => {
+  test('an unknown shape is refused before anything is written', async () => {
     const b = box();
-    const r = await setup(b, ['claude-code', '--shape', 'company']);
+    const r = await setup(b, ['claude-code', '--shape', 'team']);
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr + r.stdout).toContain('later gbrain release');
+    expect(r.stderr + r.stdout).toContain('pass personal, company, both or none');
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
   }, 60_000);
 });
 
+function docsDir(b: Box): string {
+  const dir = join(b.root, 'company-docs');
+  mkdirSync(join(dir, 'pricing'), { recursive: true });
+  writeFileSync(join(dir, 'pricing', 'q3.md'), '# Q3 pricing review\n\nWe moved the team plan to annual billing.\n');
+  writeFileSync(join(dir, 'onboarding.md'), '# Onboarding playbook\n\nSend the welcome email first.\n');
+  return dir;
+}
+const sourceIds = async (b: Box): Promise<any[]> => JSON.parse((await gbrain(b, ['sources', 'list', '--json'])).stdout).sources;
+
+describe('setup --shape company', () => {
+  test('a one-person brain gets a company source in default search, its pages, and the docs read only', async () => {
+    const b = box();
+    const docs = docsDir(b);
+    const before = treeHash(docs);
+    const r = await setup(b, ['claude-code', '--shape', 'company', '--docs', docs]);
+    expect(r.exitCode).toBe(0);
+    const layout = r.doc.brain_layout;
+    expect(layout.company).toMatchObject({ source: 'company', action: 'created', federated: true });
+    expect(layout.company.root.startsWith(join(b.home, '.gbrain'))).toBe(true);
+    expect(layout.pages.map((p: any) => [p.slug, p.source, p.action])).toEqual(COMPANY_PAGES.map((p) => [p.slug, 'company', 'write']));
+    expect(layout.docs).toMatchObject({ action: 'imported', files: 2 });
+    expect(layout.check).toMatchObject({ ok: true, query: 'Onboarding playbook' });
+    expect(layout.check.detail).toContain('default search');
+    expect(layout.next_question).toContain('what did we decide about Onboarding playbook');
+    expect(r.doc.notices.some((n: any) => n.code === 'source_not_in_default_search')).toBe(false);
+    expect(treeHash(docs)).toBe(before);
+    const md = readFileSync(claudeMd(b), 'utf8');
+    expect(md).toContain('company/decisions');
+    expect(md).not.toContain('me/facts');
+    expect((await gbrain(b, ['get', 'company/facts', '--source', 'company'])).stdout).toContain('status: stub');
+    const again = await setup(b, ['claude-code', '--shape', 'company']);
+    expect(again.exitCode).toBe(0);
+    expect(again.doc.brain_layout.company.action).toBe('kept');
+    expect(again.doc.brain_layout.pages.every((p: any) => p.action === 'keep')).toBe(true);
+  }, 240_000);
+
+  test('a brain declared shared keeps the company source out of default search and asks the user', async () => {
+    const b = box();
+    expect((await setup(b, ['claude-code', '--shape', 'personal'])).exitCode).toBe(0);
+    expect((await gbrain(b, ['config', 'set', 'brain.audience', 'shared'])).exitCode).toBe(0);
+    const docs = docsDir(b);
+    const r = await setup(b, ['claude-code', '--shape', 'both', '--docs', docs]);
+    expect(r.exitCode).toBe(0);
+    expect(r.doc.brain_layout.company).toMatchObject({ action: 'created', federated: false });
+    expect((await sourceIds(b)).find((s) => s.id === 'company').federated).toBe(false);
+    const n = r.doc.notices.find((x: any) => x.code === 'source_not_in_default_search');
+    expect(n.fix.next).toBe('ask_user');
+    expect(n.fix.argv.slice(0, 4)).toEqual(['gbrain', 'sources', 'federate', 'company']);
+    expect(r.doc.brain_layout.check.detail).toContain('search of the company source');
+    const md = readFileSync(claudeMd(b), 'utf8');
+    expect(md).toContain('me/facts');
+    expect(md).toContain('company/decisions');
+  }, 300_000);
+
+  test('--team writes the personal part, creates nothing for the company part and prints the route', async () => {
+    const b = box();
+    const r = await setup(b, ['claude-code', '--shape', 'both', '--team']);
+    expect(r.exitCode).toBe(0);
+    expect(r.doc.brain_layout.company).toMatchObject({ action: 'team' });
+    expect(r.doc.brain_layout.pages.map((p: any) => p.slug)).toEqual(['me/facts', 'me/voice', 'me/how-i-decide']);
+    expect((await sourceIds(b)).some((s) => s.id === 'company')).toBe(false);
+    expect(r.doc.notices.find((x: any) => x.code === 'brain_layout_team_next').user_message).toContain('gbrain access serves several');
+    const md = readFileSync(claudeMd(b), 'utf8');
+    expect(md).toContain('me/facts');
+    expect(md).not.toContain('company/decisions');
+  }, 180_000);
+});
+
 describe('layout units', () => {
   test('the starter pages hold only template text', () => {
-    for (const p of PERSONAL_PAGES) {
+    for (const p of [...PERSONAL_PAGES, ...COMPANY_PAGES]) {
       const text = renderStarterPage(p);
       expect(text).toContain('status: stub');
       for (const line of text.split('\n').filter((l) => l.startsWith('- '))) expect(line.startsWith('- Example (delete me):')).toBe(true);
@@ -172,9 +242,15 @@ describe('layout units', () => {
 
   test('flag validation', () => {
     const parse = (args: string[]) => parseLayoutFlags((f) => { const i = args.indexOf(f); return i < 0 ? undefined : args[i + 1]; }, (f) => args.includes(f), 'claude-code');
-    expect(parse(['--notes', '/tmp'])).toContain('--shape personal');
+    expect(parse(['--notes', '/tmp'])).toContain('--shape personal or both');
     expect(parse(['--shape', 'personal', '--notes', 'rel/dir'])).toContain('absolute');
-    expect(parse(['--shape', 'both'])).toContain('later gbrain release');
+    expect(parse(['--shape', 'personal', '--docs', '/tmp'])).toContain('--shape company or both');
+    expect(parse(['--shape', 'personal', '--team'])).toContain('need --shape company or both');
+    expect(parse(['--shape', 'company', '--team', '--solo'])).toContain('do not go together');
+    expect(parse(['--shape', 'company', '--team', '--docs', '/tmp'])).toContain('--solo');
+    expect(parse(['--shape', 'both'])).toEqual({ brain: 'both' });
+    expect(parse(['--shape', 'company', '--team'])).toEqual({ brain: 'company', team: true });
+    expect(parse(['--shape', 'both', '--notes', 'none', '--docs', '/tmp'])).toEqual({ brain: 'both', notes: null, docs: '/tmp' });
     expect(parse(['--shape', 'personal', '--notes', 'none'])).toEqual({ brain: 'personal', notes: null });
   });
 
@@ -217,6 +293,56 @@ describe('layout units', () => {
     const wrote = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'personal', notes: null, dryRun: false },
       run: (argv) => (argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' }) })!;
     expect(wrote.pages.map((p) => p.action)).toEqual(['write', 'write', 'write']);
+  });
+
+  test('a rerun handed out after a --team run keeps --team', () => {
+    const o = (company: any) => ({ shape: 'both', pages: [{ slug: 'me/facts', source: null, action: 'failed', detail: 'busy' }], notes: null, docs: null, company, block: null, check: { ok: true, query: null, detail: '' }, next_question: null }) as any;
+    const fix = (company: any) => layoutNotices(o(company), 'claude-code').find((n) => n.code === 'brain_layout_pages_pending')!.fix!;
+    expect(fix({ source: 'company', action: 'team', federated: null, root: null }).argv).toEqual(['gbrain', 'setup', 'claude-code', '--shape', 'both', '--team']);
+    expect(fix(null).argv).toEqual(['gbrain', 'setup', 'claude-code', '--shape', 'both']);
+  });
+
+  test('a company folder that is not an empty folder is never adopted, and the block and the fix say so', () => {
+    for (const occupy of [(p: string) => { mkdirSync(p); writeFileSync(join(p, 'mine.md'), '# Mine\n'); }, (p: string) => writeFileSync(p, 'a file\n')]) {
+      const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-occupied-'));
+      roots.push(root);
+      occupy(join(root, 'company'));
+      const instructions = join(root, 'CLAUDE.md');
+      const calls: string[][] = [];
+      const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: instructions, flags: { brain: 'both', notes: null, docs: null, dryRun: false },
+        run: (argv) => {
+          calls.push(argv);
+          if (argv[1] === 'sources') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'default', local_path: join(root, 'default'), federated: true }] }), stderr: '' };
+          return argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' };
+        } })!;
+      expect(o.company!.action).toBe('failed');
+      expect(calls.some((c) => c[1] === 'sources' && c[2] === 'add')).toBe(false);
+      expect(o.pages.map((p) => p.slug)).toEqual(PERSONAL_PAGES.map((p) => p.slug));
+      const block = readFileSync(instructions, 'utf8');
+      expect(block).toContain('me/facts');
+      expect(block).not.toContain('company/facts');
+      const fix = layoutNotices(o, 'claude-code').find((n) => n.code === 'brain_layout_pages_pending')!.fix!;
+      expect(fix.ask_user).toBe(true);
+      expect(fix.user_message).toContain(join(root, 'company'));
+    }
+  });
+
+  test('personal pages land before the company source exists, and either sources add reply reads as federated', () => {
+    for (const reply of [{ federated: true }, { config: { federated: true } }]) {
+      const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-order-'));
+      roots.push(root);
+      const calls: string[][] = [];
+      const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'both', notes: null, docs: null, dryRun: false },
+        run: (argv) => {
+          calls.push(argv);
+          if (argv[1] === 'sources' && argv[2] === 'list') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'default', local_path: join(root, 'default'), federated: true }] }), stderr: '' };
+          if (argv[1] === 'sources' && argv[2] === 'add') return { code: 0, stdout: JSON.stringify({ id: 'company', ...reply }), stderr: '' };
+          return argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' };
+        } })!;
+      const added = calls.findIndex((c) => c[1] === 'sources' && c[2] === 'add');
+      for (const p of PERSONAL_PAGES) expect(calls.findIndex((c) => c[1] === 'put' && c[2] === p.slug)).toBeLessThan(added);
+      expect(o.company!.federated).toBe(true);
+    }
   });
 
   test('the notes count does not follow symlinked folders', () => {

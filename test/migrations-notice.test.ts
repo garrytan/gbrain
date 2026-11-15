@@ -42,6 +42,16 @@ describe('pendingUpgradeMigrationsNotice', () => {
     expect(notice?.why).toContain(latest);
   });
 
+  test('a wedged migration gets a notice whose fix asks the user before clearing it', async () => {
+    const notice = await inHome(async () => {
+      for (const version of MIGRATION_VERSIONS) if (version !== latest) appendCompletedMigration({ version, status: 'complete' } as never);
+      for (let i = 0; i < 3; i++) appendCompletedMigration({ version: latest, status: 'partial' } as never);
+      return pendingUpgradeMigrationsNotice(engine, 'query', latest);
+    });
+    expect(notice).toMatchObject({ code: 'migrations_pending', fix: { ask_user: true, argv: ['gbrain', 'apply-migrations', '--force-retry', latest] } });
+    expect(notice!.why).toContain(latest);
+  });
+
   test('no ledger yet (a fresh brain) means no notice', async () => {
     expect(await inHome(() => pendingUpgradeMigrationsNotice(engine, 'query', latest))).toBeNull();
   });

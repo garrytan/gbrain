@@ -30,15 +30,15 @@ afterAll(() => { for (const h of homes) rmSync(h, { recursive: true, force: true
 
 type Forward = (c: GBrainConfig, name: string, args: Record<string, unknown>, o: ForwardRemoteToolOptions & { meta?: Record<string, unknown> }) => Promise<CallToolResult>;
 
-async function startBridge(over: { forward?: Forward; list?: () => Promise<RemoteToolDefs>; transport?: RemoteBridgeOptions['transport']; advertise?: RemoteBridgeOptions['advertise'] } = {}) {
+async function startBridge(over: { forward?: Forward; list?: () => Promise<RemoteToolDefs>; transport?: RemoteBridgeOptions['transport']; advertise?: RemoteBridgeOptions['advertise']; eofDrainMs?: number } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'gbrain-bridge-unit-'));
   homes.push(home);
   const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
   const logs: string[] = [];
   const exits: number[] = [];
-  const stdin = Object.assign(new EventEmitter(), { isTTY: true });
+  const stdin = Object.assign(new EventEmitter(), { isTTY: over.eofDrainMs === undefined });
   await withEnv({ GBRAIN_HOME: home, GBRAIN_SURFACE: undefined }, () => startRemoteStdioBridge(cfg, {
-    installFatalHandlers: false, mcpStdio: false, eofDrainMs: 0, ...(over.advertise ? { advertise: over.advertise } : {}),
+    installFatalHandlers: false, mcpStdio: false, eofDrainMs: over.eofDrainMs ?? 0, ...(over.advertise ? { advertise: over.advertise } : {}),
     transport: over.transport ?? (() => serverSide),
     lifecycle: { stdin: stdin as never, signals: new EventEmitter() as never, log: (m: string) => { logs.push(m); }, exit: (c?: number) => { exits.push(c ?? 0); },
       getParentPid: () => 1, probeWatchdog: () => false },
@@ -47,7 +47,7 @@ async function startBridge(over: { forward?: Forward; list?: () => Promise<Remot
   }));
   const client = new Client({ name: 'bridge-unit', version: '1' }, { capabilities: {} });
   if (!over.transport) await client.connect(clientSide);
-  return { client, logs, exits, home, close: () => client.close().catch(() => {}) };
+  return { client, logs, exits, home, stdin, close: () => client.close().catch(() => {}) };
 }
 
 const body = (r: unknown) => JSON.parse(((r as CallToolResult).content[0] as { text: string }).text);
@@ -169,6 +169,21 @@ describe('unexpected faults', () => {
       const second = await b.client.callTool({ name: 'get_page', arguments: { slug: 'notes/x' } });
       expect(second.isError ?? false).toBe(false);
       expect(body(second)).toEqual({ ok: true });
+    } finally { await b.close(); }
+  });
+
+  test('stdin EOF whose drain bound expires with a write in flight logs write_outcome_unknown and exits 1', async () => {
+    let started = false;
+    const b = await startBridge({ eofDrainMs: 50, forward: async () => { started = true; return await new Promise<CallToolResult>(() => {}); } });
+    try {
+      void b.client.callTool({ name: 'put_page', arguments: { slug: 'notes/eof-example', content: 'x' } }).catch(() => {});
+      for (let i = 0; i < 200 && !started; i++) await Bun.sleep(5);
+      b.stdin.emit('end');
+      for (let i = 0; i < 400 && !b.exits.length; i++) await Bun.sleep(5);
+      const unknown = b.logs.filter(l => l.includes('code=write_outcome_unknown'));
+      expect(unknown).toHaveLength(1);
+      expect(unknown[0]).toMatch(/tool=put_page submission_status=unknown request_id=[0-9a-f-]{36} fix="gbrain write-request -- [0-9a-f-]{36}"/);
+      expect(b.exits[0]).toBe(1);
     } finally { await b.close(); }
   });
 

@@ -19,9 +19,9 @@
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createServer, type Server } from 'node:net';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { runCli, type CliResult } from './helpers/cli-spawn.ts';
 import { hookEntryHash, removeClaudeHooksAt, writeClaudeHooksAt } from '../src/core/bootstrap/hooks.ts';
 import { GBRAIN_HOOK_MARKER_VALUE } from '../src/core/bootstrap/host-specs.ts';
@@ -582,6 +582,23 @@ describe('gbrain setup codex: install lifecycle', () => {
     expect(second.exitCode).toBe(0);
     expect(second.doc.steps.map((s: any) => [s.step, s.action])).toEqual([['receipt', 'keep'], ['mcp', 'keep'], ['hooks', 'keep'], ['trust', 'keep']]);
     expect([codexToml(b), hooksJson(b), codexReceipt(b)].map((p) => readFileSync(p, 'utf8'))).toEqual(before);
+  });
+
+  test('an install that changes an existing config.toml or hooks.json keeps a timestamped .bak of each and names it', async () => {
+    const b = box();
+    mkdirSync(codexDir(b), { recursive: true });
+    const foreignToml = 'model = "o5"\n';
+    const foreignHooks = JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo user-hook', timeout: 2 }] }] } }, null, 2);
+    writeFileSync(codexToml(b), foreignToml);
+    writeFileSync(hooksJson(b), foreignHooks);
+    const installed = await setup(b, ['codex', '--json']);
+    expect(installed.exitCode, installed.stderr).toBe(0);
+    for (const [file, original] of [[codexToml(b), foreignToml], [hooksJson(b), foreignHooks]] as const) {
+      const backups = readdirSync(codexDir(b)).filter((n) => n.startsWith(`${basename(file)}.bak.`));
+      expect(backups).toHaveLength(1);
+      expect(readFileSync(join(codexDir(b), backups[0]!), 'utf8')).toBe(original);
+      expect(installed.doc.notes.join('\n')).toContain(join(codexDir(b), backups[0]!));
+    }
   });
 
   test('--remove deletes exactly the owned entries; foreign config, hooks, trust entries and the brain stay byte-for-byte', async () => {
