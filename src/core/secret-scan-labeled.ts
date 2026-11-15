@@ -119,8 +119,8 @@ const NETRC_HEAD = '(?:^|\\s)(?:machine\\s{1,4}[^\\s]{1,253}|default)(?:\\s{1,4}
 const NETRC_LINE_HEAD = '^\\s{0,8}(?:(?:login|account)\\s{1,4}[^\\s]{1,128}\\s{1,4}){0,2}password\\s{1,4}';
 /** A line that opens a multi-line `.netrc` stanza (`machine host`, `default`, optionally with login/account but no password). */
 const NETRC_STANZA_OPEN_RE = /^\s{0,8}(?:machine\s{1,4}\S{1,253}|default)(?:\s{1,4}(?:login|account)\s{1,4}\S{1,128}){0,2}\s{0,4}$/;
-/** A line that keeps a `.netrc` stanza open: only `login`, `account` and `password` tokens. */
-const NETRC_STANZA_LINE_RE = /^\s{0,8}(?:(?:login|account|password)\s{1,4}\S{1,255}\s{0,4}){1,3}$/;
+/** A line that keeps a `.netrc` stanza open: only `login`, `account` and `password` tokens, a blank line or a `#` comment. */
+const NETRC_STANZA_LINE_RE = /^\s{0,8}(?:(?:(?:login|account|password)\s{1,4}\S{1,255}\s{0,4}){1,3}|#.*|\s*)$/;
 
 /** True when the line after `line` is inside a multi-line `.netrc` stanza; `open` says whether `line` itself was. */
 export function netrcStanzaOpen(line: string, open: boolean): boolean {

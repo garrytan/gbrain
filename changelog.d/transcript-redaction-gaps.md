@@ -7,7 +7,7 @@ What to do: conversations imported earlier keep what they stored. `gbrain doctor
 
 ### Itemized changes
 
-- `src/core/secret-scan-labeled.ts`: a `password` line inside a multi-line `.netrc` stanza (opened by a `machine` or `default` line, kept open by `login`, `account` and `password` lines) is redacted. The line must be only `password <value>`, so prose such as "machine learning" followed by "password managers are useful" stays.
+- `src/core/secret-scan-labeled.ts`: a `password` line inside a multi-line `.netrc` stanza (opened by a `machine` or `default` line, kept open by `login`, `account` and `password` lines, blank lines and `#` comments) is redacted. The line must be only `password <value>`, so prose such as "machine learning" followed by "password managers are useful" stays.
 - `src/core/secret-scan-cookie.ts`: a `-b` on a line that continues a curl command (each earlier line ends in `\`) counts as curl's cookie argument; a cookie value quoted with escaped quotes (`\"`, or `\\\"` one level deeper) is read. A `-b` after a continued line that is not curl (`git checkout -b`) stays.
 - `src/core/secret-scan.ts`: the transcript-lane scan carries the `.netrc` stanza and the curl continuation from line to line.
 - `src/core/transcripts/secret-audit.ts`: `TRANSCRIPT_SECRET_AUDIT_VERSION` 6 → 7, because the audit now finds these shapes on stored pages.
