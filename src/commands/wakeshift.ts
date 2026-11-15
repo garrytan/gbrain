@@ -334,7 +334,7 @@ async function emit(engine: BrainEngine, args: string[]): Promise<void> {
   }
   try {
     const datastore = managedFilesystemDatastorePath(engine);
-    if (datastore) await ingestCronSpool(engine, datastore);
+    if (datastore) await ingestCronSpool(engine, datastore).catch(e => console.error(`[wakeshift] could not take the spooled cron runs: ${e instanceof Error ? e.message : String(e)}`));
     await recordCronRun(engine, { name, status });
   } catch (e) {
     console.error(`[wakeshift] could not record the ${name} run: ${e instanceof Error ? e.message : String(e)}`);

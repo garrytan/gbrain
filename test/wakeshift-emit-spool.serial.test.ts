@@ -6,7 +6,7 @@
  * Serial: every test runs under withEnv with GBRAIN_HOME at a temporary home holding config.json and the 0600 key file.
  */
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -154,6 +154,33 @@ describe('the spool', () => {
     expect(again.value).toEqual({ recorded: 0, rejected: 0 });
     expect(again.err).toBe('');
     expect(await runs()).toHaveLength(0);
+  });
+
+  test('a spooled time the database cannot store is moved to rejected/ and does not hold back the runs after it', async () => {
+    const dir = await spoolDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '0000000000001-aaaaaaaaaaaaaaaa.json'), JSON.stringify({ name: 'nightly-example', status: 'ok', finished_at: '0000-01-01T00:00:00.000Z' }), { mode: 0o600 });
+    await inHome(() => spoolCronRun(datastore, { name: 'nightly-example', status: 'failed' }));
+    const r = await captured(() => ingestCronSpool(engine, datastore));
+    expect(r.value).toEqual({ recorded: 1, rejected: 1 });
+    expect(r.err).toContain('not a cron run');
+    expect(readdirSync(join(dir, 'rejected'))).toEqual(['0000000000001-aaaaaaaaaaaaaaaa.json']);
+    expect((await runs()).map(x => x.status)).toEqual(['failed']);
+    expect(await pending()).toHaveLength(0);
+  });
+
+  test('a direct emit records its own run even when the spool cannot be ingested', async () => {
+    const dir = await spoolDir();
+    mkdirSync(join(dir, 'rejected'), { recursive: true });
+    writeFileSync(join(dir, '0000000000001-aaaaaaaaaaaaaaaa.json'), '{not json', { mode: 0o600 });
+    chmodSync(join(dir, 'rejected'), 0o500);
+    try {
+      const r = await captured(() => runWakeshift(engine, ['emit', 'cron.finished', '--name', 'nightly-example', '--status', 'ok']));
+      expect(r.err).toContain('could not take the spooled cron runs');
+      expect((await runs()).map(x => [x.name, x.status])).toEqual([['nightly-example', 'ok']]);
+    } finally {
+      chmodSync(join(dir, 'rejected'), 0o700);
+    }
   });
 
   test('a spooled run of an unregistered cron is recorded with the same hint as the direct path, and the next direct emit takes leftovers', async () => {

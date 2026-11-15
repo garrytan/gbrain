@@ -8,7 +8,7 @@
  * status and time, so a claim left behind by a crash between the insert and the delete is replayed harmlessly.
  *
  * Bounded: at most SPOOL_MAX_FILES runs wait per brain (emit says so and drops the run past that), and a file over
- * SPOOL_MAX_BYTES or one that does not parse is moved to rejected/ with one stderr line, never retried. Nothing is
+ * SPOOL_MAX_BYTES or one that does not parse (a finished time before 2000 or over a day ahead included) is moved to rejected/ with one stderr line, never retried. Nothing is
  * spooled while reporting back is off, and Postgres brains never spool: their emit connects or reports the outage.
  */
 import { createHash, randomBytes } from 'node:crypto';
@@ -22,6 +22,8 @@ export const SPOOL_MAX_FILES = 1000;
 export const SPOOL_MAX_BYTES = 1024;
 export const SPOOL_INGEST_BATCH = 200;
 const STALE_CLAIM_MS = 10 * 60_000;
+const EARLIEST_RUN_MS = Date.UTC(2000, 0, 1);
+const LATEST_RUN_SKEW_MS = 24 * 3600_000;
 const PENDING = /^\d{13}-[0-9a-f]{16}\.json$/;
 const CLAIMED = /^\d{13}-[0-9a-f]{16}\.json\.claimed-[0-9a-f]{16}$/;
 
@@ -62,7 +64,7 @@ function parseRun(path: string): CronRun | string {
   try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch { return 'it is not JSON'; }
   const r = raw as Partial<CronRun> | null;
   const time = typeof r?.finished_at === 'string' ? Date.parse(r.finished_at) : NaN;
-  if (!r || typeof r.name !== 'string' || cronName(r.name) !== r.name || (r.status !== 'ok' && r.status !== 'failed') || !Number.isFinite(time)) {
+  if (!r || typeof r.name !== 'string' || cronName(r.name) !== r.name || (r.status !== 'ok' && r.status !== 'failed') || !(time >= EARLIEST_RUN_MS && time <= Date.now() + LATEST_RUN_SKEW_MS)) {
     return 'it is not a cron run (name, status ok|failed, finished_at)';
   }
   return { name: r.name, status: r.status, finished_at: new Date(time).toISOString() };
