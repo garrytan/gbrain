@@ -83,6 +83,13 @@
         },
         {
           "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/token"
+        },
+        {
+          "handlers": [
             "rateLimit#1",
             "urlencodedParser",
             "<anonymous>"
@@ -837,6 +844,13 @@
           ],
           "method": "use",
           "path": "/register"
+        },
+        {
+          "handlers": [
+            "<anonymous>"
+          ],
+          "method": "use",
+          "path": "/token"
         },
         {
           "handlers": [

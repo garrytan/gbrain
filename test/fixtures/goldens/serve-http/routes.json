@@ -91,6 +91,14 @@
     },
     {
       "handlers": [
+        "<inline>"
+      ],
+      "method": "use",
+      "path": "/token",
+      "when": []
+    },
+    {
+      "handlers": [
         "ccRateLimiter",
         "express.urlencoded({ extended : false })",
         "<inline>"
