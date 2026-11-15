@@ -8,6 +8,7 @@
 import { describe, expect, test } from 'bun:test';
 import { buildInitFirstRunNotices, setupFirstRunNotices, upkeepLine } from '../src/commands/init-first-run.ts';
 import { costMatrixSentence } from '../src/core/search/mode-advice.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const searchMode = { mode: 'balanced' as const, reason: 'Balanced default for a new brain.' };
 const scaffold = { missing: ['cold-start', 'book-mirror'], argv: ['gbrain', 'skillpack', 'scaffold', 'cold-start', 'book-mirror'] };
@@ -35,9 +36,21 @@ describe('buildInitFirstRunNotices', () => {
     expect(notices[1].decisions!.map(d => d.id)).not.toContain('harness_wiring');
     const [wiring] = notices;
     expect(wiring.kind).toBe('info');
-    expect(wiring.why).toContain('install step, not a setting');
-    expect(wiring.fix).toMatchObject({ actor: 'agent', consent: [] });
-    expect(wiring.fix!.user_message).toBeUndefined();
+  });
+
+  test('with no agent detected, the wiring fix stays the user step readiness gave, and the why does not promise a command', async () => {
+    const markers = { CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined, CODEX_SANDBOX: undefined, CODEX_CI: undefined, OPENCODE: undefined, OPENCODE_PID: undefined };
+    await withEnv(markers, async () => {
+      const config = { engine: 'pglite', database_path: '/tmp/gbrain-example.pglite' } as never;
+      const [wiring] = buildInitFirstRunNotices({ searchMode, writeback: true, config });
+      expect(wiring.code).toBe('harness_wiring');
+      expect(wiring.fix!.argv).toBeUndefined();
+      expect(wiring.fix!.actor).toBe('user');
+      expect(wiring.fix!.consent).toEqual(['persistent_install']);
+      expect(wiring.fix!.user_message).toBeTruthy();
+      expect(wiring.why).not.toContain('The fix names the command');
+      expect(wiring.why).toContain('relay');
+    });
   });
 
   test('nothing paid turns on from the first-run settings: writeback in effect off, keyless upkeep pays for nothing', () => {
