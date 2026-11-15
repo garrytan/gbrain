@@ -183,7 +183,7 @@ Against the upgrade-breakage classes in the GBRA-224 plan:
 | I: packaged skill and host migrations | Yes: `apply-migrations` runs every orchestrator on a brain the old release created |
 | J: embedding backfill holds created by an upgrade | Yes on keyed cells: embedding a new page and vector query after the upgrade |
 | C: mixed versions, stale resident processes | Partly: a stdio serve and (Postgres) a supervisor across the upgrade, one build afterwards, and the old binary on the upgraded brain; not long-lived multi-host fleets |
-| E: runtime floor, postinstall, Bun | Partly: the real Bun-floor read and global install on the runner's Bun; not older Bun versions |
+| E: runtime floor, Bun | Partly: the real Bun-floor read and global install on the runner's Bun; not older Bun versions |
 | G: migration orchestrator chain on managed brains | Partly: the chain on fresh small brains; not managed multi-writer brains |
 
 Not covered: scale (classes B and F stay with the production soak and the

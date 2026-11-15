@@ -59,7 +59,7 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   const swapOnly = args.includes('--swap-only');
   const noAutopilotInstall = args.includes('--no-autopilot-install') || process.env.GBRAIN_NO_AUTOPILOT_INSTALL === '1';
   const checkBunFloor = !args.includes('--no-bun-floor-check');
-  // #5693: post-upgrade owns migrations, so package postinstall skips them.
+  // #5693: post-upgrade owns migrations. gbrain ships no postinstall now; the flag still tells an older release's postinstall to skip them.
   const upgradeEnv = { ...process.env, GBRAIN_UPGRADE_OWNS_MIGRATIONS: '1', ...(noAutopilotInstall ? { GBRAIN_NO_AUTOPILOT_INSTALL: '1' } : {}) };
 
   const json = jsonRequested(args);

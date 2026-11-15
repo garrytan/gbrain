@@ -85,9 +85,10 @@ npm package named `gbrain`, or `bun add` in the user's current project.
 Local/thin-client conversion requires explicit intent and preservation of the
 previous configuration.
 
-**Required search-mode choice:** initialization may select a noninteractive
-default and print a nine-cell cost matrix with `[AGENT]` markers. Relay that
-matrix and confirm the operator's choice before continuing. Follow Step 3.5 of
+**Search mode in effect:** initialization selects a noninteractive default and
+prints a nine-cell cost matrix with `[AGENT]` markers. Connect memory first,
+then relay that matrix and the mode in effect in the reply that reports the
+install; apply the operator's choice when they give it. Follow Step 3.5 of
 [INSTALL_FOR_AGENTS.md](https://github.com/garrytan/gbrain/blob/master/INSTALL_FOR_AGENTS.md); use the printed matrix,
 not remembered prices. Illustrative model API costs are separate from a
 harness subscription. This choice does not enable paid APIs or capture.

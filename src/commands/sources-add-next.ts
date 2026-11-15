@@ -9,6 +9,8 @@
  * the new source readable. The stored federation default is unchanged.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import type { Notice, RenderedNotice } from '../core/agent-output.ts';
+import { newSourceJoinsDefaultSearch } from '../core/source-default-search.ts';
 import { localFederatedSourceIds } from '../core/source-resolver.ts';
 import { privatePagesFilterFragment, resolveExcludePrivatePages } from '../core/search/private-visibility.ts';
 import { quarantineFilterFragment } from '../core/quarantine.ts';
@@ -33,4 +35,66 @@ export async function noGrantFloorNext(engine: BrainEngine, id: string): Promise
     argv,
     why: `Connections with no source grant read only the default source and federated sources, and none of them holds a page, so their reads are refused until "${id}" is federated or they are granted sources.`,
   };
+}
+
+/** The notice for a source left out of default search; shared says the brain's shape kept it out. Federating is the user's call when shared or when `ask` (a source that predates this add). */
+export function notInDefaultSearchNotice(id: string, shared: boolean, ask = shared): Notice {
+  return {
+    code: 'source_not_in_default_search',
+    kind: 'info',
+    why: `The source "${id}" is not federated, so it is not in default search: a search, query or recall that names no source leaves its pages out, and a remote token or agent connection with no source grant cannot read them.`
+      + (shared ? ' This brain serves several people or is not marked personal, so a new source stays out until someone chooses to add it.' : '')
+      + ` Run \`gbrain sources federate ${id}\` to add it, or grant one token with \`gbrain auth rescope --token <name> --sources ${id}\`.`,
+    fix: {
+      argv: ['gbrain', 'sources', 'federate', id],
+      consent: [],
+      actor: 'agent',
+      ...(ask ? { ask_user: true as const } : {}),
+      requires_exclusive: false,
+      why: 'Adds the source to default search and to what connections with no source grant can read.',
+      verify: { argv: ['gbrain', 'sources', 'list', '--json'] },
+    },
+  };
+}
+
+/** After `gbrain sync --source <id>`: the same notice when that source holds pages and its federated setting is unset. */
+export async function syncOutOfSearchNotice(engine: BrainEngine, args: string[]): Promise<Notice | null> {
+  if (args[0] === 'status' || args[0] === 'unblock' || args.includes('--dry-run')) return null;
+  const id = args.find((_, i) => args[i - 1] === '--source');
+  if (!id || id === 'default') return null;
+  try {
+    const [row] = await engine.executeRaw<{ f: unknown; remote: unknown; pages: number }>(
+      `SELECT config->'federated' AS f, config->'added_by_remote_caller' AS remote, (SELECT count(*)::int FROM pages WHERE source_id = $1 AND deleted_at IS NULL) AS pages FROM sources WHERE id = $1`, [id]);
+    if (!row || row.f != null || row.remote === true || !Number(row.pages)) return null;
+    return notInDefaultSearchNotice(id, !(await newSourceJoinsDefaultSearch(engine)), true);
+  } catch {
+    return null;
+  }
+}
+
+/** Writes the sync notice on stderr when it applies. */
+export async function noteSyncOutOfSearch(engine: BrainEngine, args: string[]): Promise<void> {
+  const notice = await syncOutOfSearchNotice(engine, args);
+  if (notice) (await import('../cli/cli-error.ts')).writeCliNotice(notice);
+}
+
+/**
+ * GST-2732: what a finished add means, for both CLI add paths. `chosen` is the --federated / --no-federated choice
+ * (null when none was made); `path` is the local folder of a plain --path add, else null. Prints on `say`, writes the
+ * notice on stderr unless json, and returns the rendered notices for the JSON document.
+ */
+export async function reportAddOutcome(input: { id: string; chosen: boolean | null | undefined; federated: boolean; path: string | null; json: boolean; say: (line: string) => void }): Promise<RenderedNotice[] | undefined> {
+  const { existsSync } = await import('node:fs');
+  if (input.path && existsSync(input.path) && !(await import('../core/git-remote.ts')).inGitCheckout(input.path)) {
+    input.say('  plain folder (not a git repository): sync imports its files without Git, so git history is off and a file removed from it keeps its page');
+  }
+  if (input.chosen != null) return undefined;
+  if (input.federated) {
+    input.say(`  this brain serves one person, so a new source joins default search; \`gbrain sources unfederate ${input.id}\` takes it out`);
+    return undefined;
+  }
+  const notice = notInDefaultSearchNotice(input.id, true);
+  if (!input.json) (await import('../cli/cli-error.ts')).writeCliNotice(notice);
+  const { cliRenderContext, renderNotice } = await import('../core/agent-output.ts');
+  return [renderNotice(notice, cliRenderContext())];
 }

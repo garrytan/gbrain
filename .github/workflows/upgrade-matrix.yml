@@ -71,7 +71,6 @@ on:
       - 'src/commands/apply-migrations.ts'
       - 'src/commands/apply-migrations-schema.ts'
       - 'src/commands/migrations/**'
-      - 'scripts/postinstall.ts'
       - 'scripts/upgrade-matrix.ts'
       - 'scripts/upgrade-matrix/**'
       - '.github/workflows/upgrade-matrix.yml'
