@@ -21,7 +21,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { TranscriptFormat } from './types.ts';
 import { harnessRoots, type HarnessRoot } from './detect.ts';
-import { isOpenclawCheckpointFile } from './openclaw.ts';
+import { isOpenclawArchivedFile, isOpenclawCheckpointFile } from './openclaw.ts';
 import { isGrokChatHistoryFile } from './grok.ts';
 import { isClaudeCodeSubagentFile, isClaudeCodeWorkflowArtifactFile } from './claude-code.ts';
 import { isClaudeCliSelfTranscriptPath } from '../ai/providers/claude-cli-scratch.ts';
@@ -85,7 +85,7 @@ export function discoverTranscriptFiles(roots?: HarnessRoot[], opts: DiscoverOpt
     const files: string[] = [];
     walk(root, files);
     for (const p of files) {
-      if (!p.endsWith(extension)) continue;
+      if (!p.endsWith(extension) && !(format === 'openclaw' && isOpenclawArchivedFile(p))) continue;
       if (isOpenclawCheckpointFile(p)) continue;
       // Grok: only chat_history.jsonl is a session; updates/events/rewind
       // JSONL next to it would otherwise inflate found-counts and freeze

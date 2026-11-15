@@ -1169,6 +1169,9 @@ src/core/transcription.ts	fs_import	2	W7: filesystem boundary moves to the local
 src/core/transcription.ts	process_env	5	W6: settings plane out of the core
 src/core/transcription.ts	spawn_import	2	W7: process-wide effects move to src/cli
 src/core/transcripts.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/transcripts/archive-readers.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/transcripts/archive-readers.ts	process_env	1	W6: settings plane out of the core (GBRAIN_OPENCLAW_GATEWAY_URL picks the Gateway reader)
+src/core/transcripts/archive.ts	fs_import	1	W7: filesystem boundary moves to the local app (repo-source archive files, legacy folder scan)
 src/core/transcripts/claude-code-jsonl.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/claude-code.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/codex-hook-lane.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1180,6 +1183,8 @@ src/core/transcripts/export-json.ts	fs_import	1	W7: filesystem boundary moves to
 src/core/transcripts/grok.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/hermes.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/openclaw.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/transcripts/openclaw-gateway.ts	process_env	4	W6: settings plane out of the core (Gateway URL and token env, passed to the openclaw child)
+src/core/transcripts/openclaw-gateway.ts	spawn_import	1	W7: process-wide effects move to src/cli (openclaw gateway call child)
 src/core/transcripts/recover.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/trust/marker-repair.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/trust/page-handlers.ts	fs_import	1	W7: filesystem boundary moves to the local app (#7960 restores the page file a failed owner repair wrote)

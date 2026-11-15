@@ -550,7 +550,7 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
  * still publishing waits on that write (transcriptPartRequest) instead of
  * admitting a second one.
  */
-async function submitTranscriptPart(
+export async function submitTranscriptPart(
   ctx: OperationContext,
   engine: BrainEngine,
   sourceId: string,
@@ -612,7 +612,7 @@ async function transcriptPartRequest(ctx: OperationContext, sourceId: string, sl
  * That refusal (owner_unavailable) pauses background work only, so it is this session's error, never the run's:
  * foreground parts of every other session are still admitted.
  */
-async function deleteStaleTranscriptPart(ctx: OperationContext, engine: BrainEngine, sourceId: string, slug: string): Promise<void> {
+export async function deleteStaleTranscriptPart(ctx: OperationContext, engine: BrainEngine, sourceId: string, slug: string): Promise<void> {
   const snapshot = await engine.readPageSnapshot(slug, { sourceId });
   if (!snapshot) return;
   const receipt = await submitPageMutation({ ...ctx, admissionOrigin: 'background' }, { operation: 'delete_page', params: { slug, source_id: sourceId, expected_revision: snapshot.revision, request_id: randomUUID() } })
@@ -661,7 +661,7 @@ function adoptExistingBaseSlug(rendered: RenderSessionResult, existingSlug: stri
  * line would land with embedding skipped), times PAGE_CEILING_FILL for the
  * frontmatter. Read once per run.
  */
-async function transcriptPageCeiling(engine: BrainEngine): Promise<number> {
+export async function transcriptPageCeiling(engine: BrainEngine): Promise<number> {
   const [policy, block] = await Promise.all([readPageBodyPolicy(engine), effectiveBytesBlock(engine)]);
   return Math.floor(Math.min(policy.maxBytes, block) * PAGE_CEILING_FILL);
 }

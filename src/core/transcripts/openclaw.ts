@@ -49,6 +49,27 @@ export function isOpenclawCheckpointFile(path: string): boolean {
 }
 
 /**
+ * GST-2768: the documented archived transcript variants OpenClaw keeps under sessions/: `<id>.jsonl.reset.<stamp>`
+ * and `<id>.jsonl.deleted.<stamp>`, which OpenClaw 2026.11.3 writes zstd-compressed with a `.zst` suffix (recorded:
+ * `<id>.jsonl.deleted.2026-11-15T05-43-50.473Z.<hex>.zst`). Same line format as a live session file.
+ */
+const ARCHIVED_RE = /\.jsonl\.(?:reset|deleted)\.[^/\\]+$/;
+
+export function isOpenclawArchivedFile(path: string): boolean {
+  return ARCHIVED_RE.test(path);
+}
+
+async function readSessionText(path: string): Promise<string> {
+  const bytes = readFileSync(path);
+  if (!path.endsWith('.zst')) return bytes.toString('utf8');
+  const zlib = (await import('node:zlib')) as unknown as { zstdDecompressSync?: (b: Buffer) => Buffer };
+  const bun = (globalThis as { Bun?: { zstdDecompressSync?: (b: Buffer) => Uint8Array } }).Bun;
+  const out = zlib.zstdDecompressSync ? zlib.zstdDecompressSync(bytes) : bun?.zstdDecompressSync?.(bytes);
+  if (!out) throw new Error('openclaw archived session is zstd-compressed and this runtime has no zstd decoder');
+  return Buffer.from(out).toString('utf8');
+}
+
+/**
  * One parsed openclaw session line, classified (cathedral-5). Exported so the
  * compaction-boundary tail reader (corpus-segments) reuses the SAME
  * line→message mapping as the import adapter — the dated SPEC_TARGET above
@@ -123,7 +144,9 @@ export const openclawAdapter: TranscriptAdapter = {
   specTarget: OPENCLAW_SPEC_TARGET,
 
   detect(path: string, sample: Buffer): boolean {
-    if (!path.endsWith('.jsonl') || isOpenclawCheckpointFile(path)) return false;
+    if (isOpenclawCheckpointFile(path)) return false;
+    if (isOpenclawArchivedFile(path) && path.endsWith('.zst')) return true;
+    if (!path.endsWith('.jsonl') && !isOpenclawArchivedFile(path)) return false;
     const firstLine = sample.toString('utf8').split('\n', 1)[0]?.trim();
     if (!firstLine) return false;
     try {
@@ -140,7 +163,10 @@ export const openclawAdapter: TranscriptAdapter = {
     if (size > cap) {
       throw new Error(`openclaw session too large for import: ${size} bytes (cap ${cap})`);
     }
-    const raw = readFileSync(path, 'utf8');
+    const raw = await readSessionText(path);
+    if (raw.length > cap) {
+      throw new Error(`openclaw session too large for import: ${raw.length} characters decompressed (cap ${cap})`);
+    }
     let skippedLines = 0;
     let sessionId = '';
     let cwd: string | undefined;
@@ -171,7 +197,7 @@ export const openclawAdapter: TranscriptAdapter = {
     let sessions = 0;
     if (messages.length > 0) {
       sessions = 1;
-      const sid = sessionId || basename(path, '.jsonl');
+      const sid = sessionId || basename(path).split('.jsonl')[0]!;
       yield {
         meta: {
           harness: 'openclaw',

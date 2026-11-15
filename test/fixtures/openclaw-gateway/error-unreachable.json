@@ -1,0 +1,14 @@
+{
+  "ok": false,
+  "error": {
+    "type": "gateway_transport_error",
+    "kind": "closed",
+    "message": "Gateway not reachable at ws://127.0.0.1:18799 (ECONNREFUSED).",
+    "reason": "connect ECONNREFUSED 127.0.0.1:18799"
+  },
+  "gateway": {
+    "url": "ws://127.0.0.1:18799",
+    "urlSource": "local loopback",
+    "bindDetail": "Bind: loopback"
+  }
+}

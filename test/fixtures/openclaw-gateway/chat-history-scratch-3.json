@@ -1,0 +1,23 @@
+{
+  "sessionKey": "agent:dev:scratch-3",
+  "sessionId": "9eb7e494-36f2-4762-8537-70b6a1a97c7d",
+  "hasMore": false,
+  "totalMessages": 1,
+  "messages": [
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "Reset"
+        }
+      ],
+      "timestamp": 1794721432564,
+      "__openclaw": {
+        "id": "cffc6095-a427-4cdb-b8b8-e213de55588b",
+        "seq": 1,
+        "kind": "reset"
+      }
+    }
+  ]
+}

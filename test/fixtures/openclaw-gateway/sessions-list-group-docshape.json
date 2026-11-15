@@ -1,0 +1,39 @@
+{
+  "_note": "DOC-SHAPED, not recorded: a channel-created group row cannot be produced without a real messaging account. Fields follow the recorded sessions.list row shape plus SessionEntry chatType/groupChannel/subject from docs/reference/session-management-compaction/schema.md (OpenClaw 2026.11.3).",
+  "count": 2,
+  "totalCount": 2,
+  "limitApplied": 100,
+  "nextOffset": null,
+  "hasMore": false,
+  "sessions": [
+    {
+      "key": "agent:main:telegram:group:-1000000000001",
+      "sessionId": "00000000-0000-4000-8000-000000000101",
+      "agentId": "main",
+      "kind": "group",
+      "classification": "group",
+      "chatType": "group",
+      "groupChannel": "telegram",
+      "subject": "acme-example team",
+      "displayName": "acme-example team",
+      "createdVia": "channel",
+      "createdAt": 1794700000000,
+      "updatedAt": 1794710000000,
+      "archived": false,
+      "isMain": false,
+      "spawnDepth": 0,
+      "visibility": "shared"
+    },
+    {
+      "key": "agent:main:webhook:legacy-row",
+      "sessionId": "00000000-0000-4000-8000-000000000102",
+      "agentId": "main",
+      "displayName": "legacy row without chatType",
+      "createdAt": 1794700000000,
+      "updatedAt": 1794710000000,
+      "archived": false,
+      "isMain": false,
+      "spawnDepth": 0
+    }
+  ]
+}

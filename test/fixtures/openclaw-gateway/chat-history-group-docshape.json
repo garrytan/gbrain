@@ -1,0 +1,32 @@
+{
+  "_note": "DOC-SHAPED history for the doc-shaped group row: same envelope as the recorded chat.history pages.",
+  "sessionKey": "agent:main:telegram:group:-1000000000001",
+  "sessionId": "00000000-0000-4000-8000-000000000101",
+  "hasMore": false,
+  "totalMessages": 2,
+  "messages": [
+    {
+      "role": "user",
+      "content": "standup notes for acme-example",
+      "timestamp": 1794700100000,
+      "__openclaw": {
+        "id": "00000000-0000-4000-8000-0000000001a1",
+        "seq": 1
+      }
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "noted the standup"
+        }
+      ],
+      "timestamp": 1794700160000,
+      "__openclaw": {
+        "id": "00000000-0000-4000-8000-0000000001a2",
+        "seq": 2
+      }
+    }
+  ]
+}

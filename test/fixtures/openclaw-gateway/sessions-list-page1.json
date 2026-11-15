@@ -1,0 +1,49 @@
+{
+  "ts": 1794721489994,
+  "path": "/home/alice-example/.openclaw/agents/dev/agent/openclaw-agent.sqlite",
+  "count": 2,
+  "totalCount": 3,
+  "limitApplied": 2,
+  "nextOffset": 2,
+  "hasMore": true,
+  "sessions": [
+    {
+      "key": "agent:dev:scratch-3",
+      "sessionId": "9eb7e494-36f2-4762-8537-70b6a1a97c7d",
+      "agentId": "dev",
+      "kind": "direct",
+      "classification": "direct",
+      "chatType": "direct",
+      "label": "scratch 3",
+      "displayName": "scratch 3",
+      "createdVia": "operator",
+      "createdAt": 1794721343940,
+      "updatedAt": 1794721432561,
+      "archived": false,
+      "isMain": false,
+      "parentSessionKey": "agent:dev:main",
+      "spawnDepth": 0,
+      "visibility": "shared"
+    },
+    {
+      "key": "agent:dev:scratch-alpha",
+      "sessionId": "318c6a69-4cfa-4aba-bda5-8babbb465c4e",
+      "agentId": "dev",
+      "kind": "direct",
+      "classification": "direct",
+      "chatType": "direct",
+      "label": "scratch alpha",
+      "displayName": "scratch alpha",
+      "createdVia": "operator",
+      "createdAt": 1794721280138,
+      "updatedAt": 1794721322173,
+      "archived": false,
+      "isMain": false,
+      "parentSessionKey": "agent:dev:main",
+      "spawnDepth": 0,
+      "visibility": "shared",
+      "lastInteractionAt": 1794721320980,
+      "lastActivityAt": 1794721322120
+    }
+  ]
+}

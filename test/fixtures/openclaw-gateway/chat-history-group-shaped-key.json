@@ -1,0 +1,23 @@
+{
+  "sessionKey": "agent:dev:telegram:group:-1009990001",
+  "sessionId": "534a6bcb-e7fa-433e-99ad-086680bcec6f",
+  "hasMore": false,
+  "totalMessages": 1,
+  "messages": [
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "group-shaped note"
+        }
+      ],
+      "timestamp": 1794721729670,
+      "__openclaw": {
+        "id": "3c55702f-3242-492c-99e4-85ca5eb14d66",
+        "seq": 1,
+        "recordTimestampMs": 1794721729670
+      }
+    }
+  ]
+}
