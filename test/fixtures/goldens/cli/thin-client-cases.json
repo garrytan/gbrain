@@ -101,12 +101,10 @@
     },
     {
       "argv": "serve",
-      "exitCode": 1,
+      "exitCode": 0,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain serve` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain serve",
-        "Why: serve starts a server. Run on the host, not the thin client.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "[gbrain-bridge] relaying stdio to http://127.0.0.1:1/mcp surface=full (source: default)",
+        "[gbrain-bridge] exit (stdin-end)"
       ],
       "stdout": []
     },

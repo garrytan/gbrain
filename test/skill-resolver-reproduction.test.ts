@@ -45,7 +45,7 @@ const G = JSON.parse(gunzipSync(readFileSync(join(import.meta.dir, 'fixtures/ski
 async function topFive(home: string, catalog: string, turns: { id: string; text: string }[]): Promise<Record<string, string[]>> {
   const out: Record<string, string[]> = {};
   for (const t of turns) {
-    const r = await resolveSkills({ message: t.text, top_k: 5 }, { home, catalogs: [catalog], sessionTokenBudget: 50_000 });
+    const r = await resolveSkills({ message: t.text, top_k: 5, top_gate: 0 }, { home, catalogs: [catalog], sessionTokenBudget: 50_000 });
     out[t.id] = r.output.suggestions.map(s => s.id);
   }
   return out;

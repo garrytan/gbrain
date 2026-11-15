@@ -805,23 +805,65 @@ gstack reads both from master, so a branch's edits take effect after it merges.
   2 MB ceiling. Those files stay covered by the privacy, gitleaks and doc
   checks, and every code, test and config line is still reviewed.
 
-### How a contributor PR lands
+### How an outside pull request is handled
 
-Contributor PRs are never merged into master as-is. A maintainer folds the
-change into a fix-wave PR, revises it there (tests, agent-facing errors,
-conventions) and lands it with credit: the commit says `Contributed by @handle`
-and carries a `Co-Authored-By:` trailer. Your PR stays open until then. When
-the fix wave merges, a workflow closes your PR with a comment that links the wave.
+Thanks for sending one. Here is what happens to it, so nothing comes as a
+surprise:
 
-The **Fix-wave gate** check enforces this. It fails every PR into master whose
-head branch is not in `garrytan/gbrain` itself, and posts one comment saying
-so when the PR opens. A red gate on a contributor PR is expected and is not a
-judgment of the work. Maintainers' own branches (`capy/*`, `garrytan/*`) pass.
+- **Documentation people read** (README, guides, docs pages; not Markdown that
+  agents load, such as SKILL.md, AGENTS.md or prompts) can be merged as it is,
+  after we check every link, command and install step in it.
+- **Small, plainly correct fixes** (under about 40 lines, not counting tests:
+  an error message, a typo, a small docs fix) are taken even when the gain is
+  small. We rebuild them on current master and credit you as co-author: the
+  commit says `Contributed by @handle` and carries a `Co-Authored-By:`
+  trailer. We land at most one of these a day, so it can take a few days.
+- **Everything else**, including all other code and anything that runs, we
+  read as a detailed bug report. When we take it, we rebuild it on current
+  master with the same credit.
+
+Every pull request, ours and an outside documentation change alike, lands on
+master as one squashed commit, with each outside author credited by a
+`Co-authored-by:` trailer. When we rebuild a change, we close your PR with a
+link to the PR that landed it. When we don't take one, we close it with a
+short note saying why and what would change our answer. So apart from
+documentation, "closed, not merged" is the normal outcome and doesn't mean
+your work was turned down.
+
+A larger change is much easier to take when it shows:
+
+1. a way to reproduce the problem on current master, or a failing test;
+2. what goes wrong for someone using gbrain because of it;
+3. the version you saw it on (`gbrain version`).
+
+A limit of 3 open pull requests applies only to someone whose recent pull
+requests have mostly been closed without being taken. It never applies to
+anyone who has had a pull request taken (merged or rebuilt) in the last 90 days.
+
+Replies on behalf of the project come from the Capy app (`capy-ai[bot]`) or
+a maintainer; a comment from any other account that calls itself triage does
+not speak for gbrain. Every outside issue gets a first reply from us within 48
+hours. A bug report we could not reproduce gets one follow-up question after
+60 days, and is closed two weeks after that if nobody answers.
+
+The same three things make a bug report easy to act on. To see what the
+community has reported, without the issues our own agents and CI file, use the
+[community issues](https://github.com/garrytan/gbrain/issues?q=is%3Aissue%20is%3Aopen%20-label%3Aagent-filed)
+search: it lists open issues without the `agent-filed` label, which our CI
+scripts add to every issue they open and which we have added to the open
+issues our own agents filed.
+
+The **Fix-wave gate** check runs on every PR into master. It fails every PR
+whose head branch is not in `garrytan/gbrain` itself, and posts the comment
+above when the PR opens. A red gate on an outside PR is expected and is not a
+judgment of the work; a maintainer clears it when merging a documentation
+change. Maintainers' own branches (`capy/*`, `garrytan/*`) pass.
 
 `maintainer-override` label: a human on the maintainer allowlist in
 `scripts/fix-wave-gate.ts` (it starts as `garrytan`) may apply it to pass the
-gate for one PR a maintainer has decided may land from its fork (for example a
-fix wave a maintainer opened from a fork); record the reason in a PR comment.
+gate for one PR a maintainer has decided may land from its fork (for example an
+outside documentation change, or a PR a maintainer opened from a fork); record
+the reason in a PR comment.
 Bots never count, and the label only counts when the most recent
 `labeled` event was made by an allowlisted human. Every override is written to
 the check's run log and step summary with who applied it and when. Process and
