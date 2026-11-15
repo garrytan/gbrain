@@ -1,31 +1,70 @@
 /**
  * init's first-run decision bundle (agent operator wave G5): ONE `kind: ask`
- * notice whose decisions carry search mode, writeback (recommended salient),
- * harness wiring and the optional skills scaffold, with one user_message
- * offering 'defaults'. Pure: no engine, no filesystem.
+ * notice whose decisions carry search mode, writeback (in effect off,
+ * recommended salient) and the optional skills scaffold as settings in
+ * effect, plus a separate `harness_wiring` install step. Pure: no engine, no
+ * filesystem.
  */
 import { describe, expect, test } from 'bun:test';
 import { buildInitFirstRunNotices, setupFirstRunNotices, upkeepLine } from '../src/commands/init-first-run.ts';
 import { costMatrixSentence } from '../src/core/search/mode-advice.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const searchMode = { mode: 'balanced' as const, reason: 'Balanced default for a new brain.' };
 const scaffold = { missing: ['cold-start', 'book-mirror'], argv: ['gbrain', 'skillpack', 'scaffold', 'cold-start', 'book-mirror'] };
 
 describe('buildInitFirstRunNotices', () => {
-  test('one ask notice: search_mode, writeback, skills_scaffold in order, one defaults relay', () => {
+  test('one notice of settings in effect: search_mode, writeback, skills_scaffold in order, relayed without waiting for an answer', () => {
     const notices = buildInitFirstRunNotices({ searchMode, writeback: true, skillsScaffold: scaffold });
     expect(notices).toHaveLength(1);
     const [bundle] = notices;
     expect(bundle).toMatchObject({ code: 'first_run_decisions', kind: 'ask' });
     expect(bundle.decisions!.map(d => d.id)).toEqual(['search_mode', 'writeback', 'skills_scaffold']);
     expect(bundle.user_message).toBe(
-      "gbrain is installed. Reply 'defaults' to keep the recommended settings (search_mode: balanced; writeback: salient; skills_scaffold: skip), or tell me what to change.",
+      'gbrain is installed. In effect: search mode balanced; agents save only what you ask them to remember, until you turn on automatic saving '
+      + '(salient is recommended: durable facts you state, saved with provenance). '
+      + `${costMatrixSentence()} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     );
+    expect(bundle.user_message).not.toContain("Reply 'defaults'");
+    expect(bundle.why).toContain('do not hold the install open');
   });
 
-  test('writeback recommends salient; every option applies through config set', () => {
+  test('connecting the agent is its own install step, never a setting in the ask (Garry G, GST-2719)', () => {
+    const config = { engine: 'pglite', database_path: '/tmp/gbrain-example.pglite' } as never;
+    const notices = buildInitFirstRunNotices({ searchMode, writeback: true, config });
+    expect(notices.map(n => n.code)).toEqual(['harness_wiring', 'first_run_decisions']);
+    expect(notices[1].decisions!.map(d => d.id)).not.toContain('harness_wiring');
+    const [wiring] = notices;
+    expect(wiring.kind).toBe('info');
+  });
+
+  test('with no agent detected, the wiring fix stays the user step readiness gave, and the why does not promise a command', async () => {
+    const markers = { CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined, CODEX_SANDBOX: undefined, CODEX_CI: undefined, OPENCODE: undefined, OPENCODE_PID: undefined };
+    await withEnv(markers, async () => {
+      const config = { engine: 'pglite', database_path: '/tmp/gbrain-example.pglite' } as never;
+      const [wiring] = buildInitFirstRunNotices({ searchMode, writeback: true, config });
+      expect(wiring.code).toBe('harness_wiring');
+      expect(wiring.fix!.argv).toBeUndefined();
+      expect(wiring.fix!.actor).toBe('user');
+      expect(wiring.fix!.consent).toEqual(['persistent_install']);
+      expect(wiring.fix!.user_message).toBeTruthy();
+      expect(wiring.why).not.toContain('The fix names the command');
+      expect(wiring.why).toContain(wiring.fix!.user_message!);
+    });
+  });
+
+  test('nothing paid turns on from the first-run settings: writeback in effect off, keyless upkeep pays for nothing', () => {
+    const [bundle] = buildInitFirstRunNotices({ searchMode: { mode: 'conservative', reason: 'No chat key.' }, writeback: true, upkeep: { embedding: false } });
+    expect(bundle.decisions!.find(d => d.id === 'writeback')!.default).toBe('off');
+    expect(bundle.decisions!.find(d => d.id === 'search_mode')!.default).toBe('conservative');
+    expect(bundle.user_message).toContain('Nothing is deleted or paid for without you');
+    expect(bundle.why).toContain('Nothing paid turns on from these settings without a key the user supplied');
+  });
+
+  test('writeback is in effect off and recommends salient; every option applies through config set', () => {
     const writeback = buildInitFirstRunNotices({ writeback: true })[0].decisions!.find(d => d.id === 'writeback')!;
-    expect(writeback.default).toBe('salient');
+    expect(writeback.default).toBe('off');
+    expect(writeback.default_reason).toContain('salient is recommended');
     expect(writeback.options.map(o => o.id)).toEqual(['salient', 'all', 'off']);
     for (const o of writeback.options) expect(o.argv).toEqual(['gbrain', 'config', 'set', 'memory.auto_writeback', o.id]);
   });
@@ -64,7 +103,7 @@ describe('the upkeep line (GBRA-438)', () => {
     expect(upkeep.default).toBe('on');
     expect(upkeep.options.find(o => o.id === 'on')!.argv).toBeUndefined();
     expect(upkeep.options.find(o => o.id === 'off')!.argv).toEqual(['gbrain', 'config', 'set', 'maintenance.auto', 'false']);
-    expect(bundle.user_message).toContain('upkeep: on');
+    expect(bundle.user_message).toContain(upkeepLine(false));
   });
 
   test('a keyed brain\'s line names the one capped paid step', () => {
@@ -103,7 +142,7 @@ describe('setupFirstRunNotices (gbrain setup <harness>)', () => {
     const [n] = setupFirstRunNotices(fromInit({ searchMode, writeback: true }), 'Claude Code');
     expect(n.user_message).toBe(
       'gbrain is set up and Claude Code is wired, so memory works now. In effect: search mode balanced; agents save only what you ask them to remember, '
-      + 'until you turn on automatic saving (gbrain recommends salient: durable facts you state, saved with provenance). '
+      + 'until you turn on automatic saving (salient is recommended: durable facts you state, saved with provenance). '
       + 'Report back (Wakeshift): off. gbrain wakeshift enable turns it on. '
       + `${costMatrixSentence()} Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.`,
     );

@@ -104,7 +104,7 @@ async function runPurgeDeleted(engine: BrainEngine, args: string[]): Promise<voi
 }
 
 export function printUsage(): void {
-  console.log(`gbrain pages — page-level operator commands (v0.26.5)
+  console.log(`gbrain pages — page-level operator commands
 
 Subcommands:
   ghosts [--source <id>] [--json]   List live pages whose canonical file is missing on the

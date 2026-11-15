@@ -81,8 +81,9 @@ jobs:
           if-no-files-found: warn
       - name: "#5286 published signed release binary"
         run: |
-          tag="$(curl -fsSI https://github.com/garrytan/gbrain/releases/latest | awk 'tolower($1)=="location:" {print $2}' | tr -d '\r' | sed 's#.*/tag/##')"
-          echo "latest release: $tag"
+          # The newest release is the one latest-stable names; GitHub's "Latest" is the stable release.
+          tag="v$(curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/latest-stable/VERSION | head -n 1 | tr -d '[:space:]')"
+          echo "newest release: $tag"
           curl -fsSL -o gbrain-darwin-arm64 "https://github.com/garrytan/gbrain/releases/download/$tag/gbrain-darwin-arm64"
           shasum -a 256 gbrain-darwin-arm64
           codesign --verify --strict --verbose=2 gbrain-darwin-arm64

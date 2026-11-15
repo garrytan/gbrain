@@ -2,7 +2,7 @@
  * #6089 exit matrix off Postgres. PGLite keeps skipping the pre-flight (#1100)
  * and checks the schema version in-process after the orchestrators released
  * the datastore; an unreachable Postgres stays non-fatal (apply-migrations,
- * in-process `gbrain post-upgrade`, package postinstall) and says so with the
+ * in-process `gbrain post-upgrade`) and says so with the
  * GBRAIN_DB_ACCESS marker. The Postgres cases live in
  * test/e2e/apply-migrations-schema-exit.test.ts.
  */
@@ -129,21 +129,4 @@ describe('apply-migrations with Postgres unreachable stays non-fatal and says so
     expect(parseDocument(r.stdout).apply_migrations).toEqual({ exit_code: 0 });
   }, 180_000);
 
-  test('package postinstall runs apply-migrations, which exits 0, so no recovery hint is printed', async () => {
-    const home = postgresHome();
-    const driver = writeSchemaDriver(home, { migrations: ['noop'], args: [], entry: 'argv' });
-    const bin = join(home, 'bin');
-    mkdirSync(bin);
-    writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} --no-env-file ${JSON.stringify(driver)} "$@"\n`, { mode: 0o755 });
-    const r = spawnSync(process.execPath, ['--no-env-file', join(REPO, 'scripts/postinstall.ts')], {
-      cwd: home,
-      env: { HOME: home, GBRAIN_HOME: home, PATH: `${bin}:/usr/bin:/bin`, GBRAIN_SKIP_REFERENCE_SWEEP: '1' },
-      encoding: 'utf8', timeout: 120_000,
-    });
-    const out = r.stdout + r.stderr;
-    expect(r.status, out).toBe(0);
-    expect(readFileSync(join(home, 'orchestrator.log'), 'utf8')).toBe('ran noop\n');
-    expect(r.stderr).toMatch(/^GBRAIN_DB_ACCESS \w+$/m);
-    expect(out).not.toContain('postinstall skipped');
-  }, 120_000);
 });

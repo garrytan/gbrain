@@ -148,7 +148,7 @@ describe('D2 command migrations: init', () => {
       expect(doc).toMatchObject({ status: 'success', engine: 'pglite', contract_version: 1 });
       const bundle = (doc.notices as Array<Record<string, any>>).find(n => n.code === 'first_run_decisions')!;
       expect(bundle).toMatchObject({ kind: 'ask', contract_version: 1 });
-      expect(bundle.user_message).toContain("Reply 'defaults'");
+      expect(bundle.user_message).toContain('Nothing needs an answer now');
       const searchMode = bundle.decisions.find((d: { id: string }) => d.id === 'search_mode');
       expect(searchMode.options.map((o: { id: string }) => o.id)).toEqual(['conservative', 'balanced', 'tokenmax']);
       expect(searchMode.options[0].argv).toEqual(['gbrain', 'config', 'set', 'search.mode', 'conservative']);

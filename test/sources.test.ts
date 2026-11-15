@@ -9,6 +9,7 @@
 import { describe, test, expect, beforeEach, afterEach, spyOn } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
+import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -96,7 +97,7 @@ describe('sources add', () => {
     await expect(runSources(engine, ['add', long, '--path', '/tmp/x'])).rejects.toThrow(/Invalid source id/);
   });
 
-  test('inserts a valid source with defaults (federated unset → isolated)', async () => {
+  test('inserts a valid source with defaults (a single-user brain federates it, GST-2732)', async () => {
     const { engine, calls } = makeStub({
       'SELECT id, name, local_path, last_commit, last_sync_at, config, created_at': [{
         id: 'gstack',
@@ -114,7 +115,8 @@ describe('sources add', () => {
     expect(insert!.params[0]).toBe('gstack');
     expect(insert!.params[1]).toBe('gstack'); // name defaults to id
     expect(insert!.params[2]).toBe('/tmp/gstack');
-    expect(insert!.params[3]).toBe('{}'); // federated unset → empty config
+    // A shared brain keeps the old unset default: test/sources-add-default-search.test.ts.
+    expect(insert!.params[3]).toBe('{"federated":true}');
   });
 
   test('--federated sets config.federated = true', async () => {
@@ -174,12 +176,14 @@ describe('sources add — #2707 --force flag wiring', () => {
 
   beforeEach(() => {
     plainDir = mkdtempSync(join(tmpdir(), 'gbrain-sources-cli-2707-'));
+    // GST-2732: a folder outside any repository registers as plain; the refusal is for a repository with nothing committed.
+    execFileSync('git', ['-C', plainDir, 'init', '-q']);
   });
   afterEach(() => {
     rmSync(plainDir, { recursive: true, force: true });
   });
 
-  test('rejects a real non-git --path directory by default', async () => {
+  test('rejects a git repository with nothing committed by default', async () => {
     const { engine } = makeStub();
     await expect(runSources(engine, ['add', 'cli-plain', '--path', plainDir]))
       .rejects.toThrow(/not a git repository/);
