@@ -17,6 +17,7 @@ import { strictFactsOutsideGitEntry } from '../src/commands/doctor/checks/strict
 import { durableGitRepo } from './helpers/git-publication.ts';
 import { managedBrain } from './helpers/managed-brain.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const gitRepo = ({ root }: { root: string }) => { writeFileSync(join(root, '.gitignore'), '\n'); durableGitRepo(root, ['.gitignore']); };
 const check = async (engine: BrainEngine) => ((await strictFactsOutsideGitEntry.run({ engine, progress: { heartbeat() {} }, args: [] } as unknown as DoctorContext)) as Array<Record<string, any>>)
@@ -45,5 +46,14 @@ for (const backend of testBackends()) describe(`[${backend}] doctor strict_facts
     expect(result.message).toContain('entity_page_missing 1');
     expect(result.fix).toMatchObject({ argv: ['gbrain', 'repair', 'facts-home', '--source', 'default', '--json'], consent: [], actor: 'agent' });
     expect(result.details.sources).toMatchObject([{ source_id: 'default', outside_git: 1, groups: { entity_page_missing: 1 } }]);
+  }, { databaseUrl, setup: gitRepo }), 180_000);
+
+  test('GBRA-541: a strict source whose census the budget stopped is health unknown, never ok', () => managedBrain(async ({ engine }) => {
+    await engine.executeRaw(`UPDATE sources SET config = config || '{"canonical":"git"}'::jsonb WHERE id='default'`);
+    const result = (await withEnv({ GBRAIN_DOCTOR_GIT_GAP_TIMEOUT_MS: '1' }, () => strictFactsOutsideGitEntry.run({ engine, progress: { heartbeat() {} }, args: [],
+      entryDeadlineAt: Date.now() } as unknown as DoctorContext)) as Array<Record<string, any>>).find(c => c.name === 'strict_facts_outside_git')!;
+    expect(result.status).toBe('warn');
+    expect(result.details).toMatchObject({ health: 'unknown', reason: 'bound', bound: 'git_gap_timeout' });
+    expect(result.message).toContain('Health unknown, not clear');
   }, { databaseUrl, setup: gitRepo }), 180_000);
 });
