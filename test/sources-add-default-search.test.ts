@@ -137,3 +137,45 @@ describe('federating a source on a keyless PGLite brain', () => {
     expect(text).not.toContain('gbrain embed --stale');
   });
 });
+
+describe('a brain that cannot be shown to be personal keeps new sources out', () => {
+  test('a failed client-usage read on an undeclared brain is not personal: the source stays out, with the notice', async () => {
+    const { newSourceJoinsDefaultSearch } = await import('../src/core/source-default-search.ts');
+    const declared = await engine.getConfig('brain.audience');
+    await engine.unsetConfig('brain.audience');
+    const failing = new Proxy(engine, {
+      get(target, key, receiver) {
+        if (key === 'executeRaw') return (sql: string, params?: unknown[]) => /mcp_request_log/.test(sql)
+          ? Promise.reject(new Error('canceling statement due to statement timeout'))
+          : target.executeRaw(sql, params as never);
+        const value = Reflect.get(target, key, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as PGLiteEngine;
+    try {
+      expect(await newSourceJoinsDefaultSearch(engine)).toBe(true);
+      expect(await newSourceJoinsDefaultSearch(failing)).toBe(false);
+      const notice = (await import('../src/commands/sources-add-next.ts')).notInDefaultSearchNotice('unproven-a', !(await newSourceJoinsDefaultSearch(failing)));
+      expect(notice.why).toContain('is not marked personal');
+    } finally {
+      if (declared != null) await engine.setConfig('brain.audience', declared);
+    }
+  });
+});
+
+describe('an identical retry of a path-less add on a managed brain', () => {
+  test('replays the first add instead of failing idempotency_conflict', async () => {
+    const { managedBrain } = await import('./helpers/managed-brain.ts');
+    const { addSource } = await import('../src/core/sources-ops.ts');
+    const { randomUUID } = await import('node:crypto');
+    await managedBrain(async ({ engine: managed }) => {
+      const requestId = randomUUID();
+      const first = await addSource(managed, { id: 'bare-retry', requestId } as never);
+      const again = await addSource(managed, { id: 'bare-retry', requestId } as never);
+      expect(again.id).toBe(first.id);
+      const [row] = await managed.executeRaw<{ f: unknown }>(`SELECT config->'federated' AS f FROM sources WHERE id = 'bare-retry'`);
+      expect(row?.f).toBe(true);
+    });
+  }, 60_000);
+});
+
