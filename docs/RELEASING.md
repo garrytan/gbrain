@@ -939,7 +939,17 @@ to see what's actually in the PR before writing the body.
 
 ## Community PR wave process
 
-Never merge external PRs directly into master. Instead, use the "fix wave" workflow:
+Fix waves built from outside PR lists ended on 2026-11-01. Each outside PR is
+now triaged when it arrives, under the rules contributors see in
+[CONTRIBUTING.md](../CONTRIBUTING.md#how-an-outside-pull-request-is-handled):
+documentation people read may be merged as it is after a text read of every
+link, command and install step; a small, plainly correct fix (under about 40
+lines, not counting tests) is rebuilt on current master with credit, at most one
+small PR a day; anything else is read as a report and rebuilt only when it has
+proof and matters. Outside code is never checked out, run or merged. A rebuild
+PR lists the outside PR on a `Supersedes #N` line so the
+[closeout](#fix-wave-closeout) closes it with a link. The steps below are the
+older batch procedure; steps 4 to 7 still apply to any rebuild PR.
 
 1. **Categorize** — group PRs by theme (bug fixes, features, infra, docs)
 2. **Deduplicate** — if two PRs fix the same thing, pick the one that changes fewer
@@ -987,9 +997,11 @@ master unless its head repository is `garrytan/gbrain` or the `maintainer-overri
 label counts. Only maintainers can push to `garrytan/gbrain`, so GBRA thread PRs
 (`capy/*`) and `garrytan/*` branches pass; fork PRs fail whatever their branch is
 called. When a contributor PR opens, a second job posts one comment with the same
-text as the failure: the work is welcome and the PR stays open, it lands through a
-fix wave with credit (`Contributed by @handle` plus a `Co-Authored-By:` trailer), and
-CONTRIBUTING.md "Where does my change go?" explains where changes belong.
+text as the failure: how outside PRs are handled (documentation merged as it is
+after a text read, small correct fixes rebuilt with credit, everything else read as
+a report and rebuilt with credit when taken, `Contributed by @handle` plus a
+`Co-Authored-By:` trailer), the proof a larger change needs, who the open-PR limit
+applies to, and a link to CONTRIBUTING.md "How an outside pull request is handled".
 
 The workflow uses `pull_request_target`, so the workflow and
 `scripts/fix-wave-gate.ts` always come from the default branch: a PR that edits
@@ -1002,7 +1014,7 @@ repository (deleted fork) fails closed. The check re-runs on `opened`, `edited`,
 **`maintainer-override` label.** Who: a human on `MAINTAINERS` in
 `scripts/fix-wave-gate.ts` (starts as `garrytan`; changing it is a reviewed PR to
 master). When: only for a PR a maintainer has decided may land from its fork, such as
-a fix wave a maintainer opened from a fork; record the reason in a PR comment. How it
+an outside documentation change or a PR a maintainer opened from a fork; record the reason in a PR comment. How it
 is checked: the label counts only when the most recent `labeled` timeline event for it
 was made by an allowlisted `User`; bots (`capy-ai[bot]`, `github-actions[bot]`, any
 `[bot]` login) never qualify, and removing the label fails the PR again. Audit: the run

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { redactPgUrl, redactDeep, redactUrlsInText } from '../src/core/url-redact.ts';
+import { redactPgUrl, redactDeep, redactUrlsInText, stripUrlSecrets } from '../src/core/url-redact.ts';
 
 describe('redactPgUrl', () => {
   test('strips userinfo from postgresql:// URL', () => {
@@ -119,5 +119,22 @@ describe('redactUrlsInText — libpq keyword/value form', () => {
   test('case-insensitive and sslpassword too', () => {
     expect(redactUrlsInText('PASSWORD=abc sslpassword=def host=h'))
       .toBe('PASSWORD=*** sslpassword=*** host=h');
+  });
+});
+
+describe('stripUrlSecrets — userinfo stops at the authority', () => {
+  const url = (...parts: string[]) => parts.join('');
+
+  test('an @ inside a query value never lets the token after it survive', () => {
+    expect(stripUrlSecrets(`see ${url('https://host.example/mcp?login=alice@example.com&tok', 'en=qtok123')} now`))
+      .toBe('see https://host.example/mcp now');
+  });
+
+  test('an @ inside the path keeps the real host', () => {
+    expect(stripUrlSecrets(url('https://host.example/a/@b?tok', 'en=qtok123'))).toBe('https://host.example/a/@b');
+  });
+
+  test('userinfo holding an @ is still removed whole', () => {
+    expect(stripUrlSecrets(url('https://', 'u:p@ss', '@host.example/mcp'))).toBe('https://host.example/mcp');
   });
 });
