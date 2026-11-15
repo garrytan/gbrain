@@ -6,9 +6,9 @@
 - New error codes: `archive_gateway_unreachable`, `archive_gateway_auth`, `archive_gateway_failed`, `archive_owner_unset`, `archive_redaction_failed`, `archive_run_busy` (one run per source at a time), `archive_audience_unproven` (the brain's audience could not be checked, so nothing was written).
 - When a brain becomes shared, the next archive run first keeps every earlier archive page to the owner, then records the new audience. A failed day index write is retried on the next run.
 
+- Docs: `docs/guides/conversation-archive.md`.
+- Tests: `test/transcripts-archive-*.test.ts` (PGLite, including a real git remote and child CLI commit-push), `test/transcripts-openclaw-gateway.test.ts`, `test/transcripts-openclaw-archived-files.test.ts`, `test/transcripts-openclaw-files-only.test.ts`.
+
 ### Known limits
 - Redaction works on what each day's own text marks as a secret. A value that a later day labels as a credential stays visible in the earlier day's page.
 - Pages written while the brain was personal are closed on the next archive run after it becomes shared, so they stay readable to other members for up to one maintenance interval.
-
-- Docs: `docs/guides/conversation-archive.md`.
-- Tests: `test/transcripts-archive-*.test.ts` (PGLite, including a real git remote and child CLI commit-push), `test/transcripts-openclaw-gateway.test.ts`, `test/transcripts-openclaw-archived-files.test.ts`, `test/transcripts-openclaw-files-only.test.ts`.

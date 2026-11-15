@@ -67,7 +67,7 @@ describe('archive day index retry (pglite)', () => {
     const flaky = new Proxy(engine, { get(target, prop) {
       const value = Reflect.get(target, prop, target);
       if (typeof value !== 'function') return value;
-      if (prop === 'transaction') return (fn: (tx: unknown) => unknown) => target.transaction(tx => fn(new Proxy(tx, { get(t, p) {
+      if (prop === 'transaction') return (fn: (tx: unknown) => Promise<unknown>) => target.transaction(tx => fn(new Proxy(tx, { get(t, p) {
         const v = Reflect.get(t, p, t);
         if (p === 'putPage') return (slug: string, ...rest: unknown[]) => {
           if (failing && slug.startsWith('conversations/days/')) return Promise.reject(new Error('synthetic index write failure'));

@@ -342,6 +342,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | The change needs the owner's explicit approval before it can proceed. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### archive_audience_unproven
+
+<a id="archive_audience_unproven"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The conversation archive could not check whether the brain is shared (its client-usage read failed), so it wrote nothing this run. | A brain with no audience declared counts as shared when several clients use it; without that read a page written as personal could be open to other members, so the run publishes nothing. | Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal\|shared. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
+
 ### archive_gateway_auth
 
 <a id="archive_gateway_auth"></a>
