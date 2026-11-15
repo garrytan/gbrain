@@ -18,7 +18,8 @@
  *   skills.resolver.min_match   the weakest match_strength to suggest
  *     (default: every match)
  *   skills.resolver.top_gate    empty the block when the best skill it would
- *     show scores below this over its catalog's maxIdf (0..100; default off)
+ *     show scores below this over its catalog's maxIdf (0..100, 0 is off;
+ *     default TOP_GATE_DEFAULT)
  *   skills.resolver.per_harness.<harness>.{top_k,min_match,top_gate}  overrides
  *     for one harness; a key it leaves out falls back to the global one, and
  *     an entry that is not an object (a hand-edited null) counts as unset
@@ -36,7 +37,7 @@ import { readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { HARNESSES } from './block.ts';
 import { ResolverError } from './errors.ts';
-import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
+import { EXCLUDE_MAX, MATCH_STRENGTHS, type MatchStrength, TOP_GATE_DEFAULT, TOP_GATE_MAX, TOP_K_MAX } from './limits.ts';
 
 export const DEFAULT_SESSION_TOKEN_BUDGET = 2000;
 export const MIN_SESSION_TOKEN_BUDGET = 100;
@@ -94,7 +95,7 @@ export function validateMinMatch(v: unknown, key: string): MatchStrength {
 
 export function validateTopGate(v: unknown, key: string): number {
   if (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= TOP_GATE_MAX) return v;
-  throw configInvalid(key, `must be a number from 0 to ${TOP_GATE_MAX} (0 or unset: off)`);
+  throw configInvalid(key, `must be a number from 0 to ${TOP_GATE_MAX} (0: off; unset: ${TOP_GATE_DEFAULT})`);
 }
 
 export function validateSkillDirs(v: unknown, key: string): string[] {
@@ -113,6 +114,15 @@ export function configuredSkillDirs(section: Record<string, unknown>, harness: s
 export function validatePinned(v: unknown, key: string): string[] {
   if (Array.isArray(v) && v.length <= EXCLUDE_MAX && v.every(x => typeof x === 'string' && x.length > 0 && x.length <= 256)) return v as string[];
   throw configInvalid(key, `must be a list of at most ${EXCLUDE_MAX} skill ids`);
+}
+
+/** The top_gate configured for `harness` (its per_harness key, else the global one), or undefined when neither is set. Reads and validates only those two keys, so a bad value elsewhere in the section never affects it. Throws skill_resolver_config_invalid on a bad top_gate. */
+export function configuredTopGate(section: Record<string, unknown>, harness: string): number | undefined {
+  const per = section.per_harness;
+  const mine = harness && per && typeof per === 'object' && !Array.isArray(per) ? (per as Record<string, unknown>)[harness] : undefined;
+  const own = mine && typeof mine === 'object' && !Array.isArray(mine) ? (mine as Record<string, unknown>).top_gate : undefined;
+  if (own !== undefined) return validateTopGate(own, `skills.resolver.per_harness.${harness}.top_gate`);
+  return section.top_gate === undefined ? undefined : validateTopGate(section.top_gate, 'skills.resolver.top_gate');
 }
 
 /** The turn settings the lane uses for `harness`: its per_harness keys, else the global ones. Throws skill_resolver_config_invalid on a bad value anywhere in the section. */

@@ -2,7 +2,7 @@
 import type { CliHelpSpec } from '../command-table.ts';
 
 export const help: CliHelpSpec = {
-  summary: 'Run the MCP server: stdio by default, or OAuth 2.1 HTTP with --http.',
+  summary: 'Run the MCP server: stdio by default, or OAuth 2.1 HTTP with --http. On a thin client, bare serve is a stdio bridge to the remote brain and takes only --surface, --advertise and --source-guard.',
   usage: [
     'gbrain serve [--surface verbs|starter|full] [--advertise verbs|starter|full] [--access full|read-only] [--source-guard] [--stdio-idle-timeout <s>] [--stdio-member <id>] [--fail-fast] [--cli-socket]',
     'gbrain serve --http [--port <n>] [--bind <host>] [--public-url <url>] [--token-ttl <s>] [--enable-dcr] [--surface …] [--advertise …]',
