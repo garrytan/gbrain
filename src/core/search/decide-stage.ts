@@ -238,6 +238,37 @@ export async function applyEvidenceGate(ctx: DecideSearchContext | undefined, qu
   }
 }
 
+/**
+ * GST-2762: the keyless any-word fill's rows through the S3/S5 request, after
+ * the page's other rows went through applyEvidenceGate. One attempt on the
+ * same query budget, with copies of the policies whose min_keep is reduced by
+ * the `kept` rows already on the page, and its own meta. Null when a slot that
+ * is on did not judge the page's rows or these (the fill is then not returned
+ * and ctx.meta is left as it was); otherwise the surviving rows, with their
+ * counts added to ctx.meta. Rows past EVIDENCE_MAX_CANDIDATES are not returned.
+ */
+export async function gateFillRows(ctx: DecideSearchContext | undefined, query: string, rows: SearchResult[], kept: number): Promise<SearchResult[] | null> {
+  if (!ctx || rows.length === 0) return rows;
+  const acting = (['evidence', ...coPackHandlers.map((h) => h.slot)] as DecideSlot[]).filter((slot) => ctx.policies[slot]?.effective === 'on');
+  if (acting.length === 0) return rows;
+  const judgedBy = (meta: DecideSearchMeta) => acting.every((slot) => meta[slot] !== undefined && meta[slot]!.skipped === undefined);
+  if (!judgedBy(ctx.meta)) return null;
+  const evidence = ctx.policies.evidence;
+  const attempt: DecideSearchContext = {
+    ...ctx, meta: {},
+    policies: { ...ctx.policies, ...(evidence ? { evidence: { ...evidence, minKeep: Math.max(0, evidence.minKeep - kept) } } : {}) },
+  };
+  const out = await evidenceStage(attempt, query, rows.slice(0, EVIDENCE_MAX_CANDIDATES));
+  if (!judgedBy(attempt.meta)) return null;
+  for (const slot of acting) {
+    const [page, fill] = [ctx.meta[slot]!, attempt.meta[slot]!];
+    const outcomes = { ...page.outcomes };
+    for (const [k, n] of Object.entries(fill.outcomes ?? {})) outcomes[k] = (outcomes[k] ?? 0) + n;
+    ctx.meta[slot] = { ...page, judged: (page.judged ?? 0) + (fill.judged ?? 0), outcomes, latency_ms: (page.latency_ms ?? 0) + (fill.latency_ms ?? 0) };
+  }
+  return out;
+}
+
 async function evidenceStage(ctx: DecideSearchContext, query: string, pool: SearchResult[]): Promise<SearchResult[]> {
   const policy = ctx.policies.evidence;
   const s3Requested = policy !== undefined && policy.requested !== 'off';
