@@ -113,8 +113,7 @@ no tools; only an absent trusted-local binding uses the default registry.
 
    For a linked source checkout, update that checkout to the chosen release
    through its normal Git workflow, then run `bun install --ignore-scripts`.
-   Do not use `gbrain upgrade --swap-only` for this source/package cutover: its
-   underlying Bun installation can still run postinstall. Plain `gbrain upgrade`,
+   Do not use `gbrain upgrade --swap-only` for this source/package cutover. Plain `gbrain upgrade`,
    `gbrain post-upgrade`, and `gbrain apply-migrations --yes` can run pending
    setup phases that start autopilot or perform other maintenance.
 

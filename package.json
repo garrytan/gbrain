@@ -149,7 +149,6 @@
     "check:source-scope-onboard": "bash scripts/check-source-scope-onboard.sh",
     "check:getpage-scope": "node scripts/check-getpage-scoped-write.mjs",
     "check:origin-assignment": "node scripts/check-origin-assignment.mjs",
-    "postinstall": "bun run scripts/postinstall.ts",
     "prepublish:clawhub": "bun run build:all",
     "publish:clawhub": "clawhub package publish . --family bundle-plugin",
     "check:skill-refs": "bun scripts/check-skill-refs.mjs",

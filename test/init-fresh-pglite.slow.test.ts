@@ -299,8 +299,8 @@ describe('v0.37 T12 — D9 --no-embedding deferred-setup mode', () => {
       expect(out.match(/\[first_run_decisions\]/g)).toHaveLength(1);
       expect(bundle).toContain('(id: writeback)');
       expect(bundle).toContain('(run: gbrain config set memory.auto_writeback salient)');
-      expect(bundle).toContain('default: salient');
-      expect(out.match(/Reply 'defaults'/g)).toHaveLength(1);
+      expect(bundle).toContain('default: off');
+      expect(out.match(/Nothing needs an answer now/g)).toHaveLength(1);
       // The old separate writeback banner/[AGENT] ask and the skills pointer are gone.
       expect(out).not.toContain('Ambient memory writeback is available');
       expect(out + r.stderr).not.toContain('Ask me to run');

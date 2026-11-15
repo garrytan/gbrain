@@ -427,8 +427,8 @@ It's idempotent. On an install that already migrated it's a cheap no-op.
 ## Context
 
 The Minions schema, queue, worker, and migration skill ship together, and
-the migration fires automatically on `gbrain upgrade` and via the
-`postinstall` hook. An install is half-migrated when the schema is present
+the migration fires automatically on `gbrain upgrade` (and on
+`gbrain apply-migrations --yes`). An install is half-migrated when the schema is present
 but the migration never completed: no `~/.gbrain/preferences.json`,
 autopilot still runs inline, cron jobs still call `agentTurn`. This guide
 covers detecting that state and finishing the migration.

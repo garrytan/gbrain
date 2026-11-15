@@ -3723,7 +3723,6 @@
   "test/scripts/order-hunt.test.ts": 2,
   "test/scripts/postgres-lane-coverage.test.ts": 7144,
   "test/scripts/postgres-unit-arms.test.ts": 4720,
-  "test/scripts/postinstall-standalone.test.ts": 5,
   "test/scripts/pregate-remote-gate.test.ts": 2446,
   "test/scripts/production-soak-ubicloud.test.ts": 487,
   "test/scripts/promote-stable.test.ts": 351,
