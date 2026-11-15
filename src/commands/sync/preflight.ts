@@ -7,7 +7,7 @@
  * phases drain.
  */
 import { existsSync, realpathSync } from 'fs';
-import { resolve as pathResolve, join } from 'path';
+import { dirname, resolve as pathResolve, join } from 'path';
 import { chunkerStamp } from '../../core/chunkers/code.ts';
 import { currentCompanyBrainSync } from '../../core/company-brain/profile.ts';
 import { serr, slog } from '../../core/console-prefix.ts';
@@ -546,6 +546,11 @@ async function discoverSyncGitRoot(
     // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- repoPath is the operator-configured local sync repo (sync is localOnly) and '.git' is a constant name
     } else if (existsSync(join(repoPath, '.git'))) {
       throw err;
+    } else if (enclosingGitEntry(repoPath)) {
+      // GST-2767: a brain dir inside an unreadable repository (dubious ownership, a broken .git above it) must not get
+      // a nested repository of its own that shadows the outer one.
+      const entry = enclosingGitEntry(repoPath)!;
+      throw new Error(`${(err as Error).message} ${entry} sits above it and git cannot open it, so gbrain will not create a repository inside it: run git -C ${dirname(entry)} status to see why git refuses it, fix or remove it, then rerun the sync.`);
     } else {
       serr(`[gbrain] auto-recovery: git-initializing brain dir ${repoPath} (no git repo found).`);
       await gitAsync(repoPath, ['init', '--quiet']);
@@ -554,6 +559,13 @@ async function discoverSyncGitRoot(
     }
   }
   return gitContextRoot;
+}
+
+/** The `.git` entry a folder above `repoPath` (through any link in it) holds, or null. */
+function enclosingGitEntry(repoPath: string): string | null {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- repoPath is the operator-configured local sync repo and '.git' is a constant name
+  for (let at = dirname(realpathSync(repoPath)); dirname(at) !== at; at = dirname(at)) if (existsSync(join(at, '.git'))) return join(at, '.git');
+  return null;
 }
 
 /** Detached-HEAD / origin detection, the bookmark read, the git pull and HEAD (with the unborn-HEAD self-heal). */
