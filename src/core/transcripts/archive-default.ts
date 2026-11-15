@@ -8,7 +8,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
-import type { GBrainConfig } from '../config.ts';
+import { isThinClient, type GBrainConfig } from '../config.ts';
 import { classifyBrainAudience, type BrainAudience } from '../facts/writeback-audience.ts';
 
 export const ARCHIVE_ENABLED_KEY = 'transcripts.archive.enabled';
@@ -28,20 +28,12 @@ const OFF = new Set(['0', 'false', 'off', 'no']);
 
 export async function resolveArchiveEnabled(
   engine: Pick<BrainEngine, 'getConfig'>,
+  /** config: the caller's loaded config file (the commands layer passes loadConfig()); it names a thin client. */
   opts: { remote?: boolean; config?: GBrainConfig | null } = {},
 ): Promise<ArchiveEnablement> {
   const off = (source: ArchiveEnablement['source'], reason: string): ArchiveEnablement => ({ enabled: false, source, audience: null, offered: false, reason });
   if (opts.remote) return off('remote', 'a remote caller never runs the archive');
-  let config = opts.config;
-  if (config === undefined) {
-    try {
-      const { loadConfig } = await import('../config.ts');
-      config = loadConfig();
-    } catch {
-      return off('config_unreadable', 'the config file could not be read');
-    }
-  }
-  const { isThinClient } = await import('../config.ts');
+  const config = opts.config ?? null;
   if (isThinClient(config)) return off('thin_client', 'a thin client reads a remote brain; the archive runs on the brain host');
   let raw: string | null;
   try {
@@ -52,7 +44,7 @@ export async function resolveArchiveEnabled(
   const value = String(raw ?? '').trim().toLowerCase();
   if (ON.has(value)) return { enabled: true, source: 'explicit', audience: null, offered: false, reason: ARCHIVE_ENABLED_KEY + ' is on' };
   if (OFF.has(value)) return { enabled: false, source: 'explicit', audience: null, offered: false, reason: ARCHIVE_ENABLED_KEY + ' is off' };
-  const { audience } = await classifyBrainAudience(engine as BrainEngine, config ?? null);
+  const { audience } = await classifyBrainAudience(engine as BrainEngine, config);
   if (audience === 'personal') return { enabled: true, source: 'default', audience, offered: false, reason: 'on by default on a personal brain' };
   return { enabled: false, source: 'default', audience, offered: true, reason: 'off by default on a ' + audience + ' brain; offered with gbrain transcripts archive on' };
 }

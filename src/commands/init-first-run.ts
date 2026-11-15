@@ -230,7 +230,7 @@ export async function firstRunBundle(engine: BrainEngine, searchMode: { mode: Se
   let embedding = false;
   try { embedding = isAvailable('embedding'); } catch { /* gateway not configured: keyless */ }
   const { resolveArchiveEnabled } = await import('../core/transcripts/archive-default.ts');
-  const archive = await resolveArchiveEnabled(engine).catch(() => null);
+  const archive = await resolveArchiveEnabled(engine, { config: loadConfig() }).catch(() => null);
   const archiveState = archive?.enabled ? 'on' as const : archive?.offered ? 'offered' as const : null;
   return buildInitFirstRunNotices({
     searchMode, config: loadConfig(), writeback: await writebackAskApplies(engine), skillsScaffold: initSkillsScaffold(), surface, upkeep: { embedding },

@@ -33,7 +33,8 @@ export async function checkTranscriptArchiveFreshness(
   opts: { readers?: import('../../../core/transcripts/archive.ts').ArchiveReader[]; nowMs?: number } = {},
 ): Promise<Check> {
   try {
-    const enablement = await resolveArchiveEnabled(engine);
+    const { loadConfig } = await import('../../../core/config.ts');
+    const enablement = await resolveArchiveEnabled(engine, { config: (() => { try { return loadConfig(); } catch { return null; } })() });
     if (!enablement.enabled) {
       return { name, status: 'ok', message: 'The conversation archive is off (' + enablement.reason + ').', details: { enabled: false, source: enablement.source, offered: enablement.offered } };
     }
