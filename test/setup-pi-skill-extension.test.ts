@@ -121,6 +121,24 @@ describe.skipIf(!NODE)('gbrain setup pi --skill-loading', () => {
     expect(again.resolver.steps.find((s: any) => s.step === 'extension')).toMatchObject({ action: 'keep' });
   });
 
+  test('skills.resolver.top_gate reaches the extension: a gate of 100 leaves the suggestion out, and a gate of 0 (the opt-out) is kept', async () => {
+    const b = box();
+    mkdirSync(gbrainHome(b), { recursive: true });
+    writeFileSync(join(gbrainHome(b), 'config.json'), JSON.stringify({ skills: { resolver: { per_harness: { pi: { top_gate: 100 } } } } }));
+    expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(readState(b)).toMatchObject({ top_gate: 100 });
+    const out = drive(b, [['start', {}], ['run', { prompt: 'deploy the service to production', skills: [{ name: 'deploy-service', disableModelInvocation: false }] }], ['flush', {}]]);
+    expect(JSON.stringify(out[2])).not.toContain('deploy-service');
+
+    const off = box();
+    mkdirSync(gbrainHome(off), { recursive: true });
+    writeFileSync(join(gbrainHome(off), 'config.json'), JSON.stringify({ skills: { resolver: { top_gate: 0 } } }));
+    expect((await setup(off, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
+    expect(readState(off)).toMatchObject({ top_gate: 0 });
+    const shown = drive(off, [['start', {}], ['run', { prompt: 'deploy the service to production', skills: [{ name: 'deploy-service', disableModelInvocation: false }] }], ['flush', {}]]);
+    expect(JSON.stringify(shown[2])).toContain('deploy-service');
+  });
+
   test('the extension: one hidden message with paths, pins as a system section every run, nothing on custom runs, never a pinned or hidden skill, dedupe until session_compact', async () => {
     const b = box();
     expect((await setup(b, ['--skill-loading', 'resolve'])).exitCode).toBe(0);
