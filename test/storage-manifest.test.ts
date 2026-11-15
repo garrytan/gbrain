@@ -131,6 +131,13 @@ describe('storage shelf on a repo-less brain', () => {
     }
   }, 30_000);
 
+  test('an empty location path refuses with what to write for an item at the root of its bucket or repository', async () => {
+    const r = await refusal(call('storage_register', { card: card('root-item', { locations: [{ store: 'b2', bucket: 'bucket-a', path: '', tool: 'restic', size_bytes: 1 }] }) }));
+    expect(r).toMatchObject({ code: 'storage_record_invalid', reason: 'schema' });
+    expect(r!.message).toContain('locations.0.path');
+    expect(r!.message).toContain('write "/"');
+  }, 30_000);
+
   test('validation refuses incomplete cards, command fields, stamped fields, secrets and credential shapes', async () => {
     const fake = (...parts: string[]) => parts.join('');
     const cases: Array<[Record<string, unknown>, string, string]> = [
