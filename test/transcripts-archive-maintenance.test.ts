@@ -10,6 +10,8 @@ import type { CycleReport } from '../src/core/cycle.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { ARCHIVE_ENABLED_KEY, ARCHIVE_TIMEZONE_KEY, type ArchiveReader } from '../src/core/transcripts/archive.ts';
 import { ARCHIVE_MAINTENANCE_BUDGET_MS, readArchiveMaintenance, runArchiveMaintenance } from '../src/core/transcripts/archive-maintenance.ts';
+import { tryAcquireDbLock } from '../src/core/db-lock.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { runUnattendedMaintenance, type SafePhaseProviders } from '../src/core/maintenance/run.ts';
 import { archivedPages, conversation, staticReader } from './helpers/transcript-archive.ts';
 
@@ -126,3 +128,33 @@ describe('one pass is bounded by a count and a time limit', () => {
   }, 60_000);
 });
 
+describe('run refusals are recorded, retryable skips that never fail the pass', () => {
+  test('archive_run_busy: another run holds the source; the pass records a skip and the next pass archives', async () => {
+    await engine.setConfig('brain.audience', 'personal');
+    const held = await tryAcquireDbLock(engine, 'transcripts-archive:conversations', 5);
+    expect(held).not.toBeNull();
+    let outcome;
+    try { outcome = await runArchiveMaintenance(engine, { runner: 'test', now: NOW, readers: readers() }); } finally { await held!.release(); }
+    expect(outcome).toMatchObject({ status: 'skipped', code: 'archive_run_busy' });
+    expect(await readArchiveMaintenance(engine)).toMatchObject({ status: 'skipped', code: 'archive_run_busy' });
+    const upkeep = await runUnattendedMaintenance(engine, { runner: 'test', now: () => NOW, providers: KEYLESS, cycle,
+      archive: (e, o) => runArchiveMaintenance(e, { ...o, readers: readers() }) });
+    expect(upkeep.exit).toBe(0);
+    expect(upkeep.record!.steps.find(s => s.name === 'transcript_archive')).toMatchObject({ status: 'ok' });
+    expect(await readArchiveMaintenance(engine)).toMatchObject({ status: 'ok', written: 1 });
+  }, 60_000);
+
+  test('archive_audience_unproven: the audience read failed; the pass records a skip, writes nothing and the upkeep step is not a failure', async () => {
+    await engine.setConfig('brain.audience', 'personal');
+    const failing = new Proxy(engine, { get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (prop !== 'executeRaw') return typeof value === 'function' ? value.bind(target) : value;
+      return (sql: string, params?: unknown[]) => /mcp_request_log/.test(sql) ? Promise.reject(new Error('synthetic usage read failure')) : target.executeRaw(sql, params);
+    } }) as unknown as BrainEngine;
+    await engine.executeRaw('DELETE FROM config WHERE key = $1', ['brain.audience']);
+    const outcome = await runArchiveMaintenance(failing, { runner: 'test', now: NOW, readers: readers() });
+    expect(outcome).toMatchObject({ status: 'skipped', code: 'archive_audience_unproven' });
+    expect(await readArchiveMaintenance(engine)).toMatchObject({ status: 'skipped', code: 'archive_audience_unproven', written: 0 });
+    expect(await archivedPages(engine)).toEqual([]);
+  }, 60_000);
+});

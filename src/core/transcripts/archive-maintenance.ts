@@ -40,6 +40,8 @@ export const ARCHIVE_MAINTENANCE_LOCK_ID = 'gbrain-transcript-archive';
 const LOCK_TTL_MIN = 30;
 /** Wall-clock budget of one pass's archive work (forward run plus backfill); conversations not reached wait for the next pass. */
 export const ARCHIVE_MAINTENANCE_BUDGET_MS = 120_000;
+/** Run refusals that end this pass's archive step as a recorded skip the next pass retries (the floor ignores a skip). */
+export const ARCHIVE_RETRYABLE_CODES: readonly string[] = ['archive_run_busy', 'archive_audience_unproven'];
 
 export interface ArchiveMaintenanceError { code: string; message: string }
 
@@ -159,6 +161,11 @@ export async function runArchiveMaintenance(engine: BrainEngine, opts: ArchiveMa
         }
       } catch (error) {
         const e = error as { code?: string; message?: string };
+        if (e.code && ARCHIVE_RETRYABLE_CODES.includes(e.code)) {
+          const skipped: ArchiveMaintenanceRecord = { ...record, status: 'skipped', code: e.code, message: (e.message ?? String(error)).slice(0, 300) };
+          await save(engine, skipped);
+          return { status: 'skipped', code: e.code, message: 'The archive step did not run this pass (' + e.code + '); the next pass tries again.', record: skipped };
+        }
         record.status = 'failed';
         record.code = e.code ?? 'archive_maintenance_failed';
         record.errors.push({ code: record.code, message: (e.message ?? String(error)).slice(0, 300) });

@@ -728,7 +728,7 @@ async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { e
       await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
     }
   }
-  if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
+  if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'accepted' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
   for (const w of indexWrites) {
     if (w.outcome.status === 'written' || w.outcome.status === 'accepted' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
     else if (w.outcome.status === 'error') result.errors.push({ harness: 'index', reader: 'day-index', code: w.outcome.code ?? 'archive_commit_failed', message: 'the day index ' + w.outcome.slug + ' was not written: ' + (w.outcome.message ?? 'no detail') });
