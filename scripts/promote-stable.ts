@@ -35,6 +35,13 @@
  *    atomic push moves all three, `stable` and `stable-record` leased on
  *    the values read, so a failed push leaves the remote unchanged and a
  *    re-run starts clean.
+ * 8. the release's GitHub release is marked "Latest" (pre-release cleared):
+ *    release.yml publishes every batch release as a pre-release, so the
+ *    stable channel is the one release GitHub calls Latest. A forward
+ *    promotion replaces its notes with every CHANGELOG entry since the
+ *    previous stable (rolledUpNotes()); a rollback keeps the notes. If this
+ *    last step fails, stable has already moved: the refusal names
+ *    `bun scripts/release-channel.ts backfill --apply`, which sets it.
  *
  * Clients read the record at
  * https://raw.githubusercontent.com/garrytan/gbrain/stable-record/stable.json
@@ -92,6 +99,8 @@ export interface PromoteDeps {
   scheduled?: boolean;
   soakWorkflow: string;
   ghApi(path: string): Promise<unknown>;
+  /** A write to the GitHub API (only the release edit that marks stable Latest). */
+  ghApiWrite(method: 'PATCH', path: string, body: Record<string, unknown>): Promise<unknown>;
   git(args: string[], input?: string): Promise<GitResult>;
   now(): Date;
   log(line: string): void;
@@ -419,13 +428,15 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
   if (deps.scheduled && !(await onReleaseBranch(deps, commit))) throw new Refusal(`v${version} (${commit}) is not on master; the scheduled check only promotes a release minted from master, so a maintainer decides on this one.`);
   const taggedVersion = (await deps.git(['show', `${releaseRef}:VERSION`])).stdout.trim();
   if (taggedVersion !== version) throw new Refusal(`v${version}'s VERSION file says "${taggedVersion || 'nothing'}"; promote a tag release.yml minted for its own VERSION.`);
-  let release: { draft?: boolean };
+  let release: { draft?: boolean; id?: unknown };
   try {
-    release = await deps.ghApi(`repos/${deps.repo}/releases/tags/v${version}`) as { draft?: boolean };
+    release = await deps.ghApi(`repos/${deps.repo}/releases/tags/v${version}`) as { draft?: boolean; id?: unknown };
   } catch (error) {
     throw new Refusal(`v${version} has no published GitHub release (${(error as Error).message.split('\n')[0]}); wait for release.yml to publish it, then promote.`);
   }
   if (release.draft) throw new Refusal(`The GitHub release for v${version} is still a draft; publish it (release.yml does), then promote.`);
+  if (typeof release.id !== 'number') throw new Refusal(`The GitHub release for v${version} has no id, so it cannot be marked Latest; re-run this workflow.`);
+  const releaseId = release.id;
   deps.log(`[promote-stable] v${version} is commit ${commit}, tree ${tree}, and its GitHub release is published.`);
 
   const { runId, attempt } = parseRunUrl(inputs.soakRunUrl, deps.repo);
@@ -465,6 +476,8 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     rollback, reason,
   };
   const message = renderTagMessage(fields);
+  const changelog = rollback ? null : await deps.git(['show', `${releaseRef}:CHANGELOG.md`]);
+  const notes = changelog === null ? null : rolledUpNotes(changelog.code === 0 ? changelog.stdout : '', fields.previous, version, deps.repo);
 
   // The evidence record: carried forward from the previous record commit (none before the first promotion).
   const prior = await readPriorRecord(deps);
@@ -486,10 +499,95 @@ export async function promote(deps: PromoteDeps, inputs: PromoteInputs): Promise
     'Moving the stable tag failed and nothing changed on the remote (stable may have moved since this run read it); re-run this workflow, which re-reads the current stable.');
   if (!recordExists) deps.log(`[promote-stable] pushed record tag stable-v${version}.`);
   deps.log(`[promote-stable] stable now points at v${version} (${commit}).`);
+  await markLatest(deps, releaseId, version, notes, rollback);
 
   const promotion: Promotion = { ...fields, recordCreated: !recordExists, knownBad };
   deps.summary(renderSummary(promotion, notPromotable));
   return promotion;
+}
+
+/** GitHub's limit on a release body is 125,000 characters; stay under it with room for the trailer. */
+export const RELEASE_NOTES_MAX = 120_000;
+
+/**
+ * The stable release's notes: every CHANGELOG.md section newer than `previous` up to and including `version`, newest
+ * first, under one line naming the previous stable. Oldest sections drop first when the roll-up would pass
+ * RELEASE_NOTES_MAX, and a link to the full CHANGELOG at the tag says so. With no previous stable it is the release's
+ * own entry; with no matching section it is the same link stub release.yml writes.
+ */
+export function rolledUpNotes(changelog: string, previous: string | null, version: string, repo: string): string {
+  const link = `https://github.com/${repo}/blob/v${version}/CHANGELOG.md`;
+  const wanted = (v: string) => compareVersions(v, version) <= 0 && (previous === null ? compareVersions(v, version) === 0 : compareVersions(v, previous) > 0);
+  const sections: string[][] = [];
+  let current: string[] | null = null;
+  for (const line of changelog.split('\n')) {
+    if (line.startsWith('## [')) {
+      const v = /^## \[(\d+(?:\.\d+){2,3})\]/.exec(line)?.[1];
+      current = v && wanted(v) ? [line] : null;
+      if (current) sections.push(current);
+      continue;
+    }
+    current?.push(line);
+  }
+  if (sections.length === 0) return `See [CHANGELOG.md](${link}) for v${version}.\n`;
+  const intro = previous === null ? `Stable release v${version}.\n` : `Stable release v${version}: every change since the previous stable release, v${previous}, newest first.\n`;
+  const bodies = sections.map(s => `${s.join('\n').trimEnd()}\n`);
+  const kept: string[] = [];
+  let size = intro.length;
+  for (const body of bodies) {
+    if (kept.length > 0 && size + body.length + 200 > RELEASE_NOTES_MAX) break;
+    kept.push(body);
+    size += body.length + 1;
+  }
+  if (kept[0]!.length + intro.length + 200 > RELEASE_NOTES_MAX) return `${intro}\nThe notes are too long for this page; read them in [CHANGELOG.md](${link}).\n`;
+  const dropped = bodies.length - kept.length;
+  const tail = dropped ? `\n${dropped} older ${dropped === 1 ? 'entry is' : 'entries are'} in [CHANGELOG.md](${link}).\n` : '';
+  return [intro, ...kept].join('\n') + tail;
+}
+
+/** The version of the release GitHub calls Latest now, or null when there is none or it cannot be read. */
+export async function latestReleaseVersion(deps: Pick<PromoteDeps, 'repo' | 'ghApi'>): Promise<string | null> {
+  return readLatestReleaseVersion(deps).catch(() => null);
+}
+
+/** The current Latest release's version; null when there is none (404). Any other failed read throws. */
+async function readLatestReleaseVersion(deps: Pick<PromoteDeps, 'repo' | 'ghApi'>): Promise<string | null> {
+  let release: { tag_name?: string };
+  try {
+    release = (await deps.ghApi(`repos/${deps.repo}/releases/latest`)) as { tag_name?: string };
+  } catch (error) {
+    if (/HTTP 404/.test((error as Error).message)) return null;
+    throw error;
+  }
+  const v = (release.tag_name ?? '').replace(/^v/, '');
+  return VERSION_RE.test(v) ? v : null;
+}
+
+/**
+ * Mark a release GitHub's "Latest": clear pre-release, set make_latest, and replace the notes when `notes` is given.
+ * A forward promotion never moves Latest to an older release than the current one: binaries released before
+ * pre-releases existed download `releases/latest` as their newest release, so moving it back would downgrade them. Latest
+ * then stays put until stable passes it. A rollback moves it back on purpose.
+ */
+export async function markLatest(deps: PromoteDeps, releaseId: number, version: string, notes: string | null, rollback = false): Promise<void> {
+  let latest: string | null = null;
+  if (!rollback) {
+    try {
+      latest = await readLatestReleaseVersion(deps);
+    } catch (error) {
+      throw new Refusal(`stable now points at v${version}, but GitHub's current Latest release could not be read (${(error as Error).message.split('\n')[0]}), so Latest was left alone; run \`bun scripts/release-channel.ts backfill --apply\` from a checkout to set it (${DOCS}).`);
+    }
+  }
+  if (latest && compareVersions(latest, version) > 0) {
+    deps.log(`[promote-stable] GitHub's Latest stays v${latest}, which is newer than v${version}; it moves to the stable release once stable passes it.`);
+    return;
+  }
+  try {
+    await deps.ghApiWrite('PATCH', `repos/${deps.repo}/releases/${releaseId}`, { prerelease: false, make_latest: 'true', ...(notes === null ? {} : { body: notes }) });
+  } catch (error) {
+    throw new Refusal(`stable now points at v${version}, but marking its GitHub release Latest failed (${(error as Error).message.split('\n')[0]}); run \`bun scripts/release-channel.ts backfill --apply\` from a checkout to set it (${DOCS}).`);
+  }
+  deps.log(`[promote-stable] the GitHub release v${version} is now Latest${notes === null ? '' : ', with notes rolled up since the previous stable'}.`);
 }
 
 export function processDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.cwd()): PromoteDeps {
@@ -498,12 +596,17 @@ export function processDeps(env: NodeJS.ProcessEnv = process.env, cwd = process.
     actor: env.GITHUB_ACTOR ?? '',
     soakWorkflow: env.STABLE_SOAK_WORKFLOW ?? '',
     async ghApi(path) {
-      const r = spawnSync('gh', ['api', path], { cwd, env, encoding: 'utf8' });
+      const r = spawnSync('gh', ['api', path], { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
       if (r.status !== 0) throw new Error(`gh api ${path} failed: ${(r.stderr || r.error?.message || '').trim()}`);
       return JSON.parse(r.stdout);
     },
+    async ghApiWrite(method, path, body) {
+      const r = spawnSync('gh', ['api', '--method', method, path, '--input', '-'], { cwd, env, encoding: 'utf8', input: JSON.stringify(body) });
+      if (r.status !== 0) throw new Error(`gh api ${method} ${path} failed: ${(r.stderr || r.error?.message || '').trim()}`);
+      return JSON.parse(r.stdout || '{}');
+    },
     async git(args, input) {
-      const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', ...(input !== undefined ? { input } : {}) });
+      const r = spawnSync('git', args, { cwd, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, ...(input !== undefined ? { input } : {}) });
       return { code: r.status ?? 1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
     },
     now: () => new Date(),

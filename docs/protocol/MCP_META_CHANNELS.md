@@ -130,8 +130,8 @@ source. Over HTTP that is the token's or client's write source (the first id
 of its source grant), or `default` with no grant. Over stdio it is the source
 the server resolved (`GBRAIN_SOURCE`, `.gbrain-source`, then `default`). With
 a `_meta.session_id`, the block holds that session's facts. Without one, or
-when the session has none, it holds the source's facts from the last 24 hours,
-unless the host set `context.hot_memory.session_only`. A remote caller only
+when the session has none, it holds the source's facts from the last 24 hours
+(`context.hot_memory.session_only` does not narrow this key). A remote caller only
 ever gets facts with `visibility: world`, and never a fact from a source its
 grant can't read.
 

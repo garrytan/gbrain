@@ -14,10 +14,13 @@
  * order in small keyset batches.
  */
 import type { BrainEngine } from '../engine.ts';
-import { scanText } from '../secret-scan.ts';
+import { TRANSCRIPT_LANE_SCAN_OPTS, scanText } from '../secret-scan.ts';
 
-/** Bump when the transcript-lane detectors change, so doctor asks for a fresh audit. */
-export const TRANSCRIPT_SECRET_AUDIT_VERSION = 5;
+/**
+ * Bump when the transcript-lane detectors change, so doctor asks for a fresh audit. 6: cookie_header, .netrc and the
+ * key-label join (GST-2768). 7: a multi-line .netrc stanza, a curl -b on a continued line and a JSON-escaped quoted cookie.
+ */
+export const TRANSCRIPT_SECRET_AUDIT_VERSION = 7;
 export const TRANSCRIPT_SECRET_AUDIT_KEY = 'transcripts.secret_audit';
 const BATCH = 25;
 const LINES_PER_PAGE = 20;
@@ -69,8 +72,8 @@ export async function auditTranscriptSecrets(
       cursor = Number(row.id);
       pagesScanned++;
       const findings = [
-        ...scanText(row.title ?? '', { highEntropy: true, labeledCredentials: true }).map((f) => ({ ...f, line: 0 })),
-        ...scanText(row.compiled_truth ?? '', { highEntropy: true, labeledCredentials: true }),
+        ...scanText(row.title ?? '', TRANSCRIPT_LANE_SCAN_OPTS).map((f) => ({ ...f, line: 0 })),
+        ...scanText(row.compiled_truth ?? '', TRANSCRIPT_LANE_SCAN_OPTS),
       ];
       if (findings.length === 0) continue;
       const hits: Record<string, number> = {};

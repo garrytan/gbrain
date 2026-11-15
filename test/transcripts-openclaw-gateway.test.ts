@@ -58,6 +58,14 @@ const docShaped = () => recordedTransport({
   },
 });
 
+const recorded1009 = () => recordedTransport({
+  list: [load('sessions-list-1009.json')],
+  history: {
+    'agent:dev:main': [load('chat-history-1009-main.json')],
+    'agent:dev:example-probe-a': [load('chat-history-1009-probe-a.json')],
+  },
+});
+
 describe('openclaw gateway reader (recorded fixtures)', () => {
   test('pages sessions.list by nextOffset and chat.history backward, oldest first, user and assistant text only', async () => {
     const transport = recorded();
@@ -73,6 +81,16 @@ describe('openclaw gateway reader (recorded fixtures)', () => {
     expect(alpha.session.messages[0]!.timestamp).toBe(new Date(1794721281750).toISOString());
   });
 
+  test('OpenClaw 2026.10.9 shape: pages and maps the list, and an operator-made session with no chatType is unverified', async () => {
+    const transport = recorded1009();
+    const convs = await openclawGatewayReader({ transport }).list({});
+    expect(transport.calls.filter(([m]) => m === 'sessions.list')).toHaveLength(1);
+    expect(convs.map(c => c.scopeKey)).toEqual(['agent:dev:main', 'agent:dev:example-probe-a']);
+    expect(convs.map(c => c.conversationKey)).toEqual(['00000000-0000-4000-8000-000000001009', '00000000-0000-4000-8000-000000001010']);
+    expect(convs.map(c => c.channel)).toEqual([{ chatType: 'direct', verified: true }, { verified: false }]);
+    expect(convs[1]!.session.messages.map(m => [m.role, m.text])).toEqual([['assistant', 'note 1 for probe a'], ['assistant', 'note 2 for probe a']]);
+    expect(convs[1]!.session.messages[0]!.timestamp).toBe(new Date(1794724689369).toISOString());
+  });
   test('chatType mapping: only the row chatType counts, never the key shape or kind', async () => {
     const [, groupShaped] = await openclawGatewayReader({ transport: recorded() }).list({});
     expect(groupShaped!.channel).toEqual({ chatType: 'direct', verified: true });
@@ -115,6 +133,20 @@ describe('gateway reader inside the archive (pglite)', () => {
     await setArchiveEnabled(engine, true);
   });
 
+  test('OpenClaw 2026.10.9 on a shared brain: the operator-made session with no chatType is owner-only, even when a group named for its key exists', async () => {
+    await engine.setConfig('brain.audience', 'shared');
+    await addMember(engine, 'alice-example');
+    await addMember(engine, 'bob-example');
+    await setOwner(engine, 'alice-example');
+    await addGroup(engine, archiveGroupPrincipal('openclaw', 'agent:dev:example-probe-a'), ['bob-example']);
+    const result = await runTranscriptArchive(engine, { mode: 'backfill', from: '2026-11-14', to: '2026-11-15', readers: [openclawGatewayReader({ transport: recorded1009() })], now: new Date('2026-11-20T00:00:00Z') });
+    expect(result.errors).toEqual([]);
+    const pages = (await archivedPages(engine)).filter(p => p.slug.startsWith('conversations/openclaw/'));
+    expect(pages).toHaveLength(2);
+    for (const page of pages) expect(page.frontmatter.readable_by).toEqual(['alice-example']);
+    const probe = pages.find(p => p.body.includes('note 1 for probe a'))!;
+    expect((probe.frontmatter.transcript_archive as Record<string, unknown>).chat_type).toBeUndefined();
+  }, 60_000);
   test('on a shared brain the verified group gets owner plus its existing group; the unknown channel resolves owner only', async () => {
     await engine.setConfig('brain.audience', 'shared');
     await addMember(engine, 'alice-example');

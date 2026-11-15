@@ -371,7 +371,7 @@ function resolveRuntimePaths(execArgv: readonly string[], cwd: string): string[]
  * a compiled binary (execPath IS gbrain; the entry is a `/$bunfs/` virtual
  * path, `~BUN` on Windows).
  */
-function isScriptRuntime(): boolean {
+export function isScriptRuntime(): boolean {
   const entry = process.argv[1];
   const bunfsEntry = entry !== undefined && (/^\/\$bunfs\//.test(entry) || /[\\/]~BUN[\\/]/.test(entry));
   const devRuntime = /[/\\](bun|node)(\.exe)?$/.test(process.execPath);

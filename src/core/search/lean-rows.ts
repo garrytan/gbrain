@@ -25,7 +25,9 @@
  *     reason }` (plus `truncated: true` when cut): `reason` is `long_page`
  *     when the page came back in that unit, `long_page_chunk` when it kept
  *     its ranked chunk;
- *   - `evidence_omitted` on a keyword-mode row whose text did not fit.
+ *   - `evidence_omitted` on a keyword-mode row whose text did not fit;
+ *   - `keyword_fill` on a row the keyless any-word fill appended (it holds
+ *     only some of the query's words).
  * `fields: "full"`, the `mcp.result_rows: full` host config and gbrain's own
  * thin client get every field; trusted local callers always do.
  */
@@ -41,6 +43,8 @@ const KEPT_FIELDS: ReadonlySet<string> = new Set([
   'message_id', 'thread_id', 'source_subject', 'relational', 'matched_alias', 'result_type', 'fact_id', 'page_slug', 'follow_up',
   // `match: "keyword"`: an enumerated page whose text did not fit the evidence budget.
   'evidence_omitted',
+  // GST-2762: a row the keyless any-word fill appended after the rows that hold every query word.
+  'keyword_fill',
   // #5575 A6: every row says how much it deserves influence.
   'trust_tier', 'origin', 'unconfirmed',
   // #7600: a conversation page's row is a quoted excerpt.

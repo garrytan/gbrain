@@ -962,6 +962,87 @@
         },
         {
           "category": "brain",
+          "details": {
+            "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-model",
+            "sources": [],
+            "warn_seconds": 900
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No source is strict (git-canonical), so no index trails a commit.",
+          "name": "git_index_lag",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census",
+            "errors": [],
+            "informational": true,
+            "newest": 800,
+            "partial_sources": [],
+            "sources": [],
+            "sources_without_git_checkout": 1,
+            "timeout_ms": "<volatile>"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No source has a Git checkout, so there is no commit to compare the database with.",
+          "name": "db_ahead_of_git",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "docs": "docs/guides/repair.md#facts-home",
+            "sources": []
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
+          "name": "strict_facts_outside_git",
+          "status": "ok"
+        },
+        {
+          "category": "ops",
+          "details": {
+            "count": 0,
+            "docs": "docs/guides/troubleshooting.md#owner-host-stale",
+            "stale": [],
+            "stale_after_ms": "<volatile>"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No managed write is waiting on an owner host.",
+          "name": "owner_host_stale",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "by_source": [
+              {
+                "checked": 0,
+                "other_writer": 0,
+                "source_id": "default",
+                "status": "known",
+                "sync_deleted": 0,
+                "tombstones": 0,
+                "truncated": false,
+                "unknown": 0
+              }
+            ],
+            "count": 0,
+            "docs": "docs/guides/repair.md#uncommitted-deletions",
+            "exact": true,
+            "other_writer_count": 0,
+            "purged": "Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create taken before the purge) can bring them back.",
+            "samples": [],
+            "truncated": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No soft-deleted page was removed by a sync while Git never held its file (0 tombstone(s) checked).",
+          "name": "uncommitted_sync_deletions",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
           "elapsed_ms": "<volatile>",
           "message": "Not applicable: no page names readers and no member exists.",
           "name": "access_readers_malformed",
@@ -1965,6 +2046,20 @@
           "elapsed_ms": "<volatile>",
           "message": "No fact is left retired by a facts-fence generation that no fence withdrew.",
           "name": "unwithdrawn_facts",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "ambiguous": 0,
+            "capped": false,
+            "docs": "docs/guides/repair.md#purged-page-facts",
+            "evidenced": 0,
+            "repair": "purged-page-facts"
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No fact extracted from a page is left active after that page was purged.",
+          "name": "purged_page_facts",
           "status": "ok"
         },
         {
@@ -3576,34 +3671,6 @@
         {
           "category": "brain",
           "details": {
-            "by_source": [
-              {
-                "checked": 0,
-                "other_writer": 0,
-                "source_id": "default",
-                "status": "known",
-                "sync_deleted": 0,
-                "tombstones": 0,
-                "truncated": false,
-                "unknown": 0
-              }
-            ],
-            "count": 0,
-            "docs": "docs/guides/repair.md#uncommitted-deletions",
-            "exact": true,
-            "other_writer_count": 0,
-            "purged": "Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create taken before the purge) can bring them back.",
-            "samples": [],
-            "truncated": false
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No soft-deleted page was removed by a sync while Git never held its file (0 tombstone(s) checked).",
-          "name": "uncommitted_sync_deletions",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
             "docs": "docs/guides/repair.md#unindexed-files",
             "sources": [
               {
@@ -3751,45 +3818,6 @@
         {
           "category": "brain",
           "details": {
-            "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-git-gap-census",
-            "errors": [],
-            "informational": true,
-            "partial_sources": [],
-            "sources": [],
-            "sources_without_git_checkout": 1,
-            "timeout_ms": "<volatile>"
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No source has a Git checkout, so there is no commit to compare the database with.",
-          "name": "db_ahead_of_git",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
-            "docs": "docs/designs/GIT_CANONICAL_MEMORY.md#the-model",
-            "sources": [],
-            "warn_seconds": 900
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No source is strict (git-canonical), so no index trails a commit.",
-          "name": "git_index_lag",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
-            "docs": "docs/guides/repair.md#facts-home",
-            "sources": []
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No source is strict (git-canonical), so no fact is required to have a Git home.",
-          "name": "strict_facts_outside_git",
-          "status": "ok"
-        },
-        {
-          "category": "brain",
-          "details": {
             "docs": "docs/guides/write-refusals.md#file_database_drift",
             "sources": []
           },
@@ -3808,19 +3836,6 @@
           "elapsed_ms": "<volatile>",
           "message": "No fact, take or link is indexed from a fence on an imported email, calendar, GitHub or transcript page.",
           "name": "outside_content_fences",
-          "status": "ok"
-        },
-        {
-          "category": "ops",
-          "details": {
-            "count": 0,
-            "docs": "docs/guides/troubleshooting.md#owner-host-stale",
-            "stale": [],
-            "stale_after_ms": "<volatile>"
-          },
-          "elapsed_ms": "<volatile>",
-          "message": "No managed write is waiting on an owner host.",
-          "name": "owner_host_stale",
           "status": "ok"
         },
         {

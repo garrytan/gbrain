@@ -29,9 +29,7 @@ Guide: docs/guides/conversation-archive.md`;
 
 function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
-  if (i >= 0) return args[i + 1];
-  const eq = args.find(a => a.startsWith(name + '='));
-  return eq ? eq.slice(name.length + 1) : undefined;
+  return i >= 0 ? args[i + 1] : undefined;
 }
 
 export async function runTranscriptsArchive(engine: BrainEngine, args: string[], dispatch: Pick<CliDispatchContext, 'makeContext'> = {}): Promise<void> {

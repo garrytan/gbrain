@@ -60,7 +60,7 @@ import {
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
-import { noGrantFloorNext } from './sources-add-next.ts';
+import { noGrantFloorNext, reportAddOutcome } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -463,7 +463,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   say(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
-  if (!fed && federated === null) console.error(`Warning: source "${id}" is not federated. A remote token or agent connection with no source grant cannot read its pages, so its searches leave them out. Run \`gbrain sources federate ${id}\` to let every such connection read it, or grant one token with \`gbrain auth rescope --token <name> --sources ${id}\`.`);
+  const notices = await reportAddOutcome({ id, chosen: ghKind || gKind ? true : federated, federated: fed, path: finalRemoteUrl || ghKind || gKind ? null : created.local_path, json, say });
   const next = !fed && federated === null ? await noGrantFloorNext(engine, id).catch(() => null) : null;
   if (next) say(`  next: ${next.command} — ${next.why}`);
   if (ghKind || gKind) {
@@ -499,7 +499,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       console.error(`         Run \`gbrain sources harden ${id}\` to retry.`);
     }
   }
-  if (json) console.log(JSON.stringify({ id, name: created.name, local_path: created.local_path, remote_url: finalRemoteUrl ?? null, federated: fed, ...(next ? { next } : {}) }));
+  if (json) console.log(JSON.stringify({ id, name: created.name, local_path: created.local_path, remote_url: finalRemoteUrl ?? null, federated: fed, ...(next ? { next } : {}), ...(notices ? { notices } : {}) }));
 }
 
 /**
@@ -1231,7 +1231,7 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
     } else if (sub.status === 'spend_capped') {
       say(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
     } else if (sub.status === 'no_worker_surface') {
-      say(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
+      if (await (await import('../core/embedding-disabled.ts')).embeddingsDisabled(engine)) say('  → embed-backfill not queued: embedding is disabled on this brain (keyless by choice; keyword search works).'); else say(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
     } else if (sub.status === 'stalled') {
       say(`  → embed-backfill not queued: the last ${sub.failures} runs failed on the same blocked pages with nothing embedded. See: gbrain doctor --only embed_backfill_stalled`);
     } else if (sub.status === 'embedding_disabled') {
@@ -2001,7 +2001,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
 }
 
 function printHelp(): void {
-  console.log(`gbrain sources — manage multi-source brain configuration (v0.26.5)
+  console.log(`gbrain sources — manage multi-source brain configuration
 
 Subcommands:
   inspect <path> [--profile company-brain] [--json] [--out <file>]

@@ -142,7 +142,7 @@ describe('ambient writeback — hermetic 5-step lifecycle', () => {
     // G5: the ask is the `writeback` decision in init's one first-run bundle ([AGENT] block).
     expect(initOut).toContain('(id: writeback)');
     expect(initOut).toContain('(run: gbrain config set memory.auto_writeback salient)');
-    expect(initOut).toContain('default: salient');
+    expect(initOut).toContain('default: off');
 
     // The ask fires ONCE: a second init pass over the same brain stays quiet
     // (sentinel stamped) — checked implicitly by step 2's config set instead

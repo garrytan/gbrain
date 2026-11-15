@@ -9,6 +9,10 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { ARCHIVE_TIMEZONE_KEY, readArchiveLedger, runTranscriptArchive, setArchiveEnabled } from '../src/core/transcripts/archive.ts';
 import { archivedPages, conversation, staticReader } from './helpers/transcript-archive.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 let engine: PGLiteEngine;
 
@@ -62,5 +66,29 @@ describe('archive redaction (pglite)', () => {
     const retried = await runTranscriptArchive(engine, { ...opts, readers: [staticReader('claude-code', [conv()])] });
     expect(retried.written).toBe(2);
     expect((await readArchiveLedger(engine, 'conversations')).some(e => e.held)).toBe(false);
+  }, 60_000);
+});
+
+describe('backfill and redaction rule changes (pglite)', () => {
+  test('a finished day whose value only becomes redactable under newer redaction rules is re-redacted by backfill', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'archive-rules-'));
+    try {
+      await withEnv({ GBRAIN_HOME: home }, async () => {
+        const MARK = 'BLUEFALCON-synthetic-77';
+        const c = () => conversation('claude-code', 'session-rules', [
+          ['user', '2026-10-01T10:00:00.000Z', 'the project codename is ' + MARK], ['assistant', '2026-10-01T10:01:00.000Z', 'noted'],
+        ]);
+        const first = await runTranscriptArchive(engine, { ...opts, readers: [staticReader('claude-code', [c()])] });
+        expect(first.written).toBe(1);
+        expect((await archivedPages(engine)).find(p => p.slug.startsWith('conversations/claude-code/'))!.body).toContain(MARK);
+        mkdirSync(join(home, '.gbrain'), { recursive: true });
+        writeFileSync(join(home, '.gbrain', 'harvest-private-patterns.txt'), 'BLUEFALCON-[a-z]+-[0-9]+\n');
+        await runTranscriptArchive(engine, { ...opts, readers: [staticReader('claude-code', [c()])] });
+        const page = (await archivedPages(engine)).find(p => p.slug.startsWith('conversations/claude-code/'))!;
+        expect(page.body).not.toContain(MARK);
+      });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }, 60_000);
 });

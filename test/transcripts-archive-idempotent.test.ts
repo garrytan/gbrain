@@ -60,3 +60,35 @@ describe('archive idempotency (pglite)', () => {
     for (const p of pages1.filter(p => !p.slug.includes('2026-11-10'))) expect(pages3.find(q => q.slug === p.slug)).toEqual(p);
   }, 60_000);
 });
+
+describe('archive day index retry (pglite)', () => {
+  test('a day index whose write failed is written by the next run', async () => {
+    let failing = true;
+    const flaky = new Proxy(engine, { get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (typeof value !== 'function') return value;
+      if (prop === 'transaction') return (fn: (tx: unknown) => Promise<unknown>) => target.transaction(tx => fn(new Proxy(tx, { get(t, p) {
+        const v = Reflect.get(t, p, t);
+        if (p === 'putPage') return (slug: string, ...rest: unknown[]) => {
+          if (failing && slug.startsWith('conversations/days/')) return Promise.reject(new Error('synthetic index write failure'));
+          return (v as (...a: unknown[]) => unknown).call(t, slug, ...rest);
+        };
+        return typeof v === 'function' ? v.bind(t) : v;
+      } })));
+      if (prop === 'putPage') return (slug: string, ...rest: unknown[]) => {
+        if (failing && slug.startsWith('conversations/days/')) return Promise.reject(new Error('synthetic index write failure'));
+        return (value as (...a: unknown[]) => unknown).call(target, slug, ...rest);
+      };
+      return value.bind(target);
+    } }) as unknown as PGLiteEngine;
+    const reader = () => staticReader('claude-code', [conversation('claude-code', 'session-index', [['user', '2026-10-01T10:00:00.000Z', 'index retry note']])]);
+    const opts = { mode: 'backfill' as const, from: '2026-10-01', to: '2026-10-01', now: new Date('2026-10-05T00:00:00Z') };
+    const first = await runTranscriptArchive(flaky, { ...opts, readers: [reader()] });
+    expect(first.errors.map(e => e.reader)).toEqual(['day-index']);
+    expect((await archivedPages(engine)).some(p => p.slug.startsWith('conversations/days/'))).toBe(false);
+    failing = false;
+    const second = await runTranscriptArchive(engine, { ...opts, readers: [reader()] });
+    expect(second.errors).toEqual([]);
+    expect((await archivedPages(engine)).filter(p => p.slug.startsWith('conversations/days/')).map(p => p.slug)).toEqual(['conversations/days/2026-10-01']);
+  }, 60_000);
+});

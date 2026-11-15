@@ -376,6 +376,7 @@ test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
 test/notifier-retry-unwatched-gst2515.test.ts
+test/notifier-sync-disabled-gst2515.test.ts
 test/on-commit-embedding.serial.test.ts
 test/oneshot-consumer-direct-route.test.ts
 test/oneshot-housekeeping-cli.test.ts
@@ -606,6 +607,7 @@ test/repair-frontmatter.test.ts
 test/repair-ghost-database-ahead-gbra133.test.ts
 test/repair-lost-fence-rows.test.ts
 test/repair-private-labels-batch.test.ts
+test/repair-purged-page-facts-8859.test.ts
 test/repair-quoted-markers-8059.test.ts
 test/repair-receipt-compaction.test.ts
 test/repair-rename-identity-6729.test.ts
@@ -700,6 +702,7 @@ test/sync-legacy-slug-adoption-6727.test.ts
 test/sync-legacy-sweep-resume-7189.test.ts
 test/sync-level-reuse-across-gbra133.test.ts
 test/sync-metafile-foreign-slug-7341.test.ts
+test/sync-mirror-catchup-gst2515.test.ts
 test/sync-origin-live-wins-6517.test.ts
 test/sync-page-identity-hold-gbra130.test.ts
 test/sync-page-write-failed-gbra130.test.ts

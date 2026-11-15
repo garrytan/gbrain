@@ -124,6 +124,7 @@ export const BRAIN_CHECK_NAMES: ReadonlySet<string> = new Set([
   'guest_source',
   'extractor_facts_expired',
   'unwithdrawn_facts',
+  'purged_page_facts',
   'loop_facts_drift',
   'ontology_facts_fenced',
   'orphan_persistence_bindings',

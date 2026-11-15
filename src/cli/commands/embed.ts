@@ -17,6 +17,10 @@ export async function run(engine: BrainEngine, args: string[], ctx: CliDispatchC
     return;
   }
   const { SELECTED_CONFIG_BY_ENGINE } = ctx;
+  // GST-2767: a single-page run's arguments are read before consent, so an unknown flag is refused before any spend prompt.
+  if (!args.some(a => ['--all', '--stale', '--slugs', '--held', '--facts', '--images'].includes(a))) {
+    (await import('../../commands/embed-slug-args.ts')).embedSlugTarget(args);
+  }
   // A4: an explicit backfill is paid work; consent first, on the probe-only engine (startup: 'observational').
   const consent = await authorizeEmbed(engine, args);
   if (!consent) return;
@@ -84,8 +88,9 @@ async function authorizeEmbed(engine: BrainEngine, args: string[]): Promise<{ au
 
 /** `gbrain embed --help` (answered without a brain) and the usage error. */
 const EMBED_USAGE = [
-  'Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--source <id>] [--yes | --max-usd N] [--json] | --stale --images | --facts',
+  'Usage: gbrain embed [<slug>|--all|--stale|--slugs s1 s2 ...|--held] [--dry-run] [--batch-size N] [--priority recent] [--catch-up] [--include-null-signature] [--source <id>] [--yes | --max-usd N] [--json] | --stale --images | --stale --facts --source <id>',
   '  Embeds chunks without a vector (--stale; --catch-up keeps going until the backlog is empty) or re-embeds pages (--all, a slug, --slugs).',
+  '  --stale covers pages, not facts saved with remember: embed those with --stale --facts --source <id> (--dry-run, then --yes --max-cost-usd N).',
   '  A page over 1 MiB spends at most embed.max_usd_per_page (default $2) and embeds its newest chunks first. --held --dry-run lists, for every',
   '  source, the pages a cap or a pending approval stopped, the cost to finish and one approve command per source. --held --source <id>',
   '  --max-usd N (or --slugs <slug> --source <id> --max-usd N) approves them, one source at a time: N is both the run\'s cap and the extra per-page allowance it',

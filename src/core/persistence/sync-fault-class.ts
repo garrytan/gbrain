@@ -140,6 +140,8 @@ export const SYNC_FAULT_TABLE: ReadonlyArray<SyncFaultRule> = [
   // #7199: a `file_drift` hold with side `unknown` (no import record): neither side is known to have moved.
   { code: 'file_drift_unknown', class: 'page', safe_actions: ['reconcile'], needs_human: true, escalate: 'always: the file and the page differ and no import record says which changed',
     human_reason: 'The file and the database page differ, and sync has no import record to tell which one changed since the last import, so it held the file instead of overwriting the page; a person chooses which version wins (gbrain repair file-drift --source <source> --slug <slug> --prefer database|file previews it and writes nothing until applied).' },
+  // GBRA-542: a deleted-side `file_drift` hold on a read-only mirror (sync-holds.ts mirrorDatabaseOnlyHold): the page stays live and database-only by design.
+  { code: 'file_drift_mirror_database_only', class: 'page', safe_actions: ['none'], needs_human: false, escalate: 'never: the page stays live and database-only because gbrain never writes a read-only mirror' },
   { code: 'origin_conflict_decision', class: 'page', safe_actions: ['none'], needs_human: true, escalate: 'always: the pages differ, their ids conflict or none is the page the path names',
     human_reason: 'Several live pages record this file as their origin and sync cannot prove they are one document; a person keeps the page that is the file\'s and soft-deletes the others (gbrain repair origin-twins --source <source> lists them with the commands), then syncs.' },
   // GBRA-130 A-17/B-3/B-4: a held `page_identity_changed` path (sync-status.ts holdVerdict): several tombstones, a spelling twin or a takeover whose ids differ.

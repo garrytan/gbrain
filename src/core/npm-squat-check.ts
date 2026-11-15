@@ -62,7 +62,7 @@ const REAL_REPO_MARKER = 'garrytan/gbrain';
 /** The documented install command (INSTALL_PIN, the one install ref in core/install-ref.ts). */
 const INSTALL_ARGV = ['bun', 'install', '-g', INSTALL_PIN];
 
-/** #218 recovery: a Bun global install can skip the postinstall that applies schema migrations. */
+/** #218 recovery: a fresh install runs no migrations; this applies them. */
 const SCHEMA_RECOVERY_ARGV = ['gbrain', 'apply-migrations', '--yes', '--no-autopilot-install'];
 
 /** The documented install/remediation path, reused in doctor output. */
@@ -246,7 +246,7 @@ function squatFix(foreign: ClassifiedGbrainBinary, realElsewhere: boolean, opts:
     then: {
       argv: SCHEMA_RECOVERY_ARGV, consent: [], actor: 'agent', requires_exclusive: false,
       verify: { argv: ['gbrain', 'doctor', '--json'] }, docs: 'README.md#install',
-      why: 'A Bun global install can skip the postinstall that applies schema migrations (#218). This applies them and exits 0 only when the schema is at head; exit 1 with migrations_pending means run gbrain doctor --json and relay what it reports.',
+      why: 'The install itself runs no migrations (#218). This applies them and exits 0 only when the schema is at head; exit 1 with migrations_pending means run gbrain doctor --json and relay what it reports.',
     },
   };
   return {

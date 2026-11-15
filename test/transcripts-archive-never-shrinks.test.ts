@@ -101,3 +101,40 @@ describe('the archive never shrinks a day page (pglite)', () => {
     expect(await snapshot()).toEqual(before);
   }, 60_000);
 });
+
+describe('never shrinks across holds and overlapping runs (pglite)', () => {
+  test('a day written, then held, then read shorter after a reset keeps its page', async () => {
+    const before = await seed();
+    const held = await runTranscriptArchive(engine, { mode: 'run', readers: [staticReader('openclaw', [conversation('openclaw', KEY, FULL)])], now: NOW, redact: () => { throw new Error('bad pattern'); } });
+    expect(held.days.map(d => d.status)).toEqual(['held', 'held']);
+    const result = await run([staticReader('openclaw', [conversation('openclaw', KEY, [FULL[4]!])])]);
+    expect(result.days.map(d => [d.day, d.status])).toEqual([['2026-11-10', 'kept']]);
+    expect(await snapshot()).toEqual(before);
+  }, 60_000);
+
+  test('two overlapping runs never publish older history over newer', async () => {
+    const OLD = FULL.slice(2, 4);
+    const NEW = FULL.slice(2);
+    let release!: () => void;
+    const gate = new Promise<void>(r => { release = r; });
+    let started!: () => void;
+    const loading = new Promise<void>(r => { started = r; });
+    const slow: ArchiveReader = {
+      harness: 'openclaw', name: 'openclaw',
+      async *scan() {
+        const conv = conversation('openclaw', KEY, OLD);
+        yield { harness: 'openclaw', conversationKey: KEY, sessionId: KEY, days: ['2026-11-10'], load: async () => { started(); await gate; return conv; } };
+      },
+    };
+    const first = run([slow]).then(r => r, (e: unknown) => e as Error);
+    await loading;
+    const second = await run([staticReader('openclaw', [conversation('openclaw', KEY, NEW)])]).then(r => r, (e: unknown) => e as Error);
+    release();
+    const older = await first;
+    const tuesday = (await snapshot()).find(p => p.slug.startsWith('conversations/openclaw/2026-11-10'));
+    const wrote = (r: unknown) => !(r instanceof Error) && (r as { written: number }).written > 0;
+    if (wrote(second)) expect(tuesday?.body ?? '').toContain('tuesday three');
+    else expect((second as { code?: string }).code).toBe('archive_run_busy');
+    expect(wrote(older) || wrote(second)).toBe(true);
+  }, 60_000);
+});

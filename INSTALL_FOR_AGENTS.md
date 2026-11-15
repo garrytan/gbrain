@@ -25,7 +25,7 @@ GBrain is MIT-licensed and free to self-host; the rest of this guide installs it
 
 > **Choose the installation path first.** Inside **[Grok Bot](docs/guides/grok-bot.md)** or **[Muse](docs/guides/muse.md)**, use their dedicated guide: the recommended shape keeps the brain on the user's own computer, published with `gbrain mcp expose --funnel` ([remote MCP](docs/guides/remote-mcp.md)), and installs the thin CLI inside the agent; `scripts/setup-in-agent.sh` is the in-agent alternative, and its receipt tracks repair and native enablement. To make a brain on this computer reachable from the user's other devices, apps, or cloud agents over MCP, follow the **[remote MCP guide](docs/guides/remote-mcp.md)** (`gbrain mcp expose`; confirm the plan before installing Tailscale or a service; `--funnel` only for cloud agents). For an **[existing hosted brain](docs/guides/hosted-harness-access.md)**, choose the harness's native OAuth/PKCE flow or a private machine handoff. Owner login, client management, permissions, and revocation use the separate [MCP administration](docs/mcp/ADMIN.md) path. This guide covers a local brain for other existing agents.
 >
-> **Memory-only path:** install → initialize → relay and confirm the Step 3.5 search-mode choice → connect the harness → verify memory (with `gbrain setup <harness>`, initialize and connect are one command and the search-mode choice is relayed in the reply that reports the install). Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The required search-mode choice still applies; published API cost examples are not prices for the user’s harness subscription.
+> **Memory-only path:** install → initialize → connect the harness → verify memory → report the install with the Step 3.5 search mode and settings in effect (with `gbrain setup <harness>`, initialize and connect are one command). Never end the install on a question. Skip identity replacement, private-repo bootstrap, automatic capture, cron installation, and paid enrichment unless requested. A keyword-only brain needs no API key. The user still sees the search-mode matrix; published API cost examples are not prices for the user’s harness subscription.
 >
 > Only if the user asks for a **new persistent personal agent** with identity and a private repo, follow `BOOTSTRAP_FOR_AGENTS.md`.
 
@@ -86,8 +86,6 @@ key ([Step 3](#step-3-create-the-brain)). On any other harness, `gbrain init --p
 > git clone --branch stable https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
 > bun install && bun link
 > ```
-
-Bun blocks gbrain's postinstall on `bun install -g` (`Blocked 1 postinstall`); a new install can skip it: the script only repeats the refusal every gbrain command prints on a Bun below the floor and runs `gbrain apply-migrations --yes --non-interactive`, which has nothing to migrate before a brain exists, and `gbrain setup` creates the brain and applies its setup migrations.
 
 ## Step 2: API Keys
 
@@ -162,21 +160,23 @@ gbrain init --pglite --no-embedding     # keyless memory, no server needed
 gbrain doctor --json                   # inspect diagnostics and any warnings
 ```
 
-**The first-run decision bundle.** Init asks every first-run question once, in
-one bundle, and does not wait for the answers: it applies defaults and exits 0.
-Human output prints it as an `[AGENT]` block; `gbrain init --json` carries it
-as a notice of kind `ask` with `decisions[]`:
+**The first-run settings.** Init applies its defaults and exits 0; nothing waits
+for an answer. When no agent is connected yet it prints a `harness_wiring`
+notice: connecting gbrain to the agent you run in is part of the install, so do
+it now (Step 5), not after the user replies. It also prints the settings in
+effect once, as an `[AGENT]` block (`gbrain init --json`: a notice of kind
+`ask` with `decisions[]`):
 
-| Decision | What the user picks | Default |
+| Setting | What the user can change | In effect |
 |---|---|---|
 | `search_mode` | `conservative`, `balanced` or `tokenmax`, with the cost matrix (Step 3.5) | the mode init applied, with its reason |
-| `writeback` | whether you save salient facts from conversations without being asked | recommended `salient`; off until the user agrees |
-| `harness_wiring` | registering gbrain in the harness you run in (Step 5) | the exact registration command for the detected harness |
+| `writeback` | whether you save salient facts from conversations without being asked | off; gbrain recommends `salient`, which the user opts into |
 | `skills_scaffold` | optional bundled skills in the agent workspace | skip |
+| `upkeep` | free upkeep while the agent's session is open | on |
 
-Relay the bundle's one `user_message` to the user ("Reply 'defaults' to accept
-…") and apply each answer with the command its option names. One round-trip
-covers Step 3.5 and the wiring question. Details:
+Connect first, then report the install and relay the bundle's `user_message`
+in that reply, as the settings in effect and how to change them. Apply an
+answer with the command its option names whenever the user gives one. Details:
 [first run](docs/protocol/AGENT_OPERATOR_v1.md#first-run).
 
 The user's markdown files and canonical skills are SEPARATE from this tool repo.
@@ -278,20 +278,18 @@ The bundled skills `skills/db-repair/` (triggers on the marker) and
 `skills/postgres-adopt/` (detect / prefer / install / migrate-wrap) drive this
 loop; full reference in `docs/ENGINES.md` ("Engine detection and access repair").
 
-## Step 3.5: Confirm search mode with the user (DO NOT SKIP)
+## Step 3.5: Tell the user which search mode is in effect (DO NOT SKIP)
 
-This is the `search_mode` decision from the first-run bundle.
+This is the `search_mode` setting from the first-run settings.
 `gbrain init` auto-applied a default search mode: `tokenmax` with a chat key
 (Anthropic, OpenAI or Google), `balanced` with a ready reranker but no chat key,
 and `conservative` when your subagent tier is Haiku-class or neither exists. The init output
-included the cost matrix below preceded by `[AGENT]` markers. You must NOT
-silently accept the default. Stop and ask the operator.
-
-After `gbrain setup <harness>` the harness is already wired when the matrix
-appears, so there is nothing to stop before: show the matrix and the applied
-mode in the reply that reports the install, as a choice the user can make at
-any time, and run `gbrain config set search.mode <mode>` when they pick one.
-Don't hold the install open for the answer.
+included the cost matrix below preceded by `[AGENT]` markers. Don't accept it
+silently, and don't stop the install to ask either: on every harness, connect
+gbrain first (with `gbrain setup <harness>` or the `harness_wiring` step), then
+show the matrix and the applied mode in the reply that reports the install, as
+a choice the user can make at any time, and run
+`gbrain config set search.mode <mode>` when they pick one.
 
 If you already know the operator's choice, record it at install time instead:
 `gbrain init --search-mode <conservative|balanced|tokenmax>` stores it as the
@@ -318,9 +316,9 @@ Estimated downstream input cost of the retrieved payload @ 10K queries/mo:
 
 **Ask the operator (paraphrase if needed):**
 
-> Your gbrain just installed with search mode `<auto-applied default>`. This is
-> a one-time setup decision that controls retrieval payload size. Which mode
-> do you want?
+> Your gbrain is installed and connected, with search mode
+> `<auto-applied default>`. It controls retrieval payload size, and you can
+> change it any time. The modes:
 >
 >   1) conservative — tight 4K budget, 10 chunks max, no reranker.
 >      Best for Haiku subagents, cost-sensitive setups, high-volume loops.
@@ -827,9 +825,8 @@ again. Pass `--no-bun-floor-check` only after checking the target yourself
 when the floor cannot be read (offline). See
 [Bun floor](docs/guides/upgrades-auto-update.md#bun-floor).
 
-The autopilot opt-out skips installation and service rewrites, including package
-postinstall hooks; it does not skip other migrations. Keep the environment form
-on the package-manager command because hooks run before `post-upgrade`.
+The autopilot opt-out skips installation and service rewrites; it does not skip
+other migrations.
 `GBRAIN_NO_REEMBED=1` separately skips the potentially paid reindex step.
 For an existing service deployment, review its migration guide instead of
 assuming memory-only options are the desired maintenance policy. Verify a known

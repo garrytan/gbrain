@@ -1,0 +1,45 @@
+{
+  "_note": "Synthetic, in the shape OpenClaw 2026.10.9 returned for sessions.list on a dev Gateway (probe 2026-11-15): the main session carries chatType direct; a session an operator created with sessions.create has no chatType and classification custom. Values are placeholders; rows are trimmed to the fields the reader reads plus the 10.9 markers.",
+  "ts": 1794724694256,
+  "path": "/home/alice-example/.openclaw/agents/dev/agent/openclaw-agent.sqlite",
+  "count": 2,
+  "totalCount": 2,
+  "limitApplied": 200,
+  "nextOffset": null,
+  "hasMore": false,
+  "owners": [],
+  "sessions": [
+    {
+      "key": "agent:dev:main",
+      "sessionId": "00000000-0000-4000-8000-000000001009",
+      "agentId": "dev",
+      "kind": "direct",
+      "classification": "main",
+      "chatType": "direct",
+      "createdVia": "system",
+      "isMain": true,
+      "archived": false,
+      "visibility": "shared",
+      "updatedAt": 1794724693000,
+      "lifecycleRevision": "00000000-0000-4000-8000-0000000010a1"
+    },
+    {
+      "key": "agent:dev:example-probe-a",
+      "sessionId": "00000000-0000-4000-8000-000000001010",
+      "agentId": "dev",
+      "kind": "direct",
+      "classification": "custom",
+      "label": "probe a",
+      "displayName": "probe a",
+      "createdVia": "operator",
+      "isMain": false,
+      "isDock": false,
+      "isBackground": false,
+      "archived": false,
+      "pinned": false,
+      "visibility": "shared",
+      "updatedAt": 1794724693268,
+      "lifecycleRevision": "00000000-0000-4000-8000-0000000010a2"
+    }
+  ]
+}

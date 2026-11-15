@@ -58,8 +58,9 @@ const lockRow = (engine: BrainEngine, beat: string, ttl: string) => engine.execu
 const live = (engine: BrainEngine) => lockRow(engine, '1 second', '2 minutes');
 const dead = (engine: BrainEngine) => lockRow(engine, '3 minutes', '-1 minute');
 const unlock = (engine: BrainEngine) => engine.executeRaw('DELETE FROM gbrain_cycle_locks WHERE id=$1', [LOCK]);
-const setPass = (engine: BrainEngine, outcome: string, streak: number, age = '0 seconds') => engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(completed_keys,
-  '{0,telemetry,outcome}',to_jsonb($2::text)),'{0,obligations,abandoned_streak}',to_jsonb($3::int)), updated_at=now()-$4::interval WHERE op=$1`, [MANAGED_SYNC_PASS_OP, outcome, streak, age]);
+// GST-2515: the pass gets a fresh id no committed write or hold carries, so it models a pass that committed nothing.
+const setPass = (engine: BrainEngine, outcome: string, streak: number, age = '0 seconds') => engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(jsonb_set(jsonb_set(completed_keys,
+  '{0,telemetry,outcome}',to_jsonb($2::text)),'{0,obligations,abandoned_streak}',to_jsonb($3::int)),'{0,telemetry,pass_id}',to_jsonb(gen_random_uuid()::text)), updated_at=now()-$4::interval WHERE op=$1`, [MANAGED_SYNC_PASS_OP, outcome, streak, age]);
 const commitFile = (root: string, name: string) => { writeFileSync(join(root, name), `---\ntype: concept\ntitle: ${name}\n---\n\nA note about ${name}.\n`); git(root, ['add', '-A']); git(root, ['commit', '-qm', name]); };
 
 for (const backend of testBackends()) {

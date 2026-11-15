@@ -7,7 +7,7 @@ import type { IdleUpkeep } from '../core/maintenance/idle.ts';
 export { serveFailFastRequested, writeServeFailFastEnvelope } from '../core/serve-fail-fast.ts';
 import { isEngineDegraded as isEngineDegradedForServe } from '../core/degraded-marker.ts';
 import { startMcpServer, stdioRpcsInFlightCount, resolveMcpStdioSourceScope } from '../mcp/server.ts';
-import { installStdioShutdownTriggers, probeWatchdogAvailable, readLiveParentPid, resolveEofDrainMs, type StdioLifecycleDeps } from '../mcp/stdio-lifecycle.ts';
+import { exitAfterStdoutDrains, installStdioShutdownTriggers, probeWatchdogAvailable, readLiveParentPid, resolveEofDrainMs, type StdioLifecycleDeps } from '../mcp/stdio-lifecycle.ts';
 // The parent-liveness readers moved to the engine-free stdio lifecycle the thin-client bridge shares.
 export { isPidAlive, probeWatchdogAvailable, readLiveParentPid } from '../mcp/stdio-lifecycle.ts';
 import { VERB_NAMES } from '../core/verbs.ts';
@@ -598,7 +598,7 @@ function resolveBootTimeoutMs(): number {
  */
 function installGraduationHandoff(engine: BrainEngine, opts: ServeOptions): ServeOptions {
   if (engine.kind !== 'pglite') return opts;
-  const exit = opts.exit ?? ((code?: number) => { process.exit(code); });
+  const exit = opts.exit ?? exitAfterStdoutDrains();
   const log = opts.log ?? ((msg: string) => console.error(msg));
   let handoffExit: number | null = null;
   let shutdown: ((reason: string) => void) | null = null;
@@ -678,7 +678,7 @@ function installStdioLifecycle(
   const deps: StdioLifecycleDeps = {
     stdin: opts.stdin ?? process.stdin,
     signals: opts.signals ?? process,
-    exit: opts.exit ?? ((code?: number) => { process.exit(code); }),
+    exit: opts.exit ?? exitAfterStdoutDrains(),
     log: opts.log ?? ((msg: string) => console.error(msg)),
     getParentPid: opts.getParentPid ?? readLiveParentPid,
     setInterval: opts.setInterval ?? ((fn, ms) => setInterval(fn, ms)),

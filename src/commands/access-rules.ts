@@ -191,10 +191,11 @@ async function previewRules(engine: BrainEngine, sourceId: string, store: Access
   }
   const edits = [...pages.values()], segmented = Math.max(0, ...edits.map(p => p.segmented_versions_not_edited ?? 0));
   const twins: OpenTwins = { count: 0, twins: [], commands: [] };
+  const ruleOwner = (await readersOwner(engine)).owner;
   for (const rule of cls.changes.filter(c => c.narrowing).map(c => cls.target.find(r => r.id === c.rule)).filter(r => r !== undefined)) {
     const covered = await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT source_id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND ${ruleCoversSql('slug', '$2::text')} ORDER BY slug LIMIT ${OPEN_TWINS_PAGES}`, [sourceId, rule.prefix]);
     const found = await openTwins(engine, covered, rule.readable_by,
-      source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')} --source ${source}`);
+      source => `gbrain access rule add ${rule.prefix.endsWith('/') ? '--prefix' : '--slug'} ${rule.prefix} --readers ${rule.readable_by.map(reader).join(',')}${ruleOwner && !rule.readable_by.includes(`member:${ruleOwner}`) ? ' --allow-without-owner' : ''} --source ${source}`);
     Object.assign(twins, { count: twins.count + found.count, twins: [...twins.twins, ...found.twins], commands: [...twins.commands, ...found.commands] });
   }
   const owner = await ownerReadsRestrictedOn(engine) ? (await ownerView(engine)).owner : null;

@@ -79,6 +79,10 @@ export const DEFAULT_QUIET_MINUTES = 180;
 const LEDGER_PREFIX = 'transcripts.archive.ledger.';
 const PIN_PREFIX = 'transcripts.archive.pinned_timezone.';
 const LEGACY_PREFIX = 'transcripts.archive.legacy.';
+/** The audience (personal or shared) the archive last ran under, per configured source. */
+const AUDIENCE_PREFIX = 'transcripts.archive.audience.';
+/** Days whose index page still has to be written (a failed or interrupted index write), per source. */
+const INDEX_PENDING_PREFIX = 'transcripts.archive.index_pending.';
 const INGESTED_VIA = 'cli:transcripts-archive';
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -137,6 +141,8 @@ export interface ArchiveLedgerEntry {
   ids?: string[];
   /** Signature of the source's message identities for the day when it was written; backfill skips a finished day whose source still matches. */
   source?: string;
+  /** Version of the redaction rules (built-in detectors and the user's patterns) the day was written under; backfill re-checks a day written under other rules. */
+  redaction?: string;
   held?: ArchiveHeld;
   updated_at?: string;
 }
@@ -289,13 +295,14 @@ async function archiveTimeZone(engine: BrainEngine, sourceId: string): Promise<{
   return pinned ? { timezone: pinned, pinned: true, configured } : { timezone: assertTimeZone(configured), pinned: false, configured };
 }
 
-interface Privacy { shared: boolean; owner: string | null }
+/** unproven: the brain reads as personal only because its client-usage check failed, so it may still be shared. */
+interface Privacy { shared: boolean; owner: string | null; unproven?: boolean }
 
 async function resolvePrivacy(engine: BrainEngine): Promise<Privacy> {
   const audience = await classifyBrainAudience(engine);
   const enabled = (await listMembers(engine)).filter(m => m.status === 'enabled').length;
   const shared = audience.audience !== 'personal' || enabled >= 2;
-  return { shared, owner: shared ? (await ownerView(engine)).owner : null };
+  return { shared, owner: shared ? (await ownerView(engine)).owner : null, ...(!shared && audience.unproven ? { unproven: true } : {}) };
 }
 
 async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveConversation, groups: Map<string, boolean>): Promise<string[] | undefined> {
@@ -308,6 +315,33 @@ async function readersFor(engine: BrainEngine, privacy: Privacy, conv: ArchiveCo
     if (groups.get(principal)) readers.push('group:' + principal);
   }
   return readers;
+}
+
+/**
+ * Pages written while the brain was personal name no readers. When the brain has become shared, the source's whole archive
+ * folder is kept to the owner by a folder rule (a narrowing, so it applies and restamps at once) before the run writes
+ * anything, then the new audience is recorded. A source whose rules live in git is left to its access.yml.
+ */
+async function reconcileAudience(engine: BrainEngine, sourceId: string, privacy: Privacy): Promise<void> {
+  const key = AUDIENCE_PREFIX + sourceId;
+  const now = privacy.shared ? 'shared' : 'personal';
+  const recorded = await engine.getConfig(key);
+  if (recorded === now) return;
+  if (privacy.shared && !privacy.owner) return;
+  if (privacy.shared && recorded === 'personal' && (await engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) {
+    const policy = await import('../access/policy.ts');
+    const { normalizeRule } = await import('../access/folder-rules.ts');
+    if (await policy.readAccessStore(engine, sourceId) === 'git') return;
+    const normalized = normalizeRule({ prefix: 'conversations/', readable_by: [privacy.owner] });
+    if ('problem' in normalized) throw new Error('the owner-only archive rule is invalid: ' + normalized.problem);
+    const rule = normalized.rule;
+    const current = await policy.appliedRules(engine, sourceId);
+    const kept = current.find(r => r.prefix === rule.prefix);
+    if (!kept || kept.readable_by.join() !== rule.readable_by.join()) {
+      await policy.proposeRevision(engine, sourceId, [...current.filter(r => r.prefix !== rule.prefix), rule], { origin: 'cli', store: 'database', proposedBy: 'transcripts-archive' });
+    }
+  }
+  await engine.setConfig(key, now);
 }
 
 function isGitRepo(path: string | null): boolean {
@@ -389,6 +423,9 @@ function mergeScanEntries(gateway: ArchiveScanEntry, files: ArchiveScanEntry[]):
 
 /** A run writes its pages in batches of this many conversation-days or bytes, so memory stays bounded on a large store. */
 const FLUSH_DAYS = 200;
+/** Bump when the built-in redaction detectors change, so backfill re-redacts finished days written under the old ones. */
+const ARCHIVE_REDACTION_RULES = 'archive-redaction-1';
+const ARCHIVE_LOCK_PREFIX = 'transcripts-archive:';
 const FLUSH_BYTES = 8 * 1024 * 1024;
 
 interface DayWrite {
@@ -403,7 +440,6 @@ interface DayWrite {
 
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
-  const now = opts.now ?? new Date();
   const enabled = await archiveEnabled(engine);
   if (!enabled && !dryRun) {
     return emptyResult(opts.mode, {
@@ -413,6 +449,29 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     });
   }
   const { sourceId, privacy } = await effectiveSource(engine, opts.sourceId);
+  if (dryRun) return archiveSource(engine, opts, { enabled, sourceId, privacy });
+  if (privacy.unproven) {
+    const { opError } = await import('../ops/contract.ts');
+    throw opError('archive_audience_unproven', 'The brain\'s audience could not be checked (its client-usage read failed), so the conversation archive wrote nothing: a page written as personal could be open to other members.',
+      'Rerun gbrain transcripts archive run; if it repeats, declare the audience with gbrain config set brain.audience personal|shared.');
+  }
+  // One run per source at a time: a run decides from the ledger it read at its start, so an overlapping run could publish
+  // older history over what the other run just wrote.
+  const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
+  try {
+    return await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, signal => archiveSource(engine, opts, { enabled, sourceId, privacy, signal }));
+  } catch (err) {
+    if (!(err instanceof LockUnavailableError)) throw err;
+    const { opError } = await import('../ops/contract.ts');
+    throw opError('archive_run_busy', 'Another conversation archive run holds source ' + sourceId + ', so this run read and wrote nothing.',
+      'Wait for the other run to finish, then rerun; gbrain status --section locks --json shows the holder.');
+  }
+}
+
+async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { enabled: boolean; sourceId: string; privacy: Privacy; signal?: AbortSignal }): Promise<ArchiveRunResult> {
+  const dryRun = opts.dryRun === true;
+  const now = opts.now ?? new Date();
+  const { enabled, sourceId, privacy } = ctx;
   const source = dryRun
     ? (await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]))[0] ?? { local_path: null }
     : await ensureSource(engine, sourceId);
@@ -420,6 +479,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     : opts.context ?? (opts.makeContext && await managedPersistenceEnabled(engine) ? await opts.makeContext(sourceId) : undefined);
   const managed = !!context && await managedPersistenceEnabled(engine);
   const writeMode: ArchiveRunResult['write_mode'] = managed ? 'coordinator' : (!privacy.shared && isGitRepo(source.local_path) ? 'repo' : 'database');
+  if (!dryRun) await reconcileAudience(engine, await configuredSource(engine, opts.sourceId), privacy);
   const tz = await archiveTimeZone(engine, sourceId);
   if (!tz.pinned && !dryRun) await engine.setConfig(PIN_PREFIX + sourceId, tz.timezone);
   const today = localDay(now.toISOString(), tz.timezone);
@@ -482,6 +542,8 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   }
   scanned.push(...entries.filter(e => !merged.has(e)));
 
+  const patterns = loadImportRedactionPatterns();
+  const redactionVersion = sha256(ARCHIVE_REDACTION_RULES + '\u0000' + patterns.map(p => p.source).join('\u0000'));
   const ledger = new Map((await readArchiveLedger(engine, sourceId)).map(e => [e.harness + '.' + e.conversation_key_hash + '.' + e.day, e]));
   const legacy = await legacyCovered(engine, sourceId);
   const covered = (harness: string, day: string) => legacy.has(harness + '.' + day) || legacy.has('*.' + day);
@@ -500,7 +562,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       }
       const done = ledger.get(entry.harness + '.' + hash + '.' + day);
       const sig = entry.dayIds?.[day] ? daySignature(entry.dayIds[day]!) : undefined;
-      if (opts.mode === 'backfill' && done?.hash && !done.held && done.complete && day < today && sig && done.source === sig) { result.unchanged++; continue; }
+      if (opts.mode === 'backfill' && done?.hash && !done.held && done.complete && day < today && sig && done.source === sig && done.redaction === redactionVersion) { result.unchanged++; continue; }
       live.push(day);
       allDays.add(day);
     }
@@ -512,23 +574,25 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   const cap = opts.mode === 'backfill' ? await configInt(engine, ARCHIVE_BACKFILL_CAP_KEY, DEFAULT_BACKFILL_DAYS_PER_RUN) : 0;
   const ordered = [...allDays].filter(d => !heldDays.has(d)).sort().reverse();
 
-  const patterns = loadImportRedactionPatterns();
   const redact = opts.redact ?? ((s: ParsedSession) => redactSession(s, { patterns }));
   const pageCeiling = dryRun ? Math.floor(PAGE_MAX_BYTES * PAGE_CEILING_FILL) : await transcriptPageCeiling(engine);
   const quietMs = (await configInt(engine, ARCHIVE_QUIET_MINUTES_KEY, DEFAULT_QUIET_MINUTES)) * 60_000;
   const groups = new Map<string, boolean>();
   const pending: ArchiveDayOutcome[] = [];
-  const touched = new Set<string>();
+  const pendingKey = INDEX_PENDING_PREFIX + sourceId;
+  const touched = new Set<string>(dryRun ? [] : await readDays(engine, pendingKey));
   let batch: DayWrite[] = [];
   let batchBytes = 0;
   const flushBatch = async () => {
     if (!batch.length) return;
+    if (ctx.signal?.aborted) throw ctx.signal.reason;
     await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, batch);
     for (const w of batch) {
       if ((w.outcome.status !== 'written' && w.outcome.status !== 'accepted') || !w.ledger) continue;
       ledger.set(w.ledger.harness + '.' + w.ledger.conversation_key_hash + '.' + w.ledger.day, w.ledger);
       touched.add(w.outcome.day);
     }
+    if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify([...touched].sort()));
     batch = [];
     batchBytes = 0;
   };
@@ -593,7 +657,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       });
       const before = prior(outcome.day);
       const lost = before?.ids ? before.ids.some(id => !ids.includes(id)) : (before?.messages ?? 0) > rendered.messages;
-      if (before?.hash && !before.held && lost) {
+      if (before?.hash && lost) {
         outcome.status = 'kept';
         outcome.message = 'the source no longer holds every message the archive wrote for this day (a reset or compaction); the archived page is kept';
         continue;
@@ -601,6 +665,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       if (dryRun) { outcome.status = 'planned'; continue; }
       if (before?.hash === contentHash && !before.held && await pageExists(engine, sourceId, rendered.baseSlug)) {
         outcome.status = 'unchanged';
+        if (before.redaction !== redactionVersion) await writeLedger(engine, { ...before, redaction: redactionVersion });
         if (hold === 'release') await releaseOpenDayHold(engine, sourceId, rendered.parts.map(p => p.slug));
         continue;
       }
@@ -614,7 +679,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
         parts: rendered.parts,
         harness: conv.harness,
         ...(redacted.session.meta.raw ? { raw: redacted.session.meta.raw } : {}),
-        ledger: { source_id: sourceId, harness: conv.harness, conversation_key_hash: hash, day: outcome.day, hash: contentHash, complete, slug: rendered.baseSlug, parts: rendered.parts.length, messages: rendered.messages, ids, source: daySignature(ids) },
+        ledger: { source_id: sourceId, harness: conv.harness, conversation_key_hash: hash, day: outcome.day, hash: contentHash, complete, slug: rendered.baseSlug, parts: rendered.parts.length, messages: rendered.messages, ids, source: daySignature(ids), redaction: redactionVersion },
         hold,
         staleSlugs: renamed.length ? renamed : Array.from({ length: Math.max(0, (before?.parts ?? 0) - rendered.parts.length) }, (_, i) => rendered.baseSlug + '-p' + (rendered.parts.length + i + 1)),
       });
@@ -663,6 +728,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, indexWrites);
     }
   }
+  if (!dryRun && touched.size) await engine.setConfig(pendingKey, JSON.stringify(indexWrites.filter(w => w.outcome.status !== 'written' && w.outcome.status !== 'unchanged').map(w => w.outcome.day).sort()));
   for (const w of indexWrites) {
     if (w.outcome.status === 'written' || w.outcome.status === 'accepted' || w.outcome.status === 'unchanged') result.index_pages.push(w.outcome.slug!);
     else if (w.outcome.status === 'error') result.errors.push({ harness: 'index', reader: 'day-index', code: w.outcome.code ?? 'archive_commit_failed', message: 'the day index ' + w.outcome.slug + ' was not written: ' + (w.outcome.message ?? 'no detail') });
@@ -681,6 +747,15 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   if (result.stopped_at_deadline) result.info.push('the run reached its time limit; the conversations it did not reach wait for the next run');
   if (result.deferred_days.length) result.info.push(result.deferred_days.length + ' older day(s) wait for the next backfill run (' + ARCHIVE_BACKFILL_CAP_KEY + ' caps one run)');
   return result;
+}
+
+async function readDays(engine: BrainEngine, key: string): Promise<string[]> {
+  try {
+    const days = JSON.parse((await engine.getConfig(key)) ?? '[]') as unknown;
+    return Array.isArray(days) ? days.filter((d): d is string => typeof d === 'string' && DAY_RE.test(d)) : [];
+  } catch {
+    return [];
+  }
 }
 
 async function pageExists(engine: BrainEngine, sourceId: string, slug: string): Promise<boolean> {

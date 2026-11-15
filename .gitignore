@@ -14,7 +14,6 @@ bin/
 # file in cwd; glob catches all of them.
 *.bun-build
 .gstack/*
-!.gstack/redact-allowlist
 !.gstack/pregate.json
 !.gstack/ship-policy.json
 !.gstack/ubicloud.json

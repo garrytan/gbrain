@@ -12,7 +12,7 @@ import { EXPIRED_ARCHIVE_SQL, removedSourceScrubCtes } from '../source-delete.ts
 import { parseSourceConfig } from '../sources-load.ts';
 import { redactSourceConfig } from '../source-config-redact.ts';
 import { discoverGitRoot } from '../sync-git.ts';
-import { isInsideGitRepo, hasTrackedContent } from '../git-remote.ts';
+import { inGitCheckout, hasTrackedContent } from '../git-remote.ts';
 import { containsPath, getWorktreeBinding, humanManifestProgress, type WorktreeBinding, type WorktreeManifest, worktreeManifest } from './ownership.ts';
 import { manifestDifferences, storedManifestScope, type WorktreeManifestScope } from './worktree-manifest.ts';
 import { hostIdFor } from './identity.ts';
@@ -62,6 +62,11 @@ function retireSuperseded(row:TopologyChange):OperationError{
     {fix:ownerStatusFix(row.source_id)});
 }
 /** A prior receipt of this request_id, replayed; a retire admission (#8984) returns null so the run resumes. */
+/** The arguments a lifecycle request id is bound to (its receipt digest). */
+export function topologyIntent(input:SourceLifecycleInput):Record<string,unknown>{
+  return {...input,requestId:undefined,dryRun:undefined,automaticClaim:undefined};
+}
+
 function replayTopologyChange(row:TopologyChange|null):Record<string,unknown>|null{
   if(!row||isRetireAdmission(row))return null;
   if(isSupersededRetire(row))throw retireSuperseded(row);
@@ -145,11 +150,12 @@ export async function runManagedSourceLifecycle(engine:BrainEngine,input:SourceL
   if(['remove','purge','archive'].includes(input.operation)&&input.sourceId==='default') throw opError('invalid_params','The default source cannot be removed or archived.',
     `The default source holds the brain's primary pages and always stays registered. ${input.operation} a named source instead; the command in fix lists them.`,{fix:sourcesListFix()});
   const principal=await topologyPrincipal(engine);
-  const intent={...input,requestId:undefined,dryRun:undefined,automaticClaim:undefined};
+  const intent=topologyIntent(input);
   const prior=await priorTopologyChange(engine,principal,requestId,intent);
   const replayed=replayTopologyChange(prior);
   if(replayed) return replayed;
-  if(input.requireGitContent&&input.path&&(!isInsideGitRepo(input.path)||!hasTrackedContent(input.path)))
+  // GST-2732: a plain folder outside any repository registers as one; a repository with nothing committed still refuses (#2707).
+  if(input.requireGitContent&&input.path&&(!existsSync(input.path)||inGitCheckout(input.path)&&!hasTrackedContent(input.path)))
     throw opError('not_a_git_repo','The source path must contain committed Git content. Use --force to register an ordinary directory.',
       `Commit the content in that directory with git first, or, if '${input.sourceId}' is meant to be a plain directory, rerun the add with --force (sync then imports its files without Git; a file removed from it keeps its page); nothing was registered.`);
   if(input.operation==='reclone'||input.operation==='add'&&input.remoteUrl){
