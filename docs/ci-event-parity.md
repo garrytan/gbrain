@@ -135,13 +135,14 @@ complete full-suite run of the same workflow (`scripts/ci-reuse.ts`, in Test
 
 The push must be a merge commit or a one-parent commit. A merge commit tries the
 runs on its merged head first, newest first, then other heads with the same
-tree. A one-parent commit (a squashed landing) has no merged head. Its heads
-are the landed pull request's head, which GitHub names for the commit, and the
-heads of recent dispatch and push runs with the same tree; every run on those
-heads is read, and the newest one decides, as in the
+tree. A one-parent commit (a squashed landing) has no merged head, so only the
+landed pull request's own run counts: the heads GitHub names for the commit,
+with the push's tree. Every run on those heads is read, and the newest one
+decides, as in the
 [remote gate](#remote-gate-reuse): if that run failed or is still running, the
 push runs in full; a cancelled run, or one that skipped its full job, is passed
-over for the next older one. Anything else, an API error or a
+over for the next older one. A one-parent commit no pull request names (a hand
+revert, a direct push) runs in full. Anything else, an API error or a
 partial, cancelled or diagnostic run included, leaves reuse unset, so the push
 runs in full. A reusing push skips every full lane and both aggregates, records the
 reused run in its summary, and runs the `reused-full-suite` job with the

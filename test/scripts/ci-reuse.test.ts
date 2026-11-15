@@ -38,9 +38,7 @@ interface Fixture {
   runs?: FullRun[];
   jobs?: Record<string, JobRow[]>;
   artifacts?: Record<number, { value?: unknown; reason?: string }>;
-  fail?: 'runs' | 'jobs' | 'commit';
-  /** recentRuns' page when it differs from `runs` (a run that dropped off it is still read by head). */
-  recent?: FullRun[];
+  fail?: 'runs' | 'jobs' | 'commit' | 'pulls';
   pulls?: Record<string, string[]>;
 }
 
@@ -60,8 +58,10 @@ function fixture(f: Fixture): ReuseDeps & { jobCalls: string[] } {
       return runs.filter(r => r.head_sha === sha);
     },
     async recentSuccessfulRuns() { return runs.filter(r => r.conclusion === 'success'); },
-    async recentRuns() { return f.recent ?? runs; },
-    async pullHeads(sha) { return f.pulls?.[sha] ?? []; },
+    async pullHeads(sha) {
+      if (f.fail === 'pulls') throw new Error(`GitHub API GET commits/${sha}/pulls -> 502: bad gateway`);
+      return f.pulls?.[sha] ?? [];
+    },
     async jobs(runId, attempt) {
       if (f.fail === 'jobs') throw new Error('GitHub API GET jobs -> 500');
       jobCalls.push(`${runId}/${attempt}`);
@@ -234,7 +234,7 @@ describe('ci-reuse decision', () => {
   describe('a one-parent (squashed) push', () => {
     const squash = (runs: FullRun[], over: Partial<Fixture> = {}) => fixture({
       commits: { [M]: { tree: T, parents: [BASE] }, [H]: { tree: T, parents: [BASE] }, [H2]: { tree: T, parents: [BASE] }, [BASE]: { tree: OTHER, parents: [] } },
-      runs, artifacts: Object.fromEntries(runs.map(r => [r.id, { value: treeJson(r) }])), ...over,
+      runs, artifacts: Object.fromEntries(runs.map(r => [r.id, { value: treeJson(r) }])), pulls: { [M]: [H] }, ...over,
     });
 
     test('reuses the passed full run of the pull request head whose tree equals the squash commit tree', async () => {
@@ -251,7 +251,7 @@ describe('ci-reuse decision', () => {
 
     test('a newer failed or in-progress full run on the tree refuses even when an older one passed', async () => {
       const passed = prRun({ id: 500 });
-      const failed = prRun({ id: 600, head_sha: H2, conclusion: 'failure' });
+      const failed = prRun({ id: 600, conclusion: 'failure' });
       expect(await decide(squash([passed, failed]), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_failed' });
       const running = prRun({ id: 600, status: 'in_progress', conclusion: null });
       expect(await decide(squash([passed, running]), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_in_progress' });
@@ -279,19 +279,23 @@ describe('ci-reuse decision', () => {
       expect(await decide(squash([prRun(), failedFork]), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500 } });
     });
 
-    test('the landed pull request head is found by commit even when its runs fell off the recent-runs page', async () => {
-      const run = prRun();
-      expect(await decide(squash([run], { recent: [] }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
-      expect(await decide(squash([run], { recent: [], pulls: { [M]: [H] } }), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500, sha: H } });
-      const failed = prRun({ id: 600, conclusion: 'failure' });
-      const older = prRun({ id: 400, head_sha: H2 });
-      expect(await decide(squash([older, failed], { recent: [older], pulls: { [M]: [H] } }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_failed' });
+    test('a passed run on a same-tree head GitHub does not name for the commit runs in full', async () => {
+      const elsewhere = prRun({ head_sha: H2 });
+      expect(await decide(squash([elsewhere]), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
+      expect(await decide(squash([elsewhere], { pulls: { [M]: [H2] } }), PROFILES.test, M, REPO)).toMatchObject({ reuse: true, source: { run_id: 500, sha: H2 } });
     });
 
-    test('every run of a same-tree head is read by head, so a newer failure there refuses even when the page shows only an older pass', async () => {
-      const passed = prRun({ id: 500 });
-      const failed = prRun({ id: 600, conclusion: 'failure' });
-      expect(await decide(squash([passed, failed], { recent: [passed] }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'run_failed' });
+    test('a one-parent push with no pull request behind it (a hand revert, a direct push) runs in full', async () => {
+      expect(await decide(squash([prRun()], { pulls: {} }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
+    });
+
+    test('a named head with another tree never counts', async () => {
+      const deps = squash([prRun()], { commits: { [M]: { tree: T, parents: [BASE] }, [H]: { tree: OTHER, parents: [BASE] } } });
+      expect(await decide(deps, PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'no_candidate' });
+    });
+
+    test('a pull request lookup error runs in full', async () => {
+      expect(await decide(squash([prRun()], { fail: 'pulls' }), PROFILES.test, M, REPO)).toMatchObject({ reuse: false, reason: 'api_error' });
     });
 
     test('a passed run whose artifact records another tree is rejected, never reused', async () => {
