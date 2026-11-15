@@ -16,7 +16,7 @@ import { isDatedTimelineLine, isValidDate, supersededInlineCitationEntries } fro
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
 import { firstMaterializedMarkerIndex } from './timeline-marker.ts';
-import { bodyBlocks, detachedValue, retainedGenerationBlocks } from './page-body/segment-blocks.ts';
+import { BodyReadStopped, bodyBlocks, detachedValue, retainedGenerationBlocks } from './page-body/segment-blocks.ts';
 
 export interface ExtractedTimelineEntry {
   slug: string;
@@ -338,6 +338,24 @@ export async function unkeptTimelineRows(engine: Pick<BrainEngine, 'executeRaw'>
   return out;
 }
 
+/** A stored version a timeline key was read from, and what must still hold for it to count in a later transaction. */
+type VersionWitness = { id: number; storage: 'inline'; digests: [string, string] }
+  | { id: number; storage: 'segmented'; generation: number; hash: string | null };
+
+/**
+ * What a page's stored versions say about the timeline keys retraction asked about (#9362): for each key, the versions
+ * whose text produces it (`produced`) or files it under an older reading (`superseded`), newest first. `done` once
+ * filled: a caller fills it with a dry run before its publication transaction, and the retraction inside it then reads no
+ * version body, only checks that a version it names is still the page's with the same body.
+ */
+export interface VersionTimelineScan {
+  done: boolean;
+  produced: Map<string, VersionWitness[]>;
+  superseded: Map<string, VersionWitness[]>;
+}
+
+export const versionTimelineScan = (): VersionTimelineScan => ({ done: false, produced: new Map(), superseded: new Map() });
+
 /**
  * Reconcile a page's timeline rows with its current text: retract every row
  * an earlier version of the page produced that the current text no longer
@@ -345,7 +363,9 @@ export async function unkeptTimelineRows(engine: Pick<BrainEngine, 'executeRaw'>
  * version of the page ever produced (enrichment, meeting fan-out, inferred
  * anchors) and event-page projections are never touched. The page_versions
  * scan only runs when the page holds a row the current text does not produce,
- * and keeps only the keys of those rows. A retained segmented generation is read
+ * reads one version body per statement and keeps only the keys of those rows.
+ * `versions` carries that scan from a dry run before a
+ * publication transaction into it (VersionTimelineScan). A retained segmented generation is read
  * run by run (retainedGenerationBlocks), skipping each run whose key the live body
  * or an earlier generation already read; `stop` is asked before each of its segment reads.
  * Returns the orphaned rows; they are deleted unless `dryRun`. `storedRows`
@@ -359,33 +379,92 @@ export async function retractRemovedTimelineEntries(
   slug: string,
   sourceId: string,
   current: string | TimelineTextKeys,
-  opts: { dryRun?: boolean; storedRows?: ReadonlyArray<StoredTimelineTuple>; stop?: () => boolean; expectedRevision?: string } = {},
+  opts: { dryRun?: boolean; storedRows?: ReadonlyArray<StoredTimelineTuple>; stop?: () => boolean; expectedRevision?: string; versions?: VersionTimelineScan } = {},
 ): Promise<Array<TimelineTuple & { id: number }>> {
   const kept = typeof current === 'string' ? markdownTimelineKeys(current, slug) : current.kept;
   const within = typeof current === 'string' ? undefined : current.within;
   const rows = opts.storedRows ?? await storedTimelineRows(engine, sourceId, slug);
   const extra = rows.filter(row => !kept.has(tupleKey(row)) && (!within || within.has(tupleKey(row))));
-  if (!extra.length) return [];
-  const versions = await engine.executeRaw<{ compiled_truth: string | null; timeline: string | null; body_storage: string; page_id: number; generation: number | null }>(
-    `SELECT DISTINCT v.compiled_truth, v.timeline, v.body_storage, v.page_id, v.body_generation AS generation FROM page_versions v JOIN pages p ON p.id = v.page_id
-      WHERE p.source_id = $1 AND p.slug = $2`, [sourceId, slug]);
-  const wanted = new Set(extra.map(tupleKey));
-  const produced = new Set<string>();
-  // #6226, #7949: rows an older reading filed for this text or a stored version.
-  const superseded = new Set(typeof current === 'string' ? supersededTimelineReadings(current).map(tupleKey)
-    : [...wanted].filter(key => current.superseded.has(key)));
-  const addText = (text: string) => {
-    for (const key of markdownTimelineKeys(text, slug)) if (wanted.has(key)) produced.add(key);
-    for (const entry of supersededTimelineReadings(text)) if (wanted.has(tupleKey(entry))) superseded.add(tupleKey(entry));
-  };
-  const seen = new Set(typeof current === 'string' ? [] : current.runs ?? []);
-  for (const version of versions) {
-    if (version.body_storage !== 'segmented') { addText(`${version.compiled_truth}\n${version.timeline ?? ''}`); continue; }
-    for await (const block of retainedGenerationBlocks(engine, { id: Number(version.page_id), slug, sourceId }, Number(version.generation),
-      { seen, ...(opts.stop ? { stop: opts.stop } : {}) })) addText(block);
+  // #9362: a filled `versions` (read before this transaction) is checked, not read again; a row it was not asked about stays.
+  const replay = opts.versions?.done === true;
+  if (!extra.length) {
+    if (opts.versions) opts.versions.done = true;
+    return [];
   }
-  const found = extra.filter(row => produced.has(tupleKey(row)) || (superseded.has(tupleKey(row)) && hasExtractorDetail(row)))
-    .map(({ detail: _detail, ...row }) => row);
+  // The page's stored versions, one body per statement (never every body in one result), newest first; identical
+  // bodies are parsed once and `stop` is asked before each body read.
+  const readVersions = async (wanted: ReadonlySet<string>, seen: Set<string>): Promise<VersionTimelineScan> => {
+    const read = versionTimelineScan();
+    const parsed = new Map<string, { produced: string[]; superseded: string[] }>();
+    const keysIn = async (texts: Iterable<string> | AsyncIterable<string>) => {
+      const found = { produced: new Set<string>(), superseded: new Set<string>() };
+      for await (const text of texts) {
+        for (const key of markdownTimelineKeys(text, slug)) if (wanted.has(key)) found.produced.add(key);
+        for (const entry of supersededTimelineReadings(text)) if (wanted.has(tupleKey(entry))) found.superseded.add(tupleKey(entry));
+      }
+      return { produced: [...found.produced], superseded: [...found.superseded] };
+    };
+    const versions = await engine.executeRaw<{ id: number; body_storage: string; page_id: number; generation: number | null; content_hash: string | null }>(
+      `SELECT v.id, v.body_storage, v.page_id, v.body_generation AS generation, v.content_hash FROM page_versions v JOIN pages p ON p.id = v.page_id
+        WHERE p.source_id = $1 AND p.slug = $2 ORDER BY v.id DESC`, [sourceId, slug]);
+    for (const version of versions) {
+      let witness: VersionWitness;
+      let found: { produced: string[]; superseded: string[] };
+      if (version.body_storage !== 'segmented') {
+        if (opts.stop?.()) throw new BodyReadStopped(slug);
+        const [body] = await engine.executeRaw<{ compiled_truth: string; timeline: string | null; head: string; tail: string }>(
+          `SELECT compiled_truth, timeline, md5(compiled_truth) AS head, md5(coalesce(timeline, '')) AS tail FROM page_versions WHERE id = $1`, [version.id]);
+        if (!body) continue;
+        witness = { id: Number(version.id), storage: 'inline', digests: [body.head, body.tail] };
+        const cached = `inline:${body.head}:${body.tail}`;
+        found = parsed.get(cached) ?? await keysIn([`${body.compiled_truth}\n${body.timeline ?? ''}`]);
+        parsed.set(cached, found);
+      } else {
+        witness = { id: Number(version.id), storage: 'segmented', generation: Number(version.generation), hash: version.content_hash };
+        const cached = `segmented:${version.page_id}:${version.generation}`;
+        found = parsed.get(cached) ?? await keysIn(retainedGenerationBlocks(engine, { id: Number(version.page_id), slug, sourceId }, Number(version.generation),
+          { seen, ...(opts.stop ? { stop: opts.stop } : {}) }));
+        parsed.set(cached, found);
+      }
+      for (const [into, keys] of [[read.produced, found.produced], [read.superseded, found.superseded]] as const) {
+        for (const key of keys) {
+          const witnesses = into.get(key);
+          if (witnesses) witnesses.push(witness);
+          else into.set(key, [witness]);
+        }
+      }
+    }
+    read.done = true;
+    return read;
+  };
+  // Inside a later transaction: the witness version is still this page's, with the body it was read with (no body is returned).
+  const stillHolds = async (witness: VersionWitness) => (witness.storage === 'inline'
+    ? await engine.executeRaw(`SELECT 1 FROM page_versions v JOIN pages p ON p.id = v.page_id WHERE v.id = $1 AND p.source_id = $2 AND p.slug = $3
+        AND v.body_storage = 'inline' AND md5(v.compiled_truth) = $4 AND md5(coalesce(v.timeline, '')) = $5`, [witness.id, sourceId, slug, ...witness.digests])
+    : await engine.executeRaw(`SELECT 1 FROM page_versions v JOIN pages p ON p.id = v.page_id WHERE v.id = $1 AND p.source_id = $2 AND p.slug = $3
+        AND v.body_storage = 'segmented' AND v.body_generation = $4 AND v.content_hash IS NOT DISTINCT FROM $5`, [witness.id, sourceId, slug, witness.generation, witness.hash])).length > 0;
+  const scan = replay ? opts.versions! : await readVersions(new Set(extra.map(tupleKey)), new Set(typeof current === 'string' ? [] : current.runs ?? []));
+  if (opts.versions && !replay) Object.assign(opts.versions, scan);
+  const holds = new Map<number, boolean>();
+  const confirmed = async (witnesses: VersionWitness[] | undefined) => {
+    if (!witnesses?.length) return false;
+    if (!replay) return true;
+    for (const witness of witnesses) {
+      if (!holds.has(witness.id)) holds.set(witness.id, await stillHolds(witness));
+      if (holds.get(witness.id)) return true;
+    }
+    return false;
+  };
+  // #6226, #7949: rows an older reading filed for this text or a stored version.
+  const supersededNow = typeof current === 'string' ? new Set(supersededTimelineReadings(current).map(tupleKey)) : current.superseded;
+  const found: Array<TimelineTuple & { id: number }> = [];
+  for (const row of extra) {
+    const key = tupleKey(row);
+    if (!await confirmed(scan.produced.get(key))
+      && !(hasExtractorDetail(row) && (supersededNow.has(key) || await confirmed(scan.superseded.get(key))))) continue;
+    const { detail: _detail, ...tuple } = row;
+    found.push(tuple);
+  }
   if (!found.length) return [];
   // W1 #6783 §12 (a): a row more trusted than the page's restatement, or held by an open contest, stays; the owner decides.
   const [{ contestHeldRows, heldRows }, { derivedWriteTrust }, { storedTrustTier }] = await Promise.all([
