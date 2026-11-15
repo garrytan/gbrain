@@ -88,7 +88,7 @@ Several files of one session merge into one conversation (`gbrain transcripts in
 `<id>.jsonl.pre-doctor-*-repair-<stamp>.bak`) and Doctor's recovery copies (`<id>.jsonl.bak-<pid>-<stamp>`) are
 skipped: their sessions live in the Gateway's database, which the next run with the Gateway up reads.
 
-Two OpenClaw limits to know:
+Three OpenClaw limits to know:
 
 - `sessions.list` does not list archived sessions, so a session archived before gbrain first read it is only
   found through its file on disk.

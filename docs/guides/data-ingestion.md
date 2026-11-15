@@ -81,6 +81,8 @@ gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store; om
 gbrain transcripts status                    # found vs imported, per harness
 ```
 
+For one redacted page per conversation per local day plus a daily index (off until `gbrain transcripts archive on`), see the [conversation archive](conversation-archive.md).
+
 **Say to your agent:** *"Import my conversations from my chatgpt export at ~/Downloads/conversations.json"* — *"Archive my session transcripts"* — and later, *"When did I first discuss agent memory?"* (the archive answers origin questions with dated quotes).
 
 Codex sessions imported before gbrain read codex 0.153+ rollouts lost their
