@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { existsSync as pathExists } from 'node:fs';
 import { isInsideGitRepo } from '../git-remote.ts';
 import { posix } from 'node:path';
 import { parseDataFrontmatter } from '../data-frontmatter.ts';
@@ -403,5 +402,5 @@ export async function validateCompanyBrainPlan(saved: unknown, options: InspectC
 
 /** GST-2732: a plain folder gets a pointer to \`sources add\` instead of the generic Git refusal. */
 function notGitRepository(path: string): boolean {
-  try { return pathExists(path) && !isInsideGitRepo(path); } catch { return false; }
+  try { return !isInsideGitRepo(path); } catch { return false; }
 }

@@ -49,25 +49,15 @@ export async function executeSourceLifecycle(engine: BrainEngine, parsed: Parsed
   return runPersistenceAdministration(engine, parsed.operation, parsed.params);
 }
 
-/** GST-2732: what a committed add means for default search, and a plain folder's missing history, on stderr and as `notices`. */
+/** GST-2732: what a committed add means for default search and a plain folder, on stderr and as `notices`. */
 async function addOutcome(result: Record<string, unknown>, parsed?: ParsedSourceLifecycle): Promise<Record<string, unknown>> {
   const options = parsed?.operation === 'source_add' ? parsed.params.options as AddSourceOpts | undefined : undefined;
   if (!options || result.dry_run === true || result.state !== 'committed') return result;
-  const federated = (result.config as Record<string, unknown> | undefined)?.federated;
-  const { writeCliNotice } = await import('../cli/cli-error.ts');
-  const path = typeof result.local_path === 'string' ? result.local_path : null;
-  if (path && options.localPath && (await import('node:fs')).existsSync(path) && !(await import('../core/git-remote.ts')).isInsideGitRepo(path)) {
-    console.error('plain folder (not a git repository): sync imports its files without Git, so git history is off and a file removed from it keeps its page');
-  }
-  if (options.federated == null && federated === true && !options.github && !options.google) {
-    console.error(`this brain serves one person, so a new source joins default search; \`gbrain sources unfederate ${options.id}\` takes it out`);
-  }
-  if (options.federated != null || federated != null) return result;
-  const { notInDefaultSearchNotice } = await import('./sources-add-next.ts');
-  const { cliRenderContext, renderNotice } = await import('../core/agent-output.ts');
-  const notice = notInDefaultSearchNotice(options.id, true);
-  writeCliNotice(notice);
-  return { ...result, notices: [renderNotice(notice, cliRenderContext())] };
+  const connector = !!(options.github || options.google || options.meetings || options.slack);
+  const notices = await (await import('./sources-add-next.ts')).reportAddOutcome({ id: options.id, chosen: connector ? true : options.federated,
+    federated: (result.config as Record<string, unknown> | undefined)?.federated === true,
+    path: options.localPath && typeof result.local_path === 'string' ? result.local_path : null, json: false, say: line => console.error(line.trim()) });
+  return notices ? { ...result, notices } : result;
 }
 
 async function render(result: Record<string, unknown>, parsed?: ParsedSourceLifecycle): Promise<void> {

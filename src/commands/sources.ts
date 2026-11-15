@@ -60,9 +60,7 @@ import {
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
 import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
-import { noGrantFloorNext, notInDefaultSearchNotice } from './sources-add-next.ts';
-import { writeCliNotice } from '../cli/cli-error.ts';
-import { cliRenderContext, renderNotice } from '../core/agent-output.ts';
+import { noGrantFloorNext, reportAddOutcome } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
   SOURCE_TIER_NAMES,
@@ -465,12 +463,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   say(
     `  federated: ${fed}${fed ? ' — appears in cross-source default search' : ' — only searched when explicitly named via --source'}`,
   );
-  if (created.local_path && !finalRemoteUrl && !ghKind && !gKind && existsSync(created.local_path) && !(await import('../core/git-remote.ts')).isInsideGitRepo(created.local_path)) {
-    say('  plain folder (not a git repository): sync imports its files without Git, so git history is off and a file removed from it keeps its page');
-  }
-  if (federated === null && fed && !ghKind && !gKind) say(`  this brain serves one person, so a new source joins default search; \`gbrain sources unfederate ${id}\` takes it out`);
-  const outOfSearch = !fed && federated === null ? notInDefaultSearchNotice(id, true) : null;
-  if (outOfSearch && !json) writeCliNotice(outOfSearch);
+  const notices = await reportAddOutcome({ id, chosen: ghKind || gKind ? true : federated, federated: fed, path: finalRemoteUrl || ghKind || gKind ? null : created.local_path, json, say });
   const next = !fed && federated === null ? await noGrantFloorNext(engine, id).catch(() => null) : null;
   if (next) say(`  next: ${next.command} — ${next.why}`);
   if (ghKind || gKind) {
@@ -506,7 +499,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       console.error(`         Run \`gbrain sources harden ${id}\` to retry.`);
     }
   }
-  if (json) console.log(JSON.stringify({ id, name: created.name, local_path: created.local_path, remote_url: finalRemoteUrl ?? null, federated: fed, ...(next ? { next } : {}), ...(outOfSearch ? { notices: [renderNotice(outOfSearch, cliRenderContext())] } : {}) }));
+  if (json) console.log(JSON.stringify({ id, name: created.name, local_path: created.local_path, remote_url: finalRemoteUrl ?? null, federated: fed, ...(next ? { next } : {}), ...(notices ? { notices } : {}) }));
 }
 
 /**
@@ -1237,10 +1230,8 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
       say(`  → embed-backfill skipped (cooldown). Manually trigger with: gbrain jobs submit embed-backfill --params '{"sourceId":"${id}"}'`);
     } else if (sub.status === 'spend_capped') {
       say(`  → embed-backfill skipped (24h spend cap $${sub.spendCapUsd} reached for this source).`);
-    } else if (sub.status === 'no_worker_surface' && await (await import('../core/embedding-disabled.ts')).embeddingsDisabled(engine)) {
-      say('  → embed-backfill not queued: embedding is disabled on this brain (keyless by choice; keyword search works).');
     } else if (sub.status === 'no_worker_surface') {
-      say(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
+      if (await (await import('../core/embedding-disabled.ts')).embeddingsDisabled(engine)) say('  → embed-backfill not queued: embedding is disabled on this brain (keyless by choice; keyword search works).'); else say(`  → embed-backfill not queued (${sub.engineKind} has no recognized persistent worker); run: gbrain embed --stale --source ${id}`);
     } else if (sub.status === 'stalled') {
       say(`  → embed-backfill not queued: the last ${sub.failures} runs failed on the same blocked pages with nothing embedded. See: gbrain doctor --only embed_backfill_stalled`);
     } else if (sub.status === 'embedding_disabled') {

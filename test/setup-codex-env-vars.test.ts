@@ -4,6 +4,7 @@
  * user exported reached the CLI but never the MCP child, and Codex sessions
  * stayed keyword-only. The entry lists names only (env_vars), never values.
  */
+import { withEnv } from './helpers/with-env.ts';
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -21,15 +22,11 @@ describe('setup codex env_vars', () => {
     expect([...CODEX_FORWARDED_PROVIDER_ENV]).toEqual([...CODEX_FORWARDED_PROVIDER_ENV].sort());
   });
 
-  test('the entry never carries a key value, even when the key is set in setup\'s environment', () => {
-    const prior = process.env.OPENAI_API_KEY;
-    process.env.OPENAI_API_KEY = 'sk-test-value-never-written';
-    try {
+  test('the entry never carries a key value, even when the key is set in setup\'s environment', async () => {
+    await withEnv({ OPENAI_API_KEY: 'sk-test-value-never-written' }, () => {
       const rendered = JSON.stringify(desiredCodexMcpEntry(plan as never));
       expect(rendered).not.toContain('sk-test-value-never-written');
-    } finally {
-      if (prior === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = prior;
-    }
+    });
   });
 
   test('the list equals the provider subset of the Codex plugin lane\'s env_vars', () => {

@@ -461,8 +461,7 @@ export async function addSource(
   engine: BrainEngine,
   opts: AddSourceOpts,
 ): Promise<SourceRow> {
-  opts = await (await import('./source-default-search.ts')).withDefaultSearchChoice(engine, opts);
-  if(await managedPersistenceEnabled(engine))return (await import('./persistence/managed-sources.ts')).addManagedSource(engine,opts);
+  opts = await (await import('./source-default-search.ts')).withDefaultSearchChoice(engine, opts); if(await managedPersistenceEnabled(engine))return (await import('./persistence/managed-sources.ts')).addManagedSource(engine,opts);
   await assertUnmanagedCanonicalWriter(engine, 'sources add');
   validateSourceId(opts.id);
 

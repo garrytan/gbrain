@@ -9,7 +9,7 @@
  * the new source readable. The stored federation default is unchanged.
  */
 import type { BrainEngine } from '../core/engine.ts';
-import type { Notice } from '../core/agent-output.ts';
+import type { Notice, RenderedNotice } from '../core/agent-output.ts';
 import { newSourceJoinsDefaultSearch } from '../core/source-default-search.ts';
 import { localFederatedSourceIds } from '../core/source-resolver.ts';
 import { privatePagesFilterFragment, resolveExcludePrivatePages } from '../core/search/private-visibility.ts';
@@ -70,4 +70,31 @@ export async function syncOutOfSearchNotice(engine: BrainEngine, args: string[])
   } catch {
     return null;
   }
+}
+
+/** Writes the sync notice on stderr when it applies. */
+export async function noteSyncOutOfSearch(engine: BrainEngine, args: string[]): Promise<void> {
+  const notice = await syncOutOfSearchNotice(engine, args);
+  if (notice) (await import('../cli/cli-error.ts')).writeCliNotice(notice);
+}
+
+/**
+ * GST-2732: what a finished add means, for both CLI add paths. `chosen` is the --federated / --no-federated choice
+ * (null when none was made); `path` is the local folder of a plain --path add, else null. Prints on `say`, writes the
+ * notice on stderr unless json, and returns the rendered notices for the JSON document.
+ */
+export async function reportAddOutcome(input: { id: string; chosen: boolean | null | undefined; federated: boolean; path: string | null; json: boolean; say: (line: string) => void }): Promise<RenderedNotice[] | undefined> {
+  const { existsSync } = await import('node:fs');
+  if (input.path && existsSync(input.path) && !(await import('../core/git-remote.ts')).isInsideGitRepo(input.path)) {
+    input.say('  plain folder (not a git repository): sync imports its files without Git, so git history is off and a file removed from it keeps its page');
+  }
+  if (input.chosen != null) return undefined;
+  if (input.federated) {
+    input.say(`  this brain serves one person, so a new source joins default search; \`gbrain sources unfederate ${input.id}\` takes it out`);
+    return undefined;
+  }
+  const notice = notInDefaultSearchNotice(input.id, true);
+  if (!input.json) (await import('../cli/cli-error.ts')).writeCliNotice(notice);
+  const { cliRenderContext, renderNotice } = await import('../core/agent-output.ts');
+  return [renderNotice(notice, cliRenderContext())];
 }
