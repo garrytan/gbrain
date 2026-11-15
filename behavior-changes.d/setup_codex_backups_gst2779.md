@@ -1,0 +1,1 @@
+gbrain setup codex and gbrain setup codex --remove now copy each config.toml or hooks.json they change to a .bak.<timestamp> file beside it before writing, and print the backup path. Nothing else about the setup changes; delete the backups once you no longer need them.
