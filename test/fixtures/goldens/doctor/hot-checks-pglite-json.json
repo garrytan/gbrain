@@ -2688,6 +2688,67 @@
             "status": "ok"
           },
           {
+            "category": "brain",
+            "details": {
+              "behind": [],
+              "docs": "docs/guides/conversation-archive.md#doctor",
+              "enabled": true,
+              "harnesses": [
+                {
+                  "harness": "claude-code",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "claude-code-files"
+                },
+                {
+                  "harness": "codex",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "codex-files"
+                },
+                {
+                  "harness": "openclaw",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "openclaw-files"
+                },
+                {
+                  "harness": "hermes",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "hermes-files"
+                },
+                {
+                  "harness": "grok",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "grok-files"
+                },
+                {
+                  "harness": "openclaw",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "openclaw-gateway"
+                }
+              ],
+              "held": [],
+              "source_id": "conversations",
+              "stale_days": 2
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (gbrain transcripts archive status names each reader).",
+            "name": "transcript_archive_freshness",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
             "category": "ops",
             "elapsed_ms": "<volatile>",
             "message": "No automatic embed-backfill is repeating the same failure.",
@@ -8051,6 +8112,67 @@
             "elapsed_ms": "<volatile>",
             "message": "Free upkeep has not run on this brain yet; gbrain maintain --unattended runs it (no model calls, no page purge). Nothing deletes on its own.",
             "name": "unattended_maintenance",
+            "readiness_state": "not_applicable",
+            "severity": "info",
+            "status": "ok"
+          },
+          {
+            "category": "brain",
+            "details": {
+              "behind": [],
+              "docs": "docs/guides/conversation-archive.md#doctor",
+              "enabled": true,
+              "harnesses": [
+                {
+                  "harness": "claude-code",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "claude-code-files"
+                },
+                {
+                  "harness": "codex",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "codex-files"
+                },
+                {
+                  "harness": "openclaw",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "openclaw-files"
+                },
+                {
+                  "harness": "hermes",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "hermes-files"
+                },
+                {
+                  "harness": "grok",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "grok-files"
+                },
+                {
+                  "harness": "openclaw",
+                  "newest_archived_day": null,
+                  "newest_session_day": null,
+                  "readable": false,
+                  "reader": "openclaw-gateway"
+                }
+              ],
+              "held": [],
+              "source_id": "conversations",
+              "stale_days": 2
+            },
+            "elapsed_ms": "<volatile>",
+            "message": "Conversation archive is on; no readable sessions for claude-code, codex, openclaw, hermes, grok (gbrain transcripts archive status names each reader).",
+            "name": "transcript_archive_freshness",
             "readiness_state": "not_applicable",
             "severity": "info",
             "status": "ok"

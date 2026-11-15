@@ -866,6 +866,10 @@
         "name": "unattended_maintenance"
       },
       {
+        "category": "brain",
+        "name": "transcript_archive_freshness"
+      },
+      {
         "category": "ops",
         "name": "embed_backfill_stalled"
       },
