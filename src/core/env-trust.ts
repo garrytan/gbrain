@@ -188,6 +188,7 @@ export const CWD_DOTENV_PROTECTED_KEYS: readonly string[] = [
   'GBRAIN_REMOTE_ISSUER_URL',        // `init --remote` default: the OAuth issuer the client trusts and hands its credential to
   'GBRAIN_OAUTH_RELAY_URL',          // the OAuth relay that hands back Google tokens (creds/relay-client.ts): a planted relay is token theft
   'GBRAIN_OPENCLAW_GATEWAY_URL',     // GST-2768: the Gateway the archive's openclaw child calls with GBRAIN_OPENCLAW_GATEWAY_TOKEN; a planted URL would receive the token and serve forged history
+  'GBRAIN_OPENCLAW_GATEWAY_TOKEN',   // GST-2768: the credential that child presents; a planted one pairs with a planted Gateway to archive forged history
   'GBRAIN_HOOK_CWD',                 // #8424: the session directory the hook launcher records; a planted value moves the yield checks and the turn-rule project match
   // --- re-run marker ------------------------------------------------------
   'GBRAIN_CWD_ENV_QUARANTINED',      // cli-preflight.ts's sanitized re-run marker; only honoured when the startup cwd IS the .env-free dir it names, so a planted one is inert — listed so it is also dropped and named in the warning
@@ -220,6 +221,7 @@ export const CWD_DOTENV_PROTECTED_PREFIXES: readonly string[] = [
   'NPM_CONFIG_', // npm registry / script-shell / node-options redirection for npm-based children
   'npm_config_', // the lowercase spelling npm actually reads
   'BASH_FUNC_',  // exported-function injection (`BASH_FUNC_name%%=() {…}`): bash imports the body as a function into every child shell
+  'OPENCLAW_',   // GST-2768: the openclaw child's Gateway URL, token, config and state roots; a planted value redirects the Gateway token or serves forged history
 ];
 
 /**

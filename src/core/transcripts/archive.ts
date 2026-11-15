@@ -133,6 +133,8 @@ export interface ArchiveLedgerEntry {
   ids?: string[];
   /** Signature of the source's message identities for the day when it was written; backfill skips a finished day whose source still matches. */
   source?: string;
+  /** Version of the redaction rules (built-in detectors and the user's patterns) the day was written under; backfill re-checks a day written under other rules. */
+  redaction?: string;
   held?: ArchiveHeld;
   updated_at?: string;
 }
@@ -379,6 +381,9 @@ function mergeScanEntries(gateway: ArchiveScanEntry, files: ArchiveScanEntry[]):
 
 /** A run writes its pages in batches of this many conversation-days or bytes, so memory stays bounded on a large store. */
 const FLUSH_DAYS = 200;
+/** Bump when the built-in redaction detectors change, so backfill re-redacts finished days written under the old ones. */
+const ARCHIVE_REDACTION_RULES = 'archive-redaction-1';
+const ARCHIVE_LOCK_PREFIX = 'transcripts-archive:';
 const FLUSH_BYTES = 8 * 1024 * 1024;
 
 interface DayWrite {
@@ -393,7 +398,6 @@ interface DayWrite {
 
 export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRunOpts): Promise<ArchiveRunResult> {
   const dryRun = opts.dryRun === true;
-  const now = opts.now ?? new Date();
   const enabled = await archiveEnabled(engine);
   if (!enabled && !dryRun) {
     return emptyResult(opts.mode, {
@@ -403,6 +407,24 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
     });
   }
   const { sourceId, privacy } = await effectiveSource(engine, opts.sourceId);
+  if (dryRun) return archiveSource(engine, opts, { enabled, sourceId, privacy });
+  // One run per source at a time: a run decides from the ledger it read at its start, so an overlapping run could publish
+  // older history over what the other run just wrote.
+  const { withRefreshingLock, LockUnavailableError } = await import('../db-lock.ts');
+  try {
+    return await withRefreshingLock(engine, ARCHIVE_LOCK_PREFIX + sourceId, signal => archiveSource(engine, opts, { enabled, sourceId, privacy, signal }));
+  } catch (err) {
+    if (!(err instanceof LockUnavailableError)) throw err;
+    const { opError } = await import('../ops/contract.ts');
+    throw opError('archive_run_busy', 'Another conversation archive run holds source ' + sourceId + ', so this run read and wrote nothing.',
+      'Wait for the other run to finish, then rerun; gbrain status --section locks --json shows the holder.');
+  }
+}
+
+async function archiveSource(engine: BrainEngine, opts: ArchiveRunOpts, ctx: { enabled: boolean; sourceId: string; privacy: Privacy; signal?: AbortSignal }): Promise<ArchiveRunResult> {
+  const dryRun = opts.dryRun === true;
+  const now = opts.now ?? new Date();
+  const { enabled, sourceId, privacy } = ctx;
   const source = dryRun
     ? (await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [sourceId]))[0] ?? { local_path: null }
     : await ensureSource(engine, sourceId);
@@ -470,6 +492,8 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   }
   scanned.push(...entries.filter(e => !merged.has(e)));
 
+  const patterns = loadImportRedactionPatterns();
+  const redactionVersion = sha256(ARCHIVE_REDACTION_RULES + '\u0000' + patterns.map(p => p.source).join('\u0000'));
   const ledger = new Map((await readArchiveLedger(engine, sourceId)).map(e => [e.harness + '.' + e.conversation_key_hash + '.' + e.day, e]));
   const legacy = await legacyCovered(engine, sourceId);
   const covered = (harness: string, day: string) => legacy.has(harness + '.' + day) || legacy.has('*.' + day);
@@ -488,7 +512,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       }
       const done = ledger.get(entry.harness + '.' + hash + '.' + day);
       const sig = entry.dayIds?.[day] ? daySignature(entry.dayIds[day]!) : undefined;
-      if (opts.mode === 'backfill' && done?.hash && !done.held && done.complete && day < today && sig && done.source === sig) { result.unchanged++; continue; }
+      if (opts.mode === 'backfill' && done?.hash && !done.held && done.complete && day < today && sig && done.source === sig && done.redaction === redactionVersion) { result.unchanged++; continue; }
       live.push(day);
       allDays.add(day);
     }
@@ -500,7 +524,6 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   const cap = opts.mode === 'backfill' ? await configInt(engine, ARCHIVE_BACKFILL_CAP_KEY, DEFAULT_BACKFILL_DAYS_PER_RUN) : 0;
   const ordered = [...allDays].filter(d => !heldDays.has(d)).sort().reverse();
 
-  const patterns = loadImportRedactionPatterns();
   const redact = opts.redact ?? ((s: ParsedSession) => redactSession(s, { patterns }));
   const pageCeiling = dryRun ? Math.floor(PAGE_MAX_BYTES * PAGE_CEILING_FILL) : await transcriptPageCeiling(engine);
   const quietMs = (await configInt(engine, ARCHIVE_QUIET_MINUTES_KEY, DEFAULT_QUIET_MINUTES)) * 60_000;
@@ -511,6 +534,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
   let batchBytes = 0;
   const flushBatch = async () => {
     if (!batch.length) return;
+    if (ctx.signal?.aborted) throw ctx.signal.reason;
     await flushWrites(engine, opts, { sourceId, writeMode, root: source.local_path, context }, batch);
     for (const w of batch) {
       if (w.outcome.status !== 'written' || !w.ledger) continue;
@@ -580,7 +604,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       });
       const before = prior(outcome.day);
       const lost = before?.ids ? before.ids.some(id => !ids.includes(id)) : (before?.messages ?? 0) > rendered.messages;
-      if (before?.hash && !before.held && lost) {
+      if (before?.hash && lost) {
         outcome.status = 'kept';
         outcome.message = 'the source no longer holds every message the archive wrote for this day (a reset or compaction); the archived page is kept';
         continue;
@@ -588,6 +612,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
       if (dryRun) { outcome.status = 'planned'; continue; }
       if (before?.hash === contentHash && !before.held && await pageExists(engine, sourceId, rendered.baseSlug)) {
         outcome.status = 'unchanged';
+        if (before.redaction !== redactionVersion) await writeLedger(engine, { ...before, redaction: redactionVersion });
         if (hold === 'release') await releaseOpenDayHold(engine, sourceId, rendered.parts.map(p => p.slug));
         continue;
       }
@@ -601,7 +626,7 @@ export async function runTranscriptArchive(engine: BrainEngine, opts: ArchiveRun
         parts: rendered.parts,
         harness: conv.harness,
         ...(redacted.session.meta.raw ? { raw: redacted.session.meta.raw } : {}),
-        ledger: { source_id: sourceId, harness: conv.harness, conversation_key_hash: hash, day: outcome.day, hash: contentHash, complete, slug: rendered.baseSlug, parts: rendered.parts.length, messages: rendered.messages, ids, source: daySignature(ids) },
+        ledger: { source_id: sourceId, harness: conv.harness, conversation_key_hash: hash, day: outcome.day, hash: contentHash, complete, slug: rendered.baseSlug, parts: rendered.parts.length, messages: rendered.messages, ids, source: daySignature(ids), redaction: redactionVersion },
         hold,
         staleSlugs: renamed.length ? renamed : Array.from({ length: Math.max(0, (before?.parts ?? 0) - rendered.parts.length) }, (_, i) => rendered.baseSlug + '-p' + (rendered.parts.length + i + 1)),
       });

@@ -8,7 +8,9 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { isCwdDotenvProtectedKey } from '../src/core/env-trust.ts';
 import { cliGatewayTransport, openclawGatewayReader } from '../src/core/transcripts/openclaw-gateway.ts';
+import { withEnv } from './helpers/with-env.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'openclaw-argv-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -80,10 +82,9 @@ describe('openclaw gateway call child process', () => {
 
   test('with no override the child is the openclaw binary, launched with an argument array', async () => {
     const launched: Array<{ file: string; args: unknown }> = [];
-    const spawn = ((file: string, args: unknown, _opts: unknown, cb: (e: Error | null, out: string, err: string) => void) => {
+    const spawn = (async (file: string, args: unknown) => {
       launched.push({ file, args });
-      cb(null, JSON.stringify({ sessions: [], hasMore: false }), '');
-      return {};
+      return { error: null, stdout: JSON.stringify({ sessions: [], hasMore: false }), stderr: '' };
     }) as unknown as NonNullable<Parameters<typeof cliGatewayTransport>[0]>['spawn'];
     await cliGatewayTransport({ spawn }).call('sessions.list', { limit: 1 });
     expect(launched).toHaveLength(1);
@@ -92,3 +93,67 @@ describe('openclaw gateway call child process', () => {
     expect((launched[0]!.args as string[]).slice(0, 3)).toEqual(['gateway', 'call', 'sessions.list']);
   });
 });
+
+describe('openclaw gateway call child environment', () => {
+  const envLog = join(dir, 'env.jsonl');
+  const envBin = join(dir, 'openclaw-env');
+  writeFileSync(envBin, '#!' + process.execPath + '\nrequire("node:fs").appendFileSync(' + JSON.stringify(envLog) + ', JSON.stringify(process.env) + "\\n");\nconsole.log(JSON.stringify({ sessions: [], hasMore: false }));\n');
+  chmodSync(envBin, 0o755);
+  const lastEnv = () => JSON.parse(readFileSync(envLog, 'utf8').trim().split('\n').pop()!) as Record<string, string>;
+
+  test('a planted OPENCLAW_GATEWAY_URL in the parent environment never reaches the child', async () => {
+    await withEnv({ OPENCLAW_GATEWAY_URL: 'wss://planted.invalid', GBRAIN_OPENCLAW_GATEWAY_URL: undefined, GBRAIN_OPENCLAW_GATEWAY_TOKEN: 'tok-synthetic-0002' }, async () => {
+      await cliGatewayTransport({ bin: envBin }).call('sessions.list', {});
+    });
+    const env = lastEnv();
+    expect(env.OPENCLAW_GATEWAY_URL).toBeUndefined();
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe('tok-synthetic-0002');
+  }, 30_000);
+
+  test('a planted OPENCLAW_GATEWAY_TOKEN in the parent environment never reaches the child', async () => {
+    await withEnv({ OPENCLAW_GATEWAY_TOKEN: 'tok-planted-0003', GBRAIN_OPENCLAW_GATEWAY_TOKEN: undefined, GBRAIN_OPENCLAW_GATEWAY_URL: 'ws://127.0.0.1:18789' }, async () => {
+      await cliGatewayTransport({ bin: envBin }).call('sessions.list', {});
+    });
+    const env = lastEnv();
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
+    expect(env.OPENCLAW_GATEWAY_URL).toBe('ws://127.0.0.1:18789');
+  }, 30_000);
+
+  test('the child gets only PATH, HOME, locale and the resolved Gateway URL and token from the parent', async () => {
+    await withEnv({ OPENCLAW_STATE_DIR: '/planted/state', OPENCLAW_CONFIG_PATH: '/planted/config.json', GBRAIN_SYNTHETIC_MARKER: 'x', LANG: 'C.UTF-8' }, async () => {
+      await cliGatewayTransport({ bin: envBin, url: 'ws://127.0.0.1:18789', token: 'tok-synthetic-0004' }).call('sessions.list', {});
+    });
+    const env = lastEnv();
+    for (const k of ['OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH', 'GBRAIN_SYNTHETIC_MARKER']) expect(env[k]).toBeUndefined();
+    expect(env.LANG).toBe('C.UTF-8');
+    expect(env.PATH).toBe(process.env.PATH!);
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe('tok-synthetic-0004');
+  }, 30_000);
+
+  test('every OPENCLAW_* name and the gbrain Gateway names are protected from a working-folder .env', () => {
+    for (const k of ['OPENCLAW_GATEWAY_URL', 'OPENCLAW_GATEWAY_TOKEN', 'OPENCLAW_GATEWAY_PASSWORD', 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH', 'OPENCLAW_HOME', 'OPENCLAW_PROFILE', 'GBRAIN_OPENCLAW_GATEWAY_URL', 'GBRAIN_OPENCLAW_GATEWAY_TOKEN']) {
+      expect([k, isCwdDotenvProtectedKey(k)]).toEqual([k, true]);
+    }
+  });
+
+  test('a child that ignores SIGTERM, and its own child, are gone at the limit', async () => {
+    const pids = join(dir, 'stubborn.pids');
+    const stubborn = join(dir, 'openclaw-stubborn');
+    writeFileSync(stubborn, "#!/bin/sh\ntrap '' TERM\nsleep 40 &\necho $$ $! > " + pids + "\nwait\nsleep 40\n");
+    chmodSync(stubborn, 0o755);
+    const started = Date.now();
+    await expect(cliGatewayTransport({ bin: stubborn, timeoutMs: 200 }).call('sessions.list', {})).rejects.toMatchObject({ code: 'archive_gateway_unreachable' });
+    // gstack-timing-ok: the kill bound is the contract under test (timeoutMs + 10 s, then the TERM grace), with slack
+    expect(Date.now() - started).toBeLessThan(20_000);
+    for (const pid of readFileSync(pids, 'utf8').trim().split(/\s+/).map(Number)) expect([pid, gone(pid)]).toEqual([pid, true]);
+  }, 60_000);
+});
+
+function gone(pid: number): boolean {
+  try {
+    const stat = readFileSync('/proc/' + pid + '/stat', 'utf8');
+    return stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z');
+  } catch {
+    try { process.kill(pid, 0); return false; } catch { return true; }
+  }
+}

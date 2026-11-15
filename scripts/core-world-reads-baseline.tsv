@@ -1185,7 +1185,6 @@ src/core/transcripts/grok.ts	fs_import	1	W7: filesystem boundary moves to the lo
 src/core/transcripts/hermes.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/openclaw.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/transcripts/openclaw-gateway.ts	process_env	3	W6: settings plane out of the core (Gateway URL and token env, passed to the openclaw child)
-src/core/transcripts/openclaw-gateway.ts	spawn_import	1	W7: process-wide effects move to src/cli (openclaw gateway call child)
 src/core/transcripts/recover.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/trust/marker-repair.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/trust/page-handlers.ts	fs_import	1	W7: filesystem boundary moves to the local app (#7960 restores the page file a failed owner repair wrote)

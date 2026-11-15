@@ -25,7 +25,7 @@
  * message redacted; the reader yields nothing before every read finished, so a failed run changes no ledger row.
  */
 
-import { execFile } from '../spawn.ts';
+import { execFileBounded } from '../bounded-child-exec.ts';
 import { opError } from '../ops/contract.ts';
 import { applyRedaction, planRedaction } from '../secret-scan.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
@@ -97,17 +97,20 @@ export function parseGatewayCliOutput(stdout: string, exitCode: number | null): 
 
 const DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024 * 1024;
 
+/** The parent variables the openclaw child gets: where binaries and the home folder are, and the locale. */
+const CHILD_ENV_ALLOW = new Set(['PATH', 'HOME', 'USERPROFILE', 'SYSTEMROOT', 'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES']);
+
 /** The default transport: the documented CLI on this machine. The token, when gbrain holds one, goes through the environment, never argv. */
 export function cliGatewayTransport(opts: {
   bin?: string; url?: string; token?: string; timeoutMs?: number;
   /** Largest stdout the child may write before it is stopped (default 256 MiB). Internal: tests pass a small bound. */
   maxOutputBytes?: number;
-  /** Test seam: the child launcher (default spawn.ts execFile: array arguments, no shell). */
-  spawn?: typeof execFile;
+  /** Test seam: the child launcher (default execFileBounded: array arguments, no shell, SIGKILL after the TERM grace). */
+  spawn?: typeof execFileBounded;
 } = {}): GatewayTransport {
   const bin = opts.bin ?? 'openclaw';
   const maxOutputBytes = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-  const launch = opts.spawn ?? execFile;
+  const launch = opts.spawn ?? execFileBounded;
   const url = opts.url ?? process.env.GBRAIN_OPENCLAW_GATEWAY_URL;
   const token = opts.token ?? process.env.GBRAIN_OPENCLAW_GATEWAY_TOKEN;
   const timeoutMs = opts.timeoutMs ?? 60_000;
@@ -119,18 +122,16 @@ export function cliGatewayTransport(opts: {
       const args = ['gateway', 'call', method, '--json', '--params', JSON.stringify(params), '--timeout', String(timeoutMs)];
       // The URL goes through OPENCLAW_GATEWAY_URL: OpenClaw refuses a --url override whose credential comes only from
       // the environment (gateway_credentials_required, 2026.10.9 and 2026.11.3), and accepts the environment pair.
-      const env = { ...process.env, ...(url ? { OPENCLAW_GATEWAY_URL: url } : {}), ...(token ? { OPENCLAW_GATEWAY_TOKEN: token } : {}) };
-      return new Promise((resolve, reject) => {
-        launch(bin, args, { env, timeout: timeoutMs + 10_000, maxBuffer: maxOutputBytes }, (error, stdout) => {
-          const code = error && typeof (error as NodeJS.ErrnoException).code === 'string' ? (error as NodeJS.ErrnoException).code : null;
-          if (code === 'ENOENT') { reject(gatewayError('unreachable', bin + ' is not on PATH')); return; }
-          if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') { reject(gatewayError('failed', 'openclaw gateway call wrote more than ' + maxOutputBytes + ' bytes, so it was stopped and nothing it wrote was read')); return; }
-          try {
-            resolve(parseGatewayCliOutput(String(stdout), error ? (typeof error.code === 'number' ? error.code : 1) : 0));
-          } catch (e) {
-            reject(e);
-          }
-        });
+      // Only the allow-listed parent variables pass, so no inherited OPENCLAW_* value (a cwd .env's included) redirects the child.
+      const env: NodeJS.ProcessEnv = {};
+      for (const [k, v] of Object.entries(process.env)) if (v !== undefined && CHILD_ENV_ALLOW.has(k)) env[k] = v;
+      if (url) env.OPENCLAW_GATEWAY_URL = url;
+      if (token) env.OPENCLAW_GATEWAY_TOKEN = token;
+      return launch(bin, args, { env, timeout: timeoutMs + 10_000, maxBuffer: maxOutputBytes, killTree: true }).then(({ error, stdout }) => {
+        const code = error && typeof (error as NodeJS.ErrnoException).code === 'string' ? (error as NodeJS.ErrnoException).code : null;
+        if (code === 'ENOENT') throw gatewayError('unreachable', bin + ' is not on PATH');
+        if (code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw gatewayError('failed', 'openclaw gateway call wrote more than ' + maxOutputBytes + ' bytes, so it was stopped and nothing it wrote was read');
+        return parseGatewayCliOutput(String(stdout), error ? (typeof error.code === 'number' ? error.code : 1) : 0);
       });
     },
   };

@@ -392,6 +392,16 @@ More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversati
 
 More: [docs/guides/conversation-archive.md#privacy](../../docs/guides/conversation-archive.md#privacy)
 
+### archive_run_busy
+
+<a id="archive_run_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another conversation archive run holds this source, so this run read and wrote nothing. | A run decides each day from the archive ledger it read when it started, so two runs at once could publish older history over newer; runs on one source take turns on a database lease. | Wait for the other run to finish, then rerun gbrain transcripts archive run. Run: gbrain status --section locks --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/conversation-archive.md#openclaw](../../docs/guides/conversation-archive.md#openclaw)
+
 ### atom_drain_incomplete
 
 <a id="atom_drain_incomplete"></a>
