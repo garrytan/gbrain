@@ -2,7 +2,8 @@
 
 ### Changed
 - `.github/workflows/release.yml` publishes each release with `prerelease: true` and `make_latest: false`.
-- `scripts/promote-stable.ts` ends every promotion by marking the release Latest. A forward promotion also replaces its notes with every CHANGELOG entry since the previous stable; the oldest entries drop, with a link, past GitHub's size limit.
+- `scripts/promote-stable.ts` ends every promotion by marking the release Latest. A forward promotion also replaces its notes with every CHANGELOG entry since the previous stable; the oldest entries drop, with a link, past GitHub's size limit. Latest never moves back to an older release on a forward promotion, so until stable passes the newest batch release published before this change, Latest stays where it is.
+- A hand re-run of the release workflow that would republish the current stable release as a pre-release refuses.
 - Alpha binary self-update reads `VERSION` at the `latest-stable` tag and downloads that exact release instead of `releases/latest`.
 - The upgrade matrix counts pre-releases as releases.
 - The macOS 26 signature check takes its tag from `latest-stable`.
