@@ -1408,6 +1408,7 @@
       "idx_eval_capture_failures_ts": "CREATE INDEX idx_eval_capture_failures_ts ON public.eval_capture_failures USING btree (ts DESC)",
       "idx_extract_rollup_7d_day": "CREATE INDEX idx_extract_rollup_7d_day ON public.extract_rollup_7d USING btree (day)",
       "idx_facts_belief_stream": "CREATE INDEX idx_facts_belief_stream ON public.facts USING btree (source_id, source_markdown_slug) WHERE (expired_at IS NULL)",
+      "idx_facts_context_head": "CREATE INDEX idx_facts_context_head ON public.facts USING btree (source_id, split_part(context, ' — '::text, 1)) WHERE (source_markdown_slug IS NULL)",
       "idx_facts_dimension": "CREATE INDEX idx_facts_dimension ON public.facts USING btree (source_id, entity_slug, dimension, valid_from DESC) WHERE ((expired_at IS NULL) AND (dimension IS NOT NULL))",
       "idx_facts_embedding_model": "CREATE INDEX idx_facts_embedding_model ON public.facts USING btree (source_id, embedding_model) WHERE (expired_at IS NULL)",
       "idx_facts_entity_active": "CREATE INDEX idx_facts_entity_active ON public.facts USING btree (source_id, entity_slug, valid_from DESC) WHERE (expired_at IS NULL)",

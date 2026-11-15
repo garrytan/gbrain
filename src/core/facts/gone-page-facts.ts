@@ -23,7 +23,16 @@ export const PAGE_EXTRACTION_SOURCE_LIST = ['mcp:put_page', 'sync:import', 'file
  */
 export function extractedFromPageSql(alias: string, slug: string): string {
   return `(${alias}.source_markdown_slug IS NULL AND ${alias}.source IN (${PAGE_EXTRACTION_SOURCE_LIST.map(s => `'${s}'`).join(', ')})
-    AND (${alias}.context = ${slug} OR starts_with(${alias}.context, ${slug} || ' — ')))`;
+    AND ${contextHeadSql(alias)} = ${slug})`;
+}
+
+/**
+ * The head of the fact `alias`'s context: the text before the first CONTEXT_NOTE_SEPARATOR (subject-infer.ts), the
+ * page slug for a page-extraction row. It equals a slug exactly when the context is the slug or starts with it and the
+ * separator (no slug holds the separator). v315's idx_facts_context_head indexes it for rows filed on no page.
+ */
+export function contextHeadSql(alias: string): string {
+  return `split_part(${alias}.context, ' — ', 1)`;
 }
 
 /** `$1` source ids and `$2` slugs, paired by position. */
