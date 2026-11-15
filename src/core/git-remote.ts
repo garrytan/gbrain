@@ -354,6 +354,7 @@ export function validateRepoState(
 /** Whether `dir` or any directory above it has a `.git` entry (read from the filesystem, no Git process). */
 export function underGitCheckout(dir: string): boolean {
   for (let current = dir; ; current = dirname(current)) {
+    // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- the second segment is the fixed name '.git'; this only checks for its existence while walking up from a registered source root.
     if (existsSync(join(current, '.git'))) return true;
     if (current === dirname(current)) return false;
   }
