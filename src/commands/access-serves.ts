@@ -75,7 +75,7 @@ export function rosterEmpty(command: string): Error {
 }
 
 /** The first directory at or above `dir` that holds .git, or null; symlinks are resolved, so a link into a checkout counts. */
-function gitRootAbove(dir: string): string | null {
+export function gitRootAbove(dir: string): string | null {
   let existing = dir;
   while (!existsSync(existing) && dirname(existing) !== existing) existing = dirname(existing);
   const physical = join(realpathSync(existing), relative(existing, dir));

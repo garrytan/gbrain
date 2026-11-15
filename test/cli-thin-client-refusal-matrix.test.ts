@@ -61,6 +61,13 @@ const ROUTING_ROWS: string[][] = [
   ['recall', 'q'],
   ['query', 'q'],
   ['get', 'alice-example'],
+  ['wakeshift', 'watch', 'job', '1'],
+  ['wakeshift', 'status'],
+  ['serve', '--http'],
+  ['serve', '--http', '--port', '3131'],
+  ['serve', '--access', 'read-only'],
+  ['serve', '--surface', 'Starter'],
+  ['serve', '--advertise=bogus'],
 ];
 
 const VOLATILE_ROWS: string[][] = [['status'], ['capture', 'hello']];
@@ -104,8 +111,8 @@ describe('A16b thin-client refusal matrix', () => {
     routing = await run(ROUTING_ROWS);
   }, 300_000);
 
-  test('the matrix covers all 73 handleCliOnly cases', () => {
-    expect(CASES.length).toBe(73);
+  test('the matrix covers all 74 handleCliOnly cases', () => {
+    expect(CASES.length).toBe(74);
   });
 
   test('every handleCliOnly case, run bare on a thin client, matches the golden', () => {

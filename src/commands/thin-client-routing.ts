@@ -2,7 +2,9 @@
  * CLI→MCP gap-closure wave [OV6] — per-subcommand thin-client routing for the
  * commands whose reads/writes gained MCP ops: takes (list/search/scorecard/
  * calibration + the write verbs), search (modes/stats/tune, read-only forms),
- * jobs stats, cache stats, and quarantine list. The salience/anomalies/
+ * jobs stats, cache stats, quarantine list, wakeshift watch (watch_job /
+ * watch_write_request / watch_cron) and wakeshift accept-terms
+ * (accept_wakeshift_terms). The salience/anomalies/
  * graph-query precedent, engine-free: each routable subcommand maps onto its
  * op over callRemoteTool; everything else returns false so the caller falls
  * through to refuseThinClient's pinpoint hint.
@@ -61,6 +63,21 @@ export async function routeThinClientCommand(
 ): Promise<boolean> {
   const sub = args[0];
   const rest = args.slice(1);
+
+  // #8543: bare `serve` (or gbrain's own registration flags) is the stdio bridge to the remote brain; every other serve
+  // form refuses here with a fix that keeps its flags, so the caller's generic refusal never renders `Fix: gbrain serve`.
+  if (command === 'serve' && !args.includes('--help') && !args.includes('-h')) {
+    const { parseBridgeServeArgs, serveThinClientRefusal } = await import('../mcp/remote-bridge-args.ts');
+    const { exitCliError, usageError } = await import('../cli/cli-error.ts');
+    const { getCliOptions } = await import('../core/cli-options.ts');
+    if (getCliOptions().brain) exitCliError(usageError('--brain is not supported on a thin-client install: the remote server is a single brain.', 'Remove --brain, or run from a machine with local mounts (`gbrain mounts list`).'), 'serve');
+    const parsed = (() => { try { return parseBridgeServeArgs(args); } catch (error) { return exitCliError(error, 'serve'); } })();
+    if (!parsed.bridge) return exitCliError(serveThinClientRefusal(parsed.refused, cfg.remote_mcp?.mcp_url ?? ''), 'serve');
+    const { startRemoteStdioBridge } = await import('../mcp/remote-bridge.ts');
+    const timeoutMs = getCliOptions().timeoutMs;
+    await startRemoteStdioBridge(cfg, { surface: parsed.surface, advertise: parsed.advertise, sourceGuard: parsed.sourceGuard, ...(timeoutMs ? { timeoutMs } : {}) });
+    return true;
+  }
 
   if (command === 'sources' && sub === 'shared-skills') {
     if (rest.includes('--help') || rest.includes('-h')) {
@@ -154,6 +171,12 @@ export async function routeThinClientCommand(
       return true;
     }
     return false; // modes --reset / modes --mode|--source (the reset dry-run) / tune --apply / diagnose — host-side config or live probe
+  }
+
+  if (command === 'wakeshift' && (sub === 'watch' || sub === 'accept-terms')) {
+    const { runWakeshiftWatchRemote } = await import('./wakeshift-watch.ts');
+    await runWakeshiftWatchRemote(cfg, sub === 'watch' ? rest : ['accept-terms', ...rest]);
+    return true;
   }
 
   if (command === 'jobs' && sub === 'stats') {

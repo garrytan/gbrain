@@ -749,7 +749,7 @@ async function runSharedOperation(command: string, subArgs: string[], cliOpts: C
       return;
     }
     const paged = op.name === 'get_page' && await (await import('./page-render.ts')).finishAsOfRead(async p => normalizeLocalResult(enforcedReadOf ? await enforcedReadOf(p) : await op.handler(ctx, p)) as Record<string, any>, result as Record<string, any>, params, writeStdoutFinal); // GBRA-217
-    const output = paged ? '' : formatResult(op.name, result, params);
+    const output = paged ? '' : require('./guest-lines.ts').withGuestLines(op.name, result, params, formatResult(op.name, result, params));
     // Awaited delivery (#3423): queued stdout writes past 64KiB lose their
     // tail to a slow pipe reader when the exit grace lapses — see
     // writeStdoutFinal.
@@ -855,7 +855,7 @@ async function runThinClientRouted(
     hintAmbientNarrowing(op, params, result, ambientScope);
     const skew = (await import('../core/search/evidence-delivery.ts')).deliveryVersionSkewWarning(op.name, params, envelopeMeta?.retrieval as Record<string, unknown> | undefined, result);
     if (skew) process.stderr.write(skew + '\n');
-    const output = formatResult(op.name, result, params);
+    const output = require('./guest-lines.ts').withGuestLines(op.name, result, params, formatResult(op.name, result, params));
     // Awaited delivery (#3423) — same contract as the local-engine path.
     if (output) await writeStdoutFinal(output);
     if (stampText) process.stderr.write(stampText);
@@ -1764,7 +1764,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   'apply-migrations': 'schema migrations run on the host. SSH and run there.',
   'repair-jsonb': 'repair-jsonb operates on the local DB only.',
   integrity: 'integrity scans local files. Run on the host machine.',
-  serve: 'serve starts a server. Run on the host, not the thin client.',
+  serve: '`serve --http` and serve\'s host flags need the brain host; bare `gbrain serve` on a thin client is a stdio bridge to it.',
   dream: 'dream runs the autopilot cycle on the host. Run `gbrain dream` on the host machine.',
   orphans: "orphans needs the host's brain. Run on the host or use the `find_orphans` MCP tool from your agent.",
   transcripts: 'transcripts is server-private (raw chat exports stay on the host). Read transcripts on the host machine.',
@@ -1797,6 +1797,7 @@ const THIN_CLIENT_REFUSE_HINTS: Record<string, string> = {
   quarantine: '`quarantine list` routes to the brain host automatically (quarantine_list MCP op). scan/clear are host-bound (bulk re-import; the clear trust decision) — run those on the host.',
   advisor: 'advisor ranks next actions from the host brain. Use the `advisor` MCP tool from your agent (when the host publishes it), or run `gbrain advisor` on the host.',
   export: 'export dumps the host brain to disk and has no MCP equivalent. Run `gbrain export` on the host, or read pages with the `get_page` MCP tool.',
+  wakeshift: '`wakeshift watch job|write|cron` and `wakeshift accept-terms` route to the brain host automatically (watch_job / watch_write_request / watch_cron / accept_wakeshift_terms MCP tools). enable, disable, status and test read or change the brain host\'s Wakeshift key and settings: run those on the brain host.',
   recall: '`recall --query`/`--budget-tokens` without `--budget-policy` runs the recall op locally. Add `--budget-policy facts_first` to send it to the brain host (`recall` MCP op).',
 };
 
@@ -2522,6 +2523,7 @@ async function connectCliOnlyEngine(command: string, args: string[]): Promise<Br
     if (command === 'recall') oneShotRead = !args.includes('--watch');
     engine = await connectEngine({ probeOnly: findCliCommand(command)?.startup === 'observational' || (command === 'jobs' && args[0] === 'supervisor' && args[1] === 'status'), oneShotRead });
   } catch (serveConnectError) {
+    if (command === 'wakeshift' && args[0] === 'emit') return await (await import('../commands/wakeshift.ts')).reportEmitConnectFailure(args.slice(1), serveConnectError, dbMarkerBrainId());
     if (command === 'jobs' && args[0] === 'child-readiness') {
       const { writeChildReadinessFailure } = await import('../core/minions/child-readiness.ts');
       process.exit(writeChildReadinessFailure(serveConnectError));

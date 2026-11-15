@@ -24,8 +24,12 @@ import { operationsByName } from '../src/core/operations.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { SYNC_DELETE_TOMBSTONE_OP } from '../src/core/persistence/sync-delete-tombstones.ts';
 import { runPages } from '../src/commands/pages.ts';
+import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
+import * as preparedMaintenance from '../src/core/persistence/prepared-maintenance.ts';
+import { readDerivedOriginParks } from '../src/core/persistence/derived-origin-hold.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -61,10 +65,20 @@ function fileText(k: string, shape: Shape): string {
   };
   return ['---', `title: ${k} ${shape}`, ...fm[shape], '---', '', `Harbor ledger planning notes ${canaryOf(k, shape)} for the roadmap.`, ''].join('\n');
 }
-const KEYS = ['gitrm', 'purge', 'remote', 'midpurge'];
+const KEYS = ['gitrm', 'purge', 'remote', 'midpurge', 'preview'];
+/** A private origin, a public meeting, an event derived from the origin whose depth is the meeting, and an event whose depth is the origin. */
+const EVENT_SLUGS = { origin: 'notes/event-origin', depth: 'notes/event-depth', event: 'notes/event-event', closed: 'notes/event-closed' };
+const EVENT_FILES: Record<keyof typeof EVENT_SLUGS, string[]> = {
+  origin: ['type: note', 'visibility: private'],
+  depth: ['type: meeting'],
+  event: ['type: event', 'captured_via: life-chronicle:auto', 'visibility: world', `derived_from: [${EVENT_SLUGS.origin}.md]`, 'event:', `  depth: ${EVENT_SLUGS.depth}`, '  what: planning'],
+  closed: ['type: event', 'captured_via: life-chronicle:auto', 'visibility: world', 'event:', `  depth: ${EVENT_SLUGS.origin}`, '  what: review'],
+};
 const setup = ({ root }: { root: string }) => {
   mkdirSync(join(root, 'notes'), { recursive: true }); git(root, 'init', '-q', '-b', 'main');
   for (const k of KEYS) for (const shape of SHAPES) writeFileSync(join(root, `${slugOf(k, shape)}.md`), fileText(k, shape));
+  for (const [name, fm] of Object.entries(EVENT_FILES)) writeFileSync(join(root, `${EVENT_SLUGS[name as keyof typeof EVENT_SLUGS]}.md`),
+    ['---', `title: event ${name}`, ...fm, '---', '', `Harbor ledger planning notes canaryevent${name} for the roadmap.`, ''].join('\n'));
   commit(root, 'notes');
 };
 
@@ -88,6 +102,21 @@ async function cli(engine: BrainEngine, args: string[]): Promise<void> {
   const err = spyOn(console, 'error').mockImplementation(() => {});
   try { await withEnv({ GBRAIN_CONSENT: undefined }, () => runPages(engine, args)); }
   finally { log.mockRestore(); err.mockRestore(); }
+}
+/** `gbrain pages <args>` as the CLI runs it: its JSON output and exit verdict. */
+async function cliJson(engine: BrainEngine, args: string[]): Promise<{ out: Record<string, any> | null; exit: number }> {
+  _resetCliExitVerdictForTests();
+  const prior = process.exitCode;
+  const lines: string[] = [];
+  const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.join(' ')); });
+  const err = spyOn(console, 'error').mockImplementation(() => {});
+  try { await withEnv({ GBRAIN_CONSENT: undefined }, () => runPages(engine, args)); }
+  finally { log.mockRestore(); err.mockRestore(); }
+  const exit = currentExitCode();
+  _resetCliExitVerdictForTests();
+  process.exitCode = prior ?? 0;
+  const text = lines.join('\n').trim();
+  return { out: text.startsWith('{') ? JSON.parse(text) : null, exit };
 }
 const page = async (engine: BrainEngine, slug: string) => (await engine.executeRaw<{ deleted_at: string | null; frontmatter: unknown }>(
   "SELECT deleted_at, frontmatter FROM pages WHERE source_id='default' AND slug=$1", [slug]))[0];
@@ -148,6 +177,36 @@ for (const backend of testBackends()) {
       expect((await page(engine, origin))?.deleted_at).not.toBeNull();
       await age(engine, 100);
       await cli(engine, ['purge-deleted', '--json', '--yes']);
+      await expectCarried(engine, root, k, files);
+    }, { setup, databaseUrl }), 300_000);
+
+    test('purge-deleted --dry-run lists the parked origin the consented run releases and labels nothing; a refused consent labels nothing; --yes purges exactly that list', () => managedBrain(async ({ engine, root }) => {
+      await performManagedSync(engine, OPTS);
+      const k = 'preview', origin = slugOf(k, 'origin'), digest = slugOf(k, 'digest');
+      const files = await before(engine, root, k);
+      git(root, 'rm', '-q', `${origin}.md`); commit(root, 'remove the origin');
+      await performManagedSync(engine, OPTS);
+      await age(engine, 100);
+      const failing = spyOn(preparedMaintenance, 'publishMaintenancePages').mockImplementation(async () => { throw new Error('forced label failure'); });
+      try { expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin); }
+      finally { failing.mockRestore(); }
+      const untouched = async () => {
+        await settleManagedGitEffects(engine);
+        expect(readFileSync(join(root, `${digest}.md`), 'utf8')).toBe(files.digest!);
+        expect((await fmOf(engine, digest)).visibility).toBeUndefined();
+        expect((await readDerivedOriginParks(engine)).map(park => park.slug)).toContain(origin);
+        expect((await page(engine, origin))?.deleted_at).not.toBeNull();
+      };
+      await untouched();
+      const preview = await cliJson(engine, ['purge-deleted', '--dry-run', '--json']);
+      expect(preview.exit).toBe(0);
+      expect(preview.out!.slugs).toContain(origin);
+      await untouched();
+      expect((await cliJson(engine, ['purge-deleted', '--json'])).exit).toBe(3);
+      await untouched();
+      const run = await cliJson(engine, ['purge-deleted', '--json', '--yes']);
+      expect(run.exit).toBe(0);
+      expect([...run.out!.slugs].sort()).toEqual([...preview.out!.slugs].sort());
       await expectCarried(engine, root, k, files);
     }, { setup, databaseUrl }), 300_000);
 
@@ -219,5 +278,49 @@ for (const backend of testBackends()) {
       await cli(engine, ['purge-deleted', '--json', '--yes']);
       await expectCarried(engine, root, k, files);
     }, { setup, databaseUrl }), 300_000);
+
+    test('an explicit local purge labels a life-chronicle event whose own derived_from names the origin through the Git door; an event that fails closed on its depth keeps its bytes', () => managedBrain(async ({ engine, root, ctx }) => {
+      await performManagedSync(engine, OPTS);
+      const origin = EVENT_SLUGS.origin, event = EVENT_SLUGS.event, closed = EVENT_SLUGS.closed;
+      const files = Object.fromEntries(Object.values(EVENT_SLUGS).map(slug => [slug, readFileSync(join(root, `${slug}.md`), 'utf8')]));
+      const unbound = async () => {
+        __resetPrivateVisibilityCacheForTests();
+        const remote = { engine, config: { engine: engine.kind }, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true, sourceId: 'default' } as unknown as OperationContext;
+        const read = async (slug: string) => { try { return JSON.stringify(await operationsByName.get_page!.handler(remote, { slug })); } catch { return ''; } };
+        return { event: (await read(event)).includes('canaryeventevent'), closed: (await read(closed)).includes('canaryeventclosed') };
+      };
+      expect(await unbound()).toEqual({ event: false, closed: false });
+      const snapshot = await engine.readPageSnapshot(origin, { sourceId: 'default' });
+      const result = await operationsByName.delete_page!.handler(ctx, { slug: origin, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision }) as { status: string };
+      expect(result.status).toBe('purged');
+      await settleManagedGitEffects(engine);
+      expect(await page(engine, origin)).toBeUndefined();
+      expect((await fmOf(engine, event)).visibility).toBe('private');
+      const after = readFileSync(join(root, `${event}.md`), 'utf8');
+      const rest = (text: string) => text.split('\n').filter(line => !line.startsWith('visibility:'));
+      expect(after.split('\n').filter(line => line.startsWith('visibility:'))).toEqual(['visibility: private']);
+      expect(rest(after)).toEqual(rest(files[event]!));
+      expect(readFileSync(join(root, `${closed}.md`), 'utf8')).toBe(files[closed]!);
+      expect(await unbound()).toEqual({ event: false, closed: false });
+    }, { setup, databaseUrl }), 300_000);
+
+    test('a repo-less managed source: an explicit purge labels the life-chronicle event through the maintenance door (database only) before the row goes', () => managedBrain(async ({ engine }) => {
+      const sourceId = 'loose';
+      await fixtureWrite(engine, () => engine.executeRaw('INSERT INTO sources (id, name, local_path) VALUES ($1, $1, NULL)', [sourceId]));
+      const ctx = { engine, config: { engine: engine.kind, embedding_disabled: true }, sourceId, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+      for (const [name, fm] of Object.entries(EVENT_FILES)) {
+        const content = ['---', `title: event ${name}`, ...fm, '---', '', `Harbor ledger planning notes canaryevent${name} for the roadmap.`, ''].join('\n');
+        await submitPageMutation(ctx, { operation: 'put_page', params: { slug: EVENT_SLUGS[name as keyof typeof EVENT_SLUGS], content, request_id: randomUUID() } });
+      }
+      const fmIn = async (slug: string) => { const [row] = await engine.executeRaw<{ frontmatter: unknown }>('SELECT frontmatter FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
+        return row ? (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as Record<string, unknown> : undefined; };
+      const closedBefore = await fmIn(EVENT_SLUGS.closed);
+      const snapshot = await engine.readPageSnapshot(EVENT_SLUGS.origin, { sourceId });
+      const result = await operationsByName.delete_page!.handler(ctx, { slug: EVENT_SLUGS.origin, purge: true, request_id: randomUUID(), expected_revision: snapshot!.revision }) as { status: string };
+      expect(result.status).toBe('purged');
+      expect(await fmIn(EVENT_SLUGS.origin)).toBeUndefined();
+      expect((await fmIn(EVENT_SLUGS.event))?.visibility).toBe('private');
+      expect(await fmIn(EVENT_SLUGS.closed)).toEqual(closedBefore);
+    }), 300_000);
   });
 }

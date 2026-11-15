@@ -21,7 +21,7 @@ import type { BrainEngine } from '../engine.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { opError } from '../ops/contract.ts';
 import { getMember, listGroups } from '../access/members.ts';
-import { ownerView } from '../access/owner.ts';
+import { readersOmitOwnerError, readersOwner } from '../access/owner.ts';
 import { normalizePrincipal, normalizeReaders } from '../access/principals.ts';
 import { READERS_KEY, type LabelEdit } from '../persistence/label-edit.ts';
 import { digest } from '../persistence/digest.ts';
@@ -59,9 +59,7 @@ const same = (a: string[] | null, b: string[] | null) => JSON.stringify(a) === J
  * group, and a list without the owner unless the flag is passed; nothing is written before this passes.
  */
 async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Promise<{ readers: string[] | null; owner: string | null }> {
-  const view = await ownerView(engine);
-  const inactive = view.inactive ? normalizePrincipal(view.inactive.value) : null;
-  const owner = view.owner ?? (inactive?.startsWith('member:') ? shown(inactive) : null);
+  const { owner, live } = await readersOwner(engine);
   if (request.readers.trim() === 'none') return { readers: null, owner };
   const entries = request.readers.split(',').map(entry => entry.trim()).filter(Boolean);
   if (!entries.length) throw invalid('--readers names no reader.', 'Pass member ids and group:<id>, comma-separated (e.g. --readers alice-example,group:team-a), or none to remove the readers.');
@@ -84,11 +82,7 @@ async function checkedReaders(engine: BrainEngine, request: ReadersRequest): Pro
         member ? member.status : 'unknown');
     }
   }
-  if (owner && !principals.includes('member:' + owner) && !request.allowWithoutOwner) {
-    throw invalid('These readers leave out the brain owner "' + owner + '"' + (view.owner ? '' : ' (configured, not enabled now)') + ', so the owner\'s own keys could no longer read the page; nothing was written. Name the owner, or pass --allow-without-owner.',
-      'Add the owner to the list (--readers ' + [...principals.map(shown), owner].join(',') + '), or pass --allow-without-owner if the owner should not read it. A group that holds the owner does not count.',
-      'readers_omit_owner');
-  }
+  if (owner && !principals.includes('member:' + owner) && !request.allowWithoutOwner) throw readersOmitOwnerError(owner, live, principals, 'the page');
   return { readers: principals.map(shown), owner };
 }
 

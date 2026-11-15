@@ -38,14 +38,14 @@ import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from 
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
-import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders } from './page-visibility.ts';
+import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf } from './page-visibility.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
 import { digest, sha256 } from './digest.ts';
 import { replaceableFile } from '../facts/file-body-guard.ts';
 import { getWorktreeBinding } from './ownership.ts';
 import type { PreparedContentImport } from './prepared-import.ts';
 import type { PreparedMutation } from './coordinator.ts';
-import type { SqlEngine, WriteRequest } from './model.ts';
+import { requestPrincipal, type SqlEngine, type WriteRequest } from './model.ts';
 import { isUnboundSourcePage } from './unbound-source.ts';
 import { slugPathFile } from './unbound-pages.ts';
 import { isOriginTwinPage } from './origin-twins.ts';
@@ -107,6 +107,9 @@ import { gateField, gateInput } from '../trust/gate-outcomes.ts';
 import { PUSH_SCAN_MAX_FILE_BYTES } from '../page-size-policy.ts';
 import { fileContentHash, FileBytes, isStreamedContent, LARGE_FILE_MIN_BYTES, StreamedFileContent } from './large-file.ts';
 import { bindOrigin } from './origin-guard.ts';
+import { assertGuestWriterAtPublication, insertGuestMark, refuseRemoteGuestDelete } from '../guests/admission.ts';
+import { skipsGuestNote } from '../guests/derived.ts';
+import { NOT_A_GUEST_WRITE, prepareGuestWrite, type GuestWrite } from '../guests/publication.ts';
 
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
@@ -812,6 +815,7 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
         `Page ${row.slug}'s file is committed in source ${row.source_id}'s checkout.`, pageFix(row.source_id, row.slug));
     } } : {}),
     apply: async tx => {
+      if (row.authority.remote) await refuseRemoteGuestDelete(tx, row.source_id, row.slug, requestPrincipal(row));
       if (purge && excludedPath !== null) await assertStillSyncExcluded(tx, row, excludedPath);
       // #7311: the tombstone forgets the survivor's file, as an origin_twin page has, so its purge writes no deletion marker for it.
       if (preparedPurge && sharedRetention) return purgePageInTransaction(tx, row, { ...snapshot, page: { ...(bodyUnread(snapshot.page) ? withoutBody(snapshot.page) : snapshot.page), source_path: null, source_uri: null } as Page }, preparedPurge);
@@ -876,6 +880,26 @@ async function prepareUnreadRestore(engine: BrainEngine, row: WriteRequest, snap
     afterCommit: async target => { if (!complete) await buildSegmentedProjection(target, { sourceId: row.source_id, slug: row.slug }).catch(() => undefined); } };
   return prepared;
 }
+/**
+ * GBRA-504: `restore_page` of a guest page (only the local owner may submit one). Soft delete only set `deleted_at`, so
+ * the restore clears it without re-importing the body: a re-import would rewrite the page's content columns, which the
+ * guest-source guard refuses from anyone but a listed writer, and would project rows a guest page never has. A guest
+ * source is database-only, so there is no file to write.
+ */
+async function prepareGuestRestore(engine: BrainEngine, row: WriteRequest, snapshot: PageSnapshot): Promise<PreparedMutation> {
+  const source = { sourceId: row.source_id };
+  const noop = snapshot.page.deleted_at == null;
+  return { observedRevision: snapshot.revision, noop, ...await pageDatabaseOnlyPublication(engine, row, undefined),
+    validate: async () => {},
+    apply: async tx => {
+      if (noop) return { ...pageNoopAdvisories(row), status: 'skipped', slug: row.slug, source_id: row.source_id, noop: true, chunks: 0, chunk_skip_reason: 'write_skipped' };
+      await tx.createVersion(row.slug, source);
+      await tx.restorePage(row.slug, source);
+      await sealPageTextProjection(tx, row.slug, row.source_id);
+      return { ...pageNoopAdvisories(row), status: 'restored', slug: row.slug, source_id: row.source_id, chunks: 0, noop: false };
+    } };
+}
+
 /**
  * serializePageToMarkdown's bytes for a page whose body was not read back, streamed from its segments by export's
  * serializer: measured here, produced again into the publication's staging file (large-file.ts), never concatenated.
@@ -971,7 +995,8 @@ export async function preparePageMutation(unbounded: BrainEngine, row: WriteRequ
     signal?.throwIfAborted();
     return prepareStagedUpload(unbounded, row, staged => preparePageMutation(unbounded, staged, _config, preparedIntent, signal, options));
   }
-  return prepareInlineOrSegmentedMutation(unbounded, row, _config, preparedIntent, signal, options);
+  return prepareInlineOrSegmentedMutation(unbounded, row, _config, preparedIntent, signal, options,
+    row.operation === 'delete_page' ? NOT_A_GUEST_WRITE : await prepareGuestWrite(unbounded, row, preparedIntent?.content ?? row.intent?.content));
 }
 
 /** A remote caller's refusal names the line, never a key: keys can be private, and the receipt keeps the message. */
@@ -1004,7 +1029,7 @@ function remoteCoreMarkingKept(row: WriteRequest, snapshot: PageSnapshot | null,
 
 async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: WriteRequest, _config: Parameters<typeof preparePageMutation>[2],
   preparedIntent: Parameters<typeof preparePageMutation>[3], signal: AbortSignal | undefined,
-  options: NonNullable<Parameters<typeof preparePageMutation>[5]>): Promise<PreparedMutation> {
+  options: NonNullable<Parameters<typeof preparePageMutation>[5]>, guest: GuestWrite): Promise<PreparedMutation> {
   signal?.throwIfAborted();
   const clock = options.clock;
   const engine = boundedReads(unbounded, clock);
@@ -1059,7 +1084,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     if (!snapshot) throw pageRefusal('page_not_found', 'Page not found.', row,
       `Page ${row.slug} does not exist in source ${row.source_id} (it was purged or never written), so nothing was ${row.operation === 'restore_page' ? 'restored' : 'reverted'}. Check the slug and the source.`,
       pageFix(row.source_id, row.slug));
-    if (row.operation === 'restore_page' && bodyUnread(snapshot.page)) return prepareUnreadRestore(engine, row, snapshot, { activePack, clock, allowMissingFile: options.allowMissingFile });
+    if (row.operation === 'restore_page' && (guest.write || bodyUnread(snapshot.page))) return guest.write ? prepareGuestRestore(engine, row, snapshot) : prepareUnreadRestore(engine, row, snapshot, { activePack, clock, allowMissingFile: options.allowMissingFile });
     let page = snapshot.page;
     let tags = snapshot.tags;
     if (row.operation === 'revert_version') {
@@ -1086,7 +1111,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       ...(snapshot?.page??{id:0,source_id:row.source_id,created_at:new Date(),updated_at:new Date()}),...parsed,compiled_truth,timeline},parsed.tags);
   }
   content = remoteCoreMarkingKept(row, snapshot, content, activePack);
-  const projected = !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
+  const projected = !skipsGuestNote('publication_projections', guest.write) && !(options.unprojected || row.operation === 'remember' || row.operation.startsWith('takes_') || (row.operation === 'extract_facts' && p.kind === 'managed_facts_entity'));
   const writer = replacesTombstone || ((row.operation === 'put_page' || row.operation === 'edit_page') && p.kind !== 'managed_maintenance_page'
     && (preparedIntent !== undefined || typeof p.expected_revision === 'string')) ? 'editing' : 'preserving';
   // #5969 (D3): only an ordinary put_page intent carries a timeline section; every other writer keeps the shared policy.
@@ -1126,7 +1151,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // GST-2518: a lower-tier local write keeps the page's privacy labels it would widen (GST-2521: and the owner as a reader); its proposal carries the request.
   const labelGuard = await privacyLabelGuard(engine, row, trust, snapshot?.page ?? null, storedTier, incoming);
   let heldLabels: HeldPrivacyLabels | null = null;
-  const defaultSourceWriter = row.operation === 'restore_page' || row.operation === 'revert_version' ? null : await defaultSourceMemberWriter(engine, row.authority), defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter);
+  const defaultSourceWriter = row.operation === 'restore_page' || row.operation === 'revert_version' ? null : await defaultSourceMemberWriter(engine, row.authority), defaultSourceOwner = await defaultSourceWriterIsOwner(engine, defaultSourceWriter), ownerRewrite = ['put_page', 'edit_page', 'append_page'].includes(row.operation) ? await ownerRewriteOf(engine, row.authority, row.source_id, row.slug, row.operation === 'put_page') : null;
   // The apply diet: the publisher's locked read of row.slug is the import base, and one read after the
   // last page write serves the read-back check, the seal, the core notice and the receipt (as sync does).
   const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
@@ -1149,7 +1174,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       suppliedTrustMarker = page.frontmatter.trust_tier;
       if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
-      defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner);
+      defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
     },
     prepare: async value => { prepared = value; return value.result; },
@@ -1204,7 +1229,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const [project, advisories, links, target, core] = await pipelined(together, [
     async () => projected ? prepareCanonicalProjections(engine,ready.parsedPage,row.slug,row.source_id,snapshot,writer,timelinePolicy) : undefined,
     async () => noop || targetDeleted ? pageNoopAdvisories(row) : !ordinaryPage ? remoteLinkHint(row) : preparePageAdvisories(engine,row,ready.parsedPage,snapshot),
-    async () => !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
+    async () => !skipsGuestNote('auto_links', guest.write) && !noop && !targetDeleted && autoLinkedPage && (row.authority.autoLinkTrusted ?? !row.authority.remote) && await isAutoLinkEnabled(engine)
       ? prepareAutomaticLinks(engine,row.slug,ready.parsedPage,row.source_id,options.coordinated === true) : undefined,
     () => prepareFileTarget(engine, row, snapshot, targetDeleted ? null : rendered, undefined, { capture, allowMissing: options.allowMissingFile, activePack, remote: row.authority.remote, newPageIgnoredDatabaseOnly: true, clock, labelEdit: row.operation === 'submit_job' && p.kind === 'managed_maintenance_page' ? readLabelEdit(p.label_edit) : undefined }),
     // Always-loaded core tier: owner-only marking, brain-wide budget, remote-edit policy (core-guard.ts).
@@ -1304,7 +1329,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       // DX-1: a guarded supersession reports contested (the first proposal; every one when the write contested several rows).
       ...(contested.length ? { contested: { proposal_ref: contested[0], ...(contested.length > 1 ? { proposal_refs: contested } : {}) } } : {}) };
   } };
-  return publication;
+  return guardGuestPublication(publication, row, guest, noop);
 }
 
 /** What a page's projections report back: removed timeline rows and the contested proposal refs (#5575 guarded supersession). */
@@ -1317,4 +1342,22 @@ function editLockedPage(row: WriteRequest, snapshot: PageSnapshot | null) {
     `Page ${row.slug} does not exist in source ${row.source_id} or is deleted, so the edit changed nothing. If it is soft-deleted, restore it with restore_page; otherwise write it whole with put_page.`,
     pageFix(row.source_id, row.slug));
   return applyPageEdits(snapshot.page, snapshot.tags, row.authority.remote, parsePageEdits(row.intent?.edits), parseEditWithin(row.intent?.within));
+}
+
+/**
+ * A guest note's publication with the guest checks of guests/admission.ts added to its validate and apply. Any other
+ * write is returned as it is: the guest-source trigger refuses it in a source that became a guest source after it was
+ * admitted, so it publishes no extra statement.
+ */
+function guardGuestPublication(publication: PreparedMutation, row: WriteRequest, guest: GuestWrite, noop: boolean): PreparedMutation {
+  const { validate, apply } = publication;
+  const { note, audience } = guest;
+  if (!note || !audience) return publication;
+  publication.validate = async tx => { await validate?.(tx); await assertGuestWriterAtPublication(tx, row); };
+  publication.apply = async (tx, preimage) => {
+    const out = await apply(tx, preimage);
+    if (!noop) await insertGuestMark(tx, row, note, audience);
+    return out;
+  };
+  return publication;
 }

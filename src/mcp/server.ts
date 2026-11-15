@@ -1,7 +1,5 @@
 import { noteForwardProgress } from '../core/forward-progress.ts';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import type { Readable, Writable } from 'node:stream';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { BrainEngine } from '../core/engine.ts';
 import { OperationError, opError, type OperationMeta } from '../core/ops/contract.ts';
@@ -33,19 +31,9 @@ import { readOnlyServeSkipsResidentDuties } from '../core/direct-pool-profile.ts
 import { hookSessionCwd } from '../core/session-cwd.ts';
 import { stdioMemberIdentity } from '../core/access/caller.ts';
 
-/**
- * Largest JSON-RPC message the stdio server reads (the SDK default is 10 MiB,
- * and an oversized message closes the session). A page at the 24 MiB ceiling
- * travels JSON-escaped, and newlines and quotes double, so 64 MiB carries it
- * with room; the persistence journal caps a principal's outstanding intents at
- * the same 64 MiB.
- */
-export const MCP_STDIO_MAX_MESSAGE_BYTES = 64 * 1024 * 1024;
-
-/** The stdio transport `gbrain serve` connects, sized for ceiling-size page writes. */
-export function mcpStdioTransport(stdin: Readable = process.stdin, stdout: Writable = process.stdout): StdioServerTransport {
-  return new StdioServerTransport(stdin, stdout, { maxBufferSize: MCP_STDIO_MAX_MESSAGE_BYTES });
-}
+// The sized stdio transport moved to the engine-free lifecycle module the thin-client bridge shares.
+export { MCP_STDIO_MAX_MESSAGE_BYTES, mcpStdioTransport } from './stdio-lifecycle.ts';
+import { MCP_STDIO_MAX_MESSAGE_BYTES, mcpStdioTransport } from './stdio-lifecycle.ts';
 
 // initialize and tools/list read OPERATION_MANIFEST; the handler graph behind
 // dispatch.ts (src/core/operations.ts, ~760 modules) loads with the deferred
@@ -511,7 +499,7 @@ export async function startMcpServer(engine: BrainEngine, opts: { surface?: McpS
       // stdio stays remote/untrusted.
       transport: 'stdio', inboundFrameBytes: MCP_STDIO_MAX_MESSAGE_BYTES,
       takesHoldersAllowList: ['world'],
-      ...(sessionId ? { sessionId } : {}), ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}), onBehalfOf: { requestMeta: request.params?._meta }, room: { requestMeta: request.params?._meta },
+      ...(sessionId ? { sessionId } : {}), ...(hotMemoryOffIn(request.params) ? { hotMemoryOff: true } : {}), onBehalfOf: { requestMeta: request.params?._meta }, room: { requestMeta: request.params?._meta }, guest: { requestMeta: request.params?._meta },
       mcpCaller: { client: server?.getClientVersion()?.name, meta: request.params?._meta },
       sourceId: sourceScope.sourceId,
       ...(sourceScope.localFederatedSourceIds

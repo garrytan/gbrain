@@ -115,6 +115,7 @@ import { transcriptSecretExposureEntry } from './checks/transcript-secrets.ts';
 import { autoChronicleEntry } from './checks/auto-chronicle.ts';
 import { factsDrainEntry } from './checks/facts-drain.ts';
 import { wakeshiftEntry } from './checks/wakeshift.ts';
+import { wakeshiftOpenclawEntry } from './checks/wakeshift-openclaw.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
 import { memoryProposalsEntry } from './checks/memory-proposals.ts';
@@ -159,6 +160,7 @@ import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
 import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
+import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
@@ -253,6 +255,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   accessLineageEntry,
   accessLabelledOnlyEntry,
   attestReadAccessEntry,
+  guestSourceEntry,
   rlsEntry,
   postgresTlsEntry,
   functionSearchPathEntry,
@@ -317,6 +320,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   autoChronicleEntry,
   factsDrainEntry,
   wakeshiftEntry,
+  wakeshiftOpenclawEntry,
   factTakeVectorsEntry,
   plannerStatsEntry,
   retrievalFeedbackEntry,

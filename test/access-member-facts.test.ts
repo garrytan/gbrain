@@ -86,7 +86,7 @@ for (const kind of testBackends()) {
       });
       const text = out.content.map(c => c.text).join('\n');
       let json: Record<string, any> = {};
-      try { json = JSON.parse(text); } catch { /* prose */ }
+      try { json = JSON.parse(out.content[0]?.text ?? ''); } catch { /* prose */ }
       return { isError: out.isError === true, text, json, meta: out._meta, all: text + JSON.stringify(out._meta ?? {}) + JSON.stringify(out.structuredContent ?? {}) };
     }
     const remember = (as: Who, fact: string, extra: Record<string, unknown> = {}) => call(as, 'remember', { fact, provenance: 'qm test', ...extra });
@@ -338,6 +338,21 @@ for (const kind of testBackends()) {
       }
       expect(await engine.executeRaw('SELECT 1 FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.source_id = $1 AND p.slug = $2', [SRC, 'notes/' + shared])).toHaveLength(0);
     }, 60_000);
+
+    test('Wakeshift watches are kept to the credential, so an attested person never runs one', async () => {
+      const reg = await provider().registerClientManual('c2-watch-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);
+      const ops = ['watch_write_request', 'list_watches', 'unwatch', 'accept_wakeshift_terms'];
+      await bindCredential(engine, { kind: 'client', id: reg.clientId }, { attestActor: 'qm', attestOps: ['get_page', ...ops] });
+      await readsUnscopedOnPurpose(engine, reg.clientId, 'client');
+      tokens.watch = (await provider().exchangeClientCredentials(reg.clientId, reg.clientSecret!)).access_token;
+      const calls: Array<[string, Record<string, unknown>]> = [['watch_write_request', { request_id: 'req-alice-example' }], ['list_watches', {}], ['unwatch', { job: 1 }], ['accept_wakeshift_terms', { terms_version: 'v1' }]];
+      for (const [op, params] of calls) {
+        const out = await call({ token: 'watch', actor: ALICE_ID }, op, params);
+        expect({ op, isError: out.isError, code: out.json.code ?? out.json.error?.code ?? out.json.error, reason: out.json.reason ?? out.json.error?.reason }).toEqual({ op, isError: true, code: 'actor_not_attested', reason: 'op_not_attested' });
+      }
+      const [row] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM wake_subscriptions');
+      expect(row!.n).toBe(0);
+    });
 
     test('agent jobs: Alice\'s job is hers alone, and two people\'s identical submissions never share a job', async () => {
       const reg = await provider().registerClientManual('c2-agent-' + randomUUID().slice(0, 8), ['client_credentials'], 'read write', [], SRC);

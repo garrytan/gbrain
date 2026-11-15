@@ -61,8 +61,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision",
-            "textSha256": "002fabcfde69b77bcdf854b15c11e46e4c797cde1be1973e34ab73df3d327bd7"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND links_attendance_blocked_revision = knowledge_revision AND NOT EXISTS (SELECT 1 FROM sources guest_src WHERE guest_src.id = pages.source_id AND (COALESCE(guest_src.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = guest_src.id)))",
+            "textSha256": "4f272d869a9d854de93cd1ad43265ac46e64461ddc1df87b12870925b720ec97"
           }
         ],
         "attendance-exclude": [
@@ -71,16 +71,16 @@
             "params": [
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision",
-            "textSha256": "e568ead5dc5191a909c2e58fea58356a5acde8fcda59cd40b091727b964fb6a3"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND links_attendance_blocked_revision IS DISTINCT FROM knowledge_revision AND NOT EXISTS (SELECT 1 FROM sources guest_src WHERE guest_src.id = pages.source_id AND (COALESCE(guest_src.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = guest_src.id)))",
+            "textSha256": "398364f077186f00dd83da8ffd616f01c508faf3529d6285dad1d61cc9c4821b"
           }
         ],
         "default": [
           {
             "lane": "pool",
             "params": [],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at))",
-            "textSha256": "2288e7b188811bbaa877f1d9a13e4148bbee4ed200d7ba438a12737c69ef72e5"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND NOT EXISTS (SELECT 1 FROM sources guest_src WHERE guest_src.id = pages.source_id AND (COALESCE(guest_src.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = guest_src.id)))",
+            "textSha256": "ae74edfdee2b9dbd58ee55a27201e56979fbccc122568b07c6d2a5e80488d89a"
           }
         ],
         "versionTs+sourceId": [
@@ -90,8 +90,8 @@
               "string",
               "string"
             ],
-            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2",
-            "textSha256": "57ff70c7578ba9ff9e97f7d18593cb82a92ede5115e7cbf45e9b6d29a8aa2a3b"
+            "sql": "SELECT count(*)::int AS count FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND NOT EXISTS (SELECT 1 FROM sources guest_src WHERE guest_src.id = pages.source_id AND (COALESCE(guest_src.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = guest_src.id)))",
+            "textSha256": "bc90edfc97a3b65c610f18e29235cfd7622e1be6856f56ee6c6fb8245925e2c9"
           }
         ]
       },
@@ -756,8 +756,8 @@
               "number",
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND id > $3 ORDER BY id LIMIT $4",
-            "textSha256": "22fb498ad7872c970f05a3905d04bebef7df2790c417bea32d6a214eb0ae4505"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR links_extracted_at < $1::timestamptz OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND source_id = $2 AND NOT EXISTS (SELECT 1 FROM sources guest_src WHERE guest_src.id = pages.source_id AND (COALESCE(guest_src.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = guest_src.id))) AND id > $3 ORDER BY id LIMIT $4",
+            "textSha256": "5f9182a84461de144712758439bb9897f3f8b3d4b7256f9badeee7dd832b4141"
           }
         ],
         "default": [
@@ -766,8 +766,8 @@
             "params": [
               "number"
             ],
-            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) ORDER BY id LIMIT $1",
-            "textSha256": "27cc368fcbecffffad33b5d8542adbc3d0fcd24e6700ce7b5d351ec5e2103a57"
+            "sql": "SELECT id, slug, source_id, type, title, compiled_truth, timeline, frontmatter, updated_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at_iso FROM pages WHERE deleted_at IS NULL AND NOT (COALESCE(pages.frontmatter, '{}'::jsonb) ? 'quarantine') AND (links_extracted_at IS NULL OR updated_at > links_extracted_at OR id IN (SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND t.slug = w.target_ref AND t.deleted_at IS NULL WHERE t.updated_at > w.checked_at UNION SELECT w.origin_page_id FROM wanted_links w JOIN pages t ON t.source_id = w.target_source_id AND regexp_replace(t.slug, '^.*/', '') = w.target_ref AND t.deleted_at IS NULL WHERE w.ref_kind = 'name' AND t.updated_at > w.checked_at)) AND NOT EXISTS (SELECT 1 FROM sources guest_src WHERE guest_src.id = pages.source_id AND (COALESCE(guest_src.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = guest_src.id))) ORDER BY id LIMIT $1",
+            "textSha256": "00249985f24e8528ec57f08bdea39f6107a98f7dfb513e4e314de4fef2d568f5"
           }
         ]
       },

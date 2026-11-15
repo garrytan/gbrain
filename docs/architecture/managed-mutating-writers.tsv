@@ -14,6 +14,7 @@ op	storage_update	coordinator	submitPageMutation through the storage door bound 
 op	delete_page	coordinator	submitPageMutation soft delete or trusted-local purge.
 op	restore_page	coordinator	submitPageMutation restores a recorded version.
 op	purge_deleted_pages	coordinator	purgeDeletedPagesCoordinated purges each expired tombstone through delete_page purge.
+op	promote_guest_note	coordinator	Writes the owner page through submitPageMutation put_page and records the link in guest_promotions; the guest note is never changed.
 op	capture	coordinator	submitPageMutation admits a journaled page mutation.
 op	cancel_write_request	no_canonical_write	Cancels a queued journal request; no canonical row changes.
 op	add_tag	coordinator	submitPageMutation admits a journaled page mutation.
@@ -49,6 +50,9 @@ op	pause_job	no_canonical_write	Minion queue state only.
 op	resume_job	no_canonical_write	Minion queue state only.
 op	watch_job	no_canonical_write	Wake subscription state only (wake_subscriptions).
 op	unwatch	no_canonical_write	Wake subscription state only (wake_subscriptions).
+op	watch_write_request	no_canonical_write	Wake subscription state only (wake_subscriptions).
+op	watch_cron	no_canonical_write	Wake subscription state only (wake_subscriptions).
+op	accept_wakeshift_terms	no_canonical_write	Wakeshift terms acceptance state only (wake_terms_acceptances).
 op	replay_job	no_canonical_write	Minion queue state only.
 op	send_job_message	no_canonical_write	Minion inbox rows only.
 op	submit_agent	no_canonical_write	Queues a subagent job; its tools write through put_page.

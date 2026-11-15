@@ -387,6 +387,8 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   unpurge_page: 'error',
   // Owner confirmation needs a memory_confirm grant; the sweep's connection has none (refused before any read).
   confirm_memory: 'error',
+  // GBRA-504: promoting a guest note is the brain owner's call; the sweep's connection is refused before any read.
+  promote_guest_note: 'error',
   // rate_answer with no answer_id is a validation error; a real answer id only
   // ever names pages that answer returned to the same client.
   rate_answer: 'error',
@@ -454,6 +456,9 @@ const EXPECTED_OUTCOME: Record<string, Outcome> = {
   watch_job: 'error',
   list_watches: 'error',
   unwatch: 'error',
+  watch_write_request: 'error',
+  watch_cron: 'error',
+  accept_wakeshift_terms: 'error',
   cancel_job: 'error',
   retry_job: 'error',
   get_job_progress: 'error',

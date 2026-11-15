@@ -101,12 +101,10 @@
     },
     {
       "argv": "serve",
-      "exitCode": 1,
+      "exitCode": 0,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain serve` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
-        "Fix: gbrain serve",
-        "Why: serve starts a server. Run on the host, not the thin client.",
-        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+        "[gbrain-bridge] relaying stdio to http://127.0.0.1:1/mcp surface=full (source: default)",
+        "[gbrain-bridge] exit (stdin-end)"
       ],
       "stdout": []
     },
@@ -764,8 +762,9 @@
       "argv": "wakeshift",
       "exitCode": 1,
       "stderr": [
-        "Error [requires_local_engine]: `gbrain wakeshift` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Error [requires_local_engine]: `gbrain wakeshift` is not routable (thin-client of http://127.0.0.1:1/mcp); run it on the brain host.",
         "Fix: gbrain wakeshift",
+        "Why: `wakeshift watch job|write|cron` and `wakeshift accept-terms` route to the brain host automatically (watch_job / watch_write_request / watch_cron / accept_wakeshift_terms MCP tools). enable, disable, status and test read or change the brain host's Wakeshift key and settings: run those on the brain host.",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []
@@ -798,6 +797,16 @@
       "stderr": [
         "Error [requires_local_engine]: `gbrain beliefs` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
         "Fix: gbrain beliefs",
+        "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
+      ],
+      "stdout": []
+    },
+    {
+      "argv": "guests",
+      "exitCode": 1,
+      "stderr": [
+        "Error [requires_local_engine]: `gbrain guests` requires a local engine. This install is a thin client of http://127.0.0.1:1/mcp.",
+        "Fix: gbrain guests",
         "Docs: https://github.com/garrytan/gbrain/blob/master/docs/guides/error-codes.md#requires_local_engine"
       ],
       "stdout": []

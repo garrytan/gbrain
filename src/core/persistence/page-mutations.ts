@@ -46,12 +46,15 @@ import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-tar
 import { CALLER_CONTENT_OPERATIONS, publishesDatabaseOnly } from './page-prepare.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
-import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
+import { ADMISSION_SOURCE_SQL, cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { perCallWriteSource } from '../access/attest-sources.ts';
+import type { GuestSource } from '../guests/sources.ts';
+import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable, guestSourcesUnreadable, refuseRemoteGuestDelete, schemaBehindGuests } from '../guests/admission.ts';
+import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
@@ -76,8 +79,9 @@ const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
  * import's source-root and company-profile checks. All of them are rechecked
  * under lock by the admission transaction or by publication.
  */
+type AdmissionSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null; guest_writers: string[] | null; guest_trust_ceiling: string | null; guest_sources_hidden: boolean };
 const BATCH_SHARED_READS = new Set([
-  "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1",
+  ADMISSION_SOURCE_SQL,
   'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
@@ -396,7 +400,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     throw new OperationError('request_too_large', contentSizeHold(bodyBytes, PAGE_MAX_BYTES)!.message,
       `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
   }
-  const { page_batch: _forged, timeline_section: _section, ...params } = input.params;
+  const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = input.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (p.content_origin !== undefined) contentOriginTier(p.content_origin);
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size, ...(input.batch.repeats?.length ? { repeats: input.batch.repeats } : {}) };
@@ -406,10 +410,18 @@ export async function preparePageAdmission(ctx: OperationContext,
   const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;
   const principal = await requestPrincipalForContext(ctx);
   // Independent reads go out together on Postgres; the first refusal in this order is the one reported.
-  const [, prior] = await pipelined(ctx.engine, [
+  const [, prior, [source]] = await pipelined(ctx.engine, [
     () => assertPageRequestIdentity(ctx.engine, principal, requestId),
     () => getWriteRequest(ctx.engine, principal, requestId),
-  ]) as [unknown, WriteRequest | null];
+    () => ctx.engine.executeRaw<AdmissionSource>(ADMISSION_SOURCE_SQL, [sourceId]).catch(e => schemaBehindGuests(ctx.engine, e)),
+  ]) as [unknown, WriteRequest | null, AdmissionSource[]];
+  if (source?.guest_sources_hidden) throw guestSourcesUnreadable(sourceId);
+  const guest: GuestSource | null = source?.guest_writers ? { source_id: sourceId, writers: source.guest_writers, trust_ceiling: source.guest_trust_ceiling! } : null;
+  // GBRA-504: a guest source admits only its listed writers' plain put_page, carrying the guest attribution, which joins
+  // the intent (and so the replay identity) here; every other write to it is refused before anything is journaled.
+  const guestNote = guest ? admitGuestOperation(guest, { principal, operation: input.operation, remote: ctx.remote !== false,
+    plainPut: !input.batch && !staged && !imported && input.managedFileImport !== true, params: p, channels: ctx.guestChannels }) : null;
+  if (guestNote) p[GUEST_NOTE_INTENT_KEY] = guestNote;
   // GBRA-217: a reason is refused before anything is journaled; its canonical form joins the replay identity. An
   // operation that records no reason never journals one a caller passed anyway.
   if (CHANGE_REASON_OPERATIONS.includes(input.operation) && Object.hasOwn(p, 'reason')) {
@@ -425,8 +437,7 @@ export async function preparePageAdmission(ctx: OperationContext,
     return { prior };
   }
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null }>(
-    "SELECT incarnation,archived,local_path,config->>'kind' AS kind,config->>'role' AS role FROM sources WHERE id=$1", [sourceId]);
+  if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteGuestDelete(ctx.engine, sourceId, p.slug.toLowerCase(), principal);
   if (!source || source.archived) {
     throw new OperationError('source_changed', 'The write source is not active.',
       `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
@@ -498,6 +509,10 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });
+  }
+  if (guestNote) {
+    if (snapshot?.page.deleted_at) throw guestPageImmutable(`put_page over the deleted guest page ${slug}`);
+    await assertGuestReaders(ctx.engine, assertGuestFrontmatter(p.content, guestNote), currentCallerAccess().audience);
   }
   const slugAdvisory = (input.operation === 'put_page' || input.operation === 'capture') && input.managedFileImport !== true
     ? suffixedSlugAdmission(ctx, slug, !!snapshot && !snapshot.page.deleted_at, input.operation) : null;

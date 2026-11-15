@@ -8,6 +8,8 @@ test/http-db-config.serial.test.ts	global-state	global-state: binds HTTP listene
 test/access-as.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --as) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; the cases seed and read that one brain in order
 test/access-room-cli.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts --room) that each open one on-disk PGLite brain in a temp GBRAIN_HOME, and runs a live PGLite persistence owner on a socket in its own temp home that later cases delegate reads to
 test/enforced-member.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts under GBRAIN_ENFORCED_MEMBER) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME, or one isolated Postgres database; the cases seed and read that one brain in order
+test/enforced-member-writes-setting.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts under GBRAIN_ENFORCED_MEMBER) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME, or one isolated Postgres database; the cases seed and read that one brain in order
+test/enforced-member-writes.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (src/cli.ts under GBRAIN_ENFORCED_MEMBER) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME, or one isolated Postgres database; the cases seed and read that one brain in order
 test/access-binding.serial.test.ts	global-state	global-state: spawns real gbrain CLI children (auth create|rescope|register-client, access member) that each open one on-disk PGLite brain and take its file lock in a temp GBRAIN_HOME; later cases read the bindings earlier ones wrote
 test/admin-grant-outcome.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; R4: PGLiteEngine without an afterAll disconnect; binds local servers/ports
 test/advisor-backup-coverage.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_BACKUP_CHECK)
@@ -352,6 +354,7 @@ test/reindex-trace-transparency.serial.test.ts	global-state	global-state: R3: co
 test/remediation-run-extras.serial.test.ts	R2	R2: mock.module(../src/core/minions/queue.ts, ../src/core/minions/wait-for-completion.ts) replaces modules for every file in the process
 test/remediation-run-loop.serial.test.ts	R2	R2: mock.module(../src/core/minions/queue.ts, ../src/core/minions/wait-for-completion.ts, ../src/core/remediation-checkpoint.ts, ../src/core/ai/gateway.ts) replaces modules for every file in the process
 test/remote-privacy-journeys.serial.test.ts	global-state	global-state: R3: constructs PGLiteEngine outside beforeAll; configureGateway changes the process-wide AI gateway; binds local servers/ports
+test/remote-stdio-bridge.serial.test.ts	global-state	global-state: binds local servers/ports (a real serve --http host it stops and restarts, a proxy, stdio bridge children)
 test/repair-contextual-mode-5621.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME)
 test/rerank-degraded-notice.serial.test.ts	R2	R2: mock.module (hybridSearchCached)
 test/rerank-failure-reason.serial.test.ts	global-state	global-state: configureGateway changes the process-wide AI gateway; binds local servers/ports; R1: mutates process.env (GBRAIN_HOME, GBRAIN_AUDIT_DIR); R3: constructs PGLiteEngine inside a test (disconnected in finally)
@@ -470,4 +473,6 @@ test/extraction-review-door.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HO
 test/synopsis-sweep-8744.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_CONTEXTUAL_SYNOPSIS_MODEL)
 test/release-channel-w1.serial.test.ts	R1	R1: mutates process.env (GBRAIN_HOME, GBRAIN_RELEASE_CHANNEL) and stubs globalThis.fetch
 test/hermes-snapshot-7067.serial.test.ts	R2	R2: mock.module(node:fs) wraps copyFileSync to inject a writer and WAL checkpoint mid-snapshot
+test/wakeshift-pr2.serial.test.ts	global-state	global-state: R3: constructs a second PGLiteEngine inside a test (the git-backed brain for write.settled); binds a fake Wakeshift HTTP listener
+test/wakeshift-emit-spool.serial.test.ts	global-state	global-state: resets the module-level Wakeshift env-key cache (resetWakeshiftEnvKeyForTests) and starts the process-wide persistence consumer; binds a fake Wakeshift HTTP listener
 test/push-secret-scan-gaps.serial.test.ts	global-state	global-state: sets GBRAIN_HOME, PATH (a git wrapper for the index race) and GBRAIN_GIT_ALLOW_FILE_TRANSPORT through withEnv for real commits and pushes to local bare remotes

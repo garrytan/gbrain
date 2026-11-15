@@ -35,9 +35,13 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { bindCredential } from '../src/core/access/members.ts';
 import { consentedPurgeDeletedPages, purgeDeletedPagesCoordinated, selectPurgeCandidates } from '../src/core/persistence/purge-deleted.ts';
 import { checkDerivedOriginParked } from '../src/commands/doctor/checks/purge-parks.ts';
+import { runPages } from '../src/commands/pages.ts';
+import { _resetCliExitVerdictForTests, currentExitCode } from '../src/core/cli-force-exit.ts';
+import { readDerivedOriginParks } from '../src/core/persistence/derived-origin-hold.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
 import { submitPageMutation } from '../src/core/persistence/page-mutations.ts';
 import * as labelWrite from '../src/core/repair/label-write.ts';
+import { dropPreadmitCache } from '../src/core/persistence/preadmit-cache.ts';
 import * as privateVisibility from '../src/core/search/private-visibility.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -219,6 +223,25 @@ for (const kind of testBackends()) {
       await expectCarried(k, base.before, base.state, base.proposals);
     }, 240_000);
 
+    test('an expiring private page whose slug reads as a number too large to hold does not park the other origins in the purge', async () => {
+      const k = 'bignum';
+      await seed(k);
+      const base = await baseline(k);
+      const origin = slugOf(k, 'origin'), big = '1e999999';
+      const imported = await importFromContent(engine, big, ['---', 'title: big number', 'visibility: private', '---', '# big number', ''].join('\n'), { sourceId: SRC, noEmbed: true });
+      expect(imported.status).toBe('imported');
+      await softDelete(origin);
+      await backdate(origin);
+      await softDelete(big);
+      await backdate(big);
+      const result = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+      expect(result.blocked.filter(b => b.code === 'derived_origin_parked')).toEqual([]);
+      expect(result.slugs).toEqual(expect.arrayContaining([origin, big]));
+      await nothingKept(origin);
+      expect(await row(big)).toBeUndefined();
+      await expectCarried(k, base.before, base.state, base.proposals);
+    }, 240_000);
+
     test('a remote delete stamps the derived pages as maintenance and its response names none of them and counts none', async () => {
       const k = 'remote';
       await seed(k);
@@ -351,6 +374,7 @@ for (const kind of testBackends()) {
         await engine.setConfig('sync.write_through', 'true');
         await engine.executeRaw('UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug=$2', [SRC, blocking]);
         await engine.executeRaw('UPDATE sources SET local_path=NULL WHERE id=$1', [SRC]);
+        dropPreadmitCache(engine);
         rmSync(checkout, { recursive: true, force: true });
       }
       expect((await selectPurgeCandidates(engine, 72)).count).toBe(0);
@@ -394,6 +418,114 @@ for (const kind of testBackends()) {
       }
     }
 
+    /** `gbrain pages purge-deleted <args>` as the CLI runs it: its JSON output and exit verdict. */
+    async function pagesCli(args: string[]): Promise<{ out: Record<string, any> | null; exit: number }> {
+      _resetCliExitVerdictForTests();
+      const prior = process.exitCode;
+      const lines: string[] = [];
+      const log = spyOn(console, 'log').mockImplementation((...parts: unknown[]) => { lines.push(parts.join(' ')); });
+      const err = spyOn(console, 'error').mockImplementation(() => {});
+      try { await withEnv({ GBRAIN_CONSENT: undefined, GBRAIN_HOME: home }, () => runPages(engine, ['purge-deleted', ...args])); }
+      finally { log.mockRestore(); err.mockRestore(); }
+      const exit = currentExitCode();
+      _resetCliExitVerdictForTests();
+      process.exitCode = prior ?? 0;
+      const text = lines.join('\n').trim();
+      return { out: text.startsWith('{') ? JSON.parse(text) : null, exit };
+    }
+
+    test('purge-deleted --dry-run lists the parked origin a consented run releases and writes nothing; refused consent writes nothing; --yes purges exactly that list', async () => {
+      const k = 'preview';
+      await seed(k);
+      const origin = slugOf(k, 'origin'), blocking = slugOf(k, 'digest'), plain = slugOf(k, 'plain');
+      await parkByFailedLabel(origin);
+      await softDelete(plain);
+      await backdate(origin);
+      await backdate(plain);
+      const untouched = async () => {
+        expect((await fm(blocking)).visibility).toBeUndefined();
+        expect((await readDerivedOriginParks(engine)).map(park => park.slug)).toContain(origin);
+        expect((await row(origin))?.deleted_at).not.toBeNull();
+        expect((await row(plain))?.deleted_at).not.toBeNull();
+      };
+      const preview = await pagesCli(['--dry-run', '--json']);
+      expect(preview.exit).toBe(0);
+      expect(preview.out!.slugs).toEqual(expect.arrayContaining([origin, plain]));
+      await untouched();
+      const refused = await pagesCli(['--json']);
+      expect(refused.exit).toBe(3);
+      await untouched();
+      await expect(consentedPurgeDeletedPages(engine, 72, false)).rejects.toThrow();
+      await untouched();
+      const run = await pagesCli(['--json', '--yes']);
+      expect(run.exit).toBe(0);
+      expect([...run.out!.slugs].sort()).toEqual([...preview.out!.slugs].sort());
+      expect((await fm(blocking)).visibility).toBe('private');
+      await nothingKept(origin);
+      expect(await row(plain)).toBeUndefined();
+      await expectCarriedHidden(k);
+    }, 240_000);
+
+    test('a consented purge keeps an origin its preview held, even when the blocker clears between the preview and the run', async () => {
+      const k = 'heldrun';
+      await seed(k);
+      const origin = slugOf(k, 'origin'), digest = slugOf(k, 'digest'), plain = slugOf(k, 'plain');
+      await softDelete(origin);
+      await backdate(origin);
+      await softDelete(digest);
+      await softDelete(plain);
+      await backdate(plain);
+      const originCarry = await import('../src/core/repair/origin-carry.ts');
+      const real = originCarry.forecastCarry;
+      const forecast = spyOn(originCarry, 'forecastCarry').mockImplementation(async (...args: Parameters<typeof real>) => {
+        const read = await real(...args);
+        expect(read.hold.map(o => o.slug)).toContain(origin);
+        const restored = await localCall('restore_page', { slug: digest, request_id: randomUUID(), expected_revision: await revision(digest) });
+        expect(restored.isError ? restored.text : '').toBe('');
+        return read;
+      });
+      let result: Awaited<ReturnType<typeof consentedPurgeDeletedPages>>;
+      try { result = await consentedPurgeDeletedPages(engine, 72, true); } finally { forecast.mockRestore(); }
+      expect(result.slugs).toContain(plain);
+      expect(result.slugs).not.toContain(origin);
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      expect((await fm(digest)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await nothingKept(origin);
+      await expectCarriedHidden(k);
+    }, 240_000);
+
+    test('a held owner purge names gbrain delete <slug> --purge in its receipt and in doctor; finished through it as a new request, it writes the purge tombstones', async () => {
+      const k = 'finish';
+      await seed(k);
+      const origin = slugOf(k, 'origin');
+      const command = `gbrain delete ${origin} --purge --source-id ${SRC}`;
+      const tombstones = async () => (await engine.executeRaw<{ request_id: string }>(`SELECT r.request_id::text AS request_id FROM page_purges t
+        JOIN persistence_requests r ON r.id = t.request_id WHERE t.source_id=$1 AND t.slug=$2`, [SRC, origin])).map(r => r.request_id);
+      const first = randomUUID();
+      const failing = spyOn(labelWrite, 'importAtRevision').mockImplementation(async () => { throw new Error('forced label failure'); });
+      let held: Record<string, any>;
+      try { held = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: first, expected_revision: await revision(origin) })).text); }
+      finally { failing.mockRestore(); }
+      expect(held.purge_held?.code).toBe('derived_origin_parked');
+      expect(held.purge_held.message).toContain(command);
+      expect(held.purge_held.message).toContain(first);
+      const doctor = await checkDerivedOriginParked(engine);
+      expect(doctor.message).toContain(command);
+      expect((doctor.details as { origins: Array<{ slug: string; finish_argv?: string[] }> }).origins.find(o => o.slug === origin)?.finish_argv)
+        .toEqual(['gbrain', 'delete', origin, '--purge', '--source-id', SRC]);
+      expect(await tombstones()).toEqual([]);
+      const second = randomUUID();
+      const done = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: second, expected_revision: await revision(origin) })).text);
+      expect(done.status).toBe('purged');
+      expect(done.retention).toBeUndefined();
+      const written = await tombstones();
+      expect(written.length).toBeGreaterThan(0);
+      expect(new Set(written)).toEqual(new Set([second]));
+      await nothingKept(origin);
+      await expectCarriedHidden(k);
+    }, 240_000);
+
     test('an explicit purge rechecks inside its transaction: a derived page written after the carry keeps the origin soft-deleted and parked', async () => {
       const k = 'midsingle';
       await seed(k);
@@ -406,6 +538,7 @@ for (const kind of testBackends()) {
       const receipt = JSON.parse(out.text);
       expect(receipt.status).not.toBe('purged');
       expect(receipt.purge_held?.code).toBe('derived_origin_parked');
+      expect(receipt.purge_held.message).toContain(`gbrain delete ${origin} --purge --source-id ${SRC}`);
       expect((await row(origin))?.deleted_at).not.toBeNull();
       await expectLateHidden(k, late);
       await backdate(origin);
@@ -526,6 +659,82 @@ for (const kind of testBackends()) {
       await expectCarriedHidden(k);
     }, 240_000);
 
+    /**
+     * Life Chronicle events: one whose own derived_from names the private origin while its event.depth page is public
+     * (opens once the origin goes, so it is labelled), and one whose event.depth is the origin itself (fails closed once
+     * the origin is missing, so it is left as it is).
+     */
+    async function seedEvents(k: string): Promise<{ origin: string; event: string; closed: string }> {
+      const origin = `${k}/origin`, depth = `${k}/depth`, event = `${k}/event`, closed = `${k}/closed`;
+      const write = async (slug: string, fm: string[]) => expect((await importFromContent(engine, slug, ['---', `title: ${slug}`, ...fm, '---', `# ${slug}`, '',
+        `Harbor ledger planning notes ${canaryOf(k, 'plain')}${slug.split('/')[1]} for the roadmap.`].join('\n'), { sourceId: SRC, noEmbed: true })).status).toBe('imported');
+      await write(origin, ['type: note', 'visibility: private']);
+      await write(depth, ['type: meeting']);
+      await write(event, ['type: event', 'captured_via: life-chronicle:auto', 'visibility: world', `derived_from: [${origin}.md]`, 'event:', `  depth: ${depth}`, '  what: planning']);
+      await write(closed, ['type: event', 'captured_via: life-chronicle:auto', 'visibility: world', 'event:', `  depth: ${origin}`, '  what: review']);
+      return { origin, event, closed };
+    }
+    const eventRead = async (who: Caller, k: string, slug: string) => (await call(who, 'get_page', { slug })).text.includes(`${canaryOf(k, 'plain')}${slug.split('/')[1]}`);
+    async function expectEventsHidden(k: string, slugs: string[]): Promise<void> {
+      __resetPrivateVisibilityCacheForTests();
+      for (const who of ['unbound', 'alice'] as const) for (const slug of slugs) expect({ who, slug, read: await eventRead(who, k, slug) }).toEqual({ who, slug, read: false });
+      for (const slug of slugs) expect({ slug, read: await eventRead('owner', k, slug) }).toEqual({ slug, read: true });
+    }
+
+    test('an explicit purge labels a life-chronicle event whose own derived_from names the origin; an event that fails closed on its depth is left as it is', async () => {
+      const k = 'eventpurge';
+      const { origin, event, closed } = await seedEvents(k);
+      await expectEventsHidden(k, [event, closed]);
+      const closedBefore = await fm(closed);
+      const out = await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) });
+      expect(out.isError ? out.text : '').toBe('');
+      expect(JSON.parse(out.text).status).toBe('purged');
+      await nothingKept(origin);
+      expect((await fm(event)).visibility).toBe('private');
+      expect(await fm(closed)).toEqual(closedBefore);
+      await expectEventsHidden(k, [event, closed]);
+    }, 240_000);
+
+    test('the retention purge labels a life-chronicle event whose own derived_from names the expired origin before the row goes', async () => {
+      const k = 'eventexpiry';
+      const { origin, event, closed } = await seedEvents(k);
+      const closedBefore = await fm(closed);
+      await softDelete(origin);
+      await backdate(origin);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await nothingKept(origin);
+      expect((await fm(event)).visibility).toBe('private');
+      expect(await fm(closed)).toEqual(closedBefore);
+      await expectEventsHidden(k, [event, closed]);
+    }, 240_000);
+
+    test('a life-chronicle event that cannot be labelled parks its origin: never purged, the event stays hidden; fixed, the origin goes', async () => {
+      const k = 'eventpark';
+      const { origin, event, closed } = await seedEvents(k);
+      const original = labelWrite.importAtRevision;
+      const failing = spyOn(labelWrite, 'importAtRevision').mockImplementation(async (...args: Parameters<typeof original>) => {
+        if (args[1].slug === event) throw new Error('forced label failure');
+        return original(...args);
+      });
+      try {
+        const out = JSON.parse((await localCall('delete_page', { slug: origin, purge: true, request_id: randomUUID(), expected_revision: await revision(origin) })).text);
+        expect(out.status).not.toBe('purged');
+        expect(out.purge_held?.code).toBe('derived_origin_parked');
+        await backdate(origin);
+        const held = await purgeDeletedPagesCoordinated(engine, 72, { automatic: true });
+        expect(held.slugs).not.toContain(origin);
+        expect(held.blocked.find(b => b.slug === origin)?.code).toBe('derived_origin_parked');
+      } finally { failing.mockRestore(); }
+      expect((await row(origin))?.deleted_at).not.toBeNull();
+      expect((await checkDerivedOriginParked(engine)).details).toEqual(expect.objectContaining({ origins: expect.arrayContaining([expect.objectContaining({ slug: origin, blocking_slug: event })]) }));
+      await expectEventsHidden(k, [event, closed]);
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).not.toContain(origin);
+      expect((await fm(event)).visibility).toBe('private');
+      expect((await purgeDeletedPagesCoordinated(engine, 72, { automatic: true })).slugs).toContain(origin);
+      await nothingKept(origin);
+      await expectEventsHidden(k, [event, closed]);
+    }, 240_000);
+
     test('a stamp that fails parks the origin: never purged, named by doctor with the page that blocks it, the derived page stays hidden; fixed, the next purge stamps and unparks and the one after purges', async () => {
       const k = 'park';
       await seed(k);
@@ -560,6 +769,7 @@ for (const kind of testBackends()) {
         await engine.setConfig('sync.write_through', 'true');
         await engine.executeRaw('UPDATE pages SET source_path=NULL WHERE source_id=$1 AND slug=$2', [SRC, blocking]);
         await engine.executeRaw('UPDATE sources SET local_path=NULL WHERE id=$1', [SRC]);
+        dropPreadmitCache(engine);
         rmSync(checkout, { recursive: true, force: true });
       }
       // Fixed: the next purge labels the page and unparks the origin but keeps it, since it was parked when that purge

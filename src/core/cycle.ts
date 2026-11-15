@@ -1915,6 +1915,18 @@ export async function runCycle(
 /** #7241: tell `opts.onPhaseStart` a selected phase is starting; a hook error is logged, never fatal. */
 const notifyPhaseStart = (opts: CycleOpts, phase: CyclePhase, phases: readonly CyclePhase[]): Promise<void> => Promise.resolve().then(() => opts.onPhaseStart?.(phase, phases.indexOf(phase), phases.length)).then(() => undefined, (e: unknown) => { console.warn(`[cycle] onPhaseStart hook error (non-fatal): ${e instanceof Error ? e.message : String(e)}`); });
 
+/** GBRA-504: a cycle scoped to a guest source skips every phase that would derive rows from guest pages (guests/derived.ts); each is reported skipped. */
+async function withoutGuestPhases(engine: BrainEngine | null, sourceId: string | undefined, phases: CyclePhase[], phaseResults: PhaseResult[]): Promise<CyclePhase[]> {
+  if (!engine || !sourceId) return phases;
+  const { guestSourceVerdict, guestSkipDetails } = await import('./guests/note.ts');
+  const verdict = await guestSourceVerdict(engine, sourceId);
+  if (!verdict.guest) return phases;
+  const { summary, details } = guestSkipDetails(sourceId, verdict.lookupError);
+  const guestSkipped = new Set((await import('./guests/derived.ts')).guestSkippedPhases());
+  for (const phase of phases.filter(p => guestSkipped.has(p))) phaseResults.push({ phase, status: 'skipped', duration_ms: 0, summary: `skipped: ${summary}`, details });
+  return phases.filter(p => !guestSkipped.has(p));
+}
+
 async function runCycleUnscoped(
   engine: BrainEngine | null,
   opts: CycleOpts,
@@ -1942,7 +1954,7 @@ async function runCycleUnscoped(
       phase_scope: PHASE_SCOPE[phase],
     },
   }));
-
+  phases = await withoutGuestPhases(engine, opts.sourceId, phases, phaseResults);
   // Capture as a const so it narrows to `string` inside the `else` branches of
   // the per-phase `if (brainDir === null)` guards, even within async closures
   // (const bindings narrow across closures; property accesses don't).
