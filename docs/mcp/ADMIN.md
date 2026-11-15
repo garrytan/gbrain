@@ -379,9 +379,11 @@ gbrain auth rescope --client CLIENT_ID --operations OP1,OP2,... --surface full
 ```
 
 `gbrain doctor` fills the list with every operation it counted for that
-grant (for a client, the current snapshot plus those), so the apply command
-closes the whole gap, and each `--dry-run` prints the operation list before
-and after without changing the grant.
+grant except the membership operations below (for a client, the current
+snapshot plus those), and each `--dry-run` prints the operation list before
+and after without changing the grant. Counted membership operations are listed
+apart with a second command that adds them by name; it is never the doctor
+fix, because only the owner approves them.
 
 `--refresh-operations` is token-only (a client gets
 `client_refresh_operations_unsupported`). Removing the snapshot instead is a
