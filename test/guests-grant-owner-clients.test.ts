@@ -72,6 +72,22 @@ describe('gbrain guests grant-owner-clients', () => {
     expect(await grantOf(member)).toEqual(before.member);
   }, 60_000);
 
+  test('the owner credential read loads no token hash, only the columns the grant needs', async () => {
+    const { token } = await brain();
+    const loaded: unknown[] = [];
+    const read = engine.executeRaw.bind(engine);
+    const spy = spyOn(engine, 'executeRaw').mockImplementation((async (sql: string, params?: unknown[]) => {
+      const rows = await read(sql, params);
+      loaded.push(...rows);
+      return rows;
+    }) as never);
+    try {
+      const { credentials } = await ownerCredentials(engine, SRC);
+      expect(credentials.map(c => c.id)).toContain(token);
+    } finally { spy.mockRestore(); }
+    expect(JSON.stringify(loaded)).not.toContain('token_hash');
+  }, 60_000);
+
   test('the preview lists owner credentials that cannot read the guest source and writes nothing', async () => {
     const { narrow, reading, member, token } = await brain();
     const before = await grantOf(narrow);

@@ -130,13 +130,16 @@ const CHANGED_CHAIN = `${TRUST_TABLES.map((table, index) => `${index === 0 ? 'IF
  * is refused here (guest_attribution_missing) without a read of its own. A
  * fact, take or timeline row in a guest source is refused on INSERT and on a
  * content change; lifecycle updates and deletes pass. Other tables skip the
- * probe while guest_sources is empty.
+ * probe while guest_sources is empty. `failClosed` (follow-up 3 of #9354) first refuses, with
+ * writer_coordinator_required (unreadable_state, state guest_sources), a role that row-level security keeps from
+ * reading guest_sources, which would otherwise read it empty and pass every write as if no source were a guest source.
  */
-const GUEST_GUARD = `
+const guestGuard = (failClosed: boolean) => `
   IF TG_OP = 'UPDATE' THEN
     ${CHANGED_CHAIN.replace(/\n/g, '\n  ')}
   END IF;
-  IF TG_TABLE_NAME = 'pages' THEN
+  IF TG_TABLE_NAME = 'pages' THEN${failClosed ? `
+    ${requireMaintainerPoliciesSql('guest_sources', ['SELECT'], '    ')}` : ''}
     SELECT g.trust_ceiling, g.writers INTO guest_ceiling, guest_writers FROM guest_sources g WHERE g.source_id = NEW.source_id;
     guest := FOUND;
     IF NOT guest AND TG_OP = 'UPDATE' AND OLD.source_id IS DISTINCT FROM NEW.source_id THEN
@@ -154,7 +157,10 @@ const GUEST_GUARD = `
         NULLIF(current_setting('gbrain.guest_note', true), '') = current_setting('gbrain.write_request', true), false) THEN
       ${guestRefuse('guest_attribution_missing', 'a listed writer creates or changes a guest page only as a guest note')};
     END IF;
-  ELSIF (TG_OP = 'INSERT' OR changed) AND EXISTS (SELECT 1 FROM guest_sources) THEN
+  ELSIF (TG_OP = 'INSERT' OR changed)${failClosed ? ` THEN
+    ${requireMaintainerPoliciesSql('guest_sources', ['SELECT'], '    ')}
+  END IF;
+  IF TG_TABLE_NAME <> 'pages' AND (TG_OP = 'INSERT' OR changed)` : ''} AND EXISTS (SELECT 1 FROM guest_sources) THEN
     IF TG_TABLE_NAME = 'facts' THEN
       guest := EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = NEW.source_id);
     ELSE
@@ -168,17 +174,19 @@ const GUEST_GUARD = `
 const GUEST_CEILING_RETURN = `IF guest_ceiling IS NOT NULL AND ${rank('NEW.trust_tier')} > ${rank('guest_ceiling')} THEN NEW.trust_tier := guest_ceiling; END IF; RETURN NEW;`;
 
 /**
- * The tier trigger function. `guestSources: false` is the v226 body, kept
+ * The tier trigger function. `'none'` is the v226 body, kept
  * byte-identical (the migration golden pins it, and migrations between v226 and
- * the guest-notes migration run before guest_sources exists). `true` adds the guest-source rules
- * (GUEST_GUARD) and the per-source ceiling on every RETURN NEW; the guest-notes migration installs
- * it, and any later migration that re-creates this function uses it.
+ * the guest-notes migration run before guest_sources exists). `'guest'` adds the guest-source rules
+ * (guestGuard) and the per-source ceiling on every RETURN NEW, as the guest-notes migration installed it (byte-identical
+ * too); `'guest_fail_closed'` adds the unreadable guest_sources refusal, and any later migration that re-creates this
+ * function uses it.
  */
-const stampTierFunction = (guestSources: boolean) => {
+const stampTierFunction = (mode: 'none' | 'guest' | 'guest_fail_closed') => {
+  const guestSources = mode !== 'none';
   const ret = guestSources ? GUEST_CEILING_RETURN : 'RETURN NEW;';
   return `CREATE OR REPLACE FUNCTION gbrain_stamp_trust_tier() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $fn$
 DECLARE writer text; origin_text text; promo text; backfill boolean; keep boolean; changed boolean; effective text;${guestSources ? ' guest boolean := false; guest_ceiling text; guest_writers text[];' : ''}
-BEGIN${SETTINGS}${guestSources ? GUEST_GUARD : ''}
+BEGIN${SETTINGS}${guestSources ? guestGuard(mode === 'guest_fail_closed') : ''}
   IF ${rank('writer')} > ${rank(`'${OWNER_TIER_FLOOR}'`)} AND (promo IS NULL OR ${rank('writer')} > ${rank('promo')}) THEN
     ${refuse('a write declared a tier above operator_curated without owner confirmation', `jsonb_build_object('op',TG_OP,'writer',writer)::text`)};
   END IF;
@@ -214,9 +222,11 @@ BEGIN${SETTINGS}${guestSources ? GUEST_GUARD : ''}
   ${ret}
 END $fn$`;
 };
-const STAMP_TIER_FUNCTION = stampTierFunction(false);
-/** The current tier trigger function, guest-source rules included (the guest-notes migration). */
-export const GUEST_AWARE_STAMP_TIER_FUNCTION = stampTierFunction(true);
+const STAMP_TIER_FUNCTION = stampTierFunction('none');
+/** The tier trigger function as the guest-notes migration installed it (its body is pinned there). */
+export const GUEST_AWARE_STAMP_TIER_FUNCTION = stampTierFunction('guest');
+/** The current tier trigger function: guest-source rules that refuse a role unable to read guest_sources. */
+export const GUEST_FAIL_CLOSED_STAMP_TIER_FUNCTION = stampTierFunction('guest_fail_closed');
 
 /**
  * A version row snapshots the page before the archiving write changes it, in
