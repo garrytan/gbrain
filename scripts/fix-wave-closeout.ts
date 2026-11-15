@@ -76,13 +76,13 @@ export function isMergedWave(event: CloseoutEvent): boolean {
 
 export function closeoutMessage(handle: string, wave: number, waveTitle: string, credited: boolean): string {
   const credit = credited
-    ? ` with credit to you: the wave says \`Contributed by @${handle}\` and carries a \`Co-Authored-By:\` trailer.`
+    ? ` with credit to you: that PR says \`Contributed by @${handle}\` and carries a \`Co-Authored-By:\` trailer.`
     : '.';
   return [
     COMMENT_MARKER,
-    `Thank you, @${handle}. Fix-wave PR #${wave} (${waveTitle}) merged into master and supersedes this PR, so the change it proposed has landed there${credit}`,
+    `Thank you, @${handle}. Pull request #${wave} (${waveTitle}) merged into master and supersedes this PR, so the change it proposed has landed there${credit}`,
     '',
-    `I'm closing this PR because nothing is left for it to land, not because anything was wrong with it. If part of it didn't make it into #${wave}, reply here with what's missing and the next fix wave will pick it up.`,
+    `I'm closing this PR because nothing is left for it to land, not because anything was wrong with it. If part of it didn't make it into #${wave}, reply here with what's missing and why it matters.`,
     '',
     'This comment comes from the fix-wave closeout workflow.',
   ].join('\n');

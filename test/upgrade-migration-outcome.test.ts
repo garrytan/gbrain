@@ -1,6 +1,6 @@
 /**
- * #5693: `gbrain upgrade` owns migrations through post-upgrade, so package
- * postinstall defers them; an install that failed after the version swapped
+ * #5693: `gbrain upgrade` owns migrations through post-upgrade (the install
+ * step runs none); an install that failed after the version swapped
  * is reported as installed; and the run ends with separate binary and
  * migration lines (complete, running with the holder, or failed with the
  * recovery command).
@@ -28,7 +28,7 @@ function runUpgradeHarness(opts: { bunExit?: number; postUpgradeExit?: number; c
   writeFileSync(join(pkg, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'https://github.com/garrytan/gbrain' } }));
   const driver = join(pkg, 'src', 'cli.ts');
   writeFileSync(driver, `const { runUpgrade } = await import(${JSON.stringify(join(REPO, 'src/commands/upgrade.ts'))});\nawait runUpgrade(['--no-bun-floor-check']);\n`);
-  writeFileSync(join(bin, 'bun'), `#!/bin/sh\nprintf 'bun:%s:owns=%s\\n' "$*" "$GBRAIN_UPGRADE_OWNS_MIGRATIONS" >> "$HOME/calls.log"\n${JSON.stringify(process.execPath)} ${JSON.stringify(join(REPO, 'scripts/postinstall.ts'))}\nexit ${opts.bunExit ?? 0}\n`, { mode: 0o755 });
+  writeFileSync(join(bin, 'bun'), `#!/bin/sh\nprintf 'bun:%s:owns=%s\\n' "$*" "$GBRAIN_UPGRADE_OWNS_MIGRATIONS" >> "$HOME/calls.log"\nexit ${opts.bunExit ?? 0}\n`, { mode: 0o755 });
   writeFileSync(join(bin, 'gbrain'), `#!/bin/sh\nprintf 'gbrain:%s\\n' "$*" >> "$HOME/calls.log"\nif [ "$1" = '--version' ]; then echo 'gbrain ${NEWER}'; fi\nif [ "$1" = 'post-upgrade' ]; then exit ${opts.postUpgradeExit ?? 0}; fi\nexit 0\n`, { mode: 0o755 });
   const result = spawnSync(process.execPath, ['--no-env-file', driver], {
     cwd: home,
@@ -41,7 +41,7 @@ function runUpgradeHarness(opts: { bunExit?: number; postUpgradeExit?: number; c
 }
 
 describe('gbrain upgrade migration ownership and outcome (#5693)', () => {
-  test('package postinstall under upgrade defers migrations to post-upgrade', () => {
+  test('upgrade runs migrations once, in post-upgrade, never during the install step', () => {
     const r = runUpgradeHarness({});
     expect(r.status, r.out).toBe(0);
     expect(r.calls).toContain('bun:update --backend=copyfile gbrain:owns=1');

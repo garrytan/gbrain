@@ -51,6 +51,7 @@ import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheck
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
 import { isOutcomeMarker, outcomeMarkerSql } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
+import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
 import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewrittenContentHash } from '../page-body/segment-rewrite.ts';
@@ -86,9 +87,12 @@ const purgeContext = new Map<string, PagePurgeContext>();
 const PURGE_CONTEXT_LIMIT = 64;
 const purgeReceipts = new Map<string, { receipt: Record<string, unknown>; purge: Record<string, unknown> }>();
 
+/** #8859: the page's facts, $1 its source and $2 its slug: those filed on it and those extracted from it and filed on none. */
+const PAGE_FACTS = `(source_markdown_slug=$2 OR ${extractedFromPageSql('facts', '$2')})`;
+
 /** The page's claims (facts filed on it, its takes) that the journal sweep searches for, bounded, trimmed, deduplicated. */
 async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number) {
-  const factRows = await engine.executeRaw<{ id: number; fact: string; source: string | null }>('SELECT id,fact,source FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 ORDER BY id LIMIT 1000', [sourceId, slug]);
+  const factRows = await engine.executeRaw<{ id: number; fact: string; source: string | null }>(`SELECT id,fact,source FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} ORDER BY id LIMIT 1000`, [sourceId, slug]);
   const takeRows = await engine.executeRaw<{ id: number; claim: string }>('SELECT id,claim FROM takes WHERE page_id=$1 ORDER BY id LIMIT 1000', [pageId]);
   const needles = [...new Set([...factRows.filter(f => !isOutcomeMarker(f)).map(f => f.fact), ...takeRows.map(t => t.claim)].map(t => t.trim()).filter(t => t.length >= 8))].slice(0, 32);
   return { factRows, takeRows, needles };
@@ -96,7 +100,7 @@ async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId
 
 /** Every claim of the page (its facts, withdrawn ones included, and its takes), trimmed and deduplicated, unbounded: the segment-text sweep's needles. */
 async function readSegmentClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
-  const rows = await engine.executeRaw<{ c: string }>(`SELECT fact AS c FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND NOT ${outcomeMarkerSql('facts')} UNION SELECT claim FROM takes WHERE page_id=$3`,
+  const rows = await engine.executeRaw<{ c: string }>(`SELECT fact AS c FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')} UNION SELECT claim FROM takes WHERE page_id=$3`,
     [sourceId, slug, pageId]);
   return [...new Set(rows.map(r => r.c.trim()).filter(t => t.length >= 8))];
 }
@@ -241,7 +245,7 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
   const page = snapshot.page;
   await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
     SELECT DISTINCT source_id,visibility,COALESCE(entity_slug,'*'),gbrain_fact_fingerprint(fact),$3::uuid,$4,'page purge'
-    FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND NOT ${outcomeMarkerSql('facts')} ON CONFLICT DO NOTHING`, [sourceId, slug, requestId, actor]);
+    FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')} ON CONFLICT DO NOTHING`, [sourceId, slug, requestId, actor]);
   await tx.executeRaw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id)
     SELECT DISTINCT $1,$2,gbrain_fact_fingerprint(claim),$4::uuid FROM takes WHERE page_id=$3 ON CONFLICT DO NOTHING`, [sourceId, slug, pageId, requestId]);
   // Tombstone the content hash of the page and of every retained version, each as an import of that body would
@@ -297,7 +301,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const lifetimes = ledgerPresent ? await pageLifetimesOf(tx, sourceId, slug, page.id) : [];
   const inventory = ledgerPresent ? await lookup('ledger_redaction', () => pagePurgeClaims(tx, { sourceId, slug, pageId: page.id, lifetimes })) : { claims: [], fps: [] };
   const mirrorFacts = retention ? [] : await tx.executeRaw<{ fact_hash: string; visibility: string; subject: string }>(`SELECT DISTINCT gbrain_fact_fingerprint(fact) AS fact_hash,
-    visibility, COALESCE(entity_slug,'*') AS subject FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND NOT ${outcomeMarkerSql('facts')}`, [sourceId, slug]);
+    visibility, COALESCE(entity_slug,'*') AS subject FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')}`, [sourceId, slug]);
   const mirrorTakes = retention ? [] : (await tx.executeRaw<{ claim_hash: string }>('SELECT DISTINCT gbrain_fact_fingerprint(claim) AS claim_hash FROM takes WHERE page_id=$1', [page.id])).map(t => t.claim_hash);
   const hashes = new Set<string>();
   if (!retention) await tombstonePage(tx, sourceId, slug, page.id, snapshot, row.id, actor, { hash: storedHash, generation: Number(stored?.body_generation) }, hashes);
@@ -332,7 +336,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const cleared = await clearRebuildableCache(tx, 'query_cache');
   if (cleared === null) missingCaches.push('query_cache');
   removed.query_cache = cleared ?? 0;
-  removed.facts = await count('DELETE FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 RETURNING 1', [sourceId, slug]);
+  removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
   Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug]));
   // #6511 [R2]: the preparation sweep's targets, plus the tail past its ceiling and the rows pending at scan time, re-tested here.
   const recheck = await lookup('tail_recheck', () => recheckRequestsCarrying(tx, sourceId, needles, prepared.sweep,

@@ -421,6 +421,38 @@ describe('forget on remove', () => {
     expect(await drain()).toMatchObject({ forgotten: 1 });
   });
 
+  test('token revoke by an uppercase id still ends the token\'s watches and queues its forget', async () => {
+    const minted = await mintLegacyToken(engine, { name: 'wake-token-upper', takesHolders: ['world'], scopes: ['read', 'write', 'admin'] });
+    const ctx = { remote: true, transport: 'http' as const, sourceId: 'default', config: { engine: 'pglite' }, logger: log,
+      auth: { token: 't', clientId: minted.id, principal: { kind: 'legacy_token' as const, id: minted.id }, scopes: ['read', 'write', 'admin'] } };
+    expect(body(await call('watch_job', { id: await seedJob() }, ctx))).toMatchObject({ watching: true });
+    writeConfig({ enabled: false, url: fake.url });
+    expect(await revokeLegacyTokenById(sqlQueryForEngine(engine), minted.id.toUpperCase())).toBe(true);
+    expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'principal_revoked' }]);
+    expect(await engine.executeRaw('SELECT state FROM wake_forgets')).toEqual([{ state: 'pending' }]);
+  });
+
+  test('a removed member whose forget was never queued is forgotten by the drainer; a live member\'s revoked credential is not', async () => {
+    await addMember('alice-example');
+    await addMember('bob-example');
+    await addClient('client-m1', 'alice-example');
+    await addClient('client-m2', 'bob-example');
+    writeConfig({ enabled: true, url: fake.url, terms_url: TERMS, privacy_url: PRIVACY });
+    for (const c of ['client-m1', 'client-m2']) {
+      const step = body(await call('watch_job', { id: await seedJob() }, client(c)));
+      await call('accept_wakeshift_terms', { terms_version: step.terms_version }, client(c));
+      expect(body(await call('watch_job', { id: await seedJob() }, client(c)))).toMatchObject({ watching: true });
+    }
+    await engine.executeRaw("UPDATE access_members SET tombstoned_at = now(), disabled_at = now() WHERE id = 'alice-example'");
+    await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-m2'");
+    await engine.executeRaw("UPDATE minion_jobs SET status = 'completed', finished_at = now()");
+    expect(await drain()).toMatchObject({ delivered: 0, ended: 2 });
+    const [alice] = await engine.executeRaw<{ wake_user: string }>("SELECT wake_user FROM wake_subscriptions WHERE member_id = 'alice-example'");
+    expect(await engine.executeRaw('SELECT wake_user, state FROM wake_forgets')).toEqual([{ wake_user: alice!.wake_user, state: 'pending' }]);
+    expect(await drain()).toMatchObject({ forgotten: 1 });
+    expect(paths('/users/forget').map(c => c.body)).toEqual([{ user: alice!.wake_user }]);
+  });
+
   test('a refused forget is retried on the schedule and then dies', async () => {
     await engine.executeRaw("INSERT INTO wake_forgets (wake_user) VALUES ('0123456789abcdef0123456789abcdef')");
     fake.respond.set('/users/forget', () => ({ status: 503, body: { error: { code: 'unavailable', message: 'down' } } }));
